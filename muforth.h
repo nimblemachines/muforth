@@ -32,6 +32,10 @@
  * both 32 bits, this may change.
  */
 
+#ifdef __APPLE__
+typedef unsigned char uint8_t;
+#endif /* __APPLE__ */
+
 #ifdef __POWERPC__
 typedef int32_t   cell_t;
 typedef int64_t   d_arith_t;	/* double arithmetic */
