@@ -81,6 +81,7 @@ static cell_t *pcd_last_call;
 #define BR_ABS_ADDR	2
 #define	BAL		(BR | BR_AND_LINK)
 #define BR_COND_ZERO	(BRCOND | RS(12) | RA(2))
+#define BR_COND_NZERO	(BRCOND | RS(4)  | RA(2))
 
 /*
  * BLR_ALWAYS is Branch And Link to Link Register, Always
@@ -315,33 +316,15 @@ static void comma_li(int r, int val);
 static void comma_ld(int r_dest, unsigned int offset, int r_base);
 static void comma_st(int r_src, int offset, int r_base);
 
-static int sp_loaded = 0;
-static int sp_modified = 0;
 static void comma_fetch_sp(void)
 {
-	if (sp_loaded)
-		return;
-
 	comma_li(R_PSP, (int) &sp);
 	comma_ld(R_SP, 0, R_PSP);
-
-	sp_loaded = 0;	/* setting to 1 optimizes sp loads */
-	sp_modified = 0;
 }
 
 static void comma_store_sp(void)
 {
-//	if (!sp_modified)
-	if (!sp_loaded)
-		return;
-
-	if (!sp_modified)
-		printf("Unnecessarily writing back the sp at %p\n", pcd);
-
 	comma_st(R_SP, 0, R_PSP);
-
-	sp_loaded = 0;
-	sp_modified = 0;
 }
 
 
@@ -414,12 +397,13 @@ static void comma_stu(int r_src, int offset, int r_base)
 	assert_valid_reg(r_base);
 	assert_16bit_val(offset);
 
-	if (r_base == R_SP) {
+	if (r_base == R_SP)
 		comma_fetch_sp();
-		sp_modified = 1;
-	}
 
 	comma_instr(STU | RS(r_src) | RA(r_base) | (offset & IMM_MASK));
+	
+	if (r_base == R_SP)
+		comma_store_sp();
 }
 
 static void comma_cmpi(int r, int value)
@@ -437,12 +421,13 @@ static void comma_addi(int reg, int val)
 {
 	assert_valid_reg(reg);
 
-	if (reg == R_SP) {
+	if (reg == R_SP)
 		comma_fetch_sp();
-		sp_modified = 1;
-	}
 
 	comma_instr(ADDI | RS(reg) | RA(reg) | (val & IMM_MASK));
+
+	if (reg == R_SP)
+		comma_store_sp();
 }
 
 static void comma_mtlr(int r)
@@ -457,18 +442,12 @@ static void comma_mflr(int r)
 
 static void comma_pop(int r, int r_sp)
 {
-	if (r_sp == R_SP)
-		comma_fetch_sp();
-
 	comma_ld(r, 0, r_sp);
 	comma_addi(r_sp, 4);
 }
 
 static void comma_push(int r, int r_sp)
 {
-	if (r_sp == R_SP)
-		comma_fetch_sp();
-
 	comma_stu(r, -4, r_sp);
 }
 
@@ -549,12 +528,8 @@ void mu_compile_call()
 		exit(-1);
 	}
 
-	/*
-	 * If we will call a C function, we need to write the SP register back to memory
-	 */
 	if (is_c_function(addr))
 	{
-		comma_store_sp();
 		if (pcd_last_call[-1] == (ADDI | RS(R_RP) | RA(R_RP) | (16 & IMM_MASK))) {
 			pcd -= 4;
 			pcd_last_call = (cell_t *) pcd;
@@ -672,8 +647,6 @@ void mu_compile_entry(void)
  */
 void mu_compile_exit(void)
 {
-	comma_store_sp();
-
 #if 0
 	u_int32_t *pc;
 
@@ -847,21 +820,11 @@ u_int32_t mu_jump_helper(u_int32_t *base)
 
 	return word;
 }
-/*
-(gdb) x/x 0x00006050
-0x6050 <test_dnegate+124>:      0x409e0024
-(gdb) x/x 0x305b74
-0x305b74:       0x41800020
-(gdb) x/i 0x00006050
-0x6050 <test_dnegate+124>:      bne-    cr7,0x6074 <test_dnegate+160>
-(gdb) x/i 0x305b74
-0x305b74:       blt-    0x305b94
-*/
+
 void mu_compile_nondestructive_zbranch(void)
 {
 	comma_ld(R_TEMP, 0, R_SP);
 	comma_cmpi(R_TEMP, 0);
-	comma_store_sp();
 	comma_instr(BR_COND_ZERO);
 	PUSH(pcd);
 }
@@ -870,7 +833,6 @@ void mu_compile_destructive_zbranch(void)
 {
 	comma_pop(R_TEMP, R_SP);
 	comma_cmpi(R_TEMP, 0);
-	comma_store_sp();
 	comma_instr(BR_COND_ZERO);
 	PUSH(pcd);
 }
@@ -988,7 +950,6 @@ void mu_compile_qfor(void)
 {
 	comma_pop(R_TEMP, R_SP);	/* R_TEMP = *R_SP ++; */
 	comma_cmpi(R_TEMP, 0);		/* z = (R_TEMP == 0); */
-	comma_store_sp();
 	comma_instr(BR_COND_ZERO);	/* if (!z) { */
 	PUSH(pcd);			/* Save the address of the branch */
 	comma_push(R_TEMP, R_RP);	/*	*--R_SP = R_TEMP; */
@@ -1008,8 +969,7 @@ void mu_compile_next(void)
 	comma_addi(R_TEMP, -1);		/* R_TEMP --; */
 	comma_st(R_TEMP, 0, R_RP);	/* *R_RP = R_TEMP; */
 	comma_cmpi(R_TEMP, 0);		/* z = (R_TEMP == 0); */
-	comma_store_sp();
-	comma_instr(BR_COND_ZERO);	/* } while (!z); */
+	comma_instr(BR_COND_NZERO);	/* } while (!z); */
 	PUSH(pcd);			/* Compiler push of the branch address */
 	comma_addi(R_RP, 4);		/* pop the count off the return stack */
 }
@@ -1027,9 +987,7 @@ void mu_disassemble(int addr)
 
 	done = 0;
 	do {
-		printf("%p: ", pc);
-
-		instr = *pc++;
+		instr = *pc;
 
 		type = instr & INSTR_MASK;
 		rs = (instr & RS(31)) >> RS_SHIFT;
@@ -1040,6 +998,11 @@ void mu_disassemble(int addr)
 		if (imm & 0x8000) {
 			imm |= 0xFFFF0000;
 		}
+		
+		if (type == CLASS_31 && encoding == MFSPR_ENCODING && (cell_t) pc != base)
+			break;
+
+		printf("%p: ", pc);
 
 		switch(type) {
 		case CLASS_31:
@@ -1048,17 +1011,38 @@ void mu_disassemble(int addr)
 				printf("add\tr%d, r%d, r%d\n", rs, ra, rb);
 				break;
 			case MTSPR_ENCODING:
-				printf("mtlr\t%d\n", rs);
+				printf("mtlr\tr%d\n", rs);
 				break;
 			case MFSPR_ENCODING:
-				printf("mflr\t%d\n", rs);
+				printf("mflr\tr%d\n", rs);
 				break;
 			default:
 				assert(0);
 			}
 			break;
 
+		case CMPI:
+			printf("cmpi\tr%d, %d\n", ra, imm);
+			break;
+
 		case ADDI:
+			if (ra == 0) {
+				cell_t instr2, type2, rs2, ra2, imm2, val;
+				instr2 = pc[1];
+				type2 = instr2 & INSTR_MASK;
+				rs2 = (instr2 & RS(31)) >> RS_SHIFT;
+				ra2 = (instr2 & RA(31)) >> RA_SHIFT;
+				imm2 = (instr2 & IMM_MASK) << 16;
+				val = imm + imm2;
+				if (type2 == ADDIS && ra2 == rs) {
+					if (val == (cell_t) &sp)
+						printf("li\tr%d, &sp\n", rs);
+					else
+						printf("li\tr%d, %d\n", rs, val);
+					pc ++;
+					break;
+				}
+			}
 			printf("addi\tr%d, r%d, %d\n", rs, ra, imm);
 			break;
 
@@ -1079,9 +1063,13 @@ void mu_disassemble(int addr)
 			break;
 
 		case BRCOND:
-			if ((instr & ~IMM_MASK) == BR_COND_ZERO)
-				printf("beq\t%8.8x\n", addr + imm);
-			else assert (0);
+			if (rs == 12)
+				printf("beq\t");
+			else if (rs == 4)
+				printf("bne\t");
+			else
+				assert (0);
+			printf("%#x\n", (cell_t) pc + imm);
 			break;
 
 		case BR:
@@ -1089,11 +1077,16 @@ void mu_disassemble(int addr)
 			cell_t dest;
 
 			dest = instr & ~(INSTR_MASK | BR_ABS_ADDR | BR_AND_LINK);
+			if (dest & 0x02000000)
+				dest |= 0xFC000000;
 			if (instr & BR_AND_LINK)
 				printf("bal\t");
 			else
 				printf("ba\t");
-			mu_print_func_name(dest);
+			if (instr & BR_ABS_ADDR)
+				mu_print_func_name(dest);
+			else
+				printf("%#x", (cell_t) pc + dest);
 			printf("\n");
 			break;
 		}
@@ -1103,13 +1096,15 @@ void mu_disassemble(int addr)
 				printf("blrl\n");
 			else
 				printf("blr\n");
-			done = 1;
+			done = 0;
 			break;
 
 		default:
 			printf("UNKNOWN instr %8.8x\n", instr);
 			done = 1;
 		}
+
+		pc ++;
 	} while (!done);
 }
 
