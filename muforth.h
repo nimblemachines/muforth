@@ -43,11 +43,13 @@ struct text
     ssize_t start;	/* ssize_t is a _signed_ type */
 };
 
-struct compiled_string
+struct counted_string
 {
     size_t len;
-    char data[0];
+    char data[];
 };
+
+#define COUNTED_STRING(x)	{ strlen(x), x }
 
 extern struct string parsed;	/* for errors */
 
@@ -69,6 +71,7 @@ extern void (*mu_name_hook)();		/* called when a name is created */
 void mu_push_name_size(void);
 void mu_push_code_size(void);
 void mu_push_data_size(void);
+void mu_push_command_line(void);
 
 /* error.c */
 void die(const char *msg);
@@ -194,11 +197,8 @@ void mu_less(void);
 void mu_sp_fetch(void);
 void mu_sp_store(void);
 void mu_cmove(void);
-void mu_string_length(void);
 void mu_push_version(void);
 void mu_push_build_time(void);
-void mu_push_argc(void);
-void mu_push_argv(void);
 
 /* time.c */
 void mu_local_time(void);

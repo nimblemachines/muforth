@@ -3,7 +3,7 @@
  *
  * This file is part of muforth.
  *
- * Copyright 1997-2002 David Frech. All rights reserved, and all wrongs
+ * Copyright 1997-2004 David Frech. All rights reserved, and all wrongs
  * reversed.
  */
 
@@ -26,6 +26,9 @@ u_int8_t *pnm, *pcd, *pdt;	/* ptrs to next free byte in each space */
 
 static void mu_find_init_file()
 {
+    /* these don't have to be proper counted strings because they are
+     * used only by C code hereafter.
+     */
     PUSH("startup.mu4");
     mu_readable_q();
     if (POP) return;
@@ -72,13 +75,64 @@ static void allocate()
     pdt = pdt0;
 }
 
+/*
+( We need to rebuild the command line - says something about the
+  inefficiency of C's way of doing cmd line params - and parse that.)
+
+( copy with trailing blank, but don't include the blank in the new addr)
+: "copy  ( to from u - to+u)   push  over  r@ cmove  pop +  bl over c!  ;
+
+: command-line  ( skip first one: the program name)
+   ram  argv cell+  ram  argc 1- ?for  
+     over @  dup string-length "copy  1+ ( keep blank)  cell u+  next  then
+   nip  ( start end)  over -  ( a u)  dup allot ( aligns) ;
+*/
+
+static struct counted_string *pcmd_line;
+
+static char *copy_string(char *to, char *from, size_t length)
+{
+    memcpy(to, from, length);
+    to += length;
+    *to++ = ' ';
+    return to;
+}
+
+static void convert_command_line(int argc, char *argv[])
+{
+    char *pline;
+
+    /* skip arg[0] */
+    argc--;
+    argv++;
+
+    pcmd_line = (struct counted_string *)pdt;
+    pline = pcmd_line->data;
+
+    while (argc--)
+    {
+	pline = copy_string(pline, *argv, strlen(*argv));
+	argv++;
+    }
+    pcmd_line->len = pline - pcmd_line->data;
+
+    /* null terminate and align */
+    pdt = pline;
+    *pdt++ = 0;
+    pdt += ALIGN_SIZE - 1;
+    (int) pdt &= -ALIGN_SIZE;
+}
+
+void mu_push_command_line()
+{
+    PUSH(&pcmd_line->data);
+}
+
 int main(int argc, char *argv[])
 {
-    cmd_line_argc = argc;	/* copy to globals */
-    cmd_line_argv = argv;
-
     allocate();
     init_dict();
+    convert_command_line(argc, argv);
     mu_find_init_file();
     mu_load_file();
     mu_start_up();

@@ -32,7 +32,7 @@ ${ALLOBJS} : Makefile muforth.h
 kernel.o : version.h
 
 version.h : Makefile ${VERSOBJS}
-	echo "char version[] = \"${VERSION}\";" > version.h
+	echo "struct counted_string version = COUNTED_STRING(\"${VERSION}\");" > version.h
 	echo "time_t build_time = `date \"+%s\"`;" >> version.h
 
 muforth : ${ALLOBJS}

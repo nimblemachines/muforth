@@ -138,9 +138,11 @@ void mu_parse()
 defer not-defined  now complain is not-defined
 */
 
+struct counted_string isnt_defined = COUNTED_STRING("isn't defined");
+
 void mu_complain()
 {
-    PUSH("isn't defined");
+    PUSH(&isnt_defined.data);
     mu_throw();
 }
 
@@ -227,11 +229,13 @@ void mu_push_parsed()
     DROP(-2);
 }
 
+struct counted_string ate_the_stack = COUNTED_STRING("ate the stack");
+
 static void mu_qstack()
 {
     if (sp > S0)
     {
-	PUSH("ate the stack");
+	PUSH(&ate_the_stack.data);
 	mu_throw();
     }
 }

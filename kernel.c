@@ -209,29 +209,12 @@ void mu_cmove()
     DROP(3);
 }
 
-void mu_string_length()
-{
-    TOP = strlen((char *) TOP);
-}
-
 void mu_push_version()
 {
-    PUSH(version);
-    PUSH(strlen(version));
+    PUSH(&version.data);
 }
 
 void mu_push_build_time()
 {
     PUSH(build_time);
 }
-
-void mu_push_argc()
-{
-    PUSH(cmd_line_argc);
-}
-
-void mu_push_argv()
-{
-    PUSH(cmd_line_argv);
-}
-

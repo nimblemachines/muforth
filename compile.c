@@ -36,10 +36,10 @@ void mu_push_sp()		/* address of sp variable */
  */
 void mu_scrabble()  /* ( a u z" - z") */
 {
-    struct compiled_string *cs;
+    struct counted_string *cs;
     struct string s;
 
-    cs = (struct compiled_string *)TOP;
+    cs = (struct counted_string *)TOP;
     s.data = (char *) STK(2);
     s.len = STK(1);
     cs->len = s.len;		/* prefix count cell */

@@ -817,17 +817,16 @@ compiler
 comment XXX
 : warn"          \ z"  \ (warn")   ; XXX
 
-( Interpretive strings. Strings that return an address always get compiled!)
+( Interpreted strings. Strings that return an address always get compiled!)
 forth
-// : z"  ( - z")   char "  parse copy-string ;
 : z"  ( - z")   char "  string, ;
 :  "  ( - a c)  \f z" count  ;  ( ANS)
 : ."	char " parse ( a #)  type  ;  ( not compiled)
 
 
 ( To warn of re-defining a word.)
--: ( a u)  fd-out @ push >stderr  2dup current @ find if
-     drop  2dup type ."  again.  " ^  then  2drop  pop writes ;
+-: ( a u)  2dup current @ find if  fd-out @ push >stderr
+     drop  2dup type ."  again.  "  pop writes ^  then  2drop ;
 : -redef  [lit] 'name-hook ! ;
 -redef
 
@@ -1173,7 +1172,7 @@ variable csp  ( what does this stand for? `check stack pointer'?)
 : smhdy->s  [ 365 3* 366 + ] * ( quarter-days/yr)  push 4 * pop +  smhq->s ;
 
 ( for command-line args)
-: ld  token copy-string  load-file ;
+: ld  token make-string  load-file ;
 : -f  ( load file)  ld ;
 : --file  -f  ;
 : -d  ( define)  trues  ;
@@ -1191,19 +1190,6 @@ forth
 : prompt   .Ok  .mode-prompt  ;  ( ` Ok' then sub-prompt)
 
 
-( We need to rebuild the command line - says something about the
-  inefficiency of C's way of doing cmd line params - and parse that.)
-
-( copy with trailing blank, but don't include the blank in the new addr)
-: "copy  ( to from u - to+u)   push  over  r@ cmove  pop +  bl over c!  ;
-
-( do this in C? then we don't have to have string-length... esp if we
-  also fix error, below...)
-: command-line  ( skip first one: the program name)
-   ram  argv cell+  ram  argc 1- ?for  
-     over @  dup string-length "copy  1+ ( keep blank)  cell u+  next  then
-   nip  ( start end)  over -  ( a u)  dup allot ( aligns) ;
-
 defer canonical
 -:  forth  \ [ ;  is canonical
 
@@ -1211,7 +1197,8 @@ defer canonical
    begin  cr  <stdin  >stdout  typing interpret  >stderr  prompt  again  -;
    ( infinite loop, until error... )
 
-: error  parsed type space  dup string-length type  ( cr) ;
+( 2004.jun.26. error now expects a cell-length-prefixed compiled string.)
+: error  parsed type space  count type  ( cr) ;
 : carefully  catch  =if  error ^  then  drop ;
 
 ( XXX: difference betw error and warning, so that, eg, "isn't defined"
@@ -1219,13 +1206,13 @@ defer canonical
 
 : banner
 ( Print banner.)
- ." muFORTH "  version type ( space)
+ ." muFORTH "  version count type ( space)
  ." , made "  build-time ( seconds since epoch)  time"  type  cr
- ." Copyright (c) 1998-2003 David Frech. All rights reserved."  cr ;
+ ." Copyright (c) 1998-2004 David Frech. All rights reserved."  cr ;
 
 : warm
    >stderr banner
-   >stdout  command-line ['] evaluate  carefully  >stderr
+   >stdout  command-line count ['] evaluate  carefully  >stderr
    begin   s0 sp!  canonical  ['] quit carefully  again  -;
 
 
