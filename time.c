@@ -16,8 +16,12 @@
 /* time and date */
 static void push_forth_time_from_libc_time (struct tm *ptm)
 {
-    STK(-9) = strlen (ptm->tm_zone);
-    STK(-8) = (int) ptm->tm_zone;
+    char *tm_zone;
+
+    tm_zone = tzname[ptm->tm_isdst];
+
+    STK(-9) = strlen (tm_zone);
+    STK(-8) = (int) tm_zone;
     STK(-7) = ptm->tm_sec;
     STK(-6) = ptm->tm_min;
     STK(-5) = ptm->tm_hour;
@@ -34,7 +38,7 @@ void mu_local_time()
     time_t clock;
 
     clock = POP;
-#ifdef __NetBSD__
+#ifndef XXX__NetBSD__
     tzset();
 #endif
     localtime_r (&clock, &tm);
