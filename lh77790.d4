@@ -1,0 +1,49 @@
+( a few utils for reading and writing registers)
+
+decimal
+( Extracting fields.)
+: extract  ( i shift mask - n)  push  rshift  pop and  ;
+
+: .bits   ( n field)  binary  push  0 <#  pop for # next  #>  type  hex  ;
+: .priv   2*  z" --r--wrw"  +  2 type  ." , "  ;
+: hw  if 16 ^ then 32 ;
+: .sdr
+   dup 13 3 extract  ." system "  .priv
+   dup 11 3 extract  ." user "    .priv
+   dup 10 1 extract   0= if ." not " then  ." cacheable, "
+   dup  8 1 extract  hw  decimal u. ." bit mode, "
+            255 and   ." bank "  8 .bits  ;
+
+: r   %01 ;
+: w   %10 ;
+: rw  %11 ;
+: >sdr   ( SPR UPR cacheable HW bank - sdr)
+   1 swap <<
+   swap  8 lshift or
+   swap 10 lshift or
+   swap 11 lshift or
+   swap 13 lshift or  ;
+
+: bus-width  if  ." x16, "  ^ then   ." x8, "  ( bus size) ;
+: .bcr
+   dup 15 1 extract bus-width
+   dup 12 7 extract  u.  ." wait states, CE "  12 .bits  ;
+
+0 constant x8
+1 constant x16
+: >bcr   ( bus-width waits CE - bcr)
+   swap  12 lshift or   swap 15 lshift or  ;
+
+
+( calculating baud rates)
+: xclk  [ 24,000,000 16 / ] ;
+: divisor  * xclk 2* swap / 1+ 2/ ;
+: divisor  * xclk swap / ;
+: baud  0 begin 1+  2dup divisor  dup 65536 u< until  rot drop ;
+
+hex
+#115200 baud . .
+#57600 baud . .
+#38400 baud . .
+#19200 baud . .
+#9600 baud . .

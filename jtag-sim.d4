@@ -1,0 +1,262 @@
+( JTAG boundary scan simulator. 15 apr 1999. Tax day!)
+
+( 4-feb-2000. Added RESTART public instruction, per new ARM7TDMI data
+  sheet: DDI 0029E. The old 0029C datasheet used BYPASS instruction when
+  restarting the core during debug.)
+
+cr s" JTAG simulator "  file[#
+
+( See file `sim' for details and thoughts.)
+
+decimal
+
+( Shifting notes. A couple of subtleties. One is that TMS and TDI are
+  -sampled- on TCK rising, while TDO -changes- on TCK falling. This means
+  that the proper way to do things is this:
+
+  <set up TMS, TDI>  TCK^  <read TDO>  TCK_
+
+  where TCK^ drives the clock high and TCK_ drives it low. When we read
+  TDO after the TCK goes high we are reading the bit that was latched
+  there already; the bit that was displaced by the bit just clocked in
+  will appear on TDO -after- TCK falls.
+
+  This is good for our software simulation because it would hard to mimic
+  the hardware exactly, for the following reason. When the TAP state
+  machine enters Shift-DR or Shift-IR state it enables TDO, taking it out
+  of hi-Z.  The bit that shows up there -immediately- is the last bit of
+  the shift chain. In our software simulation we don't know what this bit
+  is until -after- shifting in the new bit on TDI. But if we read TDO after
+  TCK goes high it will work. In hardware TDO is driven with valid data
+  about 3/4 of a half-cycle after the TCK high-to-low transition that
+  drives the TAP state machine into Shift-mode. We should be able to sample
+  TDO on the rising edge of TCK. That, after all, is what the cascaded bits
+  of hardware are doing, since TDO -> TDI.
+
+  We -should- be able to do this:
+
+  <set up TMS, TDI>  <read TDO>  TCK^  TCK_
+
+  but unless we fiddle with the software to make the output bit available
+  before the shift, this is impossible. But, again, this is what the hard-
+  ware is doing. Do it the other way will make the duty cycle of TCK closer
+  to 50%.
+
+  One last thing. Instead of getting all confused, we should -hide- all this
+  from the client, who should instead do:
+
+  <set up TMS, TDI>  TCK  <read TDO>
+
+  Whether we actually sample the TDO `pin' before or after TCK rising is our
+  business.)
+
+
+( First, isolate the bit-length of this host.)
+: bits->cells   31 +           5 rshift  ;  ( round up, conv to count of cells)
+: bits->end     31 +  -32 and  2/ 2/ 2/  ;  ( to jump -over- bits)
+: bits->bytes   7 +            2/ 2/ 2/  ;  ( # of bytes to copy)
+
+
+( ICEBreaker. To make this test a little more `realistic' I thought I should
+  make scan chain 2 act a little like the ICEBreaker in the simple following
+  way: it will implement an array of 32 r/w registers. At least this way we
+  can get the basics working.)
+
+create ice 32 cells allot   ice 32 "1ceb1ceb ( get it?) cell-fill
+: update-ice  ( reg)  @  dup 2@  ( 'bits r/w-addr data)
+   over 31 and cells ice +  rot 32 and  ( 'bits data 'ice-reg -r/w)
+   if ( write)  ! drop  exit  then  @ nip ( data) swap !  ;
+
+
+( ARM 7DI. There are subtleties here with capture and update. Some registers
+  are not updated; others capture fixed values. The table below shows all.
+
+Register  Length  Captures   Update?   Comments
+ Bypass     1           0      No       Selected by BYPASS insn
+  ID       32        <id>      No       Selected by IDCODE insn
+  IR        4        0001      Yes
+Scan-sel    4        1000      Yes      Selected by SCAN_N insn
+ Scan0    105      <pins>      Yes      Selected by SCAN_N, 0; we don't have
+                                        any `real' data to capture.
+ Scan1     33      <pins>      Yes      SCAN_N, 1; ditto above
+ Scan2     38     <debug>      Yes      SCAN_N, 2; ditto above
+
+  Since shifting even a single bit changes the whole of a shift register,
+  those registers that are not updated - ID, Bypass - can't be shifted
+  directly. When we define a shift register we therefore either allot it
+  some bits - which can be shifted directly - or point its `bit pointer'
+  to a variable - called `shadow' - that can be captured to and shifted
+  without affecting the register.)
+
+
+( Shift registers. We'll implement these as an array of words, and use the
+  fancy shift instruction >shift>. If the total length of a register is not
+  a multiple of 32, the first word gets the remainder, shifted into the low
+  part of the word.
+
+  We want to store bits in a truly little-endian order. Because the 486 is
+  a little-endian machine, we can then use 32-bit instructions. But this means,
+  since we are shifting from MSB to LSB, that we have to start with the last
+  word of the bit vector and work backwards. >shift> must pre-decrement.
+
+  Body of shift-reg:
+  'bits #bits 'shift 'capture 'update.  Allotted bits precede the definition.)
+
+: 1shift  ( bit-in reg - bit-out)    ( Right shift; MSB->LSB)
+   2@ ( #bits a)  over bits->end +   begin  >shift>  over 0= until  2drop  ;
+
+( This definition of 1shift allows -chaining- like this:
+  <bit-in>  IR 1shift  ID 1shift  Bypass 1shift  <bit-out>.
+  Of course, on a single device we never do this, but if we want to be able
+  to simulate multiple-device chains then we need to do it this way.)
+
+: allot-bits  ( n - n a)   here over  bits->cells  for  0 ,  next  ;
+: shift-reg   create  ( 'update 'capture 'shift #bits 'bits)  , , , , ,  ;
+
+( call 'shift, 'capture, 'update with reg on stack)
+: sh->shift     ( reg)  dup  2 vector  ;
+: sh->capture   ( reg)  dup  3 vector  ;
+: sh->update    ( reg)  dup  4 vector  ;
+
+( Create `lambda' functions for capture.)
+: captures  ( n)  -create  swap ,  does> ( reg body)  @ swap @ !  ;
+
+variable shadow  ( shift register of up to 32 bits)
+defer update-ir
+defer update-scan-n
+
+( ID reg. set to capture code for Sharp LH77790A/B.)
+( 'update          'capture      'shift   #bits   'bits)
+' update-ir          1 captures  ' 1shift   4   allot-bits  shift-reg IR
+' drop       "17601061 captures  ' 1shift  32       shadow  shift-reg ID       
+' drop               0 captures  ' 1shift   1       shadow  shift-reg Bypass
+' update-scan-n      8 captures  ' 1shift   4   allot-bits  shift-reg ScanN
+' drop                   dup     ' 1shift  33   allot-bits  shift-reg Scan1
+' update-ice           ' drop    ' 1shift  38   allot-bits  shift-reg Scan2
+
+-: ( bit-in reg - bit-out)  push  Scan1 sh->shift  pop 1shift  ;
+' drop                   dup       rot     72   allot-bits  shift-reg Scan0
+
+( Scan0 is really a concatenation of Scan1 and Scan0. In the updated ARM7TDMI
+  data sheet scan chain 0 is 105 bits long, and the scan chain selected upon
+  reset is scan chain 3 - the external chain.)
+
+
+( Public JTAG instructions.)
+defer DR              ( will point to one of the `data' regs.)
+: shifting  ( reg)  lit DR !  ;
+
+here ]  Scan0  Scan1  Scan2  Scan0 ( sanity)  [
+-:  ( scan-n-reg)  @ @ ( n)  literal ( n a)  3 |vector|  shifting  ;
+        ' update-scan-n !
+
+: EXTEST  ScanN update-scan-n  ;
+: INTEST  EXTEST  ;
+: BYPASS  Bypass shifting  ;
+: CLAMP   BYPASS  ;
+: CLAMPZ  BYPASS  ;
+: HIGHZ   BYPASS  ;
+: RESTART  BYPASS  ;  ( I guess this isn't really necessary, since we
+			aren't simulating what the core really does here...)
+
+: SAMPLE/PRELOAD  error"  : Using SAMPLE/PRELOAD."  ;
+: IDCODE  ID shifting  ;
+: SCAN_N  ScanN shifting  ;
+
+( Undefined instructions - 1, 6, 8, 10, 11, 13 - default to BYPASS.)
+here ]
+   EXTEST   BYPASS  SCAN_N  SAMPLE/PRELOAD
+   RESTART  CLAMP   BYPASS  HIGHZ
+   BYPASS   CLAMPZ  BYPASS  BYPASS
+   INTEST   BYPASS  IDCODE  BYPASS  [
+-: ( ir-reg)  @ @ ( insn)  literal  15 |vector|  ;  ' update-ir !
+
+
+( State needed for serial I/O.)
+variable tms
+variable tdi
+variable tdo
+: tdi-1shift-tdo  ( reg)  tdi @  swap  sh->shift  tdo !  ;
+
+
+( State machine.)
+variable cur-state  ( ip of state word before transition)
+: ->   pop  cur-state !  ;
+
+compiler definitions
+: ->  ( compile) lit -> compile,
+   show  ( mark word as potentially recursive)  ;
+
+forth definitions
+
+( Since our simple Forth compiler can't do forward references, we turn the
+  state table `upside-down' to turn the majority of state-to-state references
+  into back references. The few that -were- backward references - the loops -
+  we have to defer.)
+
+defer ^Test-Logic-Reset
+defer ^Select-DR-Scan
+defer ^Run-Test/Idle
+defer ^Shift-DR
+defer ^Shift-IR
+
+      ( state to change to:   TMS=0          TMS=1)
+( States - IR)
+: Update-IR    IR sh->update
+                     ->  ^Run-Test/Idle  ^Select-DR-Scan    [
+: Exit2-IR           ->  ^Shift-IR       Update-IR          [
+: Pause-IR           ->  Pause-IR        Exit2-IR           [
+: Exit1-IR           ->  Pause-IR        Update-IR          [
+: Shift-IR     IR tdi-1shift-tdo
+                     ->  Shift-IR        Exit1-IR           [
+: Capture-IR   IR sh->capture
+                     ->  Shift-IR        Exit1-IR           [
+: Select-IR-Scan     ->  Capture-IR      ^Test-Logic-Reset  [
+
+( States - DR)
+: Update-DR    DR sh->update
+                     ->  ^Run-Test/Idle  ^Select-DR-Scan    [
+: Exit2-DR           ->  ^Shift-DR       Update-DR          [
+: Pause-DR           ->  Pause-DR        Exit2-DR           [
+: Exit1-DR           ->  Pause-DR        Update-DR          [
+: Shift-DR     DR tdi-1shift-tdo
+                     ->  Shift-DR        Exit1-DR           [
+: Capture-DR   DR sh->capture
+                     ->  Shift-DR        Exit1-DR           [
+: Select-DR-Scan     ->  Capture-DR      Select-IR-Scan     [
+
+: Run-Test/Idle      ->  Run-Test/Idle   Select-DR-Scan     [
+: Test-Logic-Reset   0 ScanN @ !  IDCODE ( ? BYPASS ?)
+                     ->  Run-Test/Idle   Test-Logic-Reset   [
+
+( Set up the deferred words.)
+' Test-Logic-Reset  ' ^Test-Logic-Reset !
+' Select-DR-Scan    ' ^Select-DR-Scan   !
+' Run-Test/Idle     ' ^Run-Test/Idle    !
+' Shift-DR          ' ^Shift-DR         !
+' Shift-IR          ' ^Shift-IR         !
+
+Test-Logic-Reset
+
+
+( Exported public interface.)
+: TMS  tms !  ;
+: TDI  1 and  tdi !  ;
+: TDO  tdo @  ;
+: TCK  tms @  cur-state @ ( ip)  1 |vector|  ;
+
+( These are the exported functions. Client uses TMS and TDI to set values,
+  TCK to cycle TCK, and TDO to read the output.  As the opening comments
+  state, use will look like this:
+
+  xx TMS  yy TDI  TCK  TDO <put value somewhere>
+
+  The interface to the real JTAG hardware - whether via parallel port or
+  fancy fast TAP controller chip, will look exactly the same.
+
+  Doing it this way allows us to sample TDO where we need to. The client
+  shouldn't need to think about it.)
+
+( ?? What about ??  if TCK were defined thus:  tdi tms TCK tdo.)
+
+#]file
