@@ -1000,14 +1000,14 @@ both of which, in the absence of gcc limitations, I wanted. I can't think
 of a way to generate even _reasonably_ good code unless I have those two
 global registers. But I can't have them. Pooh.
 
-So, the stack is simply a C array (of ints), and the stack pointer (sp) is
-a normal C global variable that lives in memory, that points to an int. TOP
-is just sp[0].
+So, the stack is simply a C array (of cell_t's), and the stack pointer (sp)
+is a normal C global variable that lives in memory, that points to a
+cell_t. TOP is just sp[0].
 
 If I am generating code that does anything with the stack, I first have to
 get sp into a register, indirect off of it, maybe modify it, and then write
-it back. So there are a bunch of routines in the compiler code (C code)
-that compile these various operations.
+it back. So there are a bunch of routines in the compiler C code that
+compile these various operations.
 
 There is also code to generate four different kinds of branch instructions,
 the combinatorial product of (unconditional branch, branch if top == 0) and
@@ -1017,7 +1017,7 @@ Since getting at the return stack (the true hardware stack) is impossible
 without low-level support, there are several routines that compile various
 pushes, pops, and copies that involve the return stack.
 
-That's about it! For the x86 it's about 400 lines of code.
+That's about it! For the x86 it's about 300 lines of code.
 
 All of the smarts for compiling control structures (if/then and friends),
 and new data structure types (create/does>) is _all_ defined in Forth in
@@ -1062,10 +1062,11 @@ compiled:
 
 When foo is executed the call to definer_code has the side effect of
 _pushing_ the address of foo's data onto the return stack. (The use of
-"call" here confusing. call is being used for its behavior "push address of
-following byte and then jump", which is what a call does. But normally the
-"address of following byte" is construed as a return address. Here it is
-used as a data address, and is popped and never used as a return address.)
+"call" here is confusing. call is being used for its behavior "push address
+of following byte and then jump", which is what a call does. But normally
+the "address of following byte" is construed as a return address. Here it
+is used as a data address, which is popped and never used as a return
+address.)
 
 definer_code can then pop the data address off the return stack, and push
 it onto the data stack, where the definer_code can use it.
@@ -1103,6 +1104,18 @@ address to push, my new-style does> has to be passed a constant value to
 compile into the child. If the constant should be an address of a data
 area, then call ram to get an address, and pass it to does>. Sometimes the
 stack manipulation is bit clumsy, but it's a good system in general.
+
+It wasn't necessary to do things this way. I could have kept the old
+behavior, that does> compiles code to push the address of the next free
+byte of ram - in other words, that the "constant" it pushes is always an
+address. This makes the defining words look a little cleaner, but it is
+less efficient when you actually want to compile a constant into the data
+space (you have to comma it into ram when you define the word and then
+fetch it out again whenever you want to use it), and it doesn't allow for
+the address being anywhere but the next available byte of ram. On ROMed
+systems you sometimes want does> to push a ROM address instead. This new
+way lets you choose which you want, by simply supplying the proper constant
+to does>.
 
 Inside the guts of create/does>
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -1383,7 +1396,7 @@ the target.
 
 By putting the words into different chains like this it becomes much easier
 to know what you are getting when you say "dup". We define an interpreter
-mode for each phase of metacompilation, and we try to define that mode to
+mode for each phase of metacompilation, and we try to define each mode to
 minimize ambiguity - the collision of words, or accidental getting of
 something other than called for - even at the cost of increasing verbosity.
 

@@ -1,3 +1,24 @@
+( $Id$
+
+  This file is part of muforth.
+
+  Copyright 1997-2004 David Frech. All rights reserved, and all wrongs
+  reversed.
+
+  Licensed under the Apache License, Version 2.0 [the "License"];
+  you may not use this file except in compliance with the License.
+  You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+  or see the file LICENSE in the top directory of this distribution.
+
+  Unless required by applicable law or agreed to in writing, software
+  distributed under the License is distributed on an "AS IS" BASIS,
+  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  See the License for the specific language governing permissions and
+  limitations under the License.)
+
 ( memory.mu4 -- basic memory management for target compilers)
 
 cr " Memory management "  file[#
@@ -26,22 +47,44 @@ decimal
 
 ( 6-apr-1999. Modified for ARM. No segments! I like the `|' prefix, so I'll
   use that for target words. We only need one space for the ARM, so I got
-  rid of `>' words. See the file NOTES for comments about endianness and 
-  other issues.)
+  rid of `>' words. See the file target/ARM/NOTES for comments about
+  endianness and other issues.)
 
 ( 26-apr-1999. Using the new dump in startup.d4. So we need to define arm|@
   and arm|c@ and init the deferred words.)
 
+( 2004.jun.28 Here is our memory model. There are four separate spaces -
+  code, data, name and ram - and each one has a size, and a target origin
+  address; also, all but ram has a host-resident buffer containing a memory
+  image of the space, and therefore also has a host address - the address
+  of the first byte of this buffer. The naming convention is as follows,
+  using code as an example:
 
-( Client needs to define code-size, data-size, name-size, ram-size, and
-  origins for all three.)
+  #code  is the size of the code space;
+  @code  is the target origin address;
+  'code  is the address of the buffer on the host.
+
+  Of course, a given meta compiler doesn't have to use all 4 spaces, or use
+  them in any particular way. It's just that we expect there to be several
+  common cases, and we're defining them here for convenience.
+
+  The ram space is for _initialized_ data. For targets that will refer to
+  an uninitialized data space, and want tools for that, we define them
+  here. Note that thes usages in a meta context seem different from that of
+  a host muforth context, but really aren't. For the host muforth, C's text
+  and data sections play the roles of code and data, and ram and name are
+  both, at initial run time, uninitialized spaces.
+
+  Before loading this code, the "client" meta compiler needs to define the
+  following:
+
+  #code #data #name #ram    ( sizes)
+  @code @data @name @ram    ( target origin addresses)
 
 ( First define the image spaces. )
 #code buffer 'code  ( is the address of buffer on host)
 #data buffer 'data  ( ditto)
 #name buffer 'name  ( ditto)
-
-( @code, @data, @name, @ram are the target origin addresses.)
 
 ( Since we can't assume we're in a segmented mode, we need to define
   non-zero origins, esp. for ROMed code.)
@@ -49,22 +92,25 @@ decimal
 : >code  [ 'code @code - ] + ;  ( convert target address to host image address)
 : >data  [ 'data @data - ] + ;  ( ditto, for data space)
 : >name  [ 'name @name - ] + ;  ( ditto, for name space)
+( Since there is no host-side image of ram space, we don't have a conversion.)
 
 ( Dictionary operators.)
 outside
 
 variable h    @code \o h !  ( code pointer)
 variable d    @data \o d !  ( data pointer)
+variable n    @name \o n !  ( name pointer)
 variable r     @ram \o r !  ( ram pointer)
 
 : here      \o h @  ;  ( next available code space)
 : allot     \o r +! ;  ( advance ram allocation pointer)
 : ram       \o r @  ;  ( next available ram)
 
-( Note: We don't define here how to allocate or use name space. We don't
-  know if the particular client meta-compiler uses separate name & code
-  space, so we can't do anything here. We're just creating common infra-
-  structure.)
+( Note: We don't define here how to allocate or use data or name space. We
+  don't know how the particular client meta-compiler will use these spaces.
+  We're just creating common infrastructure.
+
+  Also: we could/should put in bounds checks - like ram > #ram.)
 
 
 ( Memory inspection operators. Eventually these will also be able to talk to

@@ -29,9 +29,17 @@ cr " Terminal "  file[#
 
 decimal
 
+( test)
+( by setting rom-start wrong here, to "4000000, instead of
+  "4000000 64 Ki +, I managed to b0rk the bootloader on one of my boards
+  while testing the terminal download code. Shit!)
+
+: #image  [ 4 Ki ] ;
+#image buffer 'image
+
 ( Open serial device.)
 : tty-target  [ z" /dev/cuaa0" r/w open-file ] ;
-tty-target >raw  ( disallows signals)
+tty-target raw  ( disallows signals)
 
 : bps   ( fd speed)
    over ram get-termios drop  ram swap set-speed  ( fd) ram set-termios ;
@@ -40,6 +48,11 @@ tty-target >raw  ( disallows signals)
 : te-fast     tty-target  57600 bps  ;
 : te-smokin'  tty-target 115200 bps  ;  te-smokin'
 
+( Keymaps)
+-: ( self)  emit  0 ;  256 keymap term-keys
+   ( nop)       ' 0    256 keymap term-esc-keys
+-: drop ( ESC)  key term-esc-keys @execute ;  #ESC term-keys !
+: esc:  -:  \f char  term-esc-keys ! ;
 
 comment %use-typing%
   256 constant #serialbuf
@@ -73,7 +86,7 @@ new-fd-set fds
 
 : keyboard->serial  ( - done?)
    fds tty fd-in-set? if
-     tty reads  tty-target writes  key process-key ^
+     tty reads  tty-target writes  key dup term-keys @execute ^
    then  0 ;
 
 : te-stream
@@ -84,16 +97,8 @@ new-fd-set fds
    tty-target writes  ;
 
 : te  ( terminal)
-   radix @ push   raw ( console)
-   ['] te-stream catch
-               cooked ( console)  pop radix !  throw ;
-
--: emit  0 ;  is pass
-' pass <CR> ctrl-handler!
-' pass <LF> ctrl-handler!
-
--: drop  <BS> pass ;  is del-handler  ( pass a BS to serial line)
-
+   radix @ push  tty raw   ['] te-stream catch
+                 tty cooked  pop radix !  throw ;
 
 ( Downloading initial image to target.)
 
@@ -103,7 +108,7 @@ new-fd-set fds
 
 ( Expect/send.)
 : ><target  tty reads  tty writes  (  tty-target reads  tty-target writes)  ;
-: |cr  <CR> emit  ;
+: |cr  #CR emit  ;
 
 : ?prompt  ( ch)  begin  key  over = until  drop  ;
 
@@ -132,60 +137,51 @@ ld v25/chat-host.d4		( interactive debugging)
   here.)
 
 : CSI  ( handle ESC [ )
+  #ESC emit  char [ emit
   key dup char 5 = if
-    key dup push char n = if  ( got ESC [5n, so answer accordingly)
-      drop char 0
-    then
-  then  push  swap emit emit ( echo "ESC [")  pop emit  pop emit ;
+    key dup char n = if  ( got ESC [5n, so answer accordingly)
+      nip  char 0
+    then swap emit
+  then emit ;
 
--:
-   CSI  0 ;                               char [  esc-handler!  ( vt10x)
+esc: [  ( vt10x)  CSI  0 ;
 
-(   swap emit emit  0  ;)
--:
-   2drop  te-smokin'  0  ;                char k  esc-handler!  ( smoke)
--:
-   2drop  te-fast  0  ;                   char f  esc-handler!  ( fast)
--:
-   2drop  te-slow  0  ;                   char s  esc-handler!  ( slow)
+-: drop  #BS emit  0 ;   #DEL term-keys !  ( DEL sends BS)
 
--:
-   2drop  ." flashload " rom-start .w16  |cr  0 ;
-                                          char d  esc-handler!  ( download)
--:
-   2drop  ." download"  |cr  0 ;
-                                          char r  esc-handler!  ( ram download)
+esc: k  ( smoke)  te-smokin'  0  ;
+esc: f  ( fast)   te-fast  0  ;
+esc: s  ( slow)   te-slow  0  ;
 
--:
-   2drop  'image #image  uu  0 ;
-                                          char u  esc-handler!  ( uuencode)
--:
-   2drop  ." pc " 'boot @ .w16 |cr  0 ;
-                                          char p  esc-handler!  ( pc)
--:
-   2drop  ." gos" ( |cr)  0 ;
-                                          char g  esc-handler!  ( go)
-comment v25-specific
+esc: d  ( download)      ." flashload " rom-start .w16  |cr  0 ;
+esc: r  ( ram download)  ." download"  |cr  0 ;
+
+esc: u  ( uuencode)  'image #image  uu  0 ;
+esc: p  ( pc)  ." pc " 'boot @ .w16 |cr  0 ;
+esc: g  ( go)  ." gos" ( |cr)  0 ;
+
+esc: q  ( quit)  -1 ;
+
+comment %v25-specific%
 -:
    tty-target reads  tty-target writes  te-slow
    |cr-chat  char * ?prompt  " l" send  z" loader" "download  " g" send
    char g ?prompt  te-fast
    ( changes target serial speed - can't await prompt)  0  ;
-                                           char l  esc-handler!  ( loader)
+                                   char l  term-esc-keys !  ( loader)
 -:
    tty-target reads  tty-target writes
    |cr-chat  char * ?prompt  " l" send  z" image" "download
    initial-sync  0  ;
-                                           char i  esc-handler!  ( image)
+                                   char i  term-esc-keys !  ( image)
 -:
    tty-target reads  tty-target writes
    |cr-chat  char * ?prompt  |boot @ pc!  " r" send  0  ;
-                                           char b  esc-handler!  ( boot)
+                                   char b  term-esc-keys !  ( boot)
 -:
    tty-target reads  tty-target writes
    |cr-chat  char * ?prompt  " g" send  <LF> ?prompt
    ( target responds "g CR LF")   chat!  -1 ( quit term)  ;
-                                           char g  esc-handler!  ( go)
+                                   char g  term-esc-keys !  ( go)
 
 ( 2002-mar-30. Comments. About reading prompts and so on. Make an 8 byte
   ring buffer that you copy the target responses into. Keep looping around
@@ -197,7 +193,7 @@ comment v25-specific
   is probably easier. And once we get something into Flash that can be a
   debugging stub we won't even need to do this anymore.)
 
-v25-specific
+%v25-specific%
 
 00 [if]
 
@@ -208,7 +204,7 @@ v25-specific
    if  tty keyboard-in 1 read   tty keyboard-in 1 write  2drop  then  ;
 
 : kb    fds fd-zero drop  fds tty fd-set  raw
-   begin  te-select drop  kb-test  again  -;
+   begin  te-select drop  kb-test  again  [
 
 [then]
 

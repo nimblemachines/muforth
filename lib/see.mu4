@@ -25,7 +25,7 @@ cr " Memory inspector "  file[#
 
 decimal
 
-( 2002-mar-27. Converted to muForth.)
+( 2002-mar-27. Converted to muforth.)
 
 ( 06-apr-1999. Changed to be smart about the addresses it prints, so that
   dumps of target-compiled data will have meaningful addresses printed.)
@@ -38,6 +38,9 @@ decimal
 defer |c@
 defer |@
 
+( test)
+now @ is |@
+now c@ is |c@
 
 ( NOTE: These are `backwards' from the words defined in dforth.m4, which are
   in turn `backwards' from what the rest of the world does. I'm still not sure
@@ -48,8 +51,11 @@ defer |@
 
 
 ( Call, return.)
+: array  ( length)
+  create  ram swap  for 0 , next  does>  swap cells + ;
+
 8 array inspect-stack
-variable inspect-sp  ( stack pointer)
+variable inspect-sp  ( stack pointer)  0 inspect-sp !
 
 : inspect-push  ( old ea - old | ea)  swap  ( ea old)
    inspect-sp @  dup  8 u<  if
@@ -73,11 +79,10 @@ variable skip
 
 ( Now for the cmd keys.)
 
-128 array seekeys
-  0 seekeys 128
--: ( a ea - a -1)  drop -1 ;  ( discard & quit)	  cell-fill
+-: ( a ea - a -1)  drop -1 ;  ( discard & quit)
+ 128 keymap seekeys
 
-: key:  -:  swap  seekeys ! ;
+: key:  -:  \f char  seekeys ! ;
 
 ( advance rounds down to nearest `skip'.)
 : advance  ( a ea skip - a')  nip  +  skip @ negate  and  0 ;
@@ -85,39 +90,40 @@ variable skip
 -: ( skip+)  skip @         advance ;
   dup     32 seekeys !
   dup char n seekeys !
-  dup   <CR> seekeys !
+  dup    #CR seekeys !
       char j seekeys !
 
 -: ( skip-)  skip @ negate  advance ;
   dup char p seekeys !
-  dup  <DEL> seekeys !
+  dup   #DEL seekeys !
   dup char - seekeys !
   dup char b seekeys !
       char k seekeys !
 
 ( so we can skip by different amounts)
-char 1 key:  ( a ea - a 0)  drop   4 skip !  0 ;
-char 4 key:  ( a ea - a 0)  drop  16 skip !  0 ;
+key: 1  ( a ea - a 0)  drop   4 skip !  0 ;
+key: 4  ( a ea - a 0)  drop  16 skip !  0 ;
 
 variable '1dump  ( memory dump)
 variable '1see   ( decompiler)
 variable '1dis   ( disassembler)   ' -1 '1dis !  ( safety)
 
-char d key: ( >dump) ( a ea - a f)  drop  '1dump @  16  inspect!  0  ;
-char i key: ( >dis)  ( a ea - a f)  drop  '1dis @    4  inspect!  0  ;
-char s key: ( >see)  ( a ea - a f)  drop  '1see @    4  inspect!  0  ;
+key: d ( >dump) ( a ea - a f)  drop  '1dump @  16  inspect!  0  ;
+key: i ( >dis)  ( a ea - a f)  drop  '1dis @    4  inspect!  0  ;
+key: s ( >see)  ( a ea - a f)  drop  '1see @    4  inspect!  0  ;
 
-char r key: ( return)  ( new ea - new|old f)  drop  inspect-pop   0  ;
-char c key: ( call)    ( old ea - old|ea f)         inspect-push  0  ;
-char g key: ( go)      ( old ea - ea f)       nip                 0  ;
+key: r ( return)  ( new ea - new|old f)  drop  inspect-pop   0  ;
+key: c ( call)    ( old ea - old|ea f)         inspect-push  0  ;
+key: g ( go)      ( old ea - ea f)       nip                 0  ;
 
 : inspect-key  ( a ea - a')
-   key  dup 128 u< if  seekeys @ push ^  then  2drop  ( ea key)  -1 ;
+   key  dup 128 u< if  seekeys @execute ^  then  2drop  ( ea key)  -1 ;
 
--:  ( inspect loop)  raw  begin  1inspect  inspect-key  until  cooked  ;
+-:  ( inspect loop)  begin  1inspect  inspect-key  until ;
+
 : inspect   ( a '1inspect skip - a')
-   inspect!  inspect-sp off
-   radix @ push  [lit] catch  pop radix !  ( re-) throw  ;
+   inspect!  ( inspect-sp off)
+   radix @ push  tty raw  [lit] catch  tty cooked  pop radix !  ( re-) throw  ;
 
 
 ( Byte and word conversion to ascii)

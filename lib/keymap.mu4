@@ -40,37 +40,50 @@ decimal
   All entries default to `nope' which leaves `key' on stack as a done flag,
   terminating the loop.)
 
-( Array. Self-indexing.)
-: array  create  ram swap  cells allot  does>  swap cells + ;
+( Keymap. Self-indexing.)
 
+comment %serving-suggestion%
+: do-key-binding  ( keymap)
+   key dup rot  execute ( index)  @execute ( dispatch) ; %serving-suggestion%
 
-128 32 -  constant #esc
-  32 array ctrl-handlers
-#esc array  esc-handlers
-     defer  del-handler
+: keymap  ( default length)
+  create  ram push   for dup , next drop  pop
+   does>  swap cells + ;
 
-: drop  drop ;
-: reset-key-handlers  0 ctrl-handlers   32 ['] nope  cell-fill
-                      0  esc-handlers #esc ['] drop  cell-fill
-                      now nope is del-handler ;
+comment %unnecessary%
+: attach-keymap  ( submap location)
+  ( Compile a piece of code to subindex based on a new key. We want
+    to compile something like this:  "<lit> submap do-key-binding ;".)
 
-: ctrl-handler!  ( code n)         ctrl-handlers  !  ;
-: esc-handler!   ( code ch)  32 -   esc-handlers  !  ;
+  here swap !  literal \ do-key-binding \ ^ ;
+Just do this instead:
+-: subkeymap do-key-binding ;  attachpoint keymap !
+ %unnecessary%
 
-  8 constant <BS>
- 10 constant <LF>
- 13 constant <CR>
- 27 constant <ESC>  ( aka ctrl [ )
-127 constant <DEL>
-
-reset-key-handlers
--: key  dup  32 -  esc-handlers  @execute ;  <ESC> ctrl-handler!
-
-defer pass  ( thru to application)
-: process-key  ( key - done?)
-   dup graphic? if       pass                 ^  then
-   dup    32 u< if  dup ctrl-handlers  @execute ^  then
-   dup  <DEL> = if       del-handler          ^  then
-   ( high control: 128-159; terminate) ;
+( common key names)
+: #BS   [   8 ] ;
+: #LF   [  10 ] ;
+: #CR   [  13 ] ;
+: #ESC  [  27 ] ;  ( aka ctrl [ )
+: #DEL  [ 127 ] ;
 
 #]file
+
+comment %test%
+-: ( echo)  emit 0 ;  256 keymap basic-keymap
+
+: ctrl-key  char ^ emit  64 +  emit space  0 ;
+: bind-keys  ( start n)
+  for  ['] ctrl-key over basic-keymap ! 1+ next drop ;
+0 32 bind-keys
+
+-: emit space  0 ; 128 keymap esc-keymap
+-: drop ( ESC)  ." ESC "  key dup esc-keymap @execute ;  #ESC basic-keymap !
+-: drop -1 ; #CR basic-keymap !
+
+: process-keys
+   tty raw  begin  key dup basic-keymap @execute  until  tty cooked ;
+
+process-keys
+ %test%
+
