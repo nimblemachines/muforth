@@ -1,0 +1,191 @@
+." Puzzle" cr
+
+( Puzzle )
+( On October 6th, 2002 Will Shortz presented a puzzle: )
+
+( This challenge comes from Erich Friedman, who contributed several      )
+( puzzles to this year's World Puzzle Championship. Write out the digits )
+( from 1-9 in order. Then add some plus [+] signs and times [x] signs to )
+( the string to make it add up to 2,002. As usual in arithmetic,         )
+( multiplication is done before addition, and you don't have to put a    )
+( sign between every 2 digits. The answer is unique.                     )
+
+( This solution is a brute force approach written in Forth )
+( The array oper is a 8 element array which contains only the )
+( operations join, multiply, or addition.  The operation join )
+( means to take the number to the left, multiply it by 10 and add )
+( the digit to the right.  If two digits are joined then they become )
+( a number: d1 join d2 -> d1 * 10 + d2 )
+
+." Declaring constants" cr
+
+here
+
+( index constants )
+0  constant i12
+1  constant i23
+2  constant i34
+3  constant i45
+4  constant i56
+5  constant i67
+6  constant i78
+7  constant i89
+8  constant iend
+
+0  constant op-join
+1  constant op-mul
+2  constant op-add
+3  constant op-end
+
+op-join constant  op-first
+op-add  constant op-last
+
+." Declaring oper array" cr
+
+iend  cells buffer oper-array
+
+." Declaring functions" cr
+
+: true -1 ;
+: false 0 ;
+
+: sp-addr
+  ( sp@ hex ." sp=" . cr )
+;
+
+: oper ( index -- addr )
+  cells oper-array +
+;
+
+: incr-oper-indexed ( index -- )
+  dup oper @ 1+ swap oper !
+;
+
+: reset-oper-indexed ( index -- )
+  op-first swap oper !
+;
+
+: init-oper-indexed ( index -- )
+  dup iend < if
+    dup reset-oper-indexed 1+ init-oper-indexed ^ then
+  drop
+;
+
+: init-oper ( -- )
+  i12 init-oper-indexed
+;
+
+: print-digit-indexed ( index -- )
+  1+ char 0 + emit
+;
+
+: print-oper-indexed ( index -- )
+  oper @
+    dup op-add  = if space ." + " then
+    dup op-mul  = if space ." x " then
+    dup op-join = if then
+  drop
+;
+
+: print-indexed ( index -- index+1 )
+  dup print-digit-indexed
+  dup print-oper-indexed
+  1+ dup iend < if print-indexed then
+;
+
+: print ( -- )
+  i12 print-indexed print-digit-indexed cr
+;
+
+variable eval-index 
+
+: get-digit ( -- digit oper )
+  eval-index @ dup oper @ swap 1+ swap
+  eval-index @ 1+ eval-index !
+  eval-index @ iend > if drop op-end then
+;
+
+( what?? No >r and r> ??? What kind of forth is this?? )
+
+variable temp
+
+: >r temp ! ;
+: r> temp @ ;
+
+: factor1 ( n op -- new-n new-op )
+  dup op-join = if drop get-digit >r swap 10 * + r> factor1 then
+;
+
+: factor
+  get-digit factor1
+;
+
+: term1 ( n op -- new-n new-op )
+  dup op-mul = if drop factor >r * r> term1 then
+;
+
+: term
+  factor term1
+;
+
+: expr1 ( n op -- new-n new-op )
+  dup op-add = if drop term >r + r> expr1 then
+;
+
+: expr ( -- new-n )
+  term expr1 drop
+;
+
+( next-oper-indexed will increment the expression in the oper array. )
+( Imagine the expression as a series of 8 tumblers.  There are three )
+( possible states for each tumbler: join, multiply, and add. )
+( This routine will rotate the left most tumbler once and then, if )
+( the tumbler rolls over, will rotate the next one, etc. )
+( The function returns true if the new expression is unique and false )
+( if we've rolled back over to the first setting. )
+: next-oper-indexed ( index -- true | false )
+  dup iend < if dup oper @ ( index op )
+                op-last < if ( index )     incr-oper-indexed true ^ then
+                             ( index ) dup reset-oper-indexed
+                                        1+ next-oper-indexed ^
+             then
+  false
+;
+
+: next-oper ( -- true | false )
+  i12 next-oper-indexed
+;
+
+( eval will evaluate the current expression )
+( represented in memory by the sequence of operators )
+( in the oper array.  It will return the value of the )
+( the expression. )
+
+: eval ( -- n )
+  i12 eval-index ! expr
+;
+
+: solve ( n -- true | false )
+  dup eval = if drop true sp-addr ^ then
+  next-oper if solve ^ then
+  sp-addr
+  drop false
+;
+
+." Stack" cr
+
+: test ( n -- )
+  sp-addr
+  init-oper
+  sp-addr
+  dup ." Solving for " . cr
+  sp-addr
+  solve sp-addr if ." Solution:" sp-addr print sp-addr ^ then
+  sp-addr
+  ." No solution found." cr
+;
+
+here swap - 
+." Dictionary used: " u.
+
+2002 test
