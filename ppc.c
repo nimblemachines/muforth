@@ -514,7 +514,7 @@ void mu_compile_entry(void)
 	comma_push(R_TEMP, R_RP);
 }
 
-void mu_compile_return(void)
+void mu_compile_exit(void)
 {
 	comma_pop(R_TEMP, R_RP);
 	comma_mtlr(R_TEMP);
@@ -892,7 +892,7 @@ int main(void)
 	mu_compile_copy_from_r();
 	mu_compile_pop_from_r();
 	mu_compile_2drop();
-	mu_compile_return();
+	mu_compile_exit();
 
 	PUSH(pcd0);
 	mu_execute();

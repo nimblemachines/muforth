@@ -19,7 +19,7 @@
 ##  See the License for the specific language governing permissions and
 ##  limitations under the License.)
 
-	
+
 ## Note: mu_push_literal isn't really a function. DO NOT call it directly
 ## from "normal" Forth or C code! It is intended to be called by compiled
 ## code that is trying to do part of does> or part of a literal push. On
@@ -32,8 +32,8 @@ mu_push_literal:
 	movl	%edx,-4(%eax)	# value to push is in edx
 	ret
 
-## After struggling with gcc to create this code for me, I just wrote them
-## by hand. Sigh.
+## After struggling with gcc for a long time, I gave up and wrote these
+## routines in assembler.
 
 	.globl	mu_dplus
 mu_dplus:

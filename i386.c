@@ -65,7 +65,7 @@ void mu_compile_entry()
      */
 }
 
-void mu_compile_return()
+void mu_compile_exit()
 {
     /* convert call in tail position to jump */
     if (pcd - 5 == pcd_last_call && *pcd_last_call == 0xe8)

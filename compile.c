@@ -89,13 +89,13 @@ char *to_counted_string(char *zstring)
 void mu_colon()
 {
     mu_make_new_name();
-    mu_compile_entry();
+    mu_compile_entry();		/* the name of this routine ... */
     mu_minus_rbracket();
 }
 
 void mu_semicolon()
 {
-    mu_compile_return();
+    mu_compile_exit();		/* ... now matches this one. */
     mu_lbracket();
 }
 

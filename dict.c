@@ -116,7 +116,7 @@ struct inm initial_forth[] = {
     { ">>", mu_shift_right },
     { "u>>", mu_shift_right_unsigned },
     { "d+", mu_dplus },
-    { "dnegate", mu_dnegate_gcc },
+    { "dnegate", mu_dnegate },
     { "um*", mu_um_star },
     { "m*", mu_m_star },
     { "um/mod", mu_um_slash_mod },
@@ -171,7 +171,7 @@ struct inm initial_forth[] = {
 
 struct inm initial_compiler[] = {
     { ";", mu_semicolon },
-    { "^", mu_compile_return },
+    { "^", mu_compile_exit },
     { "[", mu_lbracket },
     { "drop", mu_compile_drop },
     { "2drop", mu_compile_2drop },
