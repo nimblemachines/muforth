@@ -33,8 +33,11 @@ CFLAGS=-O2 -Wall -fomit-frame-pointer
 LDFLAGS=
 
 # If any of these files changes, make a new version.h
-VERSOBJS = kernel.o i386.o interpret.o compile.o dict.o file.o \
+VERSX86  = i386.o
+VERSPPC  = ppc.o
+VERSOBJS = kernel.o interpret.o compile.o dict.o file.o \
 	 error.o time.o pci.o tty.o select.o # buf.o
+
 ALLOBJS = ${VERSOBJS} muforth.o
 
 .PHONY: all clean
@@ -50,7 +53,10 @@ version.h : Makefile ${VERSOBJS}
 	echo "#define VERSION \"${VERSION}\"" > version.h
 	echo "time_t build_time = `date \"+%s\"`;" >> version.h
 
-muforth : ${ALLOBJS}
+muforth : ${ALLOBJS} ${VERSX86}
+	${CC} ${LDFLAGS} -o $@ ${ALLOBJS} ${LIBS}
+
+muforthppc : ${ALLOBJS}
 	${CC} ${LDFLAGS} -o $@ ${ALLOBJS} ${LIBS}
 
 clean :
