@@ -21,16 +21,16 @@
 
 ( Simple terminal and serial expect/send code.)
 
-( 2002-mar-27. Converted to muForth.)
+( 2002-mar-27. Converted to muforth.)
 
 ( Created 5-aug-1999.)
 
-cr s" Terminal "  file[#
+cr " Terminal "  file[#
 
 decimal
 
 ( Open serial device.)
-z" /dev/cuaa0" r/w open-file  constant tty-target
+: tty-target  [ z" /dev/cuaa0" r/w open-file ] ;
 tty-target >raw  ( disallows signals)
 
 : bps   ( fd speed)
@@ -41,17 +41,19 @@ tty-target >raw  ( disallows signals)
 : te-smokin'  tty-target 115200 bps  ;  te-smokin'
 
 
-comment use-typing
+comment %use-typing%
   256 constant #serialbuf
   #serialbuf buffer serialbuf ( serial input buffer)
-use-typing
+%use-typing%
 
+comment %coroutines-broken%
 ( 2003-mar-13. It's coroutine time!)
 
 : coroutine  ( dstack-safety dstack-size - s0)
    cells allot ( size)  cells ( safety)  ram  swap -  constant ;
 
 coroutine serial-s0
+%coroutines-broken%
 
 variable fdmax
 : new-fd-set  ram fd-zero  buffer ;
@@ -64,39 +66,27 @@ new-fd-set fds
 
 ( Serial input to screen, keyboard input to serial.)
 
-comment old-serial->screen
-: serial->screen  ( - done?)
-   fds tty-target fd-in-set? dup if  tty-target reads  tty writes
-       typing  type  then  not ;
-old-serial->screen
-
-( XXX: do we need to get the whole input at once? ie with "typing", or can
-  we just read and process a "key" at a time, like in keyboard->serial?)
-
-: process-serial  ( key -)
-       dup <ESC>  = if  key dup char [ = if
-   key dup char 5 = if  key dup char n = if  
-
-: serial->screen  ( - done?)
-   fds tty-target fd-in-set? if  tty-target reads  tty writes
-      key process-serial 0 ^  then  -1 ;
+: serial->screen
+   fds tty-target fd-in-set? if
+     tty-target reads  tty writes  typing type
+  then ;
 
 : keyboard->serial  ( - done?)
-   fds tty fd-in-set? if  tty reads  tty-target writes
-      key process-key  ^  then  0  ;
+   fds tty fd-in-set? if
+     tty reads  tty-target writes  key process-key ^
+   then  0 ;
 
 : te-stream
    begin  tty tty-target 2 te-select
-      serial->screen drop  keyboard->serial  until  tty writes  ;
+      serial->screen  keyboard->serial  until  tty writes  ;
 
 : <drain  begin  tty-target 1 te-select  serial->screen  until
    tty-target writes  ;
 
 : te  ( terminal)
-   radix @ push
-   raw ( console)  ['] te-stream catch  cooked ( console)
-   pop radix !  throw ;
-
+   radix @ push   raw ( console)
+   ['] te-stream catch
+               cooked ( console)  pop radix !  throw ;
 
 -: emit  0 ;  is pass
 ' pass <CR> ctrl-handler!
@@ -122,11 +112,10 @@ variable 'boot   rom-start "435 + 'boot !  ( XXX: just for fun)
 : pc!  ( n)   ." pc" .w16 |cr  ." gos" |cr ;
 
 
-comment v25-specific
+comment %v25-specific%
 ( Load the chat interactive stuff here.)
 ld v25/chat-host.d4		( interactive debugging)
-
-v25-specific
+%v25-specific%
 
 ( Special keys.)
 
@@ -142,9 +131,12 @@ v25-specific
   environment that we cannot control, we handle this ourselves, right
   here.)
 
-: CSI  ( handle ESC [ )  key dup char 5 = if  key dup push char n = if
-  ( got ESC [5n, so answer accordingly)  drop char 0  then then  push
-  swap emit emit ( echo "ESC [")  pop emit  pop emit ;
+: CSI  ( handle ESC [ )
+  key dup char 5 = if
+    key dup push char n = if  ( got ESC [5n, so answer accordingly)
+      drop char 0
+    then
+  then  push  swap emit emit ( echo "ESC [")  pop emit  pop emit ;
 
 -:
    CSI  0 ;                               char [  esc-handler!  ( vt10x)
@@ -176,22 +168,22 @@ v25-specific
 comment v25-specific
 -:
    tty-target reads  tty-target writes  te-slow
-   |cr-chat  char * ?prompt  s" l" send  z" loader" "download  s" g" send
+   |cr-chat  char * ?prompt  " l" send  z" loader" "download  " g" send
    char g ?prompt  te-fast
    ( changes target serial speed - can't await prompt)  0  ;
                                            char l  esc-handler!  ( loader)
 -:
    tty-target reads  tty-target writes
-   |cr-chat  char * ?prompt  s" l" send  z" image" "download
+   |cr-chat  char * ?prompt  " l" send  z" image" "download
    initial-sync  0  ;
                                            char i  esc-handler!  ( image)
 -:
    tty-target reads  tty-target writes
-   |cr-chat  char * ?prompt  |boot @ pc!  s" r" send  0  ;
+   |cr-chat  char * ?prompt  |boot @ pc!  " r" send  0  ;
                                            char b  esc-handler!  ( boot)
 -:
    tty-target reads  tty-target writes
-   |cr-chat  char * ?prompt  s" g" send  <LF> ?prompt
+   |cr-chat  char * ?prompt  " g" send  <LF> ?prompt
    ( target responds "g CR LF")   chat!  -1 ( quit term)  ;
                                            char g  esc-handler!  ( go)
 

@@ -6,47 +6,74 @@ defer literal  ( target compile a literal) ;
 defer number   ( convert host number to target format) ;
 defer number,  ( convert to target, make target literal)
     ( \o number  if  \o 2literal  ^  then  \o literal  ; )
-defer compile,  ( compile an execution token on target) ;
-defer >data     ( get address of data of target item) ;
+defer compile, ( compile an execution token on target) ;
+defer >data    ( get address of data of target item) ;
 defer remote   ( execute target word on remote target)
 
 inside
-: char   \f char  \m literal  ;
-: (    \f (  ;
+: char   \f char  \m literal ;
+: (      \f ( ;
 
 forth
 ( All the different search-execute-compile routines for different modes,
-  and their associated prompts.)
+  and their associated prompts.
 
--:  ."  (assembling)"  ;
--:      .asm. -"find  if
-    .outside. -"find  if
-     .target. -"find  if  ( not found)  \m number ^ then
-                            ( target )   \m >data ^ then
-                     ( outside or asm)              then then  execute ;
-mode meta-asm
+  Note the similarities in structure, esp now that Randy Thelen made me
+  have find return true if found! Now things are much more perspicuous.)
 
-comment in-the-kernel
+comment %in-the-kernel%  Shown here for comparison's sake.
 : _[   ( interpret one token)
-      .forth. -"find  if   number  ^ then  execute ;
+      .forth. find  if  execute ^ then  number ;
 
 : _]   ( compile one token)
-   .compiler. -"find  if
-      .forth. -"find  if   number, ^ then
-                          compile, ^ then  execute ;    in-the-kernel
+   .compiler. find  if  execute ^ then
+      .forth. find  if  compile, ^ then  number, ;  %in-the-kernel%
+
+-:  ."  (assembling)"  ;
+-:      .asm. find  if  execute ^ then
+    .outside. find  if  execute ^ then
+     .target. find  if  \m >data ^ then  ( not found)  \m number ^ ;
+mode meta-asm
+
+( Comparing meta-outside and target is interesting. The question basically
+  is this: do you want a hybrid environment or not? meta-outside is a
+  hybrid; it's designed for doing _both_ unconnected [untethered]
+  meta-compilation, but also for doing connected [tethered] target
+  execution. But being able to switch seamlessly brings the possibility of
+  error and confusion; in particular, there might be some state of the
+  meta-compiler that you'd like to query. Really the best mode for doing
+  that is "normal" host forth mode, but using escapes such as \o to get to
+  the meta words that you're interested in.
+
+  Another issue is that of numbers. If, as is likely, the host and target
+  have different number formats - differences in endianness or word length,
+  e.g. - you'd like to not confuse the two. Since numbers are pushed onto
+  the stack - in interactive mode - and compiled as literals - in compile
+  modes - you need to be sure, at the time that the parser encounters your
+  digits in the input stream, that you're in the right mode. If you are
+  going to be changing a value that affects the machinery of the host's
+  meta compiler, then you need to be executing the host's number or number,
+  works. If your bits are destined for the target - either thru remote
+  execution or a target literal - then you'd likewise better be executing
+  \m number or \m number, .
+
+  I'm not sure I like the definition of meta-outside here. I'd almost
+  prefer that it be a "pure" meta with no searching of the target. Then
+  target mode can be used to interact with the [tethered] target.)
 
 -:  ."  (meta)"  ;
--:  .outside. -"find  if
-     .target. -"find  if  \m number ^ then
-                          \m remote ^ then  execute ;
-
+-:  .outside. find  if  execute ^ then
+     .target. find  if  \m remote ^ then  \m number ;
 mode meta-outside
 
 -:  ."  (meta-compiling)"  ;
--:  .inside. -"find  if
-    .target. -"find  if  \m number, ^  then
-                        \m compile, ^  then  execute ;
+-:  .inside. find  if  execute ^ then
+    .target. find  if  \m compile, ^ then  \m number, ;
 mode meta-inside
+
+-:  ."  (target)"  ;
+-:  .target. find  if  \m remote ^ then  \m number ;
+mode target
 
 assembler
 : comment   comment ;
@@ -117,14 +144,18 @@ variable head?
 
 ( Control structures)
 machine
-defer resolve>   ( src dest)  ( resolve forward branch)
-defer <resolve   ( dest src)  ( resolve backward branch)
+defer resolve    ( src dest)  ( resolve branch)
 defer =0branch   ( - src)  ( compile target's non-destructive branch on zero)
 defer 0branch    ( - src)  ( compile target's branch on zero)
 defer branch     ( - src)  ( compile target's unconditional branch)
 defer for        ( - dest) ( compile target's for primitive)
 defer ?for       ( - src dest)  ( compile target's ?for primitive)
 defer next       ( - src)  ( compile target's next primitive)
+
+( mark dest of forward jump as not tail-call convertible)
+: -tail   0 \o last ! ;
+: resolve>  ( src dest)  resolve -tail ;
+: <resolve  ( dest src)  swap resolve ;
 
 inside
 : =if   ( - src)  \m =0branch ;  ( keeps tested value on stack)
@@ -142,7 +173,7 @@ inside
 ( n for .. next         goes n times; _lots_ if n=0 )
 ( n ?for .. next then   goes n times; 0 if n=0 )
 
-: for     ( - dest)       \m for ;
+: for     ( - dest)      \m for ;
 : ?for    ( - src dest)  \m ?for ;
 : next    ( dest)        \m next  \m <resolve ;
 
