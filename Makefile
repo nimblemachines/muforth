@@ -50,16 +50,28 @@ ${ALLOBJS} : ${DEPFILES}
 muforth.o : version.h
 
 public.h : ${ALLOBJS:S/.o/.ph/}
-	echo "/* This file is automagically generated. Do not edit! */" > ${.TARGET}
-	cat ${.ALLSRC} >> ${.TARGET}
+	(echo "/* This file is automagically generated. Do not edit! */"; \
+	cat ${.ALLSRC}) > ${.TARGET}
 
 .SUFFIXES : .ph
 
-.c.ph : Makefile genpublic
-	./genpublic ${.IMPSRC} > ${.TARGET}
+.c.ph : Makefile
+	@echo Making ${.TARGET}
+	@(echo "/* ${.IMPSRC} */"; \
+	sed -E -n \
+		-e '/^static /d' \
+		-e 's/^([a-z]+ \**[a-z_0-9]+)\((void)?\).*$$/\1(void);/p' \
+		-e 's/^(pw [a-z_0-9]+).*;$$/extern \1;/p' \
+		${.IMPSRC}; \
+	echo) > ${.TARGET}
 
-.s.ph : Makefile genpublic
-	./genpublic ${.IMPSRC} > ${.TARGET}
+.s.ph : Makefile
+	@echo Making ${.TARGET}
+	@(echo "/* ${.IMPSRC} */"; \
+	sed -E -n \
+		-e 's/^ +\.globl +([a-z_0-9]+).*/void \1(void);/p' \
+		${.IMPSRC}; \
+	echo) > ${.TARGET}
 
 env.h : envtest
 	./envtest > ${.TARGET}
