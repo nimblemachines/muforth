@@ -145,7 +145,7 @@ static cell_t *op_next(cell_t *pc)
 	} else {
 		/* skip the branch target */
 		pc ++;
-		RPOP;
+		(void) RPOP;
 	}
 	return pc;
 }
