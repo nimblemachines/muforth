@@ -20,6 +20,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include <stdlib.h>
 #include <stdio.h>
 
 /* compiler essentials for Power PC architecture */
@@ -58,9 +59,13 @@ static u_int32_t *pcd_last_call;
 #define BAL_ABS_ADDR	0x00000002
 
 /*
- * BLR_ALWAYS is Branch to Link Register, Always
+ * BLR_ALWAYS is Branch And Link to Link Register, Always
+ *
+ * After using the Link Register as the destination of the branch, the
+ * address of the instruction following the branch is placed into the
+ * Link Register.
  */
-#define BLR_ALWAYS	0x4e800020
+#define BCLRL_ALWAYS	0x4e800021
 
 /*
  * Move To Link Register
@@ -140,56 +145,15 @@ extern void mu_iflush_addr(void *addr);
  * mu_comma_instr(int instr)
  *
  * This routine will append the instruction into the instruction stream.
- * Also, it tracks region a region that needs flushing.  If the region
- * continues to be continuous, then it simply notes that.  If the region
- * breaks, it will issue a flush.
+ * And, it flushes the instruction from the data stream.
  */
-static u_int32_t *flush_base;
-static   int32_t  flush_len = -1;
-
-static void mu_flush_code_stream(void *base, int32_t len)
-{
-	char *p;
-
-	p = (char *) base;
-
-	while (len > 0) {
-		mu_iflush_addr(p);
-		p += CACHELINE_SIZE;
-		len -= CACHELINE_SIZE;
-	}
-}
-
-static void mu_increase_flush_len(u_int32_t *base, int32_t len)
-{
-	if (flush_len >= 0) {
-		if (flush_base == base) {
-			flush_len += len;
-			return;
-		} else {
-			/*
-			 * Else flush and begin a new region
-			 */
-			mu_flush_code_stream(flush_base, flush_len);
-		}
-	}
-
-	flush_len = len;
-	flush_base = base;
-}
-
-static void mu_iflush(void)
-{
-	mu_flush_code_stream(flush_base, flush_len);
-}
-
 static void mu_comma_instr(int instr)
 {
 	u_int32_t *pc = (u_int32_t *) pcd;
 
 	*pc = instr;
 
-	mu_increase_flush_len(pc, 4);
+	mu_iflush_addr(pc);
 
 	pcd += 4;
 }
@@ -225,8 +189,9 @@ void mu_compile_call()
 		u_int32_t lo, hi;
 
 		/*
+		 * The address does not fit into a branch instruction.
 		 * The address must be loaded into a temporary register
-		 * and we can jump to it.
+		 * so we can jump through it.
 		 */
 		lo = addr >>  0 & 0xFFFF;
 		hi = addr >> 16 & 0xFFFF;
@@ -237,7 +202,7 @@ void mu_compile_call()
 		mu_comma_instr(ADDI  | RB_TEMP1 | lo);
 		mu_comma_instr(ADDIS | RB_TEMP1 | hi);
 		mu_comma_instr(MTLR(R_TEMP1));
-		mu_comma_instr(BLR_ALWAYS);
+		mu_comma_instr(BCLRL_ALWAYS);
 	} else {
 		/*
 		 * The address is OK to jump to directly
@@ -248,8 +213,6 @@ void mu_compile_call()
 		 * Place the instruction in memory
 		 */
 		mu_comma_instr(instr);
-		
 	}
-
 }
 
