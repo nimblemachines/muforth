@@ -2,7 +2,7 @@
 
  This file is part of muforth.
 
- Copyright 1997-2002 David Frech. All rights reserved, and all wrongs
+ Copyright 1997-2003 David Frech. All rights reserved, and all wrongs
  reversed.
 )
 
@@ -13,17 +13,13 @@ comment %%
 : mmap-dev  ( #blocks - a)  open-file 1 rot Ki mmap ;  %%
 
  z" color.com"
-\\ z" /home/david/Chuck/COLOR.COM.9sep"
-\\ z" /home/david/Chuck/colorForth.dist"
-\\ z" /tmp/cf"
-\\ 162 mmap-dev /dev/fd0
+\ z" /home/david/Chuck/COLOR.COM.9sep"
+\ z" /home/david/Chuck/colorForth.dist"
+\ z" /tmp/cf"
+\ 162 mmap-dev /dev/fd0
  r/o  open-file mmap-file swap nip constant |cf
 
 : block  Ki  |cf + ;
-
-variable #used ( # of cells in this block)
-: tally  1 #used +! ;  ( count it)
-: ?tally  =if  tally  then ;  ( count it only if non-zero)
 
 : c@+  ( a - a+ byte)  count ;
 : @+  dup cell+  swap @ ;
@@ -32,7 +28,7 @@ variable #used ( # of cells in this block)
 : .16  cr  16 for  dup dot  dup emit emit  2*  next  drop ;
 : .24  cr  24 for  w@+ .16  next ;
 : icon  ( n - a)  48 *  12 block + ;
-\\ : icons  ( n first)  icon  swap for  .24  next  drop ;
+\ : icons  ( n first)  icon  swap for  .24  next  drop ;
 
 comment %%
 : raw ;  ( from when I could change tty modes)
@@ -89,12 +85,25 @@ variable case
 : .WORD  uc chars ;
 : .Word  uc 1char  .word ;
 
+( Support for our bizarre little state-machine/co-routine/continuation gizmo)
+variable 'co
+( Note the dual nature of these two routines!)
+: suspend  pop 'co ! ;       ( return from co-routine)
+: resume       'co @ push ;  ( call to co-routine)
+
+defer ->format
+
+variable #used ( # of cells in this block)
+: tally  1 #used +! ;  ( count it)
+: ?tally  =if  tally  then ;  ( count it only if non-zero)
+
 ( numbers, with auto-radix)
+variable auto-radix ( so we don't clobber muforth's)
 : .d               (.)          type ;
 : .h  bright  hex (u.) decimal  type ;
-: .radix  "10 and if .h ^ then .d ;
-: .num        push  @+ tally  pop .radix ;
-: .short  dup push  2/ 2/ 2/ 2/ 2/  pop .radix ;
+: .radix  auto-radix @ "10 and if .h ^ then .d ;
+: .num        auto-radix !  suspend  tally  .radix  ->format ;
+: .short  dup auto-radix !         5 >>  .radix ;
 
 ( kinds of words; "xW" names are from cf source - don't blame me!)
 : ign         .word ; ( ignored - doesn't change color)
@@ -109,15 +118,89 @@ variable case
 : gnW   green .num ;
 : sW   yellow .short ;
 : gsW   green .short ;
-: var  cr magenta .word  @+ tally  dup green .d green .h ;
+: var  cr magenta .word  suspend  tally  dup green .d green .h  ->format ;
                                 ( show value in hex & dec)
 
-: format
+-:
+  suspend ?tally
   dup -16 and  swap  15 and  jump
    ign    wW    nW    rW
     gW   gnW   gsW    mW
     sW  text  Text  TEXT
-   var   ign   ign   ign -;
+   var   ign   ign   ign -;  is ->format
+
+
+
+( kinds of words; "xW" names are from cf source - don't blame me!)
+( annotate with type info as well as color)
+: .type
+   0 <#  bl hold  char ] hold  hex # decimal char [ hold  bl hold #> type ;
+
+: ign         .type .word ; ( ignored - doesn't change color)
+: rW   cr red .type .word ;
+: wW   yellow .type .word ; ( "white")
+: gW    green .type .word ;
+: mW     cyan .type .word ; ( macro)
+: text  white .type .word ;
+: Text  white .type .Word ;
+: TEXT  white .type .WORD ;
+: nW   yellow .type .num ;
+: gnW   green .type .num ;
+: sW   yellow .type .short ;
+: gsW   green .type .short ;
+: var  cr magenta .type .word
+   suspend  tally  dup green .d green .h  ->format ;
+                        ( show value in hex & dec)
+
+-:
+  suspend ?tally
+  dup -16 and  swap  15 and  dup  jump
+   ign    wW    nW    rW
+    gW   gnW   gsW    mW
+    sW  text  Text  TEXT
+   var   ign   ign   ign -;  is ->format
+
+
+( kinds of words; "xW" names are from cf source - don't blame me!)
+( annotate with type info but no color - suitable for reading back in and
+  converting back to colorforth source.)
+
+variable _type
+: 0type  bl _type ! ;
+: .type
+  space  _type @  over _type !  xor if  _type @ emit  space  then ;
+
+: red  char :  .type ;
+: green  char ]  .type ;
+: yellow  char [  .type ;
+: magenta  char @  .type ;
+: cyan  char \ .type ;
+: white  char ( .type ;
+
+( kinds of words; "xW" names are from cf source - don't blame me!)
+: ign         .word ; ( ignored - doesn't change color)
+: rW   cr red .word ;
+: wW   yellow .word ; ( "white")
+: gW    green .word ;
+: mW     cyan .word ; ( macro)
+: text  white .word ;
+: Text  white .Word ;
+: TEXT  white .WORD ;
+: nW   yellow .num ;
+: gnW   green .num ;
+: sW   yellow .short ;
+: gsW   green .short ;
+: var  cr magenta .word  suspend  tally  dup green .d green .h  ->format ;
+                                ( show value in hex & dec)
+
+-:
+  suspend ?tally
+  dup -16 and  swap  15 and  jump
+   ign    wW    nW    rW
+    gW   gnW   gsW    mW
+    sW  text  Text  TEXT
+   var   ign   ign   ign -;  is ->format  ( resolve forward ref)
+
 
 ( We'd like to do "256 for ... next" but since two kinds of words - full-
   length numbers and variables - use an extra cell, it doesn't work. They
@@ -132,15 +215,11 @@ variable case
 
   That would be good.)
 
-: .block
-  0 #used !
-  block  begin  @+ ?tally format  dup [ 1 Ki 1 - ] and 0= until
-  drop ;
-
+: .block  0 #used ! 0type  ->format  block  256 for  @+ resume  next  drop ;
 : header  cr cr  ." -*- Block " . ." -*-" cr ;
 : footer  cr cr  ." ("  #used @  dup (.) type  ." /256 : "
     100 256 */ (.) type ." % full)" ;
-: sh  decimal  dup header  .block  white  footer ;
+: sh  decimal  dup header  .block  ( white)  footer ;
 : shs  ( n)  begin  dup sh 1+  done? until ;
 
 

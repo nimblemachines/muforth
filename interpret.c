@@ -3,7 +3,7 @@
  *
  * This file is part of muforth.
  *
- * Copyright 1997-2002 David Frech. All rights reserved, and all wrongs
+ * Copyright 1997-2003 David Frech. All rights reserved, and all wrongs
  * reversed.
  */
 
@@ -34,7 +34,7 @@ static ssize_t first;		/* goes from -start to 0 */
 struct string parsed;		/* for errors */
 
 /* Parse whitespace-delimited tokens */
-void token()
+void mu_token()
 {
     ssize_t last;
     int trailing;
@@ -87,7 +87,7 @@ void token()
 }
 
 /* Parse token using arbitrary delimiter; do not skip leading delimiters */
-void parse()
+void mu_parse()
 {
     ssize_t last;
     int trailing;
@@ -137,104 +137,104 @@ void parse()
 defer not-defined  now complain is not-defined
 */
 
-void complain()
+void mu_complain()
 {
     PUSH("isn't defined");
-    throw();
+    mu_throw();
 }
 
-void huh()
+void mu_huh()
 {
-    if (POP) complain();
+    if (POP) mu_complain();
 }
 
-void (*number)() = complain;
-void (*number_comma)() = complain;
+void (*mu_number)() = mu_complain;
+void (*mu_number_comma)() = mu_complain;
 
-void push_tick_number()
+void mu_push_tick_number()
 {
-    PUSH(&number);
+    PUSH(&mu_number);
 }
 
-void push_tick_number_comma()
+void mu_push_tick_number_comma()
 {
-    PUSH(&number_comma);
+    PUSH(&mu_number_comma);
 }
 
 /* The interpreter's "consume" function. */
-void _lbracket()
+void mu__lbracket()
 {
-    forth_chain();
-    minus_quote_find();
+    mu_push_forth_chain();
+    mu_minus_quote_find();
     if (POP)
     {
-	(*number)();
+	(*mu_number)();
 	return;
     }
     EXECUTE;
 }
 
 /* The compiler's "consume" function. */
-void _rbracket()
+void mu__rbracket()
 {
-    compiler_chain();
-    minus_quote_find();
+    mu_push_compiler_chain();
+    mu_minus_quote_find();
     if (POP)
     {
-	forth_chain();
-	minus_quote_find();
+	mu_push_forth_chain();
+	mu_minus_quote_find();
 	if (POP)
 	{
-	    (*number_comma)();
+	    (*mu_number_comma)();
 	    return;
 	}
-	compile_call();
+	mu_compile_call();
 	return;
     }
     EXECUTE;
 }
 
-void nope() {}		/* very useful NO-OP */
-void zzz() {}		/* a convenient GDB breakpoint */
+void mu_nope() {}		/* very useful NO-OP */
+void mu_zzz() {}		/* a convenient GDB breakpoint */
 
-static struct imode forth_interpreter  = { _lbracket, nope };
-static struct imode forth_compiler     = { _rbracket, nope };
+static struct imode forth_interpreter  = { mu__lbracket, mu_nope };
+static struct imode forth_compiler     = { mu__rbracket, mu_nope };
 
 static struct imode *state = &forth_interpreter;
 
-void push_state()
+void mu_push_state()
 {
     PUSH(&state);
 }
 
-void lbracket()
+void mu_lbracket()
 {
     state = &forth_interpreter;
 }
 
-void minus_rbracket()
+void mu_minus_rbracket()
 {
     state = &forth_compiler;
 }
 
 
-void push_parsed()
+void mu_push_parsed()
 {
     STK(-1) = (int) parsed.data;
     STK(-2) = parsed.len;
     DROP(-2);
 }
 
-static void qstack()
+static void mu_qstack()
 {
     if (sp > S0)
     {
 	PUSH("ate the stack");
-	throw();
+	mu_throw();
     }
 }
 
-void interpret()
+void mu_interpret()
 {
     source.end = (char *) STK(1) + TOP;	/* the _end_ of the text */
     source.start = -TOP;		/* offset to the start of text */
@@ -244,15 +244,15 @@ void interpret()
 
     for (;;)
     {
-	token();
+	mu_token();
 	if (TOP == 0) break;
 	(*state->eat)();	/* consume(); */
-	qstack();
+	mu_qstack();
     }
     DROP(2);
 }
 
-void evaluate()
+void mu_evaluate()
 {
     struct text saved_source;
     ssize_t saved_first;
@@ -260,41 +260,38 @@ void evaluate()
     saved_source = source;
     saved_first = first;
 
-    PUSH(interpret);
-    catch();
+    PUSH(mu_interpret);
+    mu_catch();
     source = saved_source;
     first = saved_first;
-    throw();
+    mu_throw();
 }
 
-void start_up()
+void mu_start_up()
 {
     PUSH("warm");		/* push the token "warm" */
     PUSH(4);
-    _lbracket();		/* ... and execute it! */
+    mu__lbracket();		/* ... and execute it! */
 }
 
-void bye()
+void mu_bye()
 {
     exit(0);
 }
 
 /*
-: consume   state @  @execute  ;
+: consume   state @  @execute ;
 
-( interpret one token)
-: _[
-   forth -"find if  number  ^  then  execute  ;
-   ( : 1interpret  <-executable?> if <number> ^ then  execute ; )
+: _[   ( interpret one token)
+      .forth. -"find  if   number  ^ then  execute ;
 
-( compile one token)
-: _]   compiler -"find  if  forth -"find  if   number,  ^  then
-    compile,  ^  then    execute   ;
-    ( : 1compile  <-executable?> if  <-compilable?> if <number,> ^ then
-    <compile,> then  execute ; )
+: _]   ( compile one token)
+   .compiler. -"find  if
+      .forth. -"find  if   number, ^ then
+                          compile, ^ then  execute ;
 
 -:  compiler -"find if  assembler -"find if  number, exit  then
-        compile, exit  then  execute  ;
+        compile, exit  then  execute ;
 
 -:  assembler -"find if  outside -"find if  target -"find  if
       ( not found)  number exit  then

@@ -20,7 +20,7 @@
 
 int fd_pci;
 
-void pci_read()
+void mu_pci_read()
 {
     struct pci_io p;
 
@@ -36,7 +36,7 @@ void pci_read()
 }
 
 /* We need to open R/W, otherwise the ioctl, above, fails. */
-void pci_open()
+void mu_pci_open()
 {
     fd_pci = open("/dev/pci", O_RDWR); /* XXX: doesn't catch any errors! */
 }

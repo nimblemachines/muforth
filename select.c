@@ -16,32 +16,32 @@
 #include <unistd.h>
 #include <errno.h>
 
-void my_fd_zero()
+void mu_fd_zero()
 {
     FD_ZERO((fd_set *) TOP);
     TOP = sizeof(fd_set);	/* so we can allot space in Forth */
 }
 
-void my_fd_set()
+void mu_fd_set()
 {
     FD_SET(TOP, (fd_set *) STK(1));
     DROP(2);
 }
 
-void my_fd_clr()
+void mu_fd_clr()
 {
     FD_CLR(TOP, (fd_set *) STK(1));
     DROP(2);
 }
 
-void my_fd_isset()
+void mu_fd_isset()
 {
     /* Return a Forth-compatible flag */
     STK(1) = FD_ISSET(TOP, (fd_set *) STK(1)) ? -1 : 0;
     DROP(1);
 }
 
-void my_select()
+void mu_select()
 {
     int count;
     int nfds = STK(4);
@@ -58,7 +58,7 @@ void my_select()
 	{
 	    if (errno == EINTR) continue;
 	    TOP = (int) strerror(errno);
-	    throw();
+	    mu_throw();
 	}
 	break;
     }

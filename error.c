@@ -44,7 +44,7 @@ static jmp_buf *last_jb;	/* top of "stack" of jmp bufs */
  * call a function. But then, how/when do you undo the frame? Hmmm.
  * Okay, doing the Forth way. */
 
-void catch()
+void mu_catch()
 {
     jmp_buf this_jb;
     jmp_buf *prev_jb;
@@ -63,7 +63,7 @@ void catch()
     PUSH(thrown);
 }
 
-void throw()
+void mu_throw()
 {
     if (TOP != 0)
     {

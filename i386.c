@@ -13,31 +13,31 @@
 
 static u_int8_t *pcd_last_call;
 
-static void compile_offset()
+static void mu_compile_offset()
 {
-    u_int8_t *dest = (char *) POP;
+    u_int8_t *dest = (u_int8_t *) POP;
 
     *(int *)pcd = dest - (pcd + 4);
     pcd += 4;
 }
 
-void compile_call()
+void mu_compile_call()
 {
     pcd_last_call = pcd;
     *pcd++ = 0xe8;		/* call near, 32 bit offset */
-    compile_offset();
+    mu_compile_offset();
 }
 
 #if 0
-void compile_jump()
+void mu_compile_jump()
 {
     pcd_last_call = pcd;
     *pcd++ = 0xe9;		/* jump near, 32 bit offset */
-    compile_offset();
+    mu_compile_offset();
 }
 #endif
 
-void compile_return()
+void mu_compile_return()
 {
     if (pcd - 5 == pcd_last_call && *pcd_last_call == 0xe8)
 	*pcd_last_call = 0xe9;	/* tail call --> jump */
@@ -45,12 +45,12 @@ void compile_return()
 	*pcd++ = 0xc3;		/* ret near, don't pop any args */
 }
 
-void push_last_call()
+void mu_push_last_call()
 {
     PUSH(&pcd_last_call);
 }
 
-void compile_stack_adjust(int n)
+static void compile_stack_adjust(int n)
 {
     int *help;
 
@@ -62,25 +62,25 @@ void compile_stack_adjust(int n)
     pcd += 7;
 }
     
-void compile_drop()
+void mu_compile_drop()
 {
     compile_stack_adjust(4);
 }
 
-void compile_2drop()
+void mu_compile_2drop()
 {
     compile_stack_adjust(8);
 }
 
 /* not called directly; only called by generated code that first loads
  * a literal value into edx. */
-static void push_literal()
+static void mu_push_literal()
 {
     /* value is in edx */
     asm volatile ("movl sp,%eax; sub $4,sp; movl %edx,-4(%eax)");
 }
 
-void compile_literal_load()
+void mu_compile_literal_load()
 {
     int *help;
 
@@ -90,20 +90,14 @@ void compile_literal_load()
     pcd += 5;
 }
 
-void compile_literal_push()
+void mu_compile_literal_push()
 {
-    PUSH((int) push_literal);
-    compile_call();		/* sets pcd_last */
-}
-
-void compile_literal()
-{
-    compile_literal_load();
-    compile_literal_push();
+    PUSH((int) mu_push_literal);
+    mu_compile_call();		/* sets pcd_last_call */
 }
 
 #ifdef NOTYET
-void was_literal()
+void mu_was_literal()
 {
     if (pcd - 5 == pcd_last_call && *pcd_last_call == 0xe8
 	&& (pcd + *(int *)(pcd - 4) == (char *) &push_literal))
@@ -115,7 +109,7 @@ void was_literal()
 }
 #endif
 
-void compile_sp_to_eax()
+static void mu_compile_sp_to_eax()
 {
     int *help;
 
@@ -125,12 +119,6 @@ void compile_sp_to_eax()
     pcd += 5;
 }
 
-void compile_stack_move(int n)
-{
-    compile_sp_to_eax();
-    compile_stack_adjust(n);
-}
-    
 /* after struggling with gcc to create this code for me, I just did it
  * by hand. Sigh.
  */	
@@ -145,18 +133,32 @@ void compile_stack_move(int n)
    since we don't know ahead of time how far we'll have to jump - but
    make backwards branches only as long as they need to be. */
 
-void compile_zbranch()
+static void compile_zbranch()
 {
     int *help;
 
     help = (int *) pcd;
     help[0] = 0x0f003883; 	/* cmpl $0, (%eax); je rel32 */
-    help[1] = 0x84;
+    help[1] = 0x00000084;
     pcd += 9;
     PUSH(pcd);			/* 32 bit offset to fixup at (top)-1 */
 }
 
-void compile_branch()
+void mu_compile_destructive_zbranch()
+{
+    mu_compile_sp_to_eax();
+    mu_compile_drop();
+    compile_zbranch();
+}
+
+void mu_compile_nondestructive_zbranch()
+{
+    mu_compile_sp_to_eax();
+    compile_zbranch();
+}
+
+
+void mu_compile_branch()
 {
     *pcd = 0xe9;		/* jmp rel32 unconditionally */
     pcd += 5;
@@ -167,17 +169,23 @@ void compile_branch()
 /* We don't need 2shunt because we can call this as many times as
  * necessary; it only compiles 1 byte per call!
  */
-void compile_shunt()		/* drop 4 bytes from r stack */
+void mu_compile_shunt()		/* drop 4 bytes from r stack */
 {
     *pcd++ = 0x58;		/* popl %eax */
 }
 
 
+static void compile_stack_move(int n)
+{
+    mu_compile_sp_to_eax();
+    compile_stack_adjust(n);
+}
+    
 /* Next challenge: for/next. These require popping and pushing the _other_
  * stack: the return (hardware) stack.
  */
 
-void compile_pop_from_r()
+void mu_compile_pop_from_r()
 {
     compile_stack_move(-4);	/* eax = sp; sp-- */
     *(int *) pcd = 0xfc408f;	/* popl -4(%eax) */
@@ -185,7 +193,7 @@ void compile_pop_from_r()
     
 }
 
-void compile_2pop_from_r()
+void mu_compile_2pop_from_r()
 {
     int *help;
 
@@ -215,14 +223,14 @@ edx = 2
 sib = 04r for no index reg (using 4 = esp's index for all the special cases)
 */
 
-void compile_push_to_r()
+void mu_compile_push_to_r()
 {
     compile_stack_move(4);	/* eax = sp; sp++ */
     *(int *) pcd = 0x30ff;	/* pushl (%eax) */
     pcd += 2;
 }
 
-void compile_2push_to_r()
+void mu_compile_2push_to_r()
 {
     int *help;
 
@@ -233,7 +241,7 @@ void compile_2push_to_r()
     pcd += 5;
 }
 
-void compile_copy_from_r()
+void mu_compile_copy_from_r()
 {
     int *help;
 
@@ -244,27 +252,28 @@ void compile_copy_from_r()
     pcd += 6;
 }
 
-void compile_qfor()
+void mu_compile_qfor()
 {
     compile_stack_move(4);	/* eax = sp; sp++ */
     compile_zbranch();		/* cmpl $0, (%eax); je rel32 */
     *(int *) pcd = 0x30ff;	/* pushl (%eax) */
     pcd += 2;
+    PUSH(pcd);			/* push address to loop back to */
 }
 
-void compile_next()
+void mu_compile_next()
 {
     int *help;
 
     help = (int *) pcd;
     help[0] = 0x0f240cff;	/* decl (%esp); jne <back32> */
-    help[1] = 0x85;	
+    help[1] = 0x00000085;
     help[2] = 0x5800;		/* popl %eax */
     pcd += 10;
     PUSH(pcd - 1);		/* for fixup of jne */
 }
 
-void dplus()
+void mu_dplus()
 {
     asm volatile ("movl sp,%eax");
     asm volatile ("movl 4(%eax),%edx; addl %edx,12(%eax)");
@@ -272,27 +281,27 @@ void dplus()
     asm volatile ("addl $8,sp");
 }
 
-void dnegate()
+void mu_dnegate()
 {
     asm volatile ("movl sp,%eax");
     asm volatile ("negl (%eax); negl 4(%eax); sbbl $0,(%eax)");
 }
 
-void um_star()
+void mu_um_star()
 {
     asm volatile ("movl sp,%ecx");
     asm volatile ("movl (%ecx),%eax; mull 4(%ecx)");
     asm volatile ("movl %edx,(%ecx); movl %eax,4(%ecx)");
 }
 
-void m_star()
+void mu_m_star()
 {
     asm volatile ("movl sp,%ecx");
     asm volatile ("movl (%ecx),%eax; imull 4(%ecx)");
     asm volatile ("movl %edx,(%ecx); movl %eax,4(%ecx)");
 }
 
-void um_slash_mod()
+void mu_um_slash_mod()
 {
     asm volatile ("movl sp,%ecx");
     asm volatile ("movl 4(%ecx),%edx; movl 8(%ecx),%eax"); /* dividend */
@@ -321,7 +330,7 @@ void um_slash_mod()
     (in symm. div.) and as the denom changes (in floored div).
 */
 
-void fm_slash_mod()		/* floored division! */
+void mu_fm_slash_mod()		/* floored division! */
 {
     asm volatile ("pushl %ebx");	/* callee saved! */
     asm volatile ("movl sp,%ecx");
@@ -334,7 +343,7 @@ void fm_slash_mod()		/* floored division! */
 }
 
 /* for jumping thru a following "vector" of compiled calls */
-void jump()
+void mu_jump()
 {
     asm volatile ("mov sp,%eax; addl $4,sp");
 

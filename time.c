@@ -14,7 +14,7 @@
 #include <time.h>
 
 /* time and date */
-void static push_forth_time_from_libc_time (struct tm *ptm)
+static void push_forth_time_from_libc_time (struct tm *ptm)
 {
     STK(-9) = strlen (ptm->tm_zone);
     STK(-8) = (int) ptm->tm_zone;
@@ -28,17 +28,20 @@ void static push_forth_time_from_libc_time (struct tm *ptm)
     DROP(-9);
 }
 
-void local_time()
+void mu_local_time()
 {
     struct tm tm;
     time_t clock;
 
     clock = POP;
+#ifdef __NetBSD__
+    tzset();
+#endif
     localtime_r (&clock, &tm);
     push_forth_time_from_libc_time (&tm);
 }
 
-void global_time()
+void mu_global_time()
 {
     struct tm tm;
     time_t clock;
@@ -48,7 +51,7 @@ void global_time()
     push_forth_time_from_libc_time (&tm);
 }
 
-void push_clock()
+void mu_push_clock()
 {
     PUSH(time(NULL));		/* seconds since UNIX epoch */
 }

@@ -19,12 +19,14 @@ struct dict_entry
     char name[0];
 };
 
-/* no reason to put these in an array unless we have marker & empty */
-struct dict_entry *dict_chain[8];	/* dictionary "chains" of words */
+/* the forth and compiler "vocabulary" chains */
+struct dict_entry *forth_chain = NULL;
+struct dict_entry *compiler_chain = NULL;
 
-struct dict_entry **current_chain = &dict_chain[0];
-					/* current chain to compile into */
-void (*name_hook)() = nope;		/* called when a name is created */
+/* current chain to compile into */
+struct dict_entry **current_chain = &forth_chain;
+
+void (*mu_name_hook)() = mu_nope;	/* called when a name is created */
 
 /* bogus C-style dictionary init */
 struct inm			/* "initial name" */
@@ -34,155 +36,158 @@ struct inm			/* "initial name" */
 };
 
 struct inm initial_forth[] = {
-    { "version", push_version },
-    { "build-time", push_build_time },
-    { ":", colon },
-    { "name", make_new_name },
-    { "'name-hook", push_tick_name_hook },
-    { ".forth.", forth_chain },
-    { ".compiler.", compiler_chain },
-    { "current", push_current },
-    { "'number", push_tick_number },
-    { "'number,", push_tick_number_comma },
-    { "last", push_last_call },
-    { "h", push_h },
-    { "r", push_r },
-    { "s0", push_s0 },
-    { "'sp", push_sp },
-    { "catch", catch },
-    { "throw", throw },
-    { "argc", push_argc },
-    { "argv", push_argv },
-    { "token", token },
-    { "parse", parse },
-    { "-\"find", minus_quote_find },
-    { "interpret", interpret },
-    { "evaluate", evaluate },
-    { "create-file", create_file },
-    { "open-file", open_file },
-    { "r/o", push_ro_flags },
-    { "r/w", push_rw_flags },
-    { "close-file", close_file },
-    { "mmap-file", mmap_file },    
-    { "load-file", load_file },
-    { "literal", compile_literal },
-    { "literal-load", compile_literal_load },
-    { "literal-push", compile_literal_push },
-    { "compile,", compile_call },
-    { "state", push_state },
-    { "-]", minus_rbracket },
-    { "parsed", push_parsed },
-    { "huh?", huh },
-    { "complain", complain },
-    { "load-sp", compile_sp_to_eax },
-    { "0branch", compile_zbranch },
-    { "branch", compile_branch },
-    { "_?for", compile_qfor },
-    { "_next", compile_next },
-    { "scrabble", scrabble },
-    { "nope", nope },
-    { "zzz", zzz },
-    { "+", add },
-    { "and", and },
-    { "or", or },
-    { "xor", xor },
-    { "negate", negate },
-    { "invert", invert },
-    { "u<", uless },
-    { "0<", zless },
-    { "0=", zequal },
-    { "<", less },
-    { "2*", two_star },
-    { "2/", two_slash },
-    { "u2/", two_slash_unsigned },
-    { "<<", shift_left },
-    { ">>", shift_right },
-    { "u>>", shift_right_unsigned },
-    { "d+", dplus },
-    { "dnegate", dnegate },
-    { "um*", um_star },
-    { "m*", m_star },
-    { "um/mod", um_slash_mod },
-    { "fm/mod", fm_slash_mod },
-    { "jump", jump },
-    { "@", fetch },
-    { "c@", cfetch },
-    { "!", store },
-    { "c!", cstore },
-    { "+!", plus_store },
-    { "rot", rot },
-    { "-rot", minus_rot },
-    { "dup", dupe },
-    { "nip", nip },
-    { "swap", swap },
-    { "over", over },
-    { "tuck", tuck },
-    { "1", const_one },
-    { "\"=", string_equal },
-    { "read", read_carefully },
-    { "write", write_carefully },
-    { "sp@", sp_fetch },
-    { "sp!", sp_store },
-    { "cmove", cmove },
-    { "string-length", string_length },
-    { "local-time", local_time },
-    { "utc", global_time },
-    { "clock", push_clock },
+    { "version", mu_push_version },
+    { "build-time", mu_push_build_time },
+    { ":", mu_colon },
+    { "name", mu_make_new_name },
+    { "'name-hook", mu_push_tick_name_hook },
+    { ".forth.", mu_push_forth_chain },
+    { ".compiler.", mu_push_compiler_chain },
+    { "current", mu_push_current },
+    { "'number", mu_push_tick_number },
+    { "'number,", mu_push_tick_number_comma },
+    { "last", mu_push_last_call },
+    { "h", mu_push_h },
+    { "r", mu_push_r },
+    { "s0", mu_push_s0 },
+    { "sp", mu_push_sp },
+    { "catch", mu_catch },
+    { "throw", mu_throw },
+    { "argc", mu_push_argc },
+    { "argv", mu_push_argv },
+    { "token", mu_token },
+    { "parse", mu_parse },
+    { "-\"find", mu_minus_quote_find },
+    { "interpret", mu_interpret },
+    { "evaluate", mu_evaluate },
+    { "create-file", mu_create_file },
+    { "open-file", mu_open_file },
+    { "r/o", mu_push_ro_flags },
+    { "r/w", mu_push_rw_flags },
+    { "close-file", mu_close_file },
+    { "mmap-file", mu_mmap_file },    
+    { "load-file", mu_load_file },
+    { "readable?", mu_readable_q },
+    { "load-literal", mu_compile_literal_load },
+    { "push-literal", mu_compile_literal_push },
+    { "compile,", mu_compile_call },
+    { "state", mu_push_state },
+    { "-]", mu_minus_rbracket },
+    { "parsed", mu_push_parsed },
+    { "huh?", mu_huh },
+    { "complain", mu_complain },
+    { "(0branch)", mu_compile_destructive_zbranch },
+    { "(=0branch)", mu_compile_nondestructive_zbranch },
+    { "(branch)", mu_compile_branch },
+    { "(?for)", mu_compile_qfor },
+    { "(next)", mu_compile_next },
+    { "scrabble", mu_scrabble },
+    { "nope", mu_nope },
+    { "zzz", mu_zzz },
+    { "+", mu_add },
+    { "and", mu_and },
+    { "or", mu_or },
+    { "xor", mu_xor },
+    { "negate", mu_negate },
+    { "invert", mu_invert },
+    { "u<", mu_uless },
+    { "0<", mu_zless },
+    { "0=", mu_zequal },
+    { "<", mu_less },
+    { "2*", mu_two_star },
+    { "2/", mu_two_slash },
+    { "u2/", mu_two_slash_unsigned },
+    { "<<", mu_shift_left },
+    { ">>", mu_shift_right },
+    { "u>>", mu_shift_right_unsigned },
+    { "d+", mu_dplus },
+    { "dnegate", mu_dnegate },
+    { "um*", mu_um_star },
+    { "m*", mu_m_star },
+    { "um/mod", mu_um_slash_mod },
+    { "fm/mod", mu_fm_slash_mod },
+    { "jump", mu_jump },
+    { "@", mu_fetch },
+    { "c@", mu_cfetch },
+    { "!", mu_store },
+    { "c!", mu_cstore },
+    { "+!", mu_plus_store },
+    { "rot", mu_rot },
+    { "-rot", mu_minus_rot },
+    { "dup", mu_dupe },
+    { "nip", mu_nip },
+    { "swap", mu_swap },
+    { "over", mu_over },
+    { "tuck", mu_tuck },
+    { "\"=", mu_string_equal },
+    { "read", mu_read_carefully },
+    { "write", mu_write_carefully },
+    { "sp@", mu_sp_fetch },
+    { "sp!", mu_sp_store },
+    { "cmove", mu_cmove },
+    { "string-length", mu_string_length },
+    { "local-time", mu_local_time },
+    { "utc", mu_global_time },
+    { "clock", mu_push_clock },
 #ifdef __FreeBSD__
-    { "pci", pci_open },
-    { "pci@", pci_read },
+    { "pci", mu_pci_open },
+    { "pci@", mu_pci_read },
 #endif
     /* tty.c */
-    { "get-termios", get_termios },
-    { "set-termios", set_termios },
-    { "set-raw", set_termios_raw },
-    { "set-min-time", set_termios_min_time },
-    { "set-speed", set_termios_speed },
+    { "get-termios", mu_get_termios },
+    { "set-termios", mu_set_termios },
+    { "set-raw", mu_set_termios_raw },
+    { "set-min-time", mu_set_termios_min_time },
+    { "set-speed", mu_set_termios_speed },
 
     /* select.c */
-    { "fd-zero", my_fd_zero },
-    { "fd-set", my_fd_set },
-    { "fd-clr", my_fd_clr },
-    { "fd-in-set?", my_fd_isset },
-    { "select", my_select },
+    { "fd-zero", mu_fd_zero },
+    { "fd-set", mu_fd_set },
+    { "fd-clr", mu_fd_clr },
+    { "fd-in-set?", mu_fd_isset },
+    { "select", mu_select },
 
-    { "bye", bye },
+    { "bye", mu_bye },
+
+    { "#code", mu_push_code_size},
+    { "#data", mu_push_data_size},
+    { "#name", mu_push_name_size},
     { NULL, NULL }
 };
 
 struct inm initial_compiler[] = {
-    { ";", semicolon },
-    { "-;", minus_semicolon },
-    { "^", compile_return },
-    { "[", lbracket },
-    { "drop", compile_drop },
-    { "2drop", compile_2drop },
-    { "push", compile_push_to_r },
-    { "2push", compile_2push_to_r },
-    { "pop", compile_pop_from_r },
-    { "2pop", compile_2pop_from_r },
-    { "r@", compile_copy_from_r },
-    { "shunt", compile_shunt },
+    { ";", mu_semicolon },
+    { "-;", mu_minus_semicolon },
+    { "^", mu_compile_return },
+    { "[", mu_lbracket },
+    { "drop", mu_compile_drop },
+    { "2drop", mu_compile_2drop },
+    { "push", mu_compile_push_to_r },
+    { "2push", mu_compile_2push_to_r },
+    { "pop", mu_compile_pop_from_r },
+    { "2pop", mu_compile_2pop_from_r },
+    { "r@", mu_compile_copy_from_r },
+    { "shunt", mu_compile_shunt },
     { NULL, NULL }
 };
 
-void push_current()
+void mu_push_current()
 {
     PUSH(&current_chain);
 }
 
-void forth_chain()
+void mu_push_forth_chain()
 {
-    PUSH(&dict_chain[0]);
+    PUSH(&forth_chain);
 }
 
-void compiler_chain()
+void mu_push_compiler_chain()
 {
-    PUSH(&dict_chain[1]);
+    PUSH(&compiler_chain);
 }
 
 /* -"find  ( a u chain - a u t | code f) */
-void minus_quote_find()
+void mu_minus_quote_find()
 {
     char *token = (char *) STK(2);
     int len = STK(1);
@@ -192,16 +197,19 @@ void minus_quote_find()
     {
 	if (pde->name_len != len) continue;
 	if (memcmp(&pde->name, token, len) != 0) continue;
+
+	/* found: drop token, push code address and false flag */
 	STK(2) = (int) pde->code;
 	STK(1) = 0;
 	DROP(1);
 	return;
     }
+    /* not found: leave token, push true */
     TOP = -1;
 }
 
-struct dict_entry *compile_dict_entry(
-    struct dict_entry **ppde, struct string *ptok, void *pcode)
+static void compile_dict_entry(
+    struct dict_entry **ppde, char *name, size_t len, void *pcode)
 {
     struct dict_entry *pde = (struct dict_entry *) pnm;
 
@@ -215,51 +223,41 @@ struct dict_entry *compile_dict_entry(
     pde->code = pcode;
 
     /* copy name string */
-    pde->name_len = ptok->len;
-    memcpy(&pde->name, ptok->data, ptok->len);
+    pde->name_len = len;
+    memcpy(&pde->name, name, len);
 
     /* align */
-    pnm = &pde->name[0] + ptok->len + ALIGN_SIZE - 1;
+    pnm = &pde->name[0] + len + ALIGN_SIZE - 1;
     (int) pnm &= -ALIGN_SIZE;
-
-    return pde;
 }
 
 /* called from Forth */
-void compile_name()
+void mu_compile_name()
 {
     struct string token;
-    struct dict_entry *pde;
 
     token.data = (char *) STK(1);
     token.len = TOP;
     DROP(2);
 
-    pde = compile_dict_entry(current_chain, &token, pcd);
+#ifdef DEBUG
+    write(2, token.data, token.len);
+    write(2, "  ", 2);
+#endif
+
+    compile_dict_entry(current_chain, token.data, token.len, pcd);
 }
 
-/* called _only_ by initialization code, _not_ from Forth */
-void compile_init_name(struct dict_entry **pchain, struct inm *pinm)
+void mu_make_new_name()
 {
-    struct string token;
-    struct dict_entry *pde;
-
-    token.data = pinm->name;
-    token.len = strlen(pinm->name);
-    pde = compile_dict_entry(pchain, &token, pinm->code);
+    mu_token();
+    (*mu_name_hook)();
+    mu_compile_name();
 }
 
-
-void make_new_name()
+void mu_push_tick_name_hook()
 {
-    token();
-    (*name_hook)();
-    compile_name();
-}
-
-void push_tick_name_hook()
-{
-    PUSH(&name_hook);
+    PUSH(&mu_name_hook);
 }
     
 /* 
@@ -300,15 +298,14 @@ variable last-word   ( last compiled word)
 
 static void init_chain(struct dict_entry **pchain, struct inm *pinm)
 {
-    while (pinm->name != NULL)
-	compile_init_name(pchain, pinm++);
-	
+    for (; pinm->name != NULL; pinm++)
+	compile_dict_entry(pchain, pinm->name, strlen(pinm->name), pinm->code);
 }
 
 void init_dict()
 {
-    init_chain(&dict_chain[0], initial_forth);
-    init_chain(&dict_chain[1], initial_compiler);
+    init_chain(&forth_chain, initial_forth);
+    init_chain(&compiler_chain, initial_compiler);
 }
 
 

@@ -3,7 +3,7 @@
  *
  * This file is part of muforth.
  *
- * Copyright 1997-2002 David Frech. All rights reserved, and all wrongs
+ * Copyright 1997-2003 David Frech. All rights reserved, and all wrongs
  * reversed.
  */
 
@@ -11,29 +11,29 @@
 
 #include "muforth.h"
 
-void push_h()			/* "here" code space pointer */
+void mu_push_h()		/* "here" code space pointer */
 {
     PUSH(&pcd);
 }
 
-void push_r()			/* "ram" space pointer */
+void mu_push_r()		/* "ram" space pointer */
 {
     PUSH(&pdt);
 }
 
-void push_s0()			/* address of stack bottom */
+void mu_push_s0()		/* address of stack bottom */
 {
     PUSH(S0);
 }
 
-void push_sp()			/* address of sp variable */
+void mu_push_sp()		/* address of sp variable */
 {
     PUSH(&sp);
 }
 
 /* copy string; return a counted string (addr of prefix count byte);
    ( a u c" - c") */
-void scrabble()
+void mu_scrabble()
 {
     struct string s;
     char *dest;
@@ -47,21 +47,21 @@ void scrabble()
     DROP(2);
 }
 
-void colon()
+void mu_colon()
 {
-    make_new_name();
-    minus_rbracket();
+    mu_make_new_name();
+    mu_minus_rbracket();
 }
 
-void minus_semicolon()
+void mu_minus_semicolon()
 {
-    lbracket();
+    mu_lbracket();
 }
 
-void semicolon()
+void mu_semicolon()
 {
-    compile_return();
-    minus_semicolon();
+    mu_compile_return();
+    mu_minus_semicolon();
 }
 
 /*

@@ -2,6 +2,8 @@
 : forth        .forth. definitions ;
 : compiler  .compiler. definitions ;
 
+: literal  load-literal push-literal ;
+
 : ]   literal -] ;
 : char	 token  drop  c@ ;
 
@@ -116,8 +118,10 @@ forth
 : u+  ( a b c - a+c b)  rot +  swap ;  ( "under-plus")
 : v+  ( x1 y1 x2 y2 - x1+x2 y1+y2)  push u+ pop + ;  ( add 2-vectors)
 
-: -1  [ 1 negate ] ;
-: 0   [ 1 1 xor ] ;
+( We don't even have any constants yet! So we make the easiest one first...)
+: 0   [ dup dup xor ] ;
+: -1  [ 0 invert ] ;
+: 1   [ -1 negate ] ;
 : 2   [ 1 2* ] ;
 
 : 1+   1 + ;  ( these are common)
@@ -147,10 +151,14 @@ forth
 : rshift  >> ;
 : urshift  u>> ;
 
+( 2003-sep-30. I've decided that "push ;" is too implementation-specific.)
+: execute  push ;  ( make an alias for it, once and for all)
+: @execute  @ execute ;
+
 ( Jumping through vectors of calls.)
 ( too 386-specific
 : 5*  dup  2* 2* + ;
-: jump  1+ 5*  pop +  dup cell - @  +  push ; )
+: jump  1+ 5*  pop +  dup cell - @  +  execute ; )
 
 ( XXX: I think this is wrong. There are two kinds of vectoring: jump'ing
   through a sequence of following compiled calls; or vectoring through an
@@ -160,7 +168,7 @@ forth
 
 ( XXX: can this be refactored to get rid of some of the swaps?)
 ( XXX: can this be got rid of entirely?)
-: vector    ( n a)  swap cells +  @ push ;
+: vector    ( n a)  swap cells +  @execute ;
 : |vector|  ( n a mask)  rot and  swap  vector  ;
 
 ( Compiler nuts and bolts.)
@@ -175,7 +183,7 @@ forth
 
 ( Now `ctrl' and the compiler's "char" and "ctrl".)
 ( XXX: should be 64 xor? That's how you get ^? = 127.)
-: ctrl   char  [ bl 1-  ( 31) ]  and ;  ( elliptic, but it works :-)
+: ctrl   char  [ bl 1-  ( 31) ]  and ;  ( elliptical, but it works :-)
 compiler
 : char   \f char literal ;
 : ctrl   \f ctrl literal ;
@@ -183,13 +191,15 @@ forth
 
 
 ( Basic conditionals)
-: resolve>  ( src dest)  over -  swap cell- ! ;  ( 32-bit displacement)
-: <resolve  ( dest src)  swap resolve> ;
+: -tail   0 last ! ;  ( mark dest of forward jump as not tail-call convertible)
+: resolve   ( src dest - disp)  over -  swap cell- ! ( 32-bit displacement) ;
+: resolve>  ( src dest)  resolve -tail ;
+: <resolve  ( dest src)  swap resolve ;
 
 compiler
-: =if   ( - fwd)  load-sp           0branch ;  ( keeps tested value on stack)
-: if    ( - fwd)  load-sp  \c drop  0branch ;
-: then  ( fwd -)  here resolve>  0 last ! ;
+: =if   ( - src)  (=0branch) ;  ( keeps tested value on stack)
+: if    ( - src)   (0branch) ;
+: then  ( src)  here resolve> ;
 
 ( make \ more like ANS-Forth's POSTPONE)
 ( in our case, what do we compile?
@@ -199,30 +209,31 @@ compiler
 
 ( With a smart ] that makes a literal and with literal not a compiler word,
   this becomes easier:)
-: \   .compiler. -'  if  .forth. -"find  huh?
-      literal  ['] compile,  then  compile, ;
+: \   .compiler. -'  if
+         .forth. -"find  huh?  literal  ['] compile,  
+                                                     then  compile, ;
 
 ( A nice way to do full-line comments with no trailing delimiter.)
 forth
-: \\  ctrl J parse  2drop ;  ( throw away until a newline)
+: \  ctrl J parse  2drop ;  ( throw away until a newline)
 compiler
 
-\\ : else      ( fwd0 - fwd1)  branch  swap  \ then ;
+\ : else      ( src0 - src1)  (branch)  swap  \ then ;
 
-: begin   ( - back)  here ;
-: until   ( back -)      \ if  <resolve ;
-: =until  ( back -)     \ =if  <resolve ;
-: again   ( back -)    branch  <resolve ;
-: while   ( back - fwd back)   \ if  swap ;
-: =while  ( back - fwd back)  \ =if  swap ;
-: repeat  ( fwd back -)     \ again  \ then ;
+: begin   ( - dest)  here ;
+: =until  ( dest -)     \ =if  <resolve ;
+: until   ( dest -)      \ if  <resolve ;
+: again   ( dest -)  (branch)  <resolve ;
+: =while  ( dest - src dest)  \ =if  swap ;
+: while   ( dest - src dest)   \ if  swap ;
+: repeat  ( src dest -)     \ again  \ then ;
 
 ( n for .. next         goes n times; 4 billion+ if n=0 )
 ( n ?for .. next then   goes n times; 0 if n=0 )
 
-: for     ( - back)      \ push  \ begin ;
-: ?for    ( - fwd back)  _?for   \ begin ;
-: next    ( back -)      _next  <resolve ;
+: for     ( - dest)      \ push  \ begin ;
+: ?for    ( - src dest)  (?for) ;
+: next    ( dest)        (next)  <resolve ;
 
 forth
 ( To bracket comments in a flexible way.)
@@ -429,9 +440,9 @@ forth
 : variable       cell buffer ;
 : 2variable   2 cells buffer ;
 
-: ;does   literal-load  pop compile, \ ^ ;
+: ;does   load-literal  pop compile, \ ^ ;
 compiler
-: does>   ['] ;does compile,  literal-push ;
+: does>   ['] ;does compile,  push-literal ;
 forth
 
 
@@ -446,7 +457,7 @@ forth
   to the code that follows it; this way a complete load-and-call-push could
   be compiled, then partly un-compiled when the does comes along.
 
-  But does> has compiled a literal-push [call push_literal] into the parent
+  But does> has compiled a push-literal [call push_literal] into the parent
   word at the start of its shared does code; this needs to immediately
   follow a register load in the child word. Which means, once again, that
   no code can intervene between the two. In fact, as I have envisioned
@@ -473,15 +484,21 @@ forth
 
 comment XXXperimental 
 ( -create is basically the same as "here".)
-: create   name  literal-load ;  ( loads a constant)
-: constant  create  literal-push  \ ^ ;  ( syntactic sugar for : foo  89 ; )
-: buffer  ram constant  allot ;
-: variable       cell buffer ;
-: 2variable   2 cells buffer ;
+: create   name  load-literal ;  ( loads a constant)
+: constant  create  push-literal  \ ^ ;  ( syntactic sugar for : foo  89 ; )
+: 'buffer  ram constant ;
+: buffer   'buffer allot ;
+
+: variable    'buffer  0 , ;
+: 2variable   'buffer  0 , 0 , ;
+
+( These depended on the data space being zeroed, which makes me nervous:
+  : variable       cell buffer ;
+  : 2variable   2 cells buffer ; )
 
 : ;does   -compile  pop compile, \ ^ ;
 compiler
-: does>   ['] ;does compile,  literal-push ;
+: does>   ['] ;does compile,  push-literal ;
 forth
 XXXperimental 
 
@@ -497,7 +514,7 @@ XXXperimental
   value to change it.
 
   The main argument _against_ deferred words is that they aren't orthogonal
-  w.r.t _user_ variables. The way we are defining them here they are
+  w.r.t. _user_ variables. The way we are defining them here they are
   implemented using a global, system variable. On muForth, we don't care,
   because we don't _have_ user variables; but on a properly multithreaded
   target machine things are different. There we probably wouldn't implement
@@ -507,7 +524,7 @@ XXXperimental
 
   That and that "vectoring" them isn't strictly postfix.)
 
-: defer  create  ram  ['] nope ,  does> @ push ;
+: defer  create  ram  ['] nope ,  does> @execute ;
 : >data  1+ @ ;  ( given code addr of does word, fetch its constant)
 : 'data  ' >data ;
 
@@ -520,23 +537,6 @@ compiler
 : now  \f now  literal ;
 : is   \ ['data]  \ ! ;
 forth
-
-
-( Now that we have create/does>, lets add a few more compiler tidbits.)
-( These compile 1-4 bytes of machine code.)
-: asm,  create  does>  swap  here !  h +! ;
-   1 asm, 1,
-   2 asm, 2,
-2 1+ asm, 3,
-cell asm, 4,
-
-
-( Defining new dictionary chains.)
-( XXX: shouldn't these just be alloted from ram as needed? we don't have
-  marker and empty right now.)
-
-variable .last.  .compiler. .last. !
-: chain  .last. @  cell+ dup constant  .last. ! ;
 
 
 ( Number input)
@@ -648,8 +648,8 @@ defer ?radix
 'number !
 
 ( Make it easy to call "number" and "number," from interpreter mode words.)
-: number   'number  @ push ;
-: number,  'number, @ push ;
+: number   'number  @execute ;
+: number,  'number, @execute ;
 
 
 ( Basic character i/o.)
@@ -713,7 +713,7 @@ variable fd-out
 
 : spaces  ( n)  0 max  ?for  space  next  then  ;
 
-65 allot ram constant pad  ( 64 digits + sign + alignment)
+: pad  [ 65 allot ram ] ;  ( 64 digits + sign + alignment)
 variable hld
 : hold   -1 hld +!  hld @ c! ;
 
@@ -811,16 +811,28 @@ forth
 
 ( To warn of re-defining a word.)
 -: ( a u)  2dup current @ -"find if 2drop ^ then
-   drop  2dup type ."  again.  " ;  'name-hook !
-
+   drop  2dup type ."  again.  " ;
+: -redef  [lit] 'name-hook ! ;
+-redef
 
 ( A useful list of words as they're being defined.)
-: being-defined  ( a u)   current @ ( chain) .  2dup type  cr ;
-: verbose  ['] being-defined  'name-hook ! ;
-: -v  verbose ;
+-: ( a u)   current @ ( chain) . here .  2dup type  cr ;
+: -v  [lit] 'name-hook ! ;  ( be verbose)
+
+( You can only do one of these at a time! Is there an easy way to hook
+  the hook?)
 
 
 ( Ok. Tiny asm!)
+comment do-this-but-later!
+
+( These compile 1-4 bytes of machine code.)
+: asm,  create  does>  swap  here !  h +! ;
+   1 asm, 1,
+   2 asm, 2,
+   3 asm, 3,
+   4 asm, 4,
+
 variable offset  ( for effective memory addresses)
 variable sib     ( sib byte )
 variable immed
@@ -871,19 +883,20 @@ octal
 : mov  d-bit  [ hex 89 octal ] xor 1,  ea, ;
 : addi    [ hex 83 ] 1,  0 ea,  1, ;
 compiler
-: time  [ hex 310f ] 2,  'sp ) c mov  [ 8 negate ] 'sp ) addi
+: time  [ hex 310f ] 2,  sp ) c mov  [ 8 negate ] sp ) addi
    a [ 4 negate ] c r) mov     d [ 8 negate ] c r) mov ;
 forth
 
 ( a fun test)
 decimal
 : t time ;  ( contents of TSC: time since boot in processor clock ticks)
-: clockspeed  750000000 ;  ( on starbuck, a 750 M Athlon)
+( : clockspeed  750000000 ;  ( on starbuck, a 750 M Athlon)
+: clockspeed  597070000 ;  ( on stubb, a 600 M Celeron/P3)
 : uptime  ( - s)  t clockspeed um/mod nip ;
 
 ( PCI bus scan!)
-: getsp  ( r)  'sp ) swap mov ;
-: sp+    ( o)  'sp ) addi ;
+: getsp  ( r)  sp ) swap mov ;
+: sp+    ( o)  sp ) addi ;
 : ret  "c3 1, ;
 create out  c getsp  0 c r) d mov  4 c r) a mov  "ef 1, 8 sp+  ret
 create in   c getsp  0 c r) d mov  "ed 1,  a 0 c r) mov  ret
@@ -901,6 +914,7 @@ c 0 bp c 2 ri) mov
 
 decimal
 : big  -1 -1 um*  1000000 for  2dup (ud.) 2drop next  2drop ;
+do-this-but-later!
 
 comment asmXXX
 : ,s  for  1,  next ;
@@ -916,7 +930,7 @@ asmXXX
 ( !!!!-------------------- Add changes below this line -------------------!!!!)
 
 ( Word listing. Putting this in as soon as possible. Needs `space'.)
-: link>name  2 cells +  count ;
+: link>name  [ 2 cells ] +  count ;
 : words   0  current @  ( count link)
   begin  @  =while  1 u+
             dup link>name type space space  repeat
@@ -959,8 +973,9 @@ asmXXX
 
 
 ( Useful stack dump.)
-( : sp!  s0 'sp ! ;   ( reset to an empty stack)
-( : sp@     'sp @ ;   ( get current stack position)
+( These don't work! For subtle reasons...)
+( : sp!  s0 sp ! ;   ( reset to an empty stack)
+( : sp@     sp @ ;   ( get current stack position)
 : depth  s0 sp@ - cell/ 1- ;
 
 : .s  ( stack)
@@ -1006,11 +1021,16 @@ comment %%
 ( Compiler/interpreter modes.)
 : mode   create  ( prompt interpret)  ram push , ,   pop  does>  state ! ;
 
+( Defining new dictionary chains. These used to be in an array but are now
+  independent of each other; now they are simply variables that point to the
+  last-defined word on the chain.)
+: chain  variable ;
+
 chain .conditional.
-: conditional  .conditional. definitions ;
+: conditional   .conditional. definitions ;
 
 -:  ."  (inside a conditional)"  ;
--:  .conditional. -"find  if  2drop ^  then  push ;
+-:  .conditional. -"find  if  2drop ^  then  execute ;
 mode eat
 
 variable cond-nest
@@ -1035,9 +1055,13 @@ forth
 : [then]   ;
 : [with]    \ [with]  ;
 
-: trues  ( make a word that returns -1)  create  \ -1 \ ^ ;
+( A defining word that makes words that return -1)  
+: trues  create  \ -1 \ ^ ;
 
-( The defining word `with' for creating conditional compilation words.)
+( The defining word `with' for creating conditional compilation words.
+  No matter what chain we are compiling into, define the word - using
+  "trues" - in .forth.)
+
 : with   current @  forth  trues  definitions  ;
 
 ( Now, the main reason for doing this is to have `debug' and `eprom'
@@ -1055,10 +1079,8 @@ forth
    >stderr  cr over count type  2 spaces  .s  pop writes  ;  is unique-hook
 [then]
 
-( Utility)
-: 3*  dup 2* + ;     ( 3x = x + 2x)
-
 ( Just for fun)
+: 3*  dup 2* + ;     ( 3x = x + 2x)
 : 5*  dup 2* 2* + ;  ( 5x = x + 4x)
 : 10*  5* 2* ;
 
@@ -1101,7 +1123,8 @@ variable csp  ( what does this stand for? `check stack pointer'?)
 : month"  ( n - a #)  ( n is 0--11)
    3*  z" janfebmaraprmayjunjulaugsepoctnovdec"  +  3  ;
 
-( clock returns a count of seconds since 1970-jan-01 00:00:00 UTC.)
+( clock returns a count of seconds since 1970-jan-01 00:00:00 UTC,
+  the Unix "epoch".)
 
 : (date)   ( year month mday yday - 0 0)
    drop  ## "-  month" "hold "-  0 #s ( year)  ;
@@ -1122,12 +1145,17 @@ variable csp  ( what does this stand for? `check stack pointer'?)
 : time"   ( epoch - a #)  local-time                 (time")  ;
 : utc"    ( epoch - a #)         utc  2drop  s" UTC" (time")  ;
 
-( Better primitives??)
+( Better primitives? More elegant, certainly.)
 : s->smh   ( s - s m h)  60 u/mod  60 u/mod ;
 : s->smhd  ( s - s m h d)  s->smh  24 u/mod ;
-: smh->s  60 * +  60 * + ;
+: smh->s   60 * +  60 * + ;
 : smhd->s  24 * +  smh->s ;
 
+( If anyone had any idea how long a year really is, we could also define 
+  s->smhdy and smhdy->s. ;-)
+
+: smhq->s  6 * +  smh->s ;  ( sec min hr quarter-day)
+: smhdy->s  [ 365 3* 366 + ] * ( quarter-days/yr)  push 4 * pop +  smhq->s ;
 
 ( for command-line args)
 : ld  token  ram scrabble  1+  load-file ;
@@ -1143,7 +1171,7 @@ compiler
 forth
 -: ."  (compiling)"  'compiler-prompt  ;  !  ( bwa ha ha!)
 
-: .mode-prompt   state @  cell+  @ push ;  ( secondary prompt)
+: .mode-prompt   state @  cell+  @execute ;  ( secondary prompt)
 : .Ok   ."  Ok"  ;
 : prompt   .Ok  .mode-prompt  ;  ( ` Ok' then sub-prompt)
 
@@ -1187,7 +1215,7 @@ defer canonical
 
 
 ( Identify ourselves.)
--1 constant muForth
+-1 constant muforth
 
 comment %%
 ( marker, empty)

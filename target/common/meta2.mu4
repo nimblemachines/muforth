@@ -1,29 +1,52 @@
+( we can either do this with lots of deferred words or we can have the 
+  machine-dependent bits compiled first, then this file last.)
+
+machine
+defer literal  ( target compile a literal) ;
+defer number   ( convert host number to target format) ;
+defer number,  ( convert to target, make target literal)
+    ( \o number  if  \o 2literal  ^  then  \o literal  ; )
+defer compile,  ( compile an execution token on target) ;
+defer >data     ( get address of data of target item) ;
+defer remote   ( execute target word on remote target)
+
 inside
-: char   \f char  \o literal  ;
+: char   \f char  \m literal  ;
 : (    \f (  ;
 
-outside
-: number,  ( d t | n f)
-   ( |number)  number  if  \o 2literal  ^  then  \o literal  ;
-
-
+forth
 ( All the different search-execute-compile routines for different modes,
   and their associated prompts.)
 
 -:  ."  (assembling)"  ;
--:  assembler -"find if  outside -"find if  target -"find  if
-      ( not found)  number ^  then
-      ( target)  @  \o >data  ( target pfa contents)  ^  then  then
-      execute  ;
-mode assemble
+-:      .asm. -"find  if
+    .outside. -"find  if
+     .target. -"find  if  ( not found)  \m number ^ then
+                            ( target )   \m >data ^ then
+                     ( outside or asm)              then then  execute ;
+mode meta-asm
+
+comment in-the-kernel
+: _[   ( interpret one token)
+      .forth. -"find  if   number  ^ then  execute ;
+
+: _]   ( compile one token)
+   .compiler. -"find  if
+      .forth. -"find  if   number, ^ then
+                          compile, ^ then  execute ;    in-the-kernel
 
 -:  ."  (meta)"  ;
--:  outside -"find  if  ( |number)  number drop  ^  then  execute ;
-mode meta-interpret  ( outside)
+-:  .outside. -"find  if
+     .target. -"find  if  \m number ^ then
+                          \m remote ^ then  execute ;
+
+mode meta-outside
 
 -:  ."  (meta-compiling)"  ;
--:  inside -"find  if   target -"find  if  |number, ^  then then  execute ;
-mode meta-compile  ( inside)
+-:  .inside. -"find  if
+    .target. -"find  if  \m number, ^  then
+                        \m compile, ^  then  execute ;
+mode meta-inside
 
 assembler
 : comment   comment ;
@@ -92,35 +115,47 @@ variable head?
 
 : show   show ;
 
-( Meta structures - begin while until again repeat if then etc)
-: mark>      ( - fwd)    \o here  0  \o ,  ;
-: <resolve   ( back -)   \o ,  ;
+( Control structures)
+machine
+defer resolve>   ( src dest)  ( resolve forward branch)
+defer <resolve   ( dest src)  ( resolve backward branch)
+defer =0branch   ( - src)  ( compile target's non-destructive branch on zero)
+defer 0branch    ( - src)  ( compile target's branch on zero)
+defer branch     ( - src)  ( compile target's unconditional branch)
+defer for        ( - dest) ( compile target's for primitive)
+defer ?for       ( - src dest)  ( compile target's ?for primitive)
+defer next       ( - src)  ( compile target's next primitive)
 
 inside
-: begin   ( - back)  \o here  ;
-: until   ( back -)  \o ?branch,  ;
-: again   ( back -)  \a b  ;
-: then    ( fwd -)   \o here  swap  |+ !  ;
-: if      ( - fwd)        '0branch @  \o compile,  \o mark>  ;
-0 [if]
-: jump>   ( - fwd)         'branch @  \o compile,  \o mark>  ;
-: >jump   ( fwd back - back)   swap  \i then  ;
-[then]
-: while   ( back - fwd back)  \i if   swap  ;
-: repeat  ( fwd back -)       \i again   \i then  ;
-: _else   ( fwd0 - fwd1)      \i jump>   \i >jump  ;  ( strange but true)
-: for     ( - back)     <asm  t rpush  t pop  asm>  \i begin ;
-: ?for    ( - fwd back) <asm  t t t or  0= \o mark>   \i begin  ;
-: next    ( back -)      'next @  \o compile,  \o <resolve  ;
+: =if   ( - src)  \m =0branch ;  ( keeps tested value on stack)
+: if    ( - src)  \m  0branch ;
+: then  ( src)    \o here  \m resolve> ;
 
-( .. FIRST .. BEGIN .. THEN <test> UNTIL .. ; FIRST jumps to THEN)
-( n for .. next        goes n times; 4g+ if n=0 )
-( n ?for .. next then  goes n times; 0 if n=0 )
+: begin   ( - dest)  \o here ;
+: =until  ( dest)     \i =if  \m <resolve ;
+: until   ( dest)      \i if  \m <resolve ;
+: again   ( dest)  \m branch  \m <resolve ;
+: =while  ( dest - src dest)  \i =if  swap ;
+: while   ( dest - src dest)   \i if  swap ;
+: repeat  ( src dest)    \i again  \i then ;
 
+( n for .. next         goes n times; _lots_ if n=0 )
+( n ?for .. next then   goes n times; 0 if n=0 )
+
+: for     ( - dest)       \m for ;
+: ?for    ( - src dest)  \m ?for ;
+: next    ( dest)        \m next  \m <resolve ;
 
 ( Compiler and interpreter.)
-: [   meta-interpret  ;
-: -;   \o show       \i [  ;
+inside
+: [    meta-outside ;
+: -]   meta-inside  ;
+: ;    \i ^  \i [  ;
+
+outside
+: :   \m name  \i -] ;  ( XXX: can this be made totally generic?)
+
+forth
 
 : -code  \o here  assemble  ;
 : codes  \a c;  ( exit assembler)  dup |+ @  constant  |h !  does>  \o ,  ;
@@ -219,7 +254,7 @@ definer
 
 ( This is a little bit subtle. We want access to `forth' words, which we
   want to COMPILE, and to `compiler' words, which we want to EXECUTE.)
-: \   compiler -' if  forth -"find  huh?  compile,  ^  then  push ;
+: \   compiler -' if  forth -"find  huh?  compile,  ^  then  execute ;
 
 
 ( Assembler helpers.)

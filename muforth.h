@@ -54,162 +54,166 @@ extern char **cmd_line_argv;
 extern u_int8_t *pnm0, *pcd0, *pdt0;	/* ptrs to name, code, & data spaces */
 extern u_int8_t *pnm, *pcd, *pdt;    /* ptrs to next free byte in each space */
 
-void (*number)();
-void (*number_comma)();
-void (*name_hook)();			/* called when a name is created */
+extern void (*mu_number)();
+extern void (*mu_number_comma)();
+extern void (*mu_name_hook)();		/* called when a name is created */
 
 /* declare common functions */
+/* muforth.c */
+void mu_push_name_size(void);
+void mu_push_code_size(void);
+void mu_push_data_size(void);
+
 /* error.c */
 void die(const char *msg);
-void catch(void);
-void throw(void);
+void mu_catch(void);
+void mu_throw(void);
 
 /* file.c */
-void create_file(void);
-void open_file(void);
-void push_ro_flags(void);
-void push_rw_flags(void);
-void close_file(void);
-void mmap_file(void);
-void load_file(void);
-void read_carefully(void);  /* XXX: temporary */
-void write_carefully(void); /* XXX: temporary */
+void mu_create_file(void);
+void mu_open_file(void);
+void mu_push_ro_flags(void);
+void mu_push_rw_flags(void);
+void mu_close_file(void);
+void mu_mmap_file(void);
+void mu_load_file(void);
+void mu_readable_q();
+void mu_read_carefully(void);  /* XXX: temporary */
+void mu_write_carefully(void); /* XXX: temporary */
 
 
 /* i386.c */
-void compile_call(void);
-void compile_jump(void);
-void compile_return(void);
-void push_last_call(void);
-void compile_drop(void);
-void compile_2drop(void);
-void compile_literal(void);
-void compile_literal_load(void);
-void compile_literal_push(void);
-void compile_sp_to_eax(void);
-void compile_zbranch(void);
-void compile_branch(void);
-void compile_push_to_r(void);
-void compile_2push_to_r(void);
-void compile_shunt(void);
-void compile_pop_from_r(void);
-void compile_2pop_from_r(void);
-void compile_copy_from_r(void);
-void compile_qfor(void);
-void compile_next(void);
-void dplus(void);
-void dnegate(void);
-void um_star(void);
-void m_star(void);
-void um_slash_mod(void);
-void fm_slash_mod(void);
-void jump(void);
+void mu_compile_call(void);
+void mu_compile_jump(void);
+void mu_compile_return(void);
+void mu_push_last_call(void);
+void mu_compile_drop(void);
+void mu_compile_2drop(void);
+void mu_compile_literal_load(void);
+void mu_compile_literal_push(void);
+void mu_compile_destructive_zbranch();
+void mu_compile_nondestructive_zbranch();
+void mu_compile_branch(void);
+void mu_compile_push_to_r(void);
+void mu_compile_2push_to_r(void);
+void mu_compile_shunt(void);
+void mu_compile_pop_from_r(void);
+void mu_compile_2pop_from_r(void);
+void mu_compile_copy_from_r(void);
+void mu_compile_qfor(void);
+void mu_compile_next(void);
+void mu_dplus(void);
+void mu_dnegate(void);
+void mu_um_star(void);
+void mu_m_star(void);
+void mu_um_slash_mod(void);
+void mu_fm_slash_mod(void);
+void mu_jump(void);
 
 /* interpret.c */
-void start_up(void);
-void nope(void);
-void zzz(void);
-void token(void);
-void parse(void);
-void huh(void);
-void complain(void);
-void depth(void);
-void interpret(void);
-void evaluate(void);
-void push_tick_number(void);
-void push_tick_number_comma(void);
-void push_state(void);
-void lbracket(void);
-void minus_rbracket(void);
-void push_parsed(void);
-void bye(void);
+void mu_start_up(void);
+void mu_nope(void);
+void mu_zzz(void);
+void mu_token(void);
+void mu_parse(void);
+void mu_huh(void);
+void mu_complain(void);
+void mu_depth(void);
+void mu_interpret(void);
+void mu_evaluate(void);
+void mu_push_tick_number(void);
+void mu_push_tick_number_comma(void);
+void mu_push_state(void);
+void mu_lbracket(void);
+void mu_minus_rbracket(void);
+void mu_push_parsed(void);
+void mu_bye(void);
 
 /* compile.c */
-void push_h(void);
-void push_r(void);
-void push_s0(void);
-void push_sp(void);
-void scrabble(void);
-void colon(void);
-void semicolon(void);
-void minus_semicolon(void);
+void mu_push_h(void);
+void mu_push_r(void);
+void mu_push_s0(void);
+void mu_push_sp(void);
+void mu_scrabble(void);
+void mu_colon(void);
+void mu_semicolon(void);
+void mu_minus_semicolon(void);
 
 /* dict.c */
-void definitions(void);
-void forth_chain(void);
-void compiler_chain(void);
-void push_current(void);
-void minus_quote_find(void);
-void show(void);
-void make_new_name(void);
-void push_tick_name_hook(void);
+void mu_definitions(void);
+void mu_push_forth_chain(void);
+void mu_push_compiler_chain(void);
+void mu_push_current(void);
+void mu_minus_quote_find(void);
+void mu_show(void);
+void mu_make_new_name(void);
+void mu_push_tick_name_hook(void);
 void init_dict(void);
 
 /* buf.c */
 
 /* kernel.c */
-void add(void);
-void and(void);
-void or(void);
-void xor(void);
-void negate(void);
-void invert(void);
-void two_star(void);
-void two_slash(void);
-void two_slash_unsigned(void);
-void shift_left(void);
-void shift_right(void);
-void shift_right_unsigned(void);
-void fetch(void);
-void cfetch(void);
-void store(void);
-void cstore(void);
-void plus_store(void);
-void drop(void);
-void two_drop(void);
-void const_one(void);
-void rot(void);
-void minus_rot(void);
-void dupe(void);
-void nip(void);
-void swap(void);
-void over(void);
-void tuck(void);
-void string_equal(void);
-void uless(void);
-void zless(void);
-void zequal(void);
-void less(void);
-void sp_fetch(void);
-void sp_store(void);
-void cmove(void);
-void string_length(void);
-void push_version(void);
-void push_build_time(void);
-void push_argc(void);
-void push_argv(void);
+void mu_add(void);
+void mu_and(void);
+void mu_or(void);
+void mu_xor(void);
+void mu_negate(void);
+void mu_invert(void);
+void mu_two_star(void);
+void mu_two_slash(void);
+void mu_two_slash_unsigned(void);
+void mu_shift_left(void);
+void mu_shift_right(void);
+void mu_shift_right_unsigned(void);
+void mu_fetch(void);
+void mu_cfetch(void);
+void mu_store(void);
+void mu_cstore(void);
+void mu_plus_store(void);
+void mu_drop(void);
+void mu_two_drop(void);
+void mu_rot(void);
+void mu_minus_rot(void);
+void mu_dupe(void);
+void mu_nip(void);
+void mu_swap(void);
+void mu_over(void);
+void mu_tuck(void);
+void mu_string_equal(void);
+void mu_uless(void);
+void mu_zless(void);
+void mu_zequal(void);
+void mu_less(void);
+void mu_sp_fetch(void);
+void mu_sp_store(void);
+void mu_cmove(void);
+void mu_string_length(void);
+void mu_push_version(void);
+void mu_push_build_time(void);
+void mu_push_argc(void);
+void mu_push_argv(void);
 
 /* time.c */
-void local_time(void);
-void global_time(void);
-void push_clock(void);
+void mu_local_time(void);
+void mu_global_time(void);
+void mu_push_clock(void);
 
 /* pci.c */
 #ifdef __FreeBSD__
-void pci_read(void);
-void pci_open(void);
+void mu_pci_read(void);
+void mu_pci_open(void);
 #endif
 
 /* tty.c */
-void get_termios(void);
-void set_termios(void);
-void set_termios_raw(void);
-void set_termios_min_time(void);
-void set_termios_speed(void);
+void mu_get_termios(void);
+void mu_set_termios(void);
+void mu_set_termios_raw(void);
+void mu_set_termios_min_time(void);
+void mu_set_termios_speed(void);
 
 /* select.c */
-void my_fd_zero(void);
-void my_fd_set(void);
-void my_fd_clr(void);
-void my_fd_isset(void);
-void my_select(void);
+void mu_fd_zero(void);
+void mu_fd_set(void);
+void mu_fd_clr(void);
+void mu_fd_isset(void);
+void mu_select(void);

@@ -24,20 +24,45 @@ u_int8_t *pnm0, *pcd0, *pdt0;	   /* ptrs to name, code, & data spaces */
 u_int8_t *pnm, *pcd, *pdt;	/* ptrs to next free byte in each space */
 
 
-void read_init_file()
+static void mu_find_init_file()
 {
     PUSH("startup.mu4");
-    load_file();
+    mu_readable_q();
+    if (POP) return;
+
+    PUSH("/usr/local/share/muforth/startup.mu4");
+    mu_readable_q();
+    if (POP) return;
+
+    die("couldn't find startup.mu4 init file");
 }
 
-void allocate()
+void mu_push_name_size()
 {
-    pnm0 = (char *) mmap(0, 256 * 4096, PROT_READ | PROT_WRITE,
+    PUSH(pnm - pnm0);
+}
+
+void mu_push_code_size()
+{
+    PUSH(pcd - pcd0);
+}
+
+void mu_push_data_size()
+{
+    PUSH(pdt - pdt0);
+}
+
+static void allocate()
+{
+    pnm0 = (u_int8_t *) mmap(0, 256 * 4096, PROT_READ | PROT_WRITE,
 			  MAP_ANON | MAP_PRIVATE, -1, 0);
-    pcd0 = (char *) mmap(0, 256 * 4096, PROT_READ | PROT_WRITE | PROT_EXEC,
+
+    pcd0 = (u_int8_t *) mmap(0, 256 * 4096, PROT_READ | PROT_WRITE | PROT_EXEC,
 			  MAP_ANON | MAP_PRIVATE, -1, 0);
-    pdt0 = (char *) mmap(0, 1024 * 4096, PROT_READ | PROT_WRITE,
+
+    pdt0 = (u_int8_t *) mmap(0, 1024 * 4096, PROT_READ | PROT_WRITE,
 			 MAP_ANON | MAP_PRIVATE, -1, 0);
+
     if (pnm0 == MAP_FAILED || pcd0 == MAP_FAILED || pdt0 == MAP_FAILED)
 	die("couldn't allocate memory");
 
@@ -54,8 +79,9 @@ int main(int argc, char *argv[])
 
     allocate();
     init_dict();
-    read_init_file();
-    start_up();
+    mu_find_init_file();
+    mu_load_file();
+    mu_start_up();
     return 0;
 }
 

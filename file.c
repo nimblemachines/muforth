@@ -20,7 +20,51 @@
 #include <unistd.h>
 #include <errno.h>
 
-void create_file()		/* C-string-name - fd */
+/* if found and readable, leave name and push -1;
+ * if not found or not readable, drop name and push 0
+ */
+void mu_readable_q()
+{
+    struct stat st;
+    uid_t euid;
+    gid_t egid;
+
+    /* get our effective UID & GID for testing the file permissions */
+    euid = geteuid();
+    egid = getegid();
+
+    if (stat((char *)TOP, &st) == -1)
+    {
+	TOP = 0;	/* failed */;
+	return;
+    }
+
+    /* test for user perms */
+    if (st.st_uid == euid && (st.st_mode & 0400))
+    {
+	PUSH(-1);	/* success */
+	return;
+    }
+
+    /* test for group perms */
+    if (st.st_gid == egid && (st.st_mode & 0040))
+    {
+	PUSH(-1);	/* success */
+	return;
+    }
+
+    /* test for world (other) perms */
+    if (st.st_mode & 0004)
+    {
+	PUSH(-1);	/* success */
+	return;
+    }
+
+    /* failed all tests, return false */
+    TOP = 0;
+}
+
+void mu_create_file()		/* C-string-name - fd */
 {
     int fd;
 
@@ -29,12 +73,12 @@ void create_file()		/* C-string-name - fd */
     {
 	/* TOP = (int) "couldn't open"; */
 	TOP = (int) strerror(errno);
-	throw();
+	mu_throw();
     }
     TOP = fd;
 }
 
-void open_file()		/* C-string-name flags - fd */
+void mu_open_file()		/* C-string-name flags - fd */
 {
     int fd;
 
@@ -43,23 +87,23 @@ void open_file()		/* C-string-name flags - fd */
     {
 	/* TOP = (int) "couldn't open"; */
 	TOP = (int) strerror(errno);
-	throw();
+	mu_throw();
     }
     STK(1) = fd;
     DROP(1);
 }
 
-void push_ro_flags()
+void mu_push_ro_flags()
 {
     PUSH(O_RDONLY);
 }
 
-void push_rw_flags()
+void mu_push_rw_flags()
 {
     PUSH(O_RDWR);
 }
 
-void close_file()
+void mu_close_file()
 {
     for (;;)
     {
@@ -67,14 +111,14 @@ void close_file()
 	{
 	    if (errno == EINTR) continue;
 	    TOP = (int) strerror(errno);
-	    throw();
+	    mu_throw();
 	}
 	break;
     }
     DROP(1);
 }
 
-void mmap_file()		/* fd - addr len */
+void mu_mmap_file()		/* fd - addr len */
 {
     char *p;
     struct stat s;
@@ -86,14 +130,14 @@ void mmap_file()		/* fd - addr len */
     {
 	close(fd);
 	TOP = (int) strerror(errno);
-	throw();
+	mu_throw();
     }
     p = (char *) mmap(0, s.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
     if (p == MAP_FAILED)
     {
 	close(fd);
 	TOP = (int) strerror(errno);
-	throw();
+	mu_throw();
     }
 
     TOP = (int) p;
@@ -103,22 +147,22 @@ void mmap_file()		/* fd - addr len */
     /* PUSH(s.st_size); */
 }
 
-void load_file()
+void mu_load_file()
 {
     int fd;
 
     PUSH(O_RDONLY);
-    open_file();
+    mu_open_file();
     fd = TOP;
-    mmap_file();
-    PUSH(evaluate);
-    catch();
+    mu_mmap_file();
+    PUSH(mu_evaluate);
+    mu_catch();
     close(fd);
-    throw();
+    mu_throw();
 }
 
 /* NOTE: These two routines will be obsoleted by buf_* routines. */
-void read_carefully()
+void mu_read_carefully()
 {
     int fd;
     char *buffer;
@@ -137,14 +181,14 @@ void read_carefully()
 	{
 	    if (errno == EINTR) continue;
 	    TOP = (int) strerror(errno);
-	    throw();
+	    mu_throw();
 	}
 	break;
     }
     TOP = count;
 }
 
-void write_carefully()
+void mu_write_carefully()
 {
     int fd;
     char *buffer;
@@ -163,7 +207,7 @@ void write_carefully()
 	{
 	    if (errno == EINTR) continue;
 	    PUSH(strerror);
-	    throw();
+	    mu_throw();
 	}
 	buffer += written;
 	len -= written;

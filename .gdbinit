@@ -1,8 +1,6 @@
 define regs
 disp/4xw sp
 disp/a $esp
-disp/a $ebp
-disp/a $esp
 disp/a $esi
 disp/a $edi
 disp/a $edx
@@ -16,15 +14,11 @@ define stk
 x/a $esp
 end
 
-define rstk
-x/a $ebp
-end
-
 regs
 
-break zzz
+break mu_zzz
 
-set args -d debug -f arm.mu4 -f ARM/module.mu4
+#set args -d debug -f arm.mu4 -f ARM/module.mu4
 
 
 

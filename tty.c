@@ -19,7 +19,7 @@
 
 /* XXX: Use cfmakeraw, cfsetispeed, cfsetospeed? */
 
-void get_termios()
+void mu_get_termios()
 {
     tcgetattr(STK(1), (struct termios *)TOP);
 
@@ -27,18 +27,18 @@ void get_termios()
     DROP(1);
 }
 
-void set_termios()
+void mu_set_termios()
 {
     /* drain out, flush in, set */
     if (tcsetattr(STK(1), TCSAFLUSH, (struct termios *)TOP) == -1)
     {
 	TOP = (int) strerror(errno);
-	throw();
+	mu_throw();
     }
     DROP(2);
 }
 
-void set_termios_raw()
+void mu_set_termios_raw()
 {
     struct termios *pti = (struct termios *) TOP;
 
@@ -56,7 +56,7 @@ void set_termios_raw()
     DROP(1);
 }
 
-void set_termios_min_time()
+void mu_set_termios_min_time()
 {
     struct termios *pti = (struct termios *) STK(2);
     pti->c_cc[VMIN] = STK(1);
@@ -64,7 +64,7 @@ void set_termios_min_time()
     DROP(3);
 }
 
-void set_termios_speed()
+void mu_set_termios_speed()
 {
     struct termios *pti = (struct termios *) STK(1);
 
@@ -80,7 +80,7 @@ void set_termios_speed()
 	BPS(230400);
     default:
 	TOP = (int) "Unsupported speed";
-	throw();
+	mu_throw();
     }
     pti->c_ospeed = pti->c_ispeed = TOP;
     DROP(2);
@@ -88,7 +88,7 @@ void set_termios_speed()
 
 #if 0
 /* This is for testing - to see what libc considers raw mode. */
-void raw_termios()
+void mu_raw_termios()
 {
     struct termios before;
     struct termios after;
