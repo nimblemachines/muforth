@@ -26,8 +26,6 @@ From startup.mu4:
   represent "micro". I had called it "nu" Forth, because it was new, but I
   like this nu Greek letter better.
 
-
-
 Why another Forth?
 ^^^^^^^^^^^^^^^^^^
 In other words, why not keep using dforth, an earlier Linux Forth I wrote
@@ -43,7 +41,6 @@ dforth has some qualities that I now construe as defects, including:
   was interested in exporing alternatives;
 
 * a very big kernel, with lots of task-specific code
-
 
 I wanted to go the other way. My desiderata included the following:
 
@@ -100,7 +97,6 @@ First talk about the things derived from CF:
 
 Ideas from colorforth
 ^^^^^^^^^^^^^^^^^^^^^
-
 In colorforth the color of a word specifies what the interpreter should do
 with it. Red means define a new word; the token in red is the name of the
 new word. Yellow means execute; green means compile. There are some other
@@ -134,7 +130,6 @@ which is much nicer. A few neat examples, from startup.mu4:
   : 0   [ dup dup xor ] ;
   : -1  [ 0 invert ] ;
   : 1   [ -1 negate ] ;
-
 
 Since there isn't really any compiler "state" in colorforth - each word
 tells the interpreter, by its color, how to treat it - there is no need to
@@ -203,22 +198,15 @@ Things taken from cmFORTH (also mostly existed in dforth):
 Then talk about the things that I took from dforth or invented for muforth:
 
 
-- create/does> "constant" implementation
 * the UNIVERSAL literal
 
 * number parsing code all high-level; not even constants in kernel!
-* currently uses GNU make, so gmake on BSD
-
-Simple native code compiler
-  how compile, works
-  tail call conversion
-  the role of last, -tail
-  stack manipulation
-  structure compilers, high-level and low-
 
 
 Forgetting
 ^^^^^^^^^^
+muforth is like an elephant; it never forgets. ;-)
+
 muforth does not define the common Forth word "forget", nor does it define
 "empty", as colorforth does. In the presence of deferred words, any kind of
 "forget" is error-prone. I find it better to quit and reload. This has
@@ -240,7 +228,8 @@ but also create/does>. I'll talk about create/does> in a later section.
 Except in a few places - throw comes to mind - a string in muforth is
 represented on the stack by a tuple: (start, length). start points to the
 first character; length is the length. The string may or may not be
-zero-terminated; no muforth depends on the presence of such termination.
+zero-terminated; no muforth code depends on the presence of such
+termination.
 
 But what about saving strings for later use? Now we have to have a
 structure for strings in memory, and we'd like it to be C compatible, since
@@ -256,7 +245,7 @@ string is an array of the characters. termination is a single null
 character - always present in compiled strings! And padding gets us to a
 cell boundary.
 
-Unlike traditional Forth, I compile the string into "data" space, not code
+Unlike traditional Forths, I compile the string into "data" space, not code
 space. Then I compile a literal that at runtime pushes the address, not of
 length, but of string. This way I can easily pass it to C code, and I can
 just as easily convert it to a canonical muforth (start, length) string by
@@ -277,12 +266,11 @@ being neatly postfix as well. If I want a literaled compiled string to push
 (start, length) I simply follow the literal with a call to count. Look for
 "string," in startup.mu4 and you'll see how it all works.
 
-
 Tokenizing the input
 ^^^^^^^^^^^^^^^^^^^^
 This is one of the cool innovations in muforth.
 
-In muforth I defined a notional string type, called "text", that is better
+In muforth I define a notional string type, called "text", that is better
 suited to tokenizing. I say "notional" because it never shows up in the
 language, only in the C implementation. A text is something a bit odd. I'll
 explain.
@@ -379,35 +367,34 @@ return the token
 and the interpreter code is smart enough to recognize this zero-length token
 as the end.
 
-* differences between token and parse.
+So how do we interpret text typed by the user or loaded from a file?
 
-Even though muforth uses the Linux/BSD file system (and has no BLOCK words as
-yet) the input words look like those on a BLOCK-based Forth. Why is this?
-Source is always read from a -buffer-. The double variable `source' holds
-the current address of the next character to read, and the count of
-characters left to read. Interactive input is buffered line-by-line. In
-this case, `source' points into this line buffer. File input is
-memory-mapped. In this case, the -whole source file- is mapped as a single
-buffer, and `source' points into it. So we never have to worry about words
-crossing buffer boundaries. The miracles of virtual memory!
+In the first case, simply call interpret with the tuple (start, length)
+that describes the buffer holding the input text that the user typed in.
+(It's called "typing" in startup.mu4.)
 
-For this to work under Linux, however, we have to -map- the input
-characters so that all whitespace is treated like a space (ASCII 32). The
-easiest way is a 256 character lookup table, which is an identity map
-except for a handful of control characters: tab, line-feed, return,
-form-feed, vertical tab, and I think even backspace. These all map to ASCII
-32. I may change this so that -all- control characters map to space.
+For files, we simply mmap them, and then pass the (buffer, length) tuple to
+interpret! This make muforth's interpreter code look much more like a
+BLOCK-based Forth - which it isn't - than the file-based Forth that it is. 
 
-See `token' for details.
+Nested loading of files is possible because the file loading code actually
+calls evaluate (rather than interpret directly), which saves the current
+source and first, calls interpret on the new file's mmap'ed text, then
+restores the old source and first, and keeps going from there.
 
-Dictionary
-^^^^^^^^^^
+Since nested interpretation of the typing buffer isn't possible, it is
+interpreted directly, with no call to evaluate (see quit in startup.mu4).
+
+The dictionary
+^^^^^^^^^^^^^^
 The dictionary in muforth is very simple. It is a set of intertwined linked
 lists of words. Each list represents what I call a chain, and consists of
 related words. The head of each chain is the word most recently defined on
 that chain.
 
-The dictionary space is linearly allocated. Each entry consists of:
+The dictionary space is linearly allocated. Each entry consists of a tuple:
+
+  (link, code, count, name, padding)
 
   * a link pointer to the previous word on the same chain;
   * a pointer to the machine code associated with the word;
@@ -691,10 +678,8 @@ then" in our own code.
 Of course, I haven't given any good reason for using \ over \c to compile
 references in compiling words to other compiling words. Oh well.
 
-
-Simple and tail-recursive native compiler
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
+The joy of tail recursion
+^^^^^^^^^^^^^^^^^^^^^^^^^
 Tail-recursion was a motivation for writing muforth. What the heck is that,
 you ask. Fair enough.
 
@@ -746,3 +731,306 @@ compiled after the "jump foo". Strange but true!
 
   : foo  if a b c foo then ;
 
+Simple and tail-recursive native compiler
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Since muforth text is compiled into native code, we need to define a
+compiler. Compilers are usually big and complicated, and take a long time
+to write. This is because most languages are big and complicated, and also
+because the compiler writers are interested in the best runtime performance
+they can get.
+
+Forth is simple, and with muforth I'm really more interested in simplicity,
+ease of use, and ease of understanding than in raw performance. The code
+that the compiler generates frankly sucks, but it's really simple.
+Amazingly even sucky code can run fast enough to be perfectly usable and
+useful!
+
+So, how does it work?
+
+Like most Forths, muforth spends most of its time generating sequences of
+calls to words. Threaded Forths do the same thing: they compile sequences
+of "execution tokens" (to use the FORTH-83 and ANS term) which are
+essentially calls with the call opcode stripped off. So, at the lowest
+level, almost everything that gets compiled in muforth is a call.
+
+The compiler "remembers" the address of the last call instruction that it
+compiled, and so when we're about to compile a "return" to exit from the
+word, if the last instruction compiled was a call (and therefore it's in
+tail position), it gets converted to a jump.
+
+That's pretty simple. But what else is there?
+
+One of the issues with writing muforth was that gcc didn't let me define a
+global register variable to use for the stack pointer or the top of stack,
+both of which, in the absence of gcc limitations, I wanted. I can't think
+of a way to generate even _reasonably_ good code unless I have those two
+global registers. But I can't have them. Pooh.
+
+So, the stack is simply a C array (of ints), and the stack pointer (sp) is
+a normal C global variable that lives in memory, that points to an int. TOP
+is just sp[0].
+
+If I am generating code that does anything with the stack, I first have to
+get sp into a register, indirect off of it, maybe modify it, and then write
+it back. So there are a bunch of routines in the compiler code (C code)
+that compile these various operations.
+
+There is also code to generate four different kinds of branch instructions,
+the combinatorial product of (unconditional branch, branch if top == 0) and
+(pop the top, do not pop the top), and also the goo underlying for/next.
+
+Since getting at the return stack (the true hardware stack) is impossible
+without low-level support, there are several routines that compile various
+pushes, pops, and copies that involve the return stack.
+
+That's about it! For the x86 it's about 400 lines of code.
+
+All of the smarts for compiling control structures (if/then and friends),
+and new data structure types (create/does>) is _all_ defined in Forth in
+startup.mu4.
+
+Towards a new create/does>
+^^^^^^^^^^^^^^^^^^^^^^^^^^
+First, let's talk a bit about "old" create/does>, what it does, and how it
+(used to) work.
+
+Basically, create creates a new word in the dictionary, and does> causes
+this new word, when later executed, to execute a particular piece of code.
+
+create and does> are used to define "defining words" - words that build new
+kinds of data structures. The defining word contains code to create the
+data structure, and code to be executed by all the "child words" that this
+defining word is used to define.
+
+So a word called "definer" could be written:
+
+  : definer  create  <build the data structure>
+              does>  <do something with data structure>  ;
+
+And used:
+
+   definer foo
+
+The code to build the data structure is executed when the definer
+_executes_ - this is also the _compile_ time of foo. The code to do
+something with the data is executed when _foo_ executes. So we can create
+new structures and new behaviors. But how do we link them? In other words,
+how to tell the behavior code - which lives in definer and is thus _common_
+to all words that definer defines - where to find the data of each child
+word, such as foo?
+
+What used to happen is that the child word, foo, would look like this when
+compiled:
+
+  foo:
+    call definer_code
+    <foo's data>
+
+When foo is executed the call to definer_code has the side effect of
+_pushing_ the address of foo's data onto the return stack. (The use of
+"call" here confusing. call is being used for its behavior "push address of
+following byte and then jump", which is what a call does. But normally the
+"address of following byte" is construed as a return address. Here it is
+used as a data address, and is popped and never used as a return address.)
+
+definer_code can then pop the data address off the return stack, and push
+it onto the data stack, where the definer_code can use it.
+
+But there are a couple of subtleties here. One is that definer_code is
+Forth, so in addition to moving the address of foo's data onto the correct
+stack, an entry into the Forth interpreter (for threaded Forths), including
+a push of the return stack, has to occur as well. Another is that the
+body of foo now mixes code with data, something that I am trying to avoid
+with muforth.
+
+I'm going to avoid explaining the subtleties of how threaded Forths have
+traditionally accomplished this. It's one of the most strange and wonderful
+aspects of Forth, but it's also subtle and complicated, and the way muforth
+does it is quite a bit simpler. Maybe when muforth's way really makes a lot
+of sense to you you'll be ready to conquer the "old" way.
+
+In summary then, when the child word executes two things have to happen:
+
+  * the address of its data is pushed onto the data stack;
+  * a call is made to the shared code in the defining word.
+
+When I started thinking about clean but clever ways to push an address of
+data, and then jump to a common piece of code, but without mixing code and
+data in the child word, I realized that it was impossible. The best I could
+do was to load a register with a constant, and then jump to the common
+code.
+
+But this, it turns out, is all you need! The constant can be a constant,
+with intrinsic value of its own, or it can be the address of the child
+word's data, if it has any.
+
+What this means in usage is that whereas the old-style does> "knew" what
+address to push, my new-style does> has to be passed a constant value to
+compile into the child. If the constant should be an address of a data
+area, then call ram to get an address, and pass it to does>. Sometimes the
+stack manipulation is bit clumsy, but it's a good system in general.
+
+Inside the guts of create/does>
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+With that introduction, let's look at the gory implementation details. The
+code examples here are very x86-specific since at present that is the only
+implementation. But it's the ideas that I'm interested in conveying, so
+hopefully this will not be a deterrent.
+
+First of all, "does>" changes from compiling an _address_ to compiling a
+_constant_ - which could, of course, be an address. does> splits the code
+to push a constant into two parts: a load part and a push part. The load
+part is the code:
+
+  movl $constant,%edx
+
+The push part is the call [or jump!] to push-literal. This is the same code
+that "literal" generates; we're splitting it into two parts to save code
+space.
+
+Here's how it works. Let's say we're writing an assembler and need words
+for addressing modes. Like many create/does> words, these consist of a
+_constant_ and some code. The old way to do this would go something like:
+
+  : md  create ,  does> @  a b c ;
+
+This is a clumsy way to work with constants - compiling them into the word
+only to fetch them out again - and is inefficient when compiled to native
+code. My modernized way looks like this:
+
+  : md  create  does>  a b c ;
+  octal 004 md deferred
+
+does> by default creates a constant, which gets pushed when the child word
+- "deferred" in this example - is executed. The actual code that is
+compiled looks like this:
+
+  md: call create         ; define-time
+      call ;does          ; define-time
+  md_does:
+      call push_literal   ; run-time
+      call a              ; run-time
+      call b              ; run-time
+      jmp  c              ; run-time
+
+  deferred:
+      movl $004, %edx
+      jmp md_does
+
+Wait a minute! How did that ";does" thing get in there? Well, does> is
+actually a _compiler_ word. It compiles "call ;does" followed by "call
+push_literal" into the word being defined - "md" in this case.
+
+When md is called - to create a child word, or, equivalently [for OO types]
+an _instance_ - md create's the new word and then ;does compiles the load
+constant and the jump to md's run-time code.
+
+If we hadn't split the push-constant part, the code in each child word -
+and there could be lots of them! - would have to have an extra call:
+
+  md: call create         ; define-time
+      call ;does          ; define-time
+  md_does:
+      call a              ; run-time
+      call b              ; run-time
+      jmp  c              ; run-time
+
+  deferred:
+      movl $'006, %edx
+      call push_literal
+      jmp md_does
+
+What we have essentially done is move the "call push_literal", since it is
+common to every child word, out of the child and into the parent.
+
+With that long-winded intro, we can now get into some of the odd subtleties
+of this brave new world.
+
+The first subtlety is that while does> and constant - as defined below -
+both create some type of constant, they do it slightly differently.
+constant creates a word and writes code to push a constant - both the
+load and push halves of that action - and then forces a _tail-call
+conversion_ of the call to push_literal, changing it to a _jump_ and
+thereby ending the word. It can do nothing more than push its constant.
+
+This ends up being syntactic sugar;
+
+  4 constant cell
+
+and
+
+  : cell  4 ;
+
+produce exactly the same code; namely:
+
+  cell:
+    movl $4,%edx
+    jmp  push_literal
+
+does> is different; it leaves open - in fact encourages! - doing something
+exciting with the constant that has just been pushed. (Remember that this
+constant could be the address of some data structure.) It splits the
+constant-pushing task into two parts, as described above, putting the load
+into the child and the push into the parent, but leaves the call to
+push_literal as a _call_ that is expected to be followed, as in "md" above,
+with code that processes the constant.
+
+To drive home this subtle difference, assume that we defined constant thus:
+
+  : constant  create does> ;
+  4 constant cell
+
+Now what do we have?
+
+  constant:
+    call create
+    call ;does
+  constant_does:
+    jmp  push_literal
+
+  cell:
+    movl $4,%edx
+    jmp  constant_does
+
+This is slightly less efficient; it compiles extra code into the parent
+word - the run-time code "jmp push_literal" - and to execute this constant
+we do a jump to a jump, which is both silly and slow.
+
+Note: the trailing ; in our example definition of "constant" above changed
+the "call push_literal" to "jmp push_literal". Sneaky!
+
+The other important subtlety is that these constants - esp. when they are
+the address of some data structure - can be in the way when compiling said
+data structure. The constant that you want compiled into the child word has
+to be on the stack when does> [really ;does] executes. It's a bit clumsy,
+but you have to do something like this:
+
+  : clumsy  create  ram  push  , ,  pop  does>  a b c ;
+  thing1 thing2 clumsy example
+
+I suppose you could write that like this too, with consequent changes in
+how the data is "fetched" and used in a, b, and c:
+
+  : less-clumsy  create  literal  does>  a' b' c' ;
+  thing1 thing2 less-clumsy example
+
+In this case we compile _two_ literals, the second one being "split in two"
+in the canonical way:
+
+  less_clumsy:
+    call create
+    call literal    ; compiles code to load & push a literal
+    call ;does
+  less_clumsy_does:
+    call push_literal
+    call aprime
+    call bprime
+    jmp  cprime
+
+  example:
+    movl $thing2,%edx
+    call push_literal
+    movl $thing1,%edx
+    jmp  less_clumsy_does
+
+With this new kind of create/does>, you choose how to do it.
