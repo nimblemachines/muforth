@@ -1,0 +1,159 @@
+( fixed - fixed-point numbers)
+
+( Fixed point number conversions.)
+
+( 26-aug-1999. When we converst between integer and scaled numbers, we should
+  use 64-bit integers. Hmmm.)
+
+cr s" Fixed point number conversion "  file[
+
+decimal
+
+( Scaled numbers.  s15.16)
+"10000 constant scaled_one
+scaled_one 2* constant scaled_two
+scaled_one 2/ constant scaled_half
+
+( Fractions.  s3.28)
+"10000000 constant fraction_one
+fraction_one 2* constant fraction_two
+fraction_one 2/ constant fraction_half
+
+fraction_two 2* 1- constant 4-e_fr
+fraction_two    1- constant 2-e_fr
+
+scaled_two   2* 1- constant 4-e_sc
+scaled_two      1- constant 2-e_sc
+
+
+( Multiplying and dividing)
+
+( Rounding versions. Some comments on speed. The scaled multiplies actually
+  do a multiply followed by a divide by a power-of-two scaled constant.
+  This divide is really a right shift, and might be faster if implemented
+  thus. Likewise the scaled divide is a multiply by a power-of-two constant
+  - a left shift - followed by a divide. Tho this left shift might also be
+  faster than a multiply, here the division is the real killer.
+
+  On the 486, 16*16->32 multiplies take 13-42 clocks; signed divides - by
+  a register and not memory - take 43 clocks. Double-precision shifts take
+  3 clocks! On the ARM the stakes are even higher - shifts are basically
+  free and divides require a procedure call!
+
+  For `lite' use the existing code is fine.)
+
+0 [if]
+
+( Demonstration code, but dynamic range is half what it should be.)
+: */round   */  1+ 2/  shunt  -;
+: sc*   scaled_half       */round  -;
+: sc/   scaled_two  swap  */round  -;
+
+: fr*   fraction_half       */round  -;
+: fr/   fraction_two  swap  */round  -;
+
+[then]
+
+
+( This is code from v25, converted. Triple-precision!)
+: ut*  ( ud u - ulo umid uhi)
+   tuck  um* 2push   um* 0  2pop  d+  ;  ( PF elegant, eh?)
+
+: ut/mod  ( ulo umid uhi udivisor - urem uqlo uqhi)
+   push  r@ um/mod  -rot  ( qhi ulo rhi)  pop um/mod  ( qhi rlo qlo)  rot  ;
+
+: m*/  ( ud u1 u2 - ud=ud*u1/u2; 48 bit intermediate result)
+   push  ut*  r@ u2/ tm+  pop  ut/mod   rot drop ( rem)  ;
+
+( Now use these to convert!)
+
+( dpANS spec sez that M*/ is usually implemented with d and n1 signed, but
+  the divisor >0. It sez that making provision for negative divisors costs
+  a lot of processor time. It would still add some overhead to make it work:
+  something like this:
+
+  :  m*/  push  2dup xor push [ sign]  abs push  dabs pop
+          ut*  2pop swap push  ut/mod  rot drop  pop ?negate  ;  )
+
+
+( A better way. These do rounding on the 64-bit intermediate product and so do
+  not suffer from dynamic range limitations. They are coded in assembler in
+  dforth.m4.)
+
+: _sc*   m*    scaled_half 0 d+  ( round)  16 dlshift  nip  ;
+: _sc/   push  s->d  16 dlshift  r@ 2/ s->d d+  ( round)  pop  fm/mod  nip  ;
+
+: _fr*   m*  fraction_half 0 d+  ( round)   4 dlshift  nip  ;
+: _fr/   push  s->d  28 dlshift  r@ 2/ s->d d+  ( round)  pop  fm/mod  nip  ;
+
+
+( In METAFONT, Knuth calls fr* `make_fraction' and fr/ `take_fraction'.)
+
+
+: exp10  ( n - 10^n)  1 swap  ?for 10 * next then  ;
+
+( We need to be careful with `dpl'. Since constants do not change it, we
+  need to be certain that it is -always- -1 if no punctuation was seen. We
+  consider it to be `read-once': as long as it is initialized properly, it
+  will always return to -1 after being used. It is reset every time the
+  interpreter tries to input a number.)
+
+: dpl!   dpl on  ;  dpl!
+
+: scale  ( n | d - n exp10)
+   dpl @  s->d  if
+   ( single-length, no punct)  drop  1  ( n 1)  exit  then
+   ( double, punct)         exp10  ( nlo nhi exp)  nip  ;
+
+: >sc  ( n | d - scaled)    scale  sc/  ;
+: >fr  ( n | d - fraction)  scale  fr/  ;
+
+: >target-scaled   ( n - lo16 hi16)  "10000  u/mod  ( r q)  ;
+: target-scaled>   ( lo16 hi16 - n)  "10000  *  +  ;
+: tnumber   ( d t | n f)
+   (number)  dpl @  0< if  drop  0  exit  then
+           >sc  >target-scaled  -1  ;
+
+( Printing fixed-point numbers)
+: n.f   ( f n - a #)
+   s->d  dup push ( sign) dabs
+   <#  rot ?for # next then  char . hold  #s  pop sign #>  ;
+
+( This conversion should produce a double number! Can we do that and gain
+  even more precision?)
+
+( Using truncating operators for conversion.)
+: significance   ( sc|fr f - f sc|fr 10^f)  tuck  exp10  ;
+: (sc.)     ( sc f - a #)   significance  sc*_  n.f  ;
+: sc.       ( sc f)  push  target-scaled>  pop  (sc.)  type space  ;
+
+: (fr.)     ( fr f - a #)   significance  fr*_  n.f  ;
+: fr.       ( fr f)  (fr.)  type space  ;
+
+
+0 [if]
+cr ." Speed" cr
+43 1 syscall sys_times  ( returns jiffies)
+
+: my-jiffies  0 0 0 0 sp@  sys_times  drop  nip nip nip  ;
+: jiffies  0 sys_times  ;
+
+: _cycles  ( xt n - jiffies)
+   jiffies push  for  dup execute  next  drop  jiffies  pop -  ;
+: cycles   ( xt n)  push r@ _cycles  lit nope pop _cycles  -  ;
+
+1000 dup * constant 1m
+: maths/s  ( jiffies)  1m 100 rot */  ;
+: ./s      ( jiffies)  maths/s  .  ." /s  "  ;
+: ratio    ( a b)   ." ratio: " swap fr/  6 fr.  cr  ;
+
+.0007 >fr  3.1415926 >fr  2constant nums
+-:  nums   fr*  drop  ;  1m cycles  dup .  dup ./s
+-:  nums  _fr*  drop  ;  1m cycles  dup .  dup ./s   ratio
+
+-:  nums   fr/  drop  ;  1m cycles  dup .  dup ./s
+-:  nums  _fr/  drop  ;  1m cycles  dup .  dup ./s   ratio
+
+[then]
+
+]file

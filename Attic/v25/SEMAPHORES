@@ -1,0 +1,90 @@
+17-aug-1999. Semaphore HOWTO.
+
+Ok, let's end all the confusion. We have the words `1DOWN' and `DOWN' which
+decrement semaphore counters and conditionally put the caller to sleep. If,
+after decrementing, the variable is still >= 0, the caller does not even
+PAUSE. This means that we can loop thru characters available in a queue,
+e.g., but have to be careful that we PAUSE at some point.
+
+To wait for a character to come into a queue, wait on the AVAILABLE
+field. The invariant is AVAILABLE = received - requested. Thus, doing a
+DOWN or 1DOWN on this is the perfect solution. As characters come in,
+AVAILABLE is incremented; as they are requested it is decremented.
+
+To wait for room in a queue - for writing - wait on the ROOM field. The
+invariant here is ROOM = vacancies - requested. ROOM is initially set
+to the size of the queue, and is incremented every time a character is
+removed - ie, by transmission. It is decremented by a task that needs room
+to write characters.
+
+In these two examples, the other half in the producer/consumer relationship
+is an interrupt service routine (ISR). This doesn't have to be the case,
+but will be for all we're doing with the V25.
+
+So let's look at the other side - from the ISR's point of view. The input
+queue also has a ROOM field, and it is also initialized to the size of the
+queue. When a new character arrives, the ISR decrements ROOM - it is
+requesting space to write into the queue. If ROOM goes < 0, there is no room
+and an error has occurred. Incrementing a variable that counts dropped
+characters might be a good idea here. When the task waiting for characters
+to arrive reads from the input queue it -increments- ROOM - acknowledging
+the ISR's request for space, in a sense.
+
+The xmit ISR is just like a task waiting for input: It wants to read a
+character from the queue and send it down the wire. So it is essentially
+waiting for AVAILABLE >= 0. The task writing to the queue increments
+AVAILABLE and `wakes' the ISR - by setting the xmitter enable bit - if
+AVAILABLE increments from < 0 to 0.
+
+So, now let's put the whole puzzle together. Let's assume the simple case
+of a task reading and writing from a serial port. There are two queues: one
+for input and one for output. The input queue is written by the receive ISR
+and read by the task; the output queue is written by the task and read by
+the xmit ISR.
+
+Initially both queues are initialized so that their read and write pointers
+point to the beginning (actually all that matters is that point to the same
+place when the queue is empty) and AVAILABLE is set to 0 and ROOM to the
+size of the queue. The xmit ISR is enabled.
+
+What happens next? The task, waiting for input, decrements input's
+AVAILABLE, which goes < 0, and the task goes to sleep. Later a receive
+interrupt occurs; the ISR decrements ROOM (now equal to size-1) and finding
+it >= 0 happily puts a character in the queue. It increments AVAILABLE,
+which rolls over to 0, so it wakes the waiting task. The task, when it
+runs, increments ROOM to acknowledge the receipt of the character.
+
+Or perhaps a receive interrupt occurs before the task makes a request. The
+ISR decrements ROOM (now equal to size-1) and finding it >= 0 happily puts
+a character in the queue. It increments AVAILABLE, which was already >= 0
+so it doesn't wake the task. Now if the task tries to read a character, it
+will decrement AVAILABLE to 0 and will NOT SLEEP; it increments ROOM back
+up to size.
+
+Now let's look at the output queue. Probably the task will not have a
+chance to write a character to the queue before the xmit interrupt occurs,
+so we'll look at that case first. The ISR runs, decrementing AVAILABLE to
+-1, so it `sleeps' by disabling the xmitter - and thereby disabling the
+xmit ISR. No further xmit interrupts occur until the task, deciding to
+write a character, decrements ROOM to size-1, and, finding it non-negative,
+writes to the queue, increments AVAILABLE, which rolls over to 0, so it
+enables the xmitter, which later runs - and that is our second case.
+
+The task has put at least one character into the output queue. To cover all
+the cases, let's say that the output queue is full and the writing task
+tries to write three characters. DOWN sets ROOM = 0 - 3 < 0, so the writing
+task sleeps, waiting for more ROOM. The xmitter has been enabled so a xmit
+ISR occurs. It increments ROOM, which is still < 0. It xmits a character
+and decrements AVAILABLE, and, finding it >= 0, leaves itself enabled. This
+occurs two more times; the second time ROOM rolls over to 0, so the xmit
+ISR wakes the waiting writing task.
+
+And so on. It's a very careful balance of push/pull.
+
+NOTE about instructions. On the x86/V25, we can use DEC to decrement these
+counters, as it will set S if the result is < 0. However, we cannot use INC
+to increment because it (stupidly) doesn't set carry. Instead use 1 # xx
+ADD.
+
+
+

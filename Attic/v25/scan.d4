@@ -1,0 +1,134 @@
+( Scan.)
+
+( Converted from dos 17-aug-1999.)
+
+( Generic  == S C A N N E R ==)
+
+cr s" Scanner "  file[
+
+signature" Generic V25 MIDI Scanner v2.0. "
+signature" Copyright (c) 1995, 1996, 1999 "
+signature" David Frech & Remmy Demmy Productions. "
+signature" P0<7>=set/-reset; P0<6:0>=latch#. "
+signature" P1<7>=velocity strobe; P1<6>=hold strobe. "
+signature" P2<7>=sense; P2<6:0>=scan#. "
+signature" PT<2>=C-transpose; PT<1:0>=velocity select: "
+signature" 00=32, 01=48, 10=64, 11=127. "
+created-on
+
+
+ 0
+( #s  #r  #u)
+ 128 128  32  BACKGROUND Operator
+ 128 128  32  BACKGROUND father-time  ( AGES)
+ 128 128  32  BACKGROUND slave
+debug [if]  128 128  32  BACKGROUND debugger  [then]
+                                        CIRCLE Operator
+
+( Ports)   hex
+f10 CONSTANT sense
+f38 CONSTANT jumpers
+
+: PORTS   0 latches IO!  c0 strobes IO!  ( data low, strobes hi)
+          0 f01 IOW!   ( port0: data, oooo/oooo)
+       000f f09 IOW!   ( port1: data, oooo/iiii)
+       0080 f11 IOW!   ( port2: data, iooo/oooo)
+          8 f3b IO!    ( portT: threshold @ Vcc/2)  ;  decimal
+
+0 [if]
+Ports:
+P0 =  S/-R  d6  d5  d4  d3  d2  d1  d0  ( set/reset, data)
+P1 =  /perc  /hold   X   X   X   X   X   X  ( strobes, low)
+P2 =  sense  select6-0                    ( scanner)
+PT =  X   X   X   X   X  C-trans   vel1-0  ( config)
+[then]
+
+( scanner histories)
+{ 96 8 / } CONSTANT #closed  ( length of bit array)
+{ 96 8 / } CARRAY    closed  ( bit set if switch closed)
+
+debug [if]
+closed
+:O .closed   hex  
+   literal  6 for  dup \t @  >hilo .b16 .b16 space  2 + next drop  decimal  ;O
+[then]
+
+: CLOSED   closed #closed -1 FILL  ;  ( keys are normally CLOSED!)
+
+( ?? C-transpose or E-transpose. The first thing scanned is number 0. This is
+  normally converted to midi 16 - E/-1. If we're scanning a keyboard that
+  starts with C we want instead to output midi 24, C/0. For further confusion,
+  the latch boards start with output 16.
+
+  Sooo, it looks like this:
+  E-transpose :  0 scanned -> 16 latch & 16 midi out; 16 midi in -> 16 latch.
+  C-transpose :  0 scanned -> 16 latch & 24 midi out; 24 midi in -> 16 latch.
+
+  Confused? Don't be.)
+
+
+( Jumper/switch configuration.)
+( Port T:  t1:t0 are velocity:  00=32, 01=48, 10=64, 11=127.
+              t2 is C-transpose)
+
+VARIABLE vel
+
+CREATE vels  32 C, 48 C, 64 C, 127 C,
+
+: CONFIGURE
+   jumpers IO@  DUP  4 AND 2*  ( 8 or 0)  MIDItranspose !
+                  3 AND     vels + ROMC@  vel !
+   0 CHANNEL  ;
+
+: SEND-TRANSPOSED  ( note vel)   SWAP  MIDItranspose @ +  "90  3 SEND  ;
+: OPEN   ( scan# -)   vel @  2DUP  +LATCH  SEND-TRANSPOSED  ;
+: CLOSE  ( scan# -)       0  OVER  -LATCH  SEND-TRANSPOSED  ;
+
+CODE SCAN0   ( 'old - 'bits #8scans)  ( setup for scan)
+   AX AX XOR,  ES: AL sense ) MOV, ( start scanning at 0)
+   closed # t MOV, ( 'bits)  t PUSH,  #closed # t MOV,  NEXT,  C;
+
+( Adds 16 to scan #.)
+CODE 8SCAN  ( a - a+1 key0 chg0 .. keyn chgn n)
+   t INC, t PUSH, ( a+1)  8 # CX MOV,
+   DI DI XOR, ( #changed)  SS: -1 [t] DH MOV, ( prev)
+   BEGIN,  ES: sense ) DL MOV,  DL AL MOV,  DH AL XOR,  0< IF, ( changed)
+      DL AL MOV,  "7f # AX AND,  16 # AX ADD,  AX PUSH, ( keyn)
+      DI INC, ( count)  ' OPEN # AX MOV,  DH DH OR,  0< IF, ( was closed)
+      ' CLOSE # AX MOV,  THEN,  AX PUSH,  THEN,
+      DX DX ADD, ( current bit->DH:0)  ES: sense ) BYTE INC,  LOOP,
+   SS: DH -1 [t] MOV, ( current)  DI t MOV,  NEXT,  C;
+
+: HITS  ( s0 xt0 .. sn xtn n -)   ?FOR  EXECUTE  NEXT  THEN  ;
+: 8CHECK  ( a - a+1)  PAUSE  8SCAN  HITS  ;
+: SCAN   0  BEGIN  SCAN0  FOR  8CHECK  NEXT  AGAIN  -;
+
+: OK   PORTS  CLOSED  CONFIGURE  ;
+: TASKS   600 us  father-time AGES  slave MIDI  PAUSE  ;
+   ( let them run once and do their 1DOWN)
+
+: BOOT  OK  TASKS  +IRQ  SCAN  -;
+
+debug [if]
+: boot1  debugger ACTIVATE  BOOT   STOP  -;
+: boot2  OK TASKS +IRQ  ;  ( no scan)
+[then]
+
+0 [if]
+( test)
+
+: GEN  ( 'task -)  ACTIVATE  32 midi-out QINIT  -31 STATUS +!
+   0 BEGIN  DUP 64 SEND-ON  200 MS  DUP SEND-OFF
+            1+  128 MOD  AGAIN  ;
+
+: QSCAN  ( 'task -)  ACTIVATE  32 midi-out QINIT  -31 STATUS +!
+   SCAN  ;
+
+: -EMPTY
+   BEGIN  PAUSE  midi-out 2 + @  midi-out 4 + @  -  UNTIL ;
+: SEND  ( 'task -)  ACTIVATE
+   BEGIN  -EMPTY  midi-out Q@  put  debug WAKE  AGAIN  ;
+
+[then]
+
+]file

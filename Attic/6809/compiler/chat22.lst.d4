@@ -1,0 +1,317 @@
+  --  Micro Dialects, Inc. uASM-6809 Assembler   Fri, Apr 8, 1994 14:59 -- Page 1
+
+
+    1                   ; 6809 chat -- Mac-6809 communication stuff
+    2                   ; (c) 1992-94, David Frech
+    3
+    4                   ; 6 jan 92 -- back to "old style" of passing sp on reset
+    5                   ; 18 feb 93 -- back to "new style" of sp: don't pass it on
+    6                   ;        reset but do get an sp from host on go.
+    7                   ; 20-aug-93  More big changes; rewrote almost everything
+    8                   ;   now the target returns reply codes and there are only three cmds
+    9                   ;   Calling this revision version 2.0.
+   10                   ; 27-aug-93  Changed to run with 8k ram.  This is version 2.1.
+   11                   ; 08-apr-94  automagically sets stack to top of ram
+   12                   ;	returns "go" response immediately, then executes.
+   13                   ;	added sp!.
+   14                   ;	This is version 2.2.
+   15
+   16 B000              uartcr           equ    $b000               ;* control/status register
+   17 B001              uartdr           equ    uartcr+1
+   18
+   19 B400              via              equ    $b400
+   20 B40E              via_ier          equ    via+14              ;* interrupt enable register
+   21
+   22 0001              replyRead        equ    1
+   23 0003              replyWrite       equ    3
+   24 0005              replyGo          equ    5
+   25 0007              replySp          equ    7
+   26 00FF              replyError       equ    255
+   27
+   28
+   29 0000                               setdp  0
+   30 F800                               org    $f800               ;* rom start
+   31
+   32 F800 436861742036                  dcs    "Chat 6809 v2.2, "
+           383039207632
+           2E322C20
+   33 F810 436F70797269                  dcs    "Copyright (c) 1992-94 David Frech."
+           676874202863
+           292031393932
+           2D3934204461
+           766964204672
+           6563682E
+   34 F832 657874207377                  dcs    "ext sw->irq, via->firq, acia->firq."
+           2D3E6972712C
+           207669612D3E
+           666972712C20
+           616369612D3E
+           666972712E
+   35 F855 303D72656164                  dcs    "0=read(addr,cnt); 2=write(addr,cnt,bytes);"
+           28616464722C
+           636E74293B20
+           323D77726974
+           652861646472
+           2C636E742C62
+           79746573293B
+   36 F87F 343D676F2829                  dcs    "4=go():sp; 6=sp!(sp)"
+           3A73703B2036
+           3D7370212873
+           7029
+   37
+   38
+   39 F893              reset            
+   40 F893 8603                          lda    #3
+   41 F895 B7B000                        sta    uartcr              ;* master reset of 6850
+   42 F898 8615                          lda    #00010101b
+  --  Micro Dialects, Inc. uASM-6809 Assembler   Fri, Apr 8, 1994 14:59 -- Page 2
+
+
+   43 F89A B7B000                        sta    uartcr              ;* rcv int dis,rts=0,tx int dis,
+   44                                                               ;* 1 stop bit, /16 baud
+   45 F89D 867F                          lda    #$7f
+   46 F89F B7B40E                        sta    via_ier             ;* disable all via interrupts
+   47
+   48 F8A2 4F                            clra
+   49 F8A3 1F8B                          tfr    a,dp                ;* direct page register is zero
+   50 F8A5                               
+   51                                                               ;* setup interrupt vectors in ram at address 0
+   52                                                               ;* point them all to chat
+   53 F8A5 8E0000                        ldx    #0
+   54 F8A8 C607                          ldb    #7
+   55 F8AA CEF8C7                        ldu    #chat
+   56 F8AD EF81         L1               stu    ,x++
+   57 F8AF 5A                            decb
+   58 F8B0 26FB                          bne    L1
+   59
+   60                                                               ;* check for top of ram; start at $800 (2k)
+   61 F8B2 8E0800                        ldx    #$800
+   62 F8B5 2002                          bra    ramTest
+   63 F8B7              ramLoop          
+   64 F8B7 6380                          com    ,x+                 ;* fix, advance to next, loop
+   65 F8B9              ramTest          
+   66 F8B9 A684                          lda    ,x
+   67 F8BB 43                            coma
+   68 F8BC 6384                          com    ,x
+   69 F8BE A184                          cmpa   ,x
+   70 F8C0 27F5                          beq    ramLoop
+   71                                                               ;* end of ram...
+   72 F8C2 1F14                          tfr    x,s                 ;* set s to end
+   73                                                               ;* nmi disabled till now
+   74 F8C4                               
+   75 F8C4 3F           L2               swi                        ;* start chatting
+   76 F8C5 26FD                          bne    L2
+   77
+   78                   ;* chat sits in an endless loop: 
+   79                   ;* gets a command byte, dispatches, and returns the
+   80                   ;* resulting data. Simple?
+   81
+   82                   ;* because we did an swi to get here, both firq and irq are disabled.
+   83                   ;* this means that the acia CANNOT be connected to nmi when we're
+   84                   ;* trying to debug in "chat" mode.
+   85
+   86 F8C7              chat             
+   87 F8C7 1F41                          tfr    s,x                 ;* current sp to x
+   88 F8C9 8D6A                          bsr    WriteX              ;* send to host
+   89 F8CB                               
+   90 F8CB              chatloop         
+   91 F8CB 8D5D                          bsr    ReadA               ;* get cmd byte
+   92 F8CD 8108                          cmpa   #oplast-optable
+   93 F8CF 2506                          blo    cmd_ok
+   94 F8D1 86FF                          lda    #replyError
+   95 F8D3 8D4A                          bsr    WriteA
+   96 F8D5 20F4                          bra    chatloop
+   97 F8D7              cmd_ok           
+   98 F8D7 8EF8DC                        ldx    #optable
+   99 F8DA 6E96                          jmp    [a,x]               ;* jmp indirect thru table
+  100 F8DC                               
+  101 F8DC              optable          
+  102 F8DC F8E4                          dw     read                ;* cmd = 0
+  103 F8DE F8FA                          dw     write               ;* cmd = 2
+  104 F8E0 F910                          dw     go                  ;* cmd = 4
+  105 F8E2 F915                          dw     spstore             ;* cmd = 6
+  --  Micro Dialects, Inc. uASM-6809 Assembler   Fri, Apr 8, 1994 14:59 -- Page 3
+
+
+  106 F8E4              oplast           
+  107
+  108 F8E4              read                                        ;* read(addr, cnt)
+  109 F8E4 8D59                          bsr    ReadX
+  110 F8E6 8D42                          bsr    ReadA               ;* count
+  111 F8E8 3402                          pshs   a
+  112 F8EA 8601                          lda    #replyRead
+  113 F8EC 8D31                          bsr    WriteA
+  114 F8EE A680         L3               lda    ,x+
+  115 F8F0 8D2D                          bsr    WriteA
+  116 F8F2 6AE4                          dec    ,s
+  117 F8F4 26F8                          bne    L3
+  118 F8F6 3261                          leas   1,s
+  119 F8F8 20D1                          bra    chatloop
+  120 F8FA                               
+  121 F8FA              write                                       ;* write(addr, cnt, bytes)
+  122 F8FA 8D43                          bsr    ReadX
+  123 F8FC 8D2C                          bsr    ReadA               ;* count
+  124 F8FE 3402                          pshs   a
+  125 F900 8D28         L4               bsr    ReadA               ;* get next char
+  126 F902 A780                          sta    ,x+
+  127 F904 6AE4                          dec    ,s
+  128 F906 26F8                          bne    L4
+  129 F908 3261                          leas   1,s
+  130 F90A 8603                          lda    #replyWrite
+  131 F90C 8D11                          bsr    WriteA
+  132 F90E 20BB                          bra    chatloop
+  133 F910                               
+  134 F910              go               
+  135 F910 8605                          lda    #replyGo
+  136 F912 8D0B                          bsr    WriteA
+  137 F914 3B                            rti                        ;* load context from stack, go
+  138                                                               ;* "return" thru swi, to chat
+  139
+  140 F915              spstore          
+  141 F915 8D28                          bsr    ReadX               ;* get new sp
+  142 F917 1F14                          tfr    x,s
+  143 F919 8607                          lda    #replySp
+  144 F91B 8D02                          bsr    WriteA
+  145 F91D 20AC                          bra    chatloop
+  146 F91F                               
+  147                   ;* WriteA -- write register a to serial, clobber b
+  148 F91F              WriteA           
+  149 F91F F6B000                        ldb    uartcr
+  150 F922 C402                          andb   #2                  ;* transmit reg empty
+  151 F924 27F9                          beq    WriteA              ;* loop till ready
+  152 F926 B7B001                        sta    uartdr              ;* send data
+  153 F929 39                            rts
+  154
+  155                   ;* ReadA -- read serial into register a, clobber b
+  156 F92A              ReadA            
+  157 F92A F6B000                        ldb    uartcr
+  158 F92D C401                          andb   #1                  ;* receive reg full
+  159 F92F 27F9                          beq    ReadA               ;* loop till ready
+  160 F931 B6B001                        lda    uartdr              ;* get byte
+  161 F934 39                            rts
+  162
+  163                   ;* WriteX -- write register x to serial, high byte first
+  164                   ;* clobbers d
+  165 F935 3410         WriteX           pshs   x
+  166 F937 A6E0                          lda    ,s+                 ;* high byte at lower addr
+  167 F939 8DE4                          bsr    WriteA
+  168 F93B A6E0                          lda    ,s+
+  --  Micro Dialects, Inc. uASM-6809 Assembler   Fri, Apr 8, 1994 14:59 -- Page 4
+
+
+  169 F93D 20E0                          bra    WriteA              ;* rts from there
+  170
+  171                   ;* ReadX -- read x from serial, high byte first
+  172                   ;* clobbers d
+  173 F93F 3410         ReadX            pshs   x
+  174 F941 8DE7                          bsr    ReadA
+  175 F943 A7E4                          sta    ,s
+  176 F945 8DE3                          bsr    ReadA
+  177 F947 A761                          sta    1,s
+  178 F949 3590                          puls   x,pc
+  179
+  180
+  181 F94B                               
+  182 FFD4                               org    $fff0-(7*4)
+  183 FFD4 6E9F0000     _rsrvd           jmp    [0]                 ;* indirect thru 0
+  184 FFD8 6E9F0002     _swi3            jmp    [2]                 ;* indirect thru 2
+  185 FFDC 6E9F0004     _swi2            jmp    [4]
+  186 FFE0 6E9F0006     _firq            jmp    [6]
+  187 FFE4 6E9F0008     _irq             jmp    [8]
+  188 FFE8 6E9F000A     _swi             jmp    [10]
+  189 FFEC 6E9F000C     _nmi             jmp    [12]
+  190
+  191 FFF0                               org    $fff0
+  192 FFF0 FFD4                          dw     _rsrvd
+  193 FFF2 FFD8                          dw     _swi3
+  194 FFF4 FFDC                          dw     _swi2
+  195 FFF6 FFE0                          dw     _firq
+  196 FFF8 FFE4                          dw     _irq
+  197 FFFA FFE8                          dw     _swi
+  198 FFFC FFEC                          dw     _nmi
+  199 FFFE F893                          dw     reset
+  200
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  --  Micro Dialects, Inc. uASM-6809 Assembler   Fri, Apr 8, 1994 14:59 -- Page 5
+
+
+
+
+
+Symbol Table:
+
+Symbol Name     Value  Def.#  Line Number Cross Reference
+
+L1               F8AD *00056  00058 
+L2               F8C4 *00075  00076 
+L3               F8EE *00114  00117 
+L4               F900 *00125  00128 
+ReadA            F92A *00156  00091 00110 00123 00125 00159 00174 00176 
+ReadX            F93F *00173  00109 00122 00141 
+WriteA           F91F *00148  00095 00113 00115 00131 00136 00144 00151 00167 00169 
+WriteX           F935 *00165  00088 
+_firq            FFE0 *00186  00195 
+_irq             FFE4 *00187  00196 
+_nmi             FFEC *00189  00198 
+_rsrvd           FFD4 *00183  00192 
+_swi             FFE8 *00188  00197 
+_swi2            FFDC *00185  00194 
+_swi3            FFD8 *00184  00193 
+chat             F8C7 *00086  00055 
+chatloop         F8CB *00090  00096 00119 00132 00145 
+cmd_ok           F8D7 *00097  00093 
+go               F910 *00134  00104 
+oplast           F8E4 *00106  00092 
+optable          F8DC *00101  00092 00098 
+ramLoop          F8B7 *00063  00070 
+ramTest          F8B9 *00065  00062 
+read             F8E4 *00108  00102 
+replyError       00FF *00026  00094 
+replyGo          0005 *00024  00135 
+replyRead        0001 *00022  00112 
+replySp          0007 *00025  00143 
+replyWrite       0003 *00023  00130 
+reset            F893 *00039  00199 
+spstore          F915 *00140  00105 
+uartcr           B000 *00016  00017 00041 00043 00149 00157 
+uartdr           B001 *00017  00152 00160 
+via              B400 *00019  00020 
+via_ier          B40E *00020  00046 
+write            F8FA *00121  00103 
+ 
+                   Errors: None
+                   Labels: 36
+     Last Program Address: $FFFF
+     Last Storage Address: $0000
+            Program Bytes: $0177  375
+            Storage Bytes: $0000  0

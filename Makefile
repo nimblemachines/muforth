@@ -78,6 +78,6 @@ lists : $(LSTS)
 
 
 ### include at the end so the default target is our main target, above
-include $(top)/Make.rules
+include $(top)/build-tools/Make.rules
 
 ### That's all, folks!

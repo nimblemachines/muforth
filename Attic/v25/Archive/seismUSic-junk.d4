@@ -1,0 +1,72 @@
+: BEAT?  ( beat# pattern - f)  SWAP SHIFT 0<  ;
+00 ?[
+: BEAT   ( beat# index pattern - beat#)  PUSH OVER POP  BEAT?
+   IF  DUP PLAYS  ELSE  DROP  THEN  ;
+   ]?
+
+
+: ?beat1  random NIP 0<  ;
+: ?beat2  beat# @  isorh @  BEAT?  ;
+: ?+beat2  beat# @  1+ 15 AND  beat# !  +BEAT  ;
+: !BEAT  ( task code)  SWAP '?beat HERS !  ;
+
+: MELODY1  ( ddelta patch# channel task)  4 #ACTIVATE
+   1- channel C!  patch# C!  delta-t 2!  MIDI-SETUP-VOICE  SYNC
+   BEGIN  66 $  67 $  69 $  72 $  74 $  AGAIN  -;
+(   BEGIN  60 $  64 $  67 $  65 $  69 $  72 $  AGAIN  -;)
+
+: ??test
+   lit ?beat2  lit ?+beat2  ( lit ??melody1)  ;
+
+( 0 1 2 3 4 5 6 7 8)
+ 01 2 3 5 8 5 3 2 01  9  rom-quantile fibby
+
+(  0  1  2  3  4  5  6  7  8  9 10 11 12 13 14 15 16)
+( -8 -7 -6 -5 -4 -3 -2 -1  0  1  2  3  4  5  6  7  8;  ie, down 9th -> up 9th)
+( -9 -8 -7 -6 -5 -4 -3 -2  1  2  3  4  5  6  7  8  9;  musical intervals)
+  01  5 01  5 13 13 55 21  8 55 21 13 13  5 01  5 01   17  rom-quantile melody1
+  01 00 01 03 21 05 34 55 01 55 34 21 05 03 01 02 00   17  rom-quantile melody2
+  00 00 00 00 00 03 05 08 01 03 08 05 00 00 00 00 00   17  rom-quantile melody3
+
+{
+: seed  ( lo hi)  random-bits  2!  ;    jiffies  0  seed
+: urandom  random um* nip  ;
+( Fibonacci. We consider F_0 and F_1 to be 1.)
+: fib2  ( n - f_n-1 f_n)
+   dup 2 u< if  1 exit then  1 1  rot 1- for  tuck +  next  ;
+: fib  fib2 nip  ;
+
+: crazy-melody  ( n)  for  11 urandom fib  next  ;
+  17 crazy-melody  }  17 rom-quantile craazy
+
+( VARIABLE 'melody
+: melody-interval  'melody @EXECUTE  8 -  ; )
+
+
+: fibs  FOR  fibby  NEXT  ;
+: mels  FOR  melodic-interval  NEXT  ;
+
+VARIABLE switch-events
+assemble
+LABEL MIDIswitchISR
+   SS: 1 # | switch-events ) ADD,  carry IF,
+      SS: RUN # | MIDImonitor ) MOV, ( wake it up)  THEN,
+   ES: "40 # "f4e ) BYTE OR,  ( disable interrupt)
+   ES: "40 # "f40 ) BYTE XOR,  ( switch edge direction)
+   FINT,  IRET,  C;
+
+MIDIswitchISR 26 6 "f4c "f4e  HANDLER MIDIswitch
+
+: SWITCHES  ACTIVATE
+   switch-events OFF  0 "f40 IO! ( falling edge)  MIDIswitch
+   BEGIN
+      switch-events 1DOWN
+      "40 [ | RxIRQ { 0 serial } ] LITERAL SOURCE ( disable TALK)
+      1000 ms ( anti-bounce)
+      "40 "f4e SINK ( enable switch IRQ)
+      switch-events 1DOWN
+      "40 [ | RxIRQ { 0 serial } ] LITERAL SINK ( enable TALK)
+      1000 ms ( anti-bounce)
+      "40 "f4e SINK ( enable switch IRQ)
+   AGAIN  -;
+

@@ -1,0 +1,108 @@
+cr ." (( Task test "
+
+decimal
+
+(  Usage:  00 s r u BACKGROUND panel1
+              s r u BACKGROUND watchdog ... CIRCLE panel1 )
+
+00 64 64 32 BACKGROUND Operator
+   64 64 32 BACKGROUND aa
+   64 64 32 BACKGROUND bb
+   64 64 32 BACKGROUND cc
+   64 64 32 BACKGROUND dd
+				CIRCLE Operator
+
+( Text out)
+CODE C@+   ( a - a+1 ch)   AX AX XOR,  SS: 0 [t] AL MOV,  t INC,  t PUSH,
+   AX t MOV,  NEXT,  C;
+
+: COUNT  ( c" - a c)  C@+  ;
+: TYPE   ( a c)  FOR  C@+  EMIT  NEXT  DROP  ;
+: SPACE  32 EMIT  ;
+: CR     13 EMIT  10 EMIT  ;
+
+( Pictured Numeric)
+: >DIGIT   ( n - ch)  ( convert 1 binary digit to char; hex to uppercase)
+   9 OVER U<  7 AND +  CHAR 0 +  ;
+
+02 USER radix
+: /DIGIT   ( ud - ud' r)
+   0  radix @  UM/MOD  PUSH ( qhi)  radix @ UM/MOD ( r q)  POP  ROT  ;
+
+CODE 2SWAP  ( d1 d2 - d2 d1)
+   CX POP, ( d2.lo)  DX POP, ( d1.hi)  AX POP, ( d1.lo)
+   CX PUSH,  t PUSH, ( d2.hi)  AX PUSH,  DX t MOV,  NEXT,  C;
+
+: DNEGATE  0 0  2SWAP  D-  ;
+: DABS  ( d - abs(d)  S->D IF DNEGATE THEN  ;
+
+:: RADIXER  CREATE ,  EVOKES>  radix !  ;
+10 RADIXER DECIMAL
+16 RADIXER HEX
+ 6 RADIXER 6ARY
+
+32 ALLOT ram CONSTANT pad
+VARIABLE hld
+: HOLD  ( ch)  -1 hld +!  hld @  C!  ;
+: <#    pad hld !  ;
+: #>    ( ud - a #)  2DROP  hld @  pad OVER -  ;
+: #     ( ud - ud')   /DIGIT  >DIGIT  HOLD  ;
+: #S    ( ud - 0 0)  BEGIN  #  2DUP OR 0=  UNTIL  ;
+: SIGN  0< IF  CHAR - HOLD  THEN  ;
+
+: (UD.)   ( ud - a #)  <# #S #>  ;
+: U.      ( u -)    0  (UD.)  TYPE  SPACE  ;
+
+: (D.)    ( d - a #)
+          DUP PUSH ( sign)  DABS  <# #S  POP SIGN  #>  ;
+: D.      ( d -)       (D.)  TYPE  SPACE  ;
+
+: (.)     ( n - a #)   S->D  (D.)  ;
+: .       ( n -)       (.)  TYPE  SPACE  ;
+
+: hi-ing  ( 'task)  ACTIVATE   DECIMAL
+   BEGIN   ticks 2+ @  U.  AGAIN  -;
+
+: lo-ing  ( 'task)  ACTIVATE   HEX
+   BEGIN   ticks    @  U.  ( CHAR a  putb)  AGAIN  -;
+
+: EMITTER  BEGIN  10 FOR  DUP EMIT  NEXT  PAUSE  AGAIN  -;
+: =ING  ACTIVATE  CHAR = EMITTER  -;
+: Cing  ACTIVATE  CHAR c EMITTER  -;
+: Ding  ACTIVATE  CHAR d EMITTER  -;
+
+VARIABLE tick-count
+VARIABLE index
+: COUNTING  ACTIVATE  DECIMAL  BEGIN  tick-count @  .  PAUSE  AGAIN  -;
+: CHARRING  ACTIVATE  BEGIN  1 FOR  index @ 32 +  EMIT  NEXT  PAUSE  AGAIN  -;
+: TICKING  ACTIVATE
+   BEGIN  tick-count 1DOWN  index @  1+ 63 AND  index !  AGAIN  -;
+
+: nn:   DECIMAL #  6ARY #  DECIMAL  CHAR : HOLD  ;
+: nnn.  DECIMAL  # # #  CHAR . HOLD  ;
+: (HMS)   <#  nnn.  nn:  nn:  #S  #>  ;
+: C-ing  ( 'task)  ACTIVATE  
+   BEGIN  NOW (HMS)  2DUP TYPE  13 EMIT  100 MS  AGAIN  -;
+
+: R ( rest)  600 MS  ;
+
+: TOGGLES  ACTIVATE
+   BEGIN  aa SLEEP R  bb SLEEP R  aa WAKE R  bb WAKE R  AGAIN  -;
+
+: BOOT2
+   0 SERIAL  [ 9600 50 / ] LITERAL  50xBPS
+   1000 uS  aa hi-ing  bb lo-ing  cc TOGGLES  ;
+
+: BOOT3
+   0 SERIAL  [ 9600 50 / ] LITERAL  50xBPS
+   0 0 ticks 2!  1000 uS  cc C-ing   8000 MS  ;
+
+: +SERIAL  0 SERIAL  [ 57600 50 / ] LITERAL  50xBPS  8N1 +Rx +Tx  ;
+
+: BOOT  +SERIAL  1000 uS
+   dd TICKING  tick-count OFF  tick-count dd EATS-TICKS  +IRQ
+   BRK  aa COUNTING   ( bb =ING)   ( cc Cing)
+   BEGIN  800 MS  BRK  AGAIN  -;
+
+." )) "
+

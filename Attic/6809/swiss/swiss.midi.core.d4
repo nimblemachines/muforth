@@ -1,0 +1,210 @@
+( swiss.midi.core -- the heart of a midi-driver )
+( contains what was drum2 )
+( daf 9-feb-93  created )
+( daf 23-jul-93  changed for swiss special features; see load file )
+
+forth target
+
+( serial queue stuff: )
+decimal
+var qdata  30 allot ( 32 bytes )
+( 31 const qmax  ( cannot be >128 bytes unless we change acia handler)
+31 equ qmax
+var qread+  -1 allot ( offset to next byte to read )
+var qwrite+ -1 allot ( offset to next byte to write )
+var q#      -1 allot ( byte count of bytes in queue )
+
+: init-q
+  0 qread+ c!  0 qwrite+ c!  0 q# c! ;
+
+( should prob be CODE )
+( : qget ( -- ch )
+(   qread+ c@ qdata over + c@  ( get byte )
+(   swap 1+ qmax and qread+ c!  q# 1-c! ; )
+
+decimal
+( qget sign-extends the byte so we can 'easily' -- in forth -- )
+( check if it's a status byte. )
+code qget ( -- chSext )  ( gotta be *faast* )
+  addr qdata # ldx
+  addr qread+ ^ lda
+  a x r) ldb
+  inca   qmax # anda
+  addr qread+ ^ sta  sex
+  << d >> pshu
+  addr q# ^ dec
+  next end-code
+
+hex
+( acia equates )
+b000 equ ser-control
+b001 equ ser-data
+
+( via equates )
+b402 equ driver-dir
+b403 equ disp-dir
+b404 equ timer1
+b40b equ aux-cntl
+b40c equ cntl
+b40d equ intp-flags  ( interrupt flags reg )
+b40e equ intp-masks  ( interrupt mask reg )
+
+var status  -1 allot  ( midi status byte )
+var which   -1 allot  ( which byte: note or vel )
+var note-mask -1 allot  ( mask ANDed with status byte )
+var note-val  -1 allot  ( value that ANDed status must match )
+
+( this little interrupt routine is *waay* trickier than it looks. )
+( It does lots of nice things for us.  First, it ignores all )
+( real-time midi bytes -- F8h or greater.  Second, it remembers )
+( the last status byte, so the transmitter can use the midi )
+( 'running status' mode.  Third, it only cares about note-on )
+( messages, and neatly checks for omni mode or the right chan, )
+( so the eventual contents of the buffer is simply note-vel )
+( pairs.  Nifty, eh? )
+
+firq handler  ( acia *and* via interrupt )
+  ( firq doesn't save *any* registers )
+  intp-flags ^ tst  ( high bit set if via interrupt )
+  0< if  ( timer int )
+    addr ticks ^ inc
+    timer1 ^ tst  ( clr interrupt by reading timer1 low )
+    rti  ( ** timer interrupt exits here ** )
+  endif
+
+  ( else acia interrupt )
+  << x d >> pshs
+  ser-control ^ ldd  ( read both status and data to clear intrpt )
+  ( a=status; b=data )
+  1 # anda  ( recv data reg full )
+  0!= if
+    f8 # cmpb  ( not a real-time byte? )
+    u< if
+      80 # bitb
+      0!= if    ( status byte? )
+        addr status ^ stb  ( set status byte to this value )
+        80 # ldb
+        addr which ^ stb   ( set which to 80h )
+      else  ( data byte )
+        addr status ^ lda
+        addr note-mask ^ anda  ( ef for normal; e0 for omni )
+        addr note-val  ^ cmpa  ( note-on/off, correct channel? )
+        0= if  ( yes )
+          addr which ^ orb    ( or in which )
+          0>= if  ( yes, this is velocity )
+            10 # lda
+            addr status ^ bita   ( and status with 10h )
+            0= if ( note-off, set vel=0 )
+              clrb
+            endif
+          endif
+            
+          addr qdata #   ldx  ( store char into queue )
+          addr qwrite+ ^ lda
+          a x r)         stb
+          inca
+          qmax # anda
+          addr qwrite+ ^ sta
+          addr q# ^      inc
+
+          80 # ldb
+          addr which ^ eorb
+          addr which ^ stb    ( toggle which )
+        endif
+      endif
+    endif
+  endif
+  << x d >> puls
+  rti end-handler
+   
+hex
+code init-acia
+  3 # lda
+  ser-control ^ sta  ( master reset of 6850 )
+  95 # lda  ( rcv int en, rts=low, tx int dis, 8b 1s 0p, /16 )
+  ser-control ^ sta
+  addr status ^ clr ( clear midi status byte )
+  addr which  ^ clr
+  next end-code
+  
+hex
+create digits  ( 0..16 )
+  7e c, 30 c, 6d c, 79 c, 33 c, 5b c, 5f c, 70 c, 7f c, 7b c, ( 0..9 )
+  0fe c, 0b0 c, 0ed c, 0f9 c, 0b3 c, 0db c, 0df c, ( 10..16 )
+
+var channel  ( -1=omni; 0-15 -> chan 1->16 )
+
+( note: note-on is hex 9x; note-off is 8x; x=midi chan# )
+: init-chan
+  channel @ dup 1+  ( 0=omni, 1-16 ) digits + c@ b40f c!
+  ( chan# ) dup 0< if ( omni )
+    drop 80 e0    ( status & e0 must= 80 for note-on/off )
+  else
+    80 or ef ( status & ff must= 9x for note-on, x is channel )
+  endif  note-mask c!  note-val c! ;
+
+hex
+( we better have set up the firq interrupt vector before this! )
+( I made this code for space reasons. )
+code init-via
+  ff #         lda
+  driver-dir ^ sta  ( all bits of portb are output )
+  0a0 #        lda
+  cntl ^       sta ( port b pulse mode )
+  5802 # ldd   ( tick time = 600 micro-secs, byte-swapped )
+  timer1 ^     std
+  40 #         lda
+  aux-cntl ^   sta   ( continuous interrupts from timer1 )
+  0c0 #        lda
+  intp-masks ^ sta   ( timer1 will generate interrupt )
+  next end-code
+
+code interrupts
+  0af #        andcc      ( **enable interrupts** )
+  next end-code
+
+: getb  ( -- ch )
+  begin
+    age-notes
+  q# c@ until
+  qget ;
+
+decimal
+: doit
+  ( start )
+  init-q
+  init-via
+  init-chan
+  clear-notes
+  init-acia
+  ( Because irq is *level* sensitive, we delay here before )
+  ( re-enabling interrupts so the channel # doesn't change )
+  ( too ridiculously fast. )
+  4000 0 do loop
+  interrupts
+  begin
+    0 begin drop getb dup 0< until  ( get note# )
+    getb ( vel ) note ( add-note masks hi bit of note# )
+  again
+ ;
+
+hex
+reset handler
+  clra clrb  ( start in channel 1 )
+  begin  ( leave addr for panel switch handler )
+  addr channel ^ std
+  800 # lds
+  800 40 - # ldu
+  pfa-of doit # ldy
+  next end-handler
+
+decimal
+irq handler
+  ( panel switch )
+  addr channel ^ ldd
+  1 # addd
+  15 # andb  ( 0 - 15 )
+  again  ( branch into reset handler )
+  end-handler
+
+

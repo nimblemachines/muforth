@@ -1,0 +1,44 @@
+( read.eprom -- code to read from ep-1 )
+( daf  12-jan-92 created )
+
+only forth also chatter
+
+hex
+: hex<   ( ch -- # )
+  30 - dup 9 > if 7 - endif ;
+
+: 2hex<  ( addr -- # )
+  count hex< 4 << swap c@ hex< +  dup checksum +! ;
+
+: 4hex<  ( addr -- # )
+  dup 2hex< 8 << swap 2+ 2hex< + ;
+
+decimal
+
+: read-srec
+  0 checksum !
+  pad 8 read-ep1  ( get Sxllaaaa, x=1or9, ll=len, aaaa=addr )
+  pad 2+ 2hex< ( len=#data+3 )
+  pad 1+ c@ ascii 1 = if  ( S1 rec )
+    3 - ( #data bytes )
+    pad 4+ 4hex< ( addr ) swap over + swap do
+      pad 2 read-ep1 pad 2hex< i image + c! i dp^ ! loop
+    0
+  endif  ( if S9 rec, we'll leave len=3 as true flag )
+  pad 4 read-ep1  ( read checksum; read crlf )
+  pad 2hex< checksum @ 1+ 255 and ." bad checksum" ;
+  
+hex  
+( for reading the ep-1 needs a chip type; it also ignores base )
+( and always sends back 0 - 800 or whatever )
+: read"
+  reset-ep1 hello-ep1 chip"
+  chat! ascii r b> ascii m b>  ( read motorola hex )
+    <cr> 10 chat-ep1  ( wait for <lf> )
+
+  begin read-srec until
+  begin pad 1 read-ep1 pad c@ ascii > = until
+  f800 dA !  ( THIS IS BOGUS )
+  dA @ dp^ +!  ( now >here will give a real value ) ;
+
+

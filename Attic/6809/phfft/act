@@ -1,0 +1,355 @@
+( act -- PHFFT! interaction )
+( daf -- 9-dec-93 created )
+( daf -- 16-dec-97    !!  fixed button needing two pushes)
+(                         added state display)
+(                         added note offs)
+
+( act is NOT interrupt-driven output )
+
+forth target
+
+( need this)
+code 2/
+  u ) asr   1 u #) ror  next  end-code
+
+( via port settings )
+( Port A )
+( pin 7 is wheel1 Bin )
+( pin 4 is 1=seq, 0=no seq)
+( pins 3,2 are velocity:  00=32, 01=48, 10=64, 11=127)
+( pin 1 is Brother pause OUT )
+( pin 0 is start button IN )
+( CA1   is wheel1 Ain )
+( CA2   is wheel1 Ain )
+
+( Port B )
+( pin 7 is wheel2 Bin )
+( CB1   is wheel2 Ain )
+( CB2   is wheel2 Ain )
+( CA1 and CB1 are positive edge interrupt ins )
+( CA2 and CB2 are neg edge interrupt ins )
+hex
+code via
+  b400 # ldx
+    00 # lda  ( so that the Brother switch line is LOW at startup )
+  1 x #) sta  ( Port a )
+    02 # lda  ( set pa1 as out -- switch on Brother seq )
+  3 x #) sta  ( porta dir reg )
+ ( Port B is input )
+   011 # lda  ( ca1,cb1 pos edge inputs; ca2,cb2 neg edge )
+ 0c x #) sta  ( peripheral ctl reg )
+
+  50c3 # ldd  ( 50ms timer tick; c350h = 50,000 )
+  4 x #) std  ( timer1 )
+    40 # lda  ( continuous interrupts from timer1; disable latching )
+ 0b x #) sta  ( aux ctl reg )
+
+   0db # lda  ( ca1,2, cb1,2, timer1 interrupt )
+ 0e x #) sta  ( int enable reg )
+  0bf # andcc ( enable firq )
+           next end-code
+
+( words that depend on via config)
+: vel@  ( - velocity-reading)  b401 c@ 0c and 2/ 2/  ;
+: button?  ( -- f )  ( button pushed -- start seq )
+                 b401 c@ 1 and 0= ;
+: down  ( -- ) 2 b401 c! ;  ( push Brother play/pause )
+: up    ( -- ) 0 b401 c! ;  ( release Brother play/pause )
+: seq?  ( - f)   b401 c@  10 and  ;
+
+
+var dog
+
+decimal
+( == wheels == )
+( wheel1 connects to ca1,ca2,pa7; wheel2 to cb1,cb2,pb7 )
+
+( first 2 byte are count16; 3rd is high byte )
+( .. copy kept by high-level code )
+3 array wheel1
+3 array wheel2
+
+hex
+code set  ( wheel -- )  ( sets "old" to "new" )
+  << x >>   pulu
+     x ) ldb   ( new )
+  2 x #) stb   ( old )
+  next end-code
+
+decimal
+( 16dec97 changed to return 0,-1,+1 only)
+code change  ( wheel -- +1,-1,0)
+  u ) ldx
+  clrb
+  x ) lda  ( new )
+  2 x #) cmpa  ( new-old )
+  0!= if  0< if  -2 # ldb then   incb  ( -1,+1)  then
+  sex  ( b->a)
+  u ) std  next end-code
+
+: wheels!  wheel1 set  wheel2 set ;
+
+( == MIDI == )
+hex
+code put     ( byte -- )
+  begin
+    b000 ^ lda  2 # bita  ( transmit data reg empty )
+  0!= until
+  << d >> pulu
+  b001 ^ stb    ( char out )
+  next end-code
+
+hex
+code acia  ( 6850 in send mode )
+  3 # lda
+  b000 ^ sta  ( master reset of 6850 )
+  15 # lda  ( rcv int dis, rts=low, tx int dis, 8b 1s 0p, /16 )
+  b000 ^ sta
+  next end-code
+
+hex
+code till-semaphore  ( wait till program change, copy in to out )
+  w[
+    begin  b000 ^ lda 2 # bita ( tx ready? )  0!= until
+    b001 ^ stb  ( write back out )
+    ( this can be synchronous... )
+  ]w
+    begin  b000 ^ lda 1 # bita ( rcv char? )  0!= until
+    b001 ^ ldb  ( data )
+    0c0 # cmpb  ( prog change )
+  0!= while
+  next end-code
+
+: make-note  ( note vel status -- )
+  put ( status )  swap put put ;
+
+code dog?  ( -- f )  ( if dog <= 0, return true )
+  0 # ldx  ( flag )
+  addr dog ^ ldd  <= if -1 # ldx endif
+  << x >> pshu next end-code
+
+: delay  ( n -- )   dog ! ( n x 50ms )  begin dog? until ;
+( pulse is for turning the blowers on and off; chan2 )
+: pulse  ( note# -- )  dup 40 91 make-note  5 delay  0 91 make-note ;
+
+( last has last note played or 0)
+var last
+
+( get velocity from jumpers)
+decimal  create vels  32 c, 48 c, 64 c, 127 c,  hex
+: vel  vel@  vels + c@  ;
+
+: play   ( note# -- )  
+   dup last !  vel 90 make-note ;  ( chan 1, for notes )
+: unplay  last @ ?dup if  0 90 make-note  then  ;  ( note off)
+
+( == FIRQ interrupt == )
+( tricky: for each wheel we have three input lines: one causing )
+( interrupts on pos edges; one on neg edges; and one "data" line. )
+( We want to incr count when pos&1 or neg&0, and decr otherwise. )
+( ca1,cb1 are pos; ca2, cb2 are neg )
+( we use the quality of the exclusive-or to achieve this. )
+hex
+firq handler  ( via interrupt )
+  << d >> pshs
+  b40d ^ lda  ( interrupt flag reg )
+  3 # bita     ( ca1,ca2 interrupt? -- wheel 1 )
+  0!= if
+    rora rora  ( ca2 -> sign )
+    b401 ^ eora  ( sign = ca2 xor Bin1 )
+    0< if ( incr ) 18 # ldd else -18 # ldd endif
+    addr wheel1 ^ addd
+    addr wheel1 ^ std
+  else
+    18 # bita  ( cb1,cb2? -- wheel2 )
+    0!= if
+      rola rola rola rola  ( cb2 -> sign )
+      b400 ^ eora  ( sign = cb2 xor Bin2 )
+      0< if ( incr ) 0c # ldd else -0c # ldd endif
+      addr wheel2 ^ addd
+      addr wheel2 ^ std
+    else
+      ( decr watchdog )
+      addr dog ^ ldd
+      1 # subd
+      addr dog ^ std
+      b404 ^ tst  ( clr interrupt by reading timer1 low )
+    endif
+  endif
+  << d >> puls rti end-handler
+
+( == blowers == )
+decimal
+: blow   17 pulse  ;  ( turn on blowers )
+: -blow  16 pulse  ;  ( turn off )
+
+: dog!  ( -- )  300 dog ! ;  ( 300x50ms = 15s )
+
+decimal
+: play/pause   down 4 delay up ;
+
+( == transpose == )
+( note in is 0-83; note out is 24-107 )
+( #transpose is 0-11 )
+decimal
+var #transpose
+code transpose  ( note -- note' )
+  u ) ldd
+  addr #transpose ^ addd
+  84 # cmpd  u>= if 84 # subd endif  ( wrap )
+  24 # addd  ( map to real midi note )
+  u ) std
+  next end-code
+
+code transpose+  ( incr -- scale-incr )
+  u ) ldd
+  0 # ldx  ( scale-incr )
+  addr #transpose ^ addd
+  0< if 12 # addd  -1 # ldx else 
+    12 # cmpd u>= if 12 # subd  1 # ldx endif
+  endif
+  addr #transpose ^ std
+  u ) stx  ( return scale-incr )
+  next end-code
+
+( === scales === )
+( scales come in pairs: descending, then ascending )
+( or, normal and interesting? )
+decimal
+here here
+     ( major      )  7 c,  00 c, 02 c, 4 c, 5 c, 7 c, 9 c, 11 c,
+here here
+     ( pentatonic )  5 c,  00 c, 02 c, 4 c, 7 c, 9 c,
+( here here)
+     ( whole tone  6 c,  00 c, 02 c, 4 c, 6 c, 8 c, 10 c, )
+
+here  ( fifths)  12 c,  00 c,  7 c, 14 c, 21 c, 28 c, 35 c, 42 c,
+                        49 c, 56 c, 63 c, 70 c, 77 c, 84 c,
+here  ( fourths) 12 c,  00 c,  5 c, 10 c, 15 c, 20 c, 25 c, 30 c,
+                        35 c, 40 c, 45 c, 50 c, 55 c, 60 c,
+here here
+     ( blues1     )  6 c,  00 c, 02 c, 3 c, 4 c, 7 c, 9 c,
+here ( harmonica ^ )   4 c,  02 c, 5 c, 7 c, 11 c,
+here ( harmonica v )   4 c,  00 c, 4 c, 7 c, 4 c,
+here ( camper van ^ )  3 c,  00 c, 02 c, 4 c,
+here ( camper van v )  3 c,  02 c, 6 c, 7 c,
+here ( guitar G   )  4 c,  02 c, 7 c, 11 c, 7 c,
+here here
+     ( guitar C   )  4 c,  00 c, 4 c, 7 c, 14 c, ( !! )
+here ( guitar Em9 )  4 c,  4 c, 7 c, 11 c, 18 c,
+( scales: array of 16 pointers )
+create scales , , , , , , , ,  ( compile 16 pointers )
+              , , , , , , , ,
+var cur-scale ( pointer 2nd byte of a pair of pointers to scales -- )                                     
+              ( up/dn -- cur-scale incr + @ gets a scale ptr ) 
+var scale#
+: scale+  ( incr -- )
+  transpose+  ( returns scale inc/dec )
+  scale# @ + 7 and
+  dup scale# !  double double  scales + cur-scale ! ;
+: scale!   0 scale# !  0 #transpose !  0 scale+  ;
+: scale  ( incr -- )   1+  ( 0 or 2)  cur-scale @ + @ ;
+: #tones  ( incr -- scale-len )  scale c@ ;
+: tone>note   ( incr tone# -- note# )  swap scale + 1+ c@ ;
+
+( === octaves === )
+decimal
+( flutes are 24, 36, 48, 60; 1/4 lu are 72, 84; ducks are 96 )
+( octave actually stores octave-24; we re-map later )
+var octave
+: octave!  0 octave ! ;
+
+code octave+  ( tone scale-len -- tone' )
+  2 u #) ldd ( tone )
+  0< if
+    u ) addd  ( add scale-len )
+    2 u #) std    ( tone#' )
+    addr octave ^ ldd
+    12 # subd
+    0< if 72 # ldd endif
+    addr octave ^ std
+  else
+    u ) cmpd  ( tone# > scale-len )
+    u>= if
+      u ) subd  ( tone# - scale-len )
+      2 u #) std
+      addr octave ^ ldd
+      12 # addd
+      84 # cmpd
+      u>= if 0 # ldd endif
+      addr octave ^ std
+    endif
+  endif
+  2 u #) leau  ( pop one item )  next end-code
+
+
+( === tones === )
+var tone
+: tone+  ( incr -- ) dup tone @ +  swap #tones octave+  tone ! ;
+: tone!  0 tone ! ;
+
+: play-note  ( incr -- )  ( use incr to choose ascend/descend )
+  tone @ tone>note octave @ + transpose play ;
+
+
+( ==== display ====)
+hex
+67 const playing  ( makes a 'P' for play)
+36 const pausing  ( makes a || for pause)
+: show  ( segments)  b800 c!  ;
+
+var chaser  ( 0--5.  segment #)
+code chaser+  ( incr - 0--5)
+  u ) ldd   0< if  6 # addd  then  ( 5 or 1)
+  addr chaser ^ addd
+  6 # cmpd  u>= if  6 # subd  then  addr chaser ^ std
+  u ) std  next  end-code
+
+create chasers  40 c, 20 c, 10 c, 8 c, 4 c, 2 c,
+: chase  ( incr)  chaser+  chasers + c@ show  ;
+
+decimal
+: 1wh  ( change -- ) wheel1 set  unplay  
+   dup chase  dup tone+   play-note   dog! ;
+
+: 2wh  ( change -- ) wheel2 set  dup chase  scale+  dog! ;
+
+( === INTERACTION!! === )
+: ?wheels
+  wheel1 change ?dup if 1wh endif
+  wheel2 change ?dup if 2wh endif ;
+
+: follow  ( - button)  0 chaser !   0 chase   0 last !
+  0  begin  drop ( flag)  ?wheels  button? dup  dog? or  until
+  unplay  ;
+
+: interact  ( - button)   blow  follow  -blow  ;
+
+( seq -- sequencer support )
+
+( daf  16dec97  added display, fixed 2x button push)
+( daf  17dec97  merged into ONE eprom with jumper configuration)
+
+: (sequence)  ( run Brother sequence )
+   playing show  till-semaphore play/pause ;
+
+: sequence   seq?  if (sequence) then  ;
+
+: go!
+  via acia -blow  sequence
+  wheels! scale! octave! tone!
+  begin  pausing show
+         wheel1 change wheel2 change or if interact else
+         button?  then  if play/pause sequence  then  again ;
+
+
+hex
+reset handler
+  800 # lds
+  780 # ldu  ( stacks )
+  pfa-of go! # ldy  ( init ip )
+  next
+
+host
+
+

@@ -1,0 +1,41 @@
+( MIDIoutput for testing SeismUSic.)
+
+( 27-sep-1999. Created.)
+
+cr s" MIDIoutput "  file[
+
+debug [if]
+( Lame Proteus-specific stuff.)
+: Proteus{   ( cmd)   1 SERIAL  MIDIout TAKE
+   0 ( MIDI id)  "04 ( product id)  "18 ( Emu id)  "f0  ( sysex)  5 SEND  ;
+: }Proteus   "f7 EMIT  MIDIout RELEASE  0 SERIAL  ;
+
+( tuning values are 1 word/note, in 1/64ths of a semitone, little-endian!)
+CODE MIDI>HILO  ( 14b - 7bhi 7blo)
+   t AX MOV,  AX AX ADD,  AH AL MOV,  127 # AX AND,  AX PUSH,
+   127 # t AND,  NEXT,  C;
+
+: 14!  ( 14-bit param)   MIDI>HILO  EMIT EMIT  ;
+
+: Tuning  05 Proteus{  0  48 FOR  DUP 14! 64 +  NEXT ( unchanged)
+            30 FOR  DUP 14! 16 + ( eighth-tones)  NEXT  DROP
+   78 64 *  50 FOR  DUP 14! 64 +  NEXT  DROP  }Proteus  ;
+  
+[then]
+
+: +CHANNEL   instrument C@  OR  ;
+: [1SEND]   1 SERIAL  [SEND]  0 SERIAL  ;
+: NOTE-ON  ( note vel)  PUSH
+   0 SWAP  32 + ( 16 -> 48)  POP  OVER  "90 +CHANNEL  5 [1SEND]  ;
+
+debug [if]
+: CONTROL  ( value n)   "b0 +CHANNEL  3 [1SEND]  ;
+: PATCH    ( chan)  1+  "c0 +CHANNEL  2 [1SEND]  ;
+: VOL     ( volume)      7 CONTROL  ;
+: PAN     ( 0=L,127=R)  10 CONTROL  ;
+: INSTR   instrument C@
+   DUP  3 = IF ( milk)  Tuning  THEN
+   DUP PATCH  127 VOL   42 * PAN  ;
+[then]
+
+]file

@@ -1,0 +1,61 @@
+( High-resolution time. 05-aug-1999.)
+
+( Here we combine the low-order 16 bits of ticks and the value of the
+  hardware clock counter, with the result that we have a uSec resolution
+  timer.
+
+  If we program the modulo register, MD, with the value `n', the value in
+  the timer register - TM - is in the range [0, n]. That is, it takes `n+1'
+  distinct values. Thus to count only `n' cycles per tick, we need to set
+  MD to `n-1'. The NEC manual mentions this in its usual, unbelievably
+  cryptic fashion. It was only by doing experiments that I convinced myself
+  that the range of TM is [0, n] and not [-1, n-1], which seemed just as
+  likely.
+
+  Therefore! Set MD to `n-1'. Now since TM is counting DOWN, we subtract it
+  from MD to get a value that counts up from 0. MD = n-1, so MD - TM is in
+  the range [0, n-1] as well, but going the other way. We're sort of taking
+  the MD's complement of TM.
+
+  We also have to be careful not to get a low-order count that is just
+  before underflow and a high-order count from just -after-. So we read the
+  high, then the low, then the high again, and keep doing this until the
+  two high readings are the same. This should, in this universe, take
+  exactly one or two tries. I saw this technique in Niklaus Wirth's Oberon
+  system.
+
+  One other thing! Since the counter is going at fClk/6 - 1.333 MHz on our
+  8 MHz V25 - we have to scale back to usecs by multiplying by 3/4.
+
+  Chapter 2. Here's a really nice way to do this - that I'm not going to do
+  for this project! - that combines all this elegantly. This is quite a
+  bit like what Wirth did in Oberon. The hardware counter counts along -
+  counting down - and every time it underflows, an interrupt increments the
+  main - software - tick count by exactly the number of ticks - or
+  microseconds, whichever. To get the current, hi-res, time, just read the
+  software counter and -subtract- the hardware one - remember: it's
+  counting backwards. The software counter is initialized to the number of
+  clocks per tick.
+
+  A concrete illustration will help. The user specifies a tick of 600
+  usec. This value is scaled by 4 / 3 because the clock runs at 1.333333
+  MHz. So the hardware counter is initialized to 800 clocks/tick, and the
+  32- or 48-bit software counter is initialized to 600. The current time is
+  `ticks @ clock @ scale -'. Every interrupt the ticks count is incremented
+  by 800.
+
+  A slight variation is that the ticks count is a count of clocks. The
+  scaling is all external - ie, to figure out when 40 msec in the future
+  is, calculate `ticks @ 40 4000 3 */ + '.  Then the hardware clock is set
+  to, eg, 600; the ticks increment at every interrupt is 600, and the
+  current time is `ticks @ clock @ -' - but that's the time in clocks. To
+  convert to something standard, like usec, requires scaling. This probably
+  won't often be necessary, and most calculations can use clocks instead.)
+
+CODE HIGH-RESOLUTION-TIME  ( - usecs low-ticks)
+   t PUSH,
+   BEGIN,  SS: | ticks 2 + ) t MOV, ( low ticks)  ES: "f88 ) AX MOV, ( tm1)
+           SS: | ticks 2 + ) t CMP,  0= UNTIL,
+   AX NEG,  ES: "f8a ) AX ADD,  ( md1 - tm1)  AX PUSH,  NEXT,  C;
+
+

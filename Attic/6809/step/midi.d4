@@ -1,0 +1,219 @@
+( midi )
+( daf 9-feb-93  created )
+( daf 17-sep-93  this is the common code for all apps using MIDI )
+
+( daf 16-oct-93  modified with "yield" for the motor controller )
+(   and specialized some other stuff as well... )
+
+forth target
+
+( serial queue stuff: )
+decimal
+
+127 equ qmax
+-04 equ q.+rd
+-03 equ q.+wr
+-02 equ q.cnt
+-01 equ q.status
+04 equ q.data
+
+compiler
+: queue  create 128 4 + allot ;code  ( x points to code field )
+( sign-extends the byte so we can 'easily' -- in forth -- )
+( check if it's a status byte. )
+  pfa>x
+  q.data x #) leax  ( x points to data )
+  q.cnt x #)  tst   ( anything here? )
+  0!= if
+    q.+rd x #) lda   a x r) ldb ( data )
+    inca   qmax # anda   q.+rd x #) sta
+    q.cnt x #)  dec  sex ( b->a )  << d >> pshu
+    -1 # ldx ( true )
+  else 0 # ldx ( false )
+  endif  << x >> pshu
+  next end-code
+
+target
+
+queue midiQ
+
+code init-q
+  addr midiQ # ldx
+  clra clrb x )++ std  x ) std ( clr bytes 0-3 )
+  next end-code
+
+hex
+( acia equates )
+b000 equ ser-control
+
+( this little interrupt routine is *waay* trickier than it looks. )
+( It does lots of nice things for us.  First, it ignores all )
+( real-time midi bytes -- F8h or greater.  Second, it remembers )
+( the last status byte, so the transmitter can use the midi )
+( 'running status' mode.  Third, it only cares about note-on )
+( and note-off messages, and only on channels 1 and 2. )
+
+b40d equ intp-flags  ( interrupt flags reg )
+
+var statMask
+
+firq handler  ( acia *and* via interrupt )
+  ( firq doesn't save *any* registers )
+  intp-flags ^ tst  ( high bit set if via interrupt )
+  0< if  ( timer int )
+    addr ticks ^ inc
+    timer1 ^ tst  ( clr interrupt by reading timer1 low )
+    rti  ( ** timer interrupt exits here ** )
+  endif
+
+  ( else acia interrupt )
+  << x d >> pshs
+  ser-control ^ ldd  ( read both status and data to clear intrpt )
+  ( a=status; b=data )
+  1 # anda  ( recv data reg full )
+  0!= if
+    f8 # cmpb  ( not a real-time byte? )
+    u< if
+      addr midiQ q.data + # ldx ( point to data )
+      tstb
+      0< if    ( status byte? )
+        q.status x #) stb  ( store in queue's status )
+      endif
+      ( data or status in b )
+      q.status x #) lda  ( get status in a )
+      addr statMask     ^ anda
+      addr statMask 1 + ^ cmpa
+      0= if  ( status is note-on/off, on a channel we like )
+        q.+wr x #) lda
+        a x r) stb  ( put data in q )
+        inca  qmax # anda
+        q.+wr x #) sta
+        q.cnt x #) inc
+      endif
+    endif
+  endif
+  << x d >> puls
+  rti end-handler
+
+hex
+code init-acia
+  3 # lda
+  ser-control ^ sta  ( master reset of 6850 )
+  95 # lda  ( rcv int en, rts=low, tx int dis, 8b 1s 0p, /16 )
+  ser-control ^ sta
+  0af # andcc      ( ** enable both interrupts ** )
+  next end-code
+
+var channel  ( -1=omni; 0-15 -> chan 1->16 )
+
+hex
+here  ( omni, 1..16 )
+  13 c, 306d , 7933 , 5b5f , 727f , 7bfe , ( omni, 1..10 )
+  0b0ed , 0f9b3 , 0dbdf , ( 10..16 )
+
+( note: note-on is hex 9x; note-off is 8x; x=midi chan# )
+: init-chan
+  channel @ dup 1+  ( 0=omni, 1-16 ) literal + c@ Disp
+  ( chan# ) dup 0< if ( omni )
+    drop 0e080    ( status & e0 must= 80 for note-on/off )
+  else
+    0ef80 or ( status & ef must= 8x for note-on/off, x is channel )
+  endif  statMask ! ( high byte is mask; low is value ) ;
+
+code 2r>
+  << x d >> puls
+  << x d >> pshu next end-code
+
+code Off>On  ( note vel st -- note vel' st )
+  1 u #) ldb  ( get status )
+  10 # bitb  0= if 3 u #) clr ( vel ) endif ( vel=0 for noteOff )
+  next end-code
+
+( == driver code == )
+hex
+compiler
+: driver  create c, ;code  ( note# -- )
+  << d >> pulu
+   2 x #) orb    ( or with on or off bit )
+   b800 ^ stb    ( write to portC )
+   b401 ^ stb    ( write to portA to strobe ca2 )
+  next end-code
+
+target
+80 driver on
+00 driver off
+
+: Play  ( note vel status -- )
+  drop ( forget status ) if on else off endif ;
+
+( == midi code == )
+
+( st is status; ph is phase: -1 for note, 0 for vel )
+
+: getQ  ( -- byte, <0 is status )  begin yield midiQ until ;
+
+: getMidi ( st ph -- st' ph' byte )
+  0= ( toggle ph )
+  begin
+    getQ dup 0< ( while status byte )
+  while
+    >r drop drop r> -1 ( new-st -1 )
+  repeat  ( st' ph' byte ) ;
+
+: getNote ( st ph -- st' ph' byte )
+  0 begin drop getMidi over until ( till ph=note ) ;
+
+: scanMidi
+  0 0 ( st ph )
+  begin
+    getNote ( st  ph  note ) >r
+    getMidi ( st' ph' vel  ) >r
+    over 2r> rot ( st' ph' note vel st' )
+    Off>On Play
+  again ;
+
+: clear-notes  80 0 do i off loop ;
+
+ decimal
+: initMidi
+  init-q init-via clear-notes init-chan
+  ( Because irq is *level* sensitive, we delay here before )
+  ( re-enabling interrupts so the channel # doesn't change )
+  ( too ridiculously fast. )
+  5000 0 do loop
+  init-acia  ( also enables interrupts again ) ;
+
+: doMidi  initMidi scanMidi ;
+
+( stacks overlap in a funny way: the current task's )
+( return stack is based @ 800h; its data stack @ 780h. )
+( The suspended task is @ 7c0h, 740h.  This way the )
+( current host chat code will still work. )
+hex
+reset handler
+  -1 # ldd
+  begin  ( leave addr for panel switch handler )
+  addr channel ^ std
+  ( init motor task )
+  7c0 # ldu  ( init rp )
+  740 # ldx  ( init sp )
+  pfa-of doMotor # ldd ( init ip )
+  << x d >> pshu  ( push init sp,ip )
+  addr rpSuspend ^ stu ( save for first yield )
+  
+  ( init main task )
+  800 # lds
+  800 80 - # ldu
+  pfa-of doMidi # ldy
+  next end-handler
+
+decimal
+irq handler
+  ( panel switch )
+  addr channel ^ ldd
+  1 # addd
+  15 # andb  ( 0 - 15 )
+  again  ( branch into reset handler )
+  end-handler
+
+
