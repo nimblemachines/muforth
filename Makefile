@@ -73,4 +73,4 @@ ppctest: ppc.c ppc_asm.s muforth.h
 	${CC} ${LDFLAGS} -o ppctest ppc.o ppc_asm.o ${LIBS}
 
 clean :
-	rm -f muforth ppctest version.h *.o
+	rm -f muforth ppctest .gdbinit version.h *.o
