@@ -1,0 +1,80 @@
+( $Id$
+
+  This file is part of muforth.
+
+  Copyright 1997-2004 David Frech. All rights reserved, and all wrongs
+  reversed.
+
+  Licensed under the Apache License, Version 2.0 [the "License"];
+  you may not use this file except in compliance with the License.
+  You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+  or see the file LICENSE in the top directory of this distribution.
+
+  Unless required by applicable law or agreed to in writing, software
+  distributed under the License is distributed on an "AS IS" BASIS,
+  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  See the License for the specific language governing permissions and
+  limitations under the License.)
+
+( Produces an Intel hex listing of a memory image.)
+
+( 2004-jul-07. Taken from target/v25 and massively streamlined.)
+
+cr " Intel hex " file[#
+
+decimal
+
+// with DOS
+
+64 buffer outbuf
+
+( Buffer)
+variable buf
+: b,  buf @ c!  1 buf +! ;
+: b!  buf ! ;
+
+( Useful ASCII.)
+: #LF  [ ctrl J ] ;
+: #CR  [ ctrl M ] ;
+
+: cr,  [with] DOS [if]  #CR b, [then]  #LF b, ;
+
+: c@+  ( a - a+ n)  dup 1+  swap c@ ;
+: nyb,   15 and  >digit  b,  ;
+: .byte   dup  4 rshift  nyb,  nyb,  ;
+: >byte   ( sum a byte - sum+ a)  dup .byte  u+  ;
+: >word   ( sum a b1 b2 - sum+ a)  push >byte  pop >byte  ;
+                                                    ( sends b1 then b2)
+: >hilo   dup 8 >> 255 and  swap 255 and ;
+: addr    ( sum ta - sum+ ta)  dup >hilo  >word  ;  ( big endian)
+: chunk   ( sum ha # - ha+# sum)   for  c@+  >byte  next  swap  ;
+: check   ( sum)  negate  .byte  cr,  outbuf  buf @  over -  type  ;
+: header  ( n - sum)  outbuf b!  char : b,  dup .byte  ;
+: tag     ( sum ta n - sum+n)  >byte  drop  ;
+
+      (  : count    vaddr    tag       data      checksum )
+      ( =====================================================)
+: data  ( 'host 'target # - 'host+#)
+      dup header   rot addr  0 tag   -rot chunk       check  ;
+: end   0 header     0 addr  1 tag                    check  ;
+
+: seg   ( seg)
+        2 header     0 addr  2 tag   swap addr drop   check  ;
+
+: ext   ( ext)
+        2 header     0 addr  4 tag   swap addr drop   check  ;
+
+: fragment  ( 'host 'target # - 'host+# 'target+#)
+   2dup + push   data  pop ;
+
+: chunks    ( 'host 'target #)  15 + 16 /   ( send whole 16 byte lines)
+   ?for  16 fragment  next  then  2drop  ;
+
+#]file
+
+
+z" ../Hardware/ARM/AEB-1/At29c020.bin"  r/o open-file  mmap-file
+  ( 256k) 16 /  0 swap  chunks  end
