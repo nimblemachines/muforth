@@ -141,6 +141,34 @@ cell_t debugger;
 cell_t dbg_send;
 cell_t dbg_recv;
 
+/*********************************************************
+ *
+ * The basic strategy of this debugger is to declare separate
+ * host and target semantics.  The host is defined as the
+ * machine on which the debugger is running.  The target is
+ * defined as the machine on which the debugger nub is
+ * running.  When the host and the target are the same,
+ * the line seems blurry.  The best way to think about the
+ * design of this debugger is to imagine that you've got
+ * a muForth system running on FreeBSD on an Intel processor
+ * but you're trying to debug some ARM code that you've
+ * built and is running.
+ *
+ * The host system knows that there are well defined
+ * muForth 'registers' that need to be obtained from the
+ * target system:
+ *    PC  - Program counter
+ *    SP  - Data stack pointer
+ *    S0  - The base address of the data stack (used for
+ *          calculating the stack depth)
+ *    RP  - Return stack pointer
+ *    R0  - The base address of the return stack
+ *
+ * In addition, the host system understands that there
+ * may very well be processor specific registers that
+ * the user may want to look at and possibly change.
+ */
+
 /*
  * dbg()
  * 
