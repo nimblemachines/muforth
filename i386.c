@@ -3,7 +3,7 @@
  *
  * This file is part of muforth.
  *
- * Copyright 1997-2002 David Frech. All rights reserved, and all wrongs
+ * Copyright 1997-2004 David Frech. All rights reserved, and all wrongs
  * reversed.
  */
 
@@ -26,6 +26,20 @@ void mu_compile_call()
     pcd_last_call = pcd;
     *pcd++ = 0xe8;		/* call near, 32 bit offset */
     mu_compile_offset();
+}
+
+/* resolve a forward or backward jump - moved from startup.mu4 because it
+ * was i386-specific. In this usage "src" points just _past_ the displacement
+ * we need to fix up.
+ * : resolve   ( src dest)  over -  swap cell- ! ( 32-bit displacement) ;
+ */
+void mu_resolve()
+{
+    int src = STK(1);
+    int dest = TOP;
+    int *psrc = (int *)src;
+    psrc[-1] = dest - src;
+    DROP(2);
 }
 
 #if 0
