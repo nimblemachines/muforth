@@ -61,7 +61,6 @@ struct inm initial_forth[] = {
     { "current", mu_push_current },
     { "'number", mu_push_tick_number },
     { "'number,", mu_push_tick_number_comma },
-    { "last", mu_push_last_call },
     { "h", mu_push_h },
     { "r", mu_push_r },
     { "s0", mu_push_s0 },

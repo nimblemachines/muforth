@@ -132,7 +132,6 @@ void mu_compile_call(void);
 void mu_resolve(void);
 void mu_compile_jump(void);
 void mu_compile_return(void);
-void mu_push_last_call(void);
 void mu_compile_drop(void);
 void mu_compile_2drop(void);
 void mu_compile_literal_load(void);

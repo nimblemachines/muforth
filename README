@@ -4,7 +4,6 @@ muFORTH README
 
 Why muforth?
 ^^^^^^^^^^^^
-
 Why write another Forth when there are so many around? Because
 everyone else's Forth is wrong. ;-)
 
@@ -31,29 +30,30 @@ From startup.mu4:
 
 Why another Forth?
 ^^^^^^^^^^^^^^^^^^
+In other words, why not keep using dforth, an earlier Linux Forth I wrote
+that I have used successfully on several projects?
 
-In other words, why not keep using dforth (an earlier Linux Forth I wrote
-that I have used successfully on several projects)?
-
-dforth had some qualities that I now construed as defects, including:
+dforth has some qualities that I now construe as defects, including:
 
 * written entirely in 386 assembler;
-* trapped into Linux kernel directly, eschewing the C library;
+
+* traps into the Linux kernel directly, eschewing the C library;
 
 * implemented via indirect-threaded code (ITC), an elegant technique, but I
   was interested in exporing alternatives;
 
 * a very big kernel, with lots of task-specific code
 
-I wanted to go the other way. In particular, I was wishing for:
-My desiderata included the following:
 
-* a kernel, written in C, that is the smallest possible kernel
-  capable of compiling Forth colon definitions (ie, it is self-
-  bootstrapping);
+I wanted to go the other way. My desiderata included the following:
+
+* a kernel, written in C, that is the smallest possible kernel capable of
+  compiling Forth colon definitions (ie, it is self- bootstrapping);
 
 * a simple native-code compiler;
+
 * a tail-recursive implementation;
+
 * a new parser, tokenizer, and interpreter
 
 * colorforth's terseness but implemented without color and without
@@ -202,40 +202,93 @@ Things taken from cmFORTH (also mostly existed in dforth):
 
 Then talk about the things that I took from dforth or invented for muforth:
 
-- parser/tokenizer (text v. string type) non-inline strings & separation of
-  code & data (applies to creat/does)
 
 - create/does> "constant" implementation
-* dictionary "chains" (and why I call them that) (you "link" to them; and
-  threads are execution state)
-* compiler/interpreter "modes" & metacompilation - same as dforth
-  difference of compile-time v run-time search-order
+* the UNIVERSAL literal
 
 * number parsing code all high-level; not even constants in kernel!
 * currently uses GNU make, so gmake on BSD
 
-cmFORTH stuff: names of dict chains, &c.
-compiler vs .compiler.
--find
+Simple native code compiler
+  how compile, works
+  tail call conversion
+  the role of last, -tail
+  stack manipulation
+  structure compilers, high-level and low-
+
 
 Forgetting
 ^^^^^^^^^^
 muforth does not define the common Forth word "forget", nor does it define
 "empty", as colorforth does. In the presence of deferred words, any kind of
 "forget" is error-prone. I find it better to quit and reload. This has
-never bothered me, or felt limiting in any way. It certainly makes memory
-allocation easier. ;-)
+never bothered me, or felt limiting in any way. And it certainly makes
+memory allocation easier. ;-)
+
+Strings
+^^^^^^^
+I struggled with how to define and use strings in muforth. I _really like_
+length-prefixed strings, but using them with C is a pain. After several
+false starts I arrived at a simple structure for strings that solves not
+only the problem of C compatibility, but a host of other problems related
+to having strings "inline" with code - the traditional Forth way.
+
+Since muforth is intended to run on modern machines with lots of caches, it
+seemed important to separate code and data. This affects not only strings
+but also create/does>. I'll talk about create/does> in a later section.
+
+Except in a few places - throw comes to mind - a string in muforth is
+represented on the stack by a tuple: (start, length). start points to the
+first character; length is the length. The string may or may not be
+zero-terminated; no muforth depends on the presence of such termination.
+
+But what about saving strings for later use? Now we have to have a
+structure for strings in memory, and we'd like it to be C compatible, since
+maybe the muforth word we're calling is going to call into the C library.
+Maybe we're opening a file by name.
+
+My conclusion was to compile the tuple
+
+  (length, string, termination, padding).
+
+length is a cell-sized count, so very large compiled strings are possible.
+string is an array of the characters. termination is a single null
+character - always present in compiled strings! And padding gets us to a
+cell boundary.
+
+Unlike traditional Forth, I compile the string into "data" space, not code
+space. Then I compile a literal that at runtime pushes the address, not of
+length, but of string. This way I can easily pass it to C code, and I can
+just as easily convert it to a canonical muforth (start, length) string by
+executing count:
+
+  : count  ( z" - a u)  dup  cell- @ ;
+
+z" here is a mnemonic for zero-terminated, length-prefixed, compiled
+string.
+
+One of my subgoals with muforth was to have only one kind of literal.
+There used to be several different kinds of string literals, all of them
+inline (thereby possibly causing cache problems by mixing code with data)
+and therefore requiring strange and convoluted code to "jump over" the
+inline string in order to continue execution. By converting strings
+literals to ordinary literals, lots of problems go away, and strings now
+being neatly postfix as well. If I want a literaled compiled string to push
+(start, length) I simply follow the literal with a call to count. Look for
+"string," in startup.mu4 and you'll see how it all works.
+
 
 Tokenizing the input
 ^^^^^^^^^^^^^^^^^^^^
 This is one of the cool innovations in muforth.
 
-I have defined two kinds of strings: string and text. A string is what you
-would expect in Forth: a pointer to the first character, and a length. A
-text is something a bit odd. I'll explain.
+In muforth I defined a notional string type, called "text", that is better
+suited to tokenizing. I say "notional" because it never shows up in the
+language, only in the C implementation. A text is something a bit odd. I'll
+explain.
 
 I discovered, in writing the tokenizer for dforth, that using a string
-(pointer and length) and an offset (past what we have seen already) was
+(start, length) and an offset (past what we have seen already) was
 clumsy and slow. This is what Forths have traditionally done. The state of
 the interpreter is captured by two variables: source and >in. source is a
 double variable containing a pointer to the first character, and a length -
@@ -347,29 +400,349 @@ form-feed, vertical tab, and I think even backspace. These all map to ASCII
 
 See `token' for details.
 
-Simple native code compiler
-  how compile, works
-  tail call conversion
-  the role of last, -tail
-  stack manipulation
-  structure compilers, high-level and low-
-
-Strings and texts
-  the different kinds
-  non-inline vs jumping over
-  counted string representation
-  double use of counted strings
-  more details about text and scanning process
-
 Dictionary
-  structure
-  find
-  dictionary chains
+^^^^^^^^^^
+The dictionary in muforth is very simple. It is a set of intertwined linked
+lists of words. Each list represents what I call a chain, and consists of
+related words. The head of each chain is the word most recently defined on
+that chain.
 
-segue into the interpreter modes, "programmatic" searching, the losingness
-of only/also.
+The dictionary space is linearly allocated. Each entry consists of:
+
+  * a link pointer to the previous word on the same chain;
+  * a pointer to the machine code associated with the word;
+  * a 1 byte count of characters in the name;
+  * the bytes of the name;
+  * padding to a 4-byte boundary.
+
+The dictionary can in theory contain an arbitrary number of intertwined
+chains. muforth starts up with only two chains defined; their names and
+functions I shamelessly stole from Chuck Moore, but this time from cmFORTH.
+They are called "forth" and "compiler". (He uses the same idea in
+colorforth, but calls the groups "forth" and "macro", and they are arrays
+rather than lists.)
+
+The forth chain consists of "normal" words: words that should be executed
+when mentioned outside a colon definition, and compiled when mentioned
+inside one.
+
+The compiler chain fills the role that so-called immediate words fill in more
+traditional Forths, but without their problems. Because it is a completely
+separate chain that is _not_ searched outside of colon definitions, it is
+possible to have a word with the same name in both chains with no
+confusion. A perfect example is ." . Outside a definition it simply scans
+for a trailing " delimiter and then echoes (types) the string. Inside a
+definition it compiles the string into "data" space, and compiles code to
+type it out at runtime. This is intuitively what we expect.
+
+Inside a colon definition the interpreter searches the compiler chain, and
+if it finds the token there it executes it rather than compiling it. In
+other words, words on the compiler chain execute at compile time, and tend
+to be used to build control structures like if/then and begin/while/repeat.
+Because of this, we often call them "compiling words".
+
+But that's not the end of the story. If the token is _not_ found on the
+compiler chain, we look on the forth chain, and if found there it is
+compiled.
+
+Ok, so how do we specify which chain a word gets compiled into, and how do
+we specify "search orders" like the above?
+
+A variable, called current, points to the "current" chain - the one that
+new definitions go into. By convention chains have funny names: forth and
+current are really called .forth. and .current. . I chose those names to
+indicate their chainness. (The dots on the ends are supposed to look like
+"links".) When you mention a chain by name it simply pushes its address.
+It's basically a constant.
+
+So, also by convention, we define the words "forth" and "compiler". These do
+more than simply name the chain; they make it the "current" chain - new
+words get compiled into it.
+
+How does this work? Simple!
+
+  : definitions  ( chain)  current ! ;
+  : forth        .forth. definitions ;
+  : compiler  .compiler. definitions ;
+
+Any time we define a new chain, .foo. , we also define "foo" as above.
+
+Then our code can look like this:
+
+  forth
+  [words compiled into .forth. chain]
+  compiler
+  [words compiled into .compiler. chain]
+
+Now we can specify what chain words get compiled _into_, but what about
+specifying which chains get searched, and when, and what we do with the
+words that we find? I'll first explain the basic dictionary search
+mechanism, but to fully answer this question I have to talk about structure
+of the interpreter - another cool muforth innovation.
+
+find is the workhorse word that searches the dictionary. You supply it a
+token (start, length), and the pointer to the head of a dictionary chain
+(such as .forth.). find returns true and a pointer to the word's code if it
+found it, or false and the (start, length) tuple if not. This way it's easy
+to specify a _sequence_ of searches of chains. Which brings us to...
+
+The interpreter
+^^^^^^^^^^^^^^^
+Like everything in muforth, I wanted the interpreter to be dead simple,
+but incredibly flexible. Traditionally, Forth interpreters have relied on
+lots of gross hacks and "tricks" that not only make them hard to
+understand, but hard to use as well.
+
+The interpreter basically looks like this:
+
+  : interpret  ( start length)
+    >text source 2!  first !
+    begin  token  dup while  consume ?stack  repeat ;
+
+>text converts (start, length) - the string we want to interpret - into
+(end, -length) & -length, which go into source and first, respectively.
+(This Forth code is a bit hypothetical; this really happens in C in
+interpret.c.)
+
+The loop is simple. Get a token. If its length is 0, we're done. Otherwise,
+consume the token and then check the stack for over- & underflow.
+
+Wow. That's it?
+
+The magic all happens in consume. Depending on the state of the
+interpreter, consume does wildy different things with the token.
+
+It may not surprise Forth old-timers, but muforth has a variable called
+state. Its use is _much_ different than the traditional one, though. My
+state points to a two-cell data structure. The first cell is a pointer to
+the code that to _consume_ a token; the second is a pointer to code that
+will display an informative prompt, so if you're doing something at the
+keyboard, you'll know what state the interpreter is in.
+
+I call this (consume, prompt) tuple a _mode_. muforth has only two modes
+built-in. Can you guess what they are? Interpret and compile, of course!
+
+Here is the consume function for interpret mode. It has a funny name.
+Because [ leaves the colon compiler and ] enters it, the interpret-mode
+consume function is called _[ and its compiler dual is _] .
+
+  : _[   ( interpret one token)
+       .forth. find  if  execute ^ then  number ;
+
+Look in .forth. for the token. If found, execute it. If not, try to convert
+it as a number. If that fails, number will complain. Note that there is
+_no_ mention of .compiler. ! Words on the .compiler. are invisible to
+interpret mode.
+
+The colon compiler's consume function is this:
+
+  : _]   ( compile one token)
+    .compiler. find  if  execute ^ then
+       .forth. find  if  compile, ^ then  number, ;
+
+Search .compiler. for the token. If found, execute it (it is a _compiling
+word_). If not, search .forth. . If found there, compile it. If not found,
+try to convert it as a number. If that fails, number, will complain. If it
+succeeds, it will compile a literal (hence the name "number,".)
+
+Super-simple, right?
+
+Again, Forth old-timers will laugh at how simple this is compared to what
+it replaces: ONLY/ALSO, weird nibble-encoded dictionary chain indices, etc.
+
+I think the fundamental difference between this approach and the
+traditional ones is that the traditional approach allow for - in fact,
+_demand_ - the run-time creation of search orders. In my humble opinion,
+that's simply the wrong time to be creating a search order! When you figure
+out what you're trying to do - what your interpreter _mode_ is supposed to
+accomplish - you're going to arrive at a search order that is _fixed and
+constant_ for that interpreter mode.
+
+I should add that the traditional approaches only specified a search order;
+you still had to have immediate words and other gross hacks in order to
+have compiling words. My way specifies not only the search order, but
+exactly what to do when a token is found in a particular chain. And the
+"encoding" for it is very simple and easy to read. In fact, it's the
+simplest thing that could possibly work: straight Forth code!
+
+What makes this _really_ nifty is that it's trivial to create more modes
+for the interpreter. startup.mu4 creates a mode for conditional
+interpretation, by creating a new dictionary chain called .conditional. and
+creating a new interpreter mode. It's a bit hairy, mostly because it allows
+_nested_ conditionals, but it's not much code and it's a nice approach: use
+the interpreter to scan for your tokens for you! That's what it's for!
+
+The simplicity and extensibility of this approach wins big for
+metacompilation as well.
 
 
+The funny compiler word called \
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ANS Forth has a word called POSTPONE that is horrendously complicated but
+unfortunately actually useful.
+
+Before I talk about that I want to mention the idea of forcing
+interpretation or compilation from a different dictionary chain than the
+current interpreter mode would normally choose. An easy example is that
+we're writing a compiling word that does the same thing that another
+compiling word does, but then does a bit of its own stuff as well. Without
+some kind of "escape" mechanism there is no way to compile a call to the
+other compiling word, since any mention of it inside a colon definition
+will result in its _execution_ rather than its compilation. What to do?
+
+muforth defines several such escape words.
+
+  \f forces compilation of the following token from the .forth. chain
+  \c forces compilation from the .compiler. chain
+
+But if you look through startup.mu4, you'll see very few references to
+either of these words. Mostly you'll see references to a funny word called
+\ .
+
+\ is my name for POSTPONE, courtesy of Chuck Moore. (It was part of
+cmFORTH.)
+
+\ is like \c, but it does more than that.
+
+First it looks for the token on .compiler. and compiles it if found. (This
+is what \c does, but it stops there - in fact it complains if the token
+wasn't found on .compiler. .)
+
+If instead it's on the .forth. chain, \ compiles code into the word that
+we're currently compiling, that, when later _executed_, will compile a call
+to the word we found in .forth. .
+
+It's kind of a postpone, no matter what. Let's say we're defining the word
+foo, like this:
+
+  : foo  \ bar ;
+
+If bar is a .compiler. word, postpone _its_ execution until _foo_
+executes. If bar is a .forth. word, postpone its _compilation_ until foo
+executes. That's probably the best way to think about it.
+
+With that in mind, let's think about...
 
 
+Structure compiling words
+^^^^^^^^^^^^^^^^^^^^^^^^^
+One way to write a loop is like this:
+
+   begin ... <test> while ... repeat
+
+begin marks the beginning. <test> leaves a flag on the stack, which while
+consumes, falling through if true and jumping _past_ repeat if false.
+repeat then jumps to the code following begin.
+
+So what gets compiled looks something like this, using labels as jump
+destinations:
+
+  beginning:
+    ...
+    <test>
+    branch if zero to end
+    ...
+    branch to begin
+  end:
+
+begin compiles nothing, but marks the top of the loop by pushing the
+address of beginning. until compiles the branch if zero. repeat compiles
+the branch to beginning, the address pushed on the stack by begin.
+
+Let's compare this to the code produced by if/then.
+
+  <test> if ... then
+
+This compiles
+
+    <test>
+    branch if zero to end
+    ...
+  end:
+
+Hmm. This looks just like the code that while is supposed to compile. Do if
+and while do exactly the same thing? Not quite. But before we look at the
+difference, let's think about what repeat has to do. It has to compile a
+backwards branch to beginning, and _then_ it has to fix up the address of
+the branch that while compiled so that it branches to end.
+
+So what about while? After compiling the conditional
+branch, the stack has two pointers on it: beginning, and a reference to the
+forward branch that repeat will fix up. But they're in the wrong order!
+repeat needs to see beginning first, then the forward branch fix up
+address. So we need to swap the addresses on the stack. While in theory
+repeat could do this, in practice that's the wrong place, because nothing
+prevents us, with properly defined words, from doing
+
+  begin ... while  ... until ... then
+
+which is actually a _very_ useful construct. Unless while does the swap,
+until will break, because like repeat it expects the address of the
+beginning of the loop on the top of the stack.
+
+All of this explains why while and repeat are defined thus:
+
+  : while   ( dest - src dest)   \ if  swap ;
+  : repeat  ( src dest -)     \ again  \ then ;
+
+In fact, repeat's definition as "\ again \ then" suggests using "until ...
+then" in our own code.
+
+Of course, I haven't given any good reason for using \ over \c to compile
+references in compiling words to other compiling words. Oh well.
+
+
+Simple and tail-recursive native compiler
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Tail-recursion was a motivation for writing muforth. What the heck is that,
+you ask. Fair enough.
+
+If I write
+
+  : foo  a b c foo ;
+
+What will happen when foo executes? On a normal Forth, the last reference
+to foo will compile a call to foo, which, when executed, will push the
+return stack. (Actually, in most Forths, in the presence of SMUDGE, the
+reference to foo inside foo will fail unless we tell the compiler that foo
+is "recursive".)
+
+After foo executes for a while, the return stack will overflow, and the
+program will crash.
+
+But let's look closer at foo. Is there any reason to push the stack when we
+call foo from itself? What's it going to do when it returns? It's going to
+return to its caller! So why return to ourselves if we're going to
+immediately return to our caller? Why indeed!
+
+The call to foo is in what Scheme people call "tail position". Any call in
+tail position has nothing terribly interesing to do when it returns - it's
+going to return directly to its caller anyway. So what was discovered is
+that calls in tail position can be converted to jumps. This conversion is
+called "tail-call conversion", and it's very simple, but very powerful.
+
+What happens when we do this? Suddenly foo becomes a word that contains an
+infinite loop, but one that consumes zero stack space. We've defined a word
+that is syntactically recursive, but procedurally iterative. This is a very
+powerful idea, but one that's been with us since the dawn of Lisp, way back
+when only FORTRAN existed.
+
+Using tail-recursion obviates the need for any looping constructs. muforth
+has them, but really it doesn't need them.
+
+A last question worth asking is, when can we do this conversion, and when
+can't we? At any exit from a word, either via ^ or ; we can do the
+conversion. There is one case where we have to be careful. If the byte
+after our converted tail-call is a jump destination, we have to compile a
+return instruction there.
+
+Here "call foo" gets converted to "jump foo".
+
+  : foo  if a b c then  foo ;
+
+Here the conversion happens too, but _also_ a return instruction gets
+compiled after the "jump foo". Strange but true!
+
+  : foo  if a b c foo then ;
 

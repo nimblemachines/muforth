@@ -26,6 +26,7 @@
 #include "muforth.h"
 
 static u_int8_t *pcd_last_call;
+static u_int8_t *pcd_jump_dest = 0;
 
 static void mu_compile_offset()
 {
@@ -42,20 +43,6 @@ void mu_compile_call()
     mu_compile_offset();
 }
 
-/* resolve a forward or backward jump - moved from startup.mu4 because it
- * was i386-specific. In this usage "src" points just _past_ the displacement
- * we need to fix up.
- * : resolve   ( src dest)  over -  swap cell- ! ( 32-bit displacement) ;
- */
-void mu_resolve()
-{
-    int src = STK(1);
-    int dest = TOP;
-    int *psrc = (int *)src;
-    psrc[-1] = dest - src;
-    DROP(2);
-}
-
 #if 0
 void mu_compile_jump()
 {
@@ -67,15 +54,17 @@ void mu_compile_jump()
 
 void mu_compile_return()
 {
+    /* convert call in tail position to jump */
     if (pcd - 5 == pcd_last_call && *pcd_last_call == 0xe8)
+    {
 	*pcd_last_call = 0xe9;	/* tail call --> jump */
+
+	/* if this is also a jump destination, compile a return instruction */
+	if (pcd == pcd_jump_dest)
+	    *pcd++ = 0xc3;		/* ret near, don't pop any args */
+    }
     else
 	*pcd++ = 0xc3;		/* ret near, don't pop any args */
-}
-
-void mu_push_last_call()
-{
-    PUSH(&pcd_last_call);
 }
 
 static void compile_stack_adjust(int n)
@@ -199,6 +188,23 @@ void mu_compile_branch()
     *pcd = 0xe9;		/* jmp rel32 unconditionally */
     pcd += 5;
     PUSH(pcd);			/* offset to fix up later */
+}
+
+/* resolve a forward or backward jump - moved from startup.mu4 because it
+ * was i386-specific. In this usage "src" points just _past_ the displacement
+ * we need to fix up.
+ * : resolve   ( src dest)  over -  swap cell- ! ( 32-bit displacement) ;
+ */
+void mu_resolve()
+{
+    int src = STK(1);
+    int dest = TOP;
+    int *psrc = (int *)src;
+    psrc[-1] = dest - src;
+    DROP(2);
+
+    /* also set up last jump destination, for tail-call code */
+    pcd_jump_dest = (u_int8_t *)dest;
 }
 
 
