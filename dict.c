@@ -54,6 +54,7 @@ struct inm initial_forth[] = {
     { "version", mu_push_version },
     { "build-time", mu_push_build_time },
     { ":", mu_colon },
+    { ":entry", mu_compile_entry },
     { "name", mu_make_new_name },
     { "'name-hook", mu_push_tick_name_hook },
     { ".forth.", mu_push_forth_chain },
