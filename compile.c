@@ -46,12 +46,12 @@ void mu_push_sp()		/* address of sp variable */
 }
 
 /* the char *string param here does _not_ need to be zero-terminated!! */
-static char *compile_counted_string(char *string, size_t length, void *dest)
+static char *compile_counted_string(char *string, size_t length)
 {
     struct counted_string *cs;
     struct string s;
 
-    cs = (struct counted_string *)dest;
+    cs = (struct counted_string *)pdt;
     s.data = string;
     s.length = length;
     cs->length = s.length;	/* prefix count cell */
@@ -65,10 +65,10 @@ static char *compile_counted_string(char *string, size_t length, void *dest)
  * prefix count cell _precedes_ first character of string).
  * This does _not_ allot space in the dictionary!
  */
-void mu_scrabble()  /* ( a u z" - z") */
+void mu_scrabble()  /* ( a u - z") */
 {
-    STK(2) = (int)compile_counted_string((char *)STK(2), STK(1), (void *)TOP);
-    DROP(2);
+    STK(1) = (int)compile_counted_string((char *)STK(1), TOP);
+    DROP(1);
 }
 
 /*
@@ -81,7 +81,7 @@ char *to_counted_string(char *zstring)
     char *counted_string;
 
     length = strlen(zstring);
-    counted_string = compile_counted_string(zstring, length, pdt);
+    counted_string = compile_counted_string(zstring, length);
     pdt = (u_int8_t *)ALIGNED(counted_string + length + 1);  /* count null */
     return counted_string;
 }
