@@ -223,8 +223,7 @@ static void compile_dict_entry(
     pde->code = pcode;		/* compile code pointer */
     pde->length = length;
     memcpy(pde->name, name, length);	/* copy name string */
-    pnm = pde->name + length + 1 + (ALIGN_SIZE - 1);	/* align */
-    (int) pnm &= -ALIGN_SIZE;
+    pnm = (u_int8_t *)ALIGNED(pde->name + length + 1);
 }
 
 /* called from Forth */

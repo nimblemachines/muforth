@@ -13,6 +13,7 @@
 
 #include <setjmp.h>
 #include <stdlib.h>
+#include <errno.h>
 
 #ifndef XXX
 #include <stdio.h>
@@ -77,4 +78,9 @@ void mu_throw()
 	    die((char *)TOP);
     }
     DROP(1);
+}
+
+char *counted_strerror()
+{
+    return to_counted_string(strerror(errno));
 }

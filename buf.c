@@ -35,7 +35,7 @@ ssize_t buf_refill(struct buf *pbuf)
 	if (count == -1)
 	{
 	    if (errno == EINTR) continue;
-	    PUSH(strerror);
+	    PUSH(counted_strerror());
 	    throw();
 	}
 	break;
@@ -64,7 +64,7 @@ static void write_all(int fd, char *buffer, size_t len)
 	if (written == -1)
 	{
 	    if (errno == EINTR) continue;
-	    PUSH(strerror);
+	    PUSH(counted_strerror());
 	    throw();
 	}
 	buffer += written;

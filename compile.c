@@ -31,22 +31,42 @@ void mu_push_sp()		/* address of sp variable */
     PUSH(&sp);
 }
 
-/* copy string; return a counted string (addr of first character;
- * prefix count cell _precedes_ first character of string).
- */
-void mu_scrabble()  /* ( a u z" - z") */
+/* the char *string param here does _not_ need to be zero-terminated!! */
+static char *compile_counted_string(char *string, size_t length, void *dest)
 {
     struct counted_string *cs;
     struct string s;
 
-    cs = (struct counted_string *)TOP;
-    s.data = (char *) STK(2);
-    s.len = STK(1);
+    cs = (struct counted_string *)dest;
+    s.data = string;
+    s.len = length;
     cs->len = s.len;		/* prefix count cell */
     memcpy(&cs->data[0], s.data, s.len);
     cs->data[s.len] = 0;	/* zero terminate */
-    STK(2) = (int) &cs->data[0];
+    return &cs->data[0];
+}
+
+/* copy string; return a counted string (addr of first character;
+ * prefix count cell _precedes_ first character of string).
+ * This does _not_ allot space in the dictionary!
+ */
+void mu_scrabble()  /* ( a u z" - z") */
+{
+    STK(2) = (int)compile_counted_string((char *)STK(2), STK(1), (void *)TOP);
     DROP(2);
+}
+
+/* this is _only_ called from C; zstring _must_ be zero-terminated!!
+ * this routine _does_ allot space in the dictionary! */
+char *to_counted_string(char *zstring)
+{
+    size_t length;
+    char *counted_string;
+
+    length = strlen(zstring);
+    counted_string = compile_counted_string(zstring, length, pdt);
+    pdt = (u_int8_t *)ALIGNED(counted_string + length + 1);  /* count null */
+    return counted_string;
 }
 
 void mu_colon()

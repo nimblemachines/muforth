@@ -1,3 +1,12 @@
+/*
+ * $Id$
+ *
+ * This file is part of muforth.
+ *
+ * Copyright 1997-2004 David Frech. All rights reserved, and all wrongs
+ * reversed.
+ */
+
 #include <sys/types.h>
 #include <string.h>
     
@@ -22,7 +31,8 @@
 #define BUG
 #endif
 
-#define ALIGN_SIZE  sizeof(int)
+#define ALIGN_SIZE	sizeof(int)
+#define ALIGNED(x)	(((int)(x) + ALIGN_SIZE - 1) & -ALIGN_SIZE)
 
 /* string is a "normal" string: pointer to the first character, and length. */
 struct string
@@ -77,6 +87,7 @@ void mu_push_command_line(void);
 void die(const char *msg);
 void mu_catch(void);
 void mu_throw(void);
+char *counted_strerror(void);
 
 /* file.c */
 void mu_create_file(void);
@@ -148,6 +159,7 @@ void mu_scrabble(void);
 void mu_colon(void);
 void mu_semicolon(void);
 void mu_minus_semicolon(void);
+char *to_counted_string(char *);
 
 /* dict.c */
 void mu_definitions(void);

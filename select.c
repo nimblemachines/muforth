@@ -57,7 +57,7 @@ void mu_select()
 	if (count == -1)
 	{
 	    if (errno == EINTR) continue;
-	    TOP = (int) strerror(errno);
+	    TOP = (int) counted_strerror();
 	    mu_throw();
 	}
 	break;

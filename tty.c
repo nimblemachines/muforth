@@ -32,7 +32,7 @@ void mu_set_termios()
     /* drain out, flush in, set */
     if (tcsetattr(STK(1), TCSAFLUSH, (struct termios *)TOP) == -1)
     {
-	TOP = (int) strerror(errno);
+	TOP = (int) counted_strerror();
 	mu_throw();
     }
     DROP(2);
