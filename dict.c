@@ -155,6 +155,12 @@ struct inm initial_forth[] = {
     { "set-min-time", mu_set_termios_min_time },
     { "set-speed", mu_set_termios_speed },
 
+#ifdef DEBUG
+    /* debugger.c */
+    { "dbg", mu_dbg },
+    { "debugger", mu_debugger },
+#endif /* DEBUG */
+
     /* select.c */
     { "fd-zero", mu_fd_zero },
     { "fd-set", mu_fd_set },
@@ -399,7 +405,7 @@ static struct dict_entry *find_pde_by_addr(cell_t addr)
 }
 
 /*
- * printf_func_name()
+ * snprintf_func_name()
  *
  * Given an address, this routine will print the name of the muforth word
  * which is associated with that address.  Also, it will print an offset
@@ -426,17 +432,6 @@ cell_t snprint_func_name(char *line, int size, cell_t addr)
 	if (code != addr) {
 		snprintf(line +idx, size -idx, " + %d", addr - code);
 	}
-
-	return code;
-}
-
-cell_t print_func_name(cell_t addr)
-{
-	char line[60];
-	cell_t code;
-
-	code = snprint_func_name(line, sizeof(line), addr);
-	printf("%s", line);
 
 	return code;
 }

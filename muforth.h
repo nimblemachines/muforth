@@ -226,6 +226,12 @@ void mu_colon(void);
 void mu_semicolon(void);
 char *to_counted_string(char *);
 
+/* debugger.c */
+void mu_debugger(void);
+void mu_dbg(void);
+void mu_disassemble(void);
+void mu_print_stacks(void);
+
 /* dict.c */
 void mu_definitions(void);
 void mu_push_forth_chain(void);

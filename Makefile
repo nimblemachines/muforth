@@ -40,21 +40,22 @@ VERSOBJS = kernel.o interpret.o compile.o dict.o file.o \
 	 error.o time.o pci.o tty.o select.o sort.o # buf.o
 
 ALLOBJS = ${VERSOBJS} muforth.o
+DEPFILES = Makefile muforth.h opcode.h
 
 .PHONY: all clean
 
 all : muforth
 
-${ALLOBJS} : Makefile muforth.h
+${ALLOBJS} : ${DEPFILES}
 
-muforth.o : version.h
+muforth.o : version.h muforth.h
 
 version.h : Makefile ${VERSOBJS}
 #	echo "struct counted_string version = COUNTED_STRING(\"${VERSION}\");" > version.h
 	echo "#define VERSION \"${VERSION}\"" > version.h
 	echo "time_t build_time = `date \"+%s\"`;" >> version.h
 
-muforth : ${ALLOBJS} 
+muforth : ${ALLOBJS} ${DEPFILES}
 	${CC} ${LDFLAGS} ${CFLAGS} -o $@ ${ALLOBJS} ${LIBS}
 
 clean :
