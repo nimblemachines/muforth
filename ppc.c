@@ -1068,7 +1068,7 @@ void ppc_disassemble(int addr)
 {
 	cell_t *pc, base, instr, type;
 	int done, rs, ra, rb, imm, encoding;
-	int mflr;
+	int mflr, unknown;
 
 	mflr = MFLR | RS(R_LINK_IN);
 
@@ -1084,6 +1084,7 @@ void ppc_disassemble(int addr)
 	base = (cell_t) pc;
 
 	done = 0;
+	unknown = 0;
 	do {
 		instr = *pc;
 
@@ -1115,7 +1116,8 @@ void ppc_disassemble(int addr)
 				printf("mflr\tr%d\n", rs);
 				break;
 			default:
-				assert(0);
+				unknown = 1;
+				break;
 			}
 			break;
 
@@ -1167,8 +1169,10 @@ void ppc_disassemble(int addr)
 				printf("beq\t");
 			else if (rs == 4)
 				printf("bne\t");
-			else
-				assert (0);
+			else {
+				unknown = 1;
+				break;
+			}
 			printf("%#x\n", (cell_t) pc + imm);
 			break;
 
@@ -1200,12 +1204,15 @@ void ppc_disassemble(int addr)
 			break;
 
 		default:
-			printf("UNKNOWN instr %8.8x\n", instr);
-			done = 1;
+			unknown = 1;
 		}
 
-		pc ++;
-	} while (!done);
+		if (unknown) {
+			printf("UNKNOWN instr %8.8x\n", instr);
+		} else {
+			pc ++;
+		}
+	} while (!done && !unknown);
 }
 
 /************************************************************
