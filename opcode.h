@@ -10,29 +10,29 @@
  *
  * The opcodes supported are:
  *
- * 00 - NOP
+ * NOP
  *
- * 10 - CALL (Target address follows instruction)
- * 11 - JUMP (Target address follows instruction)
- * 12 - Execute (Target address is on the data stack)
- * 13 - RET (Return from CALL)
+ * CALL (Target address follows instruction)
+ * JUMP (Target address follows instruction)
+ * Execute (Target address is on the data stack)
+ * RET (Return from CALL)
  *
- * 20 - Push Literal (data follows instruction)
- * 21 - Load Literal (into a holding buffer, data follows instruction)
- * 22 - Push Held Literal (from the holding buffer)
+ * Push Literal (data follows instruction)
+ * Load Literal (into a holding buffer, data follows instruction)
+ * Push Held Literal (from the holding buffer)
  *
- * 30 - Unconditional Branch
- * 31 - Destructive Branch If Zero, drop top element
- * 32 - Non-destructive Branch If Zero, do not modify stack
+ * Unconditional Branch
+ * Destructive Branch If Zero, drop top element
+ * Non-destructive Branch If Zero, do not modify stack
  * 
- * 40 - For
- * 41 - Next
- * 42 - I (push current for loop index)
- * 43 - J (push outer loop index within same word)
+ * For
+ * Next
+ * I (push current for loop index)
+ * J (push outer loop index within same word)
  *
- * 60 - Push to R stack
- * 61 - Pop from R stack
- * 62 - Copy from R stack
+ * Push to R stack
+ * Pop from R stack
+ * Copy from R stack
  *
  * Note: The R stack is -not- the host environments return
  * stack.  It is a stack different from the data stack.
@@ -42,27 +42,28 @@
 
 typedef enum opcode_e opcode_t;
 enum opcode_e {
+	BRK,
 	NOP,
 
-	CALL = 0x10,
 	JUMP,
+	CALL,
 	EXEC,
 	RET,
 
-	LITERAL = 0x20,
+	LITERAL,
 	LIT_LOAD,
 	LIT_PUSH,
 
-	BRANCH = 0x30,
+	BRANCH,
 	ZBRANCH,
 	_ZBRANCH,
 
-	QFOR = 0x40,
+	QFOR,
 	NEXT,
 	I,
 	J,
 
-	DROP = 0x60,
+	DROP,
 	DROP2,
 	PUSH_TO_R,
 	PUSH2_TO_R,
