@@ -31,11 +31,11 @@
 
 /* data stack */
 cell stack[STACK_SIZE];
-cell *SP = S0;
+cell *SP;
 
 /* return stack */
 xtk *rstack[STACK_SIZE];
-xtk **RP = R0;
+xtk **RP;
 
 cell   T;      /* top of stack */
 xtk   *IP;     /* instruction pointer */
@@ -55,6 +55,12 @@ char *ate_the_stack;
 char *ate_the_rstack;
 char *isnt_defined;
 char *version;
+
+static void init_stacks()
+{
+    mu_sp_reset();
+    RP = R0;
+}
 
 static void mu_find_init_file()
 {
@@ -180,6 +186,7 @@ int main(int argc, char *argv[])
     init_dict();
     convert_command_line(argc, argv);
     make_constant_strings();    /* XXX: Hack! */
+    init_stacks();
     mu_find_init_file();
     mu_load_file();
     mu_start_up();

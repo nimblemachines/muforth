@@ -91,8 +91,8 @@ void mu_less()  { T = (SND < T)            ? -1 : 0; NIP; }
 void mu_zless()  { T = (T < 0)  ? -1 : 0; }
 void mu_zequal() { T = (T == 0) ? -1 : 0; }
 
-void mu_sp_fetch() { PUSH(SP); }
-void mu_sp_store() { SP = (cell *) T; /* XXX: POP ? */ }
+void mu_depth() { cell d = S0 - SP; PUSH(d); }
+void mu_sp_reset() { SP = S0; T = 0xdecafbad; }
 
 void mu_branch_()    { BRANCH; }
 void mu_eqzbranch_() { if (T == 0) BRANCH; else IP++; }
@@ -103,17 +103,19 @@ void mu_push()   { RPUSH(POP); }
 void mu_pop()    { PUSH(RPOP); }
 void mu_rfetch() { PUSH(RP[0]); }
 
+/* for, ?for, next */
+/* for is simply "push" */
+/* ?for has to matched with "then" */
+void mu_qfor_()
+{
+    if (T == 0) { BRANCH; DROP; }
+    else        { IP++; RPUSH(POP); }
+}
+
 void mu_next_()
 {
-    if (--(cell)RP[0] == 0)
-    {
-        IP += 1;  /* skip branch */
-        RP += 1;  /* pop counter */
-    }
-    else
-    {
-        BRANCH;  /* take branch */
-    }
+    if (--(cell)RP[0] == 0) { IP += 1; RP += 1; } /* skip branch, pop counter */
+    else                    { BRANCH; }           /* take branch */
 }
 
 /*

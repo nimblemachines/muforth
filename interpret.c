@@ -65,7 +65,7 @@ static void mu_return_token(ssize_t last, int trailing)
     SND = (cell) parsed.data;
     T = parsed.length;
 
-#ifdef DEBUG
+#ifdef DEBUG_TOKEN
     write(2, parsed.data, parsed.length);
     write(2, "\n", 1);
 #endif
@@ -218,7 +218,7 @@ void mu_minus_rbracket()
 
 void mu_push_parsed()
 {
-    DUP; NIPN(-2);
+    DUP; NIPN(-1);
     SND = (cell) parsed.data;
     T = parsed.length;
 }

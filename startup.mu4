@@ -247,7 +247,7 @@ compiler
 ( n ?for .. next then   goes n times; 0 if n=0 )
 
 : for     (s - dest)      \ push  \ begin ;
-: ?for    (s - src dest)  \ =if  \ for ;
+: ?for    (s - src dest)  \ (?for) mark>  \ begin ;
 : next    (s dest -)      \ (next) mark> <resolve ;
 
 forth
@@ -877,18 +877,22 @@ forth
 :  "  (s - a c)  \f z" count  ;  ( ANS)
 : ."    char " parse ( a #)  type  ;  ( not compiled)
 
+( Words that do something with each word being defined.)
+: being-defined  create  does> 'name-hook ! ;
+
 ( To warn of re-defining a word.)
 -: ( a u)  2dup current @ find if  fd-out @ push >stderr
      drop  2dup type ."  again.  "  pop writes ^  then  2drop ;
-: -redef  ['] 'name-hook ! ;
+being-defined -redef
 -redef
 
 ( A useful list of words as they're being defined.)
 -: ( a u)   current @ ( chain) . here .  2dup type  cr ;
-: -v  ['] 'name-hook ! ;  ( be verbose)
+being-defined -v  ( be verbose)
 
 ( You can only do one of these at a time! Is there an easy way to hook
   the hook?)
+
 
 ( Now that we have strings, let's make a more useful definition of
   undeferred, so that defer'ed words that never get set to anything will
@@ -1067,10 +1071,10 @@ asmXXX
 ( These don't work! For subtle reasons...)
 ( : sp!  s0 sp ! ;   ( reset to an empty stack)
 ( : sp@     sp @ ;   ( get current stack position)
-: depth  s0 sp@ - cell/ 1- ;
+( : depth  s0 sp@ - cell/ 1- ; )
 
 : .s  ( stack)
-   depth  s0  cell-  swap  ?for  dup @ .  cell-  next then  drop  ;
+   depth  s0 cell- swap  ?for  cell- dup @ .  next then  drop  ;
 
 
 comment %%
@@ -1147,7 +1151,7 @@ forth
 : [with]    \ [with]  ;
 
 ( A defining word that makes words that return -1)  
-: trues  create  \ -1 \ ^ ;
+: trues  create  -1 does> ;
 
 ( The defining word `with' for creating conditional compilation words.
   No matter what chain we are compiling into, define the word - using
@@ -1188,8 +1192,8 @@ forth
 
 ( For loading, to see if we've left anything lying about.)
 variable csp  ( what does this stand for? `check stack pointer'?)
-: !csp   sp@  csp !  ;
-: ?csp   sp@  csp @  swap - cell/
+: !csp   depth  csp !  ;
+: ?csp   depth  csp @  swap - cell/
          =if  . ."  stack depth change"  hex  .s  then  drop  ;
 
 ( Bracket the contents of a file and check for stack depth change.)
@@ -1277,7 +1281,7 @@ defer canonical  ( XXX: is this obsolete?)
 
 ( 2004-jun-26. error now expects a cell-length-prefixed compiled string.)
 : error  parsed type space  count type  ( cr) ;
-: carefully  catch  =if  error  s0 sp!  ^  then  drop ;
+: carefully  catch  =if  error  sp!  ^  then  drop ;
 
 ( XXX: difference betw error and warning, so that, eg, "isn't defined"
   doesn't clear the stack.)

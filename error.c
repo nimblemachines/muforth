@@ -50,9 +50,6 @@ void die(const char *msg)
     exit(1);
 }
 
-/* catch & throw? */
-static jmp_buf *last_jb;    /* top of "stack" of jmp bufs */
-
 /* This works like C and not like Forth: catch returns 0 when it sets up
  * the frame and non-zero when it has been longjumped to. Catch does _not_
  * call a function. But then, how/when do you undo the frame? Hmmm.
@@ -61,19 +58,31 @@ static jmp_buf *last_jb;    /* top of "stack" of jmp bufs */
 #define SETJMP setjmp
 #define LONGJMP longjmp
 
+struct trapframe
+{
+    jmp_buf jb;
+    struct trapframe *prev;
+    xtk *ip;
+    cell *sp;
+    xtk **rp;
+};
+
+static struct trapframe *last_tf;    /* top of "stack" of trap frames */
+    
 void mu_catch()
 {
-    jmp_buf this_jb;
-    jmp_buf *prev_jb;
-    cell *saved_sp;
-    xtk **saved_rp;
+    struct trapframe tf;
     cell thrown;
 
-    prev_jb = last_jb;
-    last_jb = &this_jb;
-    saved_sp = SP;      /* so we can reset _our_ stack ptr */
-    saved_rp = RP;
-    thrown = SETJMP(this_jb);
+    /* link onto front of trapframe list */
+    tf.prev = last_tf;
+    last_tf = &tf;
+
+    tf.sp = SP;
+    tf.rp = RP;
+    tf.ip = IP;
+
+    thrown = SETJMP(tf.jb);
     if (thrown == 0)
     {
         EXECUTE;
@@ -81,19 +90,23 @@ void mu_catch()
     }        
     else
     {
-        SP = saved_sp + 1;  /* we longjmp'ed; restore sp & rp */
-        RP = saved_rp;
+        SP = tf.sp;  /* we longjmp'ed; restore sp, rp, & ip */
+        RP = tf.rp;
+        IP = tf.ip;
     }
-    last_jb = prev_jb;
-    T = thrown;   /* return thrown value */
+    /* unlink frame */
+    last_tf = tf.prev;
+
+    /* return thrown value */
+    T = thrown;
 }
 
 void mu_throw()
 {
     if (T != 0)
     {
-        if (last_jb)
-            LONGJMP(*last_jb, T);
+        if (last_tf)
+            LONGJMP(last_tf->jb, T);
         else
             die((char *)T);
     }

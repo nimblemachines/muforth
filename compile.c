@@ -40,11 +40,6 @@ void mu_push_s0()       /* address of stack bottom */
     PUSH(S0);
 }
 
-void mu_push_sp()       /* address of sp variable */
-{
-    PUSH(&SP);
-}
-
 /* the char *string param here does _not_ need to be zero-terminated!! */
 static char *compile_counted_string(char *string, size_t length)
 {
