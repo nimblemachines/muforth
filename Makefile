@@ -61,11 +61,11 @@ version.h : Makefile ${VERSOBJS}
 
 muforth : ${ALLOBJS} ${ARCHX86}
 	${CC} ${LDFLAGS} -o $@ ${ALLOBJS} ${ARCHX86} ${LIBS}
-	ln -s gdb-i386.init .gdbinit
+	ln -sf gdb-i386.init .gdbinit
 
 muforthppc : ${ALLOBJS} ${ARCHPPC}
 	${CC} ${LDFLAGS} -o $@ ${ALLOBJS} ${ARCHPPC} ${LIBS}
-#	ln -s gdb-ppc.init .gdbinit
+#	ln -sf gdb-ppc.init .gdbinit
 
 ppctest: ppc.c ppc_asm.s muforth.h
 	${CC} ${DBGCFLAGS} -c -DPPC_TEST -o ppc.o ppc.c
