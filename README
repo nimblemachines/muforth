@@ -102,9 +102,9 @@ Ideas from colorforth
 ^^^^^^^^^^^^^^^^^^^^^
 
 In colorforth the color of a word specifies what the interpreter should do
-with it. Red means define a new word; yellow means execute; green means
-compile. There are some other colors as well, but for our discussion these
-are the most interesting.
+with it. Red means define a new word; the token in red is the name of the
+new word. Yellow means execute; green means compile. There are some other
+colors as well, but for our discussion these are the most interesting.
 
 In order to be able to calculate constants inside a colon definition, you
 need only switch to yellow, do the calculation, and then switch back to
@@ -140,13 +140,15 @@ Since there isn't really any compiler "state" in colorforth - each word
 tells the interpreter, by its color, how to treat it - there is no need to
 bracket definitions with ":" and ";". A red word marks the start of a new
 definition; nothing really marks the end. In fact, it's possible, in
-colorforth, to write a word whose execution "falls thru" into the
-next word. This is considered bad style by some, but assembler programmers
-have used it to great advantage. colorforth gives you this option.
+colorforth, to write a word whose execution "falls thru" into the next
+word. This is considered bad style by some, but assembler programmers over
+the years have used it to great advantage. colorforth gives you this
+option.
 
-But there is a word called ";" in colorforth. What does it do? It exits
-from, or returns from, the current word, but without it any way marking it
-as "done". It is like EXIT in more traditional Forths.
+If we don't need to mark the start and end of a word with ":" and ";", why
+is there a word called ";" in colorforth? What does it do? It exits from,
+or returns from, the current word, but without it any way marking it as
+"done". It is like EXIT in more traditional Forths.
 
 I coveted these qualities for muforth, but had the constraint that my
 compiler _does_ have state, and does switch back and forth between
@@ -168,7 +170,8 @@ XXX: copy from interpret.c, compile.c - explain "\"
 colorforth has the oddball feature that "if" leaves the top of stack
 intact. This can be useful or annoying. I thought it would be interesting
 to have _both_ options - destructive and non- - so I defined  "=if" and
-"=while" in addition to "if" and "while".
+"=while" in addition to "if" and "while". "if" and "while" consume the top
+of stack; "=if" and "=while" leave it alone.
 
 And, just as in colorforth, there is no "else"! You can always get by
 without it, and often the code factoring improves. For example, you can
@@ -184,7 +187,7 @@ colorforth doesn't "smudge" (hide) new definitions until they are complete
 - and neither does muforth. This makes writing recursive definitions easy,
 but makes redefinition harder (you have to rename the old function first).
 I liked the idea of being able to write iterations as syntactically
-recursive procedures, as in Lisp. I haven't used it that much. ;-)
+recursive procedures, as in Lisp; however, I haven't used it much. ;-)
 
 
 - [ ] -]
@@ -220,28 +223,110 @@ Forgetting
 muforth does not define the common Forth word "forget", nor does it define
 "empty", as colorforth does. In the presence of deferred words, any kind of
 "forget" is error-prone. I find it better to quit and reload. This has
-never bothered me, or felt limiting in any way.
+never bothered me, or felt limiting in any way. It certainly makes memory
+allocation easier. ;-)
 
 Tokenizing the input
 ^^^^^^^^^^^^^^^^^^^^
-
-This is one of the areas of innovation in muforth.
+This is one of the cool innovations in muforth.
 
 I have defined two kinds of strings: string and text. A string is what you
-would expect in Forth: a pointer the first character, and a count. A text
-is a bit odd.
+would expect in Forth: a pointer to the first character, and a length. A
+text is something a bit odd. I'll explain.
 
-I discovered, in writing the tokenizer for dforth, that using a string and
-an offset (past what we have seen already) was clumsy and slow. The first
-thing you have to do is offset the pointer forward, past the text you've
-seen, and the count backwards, since it counts characters yet to be seen.
+I discovered, in writing the tokenizer for dforth, that using a string
+(pointer and length) and an offset (past what we have seen already) was
+clumsy and slow. This is what Forths have traditionally done. The state of
+the interpreter is captured by two variables: source and >in. source is a
+double variable containing a pointer to the first character, and a length -
+a normal string. >in is an offset _past_ the characters that we've looked
+at already, in previous calls to the tokenizer.
 
-Instead, why not run _everything_ backwards?
+On every call to the tokenizer you first have to offset the pointer forward
+(by >in), past the text you've seen already, and the count backwards (also
+by >in), since it counts characters yet to be seen. You're always
+offsetting two things. Even when consuming a single character during
+scanning you have to increment the pointer, and decrement the count. Two
+operations. Clumsy.
+
+Instead, I thought, why not run everything backwards?
+
+If a string is represented by the tuple
+
+  (start, length)
+
+then a text describing the same sequence of bytes in memory would be
+represented by the tuple
+
+  (end, -length), where end = address + length.
 
 The type "text" consists of a pointer just past the _end_ of the text, and
 a negative offset back from the end to the start. When we start
-interpreting a chunk of text, we set a global pointer "first" to point to
-the first character.
+tokenizing a chunk of text, we set a global offset "first" to "point" to
+the first character. But first is really a negative back from the end of
+the text.
+
+In this scenario, the current state of the tokenizer is also captured in
+two variables: source (a _text_), and first, an offset running from -length
+up to 0.
+
+On each call to the tokenizer, first already points _past_ the the text
+we've seen already, so we're ready to start looking for a new token. Now
+might perhaps be a good time to mention a little secret: muforth has _two_
+tokenizers. One - token - assumes that tokens are separated by whitespace,
+and skips _leading_ whitespace. The other - parse - takes a delimiter
+character and scans for a _trailing_ delimiter, but assumes that the new
+token starts at first - it does _not_ try to skip any leading delimiters.
+
+These two routines do not share any code, even though they are
+substantially the same code. There simply isn't a good a way to tease them
+apart, but they are short enough that I'm not worried about it. ;-)
+
+Ok, back to tokenizing. Let's assume we've called token, and we're going to
+skip leading whitespace. first "points" to the first character that we
+haven't seen yet. So, while the character at first is whitespace and first
+< 0 (not at the end), increment first. Now either we've run out of text, or
+we've found a non-whitespace character. Either way, this is the first
+character of our token.
+
+We leave first pointing to it, set last = first, and then start scanning
+with last, incrementing last as long as it points to a non-whitespace
+character and remains < 0. When we reach the end of the token - which
+happens either if we find a trailing delimiter, or if we run out of text to
+scan, last is left pointing just _past_ the last character of the token. We
+capture the presence or absence of the trailing delimiter in a variable
+called trailing, which we set to 1 when we start to look for the end of a
+token. If the input runs out before we find a delimiter we set trailing to
+0.
+
+We've now "bracketed" a token. first points to its first character; last
+points just beyond its last character. (These "pointers" are actually both
+negative offsets from the end of the source text.) The (start, length)
+string tuple for the token is then
+
+  (end + first, last - first)
+
+We consume the token and trailing delimiter (if there was one) from the
+input stream by setting
+
+  first = last + trailing.
+
+Now we're ready to look for the next token.
+
+Of course, the astute reader will be wondering about the various boundary
+cases when the text runs out. By being careful about trailing, we ensure
+that first is never left > 0. At the end of parsing a token it will be <=
+0. If no characters were found between first and last, which can only
+happen if first = 0, possibly _after_ skipping leading whitespace (think
+about it), then last - first will be 0 as well. At end of text we _always_
+return the token
+
+  (end, 0)
+
+and the interpreter code is smart enough to recognize this zero-length token
+as the end.
+
+* differences between token and parse.
 
 Even though muforth uses the Linux/BSD file system (and has no BLOCK words as
 yet) the input words look like those on a BLOCK-based Forth. Why is this?
@@ -262,7 +347,27 @@ form-feed, vertical tab, and I think even backspace. These all map to ASCII
 
 See `token' for details.
 
+Simple native code compiler
+  how compile, works
+  tail call conversion
+  the role of last, -tail
+  stack manipulation
+  structure compilers, high-level and low-
 
+Strings and texts
+  the different kinds
+  non-inline vs jumping over
+  counted string representation
+  double use of counted strings
+  more details about text and scanning process
+
+Dictionary
+  structure
+  find
+  dictionary chains
+
+segue into the interpreter modes, "programmatic" searching, the losingness
+of only/also.
 
 
 
