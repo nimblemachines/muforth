@@ -47,8 +47,10 @@ typedef unsigned int code_t;
 /* data stack */
 #define STACK_SIZE 4096
 #define STACK_SAFETY 256
-#define S0 &stack[STACK_SIZE - STACK_SAFETY]
-#define R0 &rstack[STACK_SIZE - STACK_SAFETY]
+#define S0	&stack[STACK_SIZE - STACK_SAFETY]
+#define R0	&rstack[STACK_SIZE - STACK_SAFETY]
+#define dbg_S0	&dbg_stack[STACK_SIZE - STACK_SAFETY]
+#define dbg_R0	&dbg_rstack[STACK_SIZE - STACK_SAFETY]
 
 /* gcc generates stupid code using this def'n */
 /* #define PUSH(n) 	(*--sp = (cell_t)(n)) */
@@ -114,6 +116,8 @@ extern cell_t stack[];
 extern cell_t *sp;
 extern cell_t rstack[];
 extern cell_t *rsp;
+extern cell_t dbg_stack[];
+extern cell_t dbg_rstack[];
 
 extern int  cmd_line_argc;
 extern char **cmd_line_argv;
@@ -132,6 +136,7 @@ extern void (*mu_name_hook)();		/* called when a name is created */
 
 /* XXX: Gross hack alert! */
 extern char *ate_the_stack;
+extern char *ate_the_rstack;
 extern char *isnt_defined;
 extern char *version;
 

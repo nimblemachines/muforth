@@ -350,13 +350,30 @@ void mu_push_parsed()
     DROP(-2);
 }
 
+static int within_stack(cell_t *sp, cell_t *lo, cell_t *hi)
+{
+	/* The "sp <= hi" is a tough one.  But, with an empty stack
+	 * sp == hi.
+	 */
+	return (sp >= lo && sp <= hi);
+}
+
 static void mu_qstack()
 {
-    if (sp > S0)
+    if (!within_stack(sp, stack, S0) &&
+	!within_stack(sp, dbg_stack, dbg_S0))
     {
 	PUSH(ate_the_stack);
 	mu_throw();
     }
+
+    if (!within_stack(rsp, rstack, R0) &&
+	!within_stack(rsp, dbg_rstack, dbg_R0))
+    {
+	PUSH(ate_the_rstack);
+	mu_throw();
+    }
+
 }
 
 void mu_interpret()

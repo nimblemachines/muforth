@@ -36,6 +36,9 @@ cell_t *sp = S0;
 cell_t rstack[STACK_SIZE];
 cell_t *rsp = R0;
 
+/* debugger stacks */
+cell_t dbg_stack[STACK_SIZE];
+cell_t dbg_rstack[STACK_SIZE];
 
 int  cmd_line_argc;
 char **cmd_line_argv;
@@ -48,6 +51,7 @@ code_t  *pcd;
 
 /* XXX: Gross hack alert! */
 char *ate_the_stack;
+char *ate_the_rstack;
 char *isnt_defined;
 char *version;
 
@@ -111,6 +115,7 @@ static void allocate()
 static void make_constant_strings()
 {
     ate_the_stack = to_counted_string("ate the stack");
+    ate_the_rstack = to_counted_string("ate the return stack");
     isnt_defined =  to_counted_string("isn't defined");
     version =  to_counted_string(VERSION);
 }
