@@ -31,19 +31,21 @@ void mu_push_sp()		/* address of sp variable */
     PUSH(&sp);
 }
 
-/* copy string; return a counted string (addr of prefix count byte);
-   ( a u c" - c") */
-void mu_scrabble()
+/* copy string; return a counted string (addr of first character;
+ * prefix count cell _precedes_ first character of string).
+ */
+
+void mu_scrabble()  /* ( a u c" - c") */
 {
     struct string s;
     char *dest;
 
     dest = (char *) TOP;
     s.data = (char *) STK(2);
-    *dest = s.len = STK(1);	/* prefix count byte */
-    memcpy(dest + 1, s.data, s.len);
-    *(dest + s.len + 1) = 0;	/* zero terminate */
-    STK(2) = (int) dest;
+    *(int *)dest = s.len = STK(1);	/* prefix count cell */
+    memcpy(dest + sizeof(int), s.data, s.len);
+    *(dest + s.len + sizeof(int)) = 0;	/* zero terminate */
+    STK(2) = (int) dest + sizeof(int);
     DROP(2);
 }
 

@@ -3,19 +3,20 @@
  *
  * This file is part of muforth.
  *
- * Copyright 1997-2002 David Frech. All rights reserved, and all wrongs
+ * Copyright 1997-2003 David Frech. All rights reserved, and all wrongs
  * reversed.
  */
 
 /* dictionary */
 
 #include "muforth.h"
+#include <stdio.h>
 
 struct dict_entry
 {
     struct dict_entry *link;
     void *code;
-    unsigned char name_len;
+    unsigned char length;
     char name[0];
 };
 
@@ -190,13 +191,13 @@ void mu_push_compiler_chain()
 void mu_minus_quote_find()
 {
     char *token = (char *) STK(2);
-    int len = STK(1);
+    int length = STK(1);
     struct dict_entry *pde = (struct dict_entry *) TOP;
 
     while ((pde = pde->link) != NULL)
     {
-	if (pde->name_len != len) continue;
-	if (memcmp(&pde->name, token, len) != 0) continue;
+	if (pde->length != length) continue;
+	if (memcmp(pde->name, token, length) != 0) continue;
 
 	/* found: drop token, push code address and false flag */
 	STK(2) = (int) pde->code;
@@ -209,43 +210,24 @@ void mu_minus_quote_find()
 }
 
 static void compile_dict_entry(
-    struct dict_entry **ppde, char *name, size_t len, void *pcode)
+    struct dict_entry **ppde, char *name, int length, void *pcode)
 {
     struct dict_entry *pde = (struct dict_entry *) pnm;
 
-    /* compile link */
-    pde->link = *ppde;
-
-    /* link onto front of chain */
-    *ppde = pde;
-
-    /* compile code pointer */
-    pde->code = pcode;
-
-    /* copy name string */
-    pde->name_len = len;
-    memcpy(&pde->name, name, len);
-
-    /* align */
-    pnm = &pde->name[0] + len + ALIGN_SIZE - 1;
+    pde->link = *ppde;		/* compile link to last */
+    *ppde = pde;		/* link onto front of chain */
+    pde->code = pcode;		/* compile code pointer */
+    pde->length = length;
+    memcpy(pde->name, name, length);	/* copy name string */
+    pnm = pde->name + length + 1 + (ALIGN_SIZE - 1);	/* align */
     (int) pnm &= -ALIGN_SIZE;
 }
 
 /* called from Forth */
 void mu_compile_name()
 {
-    struct string token;
-
-    token.data = (char *) STK(1);
-    token.len = TOP;
+    compile_dict_entry(current_chain, (char *) STK(1), STK(0), pcd);
     DROP(2);
-
-#ifdef DEBUG
-    write(2, token.data, token.len);
-    write(2, "  ", 2);
-#endif
-
-    compile_dict_entry(current_chain, token.data, token.len, pcd);
 }
 
 void mu_make_new_name()

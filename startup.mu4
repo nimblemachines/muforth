@@ -22,7 +22,7 @@
   represent "micro". I had called it "nu" Forth, because it was new, but I
   like this nu Greek letter better.
 
-  Copyright 1997--2002 David Frech. All rights reserved.)
+  Copyright 1997--2003 David Frech. All rights reserved.)
 
 ( This file exemplifies a Forth strength - shared by Lisp and Smalltalk,
   among other interpretive/compiled languages - that I like to call
@@ -437,9 +437,21 @@ forth
 ( -create is basically the same as "here".)
 : create   name ;  ( doesn't compile any code!)
 : constant  create  literal \ ^ ;  ( syntactic sugar for : foo  89 ; )
-: buffer  ram constant  allot ;
-: variable       cell buffer ;
-: 2variable   2 cells buffer ;
+: buffer ( cells)  ram constant  ?for 0 , next then ;
+: variable    1 buffer ;
+: 2variable   2 buffer ;
+
+( These depended on the data space being zeroed, which makes me nervous.
+  And well I should have been nervous: temporary strings - for file names,
+  among other things - are allocated there. And this just bit me. I was
+  assuming that variables would be zero when allocated; instead I got a
+  bunch of junk. As I was generating a linked-list head pointer - actually
+  a dictionary chain - what was supposed to be a null pointer at the end
+  was instead an invalid pointer off into the weeds!
+
+  : buffer  ram constant  allot ;
+  : variable       cell buffer ;
+  : 2variable   2 cells buffer ; )
 
 : ;does   load-literal  pop compile, \ ^ ;
 compiler
@@ -763,50 +775,54 @@ variable hld
 
 ( String primitives.)
 
-( 2002-mar-18. All strings are compiled into data space and referenced by
+( 2003-dec-31!! Compiled strings have a cell-sized count and are referenced
+  by pointing to the first character rather than to the count.
+
+  I have also got rid of c" and now z" is the only string operator that
+  returns a counted string. The z reminds us that it is also a
+  null-terminated string.
+
+  2002-mar-18. All strings are compiled into data space and referenced by
   creating a normal literal with the string's address. Strings can then be
   used in an error or abort routine, or whatever. This is nice and postfix.
 
-  It also means that if we want to, for example, return the address of the
-  first character - rather than of the count byte; eg, for strings used by
-  the C library - we can calculate that address _before_ making a literal.
-  Again, this works because the string isn't compiled inline, so we don't
-  need to jump over it.
+  It also means that if we want to, for example, return the address of
+  the first character of the string - rather than of the count cell;
+  eg, for strings used by the C library - we can calculate that
+  address _before_ making a literal.  Again, this works because the
+  string isn't compiled inline, so we don't need to jump over it.
 
   Things are _much_ simpler this way!)
 
 ( all compiled strings have a zero terminator.)
-: parse-copy   ( ch - c")  parse  ram scrabble ;
-: string,   ( ch - c")  parse-copy ( c")  dup  c@ 2 +  allot ;
-: count  ( c" - a u)  dup 1+ swap c@ ;
+: copy-string   ram scrabble ( z") ;
+: allot-string   dup  cell- @  cell+ 1+  allot ;
+: make-string   copy-string allot-string ;
+: string,   ( ch - z")  parse   make-string ;
+: token,       ( - z")  token   make-string ;
+: count  ( z" - a u)  dup swap  cell- @ ;
 : (.")  count type ;  ( no more jumping over strings at run-time!)
 
 comment XXX
-: (warn")   ( f c")  swap  if
+: (warn")   ( f z")  swap  if
    last-link cell+ @ ( link) cell+ count type ( name)  ." : "
    count type ( warning)  ^ then  drop  ;
 : (error")  ; XXX
 
-
-: ,"  char "  string, ;
-     ( compile string, using " as delimiter)
-
 ( Compiled strings.)
 compiler
-: c"   ( - c")   ,"     literal ;
-: z"   ( - a)    ,"  1+ literal ;
-: s"   ( - a c)  \ c"  \ count ;
-: ."             \ c"  \ (.") ;
+: z"   ( - z")   char " string,  literal ;  ( z means zero-terminated)
+:  "   ( - a c)  \ z"  \ count ;
+: ."             \ z"  \ (.") ;
 : error"         \ z"  \ throw ;  ( compile a C-style string for throw'ing)
 
 comment XXX
-: warn"          \ c"  \ (warn")   ; XXX
+: warn"          \ z"  \ (warn")   ; XXX
 
 ( Interpretive strings.)
 forth
-: c"  ( - c")   char "  parse-copy ;
-: z"  ( - a)    \f c" 1+  ;     ( for Linux/BSD)
-: s"  ( - a c)  \f c" count  ;  ( ANS)
+: z"  ( - z")   char "  parse copy-string ;
+:  "  ( - a c)  \f z" count  ;  ( ANS)
 : ."	char " parse ( a #)  type  ;
 
 
@@ -931,7 +947,7 @@ asmXXX
 ( !!!!-------------------- Add changes below this line -------------------!!!!)
 
 ( Word listing. Putting this in as soon as possible. Needs `space'.)
-: link>name  [ 2 cells ] +  count ;
+: link>name  [ 2 cells ] +  dup 1+ swap c@ ;
 : words   0  current @  ( count link)
   begin  @  =while  1 u+
             dup link>name type space space  repeat
@@ -987,12 +1003,12 @@ comment %%
 ( Even more useful backtrace of return stack.)
 : rdepth  r0  rp@ -  cell/  1-  ;  ( remember: there's a return addr on R!)
 
-: where  ( ip - offset c" ip)  push  forth  0
+: where  ( ip - offset z" ip)  push  forth  0
    begin  drop  @  =while  r@ over link> -
    ( offset)  dup 0< 0= until  ( 'link offset) swap cell+  pop  ^
-   then  ( 'link = 0)  c" ????"  pop  ;
+   then  ( 'link = 0)  z" ????"  pop  ;
 
-: .where  ( offset c" ip)  hex  .a16  decimal
+: .where  ( offset z" ip)  hex  .a16  decimal
    count type  ?dup if  cell/  ."  + "  u.  then  ;
 
 : backtrace  ( a n)
@@ -1076,7 +1092,7 @@ forth
    2dup current @
    "find  if  >name type  ."  again.  "  ^  then  2drop  ;  drop
 
--:  ( c" #chain)  fd-out @ push
+-:  ( z" #chain)  fd-out @ push
    >stderr  cr over count type  2 spaces  .s  pop writes  ;  is unique-hook
 [then]
 
@@ -1142,9 +1158,8 @@ variable csp  ( what does this stand for? `check stack pointer'?)
    <#  2drop ( zone)  hh:mm  ||  (date)  #>
    pop radix !  ;
 
-( We convert utc's time zone because the C library returns "GMT". Yuck.)
-: time"   ( epoch - a #)  local-time                 (time")  ;
-: utc"    ( epoch - a #)         utc  2drop  s" UTC" (time")  ;
+: time"   ( epoch - a #)  local-time  (time")  ;
+: utc"    ( epoch - a #)         utc  (time")  ;
 
 ( Better primitives? More elegant, certainly.)
 : s->smh   ( s - s m h)  60 u/mod  60 u/mod ;
@@ -1159,7 +1174,7 @@ variable csp  ( what does this stand for? `check stack pointer'?)
 : smhdy->s  [ 365 3* 366 + ] * ( quarter-days/yr)  push 4 * pop +  smhq->s ;
 
 ( for command-line args)
-: ld  token  ram scrabble  1+  load-file ;
+: ld  token copy-string  load-file ;
 : -f  ( load file)  ld ;
 : --file  -f  ;
 : -d  ( define)  trues  ;
@@ -1198,7 +1213,7 @@ defer canonical
    ( infinite loop, until error... )
 
 : error  parsed type space  dup string-length type  ( cr) ;
-: careful  catch  =if  error ^  then  drop ;
+: carefully  catch  =if  error ^  then  drop ;
 
 ( XXX: difference betw error and warning, so that, eg, "isn't defined"
   doesn't clear the stack.)
@@ -1211,8 +1226,8 @@ defer canonical
 
 : warm
    >stderr banner
-   >stdout  command-line ['] evaluate  careful  >stderr
-   begin   s0 sp!  canonical  ['] quit careful  again  -;
+   >stdout  command-line ['] evaluate  carefully  >stderr
+   begin   s0 sp!  canonical  ['] quit carefully  again  -;
 
 
 ( Identify ourselves.)

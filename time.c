@@ -3,7 +3,7 @@
  *
  * This file is part of muforth.
  *
- * Copyright 1997-2002 David Frech. All rights reserved, and all wrongs
+ * Copyright 1997-2003 David Frech. All rights reserved, and all wrongs
  * reversed.
  */
 
@@ -14,14 +14,10 @@
 #include <time.h>
 
 /* time and date */
-static void push_forth_time_from_libc_time (struct tm *ptm)
+static void push_forth_time_from_libc_time (struct tm *ptm, char *tz)
 {
-    char *tm_zone;
-
-    tm_zone = tzname[ptm->tm_isdst];
-
-    STK(-9) = strlen (tm_zone);
-    STK(-8) = (int) tm_zone;
+    STK(-9) = strlen (tz);
+    STK(-8) = (int) tz;
     STK(-7) = ptm->tm_sec;
     STK(-6) = ptm->tm_min;
     STK(-5) = ptm->tm_hour;
@@ -42,7 +38,7 @@ void mu_local_time()
     tzset();
 #endif
     localtime_r (&clock, &tm);
-    push_forth_time_from_libc_time (&tm);
+    push_forth_time_from_libc_time (&tm, tzname[tm.tm_isdst]);
 }
 
 void mu_global_time()
@@ -52,7 +48,7 @@ void mu_global_time()
 
     clock = POP;
     gmtime_r (&clock, &tm);
-    push_forth_time_from_libc_time (&tm);
+    push_forth_time_from_libc_time (&tm, "UTC");
 }
 
 void mu_push_clock()
