@@ -33,16 +33,30 @@
  */
 
 #ifdef __POWERPC__
-typedef int32_t    cell_t;
-typedef int64_t    double_cell_t;
+typedef int32_t   cell_t;
+typedef int64_t   d_arith_t;	/* double arithmetic */
+#define CELL_S    32
+#define CELL_M    (~0)
 #else
 #ifdef __i386__
 typedef int32_t    cell_t;
-typedef int64_t    double_cell_t;
+typedef int64_t    d_arith_t;
+#define CELL_S    32
+#define CELL_M    (~0)
 #else
 #  error "muforth won't build on your architecture!"
 #endif
 #endif
+
+typedef struct dc
+{
+    cell_t	hi;
+    cell_t	lo;
+} d_cell_t;
+
+#define MAKE_DBL(hi,lo)    (((d_arith_t)hi << CELL_S) + (d_arith_t)lo)
+#define LO(dbl)            ((d_arith_t)dbl & CELL_M)
+#define HI(dbl)            ((d_arith_t)dbl >> CELL_S)
 
 /* data stack */
 #define STACK_SIZE 4096
@@ -282,6 +296,8 @@ void mu_less(void);
 void mu_sp_fetch(void);
 void mu_sp_store(void);
 void mu_cmove(void);
+void mu_dplus_gcc(void);
+void mu_dnegate_gcc(void);
 
 /* time.c */
 void mu_local_time(void);

@@ -116,7 +116,7 @@ struct inm initial_forth[] = {
     { ">>", mu_shift_right },
     { "u>>", mu_shift_right_unsigned },
     { "d+", mu_dplus },
-    { "dnegate", mu_dnegate },
+    { "dnegate", mu_dnegate_gcc },
     { "um*", mu_um_star },
     { "m*", mu_m_star },
     { "um/mod", mu_um_slash_mod },
