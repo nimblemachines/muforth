@@ -25,7 +25,7 @@
 
 #include "muforth.h"
 
-#define MIN(a,b)	((a < b) ? a : b)
+#define MIN(a,b)	(((a) < (b)) ? (a) : (b))
 
 void mu_add()
 {
