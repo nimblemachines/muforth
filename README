@@ -1,6 +1,27 @@
 $Id$
 
+This file is part of muforth.
+
+Copyright 1997-2004 David Frech. All rights reserved, and all wrongs
+reversed.
+
+Licensed under the Apache License, Version 2.0 [the "License"];
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+   http://www.apache.org/licenses/LICENSE-2.0
+
+or see the file LICENSE in the top directory of this distribution.
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.)
+
+
 muFORTH README
+==============
 
 Why muforth?
 ^^^^^^^^^^^^
@@ -31,43 +52,46 @@ Why another Forth?
 In other words, why not keep using dforth, an earlier Linux Forth I wrote
 that I have used successfully on several projects?
 
-dforth has some qualities that I now construe as defects, including:
+dforth has some qualities that I now construe as defects. dforth
 
-* written entirely in 386 assembler;
+  * is written entirely in x86 assembler;
 
-* traps into the Linux kernel directly, eschewing the C library;
+  * traps into the Linux kernel directly, eschewing the C library;
 
-* implemented via indirect-threaded code (ITC), an elegant technique, but I
-  was interested in exporing alternatives;
+  * is implemented via indirect-threaded code (ITC), an elegant technique,
+    but I was interested in exporing alternatives;
 
-* a very big kernel, with lots of task-specific code
+  * is a very big kernel, with lots of task-specific code
 
 I wanted to go the other way. My desiderata included the following:
 
-* a kernel, written in C, that is the smallest possible kernel capable of
-  compiling Forth colon definitions (ie, it is self- bootstrapping);
+  * a kernel, written in C, that is the smallest possible kernel capable of
+    compiling Forth colon definitions (ie, it is self- bootstrapping);
 
-* a simple native-code compiler;
+  * a simple native-code compiler;
 
-* a tail-recursive implementation;
+  * a tail-recursive implementation;
 
-* a new parser, tokenizer, and interpreter
+  * a new parser, tokenizer, and interpreter
 
-* colorforth's terseness but implemented without color and without
-  reinventing the OS.
+  * colorforth's terseness but implemented without color and without
+    reinventing the OS.
 
+Map of the territory
+^^^^^^^^^^^^^^^^^^^^
+The following sections are not really in any order. Some lead into the next
+one. Some are just the thing I thought of next as I was writing. In any
+case, if you get bored reading one section, just skip to the next one. It's
+bound to be more interesting!
 
-Issues with C
-^^^^^^^^^^^^^
-* stack calling convention
-* gcc won't let me keep global var in register, so sp is in memory, making
-  native code clomsy and a bit inefficient.
-* mixing C and Forth
-* strings
+Written in C
+^^^^^^^^^^^^
+muforth is written in C. This was a hard decision, and involved some
+difficult tradeoffs.
 
-When earlier implementing dforth, I initially wanted to write it in C; but
-I was also committed to doing an ITC Forth, and doing that in C I found to
-be very clumsy. I bit the bullet and wrote in assembler, which was quite
+When implementing dforth, I initially wanted to write it in C; but I was
+also committed to doing an ITC Forth, and doing that in C I found to be
+very clumsy. I bit the bullet and wrote in assembler, which was quite
 liberating. The only real downside was the frustration of using m4 as a
 macro processor - I needed more than the C preprocessor could give me, but
 I grew to _hate_ m4. I found using it to be a case of programming by
@@ -83,17 +107,52 @@ would need to be changed to run on other architectures. I tried to keep it
 simple, so this shouldn't be hard. A few hours' work, perhaps, once you
 understand the structure of muforth.
 
+There are several places where writing in C involved compromise or
+cleverness; I'll try to talk about them in their structural context. The
+main concerns:
+
+  * calling C from Forth;
+
+  * length-prefixed Forth-style strings vs zero-terminated C strings;
+
+  * code generation inefficiencies forced on me by gcc (no register
+    globals)
+
 Oddities and idiosyncrasies
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+muforth has many differences from more conventional (old-school?) Forths.
+As I said, it's emphatically _not_ ANS-compatible. Instead I tried to
+choose and use the best ideas I could find. Many of them are, perhaps not
+surprisingly, from two Forths written by Chuck Moore: cmFORTH (for the
+Novix chip) and colorforth (for the x86 PC).
 
-muforth has several odd differences from more conventional (old-school?)
-Forths. Most of these differences result from the from Forth (many stemming
-from the colorforth ideas)
+Though I've chosen to be intentionally incompatible, I haven't done so to
+be difficult or contrarian, but instead because being compatible would have
+forced me to give up much of what I wanted to accomplish.
 
-some of these are also qualities of colorforth; others are intentional or
-the result of the implementation technique(s)
+Ideas from cmFORTH
+^^^^^^^^^^^^^^^^^^
+cmFORTH's main innovation, in my view, was to get rid of IMMEDIATE words.
+As any Forth old-timer knows, IMMEDIATE words are executed at compile time.
+But they are also executed at "interpret" time, which causes no end of
+trouble and leads to horrendously strained games being played with the
+names of words.
 
-First talk about the things derived from CF:
+Instead of IMMEDIATE words, cmFORTH has an entirely separate set of words
+in the dictionary. There are two sets - I call them "chains" - forth and
+compiler. The compiler words play the role of IMMEDIATE words in cmFORTH
+and muforth.
+
+In fact, the same idea exists in colorforth, but Chuck changed the names.
+There is a lot more explanation of this in the section on the dictionary.
+
+Since you need a way to force the compilation, rather than execution, of
+compiler words, Chuck defined the word \ that searches in the compiler
+chain for a token, compiles it if found, and complains if not found.
+
+I call this word \c (compile from compiler chain); and I define \ to be
+more like ANS's POSTPONE. There is much more explanation of this in the
+section on the funny compiler word called \ .
 
 Ideas from colorforth
 ^^^^^^^^^^^^^^^^^^^^^
@@ -107,7 +166,7 @@ need only switch to yellow, do the calculation, and then switch back to
 green. At the yellow-to-green transition the compiler generates a literal
 with the value of the calculation done by the yellow words.
 
-How did we use to do this? Like this:
+How was this done "traditionally"? Like this:
 
   : blog  [ 25 80 * ] literal + ;
 
@@ -153,24 +212,22 @@ has. Now I need two new words:
  * to exit a word "prematurely";
  * to end a word, but "fall thru" to the next word.
 
-The first I called "^" to capture the idea of jumping up out of the word. The
-second I called "-;" to indicate that it does part of the work of ";" but
-not all. It stops the compiler, but doesn't compile a "return".
+The first I called "^" to capture the idea of jumping up out of the word.
+The second I called "-;" to indicate that it does part of the work of ";"
+but not all. It stops the compiler, but doesn't compile a "return".
 
-More concretely, these words are defined thus:
-
-XXX: copy from interpret.c, compile.c - explain "\"
-
+Then there is the usual ; which does both these things. In fact, it simply
+calls one ( ^ ) and then the other ( -; ).
 
 colorforth has the oddball feature that "if" leaves the top of stack
 intact. This can be useful or annoying. I thought it would be interesting
-to have _both_ options - destructive and non- - so I defined  "=if" and
+to have _both_ options - destructive and non- - so I defined "=if" and
 "=while" in addition to "if" and "while". "if" and "while" consume the top
 of stack; "=if" and "=while" leave it alone.
 
-And, just as in colorforth, there is no "else"! You can always get by
-without it, and often the code factoring improves. For example, you can
-rewrite
+And, just as in colorforth, there is no "else" in muforth! You can always
+get by without it, and often the code factoring improves. For example, you
+can rewrite
 
   <test> if  a  else  b  then  c ;
 
@@ -181,27 +238,37 @@ as
 colorforth doesn't "smudge" (hide) new definitions until they are complete
 - and neither does muforth. This makes writing recursive definitions easy,
 but makes redefinition harder (you have to rename the old function first).
-I liked the idea of being able to write iterations as syntactically
-recursive procedures, as in Lisp; however, I haven't used it much. ;-)
 
+colorforth lacks the looping words begin, while, until, and repeat. (It
+retains for and next.) In colorforth, to write a loop, you simply "call" a
+word from within itself. For this to work, colorforth has to be
+tail-recursive. So muforth is as well. I liked the idea of being able to
+write iterations as syntactically recursive procedures, as in Lisp;
+however, I haven't used it much. ;-) See the section on the joy of
+tail-recursion for more details.
 
-- [ ] -]
-- ; -; ^
-- =if =while (non-destructive test), but no else!
-- tail-recursive looping, Lisp-style
-- no smudge or similar, makes recursion easier, but redefition harder nifty
+Numbers
+^^^^^^^
+As part of my effort to strip everything out of the kernel of muforth that
+is not necessary for bootstrapping - keeping only what is necessary to make
+colon definitions - I stripped number parsing, number formatting, and most
+i/o out of the kernel.
 
-Things taken from cmFORTH (also mostly existed in dforth):
-* the names "compiler" and "forth" for the two basic dictionary chains
-* the word "\" to mean "compile from compiler"
+There aren't even any constants defined in muforth! I calculate them,
+starting with 0, in startup.mu4. From there I get some basic constants I
+need for deciding if a character is a digit, and go on from there.
 
-Then talk about the things that I took from dforth or invented for muforth:
+The number parsing code has some flaws, and isn't that different from what
+you'd find in F-83 or an ANS Forth. The main thing I added was radix
+prefixes. Even though you're in, say, hex, you can enter a number in any of
+4 radices by prefixing it with a single character:
 
+  "  -> hex
+  '  -> octal
+  #  -> decimal
+  %  -> binary
 
-* the UNIVERSAL literal
-
-* number parsing code all high-level; not even constants in kernel!
-
+This can be a great headache saver.
 
 Forgetting
 ^^^^^^^^^^
@@ -257,14 +324,15 @@ z" here is a mnemonic for zero-terminated, length-prefixed, compiled
 string.
 
 One of my subgoals with muforth was to have only one kind of literal.
-There used to be several different kinds of string literals, all of them
-inline (thereby possibly causing cache problems by mixing code with data)
-and therefore requiring strange and convoluted code to "jump over" the
-inline string in order to continue execution. By converting strings
-literals to ordinary literals, lots of problems go away, and strings now
-being neatly postfix as well. If I want a literaled compiled string to push
-(start, length) I simply follow the literal with a call to count. Look for
-"string," in startup.mu4 and you'll see how it all works.
+Forths traditionally have had several different kinds of string literals,
+all of them inline (thereby possibly causing cache problems by mixing code
+with data) and therefore requiring strange and convoluted code to "jump
+over" the inline string in order to continue execution. By converting
+strings literals to ordinary literals, lots of problems go away, and the
+use of strings now becomes neatly postfix as well. If I want a literaled
+compiled string to push (start, length) I simply follow the literal with a
+call to count. Look for "string," in startup.mu4 and you'll see how it all
+works.
 
 Tokenizing the input
 ^^^^^^^^^^^^^^^^^^^^
@@ -302,14 +370,14 @@ represented by the tuple
   (end, -length), where end = address + length.
 
 The type "text" consists of a pointer just past the _end_ of the text, and
-a negative offset back from the end to the start. When we start
-tokenizing a chunk of text, we set a global offset "first" to "point" to
-the first character. But first is really a negative back from the end of
-the text.
+a negative offset back from the end to the start. When we start tokenizing
+a chunk of text, we set a global variable called first to "point" to the
+first character. But first is really a negative offset from the end of the
+text.
 
-In this scenario, the current state of the tokenizer is also captured in
-two variables: source (a _text_), and first, an offset running from -length
-up to 0.
+In this scenario, the current state of the tokenizer is captured in two
+variables: source (a _text_), and first, an offset running from -length up
+to 0.
 
 On each call to the tokenizer, first already points _past_ the the text
 we've seen already, so we're ready to start looking for a new token. Now
@@ -320,7 +388,7 @@ character and scans for a _trailing_ delimiter, but assumes that the new
 token starts at first - it does _not_ try to skip any leading delimiters.
 
 These two routines do not share any code, even though they are
-substantially the same code. There simply isn't a good a way to tease them
+substantially the same. There simply isn't a good a way to tease them
 apart, but they are short enough that I'm not worried about it. ;-)
 
 Ok, back to tokenizing. Let's assume we've called token, and we're going to
@@ -334,11 +402,13 @@ We leave first pointing to it, set last = first, and then start scanning
 with last, incrementing last as long as it points to a non-whitespace
 character and remains < 0. When we reach the end of the token - which
 happens either if we find a trailing delimiter, or if we run out of text to
-scan, last is left pointing just _past_ the last character of the token. We
-capture the presence or absence of the trailing delimiter in a variable
-called trailing, which we set to 1 when we start to look for the end of a
-token. If the input runs out before we find a delimiter we set trailing to
-0.
+scan, last is left pointing just _past_ the last character of the token.
+
+Another way of thinking about this is that we either run out of input text,
+or we "consume" a single trailing delimeter character. We capture the
+presence or absence of the trailing delimiter in a variable called
+trailing, which we set to 1 when we start to look for the end of a token.
+If the input runs out before we find a delimiter we set trailing to 0.
 
 We've now "bracketed" a token. first points to its first character; last
 points just beyond its last character. (These "pointers" are actually both
@@ -406,14 +476,14 @@ The dictionary can in theory contain an arbitrary number of intertwined
 chains. muforth starts up with only two chains defined; their names and
 functions I shamelessly stole from Chuck Moore, but this time from cmFORTH.
 They are called "forth" and "compiler". (He uses the same idea in
-colorforth, but calls the groups "forth" and "macro", and they are arrays
-rather than lists.)
+colorforth, but calls the sets of words "forth" and "macro", and they are
+arrays rather than lists.)
 
 The forth chain consists of "normal" words: words that should be executed
 when mentioned outside a colon definition, and compiled when mentioned
 inside one.
 
-The compiler chain fills the role that so-called immediate words fill in more
+The compiler chain fills the role that so-called IMMEDIATE words fill in more
 traditional Forths, but without their problems. Because it is a completely
 separate chain that is _not_ searched outside of colon definitions, it is
 possible to have a word with the same name in both chains with no
@@ -437,7 +507,7 @@ we specify "search orders" like the above?
 
 A variable, called current, points to the "current" chain - the one that
 new definitions go into. By convention chains have funny names: forth and
-current are really called .forth. and .current. . I chose those names to
+compiler are really called .forth. and .compiler. . I chose those names to
 indicate their chainness. (The dots on the ends are supposed to look like
 "links".) When you mention a chain by name it simply pushes its address.
 It's basically a constant.
@@ -464,14 +534,15 @@ Then our code can look like this:
 Now we can specify what chain words get compiled _into_, but what about
 specifying which chains get searched, and when, and what we do with the
 words that we find? I'll first explain the basic dictionary search
-mechanism, but to fully answer this question I have to talk about structure
-of the interpreter - another cool muforth innovation.
+mechanism, but to fully answer this question I have to talk about the
+structure of the interpreter - another cool muforth innovation.
 
 find is the workhorse word that searches the dictionary. You supply it a
 token (start, length), and the pointer to the head of a dictionary chain
 (such as .forth.). find returns true and a pointer to the word's code if it
-found it, or false and the (start, length) tuple if not. This way it's easy
-to specify a _sequence_ of searches of chains. Which brings us to...
+found it, or false and the (start, length) tuple you originally gave it if
+not. This way it's easy to specify a _sequence_ of searches of chains.
+Which brings us to...
 
 The interpreter
 ^^^^^^^^^^^^^^^
@@ -502,9 +573,13 @@ interpreter, consume does wildy different things with the token.
 It may not surprise Forth old-timers, but muforth has a variable called
 state. Its use is _much_ different than the traditional one, though. My
 state points to a two-cell data structure. The first cell is a pointer to
-the code that to _consume_ a token; the second is a pointer to code that
-will display an informative prompt, so if you're doing something at the
-keyboard, you'll know what state the interpreter is in.
+the code to _consume_ a token; the second is a pointer to code to display
+an informative prompt, so if you're doing something at the keyboard, you'll
+know what state the interpreter is in.
+
+consume is then defined as:
+
+  : consume  state @  @execute ;
 
 I call this (consume, prompt) tuple a _mode_. muforth has only two modes
 built-in. Can you guess what they are? Interpret and compile, of course!
@@ -518,8 +593,8 @@ consume function is called _[ and its compiler dual is _] .
 
 Look in .forth. for the token. If found, execute it. If not, try to convert
 it as a number. If that fails, number will complain. Note that there is
-_no_ mention of .compiler. ! Words on the .compiler. are invisible to
-interpret mode.
+_no_ mention of .compiler. ! Words in .compiler. are invisible to interpret
+mode.
 
 The colon compiler's consume function is this:
 
@@ -538,16 +613,16 @@ Again, Forth old-timers will laugh at how simple this is compared to what
 it replaces: ONLY/ALSO, weird nibble-encoded dictionary chain indices, etc.
 
 I think the fundamental difference between this approach and the
-traditional ones is that the traditional approach allow for - in fact,
+traditional ones is that the traditional approaches allow for - in fact,
 _demand_ - the run-time creation of search orders. In my humble opinion,
 that's simply the wrong time to be creating a search order! When you figure
 out what you're trying to do - what your interpreter _mode_ is supposed to
 accomplish - you're going to arrive at a search order that is _fixed and
 constant_ for that interpreter mode.
 
-I should add that the traditional approaches only specified a search order;
-you still had to have immediate words and other gross hacks in order to
-have compiling words. My way specifies not only the search order, but
+I should add that the traditional approaches only specify a search order;
+you still have to have immediate words and other gross hacks in order to
+have compiling words work. My way specifies not only the search order, but
 exactly what to do when a token is found in a particular chain. And the
 "encoding" for it is very simple and easy to read. In fact, it's the
 simplest thing that could possibly work: straight Forth code!
@@ -560,8 +635,8 @@ _nested_ conditionals, but it's not much code and it's a nice approach: use
 the interpreter to scan for your tokens for you! That's what it's for!
 
 The simplicity and extensibility of this approach wins big for
-metacompilation as well.
-
+metacompilation as well, which, when I finish working on muforth's
+"universal metacompiler", I'd like to write about.
 
 The funny compiler word called \
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -610,7 +685,6 @@ executes. That's probably the best way to think about it.
 
 With that in mind, let's think about...
 
-
 Structure compiling words
 ^^^^^^^^^^^^^^^^^^^^^^^^^
 One way to write a loop is like this:
@@ -653,13 +727,13 @@ difference, let's think about what repeat has to do. It has to compile a
 backwards branch to beginning, and _then_ it has to fix up the address of
 the branch that while compiled so that it branches to end.
 
-So what about while? After compiling the conditional
-branch, the stack has two pointers on it: beginning, and a reference to the
-forward branch that repeat will fix up. But they're in the wrong order!
-repeat needs to see beginning first, then the forward branch fix up
-address. So we need to swap the addresses on the stack. While in theory
-repeat could do this, in practice that's the wrong place, because nothing
-prevents us, with properly defined words, from doing
+So what about while? After compiling the conditional branch, the stack has
+two pointers on it: beginning, and a reference to the forward branch that
+repeat will fix up. But they're in the wrong order! repeat needs to see
+beginning first, then the forward branch fix up address. So we need to swap
+the addresses on the stack. While in theory repeat could do this, in
+practice that's the wrong place, because nothing prevents us, with properly
+defined words, from doing
 
   begin ... while  ... until ... then
 
@@ -680,7 +754,7 @@ references in compiling words to other compiling words. Oh well.
 
 The joy of tail recursion
 ^^^^^^^^^^^^^^^^^^^^^^^^^
-Tail-recursion was a motivation for writing muforth. What the heck is that,
+Tail-recursion was a motivation for writing muforth. What the heck is it?
 you ask. Fair enough.
 
 If I write
@@ -722,14 +796,16 @@ conversion. There is one case where we have to be careful. If the byte
 after our converted tail-call is a jump destination, we have to compile a
 return instruction there.
 
-Here "call foo" gets converted to "jump foo".
+In the following code:
 
   : foo  if a b c then  foo ;
 
-Here the conversion happens too, but _also_ a return instruction gets
-compiled after the "jump foo". Strange but true!
+"call foo" gets converted to "jump foo". What about:
 
   : foo  if a b c foo then ;
+
+Here the conversion happens too, but _also_ a return instruction gets
+compiled after the "jump foo". Strange but true!
 
 Simple and tail-recursive native compiler
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -1034,3 +1110,8 @@ in the canonical way:
     jmp  less_clumsy_does
 
 With this new kind of create/does>, you choose how to do it.
+
+The end
+^^^^^^^
+I hope this helped to explain how muforth works and why I think it's cool.
+I hope you'll think it's cool too, and use it to do interesting things!
