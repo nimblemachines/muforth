@@ -36,7 +36,27 @@
 #define STK(n)  	(sp[n])
 #define TOP		STK(0)
 #define DROP(n)		(sp += n)
+
+/*
+ * EXECUTE for PowerPC has been structured to pass the address
+ * of the global variable "sp" around in R14 (though, check
+ * ppc_asm.s for sure).  Possibly other major variables will
+ * be passed around.  At any rate, execute on PPC will save
+ * the registers that hold the pointer(s), load the registers,
+ * call the function at the top of the stack.  When that
+ * function returns, we restore the registers and return to C.
+ * On the i386, the register EDI could be used for the DATA
+ * stack pointer (pointer).  I see that all "sp" transactions
+ * i386.c currently involve a 4 byte reference to the "sp" variable.
+ * So, setting up EDI could save a lot of bytes and make the code
+ * faster.
+ */
+#ifdef __POWERPC__
+extern void mu_execute(void);
+#define EXECUTE		mu_execute()
+#else
 #define EXECUTE		(*(void (*)()) POP)()
+#endif /* __POWERPC__ */
 
 #ifdef DEBUG
 #include <stdio.h>
@@ -131,6 +151,7 @@ void mu_write_carefully(void); /* XXX: temporary */
 void mu_compile_call(void);
 void mu_resolve(void);
 void mu_compile_jump(void);
+void mu_compile_entry(void);
 void mu_compile_return(void);
 void mu_compile_drop(void);
 void mu_compile_2drop(void);

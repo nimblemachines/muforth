@@ -52,6 +52,19 @@ void mu_compile_jump()
 }
 #endif
 
+/*
+ * mu_compile_entry()
+ *
+ * On some architectures some entry code is necessary.
+ * On i386 this is not the case.
+ */
+void mu_compile_entry()
+{
+	/*
+	 * Nothing.
+	 */
+}
+
 void mu_compile_return()
 {
     /* convert call in tail position to jump */

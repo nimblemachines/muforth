@@ -19,6 +19,10 @@
 	;; WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 	;; See the License for the specific language governing permissions and
 	;; limitations under the License.
+	;;
+	;; The calling convention for all Forth function is that all parameters
+	;; are on the data stack (pointed to by the global variable _sp).
+	;; There are no parameters passed on the PPC's stack (register 1).
 	;; 
 	;; ppc_asm.s
 	;;
@@ -44,26 +48,57 @@ _mu_iflush_addr:
 	isync				; remove copy in own instruction buffer
 	blr				; Return
 
-	.globl	_mu_stack_adjust
-	.globl _sp
-_mu_stack_adjust:
-	oris	r11,r0,ha16(_sp)
-	addi	r11,r11,lo16(_sp)
-	lwz	r12,0(r11)		; Get the stack pointer
-	sub	r12,r12,r3		; Subtract r3 from r11 to adjust the stack.
-	stw	r12,0(r11)
-	blr
 
-	.globl	_mu_push_literal
-_mu_push_literal:
-	oris	r11,r0,ha16(_sp)
-	addi	r11,r11,lo16(_sp)
-	lwz	r12,0(r11)		; Get the stack pointer
-	subi	r12,r12,4
-	stw	r3,0(r12)		; Store the passed parameter (r3) on the stack
-					; R1 -4
-	stw	r12,0(r11)
-	blr
+	;;
+	;; mu_execute
+	;;
+	;; This is the function that gets called from C to invoke a Forth
+	;; word.  This routine sets up PowerPC registers to hold special
+	;; values.  See below for the exact list.  Some registers are pointers
+	;; and some are values.  For example, suppose R14 holds the pointer
+	;; to the C variable "sp" and R15 holds its value.  When Forth routines
+	;; call back into C, the C routines will (if they were to use those
+	;; registers) preserve them (because they are nonvolatile).  For the
+	;; pointer register, there's no problem because the pointers will be
+	;; the same before/after (the C variable won't move to a new address).
+	;; However, the registers which hold a value may be invalid.  So,
+	;; the routines which compile function calls will have to check to see
+	;; if the routines called are C routines or Forth routines.  For Forth
+	;; routines the values are guaranteed to be correct, but for C code
+	;; that may not be the case.  Therefore, when C code is called from
+	;; Forth, the value registers must be reloaded so they will be correct.
+	;;
+	;; Special Registers Used in this Forth
+	;; r14:	Pointer to Data Stack Pointer
+	;; r15:	Data Stack Pointer (note: requires reload after calling C code)
+	;; 
+	.globl	_mu_execute
+	.globl _sp
+_mu_execute:
+	mflr	r0
+	stwu	r0,-4(r1)		; Save return address
+	stwu	r14,-4(r1)		; Preserve R14 before putting the address
+					; of "sp" into it.
+	stwu	r15,-4(r1)
+
+	addi	r14,0,lo16(_sp)		; r14 = &sp
+	addis	r14,r14,ha16(_sp)
+	lwz	r15,0(r14)		; r15 =  sp
 	
+	lwz	r3,0(r15)		; Fetch the address of the next word to call
+	addi	r15,r15,4		; Increment the Stack Pointer (in the register)
+	
+	mtlr	r3			; Prepare the target address
+	blrl				; Branch to the function
+
+	stw	r15,0(r14)		; Save SP before returnning to C
+
+	lwz	r15,0(r1)		; Restore R15 for the caller (C code)
+	lwz	r14,4(r1)		; Restore R14 for the caller (C code)
+	lwz	r0,8(r1)		; Restore the Link Register
+	mtlr	r0
+	addi	r1,r1,12		; Drop R14 and the Link Register from the stack
+	blr				; Return to the calller
+
 .data
 				; This data segment is bogus, and used for gdb to not wig-out

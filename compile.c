@@ -89,6 +89,7 @@ char *to_counted_string(char *zstring)
 void mu_colon()
 {
     mu_make_new_name();
+    mu_compile_entry();
     mu_minus_rbracket();
 }
 

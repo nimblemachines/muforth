@@ -30,6 +30,7 @@
 VERSION = 0.01
 
 CFLAGS=-O2 -Wall -fomit-frame-pointer
+DBGCFLAGS=-O0 -ggdb -Wall
 ASFLAGS=-g
 LDFLAGS=
 
@@ -60,9 +61,16 @@ version.h : Makefile ${VERSOBJS}
 
 muforth : ${ALLOBJS} ${ARCHX86}
 	${CC} ${LDFLAGS} -o $@ ${ALLOBJS} ${ARCHX86} ${LIBS}
+	ln -s gdb-i386.init .gdbinit
 
 muforthppc : ${ALLOBJS} ${ARCHPPC}
 	${CC} ${LDFLAGS} -o $@ ${ALLOBJS} ${ARCHPPC} ${LIBS}
+#	ln -s gdb-ppc.init .gdbinit
+
+ppctest: ppc.c ppc_asm.s muforth.h
+	${CC} ${DBGCFLAGS} -c -DPPC_TEST -o ppc.o ppc.c
+	${CC} ${DBGCFLAGS} -c -DPPC_TEST -o ppc_asm.o ppc_asm.s
+	${CC} ${LDFLAGS} -o ppctest ppc.o ppc_asm.o ${LIBS}
 
 clean :
-	rm -f muforth version.h *.o
+	rm -f muforth ppctest version.h *.o
