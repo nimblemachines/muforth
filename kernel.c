@@ -182,7 +182,7 @@ void mu_string_equal()
 
 void mu_uless()
 {
-    STK(1) = (STK(1) < (cell_t) TOP) ? -1 : 0;
+    STK(1) = (STK(1) < (unsigned) TOP) ? -1 : 0;
     DROP(1);
 }
 
