@@ -59,13 +59,13 @@ version.h : Makefile ${VERSOBJS}
 	echo "#define VERSION \"${VERSION}\"" > version.h
 	echo "time_t build_time = `date \"+%s\"`;" >> version.h
 
-muforth : ${ALLOBJS} ${ARCHX86}
+muforth : ${ALLOBJS} ${ARCHX86} gdb-i386.init
 	${CC} ${LDFLAGS} -o $@ ${ALLOBJS} ${ARCHX86} ${LIBS}
 	ln -sf gdb-i386.init .gdbinit
 
-muforthppc : ${ALLOBJS} ${ARCHPPC}
+muforthppc : ${ALLOBJS} ${ARCHPPC} gdb-ppc.init
 	${CC} ${LDFLAGS} -o $@ ${ALLOBJS} ${ARCHPPC} ${LIBS}
-#	ln -sf gdb-ppc.init .gdbinit
+	ln -sf gdb-ppc.init .gdbinit
 
 ppctest: ppc.c ppc_asm.s muforth.h
 	${CC} ${DBGCFLAGS} -c -DPPC_TEST -o ppc.o ppc.c
