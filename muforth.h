@@ -202,7 +202,7 @@ void mu_compile_next(void);
 /* interpreter.c */
 void execute(cell_t target);
 
-/* library.s */
+/* library.c */
 dcell_t dpop(void);
 void dpush(dcell_t);
 float_t fpop(void);
@@ -214,6 +214,16 @@ void mu_um_star(void);
 void mu_m_star(void);
 void mu_um_slash_mod(void);
 void mu_fm_slash_mod(void);
+
+/* float.c */
+void mu_fdot(void);
+void mu_d_to_f(void);
+void mu_f_to_d(void);
+void mu_fadd(void);
+void mu_fdiv(void);
+void mu_fmul(void);
+void mu_fneg(void);
+void mu_fdot(void);
 
 /* interpret.c */
 void mu_push_cell_size(void);

@@ -30,15 +30,22 @@
  * aren't available to muForth programmers directly.  They are used
  * indirectly to perform work on behalf of routines that muForth code
  * may invoke.
+ *
+ * I added the bcopy() to put and fetch the float from the stack because
+ * on some processor architectures doubles need to be aligned naturally.
+ * Since the Forth stack cannot be coerced into such alignment rules, we've
+ * got trouble.
  */
 float_t fpop(void)
 {
-	float_t *p;
+	float_t *p, f;
 	
 	p = (float_t *) sp;
+	bcopy(p, &f, sizeof(f));
+
 	sp += FLOAT_NCELLS;
 
-	return *p;
+	return f;
 }
 
 void fpush(float_t f)
@@ -46,9 +53,9 @@ void fpush(float_t f)
 	float_t *p;
 
 	sp -= FLOAT_NCELLS;
-	p = (float_t *) *sp;
 
-	*p = f;
+	p = (float_t *) sp;
+	bcopy(&f, p, sizeof(f));
 }
 
 /*

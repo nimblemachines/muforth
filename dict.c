@@ -171,6 +171,15 @@ struct inm initial_forth[] = {
     /* sort.c */
     { "string-quicksort", mu_string_quicksort },
 
+    /* float.c */
+    { "f/", mu_fdiv },
+    { "f*", mu_fmul },
+    { "fneg", mu_fneg },
+    { "f+", mu_fadd },
+    { "d->f", mu_d_to_f },
+    { "f->d", mu_f_to_d },
+    { "(f.)", mu_fdot },
+
     { "bye", mu_bye },
 
     { "#code", mu_push_code_size},
@@ -405,7 +414,7 @@ static struct dict_entry *find_pde_by_addr(cell_t addr)
 }
 
 /*
- * snprintf_func_name()
+ * snprint_func_name()
  *
  * Given an address, this routine will print the name of the muforth word
  * which is associated with that address.  Also, it will print an offset

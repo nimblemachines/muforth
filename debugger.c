@@ -6,6 +6,7 @@
  * The debugger has a basic interface and users can over-ride it with
  * their own implementations.
  */
+#ifdef DEBUG
 #include "muforth.h"
 #include "opcode.h"
 #include <stdio.h>
@@ -30,21 +31,20 @@ extern cell_t snprint_func_name(char *str, int size, cell_t addr);
  *    specific registers can be read/set
  * 7) read/set memory
  *
- * And, my theory is that I'll implement this simply enough that
- * we can port it to muForth soon.
- *
- * To send commands to the target, call through the dbg_send vector.
- * To pick up responses from the target, call through the dbg_recv vector.
- * These vectors need to be implemented by by routines that can send
- * and receive bytes to/from the target machine.
+ * The host (and client) will build up a complete packet and then send
+ * it to the target (over what-ever interconnect: RS232, USB, etc.).
+ * When the host sends the packet it will block waiting for the response.
+ * When the target receives the packet it will call through some 'eval'
+ * engine (with the current chain set to the debugger).  Upon evaluating
+ * packet, it will generate a response packet.  That packet will be sent
+ * back to the host.  The host, too, will 'eval' the packet.  The results
+ * from that operation will be (for example) data on the stack that can
+ * printed along with some formatting and context.
  *
  * On the target machine there needs to be a nub.  The nub responds to
  * commands and sends responds.  The nub does not initiate new commands
  * to the host.  The only exception to that rule is that the nub
  * will send data to the host indicating that the target is in the debugger.
- *
- * If this all feels like gdb and its nub that's because I've modeled this after
- * that structure.
  *
  * Oh, here's the big fun.  There are two data stacks and two return stacks.
  * This is because when we're debugging local code, we can't use the same stack
@@ -80,55 +80,6 @@ extern cell_t snprint_func_name(char *str, int size, cell_t addr);
  * stack-base?
  * stack-end?
  *
- * Already I'm sensing trouble down this path.  The problem is that the
- * text of the commands is long.  This means that the nub will have lots
- * of bytes devoted to the parsing the commands.  Shorter commands is better.
- * 
- * Given that, here's another idea: short one byte commands.
- *
- * Here are my proposed commands:
- *   One byte commands:
- *     i   -- Fetch the target machine's information.
- *            The response to this is a pretty long string of terms
- *            each separated by semicolon's:
- *         b or l   -- big or little endian
- *         cpu-arch -- a short text string identifying the cpu arch:
- *                     i386, arm7, mippy, 6809, 68000, etc.
- *         dram<base>,<length>  -- This is a declarative of the range
- *                                 of dram on the machine.  There may
- *                                 be multiple such declaratives.  Also,
- *                                 these may not be exaustive.
- *         heap<base>,<length>  -- The range of the heap.  Searches for
- *                                 stuff in the heap won't extend beyond
- *                                 these boundaries.
- *         stack<base>,<length> -- The stack range.  In this case <base> is
- *                                 the address when there are no elements
- *                                 on the stack.  <length> indicates the
- *                                 number of bytes available for the stack
- *                                 to grow.  Also, if <length> is an
- *                                 empty string, then the stack is presumed
- *                                 to be able to grow indefinitely, which
- *                                 will likely be the case.
- *         rstack<base>,<length> -- The return stack range.  All said about
- *                                 the data stack, above, is true here.  In
- *                                 addition the rstack and the stack may
- *                                 have overlapping ranges.  Some systems are
- *                                 designed this way.
- *         pc<addr>              -- The current program counter.
- *         sp<addr>              -- The current stack pointer
- *         rp<addr>              -- The current return pointer
- *         <cpu-reg><value>      -- Some number (possibly 0) of cpu specific
- *                                  registers and their current values.
- *
- *     c   -- continue execution form here
- * 
- * Other commands:
- *
- * m<addr>,<length>;   -- read memory at <addr> for <length> bytes.
- * M<addr>:<datum>[,<datum>]*; -- set memory at <addr> with datum.
- *                                additiona data is placed at successive
- *                                addresses.
- * 
  */
 
 /*
@@ -390,4 +341,5 @@ static void print_opcode_histogram(void)
 		printf("%s:\t%d", opstr, opcode_histogram[i]);
 	}
 }
-#endif
+#endif /* 0 */
+#endif /* DEBUG */
