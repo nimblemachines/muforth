@@ -74,7 +74,7 @@
 
   2. compile data structures: variables, constants, create/does words;
 
-  3. read and write numbers - an interesting exercise since Forth starts
+  3. read and write numbers - an interesting exercise since muforth starts
      life _not_ even knowing only the constant 1!
 
   4. read and write strings.
@@ -113,7 +113,7 @@
 : chain'  token'  huh?  ;
 : \chain  chain'  compile,  ;
 
-( 28-apr-2000. Do we ever -really- want to search anything other than forth?)
+( 28-apr-2000. Do we ever -really- want to search anything other than .forth.?)
 : '   .forth.  chain'  ;
 ( : '   current @  chain'  ;  ( XXX)
 
@@ -460,9 +460,9 @@ forth
 ( -create is basically the same as "here".)
 : create   name ;  ( doesn't compile any code!)
 : constant  create  literal \ ^ ;  ( syntactic sugar for : foo  89 ; )
-: buffer ( cells)  ram constant  ?for 0 , next then ;
-: variable    1 buffer ;
-: 2variable   2 buffer ;
+: buffer  ( bytes)  ram constant  aligned  cell/  ?for 0 , next then ;
+: variable      cell  buffer ;
+: 2variable   2 cells buffer ;
 
 ( These depended on the data space being zeroed, which makes me nervous.
   And well I should have been nervous: temporary strings - for file names,
@@ -476,6 +476,7 @@ forth
   : variable       cell buffer ;
   : 2variable   2 cells buffer ; )
 
+( XXX: Is this actually architecture-neutral?)
 : ;does   load-literal  pop compile, \ ^ ;
 compiler
 : does>   ['] ;does compile,  push-literal ;
@@ -598,31 +599,33 @@ decimal
 : on  -1 swap !  ;
 : off  0 swap !  ;
 
-
 ( Punctuation in numbers: sign, radix, decimal point, separators.)
-: punct  ( a u ch - a' u')
+: punct  ( a u ch - a' u' matched)
    over if ( still chars to process)  swap push  over c@  xor if
-   ( no match)  pop pop ( XXX: switch 2pop?)  [ 2 2* 1+ ] + push ^ then
-   ( match)  pop 1 -1 v+  ^  then  drop shunt ;
+   ( no match)  pop 0 ^ then
+   ( match)  pop 1 -1 v+  -1 ^  then
+   ( end of input)  drop shunt ;
 
-: ?sign  char - punct  -1 ^  0 ;
+: ?sign  char - punct  if  -1 ^  then  0 ;
 
-: ?hex  char " punct  hex ^
-        char # punct  decimal ^
-        char ' punct  octal ^
-	char % punct  binary ^ ;
+: ?hex  char " punct  if  hex ^  then
+        char # punct  if  decimal ^  then
+        char ' punct  if  octal ^  then
+	char % punct  if  binary ^  then ;
 
-: dpl!  dpl off ;
-: ?dot  char . punct  dpl! ^  ( . resets dpl; others leave it unchanged)
-        char , punct  nope ^
-        char - punct  nope ^
-        char / punct  nope ^
-        char : punct  nope ^  complain ;
+( . resets dpl; others leave it unchanged; this means that embedding . in a
+  number causes a double number to be pushed, and dpl set to the count of
+  digits _after_ the _last_ . in the number.)
+: ?dot  char . punct  if  dpl off ^  then
+        char , punct  if   ^  then
+        char - punct  if   ^  then
+        char / punct  if   ^  then
+        char : punct  if   ^  then  complain ;
 
-: ?c-hex    char x  punct  hex ^
-            char X  punct  octal ^    hex ;
+: ?c-hex    char x  punct  if  hex ^  then
+            char X  punct  if  octal ^   then   hex ;
 
-: ?c-octal  char 0  punct  ?c-hex ^   ?hex ;
+: ?c-octal  char 0  punct  if  ?c-hex ^  then   ?hex ;
 
 ( 4-apr-2000. Added `C' style radices.)
 ( 29-apr-2000. Changeable forth-style and c-style radices. Having the C
@@ -697,7 +700,7 @@ defer ?radix
 
 ( Basic character i/o.)
 
-256 constant #inbuf
+1024 constant #inbuf
 #inbuf buffer inbuf  ( terminal input)
 variable keybuf
 variable emitbuf
@@ -709,7 +712,6 @@ variable fd-out
 : <stdin   0 reads  ;
 : >stdout  1 writes ;  <stdin  >stdout  ( sanity)
 : >stderr  2 writes ;
-
 
 : <key   ( fd - ch)                 keybuf 1 read  drop  keybuf c@ ;
 : >emit  ( ch fd)  swap emitbuf !  emitbuf 1 write ;
@@ -797,6 +799,8 @@ variable hld
 
 ( Useful.)
 : ?  @ .  ;
+
+( XXX: wordlength-specific.)
 : rotate  ( rotates _right_; without =if/then, rotates by 0 break on x86.) 
   =if  2dup u>> push  negate bl ( 32) +  <<  pop xor ^ then drop ;
 
@@ -871,8 +875,8 @@ forth
   the hook?)
 
 ( Now that we have strings, let's make a more useful definition of
-  undeferred, so that defer'ed words that never get set to point to
-  anything will complain about it.)
+  undeferred, so that defer'ed words that never get set to anything will
+  complain when used.)
 
 -:  error" undefined deferred word" ;  undeferred !
 
@@ -1016,6 +1020,7 @@ asmXXX
   _unsigned_ product and drop the high-order word. Weird but true. And an
   extra-credit challenge: is "m* drop" always equal to "um* drop"? Why or
   why not? ;-)
+
 : *       ( n1 n2 - n1*n2)   um*  drop  ;  ( what's in fig)
 
 :  */mod  ( n1 n2 n3 - r q)  push   m*   pop           fm/mod ;
@@ -1216,9 +1221,11 @@ variable csp  ( what does this stand for? `check stack pointer'?)
 : utc"    ( epoch - a #)         utc  (time")  ;
 
 ( Better primitives? More elegant, certainly.)
-: s->smh   ( s - s m h)  60 u/mod  60 u/mod ;
+: s->sm    ( s - s m)    60 u/mod ;
+: s->smh   ( s - s m h)  s->sm  s->sm ;
 : s->smhd  ( s - s m h d)  s->smh  24 u/mod ;
-: smh->s   60 * +  60 * + ;
+: sm->s    60 * + ;
+: smh->s   sm->s  sm->s ;
 : smhd->s  24 * +  smh->s ;
 
 ( If anyone had any idea how long a year really is, we could also define 
