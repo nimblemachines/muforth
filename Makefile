@@ -27,20 +27,20 @@
 ### all the "web projects" stuff. Now it should compile with BSD make or
 ### GNU make.
  
-VERSION = 0.01
+VERSION=	0.01
 
-CFLAGS=-O2 -Wall -fomit-frame-pointer
-DBGCFLAGS=-O -ggdb -Wall -DDEBUG
-ASFLAGS=-g
+CFLAGS=		-O2 -Wall -fomit-frame-pointer
+DBGCFLAGS=	-O -ggdb -Wall -DDEBUG
+ASFLAGS=	-g
 LDFLAGS=
 
 # If any of these files changes, make a new version.h
-VERSOBJS = kernel.o interpret.o compile.o dict.o file.o \
-	 interpreter.o compiler.o library.o debugger.c float.o \
-	 error.o time.o pci.o tty.o select.o sort.o # buf.o
+VERSOBJS=	kernel.o interpret.o compile.o dict.o file.o \
+		interpreter.o compiler.o library.o debugger.c float.o \
+		error.o time.o pci.o tty.o select.o sort.o # buf.o
 
-ALLOBJS = ${VERSOBJS} muforth.o
-DEPFILES = Makefile muforth.h opcode.h
+ALLOBJS=	${VERSOBJS} muforth.o
+DEPFILES=	Makefile muforth.h opcode.h
 
 .PHONY: all clean
 
