@@ -141,6 +141,10 @@ void compile_stack_move(int n)
 /* After running out of "displacement space" in a Forth word, I've changed
    the branch compilers to use the 32-bit displacement versions. */
 
+/* XXX: It might make sense to make _forward_ branches always 32 bits -
+   since we don't know ahead of time how far we'll have to jump - but
+   make backwards branches only as long as they need to be. */
+
 void compile_zbranch()
 {
     int *help;
@@ -302,9 +306,19 @@ void um_slash_mod()
     the divisor and dividend are different signs.  (This is NOT the
     same as quot < 0, because the quot could be truncated to zero
     by symmetric division when the actual quotient is < 0!)
-    The adjustment is q' = q - 1; r' = r + divisor.  This
-    preserves the invariant  a / b => (r,q) s.t.  a = qb + r;
-    a = q'b + r' = (q - 1)b + (r + b) = qb - b + r + b = qb + r !!
+    The adjustment is q' = q - 1; r' = r + divisor.
+
+    This preserves the invariant a / b => (r,q) s.t. qb + r = a.
+
+    q'b + r' = (q - 1)b + (r + b) = qb - b + r + b
+             = qb + r
+             = a
+
+    where q',r' are the _floored_ quotient and remainder (really, modulus),
+    and q,r are the symmetric quotient and remainder.
+
+    XXX: discuss how the range of the rem/mod changes as the num changes
+    (in symm. div.) and as the denom changes (in floored div).
 */
 
 void fm_slash_mod()		/* floored division! */

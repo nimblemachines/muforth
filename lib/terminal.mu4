@@ -28,9 +28,17 @@ tty-target >raw  ( disallows signals)
 : te-smokin'  tty-target 115200 bps  ;  te-smokin'
 
 
-256 constant #serialbuf
-#serialbuf buffer serialbuf ( serial input buffer)
+comment use-typing
+  256 constant #serialbuf
+  #serialbuf buffer serialbuf ( serial input buffer)
+use-typing
 
+( 2003-mar-13. It's coroutine time!)
+
+: coroutine  ( dstack-safety dstack-size - s0)
+   cells allot ( size)  cells ( safety)  ram  swap -  constant ;
+
+coroutine serial-s0
 
 variable fdmax
 : new-fd-set  ram fd-zero  buffer ;
@@ -42,9 +50,23 @@ new-fd-set fds
    fdmax @ 1+  fds  0  0  0  select  drop  ;
 
 ( Serial input to screen, keyboard input to serial.)
+
+comment old-serial->screen
 : serial->screen  ( - done?)
    fds tty-target fd-in-set? dup if  tty-target reads  tty writes
-       serialbuf dup  [ #serialbuf 2 - ]  accept ( #read)  type  then  not  ;
+       typing  type  then  not ;
+old-serial->screen
+
+( XXX: do we need to get the whole input at once? ie with "typing", or can
+  we just read and process a "key" at a time, like in keyboard->serial?)
+
+: process-serial  ( key -)
+       dup <ESC>  = if  key dup char [ = if
+   key dup char 5 = if  key dup char n = if  
+
+: serial->screen  ( - done?)
+   fds tty-target fd-in-set? if  tty-target reads  tty writes
+      key process-serial 0 ^  then  -1 ;
 
 : keyboard->serial  ( - done?)
    fds tty fd-in-set? if  tty reads  tty-target writes
@@ -99,9 +121,22 @@ v25-specific
   keyboard buffer. This makes AEB-1 autobauding - which works by sending
   `ESC [5n' - status query - and the Linux console answers with `ESC [0n' -
   terminal Ok. By echoing the ESC and [ that were eaten by our ESC-dispatch
-  mechanism, we cause the AEB-1 autobaud feature to magically work.)
+  mechanism, we cause the AEB-1 autobaud feature to magically work.
+
+  This only sort of "works". While the Linux console obliges - as do rxvt
+  and xterm - the FreeBSD syscons driver does _not_. [I have no idea what
+  the NetBSD wscons driver will do.] So rather than be at the mercy of an
+  environment that we cannot control, we handle this ourselves, right
+  here.)
+
+: CSI  ( handle ESC [ )  key dup char 5 = if  key dup push char n = if
+  ( got ESC [5n, so answer accordingly)  drop char 0  then then  push
+  swap emit emit ( echo "ESC [")  pop emit  pop emit ;
+
 -:
-   swap emit emit  0  ;                   char [  esc-handler!  ( vt10x)
+   CSI  0 ;                               char [  esc-handler!  ( vt10x)
+
+(   swap emit emit  0  ;)
 -:
    2drop  te-smokin'  0  ;                char k  esc-handler!  ( smoke)
 -:
@@ -112,9 +147,12 @@ v25-specific
 -:
    2drop  ." flashload " rom-start .w16  |cr  0 ;
                                           char d  esc-handler!  ( download)
+-:
+   2drop  ." download"  |cr  0 ;
+                                          char r  esc-handler!  ( ram download)
 
 -:
-   2drop  'image |#  uu  0 ;
+   2drop  'image #image  uu  0 ;
                                           char u  esc-handler!  ( uuencode)
 -:
    2drop  ." pc " 'boot @ .w16 |cr  0 ;

@@ -1,0 +1,87 @@
+( memory.mu4 -- basic memory management for target compilers)
+
+cr s" Memory management "  file[#
+
+decimal
+( 2002-nov-20. Randy and David started the job of splitting out code
+  common to multiple architectures.)
+
+( 2002-mar-27. Converted to work with muForth.)
+
+( 13-sep-1998.  When the target and host have different word sizes, and
+  possibly different endianesses, we really need special words for target
+  dictionary work.  Chuck Moore's `space switching' will not work for us.)
+
+( 14-sep-1998.  More changes!  We have separate spaces -- in the 80x86 world
+  -- for code and `words'.  We need separate [but equal] dictionary words for
+  the two spaces.)
+
+( 24-sep-1998.  Changed to be hopefully simpler.  Instead of having the 
+  clients of this module worry about relative and absolute we're going to
+  change things around a little.  Now `>here' and `|here' return relative
+  rather than absolute values.  The `comma' words will work as advertised.
+  The only thing that this changes, other than making for fewer `|#' and
+  `>+' and other un-readables, is that >c! and >! must have their address
+  converted to absolute, in code or word space.)
+
+( 6-apr-1999. Modified for ARM. No segments! I like the `|' prefix, so I'll
+  use that for target words. We only need one space for the ARM, so I got
+  rid of `>' words. See the file NOTES for comments about endianness and 
+  other issues.)
+
+( 26-apr-1999. Using the new dump in startup.d4. So we need to define arm|@
+  and arm|c@ and init the deferred words.)
+
+
+( Client needs to define code-size, data-size, ram-size, and origins for
+  all three.)
+
+( First define the image spaces. )
+#code buffer 'code  ( is the address of buffer on host)
+#data buffer 'data  ( ditto)
+
+( @code, @data, @ram are the target origin addresses.)
+
+( Since we can't assume we're in a segmented mode, we need to define
+  non-zero origins, esp. for ROMed code.)
+
+: >code  [ 'code @code - ] + ;  ( convert target address to host image address)
+: >data  [ 'data @data - ] + ;  ( ditto, for data space)
+
+( Dictionary operators.)
+outside
+variable h	( code pointer)
+   @code \ h !
+
+: here  ( - a)  o:: h @  ;
+
+variable d	( data pointer)
+   @data \ d !
+
+variable r    ( ram allocation pointer)
+   @ram \ r !
+
+: allot     \o r +!  ;  ( advance ram allocation pointer)
+: ram       \o r @   ;  ( next available ram)
+
+
+( Memory inspection operators. Eventually these will also be able to talk to
+  the target, rather than only reading from the image.)
+2variable limits  ( for checking mem accesses)
+\ ram constant bogus   "deadc0de dup , ,
+: inside  ( a - a)
+   dup  \o limits 2@  within  if  |+ ^  then   3 and  \o bogus  +  ;
+
+( Initialization.)
+: wipe  o= 'code o= #code erase  o= 'data o= #data erase
+        o= @code o= h !  o= @data o= d !  o= @ram o= r ! ;
+
+: org   ( buffer len org)
+   tuck tuck + ( buf org org org+len)  \o limits 2!  dup \o h !  -  dA !  ;
+
+( `org' allows us to read or write an arbitrary buffer - a memory-mapped
+  file, 'image, whatever.)
+
+( That's it for now!)
+
+#]file

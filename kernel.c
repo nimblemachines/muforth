@@ -197,7 +197,8 @@ void sp_fetch()
 
 void sp_store()
 {
-    sp = S0;
+    sp = TOP;
+    DROP(1);
 }
 
 void cmove()
@@ -218,6 +219,7 @@ void string_length()
 void push_version()
 {
     PUSH(version);
+    PUSH(strlen(version));
 }
 
 void push_build_time()
