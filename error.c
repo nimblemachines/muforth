@@ -42,9 +42,9 @@
 void die(const char *msg)
 {
     write_string(2, "muforth: ");
-    if (parsed.len != 0)
+    if (parsed.length != 0)
 	{
-	    write(2, parsed.data, parsed.len);
+	    write(2, parsed.data, parsed.length);
 	    write(2, " ", 1);
 	}
     write_string(2, msg);

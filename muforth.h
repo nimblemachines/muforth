@@ -48,19 +48,23 @@
 #define ALIGN_SIZE	sizeof(int)
 #define ALIGNED(x)	(((int)(x) + ALIGN_SIZE - 1) & -ALIGN_SIZE)
 
-/* string is a "normal" string: pointer to the first character, and length. */
+/*
+ * struct string is a "normal" string: pointer to the first character,
+ * and length.
+ */
 struct string
 {
     char *data;
-    size_t len;
+    size_t length;
 };
 
 /*
- * text is an odd beast. It's intended for parsing, and other applications
- * that scan a piece of text. To make this more efficient we store a pointer
- * to the _end_ of the text, and a _negative_ offset to its start, rather than
- * the way struct string works.
+ * struct text is an odd beast. It's intended for parsing, and other
+ * applications that scan a piece of text. To make this more efficient
+ * we store a pointer to the _end_ of the text, and a _negative_
+ * offset to its start, rather than the way struct string works.
  */
+
 struct text
 {
     char *end;
@@ -69,8 +73,8 @@ struct text
 
 struct counted_string
 {
-    size_t len;
-    char data[];
+    size_t length;	/* cell-sized length, unlike older Forths */
+    char data[0];
 };
 
 #define COUNTED_STRING(x)	{ strlen(x), x }
@@ -90,12 +94,19 @@ extern void (*mu_number)();
 extern void (*mu_number_comma)();
 extern void (*mu_name_hook)();		/* called when a name is created */
 
+/* XXX: Gross hack alert! */
+extern char *ate_the_stack;
+extern char *isnt_defined;
+extern char *version;
+
 /* declare common functions */
 /* muforth.c */
 void mu_push_name_size(void);
 void mu_push_code_size(void);
 void mu_push_data_size(void);
 void mu_push_command_line(void);
+void mu_push_version(void);
+void mu_push_build_time(void);
 
 /* error.c */
 void die(const char *msg);
@@ -223,8 +234,6 @@ void mu_less(void);
 void mu_sp_fetch(void);
 void mu_sp_store(void);
 void mu_cmove(void);
-void mu_push_version(void);
-void mu_push_build_time(void);
 
 /* time.c */
 void mu_local_time(void);

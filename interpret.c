@@ -91,13 +91,13 @@ void mu_token()
 
     /* Get address and length of the token */
     parsed.data = source.end + first;
-    parsed.len = last - first;
+    parsed.length = last - first;
 
     /* Account for characters processed, return token */
     first = last + trailing;
 
     STK(-1) = (int) parsed.data;
-    STK(-2) = parsed.len;
+    STK(-2) = parsed.length;
     DROP(-2);
 }
 
@@ -136,13 +136,13 @@ void mu_parse()
 
     /* Get address and length of the token */
     parsed.data = source.end + first;
-    parsed.len = last - first;
+    parsed.length = last - first;
 
     /* Account for characters processed, return token */
     first = last + trailing;
 
     TOP = (int) parsed.data;
-    STK(-1) = parsed.len;
+    STK(-1) = parsed.length;
     DROP(-1);
 }
 
@@ -152,11 +152,9 @@ void mu_parse()
 defer not-defined  now complain is not-defined
 */
 
-struct counted_string isnt_defined = COUNTED_STRING("isn't defined");
-
 void mu_complain()
 {
-    PUSH(&isnt_defined.data);
+    PUSH(isnt_defined);
     mu_throw();
 }
 
@@ -239,17 +237,15 @@ void mu_minus_rbracket()
 void mu_push_parsed()
 {
     STK(-1) = (int) parsed.data;
-    STK(-2) = parsed.len;
+    STK(-2) = parsed.length;
     DROP(-2);
 }
-
-struct counted_string ate_the_stack = COUNTED_STRING("ate the stack");
 
 static void mu_qstack()
 {
     if (sp > S0)
     {
-	PUSH(&ate_the_stack.data);
+	PUSH(ate_the_stack);
 	mu_throw();
     }
 }

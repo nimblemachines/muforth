@@ -24,7 +24,6 @@
 /* the very basic words */
 
 #include "muforth.h"
-#include "version.h"
 
 void mu_add()
 {
@@ -169,13 +168,13 @@ void mu_string_equal()
 {
     struct string s1, s2;
 
-    s1.data = (char *) STK(3);
-    s1.len  =          STK(2);
-    s2.data = (char *) STK(1);
-    s2.len  =          TOP;
+    s1.data   = (char *) STK(3);
+    s1.length =          STK(2);
+    s2.data   = (char *) STK(1);
+    s2.length =          TOP;
     DROP(3);
 
-    if (s1.len == s2.len && memcmp(s1.data, s2.data, s1.len) == 0)
+    if (s1.length == s2.length && memcmp(s1.data, s2.data, s1.length) == 0)
 	TOP = -1;
     else
 	TOP = 0;
@@ -221,14 +220,4 @@ void mu_cmove()
 
     memcpy(dest, src, count);
     DROP(3);
-}
-
-void mu_push_version()
-{
-    PUSH(&version.data);
-}
-
-void mu_push_build_time()
-{
-    PUSH(build_time);
 }

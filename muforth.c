@@ -22,6 +22,7 @@
  */
 
 #include "muforth.h"
+#include "version.h"
 
 #include <sys/mman.h>
 #include <stdio.h>
@@ -37,6 +38,10 @@ char **cmd_line_argv;
 u_int8_t *pnm0, *pcd0, *pdt0;	   /* ptrs to name, code, & data spaces */
 u_int8_t *pnm, *pcd, *pdt;	/* ptrs to next free byte in each space */
 
+/* XXX: Gross hack alert! */
+char *ate_the_stack;
+char *isnt_defined;
+char *version;
 
 static void mu_find_init_file()
 {
@@ -90,6 +95,19 @@ static void allocate()
 }
 
 /*
+ * This is a horrendous hack. gcc 3.3 is smart enough to let me do what
+ * I want using initializers, but 2.95 complains. So I have to run a bit
+ * of code that compiles some strings into the dictionary, and sets a
+ * few globals to point to them. It's really ugly.
+ */
+static void make_constant_strings()
+{
+    ate_the_stack = to_counted_string("ate the stack");
+    isnt_defined =  to_counted_string("isn't defined");
+    version =  to_counted_string(VERSION);
+}
+
+/*
 ( We need to rebuild the command line - says something about the
   inefficiency of C's way of doing cmd line params - and parse that.)
 
@@ -128,7 +146,7 @@ static void convert_command_line(int argc, char *argv[])
 	pline = copy_string(pline, *argv, strlen(*argv));
 	argv++;
     }
-    pcmd_line->len = pline - pcmd_line->data;
+    pcmd_line->length = pline - pcmd_line->data;
 
     /* null terminate and align */
     pdt = pline;
@@ -142,11 +160,22 @@ void mu_push_command_line()
     PUSH(&pcmd_line->data);
 }
 
+void mu_push_version()
+{
+    PUSH(version);
+}
+
+void mu_push_build_time()
+{
+    PUSH(build_time);
+}
+
 int main(int argc, char *argv[])
 {
     allocate();
     init_dict();
     convert_command_line(argc, argv);
+    make_constant_strings();	/* XXX: Hack! */
     mu_find_init_file();
     mu_load_file();
     mu_start_up();

@@ -53,14 +53,15 @@ static char *compile_counted_string(char *string, size_t length, void *dest)
 
     cs = (struct counted_string *)dest;
     s.data = string;
-    s.len = length;
-    cs->len = s.len;		/* prefix count cell */
-    memcpy(&cs->data[0], s.data, s.len);
-    cs->data[s.len] = 0;	/* zero terminate */
+    s.length = length;
+    cs->length = s.length;	/* prefix count cell */
+    memcpy(&cs->data[0], s.data, s.length);
+    cs->data[s.length] = 0;	/* zero terminate */
     return &cs->data[0];
 }
 
-/* copy string; return a counted string (addr of first character;
+/*
+ * copy string; return a counted string (addr of first character;
  * prefix count cell _precedes_ first character of string).
  * This does _not_ allot space in the dictionary!
  */
@@ -70,8 +71,10 @@ void mu_scrabble()  /* ( a u z" - z") */
     DROP(2);
 }
 
-/* this is _only_ called from C; zstring _must_ be zero-terminated!!
- * this routine _does_ allot space in the dictionary! */
+/*
+ * this is _only_ called from C; zstring _must_ be zero-terminated!!
+ * this routine _does_ allot space in the dictionary!
+ */
 char *to_counted_string(char *zstring)
 {
     size_t length;
