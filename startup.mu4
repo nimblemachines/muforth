@@ -171,7 +171,7 @@ forth
 : urshift  u>> ;
 
 ( 2003-sep-30. I've decided that "push ;" is too implementation-specific.)
-: @execute  @ -;  ( FALLS THRU)
+: @execute  @ [  ( FALLS THRU)
 : execute  push ;  ( make an alias for it, once and for all)
 
 ( Jumping through vectors of calls.)
@@ -201,17 +201,21 @@ forth
 
 
 ( Now `ctrl' and the compiler's "char" and "ctrl".)
-( XXX: should be 64 xor? That's how you get ^? = 127.)
-: ctrl   char  [ bl 1-  ( 31) ]  and ;  ( elliptical, but it works :-)
+: ctrl   char  [ bl 2* ( 64) ]  xor ;  ( how you get ^? = 127.)
 compiler
 : char   \f char literal ;
 : ctrl   \f ctrl literal ;
 forth
 
+( A nice way to do full-line comments with no trailing delimiter.)
+: //  ctrl J parse  2drop ;  ( throw away until a newline)
+
+( the old definition)
+// : ctrl   char  [ bl 1- ( 31) ]  and ;  ( elliptical, but it works :-)
+
 
 ( Basic conditionals)
-( : -tail   0 last ! ;  ( mark dest of forward jump as not tail-call convertible)
-: resolve>  ( src dest)  resolve ( -tail) ;
+: resolve>  ( src dest)  resolve ;
 : <resolve  ( dest src)  swap resolve ;
 
 compiler
@@ -225,17 +229,15 @@ compiler
   Now, the confusion happens because we need to write code _in this word_
   that will compile the above code into _other_ words. How about that?)
 
-( With a smart ] that makes a literal and with literal not a compiler word,
-  this becomes easier:)
+( Read a token out of the input stream. If the token is on the compiler
+  chain, postpone its execution until the word we're compiling executes. If
+  the token is on the forth chain, postpone its compilation until the word
+  that we're compiling executes. Got that? ;-)
+
 : \   .compiler. token'  if compile, ^ then
          .forth. find  huh?  literal  ['] compile,  compile, ;
 
-( A nice way to do full-line comments with no trailing delimiter.)
-forth
-: \  ctrl J parse  2drop ;  ( throw away until a newline)
-compiler
-
-\ : else      ( src0 - src1)  (branch)  swap  \ then ;
+// : else      ( src0 - src1)  (branch)  swap  \ then ;
 
 : begin   ( - dest)  here ;
 : =until  ( dest -)     \ =if  <resolve ;
@@ -928,7 +930,7 @@ octal
 : o8,   offset @ 1, ;
 : o32,  offset @ 4, ;
 : offset,
-   md->osize  6 >> jump  nope o8, o32, nope -;
+   md->osize  6 >> jump  nope o8, o32, nope [
 
 : sib,  00r 004 xor if ^ then  sib @ 1, ;
 : ea,  ( m0r 0r0)  >0r0 xor dup 1,  dup sib, offset, ;
@@ -1227,16 +1229,16 @@ forth
 : prompt   .Ok  .mode-prompt  ;  ( ` Ok' then sub-prompt)
 
 
-defer canonical
+defer canonical  ( XXX: is this obsolete?)
 -:  forth  \ [ ;  is canonical
 
 : quit
-   begin  cr  <stdin  >stdout  typing interpret  >stderr  prompt  again  -;
+   begin  cr  <stdin  >stdout  typing interpret  >stderr  prompt  again  [
    ( infinite loop, until error... )
 
-( 2004.jun.26. error now expects a cell-length-prefixed compiled string.)
+( 2004-jun-26. error now expects a cell-length-prefixed compiled string.)
 : error  parsed type space  count type  ( cr) ;
-: carefully  catch  =if  error ^  then  drop ;
+: carefully  catch  =if  error  s0 sp!  ^  then  drop ;
 
 ( XXX: difference betw error and warning, so that, eg, "isn't defined"
   doesn't clear the stack.)
@@ -1250,9 +1252,8 @@ defer canonical
 
 : warm
    >stderr banner
-   >stdout  command-line count ['] evaluate  carefully  >stderr
-   begin   s0 sp!  canonical  ['] quit carefully  again  -;
-
+   >stdout command-line count  ['] interpret carefully
+   begin  canonical  ['] quit carefully  again  [
 
 ( Identify ourselves.)
 trues muforth
