@@ -1,3 +1,10 @@
+# $Id$
+#
+# This file is part of muforth.
+#
+# Copyright 1997-2002 David Frech. All rights reserved, and all wrongs
+# reversed.
+
 ###
 ### Makefile for muforth, a "micro" Forth
 ###
