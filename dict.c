@@ -299,6 +299,120 @@ variable last-word   ( last compiled word)
 : >code  ( body - code)  cell-  ;
 */
 
+/*
+ * mu_find_pde_code_range()
+ *
+ * This routine will locate the supplied address to a specific
+ * word within a given chain.  The caller (mu_fund_pde_by_addr()) will
+ * determine if a word is in the compiler chain or the forth chain.
+ * It does this by determining which has the lowest gap between
+ * addr and the start of the function of each chain in which
+ * the addr matches.
+ */
+static struct dict_entry *mu_find_pde_code_range(struct dict_entry *chain, cell_t addr)
+{
+	struct dict_entry *pde, *best;
+	cell_t closest, delta;
+
+	/*
+	 * First pass: Check for direct hit
+	 */
+	pde = chain;
+	best = NULL;
+	closest = 0x7FFF;
+	do {
+		if (addr == (cell_t) pde->code)
+			return pde;
+		delta = addr - (cell_t) pde->code;
+		if (delta < closest) {
+			best = pde;
+			closest = delta;
+		}
+		pde = pde->link;
+	} while (pde);
+
+	if (closest != 0x7FFF)
+		return best;
+
+	return NULL;
+}
+
+/*
+ * mu_find_pde_by_addr()
+ *
+ * This routine calls mu_find_pde_code_range() to identify a possible
+ * pde in both chains.  If nothing is found, it returns NULL.  Else,
+ * it returns the pde for which the code segment is most likely the
+ * the correct code segment for this address.  The heuristic for this
+ * is, if the addr does not match the start address of either pde,
+ * which pde has the smallest difference between the supplied addr
+ * and the start of the code for that pde.
+ */
+static struct dict_entry *mu_find_pde_by_addr(cell_t addr)
+{
+	struct dict_entry *pde_compiler, *pde_forth, *pde;
+	cell_t comp_code, forth_code;
+
+	pde_compiler = mu_find_pde_code_range(compiler_chain, addr);
+	pde_forth = mu_find_pde_code_range(forth_chain, addr);
+
+	if (!pde_compiler && !pde_forth)
+		return NULL;
+
+	if (pde_compiler)
+		comp_code = (cell_t) pde_compiler->code;
+	else
+		comp_code = 0;
+
+	if (pde_forth)
+		forth_code = (cell_t) pde_forth->code;
+	else
+		forth_code = 0;
+
+	if (comp_code  == addr)
+		pde = pde_compiler;
+	else if (forth_code == addr)
+		pde = pde_forth;
+	else {
+		/*
+		 * This is the heuristic: we check to see which code
+		 * segment start is the closet to the supplied addr.
+		 */
+		if ((addr - comp_code) < (addr - forth_code))
+			pde = pde_compiler;
+		else
+			pde = pde_forth;
+	}
+
+	return pde;
+}
+
+/*
+ * mu_printf_func_name()
+ *
+ * Given an address, this routine will print the name of the muforth word
+ * which is associated with that address.  Also, it will print an offset
+ * value if the address isn't the start of the code segment.
+ *
+ * It returns the base address of the muforth word.
+ */
+cell_t mu_print_func_name(cell_t addr)
+{
+	struct dict_entry *pde;
+	cell_t code;
+
+	pde = mu_find_pde_by_addr(addr);
+
+	code = (cell_t) pde->code;
+
+	printf("%p: %*s", pde->code, pde->length, pde->name);
+	if (code != addr) {
+		printf(" + %d", addr - code);
+	}
+
+	return code;
+}
+
 static void init_chain(struct dict_entry **pchain, struct inm *pinm)
 {
     for (; pinm->name != NULL; pinm++)
