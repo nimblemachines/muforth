@@ -135,7 +135,7 @@ struct inm initial_forth[] = {
     { "swap", mu_swap },
     { "over", mu_over },
     { "tuck", mu_tuck },
-    { "\"=", mu_string_equal },
+    { "string-compare", mu_string_compare },
     { "read", mu_read_carefully },
     { "write", mu_write_carefully },
     { "sp@", mu_sp_fetch },
@@ -161,6 +161,9 @@ struct inm initial_forth[] = {
     { "fd-clr", mu_fd_clr },
     { "fd-in-set?", mu_fd_isset },
     { "select", mu_select },
+
+    /* sort.c */
+    { "string-quicksort", mu_string_quicksort },
 
     { "bye", mu_bye },
 

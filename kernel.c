@@ -25,6 +25,8 @@
 
 #include "muforth.h"
 
+#define MIN(a,b)	((a < b) ? a : b)
+
 void mu_add()
 {
     cell_t x = POP;
@@ -164,20 +166,65 @@ void mu_tuck()  /* a b - b a b */
     PUSH(t);
 }
 
-void mu_string_equal()
+/*
+ * Like C and unlike Forth, mu_string_compare returns an integer representing
+ * an ordering (in general the difference between the ASCII codes of the first
+ * two non-matching characters):
+ *
+ *  <0 means the first string is "less";
+ *   0 means the two strings are equal;
+ *  >0 means the first string is "greater".
+ *
+ * If two strings are the same length, then:
+ *   If every character is equal, 0 is returned;
+ *   Else, the ordering (difference) of their first non-equal characters
+ *     is returned.
+ *
+ * If the two strings are of different lengths, then:
+ *   If they share the same prefix, the shorter string is "less"; the shorter
+ *     string is treated as if it had a last character of 0.
+ *   Else, the ordering (difference) of their first non-equal characters
+ *     is returned.
+ *   Note that in this second case, 0 is never returned.
+ */
+void mu_string_compare()
 {
-    struct string s1, s2;
-
-    s1.data   = (char *) STK(3);
-    s1.length =          STK(2);
-    s2.data   = (char *) STK(1);
-    s2.length =          TOP;
+    STK(3) = string_compare((char *)STK(3), STK(2), (char *)STK(1), TOP);
     DROP(3);
+}
 
-    if (s1.length == s2.length && memcmp(s1.data, s2.data, s1.length) == 0)
-	TOP = -1;
+int string_compare(const char *string1, size_t length1,
+		   const char *string2, size_t length2)
+{
+    int ordering;
+
+    /* Careful: if lengths differ the strings can't compare as equal! */
+    if (length1 == length2)
+	ordering = strncmp(string1, string2, length1);
     else
-	TOP = 0;
+    {
+	int cmp;
+
+	/* Compare as many characters as we can */
+	cmp = strncmp(string1, string2, MIN(length1, length2));
+
+	/*
+	 * If all equal, then their lengths determine the outcome (the
+	 * shorter string is "less"). Otherwise, use the result of the
+	 * strncmp (which tells us how the first characters that differed
+	 * differed).
+	 */
+	if (cmp == 0)
+	{
+	    if (length1 < length2)
+		ordering = -string2[length1];
+	    else
+		ordering =  string1[length2];
+	}
+	else
+	    ordering = cmp;
+    }
+    return ordering;
 }
 
 void mu_uless()

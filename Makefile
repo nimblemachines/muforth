@@ -38,7 +38,7 @@ LDFLAGS=
 ARCHX86  = i386.o i386_lib.o
 ARCHPPC  = ppc.o ppc_asm.o
 VERSOBJS = kernel.o interpret.o compile.o dict.o file.o \
-	 error.o time.o pci.o tty.o select.o # buf.o
+	 error.o time.o pci.o tty.o select.o sort.o # buf.o
 
 ALLOBJS = ${VERSOBJS} muforth.o
 

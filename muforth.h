@@ -108,13 +108,15 @@ extern void mu_execute(void);
 #define ALIGNED(x)	(((cell_t)(x) + ALIGN_SIZE - 1) & -ALIGN_SIZE)
 
 /*
- * struct string is a "normal" string: pointer to the first character,
- * and length.
+ * struct string is a "normal" string: pointer to the first character, and
+ * length. However, since these are often sitting on the data stack with
+ * the length on top (and therefore at a _lower_ address) let's define it
+ * that way.
  */
 struct string
 {
-    char *data;
     size_t length;
+    char *data;
 };
 
 /*
@@ -288,7 +290,9 @@ void mu_nip(void);
 void mu_swap(void);
 void mu_over(void);
 void mu_tuck(void);
-void mu_string_equal(void);
+void mu_string_compare(void);
+int string_compare(const char *string1, size_t length1,
+		   const char *string2, size_t length2);
 void mu_uless(void);
 void mu_zless(void);
 void mu_zequal(void);
@@ -323,3 +327,7 @@ void mu_fd_set(void);
 void mu_fd_clr(void);
 void mu_fd_isset(void);
 void mu_select(void);
+
+/* sort.c */
+void mu_string_quicksort(void);
+
