@@ -1251,6 +1251,69 @@ void test_comp_fetch_lit(unsigned int n)
 	mu_compile_call();
 }
 
+static void push_dcell(long long a)
+{
+	PUSH(a);
+	PUSH(a >> 32);
+}
+
+static long long pop_dcell()
+{
+	long long a;
+
+	a  = (long long) POP << 32;
+	a |= (unsigned int) POP;
+
+	return a;
+}	
+
+static void test_dplus(long long a, long long b)
+{
+	long long r, sr;
+
+	push_dcell(a);
+	push_dcell(b);
+	mu_dplus();
+	sr = pop_dcell();
+
+	r = a + b;
+
+	if (r == sr) {
+		printf("%16.16llx + %16.16llx = %16.16llx\n", a, b, sr);
+	} else {
+		printf("%16.16llx + %16.16llx = %16.16llx; dplus -> %16.16llx\n", a, b, r, sr);
+	}
+}
+
+static void test_dnegate(long long a)
+{
+	long long r, sr;
+
+	push_dcell(a);
+	mu_dnegate();
+	sr = pop_dcell();
+
+	r = -a;
+
+	if (sr == r) {
+		printf("-%16.16llx = %16.16llx\n", a, sr);
+	} else {
+		printf("-%16.16llx = %16.16llx; dnegate -> %16.16llx\n", a, r, sr);
+	}
+}
+
+static void test_dmath(void)
+{
+	long long a, b;
+
+	a = 0x0123456789abcdefll;
+	b = 0x0000000080000000ll;
+	test_dplus(a, b);
+
+	test_dnegate(a);
+	test_dnegate(b);
+}
+
 int main(void)
 {
 	pcd0 = malloc(1024);
@@ -1278,6 +1341,8 @@ int main(void)
 
 	PUSH(pcd0);
 	mu_execute();
+
+	test_dmath();
 
 	printf("Done.\n");
 
