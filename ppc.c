@@ -655,6 +655,67 @@ void mu_fetch_literal_value(void)
 	PUSH(val);
 }
 
+/*
+ * mu_compile_qfor()
+ *
+ * The basic idea behind the for loop construct is that it takes only one
+ * parameter which is the number of times to loop.  for will loop 4+ Billion
+ * times if the input count is 0.  ?for will not loop at all if the input
+ * count is 0.  One gets access to the count by using r@.  I'd prefer that
+ * i be the word to fetch this value.  In that way the PPC version could use
+ * the CTR register for loops.  And, the value on the Return stack that is
+ * consumed by the current count on the i386 would have the old CTR register
+ * value.  This would allow nexted loops and it would have the same stack
+ * shape, though the contents would be different.  With i, then, the user
+ * code wouldn't change and would work correctly in both environments.
+ * In i386 i would perform r@ and on PPC i would copy from the PowerPC special
+ * purpose register CTR.
+ *
+ * Here's the definition of for, ?for, and next:
+ *   : for     ( - dest)      \ push  \ begin ;
+ *   : ?for    ( - src dest)  (?for) ;
+ *   : next    ( dest)        (next)  <resolve ;
+ *
+ * It looks to me like for and ?for leave different turds on the stack.
+ * for leaves just the begin loop address.  Whereas, ?for leaves a begin
+ * loop address -and- a branch if zer0 loop address.  Therefore, one
+ * would write:
+ *
+ *	for ... next
+ * 
+ * Whereas with ?for, would must write:
+ *
+ *	?for ... next then
+ *
+ * And, in fact, through inspection of the usage of ?for, that's exactly
+ * what I find in muforth.
+ */
+void mu_compile_qfor(void)
+{
+	comma_pop(R_TEMP, R_SP);	/* R_TEMP = *R_SP ++; */
+	comma_cmpi(R_TEMP, 0);		/* z = (R_TEMP == 0); */
+	comma_instr(BR_COND_ZERO);	/* if (!z) { */
+	PUSH(pcd);			/* Save the address of the branch */
+	comma_push(R_TEMP, R_RP);	/*	*--R_SP = R_TEMP; */
+	PUSH(pcd);			/* push address to loop back to */
+}
+
+/*
+ * mu_compile_next()
+ *
+ * The top of the return stack contains the loop counter.
+ * Decrement it and branch (backwards) if not zero.  If it
+ * is zero, 
+ */
+void mu_compile_next(void)
+{
+	comma_ld(R_TEMP, 0, R_RP);	/* R_TEMP = *R_RP; */
+	comma_cmpi(R_TEMP, 0);		/* z = (R_TEMP == 0); */
+	comma_instr(BR_COND_ZERO);	/* } while (!z); */
+	PUSH(pcd);			/* Compiler push of the branch address */
+	comma_addi(R_RP, 4);		/* pop the count off the return stack */
+}
+
 /************************************************************
  *
  * TEST CODE
