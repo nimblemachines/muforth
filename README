@@ -1,6 +1,6 @@
 $Id$
 
-muFORTH README. 2003-sep-04.
+muFORTH README
 
 Why muforth?
 ^^^^^^^^^^^^
@@ -12,32 +12,259 @@ First of all, muforth is most emphatically _not_ ANS-compatible. It
 would be silly to write another when there are perfectly good ones
 available. I wanted instead to build a Forth with specific features,
 several of which are shamelessly stolen from Chuck Moore's colorforth
-(http://colorforth.com):
+(http://colorforth.com).
 
-(a) a kernel, written in C, that is the smallest possible kernel
-    capable of compiling Forth colon definitions (ie, it is self-
-    bootstrapping);
+I think I started with the question, "What would colorforth look like
+without color?" and went from there. I wanted a substrate for experiments,
+a good metacompiler, and something small and simple.
 
-(b) a simple native-code compiler;
+Why the name?
+^^^^^^^^^^^^^
+From startup.mu4:
 
-(c) a tail-recursive implementation;
+  The idea is to move as much code as possible -out- of the Forth kernel.
+  Hence the name: "mu" is the Greek letter often used in engineering to
+  represent "micro". I had called it "nu" Forth, because it was new, but I
+  like this nu Greek letter better.
 
-(d) a new parser, tokenizer, and interpreter
 
-(e) colorforth's terseness but implemented without color and without
-    reinventing the OS.
+
+Why another Forth?
+^^^^^^^^^^^^^^^^^^
+
+In other words, why not keep using dforth (an earlier Linux Forth I wrote
+that I have used successfully on several projects)?
+
+dforth had some qualities that I now construed as defects, including:
+
+* written entirely in 386 assembler;
+* trapped into Linux kernel directly, eschewing the C library;
+
+* implemented via indirect-threaded code (ITC), an elegant technique, but I
+  was interested in exporing alternatives;
+
+* a very big kernel, with lots of task-specific code
+
+I wanted to go the other way. In particular, I was wishing for:
+My desiderata included the following:
+
+* a kernel, written in C, that is the smallest possible kernel
+  capable of compiling Forth colon definitions (ie, it is self-
+  bootstrapping);
+
+* a simple native-code compiler;
+* a tail-recursive implementation;
+* a new parser, tokenizer, and interpreter
+
+* colorforth's terseness but implemented without color and without
+  reinventing the OS.
+
+
+Issues with C
+^^^^^^^^^^^^^
+* stack calling convention
+* gcc won't let me keep global var in register, so sp is in memory, making
+  native code clomsy and a bit inefficient.
+* mixing C and Forth
+* strings
+
+When earlier implementing dforth, I initially wanted to write it in C; but
+I was also committed to doing an ITC Forth, and doing that in C I found to
+be very clumsy. I bit the bullet and wrote in assembler, which was quite
+liberating. The only real downside was the frustration of using m4 as a
+macro processor - I needed more than the C preprocessor could give me, but
+I grew to _hate_ m4. I found using it to be a case of programming by
+trial-and-error, rather than something on which that I could bring
+knowledge and experience to bear.
+
+This time around I was willing to give on a few things in order to be able
+to write in C.
+
+Of course, muforth is far from architecture-neutral, as it contains a
+native code compiler that compiles little chunks of x86 machine code. This
+would need to be changed to run on other architectures. I tried to keep it
+simple, so this shouldn't be hard. A few hours' work, perhaps, once you
+understand the structure of muforth.
 
 Oddities and idiosyncrasies
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-muforth has several odd differences from more conventional (old-school?) Forths. Most of these differences result from the  from Forth (many stemming from the colorforth ideas)
+muforth has several odd differences from more conventional (old-school?)
+Forths. Most of these differences result from the from Forth (many stemming
+from the colorforth ideas)
+
+some of these are also qualities of colorforth; others are intentional or
+the result of the implementation technique(s)
+
+First talk about the things derived from CF:
+
+Ideas from colorforth
+^^^^^^^^^^^^^^^^^^^^^
+
+In colorforth the color of a word specifies what the interpreter should do
+with it. Red means define a new word; yellow means execute; green means
+compile. There are some other colors as well, but for our discussion these
+are the most interesting.
+
+In order to be able to calculate constants inside a colon definition, you
+need only switch to yellow, do the calculation, and then switch back to
+green. At the yellow-to-green transition the compiler generates a literal
+with the value of the calculation done by the yellow words.
+
+How did we use to do this? Like this:
+
+  : blog  [ 25 80 * ] literal + ;
+
+The word "literal" is a compiler word, which gets executed at compile time;
+it compiles a literal from the value on the top of the stack - in this
+case, the result of 25 80 *.
+
+But that "literal" is ugly. In colorforth it goes away. I wanted to make it
+go away in muforth as well. So what did I do? I made "]" _always_ generate
+a literal. If you need to jump out of the compiler (using "["), do
+something, and then jump back, you can use "-]". It doesn't create a
+literal.
+
+Our example above becomes
+
+  : blog  [ 25 80 * ] + ;
+
+which is much nicer. A few neat examples, from startup.mu4:
+
+  : 0   [ dup dup xor ] ;
+  : -1  [ 0 invert ] ;
+  : 1   [ -1 negate ] ;
+
+
+Since there isn't really any compiler "state" in colorforth - each word
+tells the interpreter, by its color, how to treat it - there is no need to
+bracket definitions with ":" and ";". A red word marks the start of a new
+definition; nothing really marks the end. In fact, it's possible, in
+colorforth, to write a word whose execution "falls thru" into the
+next word. This is considered bad style by some, but assembler programmers
+have used it to great advantage. colorforth gives you this option.
+
+But there is a word called ";" in colorforth. What does it do? It exits
+from, or returns from, the current word, but without it any way marking it
+as "done". It is like EXIT in more traditional Forths.
+
+I coveted these qualities for muforth, but had the constraint that my
+compiler _does_ have state, and does switch back and forth between
+interpreting and compiling. So I need ";" to end my words, like it always
+has. Now I need two new words:
+
+ * to exit a word "prematurely";
+ * to end a word, but "fall thru" to the next word.
+
+The first I called "^" to capture the idea of jumping up out of the word. The
+second I called "-;" to indicate that it does part of the work of ";" but
+not all. It stops the compiler, but doesn't compile a "return".
+
+More concretely, these words are defined thus:
+
+XXX: copy from interpret.c, compile.c - explain "\"
+
+
+colorforth has the oddball feature that "if" leaves the top of stack
+intact. This can be useful or annoying. I thought it would be interesting
+to have _both_ options - destructive and non- - so I defined  "=if" and
+"=while" in addition to "if" and "while".
+
+And, just as in colorforth, there is no "else"! You can always get by
+without it, and often the code factoring improves. For example, you can
+rewrite
+
+  <test> if  a  else  b  then  c ;
+
+as
+
+  <test> if  a c ^  then  b c ;
+
+colorforth doesn't "smudge" (hide) new definitions until they are complete
+- and neither does muforth. This makes writing recursive definitions easy,
+but makes redefinition harder (you have to rename the old function first).
+I liked the idea of being able to write iterations as syntactically
+recursive procedures, as in Lisp. I haven't used it that much. ;-)
+
 
 - [ ] -]
 - ; -; ^
-- =if =while (non-destructive test)
-- create/does>
-- no smudge or similar
-- nifty parser/tokenizer (text v. string type)
-- non-inline strings
+- =if =while (non-destructive test), but no else!
+- tail-recursive looping, Lisp-style
+- no smudge or similar, makes recursion easier, but redefition harder nifty
+
+Things taken from cmFORTH (also mostly existed in dforth):
+* the names "compiler" and "forth" for the two basic dictionary chains
+* the word "\" to mean "compile from compiler"
+
+Then talk about the things that I took from dforth or invented for muforth:
+
+- parser/tokenizer (text v. string type) non-inline strings & separation of
+  code & data (applies to creat/does)
+
+- create/does> "constant" implementation
+* dictionary "chains" (and why I call them that) (you "link" to them; and
+  threads are execution state)
+* compiler/interpreter "modes" & metacompilation - same as dforth
+  difference of compile-time v run-time search-order
+
+* number parsing code all high-level; not even constants in kernel!
+* currently uses GNU make, so gmake on BSD
+
+cmFORTH stuff: names of dict chains, &c.
+compiler vs .compiler.
+-find
+
+Forgetting
+^^^^^^^^^^
+muforth does not define the common Forth word "forget", nor does it define
+"empty", as colorforth does. In the presence of deferred words, any kind of
+"forget" is error-prone. I find it better to quit and reload. This has
+never bothered me, or felt limiting in any way.
+
+Tokenizing the input
+^^^^^^^^^^^^^^^^^^^^
+
+This is one of the areas of innovation in muforth.
+
+I have defined two kinds of strings: string and text. A string is what you
+would expect in Forth: a pointer the first character, and a count. A text
+is a bit odd.
+
+I discovered, in writing the tokenizer for dforth, that using a string and
+an offset (past what we have seen already) was clumsy and slow. The first
+thing you have to do is offset the pointer forward, past the text you've
+seen, and the count backwards, since it counts characters yet to be seen.
+
+Instead, why not run _everything_ backwards?
+
+The type "text" consists of a pointer just past the _end_ of the text, and
+a negative offset back from the end to the start. When we start
+interpreting a chunk of text, we set a global pointer "first" to point to
+the first character.
+
+Even though muforth uses the Linux/BSD file system (and has no BLOCK words as
+yet) the input words look like those on a BLOCK-based Forth. Why is this?
+Source is always read from a -buffer-. The double variable `source' holds
+the current address of the next character to read, and the count of
+characters left to read. Interactive input is buffered line-by-line. In
+this case, `source' points into this line buffer. File input is
+memory-mapped. In this case, the -whole source file- is mapped as a single
+buffer, and `source' points into it. So we never have to worry about words
+crossing buffer boundaries. The miracles of virtual memory!
+
+For this to work under Linux, however, we have to -map- the input
+characters so that all whitespace is treated like a space (ASCII 32). The
+easiest way is a 256 character lookup table, which is an identity map
+except for a handful of control characters: tab, line-feed, return,
+form-feed, vertical tab, and I think even backspace. These all map to ASCII
+32. I may change this so that -all- control characters map to space.
+
+See `token' for details.
+
+
+
+
+
 
 
