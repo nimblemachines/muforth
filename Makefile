@@ -30,14 +30,13 @@
 VERSION = 0.01
 
 CFLAGS=-O2 -Wall -fomit-frame-pointer
-DBGCFLAGS=-O0 -ggdb -Wall
+DBGCFLAGS=-O -ggdb -Wall -DLIST_DICT_ENTRIES -DDEBUG
 ASFLAGS=-g
 LDFLAGS=
 
 # If any of these files changes, make a new version.h
-ARCHX86  = i386.o i386_lib.o
-ARCHPPC  = ppc.o ppc_asm.o
 VERSOBJS = kernel.o interpret.o compile.o dict.o file.o \
+	 interpreter.o compiler.o library.o \
 	 error.o time.o pci.o tty.o select.o sort.o # buf.o
 
 ALLOBJS = ${VERSOBJS} muforth.o
@@ -48,10 +47,6 @@ all : muforth
 
 ${ALLOBJS} : Makefile muforth.h
 
-${ARCHX86} : Makefile muforth.h
-
-${ARCHPPC} : Makefile muforth.h
-
 muforth.o : version.h
 
 version.h : Makefile ${VERSOBJS}
@@ -59,18 +54,8 @@ version.h : Makefile ${VERSOBJS}
 	echo "#define VERSION \"${VERSION}\"" > version.h
 	echo "time_t build_time = `date \"+%s\"`;" >> version.h
 
-muforth : ${ALLOBJS} ${ARCHX86} gdb-i386.init
-	${CC} ${LDFLAGS} -o $@ ${ALLOBJS} ${ARCHX86} ${LIBS}
-	ln -sf gdb-i386.init .gdbinit
-
-muforthppc : ${ALLOBJS} ${ARCHPPC} gdb-ppc.init
-	${CC} ${LDFLAGS} -o $@ ${ALLOBJS} ${ARCHPPC} ${LIBS}
-	ln -sf gdb-ppc.init .gdbinit
-
-ppctest: ppc.c ppc_asm.s muforth.h
-	${CC} ${DBGCFLAGS} -c -DPPC_TEST -o ppc.o ppc.c
-	${CC} ${DBGCFLAGS} -c -DPPC_TEST -o ppc_asm.o ppc_asm.s
-	${CC} ${LDFLAGS} -o ppctest ppc.o ppc_asm.o ${LIBS}
+muforth : ${ALLOBJS} 
+	${CC} ${LDFLAGS} ${CFLAGS} -o $@ ${ALLOBJS} ${LIBS}
 
 clean :
-	rm -f muforth ppctest .gdbinit version.h *.o
+	rm -f muforth version.h *.o

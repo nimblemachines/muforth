@@ -266,6 +266,12 @@ edx = 2
 sib = 04r for no index reg (using 4 = esp's index for all the special cases)
 */
 
+void mu_compile_execute()
+{
+    mu_compile_push_to_r();  /* top of data stack is address to jump to */
+    *pcd++ = 0xc3;           /* rts */
+}
+
 void mu_compile_push_to_r()
 {
     compile_stack_move(4);	/* eax = sp; sp++ */

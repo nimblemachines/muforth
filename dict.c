@@ -54,7 +54,6 @@ struct inm initial_forth[] = {
     { "version", mu_push_version },
     { "build-time", mu_push_build_time },
     { ":", mu_colon },
-    { ":entry", mu_compile_entry },
     { "name", mu_make_new_name },
     { "'name-hook", mu_push_tick_name_hook },
     { ".forth.", mu_push_forth_chain },
@@ -122,7 +121,6 @@ struct inm initial_forth[] = {
     { "m*", mu_m_star },
     { "um/mod", mu_um_slash_mod },
     { "fm/mod", mu_fm_slash_mod },
-    { "jump", mu_jump },
     { "@", mu_fetch },
     { "c@", mu_cfetch },
     { "!", mu_store },
@@ -185,6 +183,7 @@ struct inm initial_compiler[] = {
     { "2pop", mu_compile_2pop_from_r },
     { "r@", mu_compile_copy_from_r },
     { "shunt", mu_compile_shunt },
+    { "execute", mu_compile_execute },
     { NULL, NULL }
 };
 
@@ -257,7 +256,7 @@ void mu_compile_name()
 void mu_make_new_name()
 {
     mu_token();
-    (*mu_name_hook)();
+    execute((cell_t) mu_name_hook);
     mu_compile_name();
 }
 
@@ -406,19 +405,36 @@ static struct dict_entry *find_pde_by_addr(cell_t addr)
  *
  * It returns the base address of the muforth word.
  */
-cell_t print_func_name(cell_t addr)
+cell_t snprint_func_name(char *line, int size, cell_t addr)
 {
 	struct dict_entry *pde;
 	cell_t code;
+	int idx;
 
 	pde = find_pde_by_addr(addr);
 
+	if (!pde) {
+		snprintf(line, size, "Unknown function: address %p", (cell_t *) addr);
+		return addr;
+	}
+
 	code = (cell_t) pde->code;
 
-	printf("%p: %*s", (cell_t *) addr, pde->length, pde->name);
+	idx = snprintf(line, size, "%*s", pde->length, pde->name);
 	if (code != addr) {
-		printf(" + %d", addr - code);
+		snprintf(line +idx, size -idx, " + %d", addr - code);
 	}
+
+	return code;
+}
+
+cell_t print_func_name(cell_t addr)
+{
+	char line[60];
+	cell_t code;
+
+	code = snprint_func_name(line, sizeof(line), addr);
+	printf("%s", line);
 
 	return code;
 }

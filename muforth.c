@@ -32,6 +32,11 @@
 cell_t stack[STACK_SIZE];
 cell_t *sp = S0;
 
+/* return stack */
+cell_t rstack[STACK_SIZE];
+cell_t *rsp = R0;
+
+
 int  cmd_line_argc;
 char **cmd_line_argv;
 
@@ -82,7 +87,7 @@ static void allocate()
     pnm0 = (uint8_t *) mmap(0, 256 * 4096, PROT_READ | PROT_WRITE,
 			  MAP_ANON | MAP_PRIVATE, -1, 0);
 
-    pcd0 = (code_t *)  mmap(0, 256 * 4096, PROT_READ | PROT_WRITE | PROT_EXEC,
+    pcd0 = (code_t *)  mmap(0, PCD_SIZE, PROT_READ | PROT_WRITE | PROT_EXEC,
 			  MAP_ANON | MAP_PRIVATE, -1, 0);
 
     pdt0 = (uint8_t *) mmap(0, 1024 * 4096, PROT_READ | PROT_WRITE,

@@ -77,11 +77,15 @@ static cell_t *pcd_last_call;
  */
 #define BR		0x48000000
 #define BRCOND		0x40000000
+#define BRCOND_TO_REG	0x4C000000
 #define BR_AND_LINK	1
 #define BR_ABS_ADDR	2
 #define	BAL		(BR | BR_AND_LINK)
-#define BR_COND_ZERO	(BRCOND | RS(12) | RA(2))
-#define BR_COND_NZERO	(BRCOND | RS(4)  | RA(2))
+#define BC_ALWAYS	(RS(20) | RA(0))
+#define BC_ZERO		(RS(12) | RA(2))
+#define BC_NZERO	(RS(4)  | RA(2))
+#define BR_COND_ZERO	(BRCOND | BC_ZERO)
+#define BR_COND_NZERO	(BRCOND | BC_NZERO)
 
 /*
  * BLR_ALWAYS is Branch And Link to Link Register, Always
@@ -90,8 +94,11 @@ static cell_t *pcd_last_call;
  * address of the instruction following the branch is placed into the
  * Link Register.
  */
-#define BLRL_ALWAYS	0x4e800021
-#define BLR_ALWAYS	0x4e800020
+#define BC_TO_LR	(16 << 1)
+#define BC_TO_CTR	(528 << 1)
+#define BLRL_ALWAYS	(BRCOND_TO_REG | BC_ALWAYS | BC_TO_LR | BR_AND_LINK)
+#define BLR_ALWAYS	(BRCOND_TO_REG | BC_ALWAYS | BC_TO_LR)
+#define BCTR_ALWAYS	(BRCOND_TO_REG | BC_ALWAYS | BC_TO_CTR)
 
 /*
  * LOAD STORE OPS
@@ -117,6 +124,7 @@ static cell_t *pcd_last_call;
 #define SPR_LR		(RB(0) | RA(8))
 #define SPR_CTR		(RB(0) | RA(9))
 #define MTLR		(MTSPR | SPR_LR)
+#define MTCTR		(MTSPR | SPR_CTR)
 #define MFLR		(MFSPR | SPR_LR)
 
 
@@ -282,7 +290,7 @@ static void comma_instr(int instr)
 
 	store_instr(pc, instr);
 
-	pcd += 4;
+	pcd ++;
 }
 
 /*****************************************************************
@@ -460,12 +468,15 @@ static void comma_addi(int reg, int val)
 		comma_store_sp();
 }
 
-#if 0
 static void comma_mtlr(int r)
 {
 	comma_instr(MTLR | RS(r));
 }
-#endif
+
+static void comma_mtctr(int r)
+{
+	comma_instr(MTCTR | RS(r));
+}
 
 static void comma_mflr(int r)
 {
@@ -521,7 +532,7 @@ static void prep_for_c_call(int addr)
 			 * Overwrite the tear-down instruction
 			 * with the branch instruction
 			 */
-			pcd -= 4;
+			pcd -= 1;
 		} else {
 			/*
 			 * Build a call frame
@@ -717,6 +728,21 @@ void mu_compile_2push_to_r()
 	 */
 	comma_safe_call(ppc_push_to_r);
 	comma_safe_call(ppc_push_to_r);
+}
+
+/*
+ * Jump to the target address via the CTR register
+ * We must pop the return address that this routine
+ * would have used into the LR so that the next
+ * routine we invoke will use it to return to.
+ */
+void mu_compile_execute()
+{
+	comma_pop(R_TEMP, R_SP);
+	comma_mtctr(R_TEMP);
+	comma_pop(R_TEMP, R_RP);
+	comma_mtlr(R_TEMP);
+	comma_instr(BCTR_ALWAYS);
 }
 
 
@@ -1079,7 +1105,7 @@ void ppc_disassemble(int addr)
 	while (base <= addr) {
 		if (*(cell_t *)base == mflr)
 			pc = (cell_t *) base;
-		base += 4;
+		base += 1;
 	}
 	base = (cell_t) pc;
 

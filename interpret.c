@@ -281,7 +281,7 @@ void mu__lbracket()
 	EXECUTE;
 	return;
     }
-    (*mu_number)();
+    execute((cell_t) mu_number);
 }
 
 /* The compiler's "consume" function. */
@@ -301,7 +301,7 @@ void mu__rbracket()
 	mu_compile_call();
 	return;
     }
-    (*mu_number_comma)();
+    execute((cell_t) mu_number_comma);
 }
 
 void mu_nope() {}		/* very useful NO-OP */
@@ -361,7 +361,7 @@ void mu_interpret()
     {
 	mu_token();
 	if (TOP == 0) break;
-	(*state->eat)();	/* consume(); */
+	execute((cell_t) state->eat);	/* consume(); */
 	mu_qstack();
     }
     DROP(2);

@@ -241,8 +241,8 @@ _ppc_next:
 _ppc_exit:
 	lwz	r9,0(r1)		; Get return address
 	addi	r1,r1,4			; Pop!
-	mtlr	r9			; Prepare the go
-	blr				; Go!
+	mtctr	r9			; Prepare the go
+	bctr				; Go!
 	
 	;;
 	;; mu_jump

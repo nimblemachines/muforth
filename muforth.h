@@ -33,26 +33,17 @@
  */
 #ifdef __APPLE__
 typedef unsigned char uint8_t;
+typedef unsigned int  uint32_t;
 #endif /* __APPLE__ */
 
-#ifdef __POWERPC__
-typedef int32_t   cell_t;
-typedef uint32_t  code_t;
-#define CELL_S    32
-#else
-#ifdef __i386__
-typedef int32_t   cell_t;
-typedef uint8_t   code_t;
-#define CELL_S    32
-#else
-#  error "muforth won't build on your architecture!"
-#endif
-#endif
+typedef int cell_t;
+typedef unsigned int code_t;
 
 /* data stack */
 #define STACK_SIZE 4096
 #define STACK_SAFETY 256
 #define S0 &stack[STACK_SIZE - STACK_SAFETY]
+#define R0 &rstack[STACK_SIZE - STACK_SAFETY]
 
 /* gcc generates stupid code using this def'n */
 /* #define PUSH(n) 	(*--sp = (cell_t)(n)) */
@@ -61,7 +52,13 @@ typedef uint8_t   code_t;
 #define STK(n)  	(sp[n])
 #define TOP		STK(0)
 #define DROP(n)		(sp += n)
-#define EXECUTE		(*(void (*)()) POP)()
+#define EXECUTE		(execute(POP))
+
+#define RPUSH(n)	(rsp[-1] = (cell_t)(n), --rsp)
+#define RPOP		(*rsp++)
+#define RSTK(n)  	(rsp[n])
+#define RTOP		RSTK(0)
+#define RDROP(n)	(rsp += n)
 
 #ifdef DEBUG
 #include <stdio.h>
@@ -110,9 +107,13 @@ extern struct string parsed;	/* for errors */
 
 extern cell_t stack[];
 extern cell_t *sp;
+extern cell_t rstack[];
+extern cell_t *rsp;
 
 extern int  cmd_line_argc;
 extern char **cmd_line_argv;
+
+#define PCD_SIZE		(256 * 4096)
 
 extern uint8_t *pnm0, *pdt0;	/* ptrs to name & data spaces */
 extern code_t  *pcd0;		/* ptr to code space */
@@ -157,11 +158,9 @@ void mu_read_carefully(void);  /* XXX: temporary */
 void mu_write_carefully(void); /* XXX: temporary */
 
 
-/* i386.c */
+/* compiler.c */
 void mu_compile_call(void);
 void mu_resolve(void);
-void mu_compile_jump(void);
-void mu_compile_entry(void);
 void mu_compile_exit(void);
 void mu_compile_drop(void);
 void mu_compile_2drop(void);
@@ -173,6 +172,7 @@ void mu_compile_nondestructive_zbranch();
 void mu_compile_branch(void);
 void mu_compile_push_to_r(void);
 void mu_compile_2push_to_r(void);
+void mu_compile_execute(void);
 void mu_compile_shunt(void);
 void mu_compile_pop_from_r(void);
 void mu_compile_2pop_from_r(void);
@@ -180,15 +180,16 @@ void mu_compile_copy_from_r(void);
 void mu_compile_qfor(void);
 void mu_compile_next(void);
 
-/* i386.s */
-void mu_push_literal(void);
+/* interpreter.c */
+void execute(cell_t target);
+
+/* library.s */
 void mu_dplus(void);
 void mu_dnegate(void);
 void mu_um_star(void);
 void mu_m_star(void);
 void mu_um_slash_mod(void);
 void mu_fm_slash_mod(void);
-void mu_jump(void);
 
 /* interpret.c */
 void mu_start_up(void);
@@ -198,7 +199,6 @@ void mu_token(void);
 void mu_parse(void);
 void mu_huh(void);
 void mu_complain(void);
-void mu_depth(void);
 void mu_interpret(void);
 void mu_evaluate(void);
 void mu_push_tick_number(void);
@@ -250,8 +250,6 @@ void mu_cfetch(void);
 void mu_store(void);
 void mu_cstore(void);
 void mu_plus_store(void);
-void mu_drop(void);
-void mu_two_drop(void);
 void mu_rot(void);
 void mu_minus_rot(void);
 void mu_dupe(void);

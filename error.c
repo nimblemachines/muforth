@@ -68,16 +68,20 @@ void mu_catch()
     jmp_buf this_jb;
     jmp_buf *prev_jb;
     cell_t *saved_sp;
+    cell_t *saved_rsp;
     cell_t thrown;
 
     prev_jb = last_jb;
     last_jb = &this_jb;
     saved_sp = sp;		/* so we can reset _our_ stack ptr */
+    saved_rsp = rsp;
     thrown = SETJMP(this_jb);
     if (thrown == 0)
 	EXECUTE;
-    else
+    else {
 	sp = saved_sp + 1;	/* we longjmp'ed; restore sp & pop xt */
+	rsp = saved_rsp;
+    }
     last_jb = prev_jb;
     PUSH(thrown);
 }
