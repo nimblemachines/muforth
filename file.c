@@ -20,6 +20,20 @@
 #include <unistd.h>
 #include <errno.h>
 
+void create_file()		/* C-string-name - fd */
+{
+    int fd;
+
+    fd = open((char *) TOP, O_CREAT | O_TRUNC | O_WRONLY, 0666);
+    if (fd == -1)
+    {
+	/* TOP = (int) "couldn't open"; */
+	TOP = (int) strerror(errno);
+	throw();
+    }
+    TOP = fd;
+}
+
 void open_file()		/* C-string-name flags - fd */
 {
     int fd;
@@ -27,7 +41,8 @@ void open_file()		/* C-string-name flags - fd */
     fd = open((char *) STK(1), TOP);
     if (fd == -1)
     {
-	TOP = (int) "couldn't open";
+	/* TOP = (int) "couldn't open"; */
+	TOP = (int) strerror(errno);
 	throw();
     }
     STK(1) = fd;
@@ -42,13 +57,6 @@ void push_ro_flags()
 void push_rw_flags()
 {
     PUSH(O_RDWR);
-}
-
-void push_create_flags()
-{
-    STK(-1) = O_CREAT | O_TRUNC | O_WRONLY;
-    STK(-2) = 0666;
-    DROP(-2);
 }
 
 void close_file()

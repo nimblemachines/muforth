@@ -7,7 +7,7 @@
  * reversed.
  */
 
-/* interpreter and compiler */
+/* Interpreter and compiler */
 
 #include "muforth.h"
 
@@ -16,23 +16,29 @@
 struct imode			/* interpreter mode */
 {
     void (*eat)();		/* consume one token */
-    void (*prompt)();
+    void (*prompt)();		/* display a mode-specific prompt */
 };
 
-static struct string source;
-static size_t to_in;
+/*
+ * In the parsing code that follows, the variables first and last are
+ * negative offsets from the _end_ of the input text. They increase from
+ * left to right, and are always non-positive (ie, <= 0).
+ *
+ * Because they increase from left to right, just like "normal" text
+ * pointers, a "last - first" difference yields a non-negative (>=0)
+ * length.
+ */
+static struct text source;
+static ssize_t first;		/* goes from -start to 0 */
 
 struct string parsed;		/* for errors */
 
-/* parse blank-delimited tokens */
+/* Parse whitespace-delimited tokens */
 void token()
 {
-    char *end;
-    int first;
-    int last;
-    int eat_trailing;
+    ssize_t last;
+    int trailing;
 
-    first = to_in - source.len;
     if (first == 0)
     {
 	STK(-1) = STK(-2) = 0;
@@ -40,54 +46,55 @@ void token()
 	return;
     }
 	
-    end = source.data + source.len;
-
-    /* skip leading whitespace */
+    /* Skip leading whitespace */
     for (;;)
     {
-	if (!isspace(end[first])) break;
+	if (!isspace(source.end[first])) break;
 	if (++first == 0)
 	{
-	    to_in = first + source.len;
 	    STK(-1) = STK(-2) = 0;
 	    DROP(-2);
 	    return;
 	}
     }
 
-    /* now scan for trailing delimiter */
+    /*
+     * Now scan for trailing delimiter and consume it,
+     * unless we run out of input text first.
+     */
     last = first;
-    eat_trailing = 1;
+    trailing = 1;
     for (;;)
     {
-	if (isspace(end[last])) break;
+	if (isspace(source.end[last])) break;
 	if (++last == 0)
 	{
-	    eat_trailing = 0;
+	    trailing = 0;
 	    break;
 	}
     }
 
-    /* account for characters processed, return token */
-    to_in = last + eat_trailing + source.len;
-    parsed.data = (end + first);
+    /* Get address and length of the token */
+    parsed.data = source.end + first;
     parsed.len = last - first;
+
+    /* Account for characters processed, return token */
+    first = last + trailing;
 
     STK(-1) = (int) parsed.data;
     STK(-2) = parsed.len;
     DROP(-2);
 }
 
-/* parse non-blank-delimited tokens */
+/* Parse token using arbitrary delimiter; do not skip leading delimiters */
 void parse()
 {
-    char *end;
-    int first, last;
-    int eat_trailing;
+    ssize_t last;
+    int trailing;
     int c;
 
     c = TOP;
-    first = last = to_in - source.len;
+
     if (first == 0)
     {
 	TOP = STK(-1) = 0;
@@ -95,24 +102,29 @@ void parse()
 	return;
     }
 	
-    end = source.data + source.len;
+    last = first;
 
-    /* scan for trailing delimiter */
-    eat_trailing = 1;
+    /*
+     * Now scan for trailing delimiter and consume it,
+     * unless we run out of input text first.
+     */
+    trailing = 1;
     for (;;)
     {
-	if (c == end[last]) break;
+	if (c == source.end[last]) break;
 	if (++last == 0)
 	{
-	    eat_trailing = 0;
+	    trailing = 0;
 	    break;
 	}
     }
 
-    /* account for characters processed, return token */
-    to_in = last + eat_trailing + source.len;
-    parsed.data = (end + first);
+    /* Get address and length of the token */
+    parsed.data = source.end + first;
     parsed.len = last - first;
+
+    /* Account for characters processed, return token */
+    first = last + trailing;
 
     TOP = (int) parsed.data;
     STK(-1) = parsed.len;
@@ -149,6 +161,7 @@ void push_tick_number_comma()
     PUSH(&number_comma);
 }
 
+/* The interpreter's "consume" function. */
 void _lbracket()
 {
     forth_chain();
@@ -161,6 +174,7 @@ void _lbracket()
     EXECUTE;
 }
 
+/* The compiler's "consume" function. */
 void _rbracket()
 {
     compiler_chain();
@@ -181,7 +195,7 @@ void _rbracket()
 }
 
 void nope() {}		/* very useful NO-OP */
-void zzz() {}		/* a convenient breakpoint */
+void zzz() {}		/* a convenient GDB breakpoint */
 
 static struct imode forth_interpreter  = { _lbracket, nope };
 static struct imode forth_compiler     = { _rbracket, nope };
@@ -211,12 +225,6 @@ void push_parsed()
     DROP(-2);
 }
 
-/* XXX: macro or inline? */
-static void consume()
-{
-    (*state->eat)();
-}
-
 static void qstack()
 {
     if (sp > S0)
@@ -228,16 +236,17 @@ static void qstack()
 
 void interpret()
 {
-    source.data = (char *) STK(1);
-    source.len = TOP;
+    source.end = (char *) STK(1) + TOP;	/* the _end_ of the text */
+    source.start = -TOP;		/* offset to the start of text */
     DROP(2);
-    to_in = 0;
+
+    first = source.start;
 
     for (;;)
     {
 	token();
 	if (TOP == 0) break;
-	consume();
+	(*state->eat)();	/* consume(); */
 	qstack();
     }
     DROP(2);
@@ -245,13 +254,16 @@ void interpret()
 
 void evaluate()
 {
-    struct string saved_source = source;
-    size_t saved_to_in = to_in;
+    struct text saved_source;
+    ssize_t saved_first;
+
+    saved_source = source;
+    saved_first = first;
 
     PUSH(interpret);
     catch();
     source = saved_source;
-    to_in = saved_to_in;
+    first = saved_first;
     throw();
 }
 

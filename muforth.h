@@ -24,10 +24,23 @@
 
 #define ALIGN_SIZE  sizeof(int)
 
+/* string is a "normal" string: pointer to the first character, and length. */
 struct string
 {
     char *data;
     size_t len;
+};
+
+/*
+ * text is an odd beast. It's intended for parsing, and other applications
+ * that scan a piece of text. To make this more efficient we store a pointer
+ * to the _end_ of the text, and a _negative_ offset to its start, rather than
+ * the way struct string works.
+ */
+struct text
+{
+    char *end;
+    ssize_t start;	/* ssize_t is a _signed_ type */
 };
 
 extern struct string parsed;	/* for errors */
@@ -52,10 +65,10 @@ void catch(void);
 void throw(void);
 
 /* file.c */
+void create_file(void);
 void open_file(void);
 void push_ro_flags(void);
 void push_rw_flags(void);
-void push_create_flags(void);
 void close_file(void);
 void mmap_file(void);
 void load_file(void);
