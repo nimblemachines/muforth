@@ -76,9 +76,20 @@ mu_um_slash_mod:
 	movl	sp,%ecx
 	movl	4(%ecx),%edx	# dividend hi
 	movl	8(%ecx),%eax	# dividend lo
-	divl	(%ecx)		# divisor
+	divl	(%ecx)		# divisor on stack
 	movl	%edx,8(%ecx)	# remainder
-	movl	%eax,4(%ecx)	# quotient
+	movl	%eax,4(%ecx)	# quotient, on top
+	addl	$4,sp
+	ret
+
+	.globl	mu_sm_slash_rem		# symmetric division, for comparison
+mu_sm_slash_rem:
+	movl	sp,%ecx
+	movl	4(%ecx),%edx	# hi word at lower address
+	movl	8(%ecx),%eax	# dividend = edx:eax, divisor on stack
+	idivl	(%ecx)		# now rem = edx, quotient = eax
+	movl	%edx,8(%ecx)	# leave remainder and
+	movl	%eax,4(%ecx)	# quotient on stack, quotient on top
 	addl	$4,sp
 	ret
 
@@ -107,23 +118,24 @@ mu_um_slash_mod:
 mu_fm_slash_mod:
 	pushl	%ebx		# callee saved!
 	movl	sp,%ecx
-	movl	4(%ecx),%edx
-	movl	8(%ecx),%eax	# dividend
-	idivl	(%ecx)		# divisor
+	movl	4(%ecx),%edx	# hi word at lower address
+	movl	8(%ecx),%eax	# dividend = edx:eax, divisor on stack
+	idivl	(%ecx)		# now modulus = edx, quotient = eax
 	movl	(%ecx),%ebx
 	xorl	4(%ecx),%ebx	## <0 if d'dend & d'sor are opposite signs
-	jns	1f
+	jns	1f		# do nothing if same sign
 	orl	%edx,%edx
-	je	1f
-	decl	%eax
-	addl	(%ecx),%edx
-1:	movl	%edx,8(%ecx)
-	movl	%eax,4(%ecx)
+	je	1f		# do nothing if mod == 0
+	decl	%eax		# otherwise quot = quot - 1
+	addl	(%ecx),%edx	#            mod = mod + divisor
+1:	movl	%edx,8(%ecx)	# leave modulus and
+	movl	%eax,4(%ecx)	# quotient on stack, quotient on top
 	addl	$4,sp
 	popl	%ebx		# callee saved!
 	ret
 
-## for jumping thru a following "vector" of compiled calls
+
+## for jumping thru a following "vector" of compiled calls, each 5 bytes long
 	.globl	mu_jump
 mu_jump:
 	movl	sp,%eax
