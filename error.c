@@ -12,6 +12,7 @@
 #include "muforth.h"
 
 #include <setjmp.h>
+#include <stdlib.h>
 
 #ifndef XXX
 #include <stdio.h>
@@ -44,6 +45,9 @@ static jmp_buf *last_jb;	/* top of "stack" of jmp bufs */
  * call a function. But then, how/when do you undo the frame? Hmmm.
  * Okay, doing the Forth way. */
 
+#define SETJMP setjmp
+#define LONGJMP longjmp
+
 void mu_catch()
 {
     jmp_buf this_jb;
@@ -54,7 +58,7 @@ void mu_catch()
     prev_jb = last_jb;
     last_jb = &this_jb;
     saved_sp = sp;		/* so we can reset _our_ stack ptr */
-    thrown = _setjmp(this_jb);
+    thrown = SETJMP(this_jb);
     if (thrown == 0)
 	EXECUTE;
     else
@@ -68,7 +72,7 @@ void mu_throw()
     if (TOP != 0)
     {
 	if (last_jb)
-	    _longjmp(*last_jb, TOP);
+	    LONGJMP(*last_jb, TOP);
 	else
 	    die((char *)TOP);
     }

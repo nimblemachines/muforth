@@ -11,6 +11,7 @@
 
 #include "muforth.h"
 
+#include <stdlib.h>
 #include <ctype.h>
 
 struct imode			/* interpreter mode */
