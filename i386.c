@@ -359,9 +359,12 @@ void mu_m_star()
 void mu_um_slash_mod()
 {
     asm volatile ("movl sp,%ecx");
-    asm volatile ("movl 4(%ecx),%edx; movl 8(%ecx),%eax"); /* dividend */
+    asm volatile ("movl 4(%ecx),%edx"); /* dividend hi */
+    asm volatile ("movl 8(%ecx),%eax"); /* dividend lo */
     asm volatile ("divl (%ecx)");	/* divisor */
-    asm volatile ("movl %edx,8(%ecx); movl %eax,4(%ecx); addl $4,sp");
+    asm volatile ("movl %edx,8(%ecx)"); /* remainder */
+    asm volatile ("movl %eax,4(%ecx)"); /* quotient */
+    asm volatile ("addl $4,sp");
 }
 
 /*
