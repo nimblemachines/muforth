@@ -64,7 +64,7 @@ clean :
 .if defined (BRANCH)
 
 syncpoint !
-	cvs rtag -r ${BRANCH} ${BRANCH}_merged_to_HEAD muforth
+	cvs rtag -r ${BRANCH} -F ${BRANCH}_merged_to_HEAD muforth
 
 do_merge !
 	cvs update -j ${BRANCH}_merged_to_HEAD -j ${BRANCH}
