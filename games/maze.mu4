@@ -1,0 +1,431 @@
+(
+ * This algorithm is from the Oct. 1978 Byte Magazine.
+ * The author of that algorithm was Robert J. Bishop
+ * of Covina CA.
+ * Robert Bishop wrote in this description in the article:
+ *
+ * +++
+ *
+ *    Basically, here's how the program works. The entrance and exit
+ * points are randomly chosen first.  Next, a random walk is performed
+ * from both of these points until the two paths cross.  This
+ * determine the one, and only one, way through what will become the
+ * maze.  As each "cell" is visited via these random walks, the
+ * location of the cell is placed in a queue.  A queue is simply a
+ * list of items in which all insertions are made at one end, and all
+ * accesses are made from the other end, i.e.: it's a first in-first
+ * out [FIFO] list.  When either of the walks runs out of places to go
+ * [gets stuck in a corner, or gets boxed in], it goes back to the
+ * queue and restarts from the node indicated by the next item in the
+ * queueu.  This restarting process continues until the queue becomes
+ * empty, at which point the maze is complete.  The resulting maze is
+ * then displayed and the whole process starts over again.
+ *
+ * +++
+ *
+ * The original algorithm was written in Apple I Integer Basic.
+ * The algorithm was very difficult to understand, but, obviously,
+ * here is the translation.
+ *
+)
+
+( The user supplies two parameters: width and height.
+  run the program as:
+
+	<width>  <height>  maze
+
+  The mazes are more fun when there is random-ness in the seed.
+  The word 'clock' is used to start the random seed.
+
+  The 'point' array is a two element array which contains a point
+  that left the entrance in slot 0 and the point which has left
+  the exit in slot 1.  We oscillate between the two points for one
+  step at a time.  In theory the two points move toward each other,
+  but really they are just random walks through the maze.  They
+  are not allowed to bump into themselves but they can bump into
+  each other exactly once.  Once they have bumped into each other
+  they are not allowed to bump into each other again.  This is the
+  mechanism by which a single path through the maze is created.
+)
+5 array d
+2 array point
+variable paths-met
+
+: to-bit  (s  n -- bit)
+	1 swap << ;
+
+( or! will OR the data bits into the cell whose address is supplied.)
+: or!  (s  data  pointer  -- )
+	dup @ swap push or pop ! ;
+
+0 constant EAST		EAST  to-bit constant EAST_BIT
+1 constant NORTH	NORTH to-bit constant NORTH_BIT
+2 constant WEST		WEST  to-bit constant WEST_BIT
+3 constant SOUTH	SOUTH to-bit constant SOUTH_BIT
+
+4 constant EXIT		EXIT  to-bit constant EXIT_BIT
+5 constant START	START to-bit constant START_BIT
+
+EXIT_BIT START_BIT or constant EXIT_OR_START_BITS
+
+variable map	( a pointer to a buffer)
+variable queue	( a pointer to a buffer)
+variable width
+variable height
+
+: WIDTH     width @ ;
+: HEIGHT    height @ ;
+: map-size (s -- n-cells)
+	WIDTH HEIGHT m* drop ;
+: map[ (s point -- address-of-map-cell)
+	cells map @ + ;
+( The routine look examines in 4 directions examining which
+  directions are valid.  The dirs array and helper routines
+  record the good directions.)
+4 array dirs
+variable dirs-index
+: clear-dirs
+	0 dirs-index ! ;
+: save-dir (s  dir -- )
+	dirs-index @ cells dirs + !
+	1 dirs-index +! ;
+: pick-dir  (s  --  p  dir)
+	dirs-index @ random cells dirs + @  (s  -- p dir ) ;
+: dir-bits  (s  dir -- bits-representing-dir)
+	to-bit ;
+( reverse-dir
+    dir is between 0..3:
+	if dir == 0, then opposite-dir = 2
+	if dir == 1, then opposite-dir = 3
+	if dir == 2, then opposite-dir = 0
+	if dir == 3, then opposite-dir = 1)
+: reverse-dir  (s  dir -- opposite-dir)
+	2 + 3 and ;
+
+( pflip is a two element array that gets initialized with
+  the START square and the EXIT square.  The build-maze
+  routine has a big loop and each pass of the loop it
+  uses either element 0 or element 1 of the pflip array
+  to try to find a new square.  If the current pflip
+  entry doesn't have any possible moves, then a point is
+  dequeued.  If the queue is empty, the maze is complete.
+)
+2 array pflip
+variable pflip-index
+: pflip[  (s  index  --  pflip-address )
+	cells pflip + ;
+: pflip-init
+	0 pflip-index ! ;
+: pflip-flop
+	pflip-index @ 1 xor pflip-index ! ;
+: pflip-get  (s  --  pflip-point )
+	pflip-index @ pflip[ @ dup ." pflip-get = " . cr ;
+: pflip-put  (s  p -- )
+	dup ." pflip-put = " . cr
+	pflip-index @ pflip[ ! ;
+: pflip-step
+	pflip-flop  pflip-get ;
+
+( enqueue
+ *
+ * This routine will enqueue p which is a point in the maze.
+ * Later these points will be dequeued and used to restart
+ * the maze algorithm when the maze winds up in a corner.
+ *
+ * dequeue will return -1 when the queue is empty.
+ *
+ * enqueue was line 1000 in the original source
+ * dequeue was line 2000 in the original source
+)
+variable q-head
+variable q-tail
+
+: q[ (s index -- address-of-queue-cell)
+	cells queue @ + ;
+
+( q-head and q-tail are queue pointers:
+  q-head is for enqueueing
+  q-tail is for dequeueing
+
+  Because head and tail are incremented before beings used,
+  we initialize them to -1.)
+: q-init
+	-1 q-head !  -1 q-tail ! ;
+
+: enqueue (s p -- )
+	( p is a maze point)
+	dup ." enqueing " . cr
+	1 q-head +! q-head @ q[ ! ;
+
+: dequeue (s -- p | -1)
+	( p is a maze point)
+	q-tail @ q-head @ < if  1 q-tail +!  q-tail @ q[ @ dup ." dq'd " . cr ^
+	then -1 ;
+
+(  is-same-row
+ *
+ * This algorithm compares two points [a and b] and
+ * returns TRUE if they are on the same row of the maze.
+ *
+ * The algorithm is dependent upon the integer rules of division:
+ * a/K is truncated, and b/K is also truncated.  So, if
+ * a/K is not the same as b/K a and b are not on the same
+ * "row" of a by K grid.)
+: which-row?  (s  p  -- row-number)
+	0 WIDTH um/mod swap drop ;
+: is-same-row? (s  p1  p2  --  flag)
+	 which-row?  swap 
+	 which-row?  = ;
+
+( is-on-map? returns 1 if p is within the map, else 0 )
+: is-on-map? (s  p -- flag)
+	dup 0< if drop 0 ^ then
+	map-size < if 1 ^ then
+	0 ;
+
+." Beginning the step code" cr
+
+( step-blindly will move p in the supplied direction
+  without respect to the consequences)
+: step-blindly (s  p  dir -- new-p)
+	dup EAST  = if drop 1+ ^ then
+	dup WEST  = if drop 1- ^ then
+	dup NORTH = if drop WIDTH - ^ then
+	SOUTH     = if WIDTH + then ;
+: step-ok drop ;
+: step-fail drop drop -1 ;
+: step (s  p  dir --  -1 | new-p )
+	over over step-blindly  ( p  dir  new-p -- )
+	-rot  ( new-p  p  dir -- )
+	( for EAST/WEST travel, the new-p must be on the same
+	  map row as p, else it's not a valid step)
+	dup  EAST =
+	swap WEST = or if over over is-same-row? if step-ok ^ then step-fail ^ then
+	( for NORTH/SOUTH travel, the new-p must be on the map.)
+	over ( new-p p new-p) is-on-map? if step-ok ^ then step-fail ;
+
+." Beginning the direction code" cr
+
+: dir-helper (s  p  dir -- new-p | -1)
+	over over  step  (  --  p  dir  new-p )
+	( If this step took us out of bounds, exit early)
+	dup 0< if drop drop drop -1 ^ then
+	( Check to see if the map square of the new-p has
+	  already been visited)
+	dup map[ @ if 
+		(  if map[new-p] is true, then that means that the
+		 * target square, map[new-p], has already been visited
+		 * via some direction.  What's important about
+		 * that fact is that we can only touch that square
+		 * from here, map[p], if either:
+		 * 1- there has not already been some contact made
+		 *    between the two paths
+		 * 2- the two paths are the different paths:
+		 *    one has to be from the start, the other
+		 *    from the end.
+		 * If those two conditions are valid, then
+		 * we can record the option of the two paths
+		 * meeting.
+		 * Note, that it isn't until this path option
+		 * is chosen at random, from the number, k, of
+		 * available paths, that we would alter the m flag.)
+
+		( First check if the paths have already met and fail
+		  this direction if they have.)
+		paths-met @ if drop drop drop -1 ^ then
+		( --  p  dir  new-p)
+		-rot  ( --  dir  new-p  p)
+		over over  ( -- dir new-p p new-p p)
+		map[ @ EXIT_OR_START_BITS and ( --  dir  new-p  p  new-p map[p])
+		swap
+		map[ @ EXIT_OR_START_BITS and ( --  dir  new-p  map[p] map[new-p])
+		( If the top two values on the stack are equal, that means
+		  that the two squares [p] and [new-p] are part of the same path,
+		  either START or EXIT.  Either way, we must fail this direction.)
+		= if drop drop -1 ^ then
+		swap drop ^  ( Dump the direction)
+	then
+	( this is a good path, save new-p but dump p and dir)
+	-rot drop drop
+;
+
+: direction (s  p  dir  -- )
+	over over dir-helper 0< if drop drop ^ then
+	save-dir drop ;
+
+." look" cr
+
+: look (s  p  --  p  count-of-good-directions )
+	clear-dirs  dup ." look from " . cr
+	dup EAST  direction
+	dup WEST  direction
+	dup NORTH direction
+	dup SOUTH direction
+	dirs-index @
+;
+
+." move" cr
+
+( pickup-flags will grab the EXIT or START flags from
+  the location p if the paths have not yet met.
+  In other words, we pass flags from the source to the
+  destination and vis-e-versa.  This is done so that we
+  can monitor when a START based path is bumping into
+  an EXIT based path.)
+: pickup-flags  (s  p --  p  flags)
+	dup map[ @ EXIT_OR_START_BITS and ;
+
+: move (s  p  -- new-p )
+	pick-dir	." pick-dir" cr
+	over over step push  ( save the new-p from step)
+	dup map[ @ if 1 paths-met ! then
+	swap                     (s  --  p  new-p  dir)
+	dup dir-bits swap        (s  --  p  new-p  dir-bits  dir)
+	dup reverse-dir dir-bits (s  --  p  new-p  dir-bits  reverse-dir-bits)
+	." move -- comment" cr
+	( Remember that we are at location p moving to new-p
+	  by traveling in direction dir [which has since been
+	  converted to dir-bits].  We are going to OR dir-bits
+	  into the cell at location p and we are going to OR
+	  reverse-dir-bits into the cell at location new-p.
+	  This operation will link the two cells.  So from either
+	  one you can see that you've visited the other from
+	  here.  Further more, we want to carry forward the flags
+	  from p and put them into new-p and vis-e-versa.
+	  Unfortunately, I have dir-bits and reverse-dir-bits
+	  in the way.  So, I'll tuck them away on the return
+	  stack for a little while.)
+	push push                (s  --  p  new-p  R: reverse-dir-bits  dir-bits)
+	pickup-flags pop or push (s  --  p  new-p  R: reverse-dir-bits  dir-bits-and-new-p-flags)
+	swap pickup-flags        (s  --  new-p  p  p-flags  R: <as above>)
+	pop swap push            (s  --  new-p  p  dir-bits-and-new-p-flags)
+	                         (s  R:  reverse-dir-bits  p-flags)
+	swap                     (s  --  new-p  dir-bits-and-new-p-flags  p)
+	map[ or!                 (s  --  new-p  R:  reverse-dir-bits  p-flags)
+	pop pop or swap          (s  --  reverse-dir-bits-p-flags  new-p)
+	map[ or! 
+	pop ( pop the new-p from the step move) ;
+
+." alloc-maze" cr
+
+( alloc-maze will allocate space for the maze.
+  It does this by taking unnamed space from the heap.
+  Later, free-maze will return this space back to the heap.)
+: alloc-maze  (s  width  height --  old-heap-addr)
+	height !  width !
+	ram  ( save the current heap pointer)
+	." map-size == " map-size . cr
+	map-size cells unnamed-buffer map !
+	map-size cells unnamed-buffer queue !  ;
+( Restore the r pointer with the address we saved earlier)
+: free-maze  (s  old-heap-addr -- )
+	r ! ;
+
+." init-maze" cr
+
+: init-maze
+	q-init
+	pflip-init
+
+	( paths-met is a flag indicating that the START and EXIT paths
+	  have met)
+	0 paths-met !
+
+	( set the starting point and ending point)
+	7 random 3 +            0 pflip[  !
+	map-size 3 - 7 random - 1 pflip[  !
+
+	( Now set the map squares for the start/end )
+	NORTH_BIT START_BIT or  0 pflip[ @  map[ !
+	SOUTH_BIT EXIT_BIT  or  1 pflip[ @  map[ !  ;
+
+." print-maze" cr
+
+( print-maze will print the maze to the console.
+  It's broken into a few basic parts: {line1, line2} x height, and bottom.
+  Line1 is a line of hyphens with spaces where there is a passge NORTH.
+  Line2 is a line of '| ' or '  ' based on whether the current square has passage WEST.
+  After the entire maze content is printed, the bottom line is just like line1
+  except that the [only] space is where the EXIT is, and that's where the square has passage SOUTH.) 
+variable pchar
+variable pdir
+: print-elem  (s  map-square  -- )
+	pdir @ and 0= if pchar @ ^ then
+	bl ;
+: print-maze-line1 (s  map-row-base  -- )
+	char - pchar !  NORTH_BIT pdir !
+	WIDTH for
+		char + emit
+		dup @  print-elem emit
+		cell +
+	next char + emit cr drop ;
+
+: print-maze-line2 (s  map-row-base  -- )
+	char ! pchar !  WEST_BIT pdir !
+	WIDTH for
+		dup @  print-elem emit
+		bl emit
+		cell +
+	next char ! emit cr drop ;
+
+: print-maze-bottom (s  map-row-base  -- )
+	char - pchar ! SOUTH_BIT pdir !
+	WIDTH for
+		char + emit
+		dup @ print-elem emit
+		cell +
+	next char + emit cr drop ;
+
+: print-maze (s -- )
+	0 map[
+	HEIGHT for
+		dup print-maze-line1
+		dup print-maze-line2
+		WIDTH cells +
+	next
+	WIDTH cells -
+	print-maze-bottom  ;
+
+." build and friends" cr
+
+( build-step is a work-horse routine for build.
+  Given a point to start at it will look around to see what
+  available moves exist, if there is a non-zero number of moves
+  to choose from, it will move in )
+: build-step (s  p -- new-p )
+	look (s  --  p  count)  ." look" cr
+	if  ." true" cr  move  dup enqueue  ^  then
+	." false" cr drop dequeue ;
+
+." build-maze" cr
+
+: build-maze (s  --  )
+	0 pflip-index !
+	begin
+		print-maze
+		pflip-flop  ." pflip-flop" cr
+		pflip-get	." pflip-get" cr
+		build-step dup ." build-step" cr
+	0< not  while
+		pflip-put  ." pflip-put" cr
+	repeat
+;
+
+." Maze!" cr
+
+: maze (s width  height -- )
+	." allocating maze" cr
+	alloc-maze     (s  --  old-ram)
+	." initializing maze" cr
+	init-maze      (s  --  old-ram)
+	print-maze
+	." building maze" cr
+	build-maze     (s  --  old-ram)
+	." printing maze" cr
+	print-maze     (s  --  old-ram)
+	." freeing maze memory" cr
+	free-maze      (s  old-ram  -- )
+	." done." cr
+; 
+
+25 5  maze
