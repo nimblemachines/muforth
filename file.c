@@ -34,6 +34,10 @@
 #include <unistd.h>
 #include <errno.h>
 
+#define MAX_FD_VECTORS		20
+
+cell_t fd_vectors[MAX_FD_VECTORS];
+
 /* if found and readable, leave name and push -1;
  * if not found or not readable, drop name and push 0
  */

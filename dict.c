@@ -179,6 +179,7 @@ struct inm initial_forth[] = {
     { "d->f", mu_d_to_f },
     { "f->d", mu_f_to_d },
     { "(f.)", mu_fdot },
+    { "str->f", mu_str_to_f },
 
     { "bye", mu_bye },
 

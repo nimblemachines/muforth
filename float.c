@@ -77,3 +77,12 @@ void mu_fdot(void)
 	PUSH(strlen(buf));
 }
 
+void mu_str_to_f(void)
+{
+	double df;
+	char *buf;
+
+	buf = (char *) POP;
+	sscanf(buf, "%lf", &df);
+	fpush(df);
+}

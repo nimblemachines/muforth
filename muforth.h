@@ -224,6 +224,7 @@ void mu_fdiv(void);
 void mu_fmul(void);
 void mu_fneg(void);
 void mu_fdot(void);
+void mu_str_to_f(void);
 
 /* interpret.c */
 void mu_push_cell_size(void);

@@ -29,8 +29,8 @@
  
 VERSION = 0.01
 
-CFLAGS=-O2 -Wall -fomit-frame-pointer
-DBGCFLAGS=-O -ggdb -Wall -DDEBUG
+QCFLAGS=-O2 -Wall -fomit-frame-pointer
+CFLAGS=-O -ggdb -Wall -DDEBUG
 ASFLAGS=-g
 LDFLAGS=
 
