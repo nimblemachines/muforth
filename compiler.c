@@ -17,6 +17,8 @@
  * 
  * This function will lay an opcode down in the dictionary.
  */
+static cell_t *last_call;
+
 static void op_compile(cell_t op)
 {
 	*pcd++ = op;
@@ -29,6 +31,19 @@ static void fcompile(float_t f)
 	p = (float_t *) pcd;
 	bcopy(&f, p, sizeof(f));
 	pcd = (code_t *) (p+1);
+}
+
+/*
+ * mu_compile_call()
+ *
+ * Generate a CALL instruction to the address on top of the stack.
+ */
+void mu_compile_call(void)
+{
+	last_call = pcd;
+
+	op_compile(CALL);
+	op_compile(POP);
 }
 
 /*
@@ -54,7 +69,7 @@ void mu_compile_exit(void)
 	cell_t *pc;
 
 	pc = (cell_t *) pcd;
-	if (pc[-2] == CALL)
+	if (pc-2 == last_call)
 		pc[-2] = JUMP;
 
 	op_compile(RET);
@@ -94,7 +109,6 @@ COMPILE(shunt, SHUNT);
 COMPILE(literal_push, LIT_PUSH);
 COMPILE(execute, EXEC);
 COMPILE_POP(literal_load, LIT_LOAD);
-COMPILE_POP(call, CALL);
 
 COMPILE_FPOP(fliteral_load, FLIT_LOAD);
 COMPILE(fliteral_push, FLIT_PUSH);
