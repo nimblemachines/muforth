@@ -100,5 +100,28 @@ _mu_execute:
 	addi	r1,r1,12		; Drop R14 and the Link Register from the stack
 	blr				; Return to the calller
 
+	;;
+	;; mu_jump
+	;;
+	;; This routine is the glue for jumping to an indexed
+	;; Forth word following the current word, JUMP.
+	;; The basic idea is to get the return address (which points
+	;; to the 0th indexed word).  We then call into C code to
+	;; do all the heavy thinking and then it returns here.
+	;; After that we jump to the word at that index.  Note that
+	;; by jumping to that word, the return from that word
+	;; actually is -our- return.  Thefore, we only execute
+	;; one in the vector list of words following jump and then
+	;; exit from this word.
+	.globl	_mu_jump
+	.globl	_mu_jump_helper
+_mu_jump:
+	mflr	r3			; R3 is the first passed parameter in C on PPC
+	stw	r15,0(r14)		; Save the stack pointer
+	bl	_mu_jump_helper		; Call the C routine
+	mtlr	r3			; R3 is the return value form the C routine and tells us where to go
+	lwz	r15,0(r14)		; Restore the Stack Pointer from memory
+	blr				; Jump to that word.
+	
 .data
 				; This data segment is bogus, and used for gdb to not wig-out

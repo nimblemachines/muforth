@@ -36,11 +36,20 @@ int stack[STACK_SIZE];
 int *sp = S0;
 #endif /* PPC_TEST */
 
-/*
+/*******************************************************************
+ *
  * The PowerPC is a 32 bit processor with 32 bit instructions.
- * This file works completely with 32 bit entities.
+ * This file works completely with 32 bit entities.  (Except where
+ * two 32 bit entities are used in conjunction to build a 64 bit
+ * entity.)
  */
 
+/*******************************************************************
+ *
+ * There are two kinds of externally visible functions in this file:
+ * 1) those that build code in the dictionary, i.e., .compiler. words
+ * 2) those that perform run-time functionality, i.e., .forth. words
+ */
 static u_int32_t *pcd_last_call;
 
 /************************************************************************
@@ -101,6 +110,9 @@ static u_int32_t *pcd_last_call;
 #define MTLR		0x7c0803a6
 #define MFLR		0x7c0802a6
 
+
+#define SHIFT_LEFT	0x7C000030
+
 /*
  * Register definitions:
  *
@@ -113,6 +125,10 @@ static u_int32_t *pcd_last_call;
  * onto the stack.  See mu_compile_literal_load() and 
  */
 #define R_TEMP		3
+#define R_A		4
+#define R_B		5
+#define R_C		6
+#define R_D		7
 #define R_PUSH_TEMP	11
 #define R_SP		15
 #define R_RP		1
@@ -184,6 +200,7 @@ static u_int32_t *pcd_last_call;
  *         of the value to be loaded is set, the high order data has to have
  *         one added to it.
  */
+#define ADD		0x7C000214
 #define ADDI		0x38000000
 #define ADDIS		0x3C000000
 
@@ -355,6 +372,46 @@ static void comma_push(int r, int r_sp)
 }
 
 /*
+    IDIV is symmetric.  To fix it (to make it _FLOOR_) we have to
+    adjust the quotient and remainder when BOTH rem /= 0 AND
+    the divisor and dividend are different signs.  (This is NOT the
+    same as quot < 0, because the quot could be truncated to zero
+    by symmetric division when the actual quotient is < 0!)
+    The adjustment is q' = q - 1; r' = r + divisor.
+
+    This preserves the invariant a / b => (r,q) s.t. qb + r = a.
+
+    q'b + r' = (q - 1)b + (r + b) = qb - b + r + b
+             = qb + r
+             = a
+
+    where q',r' are the _floored_ quotient and remainder (really, modulus),
+    and q,r are the symmetric quotient and remainder.
+
+    XXX: discuss how the range of the rem/mod changes as the num changes
+    (in symm. div.) and as the denom changes (in floored div).
+*/
+
+void mu_fm_slash_mod()		/* floored division! */
+{
+	u_int32_t divisor;
+	int64_t dividend;
+	u_int32_t rem, q;
+
+	divisor = POP;
+
+	dividend = POP;
+	dividend <<= 32;
+	dividend += POP;
+
+	q = dividend / divisor;
+	rem = dividend - (divisor * q);
+
+	PUSH(rem);
+	PUSH(q);
+}
+
+/*
  * mu_compile_call()
  *
  * The address of the entity to call is the top element of the stack.
@@ -389,6 +446,7 @@ void mu_compile_call()
 	if ((u_int8_t *) addr < pcd0)
 	{
 		comma_st(R_SP, 0, 14);
+		comma_addi(R_RP, -16);
 	}
 
 	if ((addr == 0) || (addr & 0xFC000000)) {
@@ -538,46 +596,105 @@ void mu_dplus(void)
 	sp += 4;
 }
 
-void mu_jump(void)
+/*
+ * mu_um_star()
+ * mu_m_star()
+ *
+ * The top two cells on the stack are multiplied together and
+ * replaced with the two-cell result.  The high order of the
+ * result is on top, with the low order of the result below it.
+ *
+ * um == Unsigned Multiply
+ * m  == Signed Multiply
+ */
+void mu_um_star()
 {
-	u_int32_t instr, addr;
+	u_int32_t a, b;
+	u_int64_t r;
 
-	pcd_last_call = (u_int32_t *) pcd;
+	a = POP;
+	b = POP;
 
-	addr = POP;
+	r = a * b;
 
-	if (addr & 0x00000003) {
-		/*
-		 * ERROR: We cannot handle jumping to an address
-		 * that is not 4 byte aligned.
-		 */
+	PUSH(r);
+	PUSH(r >> 32);
+}
 
-		fprintf(stdout, "ERROR: an attempt to jump to an address that is "
-			"not 4 byte aligned!\n");
+void mu_m_star()
+{
+	u_int32_t a, b;
+	int64_t r;
 
-		exit(-1);
-	}
+	a = POP;
+	b = POP;
 
-	if ((addr == 0) || (addr & 0xFC000000)) {
-		/*
-		 * The address does not fit into a branch instruction.
-		 * The address must be loaded into a temporary register
-		 * so we can jump through it.
-		 */
-		comma_li(R_TEMP, addr);
-		comma_mtlr(R_TEMP);
-		comma_instr(BLR_ALWAYS);
-	} else {
-		/*
-		 * The address is OK to jump to directly
-		 */
-		instr = BLR_ALWAYS | addr | BR_ABS_ADDR;
+	r = a * b;
 
-		/*
-		 * Place the instruction in memory
-		 */
-		comma_instr(instr);
-	}
+	PUSH(r);
+	PUSH(r >> 32);
+}
+
+/*
+ * mu_um_slash_mod()
+ * 
+ * Given the top three stack elements a, b, and c, where a is the top element.
+ * The two elements b and c are interpreted as being a single DCELL number.
+ * The b:c pair are then divided by a.  The results of this function are
+ * the remainder and quotient.  The quotient will be the top element of the
+ * stack.
+ * 
+ * With a / b, a is the dividend and b is the divisor.  The quotient is the
+ * integer result of division.  The remainder is the difference between
+ * the dividend and the quotient times the divisor.
+ * Example: 7 / 3 = quotient 2, remainder 1.
+ * 
+ * :  um_slash_mod  ( dividend-lo divident-hi  divisor --  remainder  quotient )
+ * 
+ */
+void mu_um_slash_mod()
+{
+	u_int32_t divisor;
+	u_int64_t dividend;
+	u_int32_t rem, q;
+
+	divisor = POP;
+
+	dividend = POP;
+	dividend <<= 32;
+	dividend += POP;
+
+	q = dividend / divisor;
+	rem = dividend - (divisor * q);
+
+	PUSH(rem);
+	PUSH(q);
+}
+
+/*
+ * mu_jump()
+ *
+ * The Link Register contains a pointer to the first word following the
+ * jump FORTH word.  
+ *
+ * NOTE: "The" bug with the following code is that it assumes that it gets
+ * called.  That is, it uses the Link Register as though it were called.
+ * However, it's not, the followign code will appeear in-line.  Therefore,
+ * either, the code has to be modified to set the link register itself, or
+ * it has to be designed to not require this.
+ */
+u_int32_t mu_jump_helper(u_int32_t *base)
+{
+	int index;
+	u_int32_t word;
+
+	index = POP;
+	word = base[index];
+	assert((word & INSTR_MASK) == BR);
+	assert((word & (BR_AND_LINK | BR_ABS_ADDR)) == (BR_AND_LINK | BR_ABS_ADDR));
+	word &= ~(INSTR_MASK | BR_AND_LINK | BR_ABS_ADDR);
+
+	return word;
 }
 
 void mu_compile_nondestructive_zbranch(void)
@@ -683,7 +800,7 @@ void mu_fetch_literal_value(void)
  *
  *	for ... next
  * 
- * Whereas with ?for, would must write:
+ * Whereas with ?for, one must write:
  *
  *	?for ... next then
  *
@@ -705,7 +822,7 @@ void mu_compile_qfor(void)
  *
  * The top of the return stack contains the loop counter.
  * Decrement it and branch (backwards) if not zero.  If it
- * is zero, 
+ * is zero, pop the item off the stack and return.
  */
 void mu_compile_next(void)
 {
