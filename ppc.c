@@ -97,7 +97,19 @@ static u_int32_t *pcd_last_call;
 
 /*
  * The register convention appears to be:
+ * See: e-www.motorola.com/files/ 32bit/doc/ref_manual/E500ABIUG.pdf
+ * R0-R31 are the registers:
+ * R0       - Volatile, used during linkage
+ * R1       - Dedicated, Stack Frame Pointer
+ * R2       - Reserved
+ * R3..R10  - Passed parameters to called functions.
+ * R3..R4   - Return values from functions
+ * R11..R12 - Volatile, used during linkage
+ * R13      - Dedicated, small data area pointer
+ * R14..R31 - Nonvolatile, used for local variables
  *
+ * This version uses the stack frame pointer for
+ * the return stack.
  */
 
 /*
@@ -125,6 +137,7 @@ static u_int32_t *pcd_last_call;
  * I'm hardcoding it to 32 bytes.
  */
 #define CACHELINE_SIZE		32
+
 
 
 /**************************************************
@@ -185,7 +198,7 @@ void mu_compile_call()
 		exit(-1);
 	}
 
-	if (addr & 0xFC000000) {
+	if ((addr == 0) || (addr & 0xFC000000)) {
 		u_int32_t lo, hi;
 
 		/*
@@ -214,5 +227,36 @@ void mu_compile_call()
 		 */
 		mu_comma_instr(instr);
 	}
+}
+
+/* resolve a forward or backward jump - moved from startup.mu4 because it
+ * was i386-specific. In this usage "src" points just _past_ the displacement
+ * we need to fix up.
+ * : resolve   ( src dest)  over -  swap cell- ! ( 32-bit displacement) ;
+ */
+void mu_resolve(void)
+{
+}
+
+void mu_compile_literal_push()
+{
+    extern void mu_push_literal(void);
+    PUSH((int) mu_push_literal);
+    mu_compile_call();		/* sets pcd_last_call */
+}
+
+void mu_compile_drop(void)
+{
+    compile_stack_adjust(4);
+}
+
+void mu_compile_2drop(void)
+{
+    compile_stack_adjust(8);
+}
+
+void mu_compile_return(void)
+{
+	
 }
 
