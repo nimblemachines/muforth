@@ -303,8 +303,14 @@ variable last-word   ( last compiled word)
 : >code  ( body - code)  cell-  ;
 */
 
+#ifdef DEBUG
 /*
- * mu_find_pde_code_range()
+ * daf: stripped the mu_ off the names of these routines, since they conform
+ * to C stack API rather than muforth stack API.
+ */
+
+/*
+ * find_pde_code_range()
  *
  * This routine will locate the supplied address to a specific
  * word within a given chain.  The caller (mu_fund_pde_by_addr()) will
@@ -313,7 +319,7 @@ variable last-word   ( last compiled word)
  * addr and the start of the function of each chain in which
  * the addr matches.
  */
-static struct dict_entry *mu_find_pde_code_range(struct dict_entry *chain, cell_t addr)
+static struct dict_entry *find_pde_code_range(struct dict_entry *chain, cell_t addr)
 {
 	struct dict_entry *pde, *best;
 	u_int32_t closest, delta;
@@ -357,8 +363,8 @@ static struct dict_entry *find_pde_by_addr(cell_t addr)
 	struct dict_entry *pde_compiler, *pde_forth, *pde;
 	u_int32_t comp_code, forth_code;
 
-	pde_compiler = mu_find_pde_code_range(compiler_chain, addr);
-	pde_forth = mu_find_pde_code_range(forth_chain, addr);
+	pde_compiler = find_pde_code_range(compiler_chain, addr);
+	pde_forth = find_pde_code_range(forth_chain, addr);
 
 	if (!pde_compiler && !pde_forth)
 		return NULL;
@@ -416,6 +422,7 @@ cell_t print_func_name(cell_t addr)
 
 	return code;
 }
+#endif /* DEBUG */
 
 static void init_chain(struct dict_entry **pchain, struct inm *pinm)
 {

@@ -35,8 +35,11 @@ cell_t *sp = S0;
 int  cmd_line_argc;
 char **cmd_line_argv;
 
-uint8_t *pnm0, *pcd0, *pdt0;	   /* ptrs to name, code, & data spaces */
-uint8_t *pnm, *pcd, *pdt;	/* ptrs to next free byte in each space */
+uint8_t *pnm0, *pdt0;	/* ptrs to name & data spaces */
+code_t  *pcd0;		/* ptr to code space */
+
+uint8_t *pnm, *pdt;    /* ptrs to next free byte in each space */
+code_t  *pcd;
 
 /* XXX: Gross hack alert! */
 char *ate_the_stack;
@@ -66,7 +69,7 @@ void mu_push_name_size()
 
 void mu_push_code_size()
 {
-    PUSH(pcd - pcd0);
+    PUSH((caddr_t)pcd - (caddr_t)pcd0);
 }
 
 void mu_push_data_size()
@@ -79,7 +82,7 @@ static void allocate()
     pnm0 = (uint8_t *) mmap(0, 256 * 4096, PROT_READ | PROT_WRITE,
 			  MAP_ANON | MAP_PRIVATE, -1, 0);
 
-    pcd0 = (uint8_t *) mmap(0, 256 * 4096, PROT_READ | PROT_WRITE | PROT_EXEC,
+    pcd0 = (code_t *)  mmap(0, 256 * 4096, PROT_READ | PROT_WRITE | PROT_EXEC,
 			  MAP_ANON | MAP_PRIVATE, -1, 0);
 
     pdt0 = (uint8_t *) mmap(0, 1024 * 4096, PROT_READ | PROT_WRITE,

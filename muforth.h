@@ -37,29 +37,17 @@ typedef unsigned char uint8_t;
 
 #ifdef __POWERPC__
 typedef int32_t   cell_t;
-typedef int64_t   d_arith_t;	/* double arithmetic */
+typedef uint32_t  code_t;
 #define CELL_S    32
-#define CELL_M    (~0)
 #else
 #ifdef __i386__
-typedef int32_t    cell_t;
-typedef int64_t    d_arith_t;
+typedef int32_t   cell_t;
+typedef uint8_t   code_t;
 #define CELL_S    32
-#define CELL_M    (~0)
 #else
 #  error "muforth won't build on your architecture!"
 #endif
 #endif
-
-typedef struct dc
-{
-    cell_t	hi;
-    cell_t	lo;
-} d_cell_t;
-
-#define MAKE_DBL(hi,lo)    (((d_arith_t)hi << CELL_S) + (d_arith_t)lo)
-#define LO(dbl)            ((d_arith_t)dbl & CELL_M)
-#define HI(dbl)            ((d_arith_t)dbl >> CELL_S)
 
 /* data stack */
 #define STACK_SIZE 4096
@@ -126,8 +114,11 @@ extern cell_t *sp;
 extern int  cmd_line_argc;
 extern char **cmd_line_argv;
 
-extern u_int8_t *pnm0, *pcd0, *pdt0;	/* ptrs to name, code, & data spaces */
-extern u_int8_t *pnm, *pcd, *pdt;    /* ptrs to next free byte in each space */
+extern uint8_t *pnm0, *pdt0;	/* ptrs to name & data spaces */
+extern code_t  *pcd0;		/* ptr to code space */
+
+extern uint8_t *pnm, *pdt;    /* ptrs to next free byte in each space */
+extern code_t  *pcd;
 
 extern void (*mu_number)();
 extern void (*mu_number_comma)();

@@ -25,12 +25,12 @@
 
 #include "muforth.h"
 
-static uint8_t *pcd_last_call;
-static uint8_t *pcd_jump_dest = 0;
+static code_t *pcd_last_call;
+static code_t *pcd_jump_dest = 0;
 
 static void mu_compile_offset()
 {
-    uint8_t *dest = (uint8_t *) POP;
+    code_t *dest = (code_t *) POP;
 
     *(uint32_t *)pcd = dest - (pcd + 4);
     pcd += 4;
@@ -205,7 +205,7 @@ void mu_resolve()
     DROP(2);
 
     /* also set up last jump destination, for tail-call code */
-    pcd_jump_dest = (uint8_t *)dest;
+    pcd_jump_dest = (code_t *)dest;
 }
 
 

@@ -268,28 +268,3 @@ void mu_cmove()
     memcpy(dest, src, count);
     DROP(3);
 }
-
-/* just for fun. tests of how lame gcc still is. */
-void mu_dplus_gcc()
-{
-    d_cell_t *dsp = (d_cell_t *)sp;
-    d_arith_t sum;
-
-    sum = MAKE_DBL(dsp->hi, dsp->lo);
-    sum += MAKE_DBL(dsp[1].hi, dsp[1].lo);
-    dsp[1].hi = HI(sum);
-    dsp[1].lo = LO(sum);
-    sp = (cell_t *)&dsp[1];	/* drop one double */
-}
-
-void mu_dnegate_gcc()
-{
-    d_cell_t *dsp = (d_cell_t *)sp;
-    d_arith_t neg;
-
-    neg = -MAKE_DBL(dsp->hi, dsp->lo);
-    dsp->hi = HI(neg);
-    dsp->lo = LO(neg);
-}
-
-
