@@ -29,18 +29,15 @@
 	;; This file exports functions which contain instructions
 	;; not available to C programmers.
 	;;
-	;; mu_iflush_addr(u_int32_t *addr)
+	;; ppc_iflush_addr(u_int32_t *addr)
 	;;	Given an address, this routine will flush the cache line containing
 	;;	that address in the d-cache and i-cache.  These are the instructions
 	;;	as specified by IBM in the PPC 750 programmer's guide.
 	;;
-	;; mu_stack_adjust(int n)
-	;;      This routine will add N to the stack pointer, R1.
-	;; 
 .text					; section declaration - begin code
 
-	.globl	_mu_iflush_addr
-_mu_iflush_addr:
+	.globl	_ppc_iflush_addr
+_ppc_iflush_addr:
 	dcbst	0,r3			; update memory
 	sync				; wait for update
 	icbi	0,r3			; remove (invalidate) copy in instruction cache
@@ -94,6 +91,159 @@ _mu_execute:
 	addi	r1,r1,4			; Drop R11 and the Link Register from the stack
 	blr				; Return to the calller
 
+	.globl	_ppc_setup_regs
+_ppc_setup_regs:
+	addi	r4,0,lo16(_sp)		; r4 = &sp
+	addis	r4,r4,ha16(_sp)
+	lwz	r5,0(r4)		; r5 =  sp
+	blr
+	
+	.globl	_ppc_pop
+_ppc_pop:
+	addi	r4,0,lo16(_sp)		; r4 = &sp
+	addis	r4,r4,ha16(_sp)
+	lwz	r5,0(r4)		; r5 =  sp
+	
+	lwz	r3,0(r5)		; r3 = copy of top of stack
+
+	addi	r5,r5,4			; Pop!
+	stw	r5,0(r4)		; 
+	blr				; Exit
+
+	.globl	_ppc_push
+_ppc_push:
+	addi	r4,0,lo16(_sp)		; r4 = &sp
+	addis	r4,r4,ha16(_sp)
+	lwz	r5,0(r4)		; r5 =  sp
+
+	stwu	r3,-4(r5)		; Push!
+	stw	r5,0(r4)
+	blr
+
+	.globl	_ppc_push_lit
+_ppc_push_lit:
+	addi	r4,0,lo16(_sp)		; r4 = &sp
+	addis	r4,r4,ha16(_sp)
+	lwz	r5,0(r4)		; r5 =  sp
+
+	stwu	r10,-4(r5)		; Push!
+	stw	r5,0(r4)
+	blr
+
+	.globl	_ppc_get_tos
+_ppc_get_tos:		
+	addi	r4,0,lo16(_sp)		; r4 = &sp
+	addis	r4,r4,ha16(_sp)
+	lwz	r5,0(r4)		; r5 =  sp
+	
+	lwz	r3,0(r5)		; r3 = copy of top of stack
+	blr				; Exit
+
+	.globl	_ppc_set_tos
+_ppc_set_tos:
+	addi	r4,0,lo16(_sp)		; r4 = &sp
+	addis	r4,r4,ha16(_sp)
+	lwz	r5,0(r4)		; r5 =  sp
+
+	stw	r3,0(r5)		; Push!
+	blr
+
+	.globl	_ppc_swap
+_ppc_swap:
+	addi	r4,0,lo16(_sp)		; r4 = &sp
+	addis	r4,r4,ha16(_sp)
+	lwz	r5,0(r4)		; r5 =  sp
+
+	lwz	r8,0(r5)		; r8 = TOS
+	lwz	r9,4(r5)		; r9 = Next of stack
+	stw	r8,4(r5)		; Swap!
+	stw	r9,0(r5)		;
+	blr
+
+	.globl	_ppc_over
+_ppc_over:
+	addi	r4,0,lo16(_sp)		; r4 = &sp
+	addis	r4,r4,ha16(_sp)
+	lwz	r5,0(r4)		; r5 =  sp
+
+	lwz	r3,4(r5)		; r3 = Next of stack
+	stwu	r3,-4(r5)		; Push!
+	stw	r5,0(r4)
+	blr				; Exit
+
+	.globl	_ppc_drop
+_ppc_drop:
+	addi	r4,0,lo16(_sp)		; r4 = &sp
+	addis	r4,r4,ha16(_sp)
+	lwz	r5,0(r4)		; r5 =  sp
+	
+	addi	r5,r5,4			; Drop!
+	stw	r5,0(r4)		; 
+
+	blr				; Exit
+
+	.globl	_ppc_2drop
+_ppc_2drop:
+	addi	r4,0,lo16(_sp)		; r4 = &sp
+	addis	r4,r4,ha16(_sp)
+	lwz	r5,0(r4)		; r5 =  sp
+	
+	addi	r5,r5,8			; 2 Drop!
+	stw	r5,0(r4)		; 
+
+	blr				; Exit
+
+	.globl	_ppc_pop_from_r
+_ppc_pop_from_r:
+	addi	r4,0,lo16(_sp)		; r4 = &sp
+	addis	r4,r4,ha16(_sp)
+	lwz	r5,0(r4)		; r5 =  sp
+	
+	lwz	r3,0(r1)		; Pop from R
+	addi	r1,r1,4			
+	stwu	r3,-4(r5)		; Push to D
+	stw	r5,0(r4)
+	blr
+
+	.globl	_ppc_push_to_r
+_ppc_push_to_r:
+	addi	r4,0,lo16(_sp)		; r4 = &sp
+	addis	r4,r4,ha16(_sp)
+	lwz	r5,0(r4)		; r5 =  sp
+	
+	lwz	r3,0(r5)		; Pop from D
+	addi	r5,r5,4
+	stw	r5,0(r4)
+
+	stwu	r3,-4(r1)
+
+	blr
+
+	.globl	_ppc_copy_from_r
+_ppc_copy_from_r:
+	addi	r4,0,lo16(_sp)		; r4 = &sp
+	addis	r4,r4,ha16(_sp)
+	lwz	r5,0(r4)		; r5 =  sp
+	
+	lwz	r3,0(r1)		; Pop from R
+	stwu	r3,-4(r5)		; Push to D
+	stw	r5,0(r4)
+	blr
+
+	.globl	_ppc_next
+_ppc_next:
+	lwz	r3,0(r1)		; Decrement top of R stop
+	addi	r3,r3,-1
+	stw	r3,0(r1)
+	blr
+
+	.globl	_ppc_exit
+_ppc_exit:
+	lwz	r9,0(r1)		; Get return address
+	addi	r1,r1,4			; Pop!
+	mtlr	r9			; Prepare the go
+	blr				; Go!
+	
 	;;
 	;; mu_jump
 	;;
@@ -111,9 +261,9 @@ _mu_execute:
 	.globl	_mu_jump_helper
 _mu_jump:
 	mflr	r3			; R3 is the first passed parameter in C on PPC
-	addi	r11,0,lo16(_sp)		; r11 = &sp
-	addis	r11,r11,ha16(_sp)
-	stw	r12,0(r11)		; Save the stack pointer
+	addi	r4,0,lo16(_sp)		; r4 = &sp
+	addis	r4,r4,ha16(_sp)
+	stw	r12,0(r4)		; Save the stack pointer
 	bl	_mu_jump_helper		; Call the C routine
 	mtlr	r3			; R3 is the return value form the C routine and tells us where to go
 	lwz	r15,0(r14)		; Restore the Stack Pointer from memory
@@ -129,8 +279,8 @@ _mu_jump:
 	;; pipe-line bubbles after everything else works.
 	.globl	_mu_dnegate
 _mu_dnegate:
-	addis	r11,0,ha16(_sp)		; r11 = &sp
-	lwz	r12,lo16(_sp)(r11)	; r12 = sp
+	addis	r4,0,ha16(_sp)		; r4 = &sp
+	lwz	r12,lo16(_sp)(r4)	; r12 = sp
 	lwz	r2,4(r12)		;  r2 = lo
 	lwz	r3,0(r12)		;  r3 = hi
 	subfic	r2,r2,0

@@ -241,6 +241,10 @@ static void compile_dict_entry(
     pde->length = length;
     memcpy(pde->name, name, length);	/* copy name string */
     pnm = (uint8_t *)ALIGNED(pde->name + length);
+
+#if defined(LIST_DICT_ENTRIES)
+    printf("%*s: %p\n", length, pde->name, pcode);
+#endif /* LIST_DICT_ENTRIES */
 }
 
 /* called from Forth */
@@ -312,7 +316,7 @@ variable last-word   ( last compiled word)
 static struct dict_entry *mu_find_pde_code_range(struct dict_entry *chain, cell_t addr)
 {
 	struct dict_entry *pde, *best;
-	cell_t closest, delta;
+	u_int32_t closest, delta;
 
 	/*
 	 * First pass: Check for direct hit
@@ -338,7 +342,7 @@ static struct dict_entry *mu_find_pde_code_range(struct dict_entry *chain, cell_
 }
 
 /*
- * mu_find_pde_by_addr()
+ * find_pde_by_addr()
  *
  * This routine calls mu_find_pde_code_range() to identify a possible
  * pde in both chains.  If nothing is found, it returns NULL.  Else,
@@ -348,10 +352,10 @@ static struct dict_entry *mu_find_pde_code_range(struct dict_entry *chain, cell_
  * which pde has the smallest difference between the supplied addr
  * and the start of the code for that pde.
  */
-static struct dict_entry *mu_find_pde_by_addr(cell_t addr)
+static struct dict_entry *find_pde_by_addr(cell_t addr)
 {
 	struct dict_entry *pde_compiler, *pde_forth, *pde;
-	cell_t comp_code, forth_code;
+	u_int32_t comp_code, forth_code;
 
 	pde_compiler = mu_find_pde_code_range(compiler_chain, addr);
 	pde_forth = mu_find_pde_code_range(forth_chain, addr);
@@ -388,7 +392,7 @@ static struct dict_entry *mu_find_pde_by_addr(cell_t addr)
 }
 
 /*
- * mu_printf_func_name()
+ * printf_func_name()
  *
  * Given an address, this routine will print the name of the muforth word
  * which is associated with that address.  Also, it will print an offset
@@ -396,16 +400,16 @@ static struct dict_entry *mu_find_pde_by_addr(cell_t addr)
  *
  * It returns the base address of the muforth word.
  */
-cell_t mu_print_func_name(cell_t addr)
+cell_t print_func_name(cell_t addr)
 {
 	struct dict_entry *pde;
 	cell_t code;
 
-	pde = mu_find_pde_by_addr(addr);
+	pde = find_pde_by_addr(addr);
 
 	code = (cell_t) pde->code;
 
-	printf("%p: %*s", pde->code, pde->length, pde->name);
+	printf("%p: %*s", (cell_t *) addr, pde->length, pde->name);
 	if (code != addr) {
 		printf(" + %d", addr - code);
 	}

@@ -238,12 +238,27 @@ static cell_t *pcd_last_call;
  */
 
 /*
- * mu_iflush_addr();
+ * ppc_iflush_addr();
  *
  * This routine is defined in assembly language (see ppc_asm.s).
  * It will flush a cache block from the d-cache and i-cache.
  */
-extern void mu_iflush_addr(void *addr);
+extern void ppc_iflush_addr(void *addr);
+extern void ppc_setup_regs(void);
+extern void ppc_get_tos(void);
+extern void ppc_set_tos(void);
+extern void ppc_pop(void);
+extern void ppc_push(void);
+extern void ppc_push_lit(void);
+extern void ppc_over(void);
+extern void ppc_swap(void);
+extern void ppc_drop(void);
+extern void ppc_2drop(void);
+extern void ppc_pop_from_r(void);
+extern void ppc_copy_from_r(void);
+extern void ppc_push_to_r(void);
+extern void ppc_next(void);
+extern void ppc_exit(void);
 
 /*
  * store_instr() and comma_instr()
@@ -258,7 +273,7 @@ static void store_instr(cell_t *addr, int instr)
 {
 	*addr = instr;
 
-	mu_iflush_addr(addr);
+	ppc_iflush_addr(addr);
 }
 
 static void comma_instr(int instr)
@@ -312,21 +327,11 @@ static void assert_16bit_val(unsigned int val)
  * NOTE: for now, no tracking of a modified stack pointer is kept.
  * Therefore, we always write sp back to main memory at exit points.
  */
+typedef void (*ppc_func)(void);
 static void comma_li(int r, int val);
 static void comma_ld(int r_dest, unsigned int offset, int r_base);
 static void comma_st(int r_src, int offset, int r_base);
-
-static void comma_fetch_sp(void)
-{
-	comma_li(R_PSP, (int) &sp);
-	comma_ld(R_SP, 0, R_PSP);
-}
-
-static void comma_store_sp(void)
-{
-	comma_st(R_SP, 0, R_PSP);
-}
-
+static void comma_safe_call(ppc_func addr);
 
 /*
  * comma_<ppc-instr>()
@@ -336,6 +341,23 @@ static void comma_store_sp(void)
  * calls to comma_instr() because various errors can be checked
  * here.  Also, it makes the call points look more readable.
  */
+
+static void comma_safe_call(ppc_func func)
+{
+	cell_t addr = (cell_t) func;
+
+	comma_instr(BR | addr | BR_ABS_ADDR | BR_AND_LINK);
+}
+
+static void comma_fetch_sp(void)
+{
+	comma_safe_call(ppc_setup_regs);
+}
+
+static void comma_store_sp(void)
+{
+	comma_st(R_SP, 0, R_PSP);
+}
 
 static void comma_li(int r, int val)
 {
@@ -373,10 +395,14 @@ static void comma_ld(int r_dest, unsigned int offset, int r_base)
 	assert_valid_reg(r_base);
 	assert_16bit_val(offset);
 
-	if (r_base == R_SP)
-		comma_fetch_sp();
+	if (r_dest == 3 && r_base == R_SP) {
+		comma_safe_call(ppc_get_tos);
+	} else {
+		if (r_base == R_SP)
+			comma_fetch_sp();
 
-	comma_instr(LD | RS(r_dest) | RA(r_base) | (offset & IMM_MASK));
+		comma_instr(LD | RS(r_dest) | RA(r_base) | (offset & IMM_MASK));
+	}
 }
 
 static void comma_st(int r_src, int offset, int r_base)
@@ -385,10 +411,14 @@ static void comma_st(int r_src, int offset, int r_base)
 	assert_valid_reg(r_base);
 	assert_16bit_val(offset);
 
-	if (r_base == R_SP)
-		comma_fetch_sp();
+	if (r_src == 3 && r_base == R_SP && offset == 0) {
+		comma_safe_call(ppc_set_tos);
+	} else {
+		if (r_base == R_SP)
+			comma_fetch_sp();
 
-	comma_instr(ST | RS(r_src) | RA(r_base) | (offset & IMM_MASK));
+		comma_instr(ST | RS(r_src) | RA(r_base) | (offset & IMM_MASK));
+	}
 }
 
 static void comma_stu(int r_src, int offset, int r_base)
@@ -430,10 +460,12 @@ static void comma_addi(int reg, int val)
 		comma_store_sp();
 }
 
+#if 0
 static void comma_mtlr(int r)
 {
 	comma_instr(MTLR | RS(r));
 }
+#endif
 
 static void comma_mflr(int r)
 {
@@ -442,53 +474,21 @@ static void comma_mflr(int r)
 
 static void comma_pop(int r, int r_sp)
 {
-	comma_ld(r, 0, r_sp);
-	comma_addi(r_sp, 4);
+	if (r == 3 && r_sp == R_SP) {
+		comma_safe_call(ppc_pop);
+	} else {
+		comma_ld(r, 0, r_sp);
+		comma_addi(r_sp, 4);
+	}
 }
 
 static void comma_push(int r, int r_sp)
 {
-	comma_stu(r, -4, r_sp);
-}
-
-/*
-    IDIV is symmetric.  To fix it (to make it _FLOOR_) we have to
-    adjust the quotient and remainder when BOTH rem /= 0 AND
-    the divisor and dividend are different signs.  (This is NOT the
-    same as quot < 0, because the quot could be truncated to zero
-    by symmetric division when the actual quotient is < 0!)
-    The adjustment is q' = q - 1; r' = r + divisor.
-
-    This preserves the invariant a / b => (r,q) s.t. qb + r = a.
-
-    q'b + r' = (q - 1)b + (r + b) = qb - b + r + b
-             = qb + r
-             = a
-
-    where q',r' are the _floored_ quotient and remainder (really, modulus),
-    and q,r are the symmetric quotient and remainder.
-
-    XXX: discuss how the range of the rem/mod changes as the num changes
-    (in symm. div.) and as the denom changes (in floored div).
-*/
-
-void mu_fm_slash_mod()		/* floored division! */
-{
-	u_int32_t divisor;
-	int64_t dividend;
-	u_int32_t rem, q;
-
-	divisor = POP;
-
-	dividend = POP;
-	dividend <<= 32;
-	dividend += POP;
-
-	q = dividend / divisor;
-	rem = dividend - (divisor * q);
-
-	PUSH(rem);
-	PUSH(q);
+	if (r == 3 && r_sp == R_SP) {
+		comma_safe_call(ppc_push);
+	} else {
+		comma_stu(r, -4, r_sp);
+	}
 }
 
 /*
@@ -508,64 +508,69 @@ static int is_c_function(u_int32_t addr)
 		return 0;
 }
 
+static void prep_for_c_call(int addr)
+{
+	cell_t *pc;
+
+	if (is_c_function(addr))
+	{
+		pc = (cell_t *) pcd;
+
+		if (0 && pc[-1] == (ADDI | RS(R_RP) | RA(R_RP) | 16)) {
+			/*
+			 * Overwrite the tear-down instruction
+			 * with the branch instruction
+			 */
+			pcd -= 4;
+		} else {
+			/*
+			 * Build a call frame
+			 */
+			comma_addi(R_RP, -16);
+		}
+	}
+}
+
+static void done_with_c_call(int addr)
+{
+	if (is_c_function(addr))
+		comma_addi(R_RP, 16);
+}
+
+static void comma_call(int addr)
+{
+	prep_for_c_call(addr);
+	comma_instr(BR | addr | BR_ABS_ADDR | BR_AND_LINK);
+	done_with_c_call(addr);
+}
+
+static void comma_jump(ppc_func func)
+{
+	cell_t addr = (cell_t) func;
+
+	comma_instr(BR | addr | BR_ABS_ADDR);
+}
+
 void mu_compile_call()
 {
-	u_int32_t instr, addr;
+	u_int32_t addr;
 
 	pcd_last_call = (cell_t *) pcd;
 
 	addr = POP;
 
-	if (addr & 0x00000003) {
-		/*
-		 * ERROR: We cannot handle calling a function at an address
-		 * that is not 4 byte aligned.
-		 */
-
-		fprintf(stdout, "ERROR: an attempt to call a function that is "
-			"not 4 byte aligned!\n");
-
-		exit(-1);
-	}
-
-	if (is_c_function(addr))
-	{
-		if (pcd_last_call[-1] == (ADDI | RS(R_RP) | RA(R_RP) | (16 & IMM_MASK))) {
-			pcd -= 4;
-			pcd_last_call = (cell_t *) pcd;
-		} else {
-			comma_addi(R_RP, -16);
-		}
-	}
-
-	if ((addr == 0) || (addr & 0xFC000000)) {
-		/*
-		 * The address does not fit into a branch instruction.
-		 * The address must be loaded into a temporary register
-		 * so we can jump through it.
-		 */
-		comma_li(R_CALL, addr);
-		comma_mtlr(R_CALL);
-		comma_instr(BLRL_ALWAYS);
-	} else {
-		/*
-		 * The address is OK to jump to directly
-		 */
-		instr = BAL | addr | BR_ABS_ADDR;
-
-		/*
-		 * Place the instruction in memory
-		 */
-		comma_instr(instr);
-	}
-
 	/*
-	 * If we called a C function, we need to reload the SP register
+	 * ERROR: We cannot handle calling a function at an address
+	 * that is not 4 byte aligned.
 	 */
-	if (is_c_function(addr))
-	{
-		comma_addi(R_RP, 16);
-	}
+	assert(0 == (addr & 3));
+
+	if (addr == (cell_t) mu_over)
+		comma_safe_call(ppc_over);
+	else if(addr == (cell_t) mu_swap)
+		comma_safe_call(ppc_swap);
+	else
+		comma_call(addr);
 }
 
 /* resolve a forward or backward jump - moved from startup.mu4 because it
@@ -602,17 +607,17 @@ void mu_compile_literal_load()
 
 void mu_compile_literal_push()
 {
-	comma_push(R_PUSH_TEMP, R_SP);
+	comma_safe_call(ppc_push_lit);
 }
 
 void mu_compile_drop(void)
 {
-	comma_addi(R_SP, 4);
+	comma_safe_call(ppc_drop);
 }
 
 void mu_compile_2drop(void)
 {
-	comma_addi(R_SP, 8);
+	comma_safe_call(ppc_2drop);
 }
 
 void mu_compile_entry(void)
@@ -659,12 +664,16 @@ void mu_compile_exit(void)
 		*pc &= ~BR_AND_LINK;
 	} else if (*pc == BLRL_ALWAYS) {
 		*pc &= ~BR_AND_LINK;
-	} else {
+	}
 #endif
 
+	comma_jump(ppc_exit);
+
+#if 0
 	comma_pop(R_LINK_OUT, R_RP);
 	comma_mtlr(R_LINK_OUT);
 	comma_instr(BLR_ALWAYS);
+#endif
 }
 
 /*
@@ -679,8 +688,7 @@ void mu_compile_shunt()		/* drop 4 bytes from r stack */
 
 void mu_compile_pop_from_r()
 {
-	comma_pop(R_TEMP, R_RP);
-	comma_push(R_TEMP, R_SP);
+	comma_safe_call(ppc_pop_from_r);
 }
 
 void mu_compile_2pop_from_r()
@@ -688,22 +696,18 @@ void mu_compile_2pop_from_r()
 	/*
 	 * This could be optimized, later.
 	 */
-	comma_pop(R_TEMP, R_RP);
-	comma_push(R_TEMP, R_SP);
-	comma_pop(R_TEMP, R_RP);
-	comma_push(R_TEMP, R_SP);
+	comma_safe_call(ppc_pop_from_r);
+	comma_safe_call(ppc_pop_from_r);
 }
 
 void mu_compile_copy_from_r()
 {
-	comma_ld(R_TEMP, 0, R_RP);
-	comma_push(R_TEMP, R_SP);
+	comma_safe_call(ppc_copy_from_r);
 }
 
 void mu_compile_push_to_r()
 {
-	comma_pop(R_TEMP, R_SP);
-	comma_push(R_TEMP, R_RP);
+	comma_safe_call(ppc_push_to_r);
 }
 
 void mu_compile_2push_to_r()
@@ -711,10 +715,8 @@ void mu_compile_2push_to_r()
 	/*
 	 * This could be optimized, later.
 	 */
-	comma_pop(R_TEMP, R_SP);
-	comma_push(R_TEMP, R_RP);
-	comma_pop(R_TEMP, R_SP);
-	comma_push(R_TEMP, R_RP);
+	comma_safe_call(ppc_push_to_r);
+	comma_safe_call(ppc_push_to_r);
 }
 
 
@@ -778,6 +780,46 @@ void mu_um_slash_mod()
 {
 	u_int32_t divisor;
 	u_int64_t dividend;
+	u_int32_t rem, q;
+
+	divisor = POP;
+
+	dividend = POP;
+	dividend <<= 32;
+	dividend += POP;
+
+	q = dividend / divisor;
+	rem = dividend - (divisor * q);
+
+	PUSH(rem);
+	PUSH(q);
+}
+
+/*
+    IDIV is symmetric.  To fix it (to make it _FLOOR_) we have to
+    adjust the quotient and remainder when BOTH rem /= 0 AND
+    the divisor and dividend are different signs.  (This is NOT the
+    same as quot < 0, because the quot could be truncated to zero
+    by symmetric division when the actual quotient is < 0!)
+    The adjustment is q' = q - 1; r' = r + divisor.
+
+    This preserves the invariant a / b => (r,q) s.t. qb + r = a.
+
+    q'b + r' = (q - 1)b + (r + b) = qb - b + r + b
+             = qb + r
+             = a
+
+    where q',r' are the _floored_ quotient and remainder (really, modulus),
+    and q,r are the symmetric quotient and remainder.
+
+    XXX: discuss how the range of the rem/mod changes as the num changes
+    (in symm. div.) and as the denom changes (in floored div).
+*/
+
+void mu_fm_slash_mod()		/* floored division! */
+{
+	u_int32_t divisor;
+	int64_t dividend;
 	u_int32_t rem, q;
 
 	divisor = POP;
@@ -965,25 +1007,81 @@ void mu_compile_qfor(void)
  */
 void mu_compile_next(void)
 {
-	comma_ld(R_TEMP, 0, R_RP);	/* R_TEMP = *R_RP; */
-	comma_addi(R_TEMP, -1);		/* R_TEMP --; */
-	comma_st(R_TEMP, 0, R_RP);	/* *R_RP = R_TEMP; */
+	comma_safe_call(ppc_next);	/* R_TEMP = (*R_RP) ++; */
 	comma_cmpi(R_TEMP, 0);		/* z = (R_TEMP == 0); */
 	comma_instr(BR_COND_NZERO);	/* } while (!z); */
 	PUSH(pcd);			/* Compiler push of the branch address */
 	comma_addi(R_RP, 4);		/* pop the count off the return stack */
 }
 
-extern cell_t mu_print_func_name(cell_t addr);
+/*************************************************************
+ *
+ * ppc_disassembler()
+ *
+ * Here's a simple word disassembler.
+ *
+ *************************************************************
+ */
 
-void mu_disassemble(int addr)
+extern cell_t print_func_name(cell_t addr);
+
+static cell_t ppc_test_func(cell_t addr, ppc_func func, char *func_name)
+{
+	if (addr == (cell_t) func) {
+		printf("%p: %s", func, func_name);
+		return addr;
+	} else {
+		return 0;
+	}
+}
+
+#define PPC_TEST_FUNC(func_name)	if (!base) base = ppc_test_func(addr, func_name, #func_name)
+
+static cell_t ppc_print_func_name(cell_t addr)
+{
+	cell_t base;
+
+	base = 0;
+	PPC_TEST_FUNC(ppc_setup_regs);
+	PPC_TEST_FUNC(ppc_get_tos);
+	PPC_TEST_FUNC(ppc_set_tos);
+	PPC_TEST_FUNC(ppc_pop);
+	PPC_TEST_FUNC(ppc_push);
+	PPC_TEST_FUNC(ppc_push_lit);
+	PPC_TEST_FUNC(ppc_over);
+	PPC_TEST_FUNC(ppc_swap);
+	PPC_TEST_FUNC(ppc_drop);
+	PPC_TEST_FUNC(ppc_2drop);
+	PPC_TEST_FUNC(ppc_pop_from_r);
+	PPC_TEST_FUNC(ppc_copy_from_r);
+	PPC_TEST_FUNC(ppc_push_to_r);
+	PPC_TEST_FUNC(ppc_next);
+	PPC_TEST_FUNC(ppc_exit);
+
+	if (!base)
+		base = print_func_name(addr);
+
+	return base;
+}
+
+void ppc_disassemble(int addr)
 {
 	cell_t *pc, base, instr, type;
 	int done, rs, ra, rb, imm, encoding;
+	int mflr;
 
-	base = mu_print_func_name(addr);
-	pc = (cell_t *) base;
+	mflr = MFLR | RS(R_LINK_IN);
+
+	base = ppc_print_func_name(addr);
 	printf("\n");
+
+	pc = (cell_t *) base;
+	while (base <= addr) {
+		if (*(cell_t *)base == mflr)
+			pc = (cell_t *) base;
+		base += 4;
+	}
+	base = (cell_t) pc;
 
 	done = 0;
 	do {
@@ -999,7 +1097,7 @@ void mu_disassemble(int addr)
 			imm |= 0xFFFF0000;
 		}
 		
-		if (type == CLASS_31 && encoding == MFSPR_ENCODING && (cell_t) pc != base)
+		if (instr == mflr && (cell_t) pc != base)
 			break;
 
 		printf("%p: ", pc);
@@ -1040,10 +1138,12 @@ void mu_disassemble(int addr)
 					else
 						printf("li\tr%d, %d\n", rs, val);
 					pc ++;
-					break;
+				} else {
+					printf("li\tr%d, %d\n", rs, imm);
 				}
+			} else {
+				printf("addi\tr%d, r%d, %d\n", rs, ra, imm);
 			}
-			printf("addi\tr%d, r%d, %d\n", rs, ra, imm);
 			break;
 
 		case ADDIS:
@@ -1084,7 +1184,7 @@ void mu_disassemble(int addr)
 			else
 				printf("ba\t");
 			if (instr & BR_ABS_ADDR)
-				mu_print_func_name(dest);
+				ppc_print_func_name(dest);
 			else
 				printf("%#x", (cell_t) pc + dest);
 			printf("\n");
