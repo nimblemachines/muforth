@@ -3,7 +3,7 @@
  *
  * This file is part of muforth.
  *
- * Copyright 1997-2003 David Frech. All rights reserved, and all wrongs
+ * Copyright 1997-2004 David Frech. All rights reserved, and all wrongs
  * reversed.
  */
 
@@ -34,18 +34,18 @@ void mu_push_sp()		/* address of sp variable */
 /* copy string; return a counted string (addr of first character;
  * prefix count cell _precedes_ first character of string).
  */
-
-void mu_scrabble()  /* ( a u c" - c") */
+void mu_scrabble()  /* ( a u z" - z") */
 {
+    struct compiled_string *cs;
     struct string s;
-    char *dest;
 
-    dest = (char *) TOP;
+    cs = (struct compiled_string *)TOP;
     s.data = (char *) STK(2);
-    *(int *)dest = s.len = STK(1);	/* prefix count cell */
-    memcpy(dest + sizeof(int), s.data, s.len);
-    *(dest + s.len + sizeof(int)) = 0;	/* zero terminate */
-    STK(2) = (int) dest + sizeof(int);
+    s.len = STK(1);
+    cs->len = s.len;		/* prefix count cell */
+    memcpy(&cs->data[0], s.data, s.len);
+    cs->data[s.len] = 0;	/* zero terminate */
+    STK(2) = (int) &cs->data[0];
     DROP(2);
 }
 

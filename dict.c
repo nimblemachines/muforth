@@ -3,7 +3,7 @@
  *
  * This file is part of muforth.
  *
- * Copyright 1997-2003 David Frech. All rights reserved, and all wrongs
+ * Copyright 1997-2004 David Frech. All rights reserved, and all wrongs
  * reversed.
  */
 
@@ -58,7 +58,7 @@ struct inm initial_forth[] = {
     { "argv", mu_push_argv },
     { "token", mu_token },
     { "parse", mu_parse },
-    { "-\"find", mu_minus_quote_find },
+    { "find", mu_find },
     { "interpret", mu_interpret },
     { "evaluate", mu_evaluate },
     { "create-file", mu_create_file },
@@ -187,8 +187,13 @@ void mu_push_compiler_chain()
     PUSH(&compiler_chain);
 }
 
-/* -"find  ( a u chain - a u t | code f) */
-void mu_minus_quote_find()
+/* 2004-apr-01. After giving a talk on muforth to SVFIG, and in particular
+ * after Randy asked me some pointed questions, I decided that find should
+ * have positive logic after all. I have renamed -"find to find to indicate
+ * this change.
+ */
+/* find  ( a u chain - a u 0 | code -1) */
+void mu_find()
 {
     char *token = (char *) STK(2);
     int length = STK(1);
@@ -199,14 +204,14 @@ void mu_minus_quote_find()
 	if (pde->length != length) continue;
 	if (memcmp(pde->name, token, length) != 0) continue;
 
-	/* found: drop token, push code address and false flag */
+	/* found: drop token, push code address and true flag */
 	STK(2) = (int) pde->code;
-	STK(1) = 0;
+	STK(1) = -1;
 	DROP(1);
 	return;
     }
-    /* not found: leave token, push true */
-    TOP = -1;
+    /* not found: leave token, push false */
+    TOP = 0;
 }
 
 static void compile_dict_entry(
@@ -258,8 +263,9 @@ variable last-word   ( last compiled word)
 : patch	   pop @  use	; 
 
 : ?unique  ( a u - a u)
-   2dup current @  ?unique-hook  -"find  if  2drop exit  then
-   drop  2dup  fd-out @ push  >stderr  type  ."  again.  "  pop writes ;
+   2dup current @  ?unique-hook  find  if
+   drop  2dup  fd-out @ push  >stderr  type  ."  again.  "  pop writes 
+   then   2drop ;
 
 : code,   0 , ( lex)  here last-code !  0 , ( code)  ;
 : token,  ( - 'link)  token  ?unique  here  scrabble>  allot  ;

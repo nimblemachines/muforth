@@ -134,7 +134,7 @@ void mu_parse()
 
 /*
 : complain   error"  is not defined"  -;
-: huh?   if complain then  ;   ( useful after -"find or -' )
+: huh?   if ^ then complain  ;   ( useful after find or token' )
 defer not-defined  now complain is not-defined
 */
 
@@ -146,7 +146,8 @@ void mu_complain()
 
 void mu_huh()
 {
-    if (POP) mu_complain();
+    if (POP) return;
+    mu_complain();
 }
 
 void (*mu_number)() = mu_complain;
@@ -166,33 +167,33 @@ void mu_push_tick_number_comma()
 void mu__lbracket()
 {
     mu_push_forth_chain();
-    mu_minus_quote_find();
+    mu_find();
     if (POP)
     {
-	(*mu_number)();
+	EXECUTE;
 	return;
     }
-    EXECUTE;
+    (*mu_number)();
 }
 
 /* The compiler's "consume" function. */
 void mu__rbracket()
 {
     mu_push_compiler_chain();
-    mu_minus_quote_find();
+    mu_find();
     if (POP)
     {
-	mu_push_forth_chain();
-	mu_minus_quote_find();
-	if (POP)
-	{
-	    (*mu_number_comma)();
-	    return;
-	}
+	EXECUTE;
+	return;
+    }
+    mu_push_forth_chain();
+    mu_find();
+    if (POP)
+    {
 	mu_compile_call();
 	return;
     }
-    EXECUTE;
+    (*mu_number_comma)();
 }
 
 void mu_nope() {}		/* very useful NO-OP */
@@ -284,12 +285,11 @@ void mu_bye()
 : consume   state @  @execute ;
 
 : _[   ( interpret one token)
-      .forth. -"find  if   number  ^ then  execute ;
+      .forth. find  if execute ^ then  number ;
 
 : _]   ( compile one token)
-   .compiler. -"find  if
-      .forth. -"find  if   number, ^ then
-                          compile, ^ then  execute ;
+   .compiler. find  if  execute  ^ then
+      .forth. find  if  compile, ^ then    number, ;
 
 -:  compiler -"find if  assembler -"find if  number, exit  then
         compile, exit  then  execute ;

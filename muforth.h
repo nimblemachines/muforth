@@ -43,6 +43,12 @@ struct text
     ssize_t start;	/* ssize_t is a _signed_ type */
 };
 
+struct compiled_string
+{
+    size_t len;
+    char data[0];
+};
+
 extern struct string parsed;	/* for errors */
 
 extern int stack[];
@@ -144,7 +150,7 @@ void mu_definitions(void);
 void mu_push_forth_chain(void);
 void mu_push_compiler_chain(void);
 void mu_push_current(void);
-void mu_minus_quote_find(void);
+void mu_find(void);
 void mu_show(void);
 void mu_make_new_name(void);
 void mu_push_tick_name_hook(void);
