@@ -1,0 +1,111 @@
+( draw the colorForth icons/characters)
+
+comment %%
+( Note: PROT_READ is 1)
+: mmap-dev  ( #blocks - a)  open-file 1 rot Ki mmap ;  %%
+
+( mmap-file Working/colorForth)
+z" COLOR.COM" r/o  open-file mmap-file 
+( mmap-file /home/david/Chuck/COLOR.COM.9sep)
+( mmap-file /home/david/Chuck/colorForth.dist)
+( mmap-file /tmp/cf)
+( 162 mmap-dev /dev/fd0)
+  swap nip constant |cf
+
+: block  Ki  |cf + ;
+
+: c@+  ( a - a+ byte)  count ;
+: @+  dup cell+  swap @ ;
+: w@+  c@+ ( hi)  8 <<  swap  c@+ ( lo)  rot + ;
+: dot  "8000 and if  char # ^  then  bl ;
+: .16  cr  16 for  dup dot  dup emit emit  2*  next  drop ;
+: .24  cr  24 for  w@+ .16  next ;
+: icon  ( n - a)  48 *  12 block + ;
+\\ : icons  ( n first)  icon  swap for  .24  next  drop ;
+
+comment %%
+: raw ;  ( from when I could change tty modes)
+: cooked ; %%
+
+: =  xor 0= ;
+: done?  raw key cooked  char q = ;
+: icons  ( first)
+   dup icon begin .24  over space . 1 u+ done? until  drop ;
+
+: _chs  for  dup emit 1+  next cr ;
+: .64  64 _chs ;
+: .32  32 _chs ;
+: chars  32 .32  .64 .64 .64 drop ;
+
+( terminal ESC sequences)
+: <esc  <#  char m hold ;
+: esc>  char [ hold  ctrl [ hold  #> type ;
+
+( colored and attributed text)
+comment %%
+: color  ctrl [ emit ( esc)  char [ emit  30 + u.  char m emit ;
+: _color  drop space ; %%
+
+: attrib  <esc  0 #s esc> ;
+: color  ( foregd)  0 attrib  30 + attrib  space ;
+: bright  1 attrib ;
+: black    0 color ;
+: red      1 color ;
+: green    2 color ;
+: yellow   3 color ;
+: blue     4 color ;
+: magenta  5 color ;
+: cyan     6 color ;
+: _white   7 color ; ( for white-on-black)
+
+( : white   _white ;)
+: white   black ;  ( for xterms and suchlike)
+white
+
+( printing source blocks)
+variable case
+: lc  z"  rtoeanismcylgfwdvpbhxuq0123456789j-k.z/;:!+@*,?"  case ! ;
+: uc  z"  RTOEANISMCYLGFWDVPBHXUQ0123456789J-K.Z/;:!+@*,?"  case ! ;
+: map  case @ + c@ ;
+: .4  swap 4 << swap  28 >>  7 and ;
+: .5  swap 5 << swap  28 >>  7 and  8 + ;
+: .7  swap 7 << swap  26 >>  31 and 16 + ;
+: unpack  dup  dup 0< if  2*  dup 0< if  .7 ^ then  .5 ^ then  .4 ;
+: 1char  unpack map emit ;
+: chars  begin  dup while  1char  repeat  drop ;
+: .word  lc chars ;
+: .WORD  uc chars ;
+: .Word  uc 1char  .word ;
+
+( numbers, with auto-radix)
+: .d               (.)          type ;
+: .h  bright  hex (u.) decimal  type ;
+: .radix  "10 and if .h ^ then .d ;
+: .num        push  @+  pop .radix ;
+: .short  dup push  2/ 2/ 2/ 2/ 2/  pop .radix ;
+
+( kinds of words)
+: ignore  .word ;
+: wW  yellow .word ;
+: nW  yellow .num ;
+: rW  cr red .word ;
+: gW  green .word ;
+: gnW  green .num ;
+: gsW  green .short ;
+: mW  ( macro)  cyan .word ;
+: sW  yellow .short ;
+: text  white .word ;
+: Cap   white .Word ;
+: CAPS  white .WORD ;
+: var  magenta .word  green @+ .d ;
+
+: format  dup -16 and  swap  15 and  jump
+   ignore  wW  nW  rW    gW  gnW  gsW  mW
+   sW  text  Cap  CAPS   var  drop  drop  drop -;
+
+: sh  decimal  block  begin  @+  dup while  format  repeat  2drop  white ;
+: shs  for  cr cr  dup sh  1+  next  drop ;
+: header  cr cr  ." -*- Block " . ." -*-" cr ;
+: shs  ( n)  begin dup header dup sh 1+  done? until ;
+
+

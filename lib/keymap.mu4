@@ -1,0 +1,55 @@
+( keymap.mu4 - generic key-vectoring)
+
+( 2002-mar-28. Copied and modified from dforth/v25/terminal.d4)
+
+cr s" Keymaps "  file[#
+
+decimal
+
+( My first pass at this idea is this: printable characters - those for
+  which "graphic?" is true - should be considered self-inserting: they act
+  as themselves. The lower control characters [0 to 31] and DEL [127]
+  should be looked up in a table. For now we _ignore_ the high control
+  characters [128 to 159].)
+
+( Key handlers. ASCII codes < 32 are control codes and are dispatched
+  thru a table of key handlers. Each handler is passed `key' and returns
+  a `done' flag: non-zero means terminate the processing loop.
+
+  All entries default to `nope' which leaves `key' on stack as a done flag,
+  terminating the loop.)
+
+( Array. Self-indexing.)
+: array  create  ram swap  cells allot  does>  swap cells + ;
+
+
+128 32 -  constant #esc
+  32 array ctrl-handlers
+#esc array  esc-handlers
+     defer  del-handler
+
+: drop  drop ;
+: reset-key-handlers  0 ctrl-handlers   32 ['] nope  cell-fill
+                      0  esc-handlers #esc ['] drop  cell-fill
+                      now nope is del-handler ;
+
+: ctrl-handler!  ( code n)         ctrl-handlers  !  ;
+: esc-handler!   ( code ch)  32 -   esc-handlers  !  ;
+
+  8 constant <BS>
+ 10 constant <LF>
+ 13 constant <CR>
+ 27 constant <ESC>  ( aka ctrl [ )
+127 constant <DEL>
+
+reset-key-handlers
+-: key  dup  32 -  esc-handlers  @ push ;  <ESC> ctrl-handler!
+
+defer pass  ( thru to application)
+: process-key  ( key - done?)
+   dup graphic? if       pass                 ^  then
+   dup    32 u< if  dup ctrl-handlers  @ push ^  then
+   dup  <DEL> = if       del-handler          ^  then
+   ( high control: 128-159; terminate) ;
+
+#]file

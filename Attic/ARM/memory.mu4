@@ -1,0 +1,98 @@
+( memory.mu4 -- basic memory management for target compilers)
+
+cr s" Memory management "  file[#
+
+decimal
+
+( 2002-mar-27. Converted to work with muForth.)
+
+( 13-sep-1998.  When the target and host have different word sizes, and
+  possibly different endianesses, we really need special words for target
+  dictionary work.  Chuck Moore's `space switching' will not work for us.)
+
+( 14-sep-1998.  More changes!  We have separate spaces -- in the 80x86 world
+  -- for code and `words'.  We need separate [but equal] dictionary words for
+  the two spaces.)
+
+( 24-sep-1998.  Changed to be hopefully simpler.  Instead of having the 
+  clients of this module worry about relative and absolute we're going to
+  change things around a little.  Now `>here' and `|here' return relative
+  rather than absolute values.  The `comma' words will work as advertised.
+  The only thing that this changes, other than making for fewer `|#' and
+  `>+' and other un-readables, is that >c! and >! must have their address
+  converted to absolute, in code or word space.)
+
+( 6-apr-1999. Modified for ARM. No segments! I like the `|' prefix, so I'll
+  use that for target words. We only need one space for the ARM, so I got
+  rid of `>' words. See the file NOTES for comments about endianness and 
+  other issues.)
+
+( 26-apr-1999. Using the new dump in startup.d4. So we need to define arm|@
+  and arm|c@ and init the deferred words.)
+
+
+( AEB-1 constants)
+: ram-size  [ 256 Ki ] ; ( SRAM)
+: rom-size  [ 256 Ki ] ; ( Flash)
+: #image  [ ram-size rom-size max ] ;
+
+: chip-ram-start        0 ;     ( length "800)
+: load-ram-start  [ "8000 ] ;   ( length "20000)
+: ram-start  [ ram-size ] ;     ( length ram-size)
+: rom-start  [ "04000000 64 Ki + ] ;  ( Flash, after Boot loader and Angel)
+
+
+( First define the image space.)
+#image buffer 'image
+
+( Since we're -not- in segment mode on the ARM, we may need to define a
+  non-zero origin, esp. for ROMed code.)
+
+variable dA   ( offset from target address to image address)
+   ( set so that   dA @ +   equals   origin -  'image +  )
+: |+    ( a - a')  dA @ +  ;	( suggests adding to edge of region)
+
+( Dictionary operators.)
+variable |h	( image dictionary pointer)
+: |here  ( - a)  |h @  ;
+: |c,    ( ch)   |here |+ c!     1 |h +!  ;
+: |,     ( n)    |here |+ !   cell |h +!  ;
+: |#     ( - n)  |here |+  'image -  ;  ( return the number of bytes in image)
+
+( Memory inspection operators. Eventually these will also be able to talk to
+  the target, rather than only reading from the image.)
+2variable |limits  ( for checking mem accesses)
+ram constant bogus   "deadc0de dup , ,
+: |inside  ( a - a)
+   dup  |limits 2@  within  if  |+ ^  then   3 and  bogus  +  ;
+
+: image|c@   ( a - ch)  |inside  c@  ;
+: image|@    ( a - n)   |inside   @  ;
+
+( Setup deferred words so dump and so on will work. Right now we are
+  reading from image memory; later we can re-vector and read directly from
+  the target.)
+: image|   now image|@ is |@  now image|c@ is |c@ ;  image|
+
+( We can use @, !, c@ and c! for the target space as well, as long as they are 
+  preceded by `|+' or some other conversion into the image memory space. But
+  we may want to talk to the target directly, so in general we should go thru
+  special operators.)
+
+
+( Initialization.)
+: wipe      'image  #image  ( erase)   "55  fill  ;
+: org   ( buffer len org)
+   tuck tuck + ( buf org org org+len)  |limits 2!  dup |h !  -  dA !  ;
+
+: ram-image   wipe  'image #image  load-ram-start  org  ;
+: rom-image   wipe  'image #image       rom-start  org  ;  ( AEB-1 Flash)
+
+( `org' allows us to read or write an arbitrary buffer - a memory-mapped
+  file, 'image, whatever.)
+
+ram-image  ( just in case we forget)
+
+( That's it for now!)
+
+#]file

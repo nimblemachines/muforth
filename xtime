@@ -1,0 +1,136 @@
+( XTime signature)
+
+( Remember that everything between parentheses is a -comment- and is
+  ignored, but remember also that the first parenthesis -must- be followed by
+  a space in order to work as a comment starter.)
+
+( You might want to skip down to the `prefabbed plugins' part.)
+
+decimal
+
+( Centered text.)
+79 constant dx  ( width of display)
+: repeated  ( ch #)  ?for  dup emit  next  then  drop  ;
+: hrule     ( ch)   dx repeated  cr  ;
+: center  ( a u ch)
+   push  dup dx swap -  2 u/mod ( r q)  tuck + swap ( right left)
+   r@ swap repeated  push  type  pop pop swap  repeated  cr  ;
+
+( Helpers)
+: <<   <#  ||  ;
+: >>   ||  0 0  #>  ;
+: _#s_    ( u)  0 #s  2drop  ;
+
+( Building blocks for XTime.)
+
+( 86 400 s / 100 000 t = 108 s / 125 t; 800 is the common factor.)
+
+: hms->s  swap rot  smh->s ;
+
+: xdate&time   ( epoch - year month mday yday xtime)
+    [ 12 00 00 hms->s ]  +  utc 2drop
+   ( year month mday yday hour min sec)  hms->s  125 108 */  ;
+
+( get current date & time)
+clock  xdate&time  ( year month mday yday xtime)
+constant xtime
+constant day-of-year    ( 0 to 365)
+constant day-of-month
+constant month          ( 0 to 11)
+constant year
+
+( an `xtime' value is 0--99999.)
+: xtime%    xtime  1000 /  ;
+
+( ----------------------- The prefabbed `plugins' -----------------------)
+
+: xtime-consumer       ( "48.Xtm")
+   s" .Xtm" "hold  xtime%  ##  ;
+
+: xtime-professional1   ( "48:395.XT")
+   s" .XT"  "hold  xtime   0 # # #  ":  # #  2drop  ;
+
+( xtime-professional2 needs a count of digits after the decimal point, from
+  0 to 3, like this: `3 xtime-professional2')
+
+: xtime-professional2   ( "48.3[95] Xtime")   ( #digits)
+   s"  Xtime"  "hold  ( suffix)
+   0 max  3 min  ( clamp value)  push   xtime 0 ( unsigned double)
+   3 r@ - ?for  /digit drop  next  then  ( lose insignificance)
+      pop ?for  #  next  ".  then  ( variable digits)   # #  2drop  ;
+
+( date separator)
+: "/   char / hold  ;  ( could be `char .' or `char -' or whatever)
+
+: xdate-oldestyle      ( "2000.02.11")
+   day-of-month ## ".  month 1+ ## ".  year  _#s_  ;
+
+: xdate-nustyle1       ( "1/2000" or "21/2000" or "354/2000")
+   year _#s_   char / hold   day-of-year _#s_  ;
+
+: xdate-nustyle2       ( "001/2000" or "021/2000" or "354/2000")
+   year _#s_   char / hold   day-of-year  0  # # #  2drop  ;
+
+: xdate-nustyle3       ( "2000/1" or "2000/21" or "2000/354")
+   day-of-year _#s_   char / hold   year _#s_   ;
+
+: xdate-nustyle4       ( "2000/001" or "2000/021" or "2000/354")
+   day-of-year  0  # # #  2drop   char / hold   year _#s_   ;
+
+( --------------------- end of prefabbed `plugins' -----------------------)
+
+( --------------------------- The signature! -----------------------------)
+
+<<  xtime-professional1  ||  xdate-nustyle3  >>   char = center
+
+s" Xtime!(tm), now everywhere(sm)"                bl center
+s" http://xtime.org/"                             bl center
+
+( `hrule' needs one thing: the character to splat across the screen.)
+char = hrule
+
+( All done!)
+0 bye
+
+
+USAGE NOTES
+^^^^^^^^^^^
+The word `center' consumes three items: a `pointer' to a string of
+characters, the length of that string, and a filler character. `xtime[tm]'
+produces the first two, and `char =' the second. `center' also does a
+carriage return at the end of the line.
+
+The word `bl' is used to put a `space' or `blank' character onto the
+stack. So `s" blah blah" bl center' centers some text, using spaces for
+filler.
+
+I've added a few more words to make things easier:
+
+  ||          embeds a -space-;
+  << and >>   bracket a line containing text and converted numbers.
+
+These examples are tricky because they're embedding number conversions into
+a string; because of the way number conversion works - going from digits of
+least significance to most, right to left - the whole conversion has to be
+written right to left. A little study should make it clear. `<#' starts a
+string containing embedded numbers; `#>' ends it; `#' converts a single
+digit; and `#s' converts all the digits of a number, reducing it to zero.
+
+Remember that
+
+  s" <text>"  leaves behind magic numbers that...
+  "hold       ... can use to embed that text into the current line.
+
+The examples below are somewhat sophisticated (cryptic? impossible?).
+
+<#  s" % of the world is already in tomorrow..." "hold  xtime%  0 #s
+    s"  as this message is being sent, " "hold  #>    bl center
+<#  xdate (xdate)  s" that is, "  "hold  #>           bl center
+
+( `s"' leaves the necessary address and length on the stack.)
+s" don't stay stuck in yesterday "                 bl center  cr
+s" be:now.XT (sm)"                                 bl center
+s" http://xtime.speakeasy.net"                     bl center
+
+( `hrule' needs one thing: the character to splat across the screen.)
+char = hrule

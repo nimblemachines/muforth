@@ -1,0 +1,181 @@
+( see.mu4 - Little tools for exploring the system.)
+
+cr s" Memory inspector "  file[#
+
+decimal
+
+( 2002-mar-27. Converted to muForth.)
+
+( 06-apr-1999. Changed to be smart about the addresses it prints, so that
+  dumps of target-compiled data will have meaningful addresses printed.)
+
+( Memory inspection - dump, decompile, and, later, disassemble.)
+
+( We defer these so that, later, the target compiler can possibly read from
+  the target, rather than local memory.)
+
+defer |c@
+defer |@
+
+
+( NOTE: These are `backwards' from the words defined in dforth.m4, which are
+  in turn `backwards' from what the rest of the world does. I'm still not sure
+  which I like better. The dforth.m4 style is another of CM's `innovations'
+  in cmForth.)
+: |c@+  ( |a - |a+1 ch)   dup 1+     swap |c@  ;
+: |@+   ( |a - |a+4 n)    dup cell+  swap |@  ;
+
+
+( Call, return.)
+8 array inspect-stack
+variable inspect-sp  ( stack pointer)
+
+: inspect-push  ( old ea - old | ea)  swap  ( ea old)
+   inspect-sp @  dup  8 u<  if
+      dup 1+  inspect-sp !  inspect-stack !  ^  then
+   ( ea old sp)  drop nip  ;
+
+: inspect-pop   ( old - old | new)
+   inspect-sp @  dup if
+      1- dup  inspect-sp !  inspect-stack @  nip ^  then  drop  ;
+
+: inspect-nesting  inspect-sp @  ?for  char > emit  next  space  then  ;
+
+( For switching inspection modes.)
+defer 1inspect
+variable skip
+: inspect!  ( '1inspect default-skip)  skip !  is 1inspect ;
+
+
+( We're going to defer the heck out of these definitions so we can switch
+  between modes, and refine behavior later.)
+
+( Now for the cmd keys.)
+
+128 array seekeys
+  0 seekeys 128
+-: ( a ea - a -1)  drop -1 ;  ( discard & quit)	  cell-fill
+
+: key:  -:  swap  seekeys ! ;
+
+( advance rounds down to nearest `skip'.)
+: advance  ( a ea skip - a')  nip  +  skip @ negate  and  0 ;
+
+-: ( skip+)  skip @         advance ;
+  dup     32 seekeys !
+  dup char n seekeys !
+  dup   <CR> seekeys !
+      char j seekeys !
+
+-: ( skip-)  skip @ negate  advance ;
+  dup char p seekeys !
+  dup  <DEL> seekeys !
+  dup char - seekeys !
+  dup char b seekeys !
+      char k seekeys !
+
+( so we can skip by different amounts)
+char 1 key:  ( a ea - a 0)  drop   4 skip !  0 ;
+char 4 key:  ( a ea - a 0)  drop  16 skip !  0 ;
+
+variable '1dump  ( memory dump)
+variable '1see   ( decompiler)
+variable '1dis   ( disassembler)   ' -1 '1dis !  ( safety)
+
+char d key: ( >dump) ( a ea - a f)  drop  '1dump @  16  inspect!  0  ;
+char i key: ( >dis)  ( a ea - a f)  drop  '1dis @    4  inspect!  0  ;
+char s key: ( >see)  ( a ea - a f)  drop  '1see @    4  inspect!  0  ;
+
+char r key: ( return)  ( new ea - new|old f)  drop  inspect-pop   0  ;
+char c key: ( call)    ( old ea - old|ea f)         inspect-push  0  ;
+char g key: ( go)      ( old ea - ea f)       nip                 0  ;
+
+: inspect-key  ( a ea - a')
+   key  dup 128 u< if  seekeys @ push ^  then  2drop  ( ea key)  -1 ;
+
+-:  ( inspect loop)  raw  begin  1inspect  inspect-key  until  cooked  ;
+: inspect   ( a '1inspect skip - a')
+   inspect!  inspect-sp off
+   radix @ push  [lit] catch  pop radix !  ( re-) throw  ;
+
+
+( Byte and word conversion to ascii)
+: .b16    hex   0 <#              # #  #>  type  ; 
+: .b8    octal  0 <#            # # #  #>  type  ;
+: .w16    hex   0 <#  # # # # # # # #  #>  type  ;
+: .a16    .w16  space space  ;
+: .a_16   -16 and  .a16  ;  ( round down 16)
+
+: .a-space   ( a - a)  10 spaces  ;  ( .w16 + 2 spaces)
+
+variable #field
+: .padding   ( a - a)
+   inspect-nesting  dup  15 and  dup  #field @ *  swap 2/ 2/ +  spaces  ;
+: |_field|   ( width)  #field @ 1-  swap -  spaces  ;
+
+: #bytes     ( a - a #bytes)  16 over  15 and -  ;
+: spacing    ( a - a)  1 over 3 and 0= -  spaces  ;
+
+( >letter is pickier than >graphic, to make strings easier to read. This is
+  America-centric and anti-Euro! Which is unfortunate...)
+
+: >letter   ( ch - ch')  dup letter?   if ^ then  drop bl  ;
+: >graphic  ( ch - ch')  dup graphic?  if ^ then  drop bl  ;
+
+: .chars  ( a)   cr   dup .a_16      .padding   #bytes for
+   |c@+ ( a+1 ch)  >graphic  1 |_field|  emit  spacing  next  drop  ;
+
+: .hex-bytes  ( a)       cr  .a-space .padding   #bytes for
+   |c@+ ( a+1 ch)  2 |_field|  .b16   spacing  next  drop  ;
+
+defer .other  ( hex-words or octal-bytes, depending on arch)
+: .hex-words  ( a)   cr  .a-space  -4 and  .padding   #bytes cell/ for
+   |@+ ( a+4 n)  3 spaces  .w16  spacing  next  drop  ;
+
+: .octal-bytes  ( a)       cr  .a-space .padding   #bytes for
+   |c@+ ( a+1 ch)  3 |_field|  .b8  spacing  next  drop  ;
+
+: .other!  #field !  is .other ;
+: octal-bytes  ['] .octal-bytes   4  .other!  ;
+: hex-words    ['] .hex-words     3  .other!  ;
+hex-words
+
+
+: 1dump  ( a - a ea)
+   dup .chars  dup .hex-bytes  dup .other  ( a)  dup |@  ( a ea)  ;
+
+' 1dump '1dump !
+: du   ( a - a')  ['] 1dump  16  inspect  ;
+
+( Batch mode)
+: dumps   ( start limit)
+   inspect-sp off
+   swap  begin  1dump drop  16 +  2dup u<  until  2drop  ;
+
+
+comment broken_for_native_code
+( See.  a grotty little decompiler)
+
+: >dict<   ( a - f) ( within dict)   [ ' unnest ]  here  within  ;
+: -named   dup >dict< if  >name type  0 ^  then  -1  ;
+
+( this word is UNUSED right now.)
+: code?  ( code - name T | body F)
+   forth  begin  @ dup  while  2dup  ( >code)  = until
+   cell+ ( name) nip -1  ^  then  ( 0)  ;
+
+: .ch   ( n - n')   dup "ff and  >letter emit  8 rshift  ;
+: 1see   ( a - a ea)
+   cr  dup .a16   inspect-nesting
+   dup @  dup  .w16 space   dup .ch  .ch  .ch  .ch  drop  space  space
+   -named if  ( 10 u.r) .w16  space  then  ( a)
+   dup |@ cell- ( code)  ( a ea)  ;
+
+' 1see '1see !
+
+: (see)  ( a - a)  ['] 1see  4  inspect  ;
+: see   '  cell-  ( code)   (see)  ;
+broken_for_native_code
+
+
+#]file

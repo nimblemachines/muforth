@@ -1,0 +1,458 @@
+About endianness
+^^^^^^^^^^^^^^^^
+Though the ARM can operate as either little- or big-endian, this mode
+affects only -two- instructions - LDR and STR - and only affects them when
+moving byte or half-word quantities. With a 32-bit memory system - so this
+statement may be false for 16-bit data-bus systems like the Sharp LH77790 -
+full words are transferred in a way not affected by endianness. Each
+byte-wide piece of memory gives up its byte to a particular `memory lane'
+and that's that.
+
+This means -in particular- that instruction fetches do not depend on the
+endianness of the processor. Read that sentence again. So when compiling
+code for the ARM the only values that need to be handled carefully are
+-data- values and even then the next statement also applies: The format of
+the target image in the host's memory is -not- important. When it is
+converted to S-records or some other download format, or when it is split
+up into multiple EPROM images - for 16- or 32-bit wide targets - then
+endianness comes into play. But not before.
+
+Compiling on a 486, as I am, data will naturally be stored little-endian. I
+can do my local value handling as I like. Only when creating a binary image
+for the target is endianness important. This is in stark contrast to an
+8-bit processor for which the host's memory image is -exactly- the same -
+it is not split into pieces. In that case, we need to be more concerned
+with the endianness of values in the image memory.
+
+Carry
+^^^^^
+The ARM is a simple design and, like the 6502, has a carry that is
+`backwards' when subtracting. This is actually a feature, as we will see
+later, but leads to confusion - esp for people used to the 80x86 and
+68k. When doing unsigned compares, the state of the carry is inverted from
+what you're used to, but is set in a way that `naturally' reflects the
+mechanism of subtraction: adding the 1's complement plus inverted carry
+in. You have been warned.
+
+Threading
+^^^^^^^^^
+The ARM, being a RISC `branch-and-link' rather than `branch-and-push'
+architecture, is well suited to subroutine threading. As in threaded code,
+wherein the routine being called, rather than the caller, determines the
+type of linkage (high-level, machine code), branch-and-link defers this
+decision to the first few words of the new routine. This enables us to
+write cheap calls to `leaf' routines - the call is a branch-and-link, and
+the return is a branch to the link register.
+
+When the called routine needs to make its own calls, it sets up a stack
+frame. But only if it has to. This again is like a Forth `high-level' call,
+in which the interpretation pointer (normally left alone as it threads thru
+calls to `leaf' machine code routines) is pushed onto a call stack and set
+to a new value: the address of the called word's list of addresses to call.
+
+The ARM's BL (branch-and-link) instruction is nice, but it would be even
+nicer if we could specify the link register. Why is this useful? There are
+several places in a Forth implementation - DOES> comes to mind - where one
+ends up doing a CALL to a CALL. On architectures where a CALL is
+branch-and-push we can nest these till the cows come home, and pop the
+return addresses as we need them. (In DOES> the first push is the address
+of the parameter field of the word defined by DOES>; the second is the
+address of the high-level Forth code in the defining word.)
+
+If we could specify the link register we could write `w do_constant BL' and
+in do_constant write `lr do_does BL'. Now in do_does `w' points to the data
+in the parameter field, and `lr' points to the high-level code to execute.
+
+defined_word:
+	w do_constant BL
+	<data>
+
+do_constant:
+	lr do_does BL
+	<high level code>
+
+do_does:
+	push w on data stack
+	push ip on return stack
+	ip <- lr
+	<next>
+
+That was a more involved example than I had hoped. As it is, since we can't
+specify the link register, we have to kludge very slightly and save `lr'
+somewhere - in `w'! - in do_constant before we BL to do_does. Then both
+pointers are available in registers. So it's not too bad.
+
+An issue with both BL and direct-threading (DT) is that each word must
+start with machine code. For `code' words this is great - there is minimal
+overhead. Jump to code and go. For everything else we need to start off
+with a BL to somewhere else - basically a code field - and the code at that
+somewhere else defines what this word does. The big complication here is
+that with BL-threading we've already done a BL to get to the word; if we
+immediately do another we'll clobber our saved return address. So we have
+to either push `lr' - which we want to do anyway for words that call other
+words, like colon words and DOES> words - or save `lr' in another register
+and then BL somewhere. This makes `data' words - variables, constants and
+their ilk - take more dictionary space.
+
+It's better with DT because we didn't BL to get to the word; instead we
+executed <next>. So we're free to (mis)use the link register. In this case
+we blithely put a BL do_<type> as the `code field' and everything works.
+
+The beautiful thing about indirect-threading is that only -one- jump is
+necessary, regardless of what kind of linkage is eventually made. We only
+refill the pipeline once. This, of course, is balanced by our doing an
+extra fetch in every <next>, making it both longer and slower. How much
+slower? It's time for the ---
+
+`Threading redux' - a gory timing comparison
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+A few remarks before we begin. To make this concrete, we'll talk about the
+Sharp LH77790, the chip at the heart of ARM's AEB-1 evaluation board. The
+'790 has an ARM7DI core; I'm using a 7TDMI datasheet for timings, which are
+given as combinations of S (sequential), N (non-sequential) and I
+(internal) cycles. On the '790 an I cycle takes 1 clock, and an N cycle
+takes 1 more clock than an S cycle. The length of an S cycle depends on:
+
+ - the width of the data being moved
+ - the width of the memory accessed
+ - the number of wait states of the memory accessed
+
+For example, if the value (or instruction) is in the chip's cache, which is
+32 bits wide and zero-wait-state, an S cycle takes 1 clock. The SRAM on the
+board is 16 bits wide and 1 wait-state, so moving 32 bits takes 2 cycles of
+2 clocks each; S is 4 clocks. The Flash is 8 bits wide and 2 wait-states;
+a 32-bit S cycle takes 12 clocks. In general, S = T(W+1), where T is the
+number of transfers necessary.
+
+The work-horse instructions have the following clock counts (from 7TDMI
+datasheet):
+
+Instruction	Clocks		Additional clocks
+^^^^^^^^^^^	^^^^^^		^^^^^^^^^^^^^^^^^
+<alu>		1S		+1I  for shift by register
+				+1S + 1N  if dest is PC
+LDR		1S + 1N +1I	+1S + 1N  if dest is PC
+STR		2N		(really 1S + 1N + 1I)
+B,BL		2S + 1N
+
+With the simplification that I=1 and N=S+1, let's rewrite this as:
+
+Instruction	Clocks		Additional clocks
+^^^^^^^^^^^	^^^^^^		^^^^^^^^^^^^^^^^^
+<alu>		1S		+ 1  for shift by register
+				+ 2S + 1  if dest is PC
+LDR		2S + 2		+ 2S + 1  if dest is PC
+STR		2S + 2
+B,BL		3S + 1
+
+Ahh. Much better. Now we can talk about timings and not go completely mad.
+
+First, the basic building blocks that make up our virtual machine. We'll
+look at calling a machine code word, a `high-level' word, and a `create'
+word, and the code for exiting, or `unnesting', from a high-level word.
+
+The trick is to compare apples with apples. We show the instructions
+executed for the invocation of the word `foo'. For DT and IT, we write
+everything as starting with <next>, even though in our system <next>
+appears -after- the code in a definition. Putting it notionally before
+clarifies its rôle as the virtual machine's fetch and dispatch mechanism,
+analogous to the real machine's hardware instruction fetch and execute.
+
+First, some virtual machine mechanisms.
+
+BL_nest:
+	str	lr, [rp, -4]!	; push lr
+
+BL_unnest:
+	ldr	pc, [rp], 4
+
+BL_unnest_tail:
+	ldr	lr, [rp], 4	; for tail-call optimization
+
+DT_nest:
+	str	ip, [rp, -4]!	; push ip
+	mov	ip, lr		; load new ip from lr
+
+IT_nest:
+	str	ip, [rp, -4]!	; push ip
+	mov	ip, w		; load new ip from w
+	
+// Machine code word //
+BL:   BL foo; <machine code for foo>; MOV pc, lr
+DT:   DT_next; <machine code for foo>
+IT:   IT_next; <machine code for foo>
+
+// High-level word //
+BL:	BL foo; BL_nest; <foo>; <bar>; BL_unnest
+BL_tail_optimized:
+	BL foo; BL_nest; <foo>; BL_unnest_tail; B <bar>;
+
+DT:   DT_next; BL DT_nest; DT_nest; <foo>; DT_next; DT_unnest
+
+IT:   IT_next; IT_nest; <foo>; IT_next; IT_unnest
+
+// Create word //
+do_create:   (assumes lr; for IT would be `w', but times are the same)
+      STR top, [sp, -4]!; MOV top, lr
+
+BL:   BL foo; MOV w, lr; BL do_create; <do_create>; MOV pc, w
+DT:   BL do_create; <do_create>; DT_next
+IT:   <do_create>; IT_next      
+
+
+Block       Instructions        Clocks         Block total clocks
+^^^^^       ^^^^^^^^^^^^        ^^^^^^         ^^^^^^^^^^^^^^^^^^
+BL_nest:    STR lr, [rp, -4]!   2S + 2
+BL_unnest:  LDR pc, [rp], 4     4S + 3
+
+BL_code:    BL foo              3S + 1          6S + 2
+foo:        <machine code for foo>
+            MOV pc, lr          3S + 1
+
+BL_create:  BL foo              3S + 1         10S + 3
+foo:        MOV w, lr           1S
+            BL do_create        3S + 1
+            <do_create>
+            MOV pc, w           3S + 1
+
+BL_inline_does:
+            BL foo              3S + 1         15S + 9
+foo:        BL_nest             2S + 2
+	    BL do_definer       3S + 1
+definer:    STR top, [sp, -4]!  2S + 2
+            MOV top, lr         1S
+	    <foo>
+	    BL_unnest		4S + 3
+
+BL_colon:   BL foo              3S + 1          9S + 6
+foo:        BL_nest             2S + 2
+	    <foo>
+	    BL_unnest		4S + 3
+
+BL_colon:   BL foo              3S + 1         21S + 10
+foo:        STR lr, [rp, -4]!   2S + 2
+            BL a; MOV pc, lr    6S + 2
+            BL b; MOV pc, lr    6S + 2
+            LDR pc, [rp], 4     4S + 3
+
+BL_colon_tail_optimized:
+            BL foo              3S + 1         16S + 8
+foo:        STR lr, [rp, -4]!   2S + 2
+            BL a; MOV pc, lr    6S + 2
+            LDR lr, [rp], 4     2S + 2
+            B b                 3S + 1
+
+do_create:  (common to all cases)
+            STR top, [sp, -4]!
+            MOV top, lr (w for IT)
+
+
+DT_next:    LDR pc, [ip], 4     4S + 3         4S + 3
+
+DT_nest:    STR ip, [rp, -4]!   2S + 2         3S + 2
+            MOV ip, lr          1S
+
+DT_unnest:  LDR ip, [rp], 4     2S + 2         2S + 2
+
+DT_code:    DT_next             4S + 3         4S + 3
+            <machine code for foo>
+
+DT_create:  DT_next             4S + 3         7S + 4
+            BL do_create        3S + 1
+            <do_create>
+
+DT_inline_does:
+	    DT_next		4S + 3        22S + 14
+	    BL do_definer       3S + 1
+definer:    STR top, [sp, -4]!  2S + 2
+            MOV top, lr         1S
+            BL DT_nest          3S + 1
+	    DT_nest             3S + 2
+	    <foo>
+	    DT_next             4S + 3
+	    DT_unnest		2S + 2
+
+DT_inline_nest:
+	    STR ip, [rp, -4]!   2S + 2         3S + 2
+	    MOV ip, pc          1S
+
+DT_colon_inline:
+	    DT_next             4S + 3        13S + 10
+            DT_inline_nest      3S + 2
+            <foo>
+            DT_next             4S + 3
+            DT_unnest           2S + 2
+
+DT_colon:   DT_next             4S + 3        16S + 11
+            BL DT_nest          3S + 1
+            DT_nest             3S + 2
+            <foo>
+            DT_next             4S + 3
+            DT_unnest           2S + 2
+
+IT_next:    LDR w, [ip], 4      2S + 2         6S + 5
+            LDR pc, [w, -4]!    4S + 3
+( assumes pointer points to body - parameter field - and -not- to code field)
+
+IT_nest:    STR ip, [rp, -4]!   2S + 2         3S + 2
+            MOV ip, w           1S
+
+IT_unnest:  LDR ip, [rp], 4     2S + 2         2S + 2
+
+
+IT_code:    IT_next             6S + 5         6S + 5
+            <machine code for foo>
+
+IT_create:  IT_next             6S + 5         6S + 5	
+            <do_create>
+
+IT_do_does: STR top, [sp, -4]!  2S + 2         6S + 4
+	    MOV top, w          1S
+	    IT_nest             3S + 2
+
+IT_does:    IT_next             6S + 5	      23S + 17
+	    BL IT_do_does       3S + 1
+            IT_do_does		6S + 4
+	    <word>
+            IT_next		6S + 5
+	    IT_unnest           2S + 2
+
+IT_colon:   IT_next             6S + 5        17S + 14
+            IT_nest             3S + 2
+            <foo>
+            IT_next             6S + 5
+            IT_unnest           2S + 2
+
+
+An indirect-threaded call to machine code looks like this:
+
+	<next>; <machine code>; [<next>]
+
+The <next> that follows the machine code is considered to be part of the
+call to the next word - a kind of pipelining, and one of the elegances of
+threading. The execution cost of ITC <next> is two loads, an add if
+post-increment is not available, and a branch. On the ARM the total cycle
+count for ITC <next> is 3S + 3N + 2I cycles, where S is a sequential memory
+access, N is a non-sequential access, and I is an internal cycle.
+
+A branch-and-link call to machine code looks like:
+
+	bl; <machine code>; mov lr -> pc
+
+Its cost is two branches. On a pipelined load-store architecture like the
+ARM, two branches will cost 2S + 1N cycles each, or 4S + 2N. Assuming that
+an I cycle takes 1 clock and that an N memory cycle takes 1 clock more than
+an S cycle (as they definitely do on the Sharp '790), the totals are:
+
+   ITC <next>: 3S + 3N + 2I = 3S + 3(S+1) + 2 = 6S + 5
+   DTC <next>: 2S + 2N + 1I = 2S + 2(S+1) + 1 = 4S + 3
+   BL / ret  : 4S + 2N = 4S + 2S + 2          = 6S + 2
+
+An threaded call to high-level code looks like this:
+
+	<next, nest>  <next, body>  <next, unnest>
+
+If we want to calculated only the overhead of the -call-, we have to ignore
+the time taken to execute the body, including its preceding <next>. If we
+executed the body in the current word, and didn't do a colon nest/unnest,
+the overhead would be <next, body>. So we don't count that in the diagram
+above.
+
+Cycle overheads:
+   nest is push i, load i from w (or lr) = 3S + 2
+ unnest is pop i                         = 2S + 2
+  DT_next is ldr pc, [i], 4 = 4S + 3
+  IT_next is ldr w, [i], 4; ldr pc, [w, -4] = 6S + 5
+
+A branch-and-link call to `high-level' (non-leaf) code looks like:
+
+	bl; <push lr>; <machine code>; <pop pc>
+
+Overhead is 3 + 2 + 5 = 10 cycles.
+
+How about space overhead? Indirect-threading requires an extra word for every
+piece of code or variable in the system. For machine-code leaf routines, there
+is no overhead. For non-leaf routines, the stack setup takes one word of space.
+
+Hmm.
+
+Constants and paired instructions
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+As far as I can figure, which isn't too far 'cause this stuff starts to get
+confused, is that adc and sbc make a nice -invert- pair.
+
+SBC ::= Rd := Rn + ~Op2 + Carry
+ADC ::= Rd := Rn +  Op2 + Carry.
+
+But it's not so nice for ADD and SUB. SUB forces Carry to a 1; ADD forces
+it to a zero. These are equivalent (as far as I can figure, but I get VERY
+confused working this stuff out) EXCEPT for when Op2 is ZERO. Then ADD
+produces no carry but SUB does. Hmmm.
+
+By the way, this is different from most other processors (except the 6502,
+which is the same as the ARM). Most processors complement the sense of
+Carry for subtraction, so mixing ADDs and SUBs becomes tricky, but in some
+sense this is considered `better' for the programmer. Who knows.
+
+So the simplest solution is to say that MOV/MVN, ADC/SBC, and AND/BIC are
+all pairs, and `invert' is the only possible pairing. That still gives us
+more room than ARM's assembler... :-)
+
+MSR & MRS
+^^^^^^^^^
+Bad names. MSR means `to status from register'. On the ARM assembler, the
+destination is leftmost, next to the opcode. But in Forth we write the
+operands the other way.  Can't be helped, unless we change the opcode names
+- to something other than MRS/MSR!
+
+So that's what I've done. The new instruction is MVS - move status.
+
+And for the coprocessor move - MRC/MCR - there will be the same problem, so
+let's call those MVC - move coprocessor.
+
+Optimizing tail calls
+^^^^^^^^^^^^^^^^^^^^^
+Stack of ten calls. The innermost one returns. In DT or IT it executes EXIT
+ten times. If we had tail-optimized all those calls, the final return would
+just be a single branch. The result is that the words are strung together
+instead of nested. Saves on return stack space, and saves some time.
+
+Opcode encoding map
+^^^^^^^^^^^^^^^^^^^
+This is an elaboration of what's on page 4-2 of the 7TDMI datasheet.
+
+(We're ignoring the condition code field, since it's preset equally and
+identically in these encodings.)
+
+000 aaaa S <Rn> <Rd> ssss s tt 0 /Rm/   a=aluop; s=shift#, t=shift type
+000 aaaa S <Rn> <Rd> <Rs> 0 tt 1 <Rm>
+001 aaaa S <Rn> <Rd> rrrr i ii i iiii   r=rotate; i=immediate literal
+001 10p1 0 1000 1111 rrrr i ii i iiii   msr/mrs; r=rotate; i=immediate literal
+
+000 10p0 0 1111 <Rd> 0000 0 00 0 0000   p=cpsr/spsr
+000 10p1 0 1001 1111 0000 0 00 0 <Rm>
+000 10p1 0 1000 1111 0000 0 00 0 <Rm>
+
+
+000 000a S <Rd> <Rn> <Rs> 1 00 1 <Rm>
+000 01ua S RdHi RdLo <Rs> 1 00 1 <Rm>
+
+000 pu0w L <Rn> <Rd> 0000 1 cc 1 <Rm>  cc=00 swp/mul; 01=uh; 10=sb; 11=sh
+000 pu1w L <Rn> <Rd> dddd 1 cc 1 dddd  d=disp.; 
+                                       cc=00 swp/mul; 01=uh; 10=sb; 11=sh
+000 10b0 0 <Rn> <Rd> 0000 1 00 1 <Rm>  swp
+
+010 pubw L <Rn> <Rd> dddd d dd d dddd  ldr/str imm offset
+011 pubw L <Rn> <Rd> ssss s tt 0 <Rm>  ldr/str sh. reg. offset
+
+011 cccc c cccc cccc cccc c cc 1 cccc  undefined insn; c=comment
+
+100 pusw L <Rn> rrrr rrrr r rr r rrrr  ldm/stm; r=reg bitmap
+
+101 Lddd d dddd dddd dddd d dd d dddd  b/bl; d=disp
+110 punw L <Rn> CRd_ nnnn d dd d dddd  mcr/mrc; n=cp#, d=disp
+111 0ppp p CRn_ CRd_ nnnn c cc 0 CRm_  copro data op; p=op; n=cp#, c=CP
+111 0ppp L CRn_ <Rd> nnnn c cc 1 CRm_  copro reg xfer; p=op; n=cp#, c=CP
+
+111 1ccc c cccc cccc cccc c cc c cccc  swi; c=comment
+
