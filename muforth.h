@@ -183,7 +183,6 @@ void mu_push_sp(void);
 void mu_scrabble(void);
 void mu_colon(void);
 void mu_semicolon(void);
-void mu_minus_semicolon(void);
 char *to_counted_string(char *);
 
 /* dict.c */

@@ -171,7 +171,6 @@ struct inm initial_forth[] = {
 
 struct inm initial_compiler[] = {
     { ";", mu_semicolon },
-    { "-;", mu_minus_semicolon },
     { "^", mu_compile_return },
     { "[", mu_lbracket },
     { "drop", mu_compile_drop },
@@ -237,7 +236,7 @@ static void compile_dict_entry(
     pde->code = pcode;		/* compile code pointer */
     pde->length = length;
     memcpy(pde->name, name, length);	/* copy name string */
-    pnm = (u_int8_t *)ALIGNED(pde->name + length + 1);
+    pnm = (u_int8_t *)ALIGNED(pde->name + length);
 }
 
 /* called from Forth */

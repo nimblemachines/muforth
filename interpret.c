@@ -48,16 +48,19 @@ static ssize_t first;		/* goes from -start to 0 */
 
 struct string parsed;		/* for errors */
 
+#if 0
 /* Parse whitespace-delimited tokens */
-void mu_token()
+void mu_token_old()
 {
     ssize_t last;
     int trailing;
 
+    /* regardless of the outcome, we return (start, length) */
+    DROP(-2);
+
     if (first == 0)
     {
-	STK(-1) = STK(-2) = 0;
-	DROP(-2);
+	STK(1) = TOP = 0;
 	return;
     }
 	
@@ -67,8 +70,7 @@ void mu_token()
 	if (!isspace(source.end[first])) break;
 	if (++first == 0)
 	{
-	    STK(-1) = STK(-2) = 0;
-	    DROP(-2);
+	    STK(1) = TOP = 0;
 	    return;
 	}
     }
@@ -96,13 +98,62 @@ void mu_token()
     /* Account for characters processed, return token */
     first = last + trailing;
 
+    STK(1) = (int) parsed.data;
+    TOP = parsed.length;
+}
+#endif
+
+void mu_token()
+{
+    ssize_t last;
+    int trailing;
+
+    /* Skip leading whitespace */
+    for (;;)
+    {
+	if (first == 0)
+	    break;
+
+	if (!isspace(source.end[first]))
+	    break;
+
+	first++;
+    }
+
+    /*
+     * Now scan for trailing delimiter and consume it,
+     * unless we run out of input text first.
+     */
+    last = first;
+    trailing = 1;
+    for (;;)
+    {
+	if (last == 0)
+	{
+	    trailing = 0;
+	    break;
+	}
+	if (isspace(source.end[last]))
+	    break;
+
+	last++;
+    }
+
+    /* Get address and length of the token */
+    parsed.data = source.end + first;
+    parsed.length = last - first;
+
+    /* Account for characters processed, return token */
+    first = last + trailing;
+
     STK(-1) = (int) parsed.data;
     STK(-2) = parsed.length;
     DROP(-2);
 }
 
+#if 0
 /* Parse token using arbitrary delimiter; do not skip leading delimiters */
-void mu_parse()
+void mu_parse_old()
 {
     ssize_t last;
     int trailing;
@@ -110,10 +161,12 @@ void mu_parse()
 
     c = TOP;
 
+    /* regardless of the outcome, we return (start, length) */
+    DROP(-1);
+
     if (first == 0)
     {
-	TOP = STK(-1) = 0;
-	DROP(-1);
+	STK(1) = TOP = 0;
 	return;
     }
 	
@@ -132,6 +185,47 @@ void mu_parse()
 	    trailing = 0;
 	    break;
 	}
+    }
+
+    /* Get address and length of the token */
+    parsed.data = source.end + first;
+    parsed.length = last - first;
+
+    /* Account for characters processed, return token */
+    first = last + trailing;
+
+    STK(1) = (int) parsed.data;
+    TOP = parsed.length;
+}
+#endif
+
+void mu_parse()
+{
+    ssize_t last;
+    int trailing;
+    int c;
+
+    c = TOP;
+
+    /* The first character of unseen input is the first character of token */
+    last = first;
+
+    /*
+     * Scan for trailing delimiter and consume it,
+     * unless we run out of input text first.
+     */
+    trailing = 1;
+    for (;;)
+    {
+	if (last == 0)
+	{
+	    trailing = 0;
+	    break;
+	}
+	if (c == source.end[last])
+	    break;
+
+	++last;
     }
 
     /* Get address and length of the token */
@@ -232,7 +326,6 @@ void mu_minus_rbracket()
 {
     state = &forth_compiler;
 }
-
 
 void mu_push_parsed()
 {

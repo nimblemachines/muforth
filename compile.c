@@ -92,22 +92,16 @@ void mu_colon()
     mu_minus_rbracket();
 }
 
-void mu_minus_semicolon()
-{
-    mu_lbracket();
-}
-
 void mu_semicolon()
 {
     mu_compile_return();
-    mu_minus_semicolon();
+    mu_lbracket();
 }
 
 /*
 compiler definitions
-: -;    \ [  ;             ( for words that don't end with ^)
 : ^   lit unnest compile,  ;   ( right now this doesn't do anything fancy)
-: ;     \ ^  \ -;  ;
+: ;     \ ^  \ [  ;
 forth definitions
 */
 
