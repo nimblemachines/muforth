@@ -71,6 +71,6 @@ do_merge !
 
 merge ! do_merge syncpoint
 
-.else
+.elif make(syncpoint) || make(do_merge) || make(merge)
 .error You need to define a source BRANCH to merge from.
 .endif
