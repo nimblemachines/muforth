@@ -118,6 +118,14 @@ void mu_compile_literal_load()
     pcd += 5;
 }
 
+void mu_fetch_literal_value()
+{
+    int *p;
+
+    p = (int *)(TOP + 1);	/* TOP points to "movl #x, %edx" */
+    TOP = *p;			/* fetch the value that is loaded */
+}
+
 void mu_compile_literal_push()
 {
     PUSH((int) mu_push_literal);

@@ -137,6 +137,7 @@ void mu_compile_drop(void);
 void mu_compile_2drop(void);
 void mu_compile_literal_load(void);
 void mu_compile_literal_push(void);
+void mu_fetch_literal_value(void);
 void mu_compile_destructive_zbranch();
 void mu_compile_nondestructive_zbranch();
 void mu_compile_branch(void);

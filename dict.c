@@ -84,6 +84,7 @@ struct inm initial_forth[] = {
     { "readable?", mu_readable_q },
     { "load-literal", mu_compile_literal_load },
     { "push-literal", mu_compile_literal_push },
+    { "fetch-literal", mu_fetch_literal_value },
     { "compile,", mu_compile_call },
     { "resolve", mu_resolve },
     { "state", mu_push_state },
