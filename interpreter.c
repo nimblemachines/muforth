@@ -17,6 +17,9 @@
 typedef void (*forth_func_t)(void);
 static void interpreter(cell_t pc);
 
+static int     hold_lit  = 0;
+static float_t hold_flit = 0;
+
 static int is_func_pcd(cell_t target)
 {
 	code_t *pc;
@@ -102,7 +105,24 @@ static cell_t *op_brk(cell_t *pc)
 	return pc;
 }
 
-static int hold_literal = 0;
+static cell_t *op_lit(cell_t *pc)
+{
+	hold_lit = *pc++;
+	return pc;
+}
+
+static cell_t *op_flit(cell_t *pc)
+{
+	float_t *p;
+
+	p = (float_t *) pc;
+	bcopy(pc, &hold_flit, sizeof(hold_flit));
+	
+	pc = (cell_t *) (p+1);
+
+	return pc;
+}
+
 static void interpreter(cell_t codep)
 {
 	cell_t  *pc;
@@ -124,9 +144,13 @@ static void interpreter(cell_t codep)
 		case CALL: RPUSH(pc +1); pc = op_jump(*pc);	break;
 		case RET:  pc = (cell_t *) RPOP;		break;
 
-		case LITERAL:  PUSH((cell_t) *pc++);		break;
-		case LIT_LOAD: hold_literal = *pc++;		break;
-		case LIT_PUSH: PUSH(hold_literal);		break;
+		case LITERAL:  pc = op_lit(pc); PUSH(hold_lit);	break;
+		case LIT_LOAD: pc = op_lit(pc);			break;
+		case LIT_PUSH: PUSH(hold_lit);			break;
+
+		case FLITERAL:  pc = op_flit(pc); fpush(hold_flit); break;
+		case FLIT_LOAD: pc = op_flit(pc);		break;
+		case FLIT_PUSH: fpush(hold_flit);		break;
 
 		case BRANCH:   pc = (cell_t *) *pc;		break;
 		case ZBRANCH:  pc = op_zbranch(pc, POP);	break;

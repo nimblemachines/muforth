@@ -19,6 +19,25 @@ void mu_f_to_d(void)
 	dpush(fpop());
 }
 
+void mu_fstore(void)
+{
+	float_t *p, d;
+
+	p = (float_t *) POP;
+	d = fpop();
+	*p = d;
+}
+
+void mu_ffetch(void)
+{
+	float_t *p, d;
+
+	p = (float_t *) POP;
+	d = *p;
+
+	fpush(d);
+}
+
 void mu_fadd(void)
 {
 	float_t a, b, c;
@@ -63,15 +82,15 @@ void mu_fdiv(void)
  */
 void mu_fdot(void)
 {
-	float_t n;
+	double d;
 	char *buf;
 	int   buf_size;
 
 	buf_size = POP;
 	buf = (char *) POP;
-	n = fpop();
+	d = fpop();
 
-	snprintf(buf, buf_size, "%G", n);
+	snprintf(buf, buf_size, "%G", d);
 
 	PUSH((cell_t) buf);
 	PUSH(strlen(buf));
@@ -79,10 +98,10 @@ void mu_fdot(void)
 
 void mu_str_to_f(void)
 {
-	double df;
+	double d;
 	char *buf;
 
 	buf = (char *) POP;
-	sscanf(buf, "%lf", &df);
-	fpush(df);
+	sscanf(buf, "%lf", &d);
+	fpush(d);
 }

@@ -54,6 +54,10 @@ enum opcode_e {
 	LIT_LOAD,
 	LIT_PUSH,
 
+	FLITERAL,
+	FLIT_LOAD,
+	FLIT_PUSH,
+
 	BRANCH,
 	ZBRANCH,
 	_ZBRANCH,

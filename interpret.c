@@ -323,6 +323,11 @@ void mu_push_cell_size(void)
 	PUSH(sizeof(cell_t));
 }
 
+void mu_push_fcell_size(void)
+{
+	PUSH(sizeof(float_t));
+}
+
 void mu_push_cell_bits(void)
 {
 	PUSH(sizeof(cell_t) * 8);

@@ -22,6 +22,15 @@ static void op_compile(cell_t op)
 	*pcd++ = op;
 }
 
+static void fcompile(float_t f)
+{
+	float_t *p;
+
+	p = (float_t *) pcd;
+	bcopy(&f, p, sizeof(f));
+	pcd = (code_t *) (p+1);
+}
+
 /*
  * mu_resolve()
  * 
@@ -60,6 +69,11 @@ void mu_compile_##name(void) {	\
 	op_compile(opcode);	\
 	op_compile(POP);	\
 }
+#define COMPILE_FPOP(name, opcode)	\
+void mu_compile_##name(void) {	\
+	op_compile(opcode);	\
+	fcompile(fpop());	\
+}
 #define BRANCH(name, opcode)	\
 void mu_compile_##name(void) {	\
 	op_compile(opcode);	\
@@ -81,6 +95,9 @@ COMPILE(literal_push, LIT_PUSH);
 COMPILE(execute, EXEC);
 COMPILE_POP(literal_load, LIT_LOAD);
 COMPILE_POP(call, CALL);
+
+COMPILE_FPOP(fliteral_load, FLIT_LOAD);
+COMPILE(fliteral_push, FLIT_PUSH);
 
 BRANCH(branch, BRANCH);
 BRANCH(destructive_zbranch, ZBRANCH);
