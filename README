@@ -1272,10 +1272,270 @@ With this new kind of create/does>, you choose how to do it.
 Having understood create/does> you've tackled one of sublime mysteries of
 Forth. The other sublime mystery is our next subject...
 
-When words collide; or, the structure and interpretation of metacompilers
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+The structure and interpretation of metacompilers
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+* getting the right words - dict structure, escapes \o etc
+* time phases
+* compiling numbers
+* finish with example of create/does>
+* be clear about inside == compiling words, outside == mostly defining words
 
-I'm about to talk about metacompilers.
+A metacompiler is what most people outside of Forth call a cross-compiler:
+a compiler that runs on one machine (the "host") and compiles code for
+another (the "target"). We do not here discuss an exciting variation called
+the Canadian Cross, wherein we compile a cross compiler on one machine (the
+"compile host"), that executes on a second machine (the "host"), to compile
+code for a third machine (the "target"). While exciting, there isn't at the
+moment the need or application for this when using muforth.
+
+What makes metacompilers hard to write and understand? I think it's a
+combination of three things, which interrelate in complicated ways:
+
+  * the time phases of metacompilation;
+  * "when words collide"; or, getting the word you asked for;
+  * the two sides of defining words
+
+I'll talk about them in turn, but they are intertwingled, so it won't be an
+entirely linear discussion.
+
+Time phases of metacompilation
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Let's start with the idea of metacompiler time phases; this should lead
+naturally to discussion of the other aspects.
+
+This aspect of metacompilation is rather ill-defined, and different folks
+have pioneered different approaches over the years. Unfortunately (as I'm
+not much of a fan of Perl or its philosophy) there's more than one way to
+do it. One chooses ease over clumsiness, perhaps. But it my experience
+"ease" often translates into ambiguity and confusion. My discussion here
+will focus on an approach that chooses explicitness and verbosity over
+"ease".
+
+Roughly speaking, there are three time phases of metacompilation:
+
+  (1) compiling the metacompiler code;
+  (2) executing the metacompiler code, compiling the target code;
+  (3) executing the target code.
+
+(1) and (2) occur on the host machine; (3) occurs on the target machine.
+(If we are doing tethered debug, (3) needs a little help from the host
+machine, but mostly the execution occurs on the target.)
+
+We can break this down still further.
+
+In (1) we are compiling code that will later execute on the host to read a
+text stream of "target Forth code" and build a memory image of the compiled
+target code. We'll likely need all of the following:
+
+  * an assembler for the target architecture;
+  * defining words (: variable code etc.) for the target;
+  * compiling words (; if then begin while repeat etc.) for the target;
+  * a list of target words as we define them;
+  * assorted and sundry utility words for managing memory spaces, etc.
+
+In the past I have overlapped defining this infrastructure with
+metacompiling the target code, in order to keep things together that seem
+to "belong" together. This is a nicety that complicates the system. We will
+not be discussing such a system here; rather, we will try to "firewall" the
+phases from each other as much as possible, in the interest of modularity.
+
+Looking at the list above we immediately notice that we will be redefining
+almost all the basic infrastructure words with metacompiler versions, and
+we will be creating target versions of most of the .forth. chain. Creating
+separate chains for these new words will help dramatically to prevent
+confusion and ambiguity.
+
+In both phases (1) and (2) being able to specify exactly _which_ version of
+a word we want becomes critical. That brings us naturally to our second big
+metacompiler subject...
+
+When words collide; or, how to keep aliasing from driving you crazy
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+You have to be unambiguously clear about which version of "dup" you mean
+when you call it by name. This is the idea of "when words collide": you
+type "dup", but because of the design of the system you get the _wrong_ dup
+(the host's instead of the target's, the metacompiler's rather than the
+host's, etc.) and _something_ gets compiled or executed, and a while later
+everything crashes down, but you have no idea why.
+
+This kind error is a Royal Pain to find and fix. It is much nicer to force
+disambiguation of "which dup" up front, rather than pay later. The muforth
+way is to create several dictionary chains, one for each "context" in which
+a word might appear, and then to create several interpreter modes, each one
+corresponding roughly to a phase or task in the metacompiler.
+
+John Rible and Bill Muench wrote an elegant metacompiler in which they
+pioneered the use of the terms "outside" and "inside" to mean "metacompiler
+words that occur outside of colon definitions" (mostly defining words) and
+"metacompiler words occuring inside colon definitions" (mostly compiling
+words). I really like the descriptiveness of these terms and to honor their
+inventors have named the dictionary chains in muforth's metacompiler that
+serve similar purposes .outside. and .inside. . They are just like .forth.
+and .compiler. on the host, but have the advantage of having names distinct
+from, and cooler than, the host names.
+
+  * .outside. contains target _defining_ words:   : variable code
+  * .inside. contains target _compiling_ words:   ; if then begin while repeat
+
+In addition to these, I define .assembler. to hold the target assembler
+words, and .target. to hold the words that we're - finally! - defining on
+the target.
+
+By putting the words into different chains like this it becomes much easier
+to know what you are getting when you say "dup". We define an interpreter
+mode for each phase of metacompilation, and we try to define that mode to
+minimize ambiguity - the collision of words, or accidental getting of
+something other than called for - even at the cost of increasing verbosity.
+
+Instead of building into our interpreter modes automatic searches of all
+the chains that _might_ contain the word we want - thus dramatically
+increasing the likelihood of word collision - we define a prefix "escape"
+mechanism for executing or compiling a word from a chain _other than_ the
+one that would be "normal" for our interpreter mode. A perfect example is
+the use of \ and \c to force compilation of .compiler. words.
+
+For every chain in the metacompiler we define an escape, thus:
+
+  \f  compile from .forth.
+  \c  compile from .compiler.
+  \o  compile from .outside.
+  \i  compile from .inside.
+  \a  compile from .assembler.
+  \t  compile from .target.  (occasionally useful if .target. words are
+                              defined using create/does>)
+
+As a concrete example, assume we are writing an outside word that happens
+to depend on both words from .forth. and .outside. . Since it would be
+folly (I think - I may address this question further later on) to define an
+interpreter mode that searches .outside. then .forth. (or vice versa), we
+instead use the regular Forth compiler to define .outside. words - which
+means that _every_ use of an .outside. word within the definition must be
+prefixed with \o . This might seem clumsy and verbose, but it has the
+advantage of being unambiguous.
+
+A key point to remember is this: while _defining_ all the metacompiler
+words we are running the normal muforth interpreter and compiler: only
+.forth. and .compiler. are being searched. If we want to reference an
+.outside. word that we just defined, we have to be explicit about it:
+eg, "\o here" .
+
+We can now sketch the possible "consume" functions for various interpreter
+modes. The .outside. words "remote", "compile," and "number," respectively
+do remote execution on the target, compilation of a procedure call for the
+target, and compilation of a literal for the target. (I've left off the
+prompts for clarity.)
+
+-:  .assembler. find  if  execute ^ then
+      .outside. find  if  execute ^ then  number ;
+mode meta-assembler
+
+-:  .outside. find  if  execute ^ then
+     .target. find  if  \o remote ^ then  number ;
+mode meta-outside
+
+-:  .inside. find  if  execute ^ then
+    .target. find  if  \o compile, ^ then  \o number, ;
+mode meta-inside
+
+-:  .target. find  if  \o remote ^ then  number ;
+mode target
+
+Things to note:
+
+  * None of these modes helps directly with the task of building the
+    metacompiler itself. If we need to refer to an .assembler. word, an
+    .outside. word, or an .inside. word, we have to use an escape (\a, \o,
+    or \i).
+
+  * meta-assembler mode does not search .target. . If we want to find the
+    target address of a variable, we will have to define a special "escape"
+    function to do this. In the past I have had the meta-assembler mode do
+    this automatically but I think this is error-prone.
+
+  * The assembler will need to be able to do basic arithmetic (calculating
+    offsets, shifts, masks, etc.). The best way to make this possible is to
+    put aliases for a handful of host .forth. math words into .assembler. .
+    This must be done judiciously. Another option would be \f escapes.
+
+  * Target mode does not search for any "debugging" words that execute on
+    the host. These are necessary for painless use of the system. Probably
+    an .interaction. chain is necessary, to be _very judiciously_ filled
+    with synonyms (aliases) of host words that are useful for changing the
+    radix, printing the stack, dumping memory, etc.
+
+  * Only meta-inside does special processing of numbers. I'm not sure that
+    this is right, but I think it is. Where numbers are converted from host to
+    target form - say, in the assembler when it takes an offset from the
+    stack to compile into an instruction - target-specific code can be
+    executed. But when we mention a number by "name", we first need to push
+    it onto the stack. It seems like the host's number does a fine job of
+    this. (If our target were a 64 bit machine and our host 32 bits, this
+    might not be quite as true.)
+
+Once we have written all the parts of our metacompiler, the only thing left
+to do to start it up is to change the interpreter mode to meta-outside.
+
+In order to be able to switch among the modes defined for the metacompiler
+we'll probably want something like:
+
+  outside
+  : -]   ( start the meta colon compiler)  meta-inside ;
+  :  ]   \o literal  \o -] ;
+  : :    \o name  \o -] ;
+
+  inside
+  : [    ( switch to outside)  meta-outside ;
+  : ^    <compile return on target> ;
+  : ;    \i ^  \i [ ;
+
+These are analogous to the code in .forth. and .compiler. .
+
+If "code" and "end-code" bracket an assembler definition, we might define
+something like this:
+
+  outside
+  : code  \o name  meta-assembler ;
+
+  assembler
+  : end-code  meta-outside ;
+
+The Janus effect; or, the two faces of defining words
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+A subtle and terribly confusing aspect of metacompilers is the definition
+of defining words, like : and variable. The trouble stems from their dual
+nature: they have two faces, one facing the host Forth, and one facing the
+target.
+
+All defining words are, by definition, create/does> words. Normally what
+happens between create and does> is that we write code to build a data
+structure, and between does> and ; we write code that is executed to do
+something with the data. The difficulty is that, in a metacompiler, the
+words between create and does> execute _on the host_, and the words between
+does> and ; execute _on the target_.
+
+We are already confused enough by the aliasing of word names that
+naturally happens in a metacompiler; now we have to deal with words
+(defining words) that draw from two (or more) different sets of words, and
+have several distinct time phases built into them as well! Yow!
+
+This potential for utter confusion led me to move away from my past efforts
+at "ease" and "naturalness" in the writing of defining words, towards a
+more explicit way that requires the author to specify the source of all non
+.forth. words.
+
+The best way to illustrate is with an example, followed by a discussion of
+each token and its execution behavior.
+
+Let's define a target defining word for arrays. Like all target defining
+words, it goes into .outside. .
+
+  outside
+  : array  \o create  \o ram  swap  \o cells  \o allot
+           \o does>  
+
+Of course here my beautiful system breaks down.
+
+I need a special does> for defining words.
 
 The end
 ^^^^^^^
