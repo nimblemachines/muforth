@@ -95,8 +95,8 @@ very clumsy. I bit the bullet and wrote in assembler, which was quite
 liberating. The only real downside was the frustration of using m4 as a
 macro processor - I needed more than the C preprocessor could give me, but
 I grew to _hate_ m4. I found using it to be a case of programming by
-trial-and-error, rather than something on which that I could bring
-knowledge and experience to bear.
+trial-and-error, rather than something on which I could bring knowledge and
+experience to bear.
 
 This time around I was willing to give on a few things in order to be able
 to write in C.
@@ -190,6 +190,12 @@ which is much nicer. A few neat examples, from startup.mu4:
   : -1  [ 0 invert ] ;
   : 1   [ -1 negate ] ;
 
+A side effect is that literal is no longer a compiler word. Instead of
+being used inside normal Forth words to compile literals, it is instead
+used inside compiler words, but is itself a normal Forth word. In both
+cases it runs at compile time, but the mechanism has changed - it now finds
+itself inside compiler words instead of being one itself.
+
 Since there isn't really any compiler "state" in colorforth - each word
 tells the interpreter, by its color, how to treat it - there is no need to
 bracket definitions with ":" and ";". A red word marks the start of a new
@@ -197,7 +203,7 @@ definition; nothing really marks the end. In fact, it's possible, in
 colorforth, to write a word whose execution "falls thru" into the next
 word. This is considered bad style by some, but assembler programmers over
 the years have used it to great advantage. colorforth gives you this
-option.
+option. (Heh heh. So does muforth.)
 
 If we don't need to mark the start and end of a word with ":" and ";", why
 is there a word called ";" in colorforth? What does it do? It exits from,
@@ -207,17 +213,27 @@ or returns from, the current word, but without it any way marking it as
 I coveted these qualities for muforth, but had the constraint that my
 compiler _does_ have state, and does switch back and forth between
 interpreting and compiling. So I need ";" to end my words, like it always
-has. Now I need two new words:
+has. So I needed two new words:
 
  * to exit a word "prematurely";
  * to end a word, but "fall thru" to the next word.
 
 The first I called "^" to capture the idea of jumping up out of the word.
-The second I called "-;" to indicate that it does part of the work of ";"
-but not all. It stops the compiler, but doesn't compile a "return".
+The second I already had. It's called "[", and is used, as explained above,
+to "temporarily" exit the compiler so that we can do a calculation or
+something. Great! That's all we need. Since we do not smudge or hide newly
+defined words, the only action that needs to be taken to exit the compiler
+is to switch from compile to interpret state. This is exactly what [ does:
+it stops the compiler, but doesn't compile a "return" (or convert a
+tail-call to a jump).
 
 Then there is the usual ; which does both these things. In fact, it simply
-calls one ( ^ ) and then the other ( -; ).
+calls one ( ^ ) and then the other ( [ ). Its definition is basically:
+
+  compiler
+  : ;  \ ^  \ [  ;
+
+where \ is used to force the compilation of a compiler word.
 
 colorforth has the oddball feature that "if" leaves the top of stack
 intact. This can be useful or annoying. I thought it would be interesting
@@ -256,10 +272,11 @@ i/o out of the kernel.
 
 There aren't even any constants defined in muforth! I calculate them,
 starting with 0, in startup.mu4. From there I get some basic constants I
-need for deciding if a character is a digit, and go on from there.
+need for deciding if a character is a digit, and at that point I can write
+the number parsing code.
 
 The number parsing code has some flaws, and isn't that different from what
-you'd find in F-83 or an ANS Forth. The main thing I added was radix
+you'd find in F83 or an ANS Forth. The main thing I added was radix
 prefixes. Even though you're in, say, hex, you can enter a number in any of
 4 radices by prefixing it with a single character:
 
@@ -294,8 +311,8 @@ but also create/does>. I'll talk about create/does> in a later section.
 
 Except in a few places - throw comes to mind - a string in muforth is
 represented on the stack by a tuple: (start, length). start points to the
-first character; length is the length. The string may or may not be
-zero-terminated; no muforth code depends on the presence of such
+first character; length is the count of characters. The string may or may
+not be zero-terminated; no muforth code depends on the presence of such
 termination.
 
 But what about saving strings for later use? Now we have to have a
@@ -311,6 +328,13 @@ length is a cell-sized count, so very large compiled strings are possible.
 string is an array of the characters. termination is a single null
 character - always present in compiled strings! And padding gets us to a
 cell boundary.
+
+Note that it's possible to "compile" a string but not allot the space for
+it. This is useful for temporary strings that need to be zero-terminated,
+such as filenames to be passed down into the C library. Unfortunately it's
+easy to clobber the string thusly compiled. I used to have "ld" use a
+compiled but not alloted string; now it allots it too, so even "temporary"
+filename strings use up data space. Oh well. ^C, up-arrow, return. ;-)
 
 Unlike traditional Forths, I compile the string into "data" space, not code
 space. Then I compile a literal that at runtime pushes the address, not of
@@ -328,20 +352,26 @@ Forths traditionally have had several different kinds of string literals,
 all of them inline (thereby possibly causing cache problems by mixing code
 with data) and therefore requiring strange and convoluted code to "jump
 over" the inline string in order to continue execution. By converting
-strings literals to ordinary literals, lots of problems go away, and the
-use of strings now becomes neatly postfix as well. If I want a literaled
+string literals to ordinary literals, lots of problems go away, and the use
+of strings now becomes neatly postfix as well. If I want a literaled
 compiled string to push (start, length) I simply follow the literal with a
 call to count. Look for "string," in startup.mu4 and you'll see how it all
 works.
+
+Note also that this kind of literal can be used for any arbitrary data
+structure, not just strings; it defines a _universal literal_. What is a
+clump of data but a (start, length) tuple? You can compile any kind of data
+this way, make a literal of it as a counted string, and then call code that
+knows how to pull bits out of it and do something with them.
 
 Tokenizing the input
 ^^^^^^^^^^^^^^^^^^^^
 This is one of the cool innovations in muforth.
 
 In muforth I define a notional string type, called "text", that is better
-suited to tokenizing. I say "notional" because it never shows up in the
-language, only in the C implementation. A text is something a bit odd. I'll
-explain.
+suited than normal (start, length) strings to tokenizing. I say "notional"
+because it never shows up in the language, only in the C implementation. A
+text is something a bit odd. I'll explain.
 
 I discovered, in writing the tokenizer for dforth, that using a string
 (start, length) and an offset (past what we have seen already) was
@@ -364,13 +394,13 @@ If a string is represented by the tuple
 
   (start, length)
 
-then a text describing the same sequence of bytes in memory would be
+then a text describing the same sequence of bytes in memory could be
 represented by the tuple
 
   (end, -length), where end = address + length.
 
 The type "text" consists of a pointer just past the _end_ of the text, and
-a negative offset back from the end to the start. When we start tokenizing
+a negative offset from the end back to the start. When we start tokenizing
 a chunk of text, we set a global variable called first to "point" to the
 first character. But first is really a negative offset from the end of the
 text.
@@ -394,13 +424,13 @@ apart, but they are short enough that I'm not worried about it. ;-)
 Ok, back to tokenizing. Let's assume we've called token, and we're going to
 skip leading whitespace. first "points" to the first character that we
 haven't seen yet. So, while the character at first is whitespace and first
-< 0 (not at the end), increment first. Now either we've run out of text, or
-we've found a non-whitespace character. Either way, this is the first
-character of our token.
+< 0 (not at the end of the text), increment first. Now either we've run out
+of text, or we've found a non-whitespace character. Either way, this is the
+first character of our token.
 
 We leave first pointing to it, set last = first, and then start scanning
 with last, incrementing last as long as it points to a non-whitespace
-character and remains < 0. When we reach the end of the token - which
+character and remains < 0. When we reach the end of the token, which
 happens either if we find a trailing delimiter, or if we run out of text to
 scan, last is left pointing just _past_ the last character of the token.
 
@@ -483,14 +513,14 @@ The forth chain consists of "normal" words: words that should be executed
 when mentioned outside a colon definition, and compiled when mentioned
 inside one.
 
-The compiler chain fills the role that so-called IMMEDIATE words fill in more
-traditional Forths, but without their problems. Because it is a completely
-separate chain that is _not_ searched outside of colon definitions, it is
-possible to have a word with the same name in both chains with no
-confusion. A perfect example is ." . Outside a definition it simply scans
-for a trailing " delimiter and then echoes (types) the string. Inside a
-definition it compiles the string into "data" space, and compiles code to
-type it out at runtime. This is intuitively what we expect.
+The compiler chain fills the role that so-called IMMEDIATE words fill in
+more traditional Forths, but without their problems. Because it is a
+completely separate chain that is _not_ searched outside of colon
+definitions, it is possible to have a word with the same name in both
+chains with no confusion. A perfect example is ." . Outside a definition it
+simply scans for a trailing " delimiter and then echoes (types) the string.
+Inside a definition it compiles the string into "data" space, and compiles
+code to type it out at runtime. This is intuitively what we expect.
 
 Inside a colon definition the interpreter searches the compiler chain, and
 if it finds the token there it executes it rather than compiling it. In
@@ -541,7 +571,9 @@ find is the workhorse word that searches the dictionary. You supply it a
 token (start, length), and the pointer to the head of a dictionary chain
 (such as .forth.). find returns true and a pointer to the word's code if it
 found it, or false and the (start, length) tuple you originally gave it if
-not. This way it's easy to specify a _sequence_ of searches of chains.
+not. This way it's easy to specify a _sequence_ of searches of chains,
+using the same token over and over.
+
 Which brings us to...
 
 The interpreter
@@ -610,7 +642,8 @@ succeeds, it will compile a literal (hence the name "number,".)
 Super-simple, right?
 
 Again, Forth old-timers will laugh at how simple this is compared to what
-it replaces: ONLY/ALSO, weird nibble-encoded dictionary chain indices, etc.
+it replaces: ONLY/ALSO, arrays of weird nibble-encoded dictionary chain
+indices, etc.
 
 I think the fundamental difference between this approach and the
 traditional ones is that the traditional approaches allow for - in fact,
@@ -632,7 +665,7 @@ for the interpreter. startup.mu4 creates a mode for conditional
 interpretation, by creating a new dictionary chain called .conditional. and
 creating a new interpreter mode. It's a bit hairy, mostly because it allows
 _nested_ conditionals, but it's not much code and it's a nice approach: use
-the interpreter to scan for your tokens for you! That's what it's for!
+the interpreter to scan for tokens for you! That's what it's for!
 
 The simplicity and extensibility of this approach wins big for
 metacompilation as well, which, when I finish working on muforth's
@@ -695,15 +728,15 @@ begin marks the beginning. <test> leaves a flag on the stack, which while
 consumes, falling through if true and jumping _past_ repeat if false.
 repeat then jumps to the code following begin.
 
-So what gets compiled looks something like this, using labels as jump
-destinations:
+So what gets compiled looks something like this, using labels (like
+"beginning:") as jump destinations:
 
   beginning:
     ...
     <test>
     branch if zero to end
     ...
-    branch to begin
+    branch to beginning
   end:
 
 begin compiles nothing, but marks the top of the loop by pushing the
@@ -725,7 +758,7 @@ Hmm. This looks just like the code that while is supposed to compile. Do if
 and while do exactly the same thing? Not quite. But before we look at the
 difference, let's think about what repeat has to do. It has to compile a
 backwards branch to beginning, and _then_ it has to fix up the address of
-the branch that while compiled so that it branches to end.
+the forward branch that while compiled so that it branches to end.
 
 So what about while? After compiling the conditional branch, the stack has
 two pointers on it: beginning, and a reference to the forward branch that
@@ -764,8 +797,8 @@ If I write
 What will happen when foo executes? On a normal Forth, the last reference
 to foo will compile a call to foo, which, when executed, will push the
 return stack. (Actually, in most Forths, in the presence of SMUDGE, the
-reference to foo inside foo will fail unless we tell the compiler that foo
-is "recursive".)
+reference to foo inside foo will fail unless we somehow tell the compiler
+that foo is "recursive".)
 
 After foo executes for a while, the return stack will overflow, and the
 program will crash.
@@ -777,9 +810,9 @@ immediately return to our caller? Why indeed!
 
 The call to foo is in what Scheme people call "tail position". Any call in
 tail position has nothing terribly interesing to do when it returns - it's
-going to return directly to its caller anyway. So what was discovered is
-that calls in tail position can be converted to jumps. This conversion is
-called "tail-call conversion", and it's very simple, but very powerful.
+going to return directly to its caller. So what was discovered is that
+calls in tail position can be converted to jumps. This conversion is called
+"tail-call conversion", and it's very simple, but very powerful.
 
 What happens when we do this? Suddenly foo becomes a word that contains an
 infinite loop, but one that consumes zero stack space. We've defined a word
