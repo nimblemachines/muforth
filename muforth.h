@@ -197,6 +197,8 @@ void mu_um_slash_mod(void);
 void mu_fm_slash_mod(void);
 
 /* interpret.c */
+void mu_push_cell_size(void);
+void mu_push_cell_bits(void);
 void mu_start_up(void);
 void mu_nope(void);
 void mu_zzz(void);

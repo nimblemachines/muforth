@@ -63,6 +63,8 @@ struct inm initial_forth[] = {
     { "'number,", mu_push_tick_number_comma },
     { "h", mu_push_h },
     { "r", mu_push_r },
+    { "cell", mu_push_cell_size },
+    { "cell-bits", mu_push_cell_bits },
     { "s0", mu_push_s0 },
     { "sp", mu_push_sp },
     { "catch", mu_catch },

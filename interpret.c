@@ -318,6 +318,16 @@ static struct imode forth_compiler     = { mu__rbracket, mu_nope };
 
 static struct imode *state = &forth_interpreter;
 
+void mu_push_cell_size(void)
+{
+	PUSH(sizeof(cell_t));
+}
+
+void mu_push_cell_bits(void)
+{
+	PUSH(sizeof(cell_t) * 8);
+}
+
 void mu_push_state()
 {
     PUSH(&state);
