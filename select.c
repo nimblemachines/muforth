@@ -58,7 +58,7 @@ void mu_fd_isset()
 void mu_select()
 {
     int count;
-    int nfds = STK(4);
+    cell_t nfds = STK(4);
     fd_set *readfds = (fd_set *) STK(3);
     fd_set *writefds = (fd_set *) STK(2);
     fd_set *exceptfds = (fd_set *) STK(1);
@@ -71,7 +71,7 @@ void mu_select()
 	if (count == -1)
 	{
 	    if (errno == EINTR) continue;
-	    TOP = (int) counted_strerror();
+	    TOP = (cell_t) counted_strerror();
 	    mu_throw();
 	}
 	break;

@@ -23,15 +23,35 @@
 
 #include <sys/types.h>
 #include <string.h>
-    
+
+/*
+ * Multi-architecture support
+ *
+ * We need #defines for things that vary among the architectures that
+ * muforth compiles on. Although so far the two architectures supported are
+ * both 32 bits, this may change.
+ */
+
+#ifdef __POWERPC__
+typedef int32_t    cell_t;
+typedef int64_t    double_cell_t;
+#else
+#ifdef __i386__
+typedef int32_t    cell_t;
+typedef int64_t    double_cell_t;
+#else
+#  error "muforth won't build on your architecture!"
+#endif
+#endif
+
 /* data stack */
 #define STACK_SIZE 4096
 #define STACK_SAFETY 256
 #define S0 &stack[STACK_SIZE - STACK_SAFETY]
 
 /* gcc generates stupid code using this def'n */
-/* #define PUSH(n) 	(*--sp = (int)(n)) */
-#define PUSH(n)		(sp[-1] = (int)(n), --sp)
+/* #define PUSH(n) 	(*--sp = (cell_t)(n)) */
+#define PUSH(n)		(sp[-1] = (cell_t)(n), --sp)
 #define POP		(*sp++)
 #define STK(n)  	(sp[n])
 #define TOP		STK(0)
@@ -51,6 +71,11 @@
  * So, setting up EDI could save a lot of bytes and make the code
  * faster.
  */
+/* XXX: Note: this is a hack that I (daf) hope will go away. I'd like arch-
+ * specific stuff to go into a separate .h file, but because this relies on
+ * POP, which relies on the stack macros, which rely on cell_t, I've got a
+ * problem. Bummer.
+ */
 #ifdef __POWERPC__
 extern void mu_execute(void);
 #define EXECUTE		mu_execute()
@@ -65,8 +90,8 @@ extern void mu_execute(void);
 #define BUG
 #endif
 
-#define ALIGN_SIZE	sizeof(int)
-#define ALIGNED(x)	(((int)(x) + ALIGN_SIZE - 1) & -ALIGN_SIZE)
+#define ALIGN_SIZE	sizeof(cell_t)
+#define ALIGNED(x)	(((cell_t)(x) + ALIGN_SIZE - 1) & -ALIGN_SIZE)
 
 /*
  * struct string is a "normal" string: pointer to the first character,
@@ -101,8 +126,8 @@ struct counted_string
 
 extern struct string parsed;	/* for errors */
 
-extern int stack[];
-extern int *sp;
+extern cell_t stack[];
+extern cell_t *sp;
 
 extern int  cmd_line_argc;
 extern char **cmd_line_argv;
@@ -169,6 +194,9 @@ void mu_compile_2pop_from_r(void);
 void mu_compile_copy_from_r(void);
 void mu_compile_qfor(void);
 void mu_compile_next(void);
+
+/* i386.s */
+void mu_push_literal(void);
 void mu_dplus(void);
 void mu_dnegate(void);
 void mu_um_star(void);

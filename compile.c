@@ -67,7 +67,7 @@ static char *compile_counted_string(char *string, size_t length)
  */
 void mu_scrabble()  /* ( a u - z") */
 {
-    STK(1) = (int)compile_counted_string((char *)STK(1), TOP);
+    STK(1) = (cell_t)compile_counted_string((char *)STK(1), TOP);
     DROP(1);
 }
 
@@ -82,7 +82,7 @@ char *to_counted_string(char *zstring)
 
     length = strlen(zstring);
     counted_string = compile_counted_string(zstring, length);
-    pdt = (u_int8_t *)ALIGNED(counted_string + length + 1);  /* count null */
+    pdt = (uint8_t *)ALIGNED(counted_string + length + 1);  /* count null */
     return counted_string;
 }
 

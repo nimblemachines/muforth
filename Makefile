@@ -35,7 +35,7 @@ ASFLAGS=-g
 LDFLAGS=
 
 # If any of these files changes, make a new version.h
-ARCHX86  = i386.o
+ARCHX86  = i386.o i386_lib.o
 ARCHPPC  = ppc.o ppc_asm.o
 VERSOBJS = kernel.o interpret.o compile.o dict.o file.o \
 	 error.o time.o pci.o tty.o select.o # buf.o

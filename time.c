@@ -31,7 +31,7 @@
 static void push_forth_time_from_libc_time (struct tm *ptm, char *tz)
 {
     STK(-9) = strlen (tz);
-    STK(-8) = (int) tz;
+    STK(-8) = (cell_t) tz;
     STK(-7) = ptm->tm_sec;
     STK(-6) = ptm->tm_min;
     STK(-5) = ptm->tm_hour;

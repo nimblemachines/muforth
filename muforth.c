@@ -29,14 +29,14 @@
 #include <ctype.h>
 
 /* data stack */
-int stack[STACK_SIZE];
-int *sp = S0;
+cell_t stack[STACK_SIZE];
+cell_t *sp = S0;
 
 int  cmd_line_argc;
 char **cmd_line_argv;
 
-u_int8_t *pnm0, *pcd0, *pdt0;	   /* ptrs to name, code, & data spaces */
-u_int8_t *pnm, *pcd, *pdt;	/* ptrs to next free byte in each space */
+uint8_t *pnm0, *pcd0, *pdt0;	   /* ptrs to name, code, & data spaces */
+uint8_t *pnm, *pcd, *pdt;	/* ptrs to next free byte in each space */
 
 /* XXX: Gross hack alert! */
 char *ate_the_stack;
@@ -76,13 +76,13 @@ void mu_push_data_size()
 
 static void allocate()
 {
-    pnm0 = (u_int8_t *) mmap(0, 256 * 4096, PROT_READ | PROT_WRITE,
+    pnm0 = (uint8_t *) mmap(0, 256 * 4096, PROT_READ | PROT_WRITE,
 			  MAP_ANON | MAP_PRIVATE, -1, 0);
 
-    pcd0 = (u_int8_t *) mmap(0, 256 * 4096, PROT_READ | PROT_WRITE | PROT_EXEC,
+    pcd0 = (uint8_t *) mmap(0, 256 * 4096, PROT_READ | PROT_WRITE | PROT_EXEC,
 			  MAP_ANON | MAP_PRIVATE, -1, 0);
 
-    pdt0 = (u_int8_t *) mmap(0, 1024 * 4096, PROT_READ | PROT_WRITE,
+    pdt0 = (uint8_t *) mmap(0, 1024 * 4096, PROT_READ | PROT_WRITE,
 			 MAP_ANON | MAP_PRIVATE, -1, 0);
 
     if (pnm0 == MAP_FAILED || pcd0 == MAP_FAILED || pdt0 == MAP_FAILED)
@@ -151,7 +151,7 @@ static void convert_command_line(int argc, char *argv[])
     /* null terminate and align */
     pdt = pline;
     *pdt++ = 0;
-    pdt = (u_int8_t *)ALIGNED(pdt);
+    pdt = (uint8_t *)ALIGNED(pdt);
 }
 
 void mu_push_command_line()

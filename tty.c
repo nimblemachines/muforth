@@ -46,7 +46,7 @@ void mu_set_termios()
     /* drain out, flush in, set */
     if (tcsetattr(STK(1), TCSAFLUSH, (struct termios *)TOP) == -1)
     {
-	TOP = (int) counted_strerror();
+	TOP = (cell_t) counted_strerror();
 	mu_throw();
     }
     DROP(2);
@@ -93,7 +93,7 @@ void mu_set_termios_speed()
 	BPS(115200);
 	BPS(230400);
     default:
-	TOP = (int) "Unsupported speed";
+	TOP = (cell_t) "Unsupported speed";
 	mu_throw();
     }
     pti->c_ospeed = pti->c_ispeed = TOP;

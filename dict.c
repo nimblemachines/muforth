@@ -208,7 +208,7 @@ void mu_push_compiler_chain()
 void mu_find()
 {
     char *token = (char *) STK(2);
-    int length = STK(1);
+    cell_t length = STK(1);
     struct dict_entry *pde = (struct dict_entry *) TOP;
 
     while ((pde = pde->link) != NULL)
@@ -217,7 +217,7 @@ void mu_find()
 	if (memcmp(pde->name, token, length) != 0) continue;
 
 	/* found: drop token, push code address and true flag */
-	STK(2) = (int) pde->code;
+	STK(2) = (cell_t) pde->code;
 	STK(1) = -1;
 	DROP(1);
 	return;
@@ -236,7 +236,7 @@ static void compile_dict_entry(
     pde->code = pcode;		/* compile code pointer */
     pde->length = length;
     memcpy(pde->name, name, length);	/* copy name string */
-    pnm = (u_int8_t *)ALIGNED(pde->name + length);
+    pnm = (uint8_t *)ALIGNED(pde->name + length);
 }
 
 /* called from Forth */

@@ -27,25 +27,25 @@
 
 void mu_add()
 {
-    int x = POP;
+    cell_t x = POP;
     TOP += x;
 }
 
 void mu_and()
 {
-    int x = POP;
+    cell_t x = POP;
     TOP &= x;
 }
 
 void mu_or()
 {
-    int x = POP;
+    cell_t x = POP;
     TOP |= x;
 }
 
 void mu_xor()
 {
-    int x = POP;
+    cell_t x = POP;
     TOP ^= x;
 }
 
@@ -61,39 +61,39 @@ void mu_invert()
 
 void mu_two_star() { TOP = TOP << 1; }
 void mu_two_slash() { TOP = TOP >> 1; }
-void mu_two_slash_unsigned() { TOP = ((unsigned int) TOP) >> 1; }
+void mu_two_slash_unsigned() { TOP = ((unsigned) TOP) >> 1; }
 
 void mu_shift_left()
 {
-    int sh = POP;
+    cell_t sh = POP;
     TOP <<= sh;
 }
 
 void mu_shift_right()
 {
-    int sh = POP;
+    cell_t sh = POP;
     TOP >>= sh;
 }
 
 void mu_shift_right_unsigned()
 {
-    int sh = POP;
+    cell_t sh = POP;
     (unsigned) TOP >>= sh;
 }
 
 void mu_fetch()
 {
-    TOP = *(int *) TOP;
+    TOP = *(cell_t *) TOP;
 }
 
 void mu_cfetch()
 {
-    TOP = *(u_int8_t *) TOP;
+    TOP = *(uint8_t *) TOP;
 }
 
 void mu_store()
 {
-    int *p = (int *) TOP;
+    cell_t *p = (cell_t *) TOP;
 
     *p = STK(1);
     DROP(2);
@@ -101,15 +101,15 @@ void mu_store()
 
 void mu_cstore()
 {
-    u_int8_t *p = (u_int8_t *) TOP;
+    uint8_t *p = (uint8_t *) TOP;
 
-    *p = (u_int8_t) STK(1);
+    *p = (uint8_t) STK(1);
     DROP(2);
 }
 
 void mu_plus_store()
 {
-    int *p = (int *) TOP;
+    cell_t *p = (cell_t *) TOP;
 
     *p += STK(1);
     DROP(2);
@@ -117,7 +117,7 @@ void mu_plus_store()
 
 void mu_rot()
 {
-    int t = TOP;
+    cell_t t = TOP;
     TOP = STK(2);
     STK(2) = STK(1);
     STK(1) = t;
@@ -125,7 +125,7 @@ void mu_rot()
 
 void mu_minus_rot()
 {
-    int t = TOP;
+    cell_t t = TOP;
     TOP = STK(1);
     STK(1) = STK(2);
     STK(2) = t;
@@ -133,32 +133,32 @@ void mu_minus_rot()
 
 void mu_dupe()
 {
-    int t = TOP;
+    cell_t t = TOP;
     PUSH(t);
 }
 
 void mu_nip()
 {
-    int t = POP;
+    cell_t t = POP;
     TOP = t;
 }
 
 void mu_swap()
 {
-    int t = TOP;
+    cell_t t = TOP;
     TOP = STK(1);
     STK(1) = t;
 }
 
 void mu_over()
 {
-    int s = STK(1);
+    cell_t s = STK(1);
     PUSH(s);
 }
 
 void mu_tuck()  /* a b - b a b */
 {
-    int t = TOP;
+    cell_t t = TOP;
     TOP = STK(1);
     STK(1) = t;
     PUSH(t);
@@ -182,7 +182,7 @@ void mu_string_equal()
 
 void mu_uless()
 {
-    STK(1) = (STK(1) < (uint) TOP) ? -1 : 0;
+    STK(1) = (STK(1) < (cell_t) TOP) ? -1 : 0;
     DROP(1);
 }
 
@@ -209,7 +209,7 @@ void mu_sp_fetch()
 
 void mu_sp_store()
 {
-    sp = (int *) TOP;
+    sp = (cell_t *) TOP;
 }
 
 void mu_cmove()

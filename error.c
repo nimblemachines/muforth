@@ -67,8 +67,8 @@ void mu_catch()
 {
     jmp_buf this_jb;
     jmp_buf *prev_jb;
-    int *saved_sp;
-    int thrown;
+    cell_t *saved_sp;
+    cell_t thrown;
 
     prev_jb = last_jb;
     last_jb = &this_jb;

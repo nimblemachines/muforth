@@ -98,7 +98,7 @@ void mu_token_old()
     /* Account for characters processed, return token */
     first = last + trailing;
 
-    STK(1) = (int) parsed.data;
+    STK(1) = (cell_t) parsed.data;
     TOP = parsed.length;
 }
 #endif
@@ -146,7 +146,7 @@ void mu_token()
     /* Account for characters processed, return token */
     first = last + trailing;
 
-    STK(-1) = (int) parsed.data;
+    STK(-1) = (cell_t) parsed.data;
     STK(-2) = parsed.length;
     DROP(-2);
 }
@@ -194,7 +194,7 @@ void mu_parse_old()
     /* Account for characters processed, return token */
     first = last + trailing;
 
-    STK(1) = (int) parsed.data;
+    STK(1) = (cell_t) parsed.data;
     TOP = parsed.length;
 }
 #endif
@@ -235,7 +235,7 @@ void mu_parse()
     /* Account for characters processed, return token */
     first = last + trailing;
 
-    TOP = (int) parsed.data;
+    TOP = (cell_t) parsed.data;
     STK(-1) = parsed.length;
     DROP(-1);
 }
@@ -335,7 +335,7 @@ void mu_minus_rbracket()
 
 void mu_push_parsed()
 {
-    STK(-1) = (int) parsed.data;
+    STK(-1) = (cell_t) parsed.data;
     STK(-2) = parsed.length;
     DROP(-2);
 }

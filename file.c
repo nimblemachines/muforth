@@ -85,8 +85,8 @@ void mu_create_file()		/* C-string-name - fd */
     fd = open((char *) TOP, O_CREAT | O_TRUNC | O_WRONLY, 0666);
     if (fd == -1)
     {
-	/* TOP = (int) "couldn't open"; */
-	TOP = (int) counted_strerror();
+	/* TOP = (cell_t) "couldn't open"; */
+	TOP = (cell_t) counted_strerror();
 	mu_throw();
     }
     TOP = fd;
@@ -99,8 +99,8 @@ void mu_open_file()		/* C-string-name flags - fd */
     fd = open((char *) STK(1), TOP);
     if (fd == -1)
     {
-	/* TOP = (int) "couldn't open"; */
-	TOP = (int) counted_strerror();
+	/* TOP = (cell_t) "couldn't open"; */
+	TOP = (cell_t) counted_strerror();
 	mu_throw();
     }
     STK(1) = fd;
@@ -124,7 +124,7 @@ void mu_close_file()
 	if(close(TOP) == -1)
 	{
 	    if (errno == EINTR) continue;
-	    TOP = (int) counted_strerror();
+	    TOP = (cell_t) counted_strerror();
 	    mu_throw();
 	}
 	break;
@@ -143,18 +143,18 @@ void mu_mmap_file()		/* fd - addr len */
     if (fstat(fd, &s) == -1)
     {
 	close(fd);
-	TOP = (int) counted_strerror();
+	TOP = (cell_t) counted_strerror();
 	mu_throw();
     }
     p = (char *) mmap(0, s.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
     if (p == MAP_FAILED)
     {
 	close(fd);
-	TOP = (int) counted_strerror();
+	TOP = (cell_t) counted_strerror();
 	mu_throw();
     }
 
-    TOP = (int) p;
+    TOP = (cell_t) p;
     STK(-1) = s.st_size;
     DROP(-1);
     /* PUSH(p); */
@@ -194,7 +194,7 @@ void mu_read_carefully()
 	if (count == -1)
 	{
 	    if (errno == EINTR) continue;
-	    TOP = (int) counted_strerror();
+	    TOP = (cell_t) counted_strerror();
 	    mu_throw();
 	}
 	break;
