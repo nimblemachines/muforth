@@ -27,6 +27,7 @@
 #include <sys/mman.h>
 #include <stdio.h>
 #include <ctype.h>
+#include <stdlib.h>
 
 /* data stack */
 cell_t stack[STACK_SIZE];
@@ -182,8 +183,28 @@ void mu_push_build_time()
     PUSH(build_time);
 }
 
+static void verify(void)
+{
+    int err = 0;
+
+    if (sizeof(cell_t) != sizeof(void *)) {
+	fprintf(stderr, "ERROR: muForth requires that the size of a cell is the same size as a pointer.\n");
+	err = 1;
+    }
+
+    if (2*sizeof(cell_t) != sizeof(dcell_t)) {
+	fprintf(stderr, "ERROR: muForth requires that the size of a dcell is twice the size of a cell.\n");
+	err = 1;
+    }
+
+    if (err) {
+	exit(-1);
+    }
+}
+
 int main(int argc, char *argv[])
 {
+    verify();
     allocate();
     init_dict();
     convert_command_line(argc, argv);

@@ -41,7 +41,16 @@ typedef u_int16_t uint16_t;
 typedef u_int32_t uint32_t;
 #endif /* __linux__ */
 
+/*
+ * You can select double or float for the muForth floating point type.
+ * Simply replace "double" with "float", below.
+ */
+typedef double  float_t;
+#define FLOAT_NCELLS		(sizeof(float_t) / sizeof(cell_t))
+#define D_NCELLS		2
+typedef long long dcell_t;
 typedef int cell_t;
+typedef unsigned int ucell_t;
 typedef unsigned int code_t;
 
 /* data stack */
@@ -194,6 +203,11 @@ void mu_compile_next(void);
 void execute(cell_t target);
 
 /* library.s */
+dcell_t dpop(void);
+void dpush(dcell_t);
+float_t fpop(void);
+void fpush(float_t);
+
 void mu_dplus(void);
 void mu_dnegate(void);
 void mu_um_star(void);

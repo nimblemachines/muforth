@@ -17,8 +17,74 @@
 
 #define DPOP(lo, hi)	(hi = POP, lo = POP)
 #define DPUSH(lo, hi)	(PUSH(lo), PUSH(hi))
+
+/*
+ * fpop() and fpush()
+ *
+ * These routines are implemented in C and must be hand-coded in
+ * assembler for your target machine, if you chose to use floating point.
+ * An entire muForth system can be built without floating point, so don't
+ * think you need it.
+ *
+ * Also these routines aren't in the mu_xyz() name space because they
+ * aren't available to muForth programmers directly.  They are used
+ * indirectly to perform work on behalf of routines that muForth code
+ * may invoke.
+ */
+float_t fpop(void)
+{
+	float_t *p;
+	
+	p = (float_t *) sp;
+	sp += FLOAT_NCELLS;
+
+	return *p;
+}
+
+void fpush(float_t f)
+{
+	float_t *p;
+
+	sp -= FLOAT_NCELLS;
+	p = (float_t *) *sp;
+
+	*p = f;
+}
+
+/*
+ * dpop() and dpush()
+ *
+ * Double cells are necessary for muForth.  They are used in
+ * division and multiplication.  Division uses dcells.
+ */
+dcell_t dpop(void)
+{
+	dcell_t r;
+	ucell_t lo;
+	cell_t hi;
+
+	hi = POP;
+	lo = POP;
+	r = hi;
+	r <<= 32;
+	r |= lo;
+
+	return r;
+}
+
+void dpush(dcell_t d)
+{
+	ucell_t lo;
+	cell_t hi;
+	hi = d >> 32;
+	lo = d & 0xFFFFFFFF;
+	PUSH(lo);
+	PUSH(hi);
+}
+
 void mu_dnegate(void)
 {
+#if 1
 	cell_t lo, hi;
 
 	DPOP(lo, hi);
@@ -27,6 +93,20 @@ void mu_dnegate(void)
 		DPUSH(-lo, -hi);
 	else
 		DPUSH(-lo, ~hi);
+#else
+	/*
+	 * The other way to implement this is:
+	 */
+	dcell_t n;
+	n = dpop();
+	dpush(-n);
+	/*
+	 * The reason this isn't the implementation is to show
+	 * that the simpler logic, above, is quite valid.
+	 * Given that, it should make it easier to carry forward
+	 * to a muForth implementation on your target machine.
+	 */
+#endif
 }
 
 void mu_dplus(void)
