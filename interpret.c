@@ -307,6 +307,12 @@ void mu__rbracket()
 void mu_nope() {}		/* very useful NO-OP */
 void mu_zzz() {}		/* a convenient GDB breakpoint */
 
+/*
+ * Remember that the second part of a struct imode is a pointer to code to
+ * print a mode-specific prompt. The muforth kernel lacks decent I/O
+ * facilities. Until these are defined in startup.mu4, the prompts are
+ * noops.
+ */
 static struct imode forth_interpreter  = { mu__lbracket, mu_nope };
 static struct imode forth_compiler     = { mu__rbracket, mu_nope };
 
