@@ -50,7 +50,7 @@ int *sp = S0;
  * 1) those that build code in the dictionary, i.e., .compiler. words
  * 2) those that perform run-time functionality, i.e., .forth. words
  */
-static u_int32_t *pcd_last_call;
+static cell_t *pcd_last_call;
 
 /************************************************************************
  *
@@ -61,6 +61,7 @@ static u_int32_t *pcd_last_call;
  * readable.
  */
 #define INSTR_MASK	0xFC000000
+#define INSTR_ENCODING	0x000007FF
 
 /*
  * BRANCHES
@@ -79,7 +80,7 @@ static u_int32_t *pcd_last_call;
 #define BR_AND_LINK	1
 #define BR_ABS_ADDR	2
 #define	BAL		(BR | BR_AND_LINK)
-#define BR_COND_ZERO	(BRCOND | RS(12))
+#define BR_COND_ZERO	(BRCOND | RS(12) | RA(2))
 
 /*
  * BLR_ALWAYS is Branch And Link to Link Register, Always
@@ -107,32 +108,18 @@ static u_int32_t *pcd_last_call;
  * This is actualy, move to special purpose register, lr.  Yeah, yeah.
  * When you use this you MUST specify a register to use, too.
  */
-#define MTLR		0x7c0803a6
-#define MFLR		0x7c0802a6
+#define CLASS_31	0x7C000000
+#define MTSPR_ENCODING	0x000003a6
+#define MFSPR_ENCODING	0x000002a6
+#define MTSPR		(CLASS_31 | MTSPR_ENCODING)
+#define MFSPR		(CLASS_31 | MFSPR_ENCODING)
+#define SPR_LR		(RB(0) | RA(8))
+#define SPR_CTR		(RB(0) | RA(9))
+#define MTLR		(MTSPR | SPR_LR)
+#define MFLR		(MFSPR | SPR_LR)
 
 
 #define SHIFT_LEFT	0x7C000030
-
-/*
- * Register definitions:
- *
- * Temp is just that
- * PUSH_TEMP is different.  Usually, it would just be Temp.
- * But, note that it is used as part of the relationship between
- * BUILD and DOES> .  BUILD will set the PUSH_TEMP register with
- * the top of stack after the BUILD is complete.  Then, when DOES>
- * is executed, the first thing it will do is to push this value
- * onto the stack.  See mu_compile_literal_load() and 
- */
-#define R_TEMP		3
-#define R_A		4
-#define R_B		5
-#define R_C		6
-#define R_D		7
-#define R_PUSH_TEMP	11
-#define R_SP		15
-#define R_RP		1
-#define NUM_REGS	32
 
 /*
  * INTEGER OPS
@@ -172,20 +159,44 @@ static u_int32_t *pcd_last_call;
  * This version uses the stack frame pointer for
  * the return stack.
  *
- * Also, R14 contains a pointer to the global variable sp.
+ * Also, R11 contains a pointer to the global variable sp.
  * This is good for two reasons.  First, Forth words don't have
  * to generate code to load the address of the stack pointer
  * (2 instructions) and C code won't tromple on top of it.
- * The reason for this is that R14 is a nonvolatile register
- * and thus the compiler will generate code to preserve R14
+ * The reason for this is that R11 is a nonvolatile register
+ * and thus the compiler will generate code to preserve R11
  * before munging it and will reserect it before returning.
  * However, if a C routine called a Forth word and that
- * C routine had pushed R14 and then overwritten it, then
- * the Forth word would execute without the benefit of R14.
+ * C routine had pushed R11 and then overwritten it, then
+ * the Forth word would execute without the benefit of R11.
  * Hmmm.  Is it possible for C functions to execute Forth
  * routines?  How does this system get started?  What's
  * the transition between C and Forth?
  */
+
+/*
+ * Register definitions:
+ *
+ * Temp is just that
+ * PUSH_TEMP is different.  Usually, it would just be Temp.
+ * But, note that it is used as part of the relationship between
+ * BUILD and DOES> .  BUILD will set the PUSH_TEMP register with
+ * the top of stack after the BUILD is complete.  Then, when DOES>
+ * is executed, the first thing it will do is to push this value
+ * onto the stack.  See mu_compile_literal_load() and 
+ */
+#define R_RP		1
+#define R_TEMP		3
+#define R_A		11
+#define R_B		12
+#define R_CALL		7
+#define R_LINK_IN	8
+#define R_LINK_OUT	9
+#define R_PUSH_TEMP	10
+#define R_PSP		4
+#define R_SP		5
+#define NUM_REGS	32
+
 
 /*
  * ADD Immediate is the way to load a value into a register.  This
@@ -200,7 +211,8 @@ static u_int32_t *pcd_last_call;
  *         of the value to be loaded is set, the high order data has to have
  *         one added to it.
  */
-#define ADD		0x7C000214
+#define ADD_ENCODING	0x00000214
+#define ADD		(CLASS_31 | ADD_ENCODING)
 #define ADDI		0x38000000
 #define ADDIS		0x3C000000
 
@@ -233,18 +245,26 @@ static u_int32_t *pcd_last_call;
 extern void mu_iflush_addr(void *addr);
 
 /*
- * comma_instr(int instr)
+ * store_instr() and comma_instr()
  *
  * This routine will append the instruction into the instruction stream.
  * And, it flushes the instruction from the data stream.
+ *
+ * All instructions that modify memory filter through this routine.
+ * This will change when I write code to modify already placed instructions.
  */
+static void store_instr(cell_t *addr, int instr)
+{
+	*addr = instr;
+
+	mu_iflush_addr(addr);
+}
+
 static void comma_instr(int instr)
 {
-	u_int32_t *pc = (u_int32_t *) pcd;
+	cell_t *pc = (u_int32_t *) pcd;
 
-	*pc = instr;
-
-	mu_iflush_addr(pc);
+	store_instr(pc, instr);
 
 	pcd += 4;
 }
@@ -278,47 +298,61 @@ static void assert_16bit_val(unsigned int val)
 	}
 }
 
-static void comma_addi(int reg, int val)
-{
-	assert_valid_reg(reg);
+/*
+ * comma_fetch_sp(), comma_store_sp()
+ *
+ * These routines "manage" the loading/storing of the stack pointer.
+ * The logic is simple: A call to comma_fetch_sp() is used in any
+ * routine that expects the stack pointer to be valid.
+ * Then, when calling C code or exiting a function, comma_store_sp()
+ * is called.  If the stack pointer register had been modified
+ * then it will be written back to memory for others to use.
+ *
+ * NOTE: for now, no tracking of a modified stack pointer is kept.
+ * Therefore, we always write sp back to main memory at exit points.
+ */
+static void comma_li(int r, int val);
+static void comma_ld(int r_dest, unsigned int offset, int r_base);
+static void comma_st(int r_src, int offset, int r_base);
 
-	comma_instr(ADDI | RS(reg) | RA(reg) | (val & IMM_MASK));
+static int sp_loaded = 0;
+static int sp_modified = 0;
+static void comma_fetch_sp(void)
+{
+	if (sp_loaded)
+		return;
+
+	comma_li(R_PSP, (int) &sp);
+	comma_ld(R_SP, 0, R_PSP);
+
+	sp_loaded = 0;	/* setting to 1 optimizes sp loads */
+	sp_modified = 0;
 }
 
-static void comma_ld(int r_dest, unsigned int offset, int r_base)
+static void comma_store_sp(void)
 {
-	assert_valid_reg(r_dest);
-	assert_valid_reg(r_base);
-	assert_16bit_val(offset);
+//	if (!sp_modified)
+	if (!sp_loaded)
+		return;
 
-	comma_instr(LD | RS(r_dest) | RA(r_base) | (offset & IMM_MASK));
+	if (!sp_modified)
+		printf("Unnecessarily writing back the sp at %p\n", pcd);
+
+	comma_st(R_SP, 0, R_PSP);
+
+	sp_loaded = 0;
+	sp_modified = 0;
 }
 
-static void comma_st(int r_src, int offset, int r_base)
-{
-	assert_valid_reg(r_src);
-	assert_valid_reg(r_base);
-	assert_16bit_val(offset);
 
-	comma_instr(ST | RS(r_src) | RA(r_base) | (offset & IMM_MASK));
-}
-
-static void comma_stu(int r_src, int offset, int r_base)
-{
-	assert_valid_reg(r_src);
-	assert_valid_reg(r_base);
-	assert_16bit_val(offset);
-
-	comma_instr(STU | RS(r_src) | RA(r_base) | (offset & IMM_MASK));
-}
-
-static void comma_cmpi(int r, int value)
-{
-	assert_valid_reg(r);
-	assert_16bit_val(value);
-
-	comma_instr(CMPI | RA(r) | value);
-}
+/*
+ * comma_<ppc-instr>()
+ *
+ * A bunch of routines which build various PowerPC instructions.
+ * I use these instead of in-line build instructions (with direct
+ * calls to comma_instr() because various errors can be checked
+ * here.  Also, it makes the call points look more readable.
+ */
 
 static void comma_li(int r, int val)
 {
@@ -350,6 +384,67 @@ static void comma_li(int r, int val)
 	}
 }
 
+static void comma_ld(int r_dest, unsigned int offset, int r_base)
+{
+	assert_valid_reg(r_dest);
+	assert_valid_reg(r_base);
+	assert_16bit_val(offset);
+
+	if (r_base == R_SP)
+		comma_fetch_sp();
+
+	comma_instr(LD | RS(r_dest) | RA(r_base) | (offset & IMM_MASK));
+}
+
+static void comma_st(int r_src, int offset, int r_base)
+{
+	assert_valid_reg(r_src);
+	assert_valid_reg(r_base);
+	assert_16bit_val(offset);
+
+	if (r_base == R_SP)
+		comma_fetch_sp();
+
+	comma_instr(ST | RS(r_src) | RA(r_base) | (offset & IMM_MASK));
+}
+
+static void comma_stu(int r_src, int offset, int r_base)
+{
+	assert_valid_reg(r_src);
+	assert_valid_reg(r_base);
+	assert_16bit_val(offset);
+
+	if (r_base == R_SP) {
+		comma_fetch_sp();
+		sp_modified = 1;
+	}
+
+	comma_instr(STU | RS(r_src) | RA(r_base) | (offset & IMM_MASK));
+}
+
+static void comma_cmpi(int r, int value)
+{
+	assert_valid_reg(r);
+	assert_16bit_val(value);
+
+	if (r == R_SP)
+		comma_fetch_sp();
+
+	comma_instr(CMPI | RA(r) | value);
+}
+
+static void comma_addi(int reg, int val)
+{
+	assert_valid_reg(reg);
+
+	if (reg == R_SP) {
+		comma_fetch_sp();
+		sp_modified = 1;
+	}
+
+	comma_instr(ADDI | RS(reg) | RA(reg) | (val & IMM_MASK));
+}
+
 static void comma_mtlr(int r)
 {
 	comma_instr(MTLR | RS(r));
@@ -362,12 +457,18 @@ static void comma_mflr(int r)
 
 static void comma_pop(int r, int r_sp)
 {
+	if (r_sp == R_SP)
+		comma_fetch_sp();
+
 	comma_ld(r, 0, r_sp);
 	comma_addi(r_sp, 4);
 }
 
 static void comma_push(int r, int r_sp)
 {
+	if (r_sp == R_SP)
+		comma_fetch_sp();
+
 	comma_stu(r, -4, r_sp);
 }
 
@@ -420,11 +521,19 @@ void mu_fm_slash_mod()		/* floored division! */
  *
  * And, if this call is to C code, then reload the Stack Pointer (R15).
  */
+static int is_c_function(u_int32_t addr)
+{
+	if (addr < (u_int32_t) pcd0)
+		return 1;
+	else
+		return 0;
+}
+
 void mu_compile_call()
 {
 	u_int32_t instr, addr;
 
-	pcd_last_call = (u_int32_t *) pcd;
+	pcd_last_call = (cell_t *) pcd;
 
 	addr = POP;
 
@@ -443,10 +552,15 @@ void mu_compile_call()
 	/*
 	 * If we will call a C function, we need to write the SP register back to memory
 	 */
-	if ((u_int8_t *) addr < pcd0)
+	if (is_c_function(addr))
 	{
-		comma_st(R_SP, 0, 14);
-		comma_addi(R_RP, -16);
+		comma_store_sp();
+		if (pcd_last_call[-1] == (ADDI | RS(R_RP) | RA(R_RP) | (16 & IMM_MASK))) {
+			pcd -= 4;
+			pcd_last_call = (cell_t *) pcd;
+		} else {
+			comma_addi(R_RP, -16);
+		}
 	}
 
 	if ((addr == 0) || (addr & 0xFC000000)) {
@@ -455,8 +569,8 @@ void mu_compile_call()
 		 * The address must be loaded into a temporary register
 		 * so we can jump through it.
 		 */
-		comma_li(R_TEMP, addr);
-		comma_mtlr(R_TEMP);
+		comma_li(R_CALL, addr);
+		comma_mtlr(R_CALL);
 		comma_instr(BLRL_ALWAYS);
 	} else {
 		/*
@@ -473,9 +587,9 @@ void mu_compile_call()
 	/*
 	 * If we called a C function, we need to reload the SP register
 	 */
-	if ((u_int8_t *) addr < pcd0)
+	if (is_c_function(addr))
 	{
-		comma_ld(R_SP, 0, 14);
+		comma_addi(R_RP, 16);
 	}
 }
 
@@ -486,6 +600,24 @@ void mu_compile_call()
  */
 void mu_resolve(void)
 {
+	u_int32_t *dest = (u_int32_t *) POP;
+	u_int32_t *src  = (u_int32_t *) POP -1;
+	u_int32_t instr, br_type, delta;
+
+	delta = (u_int32_t) dest - (u_int32_t) src;
+	instr = *src;
+	br_type = instr & INSTR_MASK;
+	if (br_type == BR) {
+		delta &= ~INSTR_MASK;
+	} else if (br_type == BRCOND) {
+		br_type |= instr & (RS(31) | RA(31));
+		delta &= ~(INSTR_MASK | RS(31) | RA(31));
+	} else {
+		assert(0);
+	}
+	assert((delta & 3) == 0);
+
+	store_instr(src, br_type | delta);
 }
 
 void mu_compile_literal_load()
@@ -505,19 +637,60 @@ void mu_compile_drop(void)
 
 void mu_compile_2drop(void)
 {
-	comma_addi(R_SP, 4);
+	comma_addi(R_SP, 8);
 }
 
 void mu_compile_entry(void)
 {
-	comma_mflr(R_TEMP);
-	comma_push(R_TEMP, R_RP);
+	comma_mflr(R_LINK_IN);
+	comma_push(R_LINK_IN, R_RP);
 }
 
+/*
+ * mu_compile_return()
+ *
+ * This routine would like to turn some calls into tail recursive calls.
+ * In order to do so, at the point where we would place the return code
+ * sequence the following things must be true:
+ * 1) if the previous instruction is a branch and link absolute address,
+ * 2) Or, if the previous instruction is a branch to link address and link.
+ *
+ * If either is true, then we can -in theory- convert the calls into jumps.
+ * But, in order to do that one other condition must be true:
+ *    The call must be to a Forth compiled function.
+ * The reason for this last condition is that because of the link register
+ * mechanism of function calls, we have to skip the pushing of the link
+ * register onto the stack.  The only way to do that is to know how long
+ * that code sequence is (or de-assemble the code on the fly to determine it!).
+ * With Forth code it's relatively easy to know: It's two instructions.
+ * So, we will need to construct a new kind of instruction with the new
+ * address and ensure that it fits within the space allotted for the call
+ * already.  So long as that's all fine, then we can replace a call
+ * with a jump.
+ *
+ * It's much easier on architectures with JSR instructions.
+ */
 void mu_compile_exit(void)
 {
-	comma_pop(R_TEMP, R_RP);
-	comma_mtlr(R_TEMP);
+	comma_store_sp();
+
+#if 0
+	u_int32_t *pc;
+
+	/*
+	 * Check to see if the previous instruction is a BR_ABS_ADDR
+	 * or a BLRL_ALWAYS, then disable their AND_LINK bits.
+	 */
+	pc = (u_int32_t *) pcd -1;
+	if ((*pc & (BAL | BR_ABS_ADDR)) == (BAL | BR_ABS_ADDR)) {
+		*pc &= ~BR_AND_LINK;
+	} else if (*pc == BLRL_ALWAYS) {
+		*pc &= ~BR_AND_LINK;
+	} else {
+#endif
+
+	comma_pop(R_LINK_OUT, R_RP);
+	comma_mtlr(R_LINK_OUT);
 	comma_instr(BLR_ALWAYS);
 }
 
@@ -571,30 +744,6 @@ void mu_compile_2push_to_r()
 	comma_push(R_TEMP, R_RP);
 }
 
-void mu_dnegate(void)
-{
-	u_int64_t *dsp;
-
-	dsp = (u_int64_t *) sp;
-
-	*dsp = - *dsp;
-}
-
-void mu_dplus(void)
-{
-	u_int64_t *dsp, a, b, c;
-
-	dsp = (u_int64_t *) sp;
-
-	a = dsp[0];
-	b = dsp[1];
-
-	c = a + b;
-
-	dsp[1] = c;
-
-	sp += 4;
-}
 
 /*
  * mu_um_star()
@@ -688,6 +837,8 @@ u_int32_t mu_jump_helper(u_int32_t *base)
 	int index;
 	u_int32_t word;
 
+	assert(0);
+
 	index = POP;
 	word = base[index];
 	assert((word & INSTR_MASK) == BR);
@@ -696,11 +847,21 @@ u_int32_t mu_jump_helper(u_int32_t *base)
 
 	return word;
 }
-
+/*
+(gdb) x/x 0x00006050
+0x6050 <test_dnegate+124>:      0x409e0024
+(gdb) x/x 0x305b74
+0x305b74:       0x41800020
+(gdb) x/i 0x00006050
+0x6050 <test_dnegate+124>:      bne-    cr7,0x6074 <test_dnegate+160>
+(gdb) x/i 0x305b74
+0x305b74:       blt-    0x305b94
+*/
 void mu_compile_nondestructive_zbranch(void)
 {
 	comma_ld(R_TEMP, 0, R_SP);
 	comma_cmpi(R_TEMP, 0);
+	comma_store_sp();
 	comma_instr(BR_COND_ZERO);
 	PUSH(pcd);
 }
@@ -709,6 +870,7 @@ void mu_compile_destructive_zbranch(void)
 {
 	comma_pop(R_TEMP, R_SP);
 	comma_cmpi(R_TEMP, 0);
+	comma_store_sp();
 	comma_instr(BR_COND_ZERO);
 	PUSH(pcd);
 }
@@ -723,7 +885,12 @@ void mu_compile_branch(void)
  * mu_fetch_literal_value()
  *
  * The top of stack points to the beginning of a load immediate
- * code sequence.  The first instruction will be an ADDI or an
+ * code sequence.  Or, the top of stack points to the beginning of
+ * a word.  Therefore, the first instructions will be the beginning
+ * of a word, i.e.: function prolog instructions.  We need to skip
+ * the function prolog.
+ *
+ * The first instruction (after handling the prolog) will be an ADDI or an
  * ADDIS, but to note that the RS instruction will be R_PUSH_TEMP and
  * the RA field will be R0 (anything else is an error).
  * Then, if the first instruction is an ADDI, and if the next instruction
@@ -741,6 +908,16 @@ void mu_fetch_literal_value(void)
 	addr = (u_int32_t *) POP;
 
 	instr = addr[0];
+
+	/*
+	 * The following sequence needs to be coordinated with the
+	 * function mu_compile_entry();
+	 */
+	if (instr == (MFLR | RS(R_LINK_IN)))
+		instr = *++addr;
+
+	if (instr == (STU | RS(R_LINK_IN) | RA(R_RP) | (-4 & IMM_MASK)))
+		instr = *++addr;
 
 	assert((instr & RS(31)) == RS(R_PUSH_TEMP));
 	assert((instr & RA(31)) == RA(0));
@@ -811,6 +988,7 @@ void mu_compile_qfor(void)
 {
 	comma_pop(R_TEMP, R_SP);	/* R_TEMP = *R_SP ++; */
 	comma_cmpi(R_TEMP, 0);		/* z = (R_TEMP == 0); */
+	comma_store_sp();
 	comma_instr(BR_COND_ZERO);	/* if (!z) { */
 	PUSH(pcd);			/* Save the address of the branch */
 	comma_push(R_TEMP, R_RP);	/*	*--R_SP = R_TEMP; */
@@ -827,10 +1005,112 @@ void mu_compile_qfor(void)
 void mu_compile_next(void)
 {
 	comma_ld(R_TEMP, 0, R_RP);	/* R_TEMP = *R_RP; */
+	comma_addi(R_TEMP, -1);		/* R_TEMP --; */
+	comma_st(R_TEMP, 0, R_RP);	/* *R_RP = R_TEMP; */
 	comma_cmpi(R_TEMP, 0);		/* z = (R_TEMP == 0); */
+	comma_store_sp();
 	comma_instr(BR_COND_ZERO);	/* } while (!z); */
 	PUSH(pcd);			/* Compiler push of the branch address */
 	comma_addi(R_RP, 4);		/* pop the count off the return stack */
+}
+
+extern cell_t mu_print_func_name(cell_t addr);
+
+void mu_disassemble(int addr)
+{
+	cell_t *pc, base, instr, type;
+	int done, rs, ra, rb, imm, encoding;
+
+	base = mu_print_func_name(addr);
+	pc = (cell_t *) base;
+	printf("\n");
+
+	done = 0;
+	do {
+		printf("%p: ", pc);
+
+		instr = *pc++;
+
+		type = instr & INSTR_MASK;
+		rs = (instr & RS(31)) >> RS_SHIFT;
+		ra = (instr & RA(31)) >> RA_SHIFT;
+		rb = (instr & RB(31)) >> RB_SHIFT;
+		encoding = (instr & INSTR_ENCODING);
+		imm = instr & IMM_MASK;
+		if (imm & 0x8000) {
+			imm |= 0xFFFF0000;
+		}
+
+		switch(type) {
+		case CLASS_31:
+			switch (encoding) {
+			case ADD_ENCODING:
+				printf("add\tr%d, r%d, r%d\n", rs, ra, rb);
+				break;
+			case MTSPR_ENCODING:
+				printf("mtlr\t%d\n", rs);
+				break;
+			case MFSPR_ENCODING:
+				printf("mflr\t%d\n", rs);
+				break;
+			default:
+				assert(0);
+			}
+			break;
+
+		case ADDI:
+			printf("addi\tr%d, r%d, %d\n", rs, ra, imm);
+			break;
+
+		case ADDIS:
+			printf("addis\tr%d, r%d, %d\n", rs, ra, imm);
+			break;
+
+		case STU:
+			printf("stwu\tr%d, %d(r%d)\n", rs, imm, ra);
+			break;
+
+		case ST:
+			printf("st\tr%d, %d(r%d)\n", rs, imm, ra);
+			break;
+
+		case LD:
+			printf("ld\tr%d, %d(r%d)\n", rs, imm, ra);
+			break;
+
+		case BRCOND:
+			if ((instr & ~IMM_MASK) == BR_COND_ZERO)
+				printf("beq\t%8.8x\n", addr + imm);
+			else assert (0);
+			break;
+
+		case BR:
+		{
+			cell_t dest;
+
+			dest = instr & ~(INSTR_MASK | BR_ABS_ADDR | BR_AND_LINK);
+			if (instr & BR_AND_LINK)
+				printf("bal\t");
+			else
+				printf("ba\t");
+			mu_print_func_name(dest);
+			printf("\n");
+			break;
+		}
+
+		case BLR_ALWAYS & INSTR_MASK:
+			if (instr == BLRL_ALWAYS)
+				printf("blrl\n");
+			else
+				printf("blr\n");
+			done = 1;
+			break;
+
+		default:
+			printf("UNKNOWN instr %8.8x\n", instr);
+			done = 1;
+		}
+	} while (!done);
 }
 
 /************************************************************

@@ -77,27 +77,21 @@ _mu_iflush_addr:
 _mu_execute:
 	mflr	r0
 	stwu	r0,-4(r1)		; Save return address
-	stwu	r14,-4(r1)		; Preserve R14 before putting the address
-					; of "sp" into it.
-	stwu	r15,-4(r1)
 
-	addi	r14,0,lo16(_sp)		; r14 = &sp
-	addis	r14,r14,ha16(_sp)
-	lwz	r15,0(r14)		; r15 =  sp
+	addi	r11,0,lo16(_sp)		; r11 = &sp
+	addis	r11,r11,ha16(_sp)
+	lwz	r12,0(r11)		; r12 =  sp
 	
-	lwz	r3,0(r15)		; Fetch the address of the next word to call
-	addi	r15,r15,4		; Increment the Stack Pointer (in the register)
+	lwz	r3,0(r12)		; Fetch the address of the next word to call
+	addi	r12,r12,4		; Increment the Stack Pointer (in the register)
+	stw	r12,0(r11)		; Save new Stack Pointer (to memory)
 	
 	mtlr	r3			; Prepare the target address
 	blrl				; Branch to the function
 
-	stw	r15,0(r14)		; Save SP before returnning to C
-
-	lwz	r15,0(r1)		; Restore R15 for the caller (C code)
-	lwz	r14,4(r1)		; Restore R14 for the caller (C code)
-	lwz	r0,8(r1)		; Restore the Link Register
+	lwz	r0,0(r1)		; Restore the Link Register
 	mtlr	r0
-	addi	r1,r1,12		; Drop R14 and the Link Register from the stack
+	addi	r1,r1,4			; Drop R11 and the Link Register from the stack
 	blr				; Return to the calller
 
 	;;
@@ -117,11 +111,57 @@ _mu_execute:
 	.globl	_mu_jump_helper
 _mu_jump:
 	mflr	r3			; R3 is the first passed parameter in C on PPC
-	stw	r15,0(r14)		; Save the stack pointer
+	addi	r11,0,lo16(_sp)		; r11 = &sp
+	addis	r11,r11,ha16(_sp)
+	stw	r12,0(r11)		; Save the stack pointer
 	bl	_mu_jump_helper		; Call the C routine
 	mtlr	r3			; R3 is the return value form the C routine and tells us where to go
 	lwz	r15,0(r14)		; Restore the Stack Pointer from memory
 	blr				; Jump to that word.
-	
+
+	;;
+	;; mu_dnegate(), mu_dplus()
+	;;
+	;; These routines are written in assembler for no particularly good
+	;; reason.
+	;; 
+	;; I will reschedule these instructions to reduce
+	;; pipe-line bubbles after everything else works.
+	.globl	_mu_dnegate
+_mu_dnegate:
+	addis	r11,0,ha16(_sp)		; r11 = &sp
+	lwz	r12,lo16(_sp)(r11)	; r12 = sp
+	lwz	r2,4(r12)		;  r2 = lo
+	lwz	r3,0(r12)		;  r3 = hi
+	subfic	r2,r2,0
+	subfze	r3,r3
+	stw	r2,4(r12)
+	stw	r3,0(r12)
+	blr
+
+	;; The comments are written from the point of view
+	;; of two d-cells a & b on the stack to be summed.
+	;; 'a' is the name of the first item pushed.  As in:
+	;;		a b d+
+	;; Where each a and b are d-cells.
+	;; I will reschedule these instructions to reduce
+	;; pipe-line bubbles after everything else works.
+	.globl	_mu_dplus
+_mu_dplus:
+	addi	r11,0,lo16(_sp)		; r11 = &sp
+	addis	r11,r11,ha16(_sp)	; 
+	lwz	r12,0(r11)		; r12 = sp
+	lwz	r2,4(r12)		; r2 = b.lo
+	lwz	r3,0(r12)		; r3 = b.hi
+	lwz	r4,12(r12)		; r4 = a.lo
+	lwz	r5,8(r12)		; r5 = a.hi
+	addc	r2,r2,r4		; b.lo = b.lo + a.lo
+	adde	r3,r3,r5		; b.hi = b.hi + a.hi + carry
+	stw	r2,12(r12)
+	stw	r3,8(r12)
+	addi	r12,r12,8		; Pop the top d-cell
+	stw	r12,0(r11)
+	blr				; Return
+
 .data
 				; This data segment is bogus, and used for gdb to not wig-out
