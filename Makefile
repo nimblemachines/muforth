@@ -30,11 +30,12 @@
 VERSION = 0.01
 
 CFLAGS=-O2 -Wall -fomit-frame-pointer
+ASFLAGS=-g
 LDFLAGS=
 
 # If any of these files changes, make a new version.h
 ARCHX86  = i386.o
-ARCHPPC  = ppc.o
+ARCHPPC  = ppc.o ppc_asm.o
 VERSOBJS = kernel.o interpret.o compile.o dict.o file.o \
 	 error.o time.o pci.o tty.o select.o # buf.o
 
