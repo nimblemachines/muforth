@@ -51,7 +51,6 @@ ${ALLOBJS} : ${DEPFILES}
 muforth.o : version.h muforth.h
 
 version.h : Makefile ${VERSOBJS}
-#	echo "struct counted_string version = COUNTED_STRING(\"${VERSION}\");" > version.h
 	echo "#define VERSION \"${VERSION}\"" > version.h
 	echo "time_t build_time = `date \"+%s\"`;" >> version.h
 
@@ -60,3 +59,18 @@ muforth : ${ALLOBJS} ${DEPFILES}
 
 clean :
 	rm -f muforth version.h *.o
+
+## For merging changes in other branches into HEAD
+.if defined (BRANCH)
+
+syncpoint !
+	cvs rtag -r ${BRANCH} ${BRANCH}_merged_to_HEAD muforth
+
+do_merge !
+	cvs update -j ${BRANCH}_merged_to_HEAD -j ${BRANCH}
+
+merge ! do_merge syncpoint
+
+.else
+.error You need to define a source BRANCH to merge from.
+.endif
