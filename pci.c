@@ -1,3 +1,12 @@
+/*
+ * $Id$
+ *
+ * This file is part of muforth.
+ *
+ * Copyright 1997-2002 David Frech. All rights reserved, and all wrongs
+ * reversed.
+ */
+
 /* access to PCI config space */
 
 /* Because FreeBSD tries to keep us from shooting ourselves, we have to do

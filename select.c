@@ -1,3 +1,12 @@
+/*
+ * $Id$
+ *
+ * This file is part of muforth.
+ *
+ * Copyright 1997-2002 David Frech. All rights reserved, and all wrongs
+ * reversed.
+ */
+
 /* This is an interface to _select_. */
 
 #include "muforth.h"

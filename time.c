@@ -1,4 +1,13 @@
-/* time routines for nuforth */
+/*
+ * $Id$
+ *
+ * This file is part of muforth.
+ *
+ * Copyright 1997-2002 David Frech. All rights reserved, and all wrongs
+ * reversed.
+ */
+
+/* time routines for muforth */
 
 #include "muforth.h"
 
@@ -43,3 +52,28 @@ void push_clock()
 {
     PUSH(time(NULL));		/* seconds since UNIX epoch */
 }
+
+#if 0
+/* copied from d4 */
+/* for finding out file modification times */
+struct d4_file_times
+{
+    time_t modified;
+    time_t accessed;
+    time_t status_changed;
+};
+
+int glue_file_times (const char *filename, struct d4_file_times *pftimes)
+{
+    struct stat buf;
+
+    if (stat (filename, &buf) == -1)
+	return -(errno);
+
+    pftimes->accessed       = buf.st_atime;
+    pftimes->modified       = buf.st_mtime;
+    pftimes->status_changed = buf.st_ctime;
+    return 0;
+}
+#endif
+

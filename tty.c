@@ -1,3 +1,12 @@
+/*
+ * $Id$
+ *
+ * This file is part of muforth.
+ *
+ * Copyright 1997-2002 David Frech. All rights reserved, and all wrongs
+ * reversed.
+ */
+
 /* tty support for muForth, both for the console and attached targets */
 
 #include "muforth.h"
