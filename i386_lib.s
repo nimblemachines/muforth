@@ -2,7 +2,7 @@
 ##
 ##  This file is part of muforth.
 ##
-##  Copyright 1997-2004 David Frech. All rights reserved, and all wrongs
+##  Copyright 1997-2005 David Frech. All rights reserved, and all wrongs
 ##  reversed.
 ##
 ##  Licensed under the Apache License, Version 2.0 [the "License"];
@@ -19,79 +19,67 @@
 ##  See the License for the specific language governing permissions and
 ##  limitations under the License.)
 
-
-## Note: mu_push_literal isn't really a function. DO NOT call it directly
-## from "normal" Forth or C code! It is intended to be called by compiled
-## code that is trying to do part of does> or part of a literal push. On
-## entry edx contains the value we want to push.
-	
-	.globl	mu_push_literal
-mu_push_literal:
-	movl	sp,%eax
-	sub	$4,sp
-	movl	%edx,-4(%eax)	# value to push is in edx
-	ret
-
 ## After struggling with gcc for a long time, I gave up and wrote these
 ## routines in assembler.
 
-	.globl	mu_dplus
+    .globl  mu_dplus
 mu_dplus:
-	movl	sp,%eax
-	movl	4(%eax),%edx
-	addl	%edx,12(%eax)
-	movl	0(%eax),%edx
-	adcl	%edx,8(%eax)
-	addl	$8,sp
-	ret
+    movl    SP,%eax
+	movl    0(%eax),%edx  # SND = lo1
+    addl    %edx,8(%eax)  # FTH = lo2
+	movl    T,%edx
+    adcl    4(%eax),%edx  # sum hi = T + TRD
+    movl    %edx,T
+    addl    $8,SP
+    ret
 
-	.globl	mu_dnegate
+    .globl  mu_dnegate
 mu_dnegate:
-	movl	sp,%eax
-	negl	(%eax)
-	negl	4(%eax)
-	sbbl	$0,(%eax)
-	ret
+    movl    SP,%eax
+    negl    T
+    negl    0(%eax)
+    sbbl    $0,T
+    ret
 
-	.globl	mu_um_star
+    .globl  mu_um_star
 mu_um_star:
-	movl	sp,%ecx
-	movl	(%ecx),%eax
-	mull	4(%ecx)
-	movl	%edx,(%ecx)
-	movl	%eax,4(%ecx)
-	ret
+    movl    SP,%ecx
+    movl    T,%eax
+    mull    0(%ecx)
+    movl    %edx,T        # product hi
+    movl    %eax,0(%ecx)  # product lo
+    ret
 
-	.globl	mu_m_star
+    .globl  mu_m_star
 mu_m_star:
-	movl	sp,%ecx
-	movl	(%ecx),%eax
-	imull	4(%ecx)
-	movl	%edx,(%ecx)
-	movl	%eax,4(%ecx)
-	ret
+    movl    SP,%ecx
+    movl    T,%eax
+    imull   0(%ecx)
+    movl    %edx,T        # product hi
+    movl    %eax,0(%ecx)  # product lo
+    ret
 
-	.globl	mu_um_slash_mod
+    .globl  mu_um_slash_mod
 mu_um_slash_mod:
-	movl	sp,%ecx
-	movl	4(%ecx),%edx	# dividend hi
-	movl	8(%ecx),%eax	# dividend lo
-	divl	(%ecx)		# divisor on stack
-	movl	%edx,8(%ecx)	# remainder
-	movl	%eax,4(%ecx)	# quotient, on top
-	addl	$4,sp
-	ret
+    movl    SP,%ecx
+    movl    0(%ecx),%edx    # dividend hi
+    movl    4(%ecx),%eax    # dividend lo
+    divl    T               # divisor on stack
+    movl    %edx,4(%ecx)    # remainder
+    movl    %eax,T          # quotient, on top
+    addl    $4,SP
+    ret
 
-	.globl	mu_sm_slash_rem		# symmetric division, for comparison
+    .globl  mu_sm_slash_rem     # symmetric division, for comparison
 mu_sm_slash_rem:
-	movl	sp,%ecx
-	movl	4(%ecx),%edx	# hi word at lower address
-	movl	8(%ecx),%eax	# dividend = edx:eax, divisor on stack
-	idivl	(%ecx)		# now rem = edx, quotient = eax
-	movl	%edx,8(%ecx)	# leave remainder and
-	movl	%eax,4(%ecx)	# quotient on stack, quotient on top
-	addl	$4,sp
-	ret
+    movl    SP,%ecx
+    movl    0(%ecx),%edx    # hi word at lower address
+    movl    4(%ecx),%eax    # dividend = edx:eax, divisor on stack
+    idivl   T               # now rem = edx, quotient = eax
+    movl    %edx,4(%ecx)    # leave remainder and
+    movl    %eax,T          # quotient on stack, quotient on top
+    addl    $4,SP
+    ret
 
 ##  IDIV is symmetric.  To fix it (to make it _FLOOR_) we have to
 ##  adjust the quotient and remainder when BOTH rem /= 0 AND
@@ -114,43 +102,22 @@ mu_sm_slash_rem:
 ##  XXX: discuss how the range of the rem/mod changes as the num changes
 ##  (in symm. div.) and as the denom changes (in floored div).
 
-	.globl	mu_fm_slash_mod		# floored division!
+    .globl  mu_fm_slash_mod     # floored division!
 mu_fm_slash_mod:
-	pushl	%ebx		# callee saved!
-	movl	sp,%ecx
-	movl	4(%ecx),%edx	# hi word at lower address
-	movl	8(%ecx),%eax	# dividend = edx:eax, divisor on stack
-	idivl	(%ecx)		# now modulus = edx, quotient = eax
-	movl	(%ecx),%ebx
-	xorl	4(%ecx),%ebx	## <0 if d'dend & d'sor are opposite signs
-	jns	1f		# do nothing if same sign
-	orl	%edx,%edx
-	je	1f		# do nothing if mod == 0
-	decl	%eax		# otherwise quot = quot - 1
-	addl	(%ecx),%edx	#            mod = mod + divisor
-1:	movl	%edx,8(%ecx)	# leave modulus and
-	movl	%eax,4(%ecx)	# quotient on stack, quotient on top
-	addl	$4,sp
-	popl	%ebx		# callee saved!
-	ret
-
-
-## for jumping thru a following "vector" of compiled calls, each 5 bytes long
-	.globl	mu_jump
-mu_jump:
-	movl	sp,%eax
-	addl	$4,sp
-
-	# edx = vector = return address; eax = index
-	popl	%edx
-	movl	(%eax),%eax
-
-	# edx points just _past_ the call/jmp instruction
-	# we're interested in
-	leal	5(%eax,%eax,4),%eax
-	addl	%eax,%edx
-
-	# ... so back up and get the offset, and add it to edx
-	addl	-4(%edx),%edx
-	jmp	*%edx		# then go there!
-
+    pushl   %ebx            # callee saved!
+    movl    SP,%ecx
+	movl    T,%ebx
+    movl    0(%ecx),%edx    # hi word at lower address
+    movl    4(%ecx),%eax    # dividend = edx:eax, divisor on stack
+    idivl   %ebx            # now modulus = edx, quotient = eax  
+    xorl    0(%ecx),%ebx    ## <0 if d'dend & d'sor are opposite signs
+    jns     1f              # do nothing if same sign
+    orl     %edx,%edx
+    je      1f              # do nothing if mod == 0
+    decl    %eax            # otherwise quot = quot - 1
+    addl    T,%edx          #            mod = mod + divisor
+1:  movl    %edx,4(%ecx)    # leave modulus and
+    movl    %eax,T          # quotient on stack, quotient on top
+    addl    $4,SP
+    popl    %ebx            # callee saved!
+    ret

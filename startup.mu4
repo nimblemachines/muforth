@@ -2,10 +2,10 @@
 : forth        .forth. definitions ;
 : compiler  .compiler. definitions ;
 
-: literal  load-literal push-literal ;
+: literal  (lit) (lit) compile,  compile, ;
 
 : ]   literal -] ;
-: char	 token  drop  c@ ;
+: char   token  drop  c@ ;
 
 : (    [ char ) ]  parse  2drop ;
 
@@ -15,7 +15,7 @@
 
   This file is part of muforth.
 
-  Copyright 1997-2004 David Frech. All rights reserved, and all wrongs
+  Copyright 1997-2005 David Frech. All rights reserved, and all wrongs
   reversed.
 
   Licensed under the Apache License, Version 2.0 [the "License"];
@@ -152,30 +152,13 @@ forth
 : 1+   1 + ;  ( these are common)
 : 1-  -1 + ;
 
+: cell   [ 1 cells ] ;
 : cell+  [ cell ] + ;
 : cell-  [ cell negate ] + ;
-( Define cells and cell/ in terms of the number of memory
-  units per cell:)
-: cells  [ cell ] m* drop ( drop the high word of the value times cell) ;
-: cell/  0 ( converting dividend from single to doulbe; but s-> isn't defined yet) 
-         [ cell ] fm/mod swap drop ( drop the remainder) ;
-( Ideally, we'd redefine cells and cell as using some number of
-  2* and 2/ and determine which by using a series of [if] clauses:
-4 cell = [if]
-: cells  2* ;
-: cell/  2/ ;
-[then]
-2 cell = [if]
-: cells  2* ;
-: cell/  2/ ;
-[then]
-1 cell = [if]
-: cells     ;
-: cell/     ;
-[then]
-)
 
 : bl  [ 2 2* 2* 2* 2* ] ;  ( space character)
+
+: tuck  (s a b - b a b)  swap over ;
 
 : @+  (s a - n a+)  dup @  swap cell+ ;
 : !+  (s n a - a+)  tuck !  cell+ ;
@@ -185,6 +168,8 @@ forth
 
 : 2dup  over over ;
 : 2swap  rot push  rot pop ;
+: 2push  (s a b -> R: a b)  pop -rot  swap push push  push ;
+: 2pop   (s R: a b -> a b)  pop       pop pop swap    rot push ;
 
 ( Compatibility.)
 : =  xor 0= ;
@@ -194,17 +179,6 @@ forth
 : urshift  u>> ;
 
 : @execute  @ execute ;
-
-( Jumping through vectors of calls.)
-( too 386-specific
-: 5*  dup  2* 2* + ;
-: jump  1+ 5*  pop +  dup cell - @  +  execute ; )
-
-( XXX: I think this is wrong. There are two kinds of vectoring: jump'ing
-  through a sequence of following compiled calls; or vectoring through an
-  array - not compiled by the Forth compiler - of addresses. Use "jump" for
-  the first kind [implementation is architecture-specific] and "vector" for
-  the second.)
 
 ( XXX: can this be refactored to get rid of some of the swaps?)
 ( XXX: can this be got rid of entirely?)
@@ -236,12 +210,13 @@ forth
 
 
 ( Basic conditionals)
-: resolve>  (s src dest)  resolve ;
-: <resolve  (s dest src)  swap resolve ;
+: <resolve  (s dest src)  ! ;
+: resolve>  (s src dest)  swap <resolve ;
+: mark>  (s - src)  here  0 compile, ;
 
 compiler
-: =if   (s - src)  (=0branch) ;  ( keeps tested value on stack)
-: if    (s - src)   (0branch) ;
+: =if   (s - src)  ['] (=0branch) compile,  mark> ;
+: if    (s - src)  [']  (0branch) compile,  mark> ;
 : then  (s src)  here resolve> ;
 
 ( make \ more like ANS-Forth's POSTPONE)
@@ -258,22 +233,22 @@ compiler
 : \   .compiler. token'  if compile, ^ then
          .forth. find  huh?  literal  ['] compile,  compile, ;
 
-// : else      (s src0 - src1)  (branch)  swap  \ then ;
+// : else      (s src0 - src1)  \ (branch) mark>  swap  \ then ;
 
 : begin   (s - dest)  here ;
-: =until  (s dest -)     \ =if  <resolve ;
-: until   (s dest -)      \ if  <resolve ;
-: again   (s dest -)  (branch)  <resolve ;
+: =until  (s dest -)       \ =if  <resolve ;
+: until   (s dest -)        \ if  <resolve ;
+: again   (s dest -)  \ (branch) mark> <resolve ;
 : =while  (s dest - src dest)  \ =if  swap ;
 : while   (s dest - src dest)   \ if  swap ;
-: repeat  (s src dest -)     \ again  \ then ;
+: repeat  (s src dest -)   \ again  \ then ;
 
 ( n for .. next         goes n times; 4 billion+ if n=0 )
 ( n ?for .. next then   goes n times; 0 if n=0 )
 
 : for     (s - dest)      \ push  \ begin ;
-: ?for    (s - src dest)  (?for) ;
-: next    (s dest)        (next)  <resolve ;
+: ?for    (s - src dest)  \ =if  \ for ;
+: next    (s dest -)      \ (next) mark> <resolve ;
 
 forth
 
@@ -468,25 +443,35 @@ forth
 
 
 ( "nameless" colon words.)
-: -:   here  -] ;
+: -:   here <:> -] ;
 
 ( For comparison, the regular : compiler is defined thus:
-  : :  name  -] ; )
+  : :  name <:> -] ; )
 
-compiler
-: [call]  compile, ;  ( to compile a call to a nameless word)
-: [lit]  literal ;  ( this doesn't belong here, but it's related)
-forth
+: -create  here <does> ;  ( nameless do_does word)
+: create   name <does> ;  ( nameful do_does word)
+: does>  (s constant)
+    pop  compile, ( compile IP of parent does)
+    compile, ;  ( compile constant)
 
-( -create is basically the same as "here".)
-: create   name ;  ( doesn't compile any code!)
-: constant  create  literal \ ^ ;  ( syntactic sugar for : foo  89 ; )
+comment XXXalternative with do_does words laid out like this:
+   do_does
+   <constant>
+   <new IP>
+
+: create (s constant)  name <does>  compile, ( constant) ;
+: does>  pop compile, ( parent IP) ;
+XXXalternative
+
+: constant  create  does> ;
 : _buffer  (s bytes - ram)  ram swap  aligned  cell/  ?for 0 , next then ;
-: buffer  _buffer constant ;
+: buffer  _buffer constant ;  ( XXX: untested)
 
-: variable      cell  buffer ;
-: 2variable   2 cells buffer ;
-: array   (s n - ) cells buffer ;
+: _var  create  ram  does> ;
+: variable   _var  0 , ;
+: 2variable  _var  0 , 0 , ;
+
+( : array   (s n - ) _var ;  ( XXX: Fixme: I like arrays to be self-indexing.)
 
 ( These depended on the data space being zeroed, which makes me nervous.
   And well I should have been nervous: temporary strings - for file names,
@@ -499,14 +484,6 @@ forth
   : buffer  ram constant  allot ;
   : variable       cell buffer ;
   : 2variable   2 cells buffer ; )
-
-( XXX: Is this actually architecture-neutral?)
-( ;does compiles the child code; does> compiles the parent code.)
-: ;does   load-literal  pop compile, \ ^ ;
-compiler
-: does>   ['] ;does compile,  push-literal ;
-forth
-
 
 ( 2002-mar-30. Experimenting with an alternative here.)
 
@@ -564,6 +541,21 @@ compiler
 forth
 XXXperimental 
 
+( We need words to help us navigate the dictionary structure. find returns
+  a pointer to the code field. We need to be able to convert this to point
+  to other parts of the structure.)
+
+: >link  cell- ;
+: link>  cell+ ;
+: >body  cell+ ;
+: >name  (s code - a n)
+   >link  dup  1- c@ dup push ( length)  1+ aligned -  pop ;
+
+( What about the last word defined? "current @ @" will yield a pointer to a
+  link field.)
+
+: last  current @ @ ;
+
 ( I guess we can have deferred words, even though they are, in some ways,
   inelegant. The alternative - creating a variable and a colon word that
   calls through that variable, for _every_ deferred word - is also in some
@@ -589,13 +581,11 @@ XXXperimental
 
 variable undeferred  ' nope undeferred !
 : defer  create  ram  undeferred @ ,  does> @execute ;
-
-( XXX: isn't this i386-specific?? Yes! It fetches the data loaded by the
-  instruction "movl #constant,%edx", and that data happens to be the ram
-  address of the current value of the vector.)
-( : >data  1+ @ ;)
-: >data  fetch-literal ;  ( given code addr of does word, fetch its constant)
+: >data  >body cell+ @ ;  ( given code addr of does word, fetch its constant)
 : 'data  ' >data ;
+
+( test!!)
+undeferred @  0 undeferred !  undeferred @ drop  undeferred ! zzz
 
 ( Syntactic sugar - from Rod Crawford's 4ARM.)
 : now   '  ;
@@ -609,14 +599,14 @@ forth
 
 
 ( Number input)
-variable dpl	( location of , or . )
+variable dpl    ( location of , or . )
 variable radix
 
 : radixer  create  does>  radix ! ;
 
 2 2* 2* dup 2* ( 16!)  radixer hex
 dup            (  8!)  radixer octal
-2 +            ( 10!)  radixer decimal	
+2 +            ( 10!)  radixer decimal  
 2                      radixer binary
 
 decimal
@@ -629,14 +619,14 @@ decimal
    over if ( still chars to process)  swap push  over c@  xor if
    ( no match)  pop 0 ^ then
    ( match)  pop 1 -1 v+  -1 ^  then
-   ( end of input)  drop  shunt  ( -1 throw) ;  ( XXX use throw!)
+   ( end of input)  drop  pop drop  ( -1 throw) ;  ( XXX use throw!)
 
 : ?sign  char - punct  if  -1 ^  then  0 ;
 
 : ?hex  char " punct  if  hex ^  then
         char # punct  if  decimal ^  then
         char ' punct  if  octal ^  then
-	char % punct  if  binary ^  then ;
+        char % punct  if  binary ^  then ;
 
 ( . resets dpl; others leave it unchanged; this means that embedding . in a
   number causes a double number to be pushed, and dpl set to the count of
@@ -742,8 +732,8 @@ variable fd-out
 : <key   (s fd - ch)                  keybuf 1 read  drop  keybuf c@ ;
 : >emit  (s ch fd)  swap emitbuf c!  emitbuf 1 write ;
 
-: key   (s - ch)   fd-in  @  <key ;
-: emit  (s ch)    fd-out  @  >emit ;
+: key   (s - ch)   fd-in @  <key ;
+: emit  (s ch)    fd-out @  >emit ;
 
 : space  bl emit ;
 : cr     ctrl J emit ;
@@ -776,12 +766,10 @@ variable fd-out
 : >digit   (s n - ch)  ( convert 1 binary digit to char; hex to uppercase)
    9 over u<  7 and +  char 0 +  ;
 
-: s->d  (s n - d)  dup 0<  ;
-: d->s  (s d - n)  drop ;
-: dabs  (s d - abs(d)  s->d  if dnegate then  ;
+: s->d  (s n - d)  dup 0<  ;  ( only works if true flag is all 1s!)
 
-: +-    0< if  negate  then  ;  ( from fig)
-: abs   (s n - |n|)    s->d  +-  ;
+: abs   (s n - |n|)   s->d  if  negate then ;
+: dabs  (s d - |d|)   s->d  if dnegate then ;
 
 : spaces  (s n)  0 max  ?for  space  next  then  ;
 
@@ -794,10 +782,8 @@ variable fd-out
 
 variable hld
 : hold   -1 hld +!  hld @ c! ;
-
 : <#     pad hld !  ;
-: held   ( - a #) hld @  pad over -  ;
-: #>     (s ud - a #)  2drop  held  ;
+: #>     (s ud - a #)  2drop  hld @  pad over - ;
 : sign   (s n -)   0< if  char - hold  then  ;
 
 : #     (s ud - ud')   /digit  >digit  hold  ;
@@ -889,17 +875,17 @@ comment XXX
 forth
 : z"  (s - z")   char "  string, ;
 :  "  (s - a c)  \f z" count  ;  ( ANS)
-: ."	char " parse ( a #)  type  ;  ( not compiled)
+: ."    char " parse ( a #)  type  ;  ( not compiled)
 
 ( To warn of re-defining a word.)
 -: ( a u)  2dup current @ find if  fd-out @ push >stderr
      drop  2dup type ."  again.  "  pop writes ^  then  2drop ;
-: -redef  [lit] 'name-hook ! ;
+: -redef  ['] 'name-hook ! ;
 -redef
 
 ( A useful list of words as they're being defined.)
 -: ( a u)   current @ ( chain) . here .  2dup type  cr ;
-: -v  [lit] 'name-hook ! ;  ( be verbose)
+: -v  ['] 'name-hook ! ;  ( be verbose)
 
 ( You can only do one of these at a time! Is there an easy way to hook
   the hook?)
@@ -1018,10 +1004,9 @@ asmXXX
 ( !!!!-------------------- Add changes below this line -------------------!!!!)
 
 ( Word listing. Putting this in as soon as possible. Needs `space'.)
-: link>name  [ 2 cells ] +  dup 1+ swap c@ ;
 : words   0  current @  ( count link)
   begin  @  =while  1 u+
-            dup link>name type space space  repeat
+            dup link> >name type space space  repeat
   drop  ." ("  . ." words)" ;
 
 
@@ -1122,7 +1107,7 @@ comment %%
 ( 27-apr-2000. Changed names to more standard [if] [else] [then] and added
                the capability of nesting them.)
 ( 4-aug-2000. Added [with] and moved all conditional constants into
-	      `conditional' vocab.)
+          `conditional' vocab.)
 
 ( Compiler/interpreter modes.)
 : mode   create  (s prompt interpret)  ram push , ,   pop  does>  state ! ;
@@ -1209,7 +1194,7 @@ variable csp  ( what does this stand for? `check stack pointer'?)
 
 ( Bracket the contents of a file and check for stack depth change.)
 : file[  (s a u)   >stderr  ." (( "  type  >stdout  !csp  ;
-: ]file           >stderr  ." )) "        >stdout  ?csp  ;
+: ]file            >stderr  ." )) "        >stdout  ?csp  ;
 
 ( For counting the size of a loaded file.)
 : file[#   (s a u)  file[  here  ;
@@ -1301,7 +1286,7 @@ defer canonical  ( XXX: is this obsolete?)
 ( Print banner.)
  ." muFORTH "  version count type ( space)
  ." , made "  build-time ( seconds since epoch)  time"  type  cr
- ." Copyright (c) 1997-2004 David Frech. All rights reserved."  cr cr
+ ." Copyright (c) 1997-2005 David Frech. All rights reserved."  cr cr
  ." muFORTH is free software; see the file LICENSE for details." cr ;
 
 : warm
@@ -1321,7 +1306,7 @@ comment %%
      current  max-chains 1+ for  dup @ ,  cell-  next drop   ( save chains)
    does>  ( from to)
      current  max-chains 1+ for  push  @+  r@ !  pop cell-  next  drop
-	  ( new `here')  h !  ;
+      ( new `here')  h !  ;
 
 marker empty
 %%

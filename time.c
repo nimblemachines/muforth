@@ -3,7 +3,7 @@
  *
  * This file is part of muforth.
  *
- * Copyright (c) 1997-2004 David Frech. All rights reserved, and all wrongs
+ * Copyright (c) 1997-2005 David Frech. All rights reserved, and all wrongs
  * reversed.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -30,16 +30,17 @@
 /* time and date */
 static void push_forth_time_from_libc_time (struct tm *ptm, char *tz)
 {
-    STK(-9) = strlen (tz);
-    STK(-8) = (cell_t) tz;
-    STK(-7) = ptm->tm_sec;
-    STK(-6) = ptm->tm_min;
-    STK(-5) = ptm->tm_hour;
-    STK(-4) = ptm->tm_yday;		/* 0 to 365 */
-    STK(-3) = ptm->tm_mday;
-    STK(-2) = ptm->tm_mon; 		/* 0 to 11 */
-    STK(-1) = ptm->tm_year + 1900;
-    DROP(-9);
+    DUP;
+    NIPN(-8);
+    T = strlen (tz);
+    SND = (cell) tz;
+    TRD = ptm->tm_sec;
+    SP[2] = ptm->tm_min;
+    SP[3] = ptm->tm_hour;
+    SP[4] = ptm->tm_yday;     /* 0 to 365 */
+    SP[5] = ptm->tm_mday;
+    SP[6] = ptm->tm_mon;      /* 0 to 11 */
+    SP[7] = ptm->tm_year + 1900;
 }
 
 void mu_local_time()
@@ -67,30 +68,6 @@ void mu_global_time()
 
 void mu_push_clock()
 {
-    PUSH(time(NULL));		/* seconds since UNIX epoch */
+    PUSH(time(NULL));       /* seconds since UNIX epoch */
 }
-
-#if 0
-/* copied from d4 */
-/* for finding out file modification times */
-struct d4_file_times
-{
-    time_t modified;
-    time_t accessed;
-    time_t status_changed;
-};
-
-int glue_file_times (const char *filename, struct d4_file_times *pftimes)
-{
-    struct stat buf;
-
-    if (stat (filename, &buf) == -1)
-	return -(errno);
-
-    pftimes->accessed       = buf.st_atime;
-    pftimes->modified       = buf.st_mtime;
-    pftimes->status_changed = buf.st_ctime;
-    return 0;
-}
-#endif
 

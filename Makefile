@@ -27,28 +27,42 @@
 ### all the "web projects" stuff. Now it should compile with BSD make or
 ### GNU make.
  
-VERSION=	0.01
+VERSION=	0.02
 
 CFLAGS=		-O2 -Wall -fomit-frame-pointer
-DBGCFLAGS=	-O -ggdb -Wall -DDEBUG
-ASFLAGS=	-g
+#CFLAGS=		-g -Wall -fomit-frame-pointer -DDEBUG -DBEING_DEFINED
 LDFLAGS=
 
 # If any of these files changes, make a new version.h
 VERSOBJS=	kernel.o interpret.o compile.o dict.o file.o \
-		interpreter.o compiler.o library.o debugger.c float.o \
+		i386_lib.o \
 		error.o time.o pci.o tty.o select.o sort.o # buf.o
 
 ALLOBJS=	${VERSOBJS} muforth.o
-DEPFILES=	Makefile muforth.h opcode.h
+DEPFILES=	Makefile muforth.h env.h
 
 .PHONY: all clean
 
-all : muforth
+all : public.h muforth
 
 ${ALLOBJS} : ${DEPFILES}
 
-muforth.o : version.h muforth.h
+muforth.o : version.h
+
+public.h : ${ALLOBJS:S/.o/.ph/}
+	echo "/* This file is automagically generated. Do not edit! */" > ${.TARGET}
+	cat ${.ALLSRC} >> ${.TARGET}
+
+.SUFFIXES : .ph
+
+.c.ph : Makefile genpublic
+	./genpublic ${.IMPSRC} > ${.TARGET}
+
+.s.ph : Makefile genpublic
+	./genpublic ${.IMPSRC} > ${.TARGET}
+
+env.h : envtest
+	./envtest > ${.TARGET}
 
 version.h : Makefile ${VERSOBJS}
 	echo "#define VERSION \"${VERSION}\"" > version.h
@@ -57,8 +71,11 @@ version.h : Makefile ${VERSOBJS}
 muforth : ${ALLOBJS} ${DEPFILES}
 	${CC} ${LDFLAGS} ${CFLAGS} -o $@ ${ALLOBJS} ${LIBS}
 
+.c.asm :
+	${CC} ${CFLAGS} -S -o ${.TARGET} -c ${.IMPSRC}
+
 clean :
-	rm -f muforth version.h *.o
+	rm -f muforth version.h *.o *.asm *.ph
 
 ## For merging changes in other branches into HEAD
 .if defined (BRANCH)

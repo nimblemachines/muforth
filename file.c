@@ -3,7 +3,7 @@
  *
  * This file is part of muforth.
  *
- * Copyright (c) 1997-2004 David Frech. All rights reserved, and all wrongs
+ * Copyright (c) 1997-2005 David Frech. All rights reserved, and all wrongs
  * reversed.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -34,10 +34,6 @@
 #include <unistd.h>
 #include <errno.h>
 
-#define MAX_FD_VECTORS		20
-
-cell_t fd_vectors[MAX_FD_VECTORS];
-
 /* if found and readable, leave name and push -1;
  * if not found or not readable, drop name and push 0
  */
@@ -51,64 +47,62 @@ void mu_readable_q()
     euid = geteuid();
     egid = getegid();
 
-    if (stat((char *)TOP, &st) == -1)
+    if (stat((char *)T, &st) == -1)
     {
-	TOP = 0;	/* failed */;
-	return;
+        T = 0;    /* failed */;
+        return;
     }
 
     /* test for user perms */
     if (st.st_uid == euid && (st.st_mode & 0400))
     {
-	PUSH(-1);	/* success */
-	return;
+        PUSH(-1);   /* success */
+        return;
     }
 
     /* test for group perms */
     if (st.st_gid == egid && (st.st_mode & 0040))
     {
-	PUSH(-1);	/* success */
-	return;
+        PUSH(-1);   /* success */
+        return;
     }
 
     /* test for world (other) perms */
     if (st.st_mode & 0004)
     {
-	PUSH(-1);	/* success */
-	return;
+        PUSH(-1);   /* success */
+        return;
     }
 
     /* failed all tests, return false */
-    TOP = 0;
+    T = 0;
 }
 
-void mu_create_file()		/* C-string-name - fd */
+void mu_create_file()       /* C-string-name - fd */
 {
     int fd;
 
-    fd = open((char *) TOP, O_CREAT | O_TRUNC | O_WRONLY, 0666);
+    fd = open((char *)T, O_CREAT | O_TRUNC | O_WRONLY, 0666);
     if (fd == -1)
     {
-	/* TOP = (cell_t) "couldn't open"; */
-	TOP = (cell_t) counted_strerror();
-	mu_throw();
+        T = (cell) counted_strerror();
+        mu_throw();
     }
-    TOP = fd;
+    T = fd;
 }
 
-void mu_open_file()		/* C-string-name flags - fd */
+void mu_open_file()     /* C-string-name flags - fd */
 {
     int fd;
 
-    fd = open((char *) STK(1), TOP);
+    fd = open((char *)SND, T);
     if (fd == -1)
     {
-	/* TOP = (cell_t) "couldn't open"; */
-	TOP = (cell_t) counted_strerror();
-	mu_throw();
+        T = (cell) counted_strerror();
+        mu_throw();
     }
-    STK(1) = fd;
-    DROP(1);
+    NIP;
+    T = fd;
 }
 
 void mu_push_ro_flags()
@@ -125,44 +119,42 @@ void mu_close_file()
 {
     for (;;)
     {
-	if(close(TOP) == -1)
-	{
-	    if (errno == EINTR) continue;
-	    TOP = (cell_t) counted_strerror();
-	    mu_throw();
-	}
-	break;
+        if (close(T) == -1)
+        {
+            if (errno == EINTR) continue;
+            T = (cell) counted_strerror();
+            mu_throw();
+        }
+        break;
     }
-    DROP(1);
+    DROP;
 }
 
-void mu_mmap_file()		/* fd - addr len */
+void mu_mmap_file()     /* fd - addr len */
 {
     char *p;
     struct stat s;
     int fd;
 
-    fd = TOP;
+    fd = T;
 
     if (fstat(fd, &s) == -1)
     {
-	close(fd);
-	TOP = (cell_t) counted_strerror();
-	mu_throw();
+        close(fd);
+        T = (cell) counted_strerror();
+        mu_throw();
     }
     p = (char *) mmap(0, s.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
     if (p == MAP_FAILED)
     {
-	close(fd);
-	TOP = (cell_t) counted_strerror();
-	mu_throw();
+        close(fd);
+        T = (cell) counted_strerror();
+        mu_throw();
     }
 
-    TOP = (cell_t) p;
-    STK(-1) = s.st_size;
-    DROP(-1);
-    /* PUSH(p); */
-    /* PUSH(s.st_size); */
+    NIPN(-1);
+    SND = (cell) p;
+    T = s.st_size;
 }
 
 void mu_load_file()
@@ -171,9 +163,9 @@ void mu_load_file()
 
     PUSH(O_RDONLY);
     mu_open_file();
-    fd = TOP;
+    fd = T;
     mu_mmap_file();
-    PUSH(mu_evaluate);
+    PUSH(&p_mu_evaluate);
     mu_catch();
     close(fd);
     mu_throw();
@@ -187,23 +179,23 @@ void mu_read_carefully()
     size_t len;
     ssize_t count;
 
-    fd = STK(2);
-    buffer = (char *) STK(1);
-    len = TOP;
-    DROP(2);
+    fd = TRD;
+    buffer = (char *) SND;
+    len = T;
+    DROP2;
 
     for (;;)
     {
-	count = read(fd, buffer, len);
-	if (count == -1)
-	{
-	    if (errno == EINTR) continue;
-	    TOP = (cell_t) counted_strerror();
-	    mu_throw();
-	}
-	break;
+        count = read(fd, buffer, len);
+        if (count == -1)
+        {
+            if (errno == EINTR) continue;
+            T = (cell) counted_strerror();
+            mu_throw();
+        }
+        break;
     }
-    TOP = count;
+    T = count;
 }
 
 void mu_write_carefully()
@@ -213,21 +205,21 @@ void mu_write_carefully()
     size_t len;
     ssize_t written;
 
-    fd = STK(2);
-    buffer = (char *) STK(1);
-    len = TOP;
-    DROP(3);
+    fd = TRD;
+    buffer = (char *) SND;
+    len = T;
+    DROPN(3);
 
     while (len > 0)
     {
-	written = write(fd, buffer, len);
-	if (written == -1)
-	{
-	    if (errno == EINTR) continue;
-	    PUSH(counted_strerror());
-	    mu_throw();
-	}
-	buffer += written;
-	len -= written;
+        written = write(fd, buffer, len);
+        if (written == -1)
+        {
+            if (errno == EINTR) continue;
+            PUSH(counted_strerror());
+            mu_throw();
+        }
+        buffer += written;
+        len -= written;
     }
 }

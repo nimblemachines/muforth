@@ -3,7 +3,7 @@
  *
  * This file is part of muforth.
  *
- * Copyright (c) 1997-2004 David Frech. All rights reserved, and all wrongs
+ * Copyright (c) 1997-2005 David Frech. All rights reserved, and all wrongs
  * reversed.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -30,8 +30,6 @@
 #include <errno.h>
 
 #ifndef XXX
-#include <stdio.h>
-#include <sys/types.h>
 #include <sys/uio.h>
 #include <unistd.h>
 #endif
@@ -43,22 +41,22 @@ void die(const char *msg)
 {
     write_string(2, "muforth: ");
     if (parsed.length != 0)
-	{
-	    write(2, parsed.data, parsed.length);
-	    write(2, " ", 1);
-	}
+    {
+        write(2, parsed.data, parsed.length);
+        write(2, " ", 1);
+    }
     write_string(2, msg);
     write(2, "\n", 1);
     exit(1);
 }
 
 /* catch & throw? */
-static jmp_buf *last_jb;	/* top of "stack" of jmp bufs */
+static jmp_buf *last_jb;    /* top of "stack" of jmp bufs */
 
 /* This works like C and not like Forth: catch returns 0 when it sets up
  * the frame and non-zero when it has been longjumped to. Catch does _not_
  * call a function. But then, how/when do you undo the frame? Hmmm.
- * Okay, doing the Forth way. */
+ * Okay, doing it the Forth way. */
 
 #define SETJMP setjmp
 #define LONGJMP longjmp
@@ -67,35 +65,39 @@ void mu_catch()
 {
     jmp_buf this_jb;
     jmp_buf *prev_jb;
-    cell_t *saved_sp;
-    cell_t *saved_rsp;
-    cell_t thrown;
+    cell *saved_sp;
+    xtk **saved_rp;
+    cell thrown;
 
     prev_jb = last_jb;
     last_jb = &this_jb;
-    saved_sp = sp;		/* so we can reset _our_ stack ptr */
-    saved_rsp = rsp;
+    saved_sp = SP;      /* so we can reset _our_ stack ptr */
+    saved_rp = RP;
     thrown = SETJMP(this_jb);
     if (thrown == 0)
-	EXECUTE;
-    else {
-	sp = saved_sp + 1;	/* we longjmp'ed; restore sp & pop xt */
-	rsp = saved_rsp;
+    {
+        EXECUTE;
+        DUP;     /* make room for thrown value */
+    }        
+    else
+    {
+        SP = saved_sp + 1;  /* we longjmp'ed; restore sp & rp */
+        RP = saved_rp;
     }
     last_jb = prev_jb;
-    PUSH(thrown);
+    T = thrown;   /* return thrown value */
 }
 
 void mu_throw()
 {
-    if (TOP != 0)
+    if (T != 0)
     {
-	if (last_jb)
-	    LONGJMP(*last_jb, TOP);
-	else
-	    die((char *)TOP);
+        if (last_jb)
+            LONGJMP(*last_jb, T);
+        else
+            die((char *)T);
     }
-    DROP(1);
+    DROP;
 }
 
 char *counted_strerror()
