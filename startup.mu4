@@ -102,8 +102,13 @@
   this. So let's define some words that are useful for searching specific
   dictionary chains and compiling words from them.)
 
+( Stack comment and word comment words. We redefine these to generate
+  documentation.)
+: (s  ( ;  ( stack comment)
+: (w  ( ;  (w word comment)
+
 ( Roll tokenizing and searching into one.)
-: token'   token  rot  find ;   ( chain - a u F | body T)
+: token'   token  rot  find ;   (s chain - a u F | body T)
 
 ( Compiling from specific chains. Note that `\' is an elaboration of the
   basic scheme of `\chain'. These words will be handy in the assembler
@@ -127,14 +132,16 @@ compiler
 : \c  .compiler. \chain ;  ( until we have \ ; we need this for "if")
 
 ( Ok, now we can define our compiler comment char, ( .)
-: (    \f (  ;
+: (    \f ( ;
+: (s   \f ( ;  (w stack comment)
+: (w   \f ( ;  (w word comment)
 forth
 
 
 ( Some useful tidbits.)
 : -   negate + ;
-: u+  ( a b c - a+c b)  rot +  swap ;  ( "under-plus")
-: v+  ( x1 y1 x2 y2 - x1+x2 y1+y2)  push u+ pop + ;  ( add 2-vectors)
+: u+  (s a b c - a+c b)  rot +  swap ;  ( "under-plus")
+: v+  (s x1 y1 x2 y2 - x1+x2 y1+y2)  push u+ pop + ;  ( add 2-vectors)
 
 ( We don't even have any constants yet! So we make the easiest one first...)
 : 0   [ dup dup xor ] ;
@@ -154,8 +161,8 @@ forth
 
 : bl  [ 2 2* 2* 2* 2* ] ;  ( space character)
 
-: @+  ( a - n a+)  dup @  swap cell+ ;
-: !+  ( n a - a+)  tuck !  cell+ ;
+: @+  (s a - n a+)  dup @  swap cell+ ;
+: !+  (s n a - a+)  tuck !  cell+ ;
 
 : 2@  @+ @  swap ;  ( cell at lower address to TOP)
 : 2!  !+ ! ;
@@ -187,8 +194,8 @@ forth
 
 ( XXX: can this be refactored to get rid of some of the swaps?)
 ( XXX: can this be got rid of entirely?)
-: vector    ( n a)  swap cells +  @execute ;
-: |vector|  ( n a mask)  rot and  swap  vector  ;
+: vector    (s n a)  swap cells +  @execute ;
+: |vector|  (s n a mask)  rot and  swap  vector  ;
 
 ( Compiler nuts and bolts.)
 : aligned  [ cell 1- ] +  [ cell negate ] and ;
@@ -215,13 +222,13 @@ forth
 
 
 ( Basic conditionals)
-: resolve>  ( src dest)  resolve ;
-: <resolve  ( dest src)  swap resolve ;
+: resolve>  (s src dest)  resolve ;
+: <resolve  (s dest src)  swap resolve ;
 
 compiler
-: =if   ( - src)  (=0branch) ;  ( keeps tested value on stack)
-: if    ( - src)   (0branch) ;
-: then  ( src)  here resolve> ;
+: =if   (s - src)  (=0branch) ;  ( keeps tested value on stack)
+: if    (s - src)   (0branch) ;
+: then  (s src)  here resolve> ;
 
 ( make \ more like ANS-Forth's POSTPONE)
 ( in our case, what do we compile?
@@ -237,22 +244,22 @@ compiler
 : \   .compiler. token'  if compile, ^ then
          .forth. find  huh?  literal  ['] compile,  compile, ;
 
-// : else      ( src0 - src1)  (branch)  swap  \ then ;
+// : else      (s src0 - src1)  (branch)  swap  \ then ;
 
-: begin   ( - dest)  here ;
-: =until  ( dest -)     \ =if  <resolve ;
-: until   ( dest -)      \ if  <resolve ;
-: again   ( dest -)  (branch)  <resolve ;
-: =while  ( dest - src dest)  \ =if  swap ;
-: while   ( dest - src dest)   \ if  swap ;
-: repeat  ( src dest -)     \ again  \ then ;
+: begin   (s - dest)  here ;
+: =until  (s dest -)     \ =if  <resolve ;
+: until   (s dest -)      \ if  <resolve ;
+: again   (s dest -)  (branch)  <resolve ;
+: =while  (s dest - src dest)  \ =if  swap ;
+: while   (s dest - src dest)   \ if  swap ;
+: repeat  (s src dest -)     \ again  \ then ;
 
 ( n for .. next         goes n times; 4 billion+ if n=0 )
 ( n ?for .. next then   goes n times; 0 if n=0 )
 
-: for     ( - dest)      \ push  \ begin ;
-: ?for    ( - src dest)  (?for) ;
-: next    ( dest)        (next)  <resolve ;
+: for     (s - dest)      \ push  \ begin ;
+: ?for    (s - src dest)  (?for) ;
+: next    (s dest)        (next)  <resolve ;
 
 forth
 
@@ -460,7 +467,7 @@ forth
 ( -create is basically the same as "here".)
 : create   name ;  ( doesn't compile any code!)
 : constant  create  literal \ ^ ;  ( syntactic sugar for : foo  89 ; )
-: buffer  ( bytes)  ram constant  aligned  cell/  ?for 0 , next then ;
+: buffer  (s bytes)  ram constant  aligned  cell/  ?for 0 , next then ;
 : variable      cell  buffer ;
 : 2variable   2 cells buffer ;
 
@@ -601,11 +608,11 @@ decimal
 : off  0 swap !  ;
 
 ( Punctuation in numbers: sign, radix, decimal point, separators.)
-: punct  ( a u ch - a' u' matched)
+: punct  (s a u ch - a' u' matched)
    over if ( still chars to process)  swap push  over c@  xor if
    ( no match)  pop 0 ^ then
    ( match)  pop 1 -1 v+  -1 ^  then
-   ( end of input)  drop shunt ;
+   ( end of input)  drop  shunt  ( -1 throw) ;  ( XXX use throw!)
 
 : ?sign  char - punct  if  -1 ^  then  0 ;
 
@@ -624,7 +631,7 @@ decimal
         char : punct  if   ^  then  complain ;
 
 : ?c-hex    char x  punct  if  hex ^  then
-            char X  punct  if  octal ^   then   hex ;
+            char X  punct  if  hex ^  then   octal ;
 
 : ?c-octal  char 0  punct  if  ?c-hex ^  then   ?hex ;
 
@@ -639,7 +646,7 @@ defer ?radix
 
 ( This is scary.  We need a bunch of literals for `digit?'.)
 
-: digit?    ( ch - digit T | junk F)
+: digit?    (s ch - digit T | junk F)
    char 0 -  [ 2 2* 2* 1+ ]  ( 9)   over u< if  ( !decimal)
           [ 2 2* 2* 2* 1+ ]  ( 17)  - 
      [ 2 1+  2* 2* 2*  1+ ]  ( 25)  over u< if  ( !hex, UPPERCASE)
@@ -649,9 +656,9 @@ defer ?radix
    then  then  ( hex) [ 2 2* 1+ 2* ]  ( 10) +  then  ( decimal)
    dup radix @  u<  ;
 
-: @digit?   ( a - a digit T | a junk F)   dup c@  digit?  ;
+: @digit?   (s a - a digit T | a junk F)   dup c@  digit?  ;
 
-: *digit  ( ud a digit - ud*base+digit a)
+: *digit  (s ud a digit - ud*base+digit a)
    swap push ( a)  swap ( lo dig hi)  radix @ um* drop  rot ( dig hi*radix lo)
    radix @ um*  d+  pop  dpl @ 0< 1+  dpl +!  ;
 
@@ -667,11 +674,11 @@ defer ?radix
   And that "dpl!" in ?dot bugs me, too.)
 
 ( ANS compatible!)
-: >number  ( ud1 a1 c1 - ud2 a2 c2)  ( a2 is first unconvertible char)
+: >number  (s ud1 a1 c1 - ud2 a2 c2)  ( a2 is first unconvertible char)
    =if  for  @digit?  while  *digit 1+ next  0 ^  then
                                 drop  pop  then  ;
 
-: fancy-number  ( a u - d)  ( was -: )
+: fancy-number  (s a u - d)  ( was -: )
    2push  0 0  2pop  ?radix  ?sign push  dpl on
    begin  >number  =while ( still chars)  ?dot  repeat
    2drop  pop  if dnegate then  ;
@@ -684,7 +691,7 @@ defer ?radix
   would be set to 4. Then `0' pushes 0 on the stack but doesn't affect dpl,
   so Forth tries to convert it, and BOOM.)
 
-: (number)  ( a u - d)
+: (number)  (s a u - d)
    radix @ push   ['] fancy-number  catch   pop radix !  throw  ;
 ( always reset the radix, even in case of error)
 
@@ -714,20 +721,20 @@ variable fd-out
 : >stdout  1 writes ;  <stdin  >stdout  ( sanity)
 : >stderr  2 writes ;
 
-: <key   ( fd - ch)                 keybuf 1 read  drop  keybuf c@ ;
-: >emit  ( ch fd)  swap emitbuf c!  emitbuf 1 write ;
+: <key   (s fd - ch)                  keybuf 1 read  drop  keybuf c@ ;
+: >emit  (s ch fd)  swap emitbuf c!  emitbuf 1 write ;
 
-: key  ( - ch)   fd-in  @  <key ;
-: emit  ( ch)    fd-out @  >emit ;
+: key   (s - ch)   fd-in  @  <key ;
+: emit  (s ch)    fd-out  @  >emit ;
 
 : space  bl emit ;
 : cr     ctrl J emit ;
 
-: type                 fd-out @  -rot  write ;
-: accept  ( a # - #in)  fd-in @  -rot  read ( 1-)  ;  ( ANS)
+: type                   fd-out @  -rot  write ;
+: accept  (s a # - #in)   fd-in @  -rot  read ( 1-)  ;  ( ANS)
   ( chop trailing newline)
 
-: typing  ( - a #)  inbuf dup [ #inbuf 2 - ] accept  ;  ( get a line of input)
+: typing  (s - a #)  inbuf dup [ #inbuf 2 - ] accept  ;  ( get a line of input)
 
 
 ( WARNING:  this is different from what the CPU would do;
@@ -744,20 +751,20 @@ variable fd-out
 
 
 ( Pictured numeric output.)
-: /digit   ( ud - udquot urem)
+: /digit   (s ud - udquot urem)
    0 radix @ um/mod  ( 0:hi / radix -> urhi uqhi)  push
    ( urhi:lo)  radix @ um/mod  ( urlo uqlo)  pop rot  ;
 
-: >digit   ( n - ch)  ( convert 1 binary digit to char; hex to uppercase)
+: >digit   (s n - ch)  ( convert 1 binary digit to char; hex to uppercase)
    9 over u<  7 and +  char 0 +  ;
 
-: s->d  ( n - d)  dup 0<  ;
-: dabs  ( d - abs(d)  s->d  if dnegate then  ;
+: s->d  (s n - d)  dup 0<  ;
+: dabs  (s d - abs(d)  s->d  if dnegate then  ;
 
 : +-    0< if  negate  then  ;  ( from fig)
-: abs   ( n - |n|)    s->d  +-  ;
+: abs   (s n - |n|)    s->d  +-  ;
 
-: spaces  ( n)  0 max  ?for  space  next  then  ;
+: spaces  (s n)  0 max  ?for  space  next  then  ;
 
 : pad  [ 65 allot ram ] ;  ( 64 digits + sign + alignment)
 variable hld
@@ -765,36 +772,36 @@ variable hld
 
 : <#     pad hld !  ;
 : held   hld @  pad over -  ;
-: #>     ( ud - a #)  2drop  held  ;
-: sign   ( n -)   0< if  char - hold  then  ;
+: #>     (s ud - a #)  2drop  held  ;
+: sign   (s n -)   0< if  char - hold  then  ;
 
-: #     ( ud - ud')   /digit  >digit  hold  ;
-: #s    ( ud - 0 0)  begin  #  2dup or 0=  until  ;
+: #     (s ud - ud')   /digit  >digit  hold  ;
+: #s    (s ud - 0 0)  begin  #  2dup or 0=  until  ;
 
-: (ud.)   ( ud - a #)  <# #s #>  ;
-: ud.     ( ud -)      (ud.)  type  space  ;
+: (ud.)   (s ud - a #)  <# #s #>  ;
+: ud.     (s ud -)      (ud.)  type  space  ;
 
-: (u.)    ( u - a #)   0  (ud.)  ;
-: u.      ( u -)       (u.)  type  space  ;
+: (u.)    (s u - a #)   0  (ud.)  ;
+: u.      (s u -)       (u.)  type  space  ;
 
-: (d.)    ( d - a #)
+: (d.)    (s d - a #)
           dup push ( sign)  dabs  <# #s  pop sign  #>  ;
-: d.      ( d -)       (d.)  type  space  ;
+: d.      (s d -)       (d.)  type  space  ;
 
-: (.)     ( n - a #)   s->d  (d.)  ;
-: .       ( n -)       (.)  type  space  ;
+: (.)     (s n - a #)   s->d  (d.)  ;
+: .       (s n -)       (.)  type  space  ;
 
 ( This should truncate to field length. Actually, it shouldn't. Does it?)
-: truncating-field   ( a c field - a' field)   tuck swap -  ( a field field-c)
+: truncating-field   (s a c field - a' field)   tuck swap -  ( a field field-c)
    dup 0< if  drop ^  then  ?for  bl hold  next then  #>  ;
 
 ( Non-truncating field.)
-: field   ( a c field - a c)  over - spaces  ;
+: field   (s a c field - a c)  over - spaces  ;
 
-:  (.r)   ( n field - a #)   push  (.)   pop  field  ;
+:  (.r)   (s n field - a #)   push  (.)   pop  field  ;
 :   .r    (.r)  type  ;
 
-: (u.r)   ( u field - a #)   push  (u.)  pop  field  ;
+: (u.r)   (s u field - a #)   push  (u.)  pop  field  ;
 :  u.r    (u.r)  type  ;
 
 ( Useful.)
@@ -830,24 +837,24 @@ variable hld
   Things are _much_ simpler this way!)
 
 ( all compiled strings have a zero terminator.)
-: copy-string   scrabble ( z") ;
+: copy-string   scrabble (s z") ;
 : allot-string   cell- @  cell+ 1+  allot ;
 : make-string   copy-string  dup  allot-string ;
-: string,   ( ch - z")  parse   make-string ;
-: token,       ( - z")  token   make-string ;
-: count  ( z" - a u)  dup  cell- @ ;
+: string,   (s ch - z")  parse   make-string ;
+: token,       (s - z")  token   make-string ;
+: count  (s z" - a u)  dup  cell- @ ;
 : (.")  count type ;  ( no more jumping over strings at run-time!)
 
 comment XXX
-: (warn")   ( f z")  swap  if
+: (warn")   (s f z")  swap  if
    last-link cell+ @ ( link) cell+ count type ( name)  ." : "
    count type ( warning)  ^ then  drop  ;
 : (error")  ; XXX
 
 ( Compiled strings.)
 compiler
-: z"   ( - z")   char " string,  literal ;  ( z means zero-terminated)
-:  "   ( - a c)  \ z"  \ count ;
+: z"   (s - z")   char " string,  literal ;  ( z means zero-terminated)
+:  "   (s - a c)  \ z"  \ count ;
 : ."             \ z"  \ (.") ;
 : error"         \ z"  \ throw ;  ( compile a C-style string for throw'ing)
 
@@ -856,8 +863,8 @@ comment XXX
 
 ( Interpreted strings. Strings that return an address always get compiled!)
 forth
-: z"  ( - z")   char "  string, ;
-:  "  ( - a c)  \f z" count  ;  ( ANS)
+: z"  (s - z")   char "  string, ;
+:  "  (s - a c)  \f z" count  ;  ( ANS)
 : ."	char " parse ( a #)  type  ;  ( not compiled)
 
 
@@ -910,22 +917,22 @@ octal
 ( These abbrevs are used in the following stack comments:
   o = offset, b = base reg, i = index reg, s = scale, m = mod_rm, r = reg)
 
-: osize  ( o - m)
+: osize  (s o - m)
    dup offset !  =if  200 + 400 u< if  100 ^ then  200 ^ then ;
 
 : bpfix  dup 005 xor if ^ then  100 xor ;  ( 005 -> 105)
-: md    ( o b     - m)  00r  swap osize xor ;
-: >sib  ( o b i s - m)  6 <<  swap >0r0 xor  over 00r xor  sib !  md ;
-: +sib  ( m - m')  m00  004 xor ;
+: md    (s o b     - m)  00r  swap osize xor ;
+: >sib  (s o b i s - m)  6 <<  swap >0r0 xor  over 00r xor  sib !  md ;
+: +sib  (s m - m')  m00  004 xor ;
 
 ( converts 004/xx5 -> 104/xx5; these are mod_rm/sib pairs)
-: ri)  ( o b i s - m)                >sib  bpfix  +sib ;
-: i)   ( o   i s - m)  bp -rot ( b)  >sib         +sib ;
-: r)   ( o b     - m)  dup sp xor if  md bpfix ^  then  sp 0 ri) ;
+: ri)  (s o b i s - m)                >sib  bpfix  +sib ;
+: i)   (s o   i s - m)  bp -rot ( b)  >sib         +sib ;
+: r)   (s o b     - m)  dup sp xor if  md bpfix ^  then  sp 0 ri) ;
    
 : )   offset !  005 ;
-: $  ( imm)  immed !  cell variant ! ;
-: d-bit  ( r m | m r - m r d-bit)  dup m00 300 xor if  swap 0 ^  then  2 ;
+: $  (s imm)  immed !  cell variant ! ;
+: d-bit  (s r m | m r - m r d-bit)  dup m00 300 xor if  swap 0 ^  then  2 ;
 
 : md->osize
    307 and  dup 005 xor if  dup 004 xor if  ^  then
@@ -937,7 +944,7 @@ octal
    md->osize  6 >> jump  nope o8, o32, nope [
 
 : sib,  00r 004 xor if ^ then  sib @ 1, ;
-: ea,  ( m0r 0r0)  >0r0 xor dup 1,  dup sib, offset, ;
+: ea,  (s m0r 0r0)  >0r0 xor dup 1,  dup sib, offset, ;
 : mov  d-bit  [ hex 89 octal ] xor 1,  ea, ;
 : addi    [ hex 83 ] 1,  0 ea,  1, ;
 compiler
@@ -950,11 +957,11 @@ decimal
 : t time ;  ( contents of TSC: time since boot in processor clock ticks)
 ( : clockspeed  750000000 ;  ( on starbuck, a 750 M Athlon)
 : clockspeed  597070000 ;  ( on stubb, a 600 M Celeron/P3)
-: uptime  ( - s)  t clockspeed um/mod nip ;
+: uptime  (s - s)  t clockspeed um/mod nip ;
 
 ( PCI bus scan!)
-: getsp  ( r)  sp ) swap mov ;
-: sp+    ( o)  sp ) addi ;
+: getsp  (s r)  sp ) swap mov ;
+: sp+    (s o)  sp ) addi ;
 : ret  "c3 1, ;
 create out  c getsp  0 c r) d mov  4 c r) a mov  "ef 1, 8 sp+  ret
 create in   c getsp  0 c r) d mov  "ed 1,  a 0 c r) mov  ret
@@ -996,11 +1003,11 @@ asmXXX
 
 
 ( XXX: should be primitive?)
-: fill        ( a u n)  -rot  ?for  2dup c!    1+  next  then  2drop ;
-: cell-fill   ( a u n)  -rot  ?for  2dup  ! cell+  next  then  2drop ;
+: fill        (s a u n)  -rot  ?for  2dup c!    1+  next  then  2drop ;
+: cell-fill   (s a u n)  -rot  ?for  2dup  ! cell+  next  then  2drop ;
 
-: erase  ( a u)   0 fill  ;   ( easy, what?)
-: blank  ( a u)  bl fill  ;
+: erase  (s a u)   0 fill  ;   ( easy, what?)
+: blank  (s a u)  bl fill  ;
 
 
 ( Go forth and multiply ... and divide.
@@ -1021,26 +1028,26 @@ asmXXX
   extra-credit challenge: is "m* drop" always equal to "um* drop"? Why or
   why not? ;-)
 
-: *       ( n1 n2 - n1*n2)   um*  drop  ;  ( what's in fig)
+: *       (s n1 n2 - n1*n2)   um*  drop  ;  ( what's in fig)
 
-:  */mod  ( n1 n2 n3 - r q)  push   m*   pop           fm/mod ;
-: u*/mod  ( u1 u2 u3 - r q)  push  um*   pop           um/mod ;
+:  */mod  (s n1 n2 n3 - r q)  push   m*   pop           fm/mod ;
+: u*/mod  (s u1 u2 u3 - r q)  push  um*   pop           um/mod ;
 
-:  /mod   ( n1    n2 - r q)  push  s->d  pop ( d1 n2)  fm/mod ;
-: u/mod   ( u1    u2 - r q)          0 swap ( ud1 u2)  um/mod ;
+:  /mod   (s n1    n2 - r q)  push  s->d  pop ( d1 n2)  fm/mod ;
+: u/mod   (s u1    u2 - r q)          0 swap ( ud1 u2)  um/mod ;
 
-:  */     ( n1 n2 n3 - n1*n2/n3)   */mod  nip ;
-: u*/     ( u1 u2 u3 - u1*u2/u3)  u*/mod  nip ;
+:  */     (s n1 n2 n3 - n1*n2/n3)   */mod  nip ;
+: u*/     (s u1 u2 u3 - u1*u2/u3)  u*/mod  nip ;
 
-:  /      ( n1 n2 - quot)    /mod  nip ;
-: u/      ( u1 u2 - uquot)  u/mod  nip ;
+:  /      (s n1 n2 - quot)    /mod  nip ;
+: u/      (s u1 u2 - uquot)  u/mod  nip ;
 
-:  mod    ( n1 n2 - mod)     /mod  drop ;
-: umod    ( u1 u2 - umod)   u/mod  drop ;
+:  mod    (s n1 n2 - mod)     /mod  drop ;
+: umod    (s u1 u2 - umod)   u/mod  drop ;
 
 
 ( Within.)
-: within  ( n lo hi - lo <= n < hi)  over - push  - pop u<  ;
+: within  (s n lo hi - lo <= n < hi)  over - push  - pop u<  ;
 
 
 ( Character classifications - useful for ASCII dumps and keyboard input.)
@@ -1095,7 +1102,7 @@ comment %%
 	      `conditional' vocab.)
 
 ( Compiler/interpreter modes.)
-: mode   create  ( prompt interpret)  ram push , ,   pop  does>  state ! ;
+: mode   create  (s prompt interpret)  ram push , ,   pop  does>  state ! ;
 
 ( Defining new dictionary chains. These used to be in an array but are now
   independent of each other; now they are simply variables that point to the
@@ -1116,7 +1123,7 @@ variable cond-save-state
 
 compiler
 : [else]   cond[  eat  ;
-: [if]   ( f)  0= if  \ [else]  then  ;
+: [if]   (s f)  0= if  \ [else]  then  ;
 : [then]  ;
 : [with]   .forth. token' if  drop -1 ^  then  2drop 0 ;
 
@@ -1178,17 +1185,17 @@ variable csp  ( what does this stand for? `check stack pointer'?)
          =if  . ."  stack depth change"  hex  .s  then  drop  ;
 
 ( Bracket the contents of a file and check for stack depth change.)
-: file[  ( a u)   >stderr  ." (( "  type  >stdout  !csp  ;
+: file[  (s a u)   >stderr  ." (( "  type  >stdout  !csp  ;
 : ]file           >stderr  ." )) "        >stdout  ?csp  ;
 
 ( For counting the size of a loaded file.)
-: file[#   ( a u)  file[  here  ;
+: file[#   (s a u)  file[  here  ;
 : #]file   here  swap -  decimal  >stderr  .  ." bytes "  ]file  ;
 
 
 ( Time, timestamp.)
-: "hold  ( a #)  dup negate  hld +!  hld @  swap cmove  ;
-: ##   ( n)  0  # #  2drop  ;
+: "hold  (s a #)  dup negate  hld +!  hld @  swap cmove  ;
+: ##   (s n)  0  # #  2drop  ;
 
 ( Separators)
 : ":   char : hold  ;
@@ -1196,18 +1203,18 @@ variable csp  ( what does this stand for? `check stack pointer'?)
 : ".   char . hold  ;
 : ||   bl hold  ;  ( a space)
 
-: month"  ( n - a #)  ( n is 0--11)
+: month"  (s n - a #)  ( n is 0--11)
    3*  z" janfebmaraprmayjunjulaugsepoctnovdec"  +  3  ;
 
 ( clock returns a count of seconds since 1970-jan-01 00:00:00 UTC,
   the Unix "epoch".)
 
-: (date)   ( year month mday yday - 0 0)
+: (date)   (s year month mday yday - 0 0)
    drop  ## "-  month" "hold "-  0 #s ( year)  ;
 
-: hh:mm:ss  ( hms)  ## ":  ## ":  ## ;
-: hh:mm     ( hms)  drop ( sec)  ## ":  ## ;
-: (time")  ( year month mday yday hour min sec 'zone #zone - a #)
+: hh:mm:ss  (s hms)  ## ":  ## ":  ## ;
+: hh:mm     (s hms)  drop ( sec)  ## ":  ## ;
+: (time")  (s year month mday yday hour min sec 'zone #zone - a #)
    radix @ push  decimal
    <#  "hold  ( zone)  || hh:mm:ss  ||  (date)  #>
    pop radix !  ;
@@ -1217,13 +1224,13 @@ variable csp  ( what does this stand for? `check stack pointer'?)
    <#  2drop ( zone)  hh:mm  ||  (date)  #>
    pop radix !  ;
 
-: time"   ( epoch - a #)  local-time  (time")  ;
-: utc"    ( epoch - a #)         utc  (time")  ;
+: time"   (s epoch - a #)  local-time  (time")  ;
+: utc"    (s epoch - a #)         utc  (time")  ;
 
 ( Better primitives? More elegant, certainly.)
-: s->sm    ( s - s m)    60 u/mod ;
-: s->smh   ( s - s m h)  s->sm  s->sm ;
-: s->smhd  ( s - s m h d)  s->smh  24 u/mod ;
+: s->sm    (s s - s m)    60 u/mod ;
+: s->smh   (s s - s m h)  s->sm  s->sm ;
+: s->smhd  (s s - s m h d)  s->smh  24 u/mod ;
 : sm->s    60 * + ;
 : smh->s   sm->s  sm->s ;
 : smhd->s  24 * +  smh->s ;
