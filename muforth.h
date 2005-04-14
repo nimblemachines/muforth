@@ -133,7 +133,7 @@ extern char *version;
 
 /* declare common functions */
 
-/* protos.h is automagically generated, and can match every public function
+/* public.h is automagically generated, and can match every public function
  * taking no arguments. Other functions need to be put here explicitly.
  */
 #include "public.h"

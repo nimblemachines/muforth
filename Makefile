@@ -35,8 +35,8 @@ LDFLAGS=
 
 # If any of these files changes, make a new version.h
 VERSOBJS=	kernel.o interpret.o compile.o dict.o file.o \
-		i386_lib.o \
-		error.o time.o pci.o tty.o select.o sort.o # buf.o
+		error.o time.o pci.o tty.o select.o sort.o \
+		i386_lib.o
 
 ALLOBJS=	${VERSOBJS} muforth.o
 DEPFILES=	Makefile muforth.h env.h
@@ -81,13 +81,13 @@ version.h : Makefile ${VERSOBJS}
 	echo "time_t build_time = `date \"+%s\"`;" >> version.h
 
 muforth : ${ALLOBJS} ${DEPFILES}
-	${CC} ${LDFLAGS} ${CFLAGS} -o $@ ${ALLOBJS} ${LIBS}
+	${CC} ${LDFLAGS} -o $@ ${ALLOBJS} ${LIBS}
 
 .c.asm :
 	${CC} ${CFLAGS} -S -o ${.TARGET} -c ${.IMPSRC}
 
 clean :
-	rm -f muforth version.h *.o *.asm *.ph
+	rm -f muforth version.h public.h *.o *.asm *.ph
 
 ## For merging changes in other branches into HEAD
 .if defined (BRANCH)
