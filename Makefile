@@ -26,7 +26,7 @@
 ### 2004-jun-24. daf. Made this file as generic as possible, stripping out
 ### all the "web projects" stuff. Now it should compile with BSD make or
 ### GNU make.
- 
+
 VERSION=	0.02
 
 CFLAGS=		-O2 -Wall -fomit-frame-pointer
@@ -35,8 +35,7 @@ LDFLAGS=
 
 # If any of these files changes, make a new version.h
 VERSOBJS=	kernel.o interpret.o compile.o dict.o file.o \
-		error.o time.o pci.o tty.o select.o sort.o \
-		i386_lib.o
+			error.o time.o tty.o select.o i386_lib.o
 
 ALLOBJS=	${VERSOBJS} muforth.o
 DEPFILES=	Makefile muforth.h env.h
@@ -53,12 +52,31 @@ public.h : ${ALLOBJS:S/.o/.ph/}
 	(echo "/* This file is automagically generated. Do not edit! */"; \
 	cat ${.ALLSRC}) > ${.TARGET}
 
+forth_chain.h : public.h gen_dict_chain.sed
+	(echo "/* This file is automagically generated. Do not edit! */"; \
+	sed -E \
+		-e '/^void mu_compiler/d' \
+		-f gen_dict_chain.sed ${.ALLSRC} \
+	) > ${.TARGET}
+
+compiler_chain.h : public.h gen_dict_chain.sed
+	(echo "/* This file is automagically generated. Do not edit! */"; \
+	sed -E \
+		-e '/^void mu_compiler/!d' \
+		-e 's/mu_compiler_/mu_/' \
+		-f gen_dict_chain.sed \
+		-e 's/mu_/mu_compiler_/' ${.ALLSRC} \
+	) > ${.TARGET}
+
+dict.o : forth_chain.h compiler_chain.h
+
 .SUFFIXES : .ph
 
 .c.ph : Makefile
 	@echo Making ${.TARGET}
 	@(echo "/* ${.IMPSRC} */"; \
 	sed -E -n \
+		-e '/^#if 0/q' \
 		-e '/^static /d' \
 		-e 's/^([a-z]+ \**[a-z_0-9]+)\((void)?\).*$$/\1(void);/p' \
 		-e 's/^(pw [a-z_0-9]+).*;$$/extern \1;/p' \
@@ -87,7 +105,8 @@ muforth : ${ALLOBJS} ${DEPFILES}
 	${CC} ${CFLAGS} -S -o ${.TARGET} -c ${.IMPSRC}
 
 clean :
-	rm -f muforth version.h public.h *.o *.asm *.ph
+	rm -f muforth version.h *.o *.asm *.ph
+	rm -f public.h forth_chain.h compiler_chain.h
 
 ## For merging changes in other branches into HEAD
 .if defined (BRANCH)

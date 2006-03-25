@@ -30,7 +30,7 @@
 #include <unistd.h>
 #include <errno.h>
 
-void mu_fd_zero()
+void mu_fd_reset()
 {
     FD_ZERO((fd_set *) T);
     T = sizeof(fd_set);   /* so we can allot space in Forth */

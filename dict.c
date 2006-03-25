@@ -53,139 +53,12 @@ struct inm          /* "initial name" */
 };
 
 struct inm initial_forth[] = {
-    { "version", mu_push_version },
-    { "build-time", mu_push_build_time },
-    { ":", mu_colon },
-    { "<:>", mu_set_colon_code },
-    { "name", mu_make_new_name },
-    { "'name-hook", mu_push_tick_name_hook },
-    { ".forth.", mu_push_forth_chain },
-    { ".compiler.", mu_push_compiler_chain },
-    { "current", mu_push_current },
-    { "'number", mu_push_tick_number },
-    { "'number,", mu_push_tick_number_comma },
-    { "h", mu_push_h },
-    { "r", mu_push_r },
-    { "s0", mu_push_s0 },
-    { "catch", mu_catch },
-    { "throw", mu_throw },
-    { "command-line", mu_push_command_line },
-    { "token", mu_token },
-    { "parse", mu_parse },
-    { "find", mu_find },
-    { "execute", mu_execute },
-    { "interpret", mu_interpret },
-    { "evaluate", mu_evaluate },
-    { "create-file", mu_create_file },
-    { "open-file", mu_open_file },
-    { "r/o", mu_push_ro_flags },
-    { "r/w", mu_push_rw_flags },
-    { "close-file", mu_close_file },
-    { "mmap-file", mu_mmap_file },    
-    { "load-file", mu_load_file },
-    { "readable?", mu_readable_q },
-    { "compile,", mu_compile },
-    { "state", mu_push_state },
-    { "-]", mu_minus_rbracket },
-    { "parsed", mu_push_parsed },
-    { "huh?", mu_huh },
-    { "complain", mu_complain },
-    { "^", mu_exit },
-    { "<does>", mu_set_does_code },
-    { "(branch)", mu_branch_ },
-    { "(=0branch)", mu_eqzbranch_ },
-    { "(0branch)", mu_zbranch_ },
-    { "(next)", mu_next_ },
-    { "(?for)", mu_qfor_ },
-    { "(lit)", mu_literal_ },
-    { "scrabble", mu_scrabble },
-    { "nope", mu_nope },
-    { "zzz", mu_zzz },
-    { "+", mu_add },
-    { "and", mu_and },
-    { "or", mu_or },
-    { "xor", mu_xor },
-    { "negate", mu_negate },
-    { "invert", mu_invert },
-    { "u<", mu_uless },
-    { "0<", mu_zless },
-    { "0=", mu_zequal },
-    { "<", mu_less },
-    { "2*", mu_2star },
-    { "2/", mu_2slash },
-    { "u2/", mu_u2slash },
-    { "<<", mu_shift_left },
-    { ">>", mu_shift_right },
-    { "u>>", mu_ushift_right },
-    { "d+", mu_dplus },
-    { "dnegate", mu_dnegate },
-    { "um*", mu_um_star },
-    { "m*", mu_m_star },
-    { "um/mod", mu_um_slash_mod },
-    { "fm/mod", mu_fm_slash_mod },
-    { "@", mu_fetch },
-    { "c@", mu_cfetch },
-    { "!", mu_store },
-    { "c!", mu_cstore },
-    { "+!", mu_plus_store },
-    { "rot", mu_rot },
-    { "-rot", mu_minus_rot },
-    { "dup", mu_dup },
-    { "drop", mu_drop },
-    { "2drop", mu_2drop },
-    { "nip", mu_nip },
-    { "swap", mu_swap },
-    { "over", mu_over },
-    { "push", mu_push },
-    { "pop", mu_pop },
-    { "r@", mu_rfetch },
-    { "string-compare", mu_string_compare },
-    { "read", mu_read_carefully },
-    { "write", mu_write_carefully },
-    { "sp!", mu_sp_reset },
-    { "depth", mu_depth },
-    { "cmove", mu_cmove },
-    { "cells", mu_cells },
-    { "cell/", mu_cell_slash },
- 
-    /* time.c */
-    { "local-time", mu_local_time },
-    { "utc", mu_global_time },
-    { "clock", mu_push_clock },
-
-#ifdef __FreeBSD__
-    /* pci.c */
-    { "pci", mu_pci_open },
-    { "pci@", mu_pci_read },
-#endif
-
-    /* tty.c */
-    { "get-termios", mu_get_termios },
-    { "set-termios", mu_set_termios },
-    { "set-raw", mu_set_termios_raw },
-    { "set-min-time", mu_set_termios_min_time },
-    { "set-speed", mu_set_termios_speed },
-
-    /* select.c */
-    { "fd-zero", mu_fd_zero },
-    { "fd-set", mu_fd_set },
-    { "fd-clr", mu_fd_clr },
-    { "fd-in-set?", mu_fd_isset },
-    { "select", mu_select },
-
-    /* sort.c */
-    { "string-quicksort", mu_string_quicksort },
-
-    { "bye", mu_bye },
-
-    { "#code", mu_push_code_size},
-    { "#data", mu_push_data_size},
+#include "forth_chain.h"
     { NULL, NULL }
 };
 
 struct inm initial_compiler[] = {
-    { ";", mu_semicolon },
-    { "[", mu_lbracket },
+#include "compiler_chain.h"
     { NULL, NULL }
 };
 
@@ -204,7 +77,8 @@ void mu_push_compiler_chain()
     PUSH(&compiler_chain);
 }
 
-/* 2004-apr-01. After giving a talk on muforth to SVFIG, and in particular
+/*
+ * 2004-apr-01. After giving a talk on muforth to SVFIG, and in particular
  * after Randy asked me some pointed questions, I decided that find should
  * have positive logic after all. I have renamed -"find to find to indicate
  * this change.
@@ -268,7 +142,7 @@ void mu_compile_name()
     DROP2;
 }
 
-void mu_make_new_name()
+void mu_new()
 {
     mu_token();
     EXEC(mu_name_hook);

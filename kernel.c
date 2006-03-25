@@ -52,7 +52,7 @@ void mu_literal_() { PUSH(*IP++); }
 
 cell mu_pop_dstack() { cell t = T; DROP; return t; }
 
-void mu_add() { T += SND; NIP; }
+void mu_plus() { T += SND; NIP; }
 void mu_and() { T &= SND; NIP; }
 void mu_or()  { T |= SND; NIP; }
 void mu_xor() { T ^= SND; NIP; }
@@ -88,15 +88,15 @@ void mu_minus_rot() { cell t = T; T = SND; SND = TRD; TRD = t; }
 void mu_uless() { T = (SND < (unsigned) T) ? -1 : 0; NIP; }
 void mu_less()  { T = (SND < T)            ? -1 : 0; NIP; }
 
-void mu_zless()  { T = (T < 0)  ? -1 : 0; }
-void mu_zequal() { T = (T == 0) ? -1 : 0; }
+void mu_zero_less()  { T = (T < 0)  ? -1 : 0; }
+void mu_zero_equal() { T = (T == 0) ? -1 : 0; }
 
 void mu_depth() { cell d = S0 - SP; PUSH(d); }
 void mu_sp_reset() { SP = S0; T = 0xdecafbad; }
 
 void mu_branch_()    { BRANCH; }
-void mu_eqzbranch_() { if (T == 0) BRANCH; else IP++; }
-void mu_zbranch_()   { mu_eqzbranch_(); DROP; }
+void mu_equal_zero_branch_() { if (T == 0) BRANCH; else IP++; }
+void mu_zero_branch_()   { mu_equal_zero_branch_(); DROP; }
 
 /* r stack functions */
 void mu_push()   { RPUSH(POP); }

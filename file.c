@@ -105,12 +105,12 @@ void mu_open_file()     /* C-string-name flags - fd */
     T = fd;
 }
 
-void mu_push_ro_flags()
+void mu_push_r_slash_o()
 {
     PUSH(O_RDONLY);
 }
 
-void mu_push_rw_flags()
+void mu_push_r_slash_w()
 {
     PUSH(O_RDWR);
 }
@@ -155,20 +155,6 @@ void mu_mmap_file()     /* fd - addr len */
     NIPN(-1);
     SND = (cell) p;
     T = s.st_size;
-}
-
-void mu_load_file()
-{
-    int fd;
-
-    PUSH(O_RDONLY);
-    mu_open_file();
-    fd = T;
-    mu_mmap_file();
-    PUSH(&p_mu_evaluate);
-    mu_catch();
-    close(fd);
-    mu_throw();
 }
 
 /* NOTE: These two routines will be obsoleted by buf_* routines. */

@@ -56,7 +56,7 @@ void mu_local_time()
     push_forth_time_from_libc_time (&tm, tzname[tm.tm_isdst]);
 }
 
-void mu_global_time()
+void mu_utc()
 {
     struct tm tm;
     time_t clock;

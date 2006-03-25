@@ -129,7 +129,7 @@ void mu_complain()
 
 static pw p_mu_complain = &mu_complain;
 
-void mu_huh()
+void mu_huh_q()
 {
     if (POP) return;
     mu_complain();
@@ -177,7 +177,7 @@ void mu__rbracket()
     mu_find();
     if (POP)
     {
-        mu_compile();
+        mu_compile_comma();
         return;
     }
     EXEC(mu_number_comma);
@@ -206,7 +206,7 @@ void mu_push_state()
     PUSH(&state);
 }
 
-void mu_lbracket()
+void mu_compiler_lbracket()
 {
     state = &forth_interpreter;
 }
@@ -281,6 +281,20 @@ void mu_evaluate()
 }
 
 pw p_mu_evaluate = &mu_evaluate;
+
+void mu_load_file()
+{
+    int fd;
+
+    mu_push_r_slash_o();
+    mu_open_file();
+    fd = T;
+    mu_mmap_file();
+    PUSH(&p_mu_evaluate);
+    mu_catch();
+    close(fd);
+    mu_throw();
+}
 
 void mu_start_up()
 {
