@@ -3,7 +3,7 @@
  *
  * This file is part of muforth.
  *
- * Copyright (c) 1997-2004 David Frech. All rights reserved, and all wrongs
+ * Copyright (c) 1997-2005 David Frech. All rights reserved, and all wrongs
  * reversed.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -30,31 +30,37 @@
 #include <stdlib.h>
 
 /* data stack */
-cell_t stack[STACK_SIZE];
-cell_t *sp = S0;
+cell stack[STACK_SIZE];
+cell *SP;
 
 /* return stack */
-cell_t rstack[STACK_SIZE];
-cell_t *rsp = R0;
+xtk *rstack[STACK_SIZE];
+xtk **RP;
 
-/* debugger stacks */
-cell_t dbg_stack[STACK_SIZE];
-cell_t dbg_rstack[STACK_SIZE];
+cell   T;      /* top of stack */
+xtk   *IP;     /* instruction pointer */
+xtk    W;      /* on entry, points to the current Forth word */
 
 int  cmd_line_argc;
 char **cmd_line_argv;
 
-uint8_t *pnm0, *pdt0;	/* ptrs to name & data spaces */
-code_t  *pcd0;		/* ptr to code space */
+uint8 *pdt0;   /* ptrs to name & data spaces */
+cell  *pcd0;   /* ptr to names & code space */
 
-uint8_t *pnm, *pdt;    /* ptrs to next free byte in each space */
-code_t  *pcd;
+uint8 *pdt;    /* ptrs to next free byte in each space */
+cell  *pcd;
 
 /* XXX: Gross hack alert! */
 char *ate_the_stack;
 char *ate_the_rstack;
 char *isnt_defined;
 char *version;
+
+static void init_stacks()
+{
+    mu_sp_reset();
+    RP = R0;
+}
 
 static void mu_find_init_file()
 {
@@ -72,11 +78,6 @@ static void mu_find_init_file()
     die("couldn't find startup.mu4 init file");
 }
 
-void mu_push_name_size()
-{
-    PUSH(pnm - pnm0);
-}
-
 void mu_push_code_size()
 {
     PUSH((caddr_t)pcd - (caddr_t)pcd0);
@@ -89,20 +90,16 @@ void mu_push_data_size()
 
 static void allocate()
 {
-    pnm0 = (uint8_t *) mmap(0, 256 * 4096, PROT_READ | PROT_WRITE,
-			  MAP_ANON | MAP_PRIVATE, -1, 0);
+    pcd0 = (cell *)  mmap(0, 256 * 4096, PROT_READ | PROT_WRITE,
+                            MAP_ANON | MAP_PRIVATE, -1, 0);
 
-    pcd0 = (code_t *)  mmap(0, PCD_SIZE, PROT_READ | PROT_WRITE | PROT_EXEC,
-			  MAP_ANON | MAP_PRIVATE, -1, 0);
+    pdt0 = (uint8 *) mmap(0, 1024 * 4096, PROT_READ | PROT_WRITE,
+                            MAP_ANON | MAP_PRIVATE, -1, 0);
 
-    pdt0 = (uint8_t *) mmap(0, 1024 * 4096, PROT_READ | PROT_WRITE,
-			 MAP_ANON | MAP_PRIVATE, -1, 0);
-
-    if (pnm0 == MAP_FAILED || pcd0 == MAP_FAILED || pdt0 == MAP_FAILED)
-	die("couldn't allocate memory");
+    if (pcd0 == MAP_FAILED || pdt0 == MAP_FAILED)
+        die("couldn't allocate memory");
 
     /* init compiler ptrs */
-    pnm = pnm0;
     pcd = pcd0;
     pdt = pdt0;
 }
@@ -122,16 +119,16 @@ static void make_constant_strings()
 }
 
 /*
-( We need to rebuild the command line - says something about the
+  ( We need to rebuild the command line - says something about the
   inefficiency of C's way of doing cmd line params - and parse that.)
 
-( copy with trailing blank, but don't include the blank in the new addr)
-: "copy  ( to from u - to+u)   push  over  r@ cmove  pop +  bl over c!  ;
+  ( copy with trailing blank, but don't include the blank in the new addr)
+  : "copy  ( to from u - to+u)   push  over  r@ cmove  pop +  bl over c!  ;
 
-: command-line  ( skip first one: the program name)
-   ram  argv cell+  ram  argc 1- ?for  
-     over @  dup string-length "copy  1+ ( keep blank)  cell u+  next  then
-   nip  ( start end)  over -  ( a u)  dup allot ( aligns) ;
+  : command-line  ( skip first one: the program name)
+  ram  argv cell+  ram  argc 1- ?for  
+  over @  dup string-length "copy  1+ ( keep blank)  cell u+  next  then
+  nip  ( start end)  over -  ( a u)  dup allot ( aligns) ;
 */
 
 static struct counted_string *pcmd_line;
@@ -157,8 +154,8 @@ static void convert_command_line(int argc, char *argv[])
 
     while (argc--)
     {
-	pline = copy_string(pline, *argv, strlen(*argv));
-	argv++;
+        pline = copy_string(pline, *argv, strlen(*argv));
+        argv++;
     }
     pcmd_line->length = pline - pcmd_line->data;
 
@@ -183,32 +180,13 @@ void mu_push_build_time()
     PUSH(build_time);
 }
 
-static void verify(void)
-{
-    int err = 0;
-
-    if (sizeof(cell_t) != sizeof(void *)) {
-	fprintf(stderr, "ERROR: muForth requires that the size of a cell is the same size as a pointer.\n");
-	err = 1;
-    }
-
-    if (2*sizeof(cell_t) != sizeof(dcell_t)) {
-	fprintf(stderr, "ERROR: muForth requires that the size of a dcell is twice the size of a cell.\n");
-	err = 1;
-    }
-
-    if (err) {
-	exit(-1);
-    }
-}
-
 int main(int argc, char *argv[])
 {
-    verify();
     allocate();
     init_dict();
     convert_command_line(argc, argv);
-    make_constant_strings();	/* XXX: Hack! */
+    make_constant_strings();    /* XXX: Hack! */
+    init_stacks();
     mu_find_init_file();
     mu_load_file();
     mu_start_up();

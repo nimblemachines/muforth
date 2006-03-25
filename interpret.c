@@ -3,7 +3,7 @@
  *
  * This file is part of muforth.
  *
- * Copyright (c) 1997-2004 David Frech. All rights reserved, and all wrongs
+ * Copyright (c) 1997-2005 David Frech. All rights reserved, and all wrongs
  * reversed.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -28,10 +28,14 @@
 #include <stdlib.h>
 #include <ctype.h>
 
-struct imode			/* interpreter mode */
+/* for debug */
+#include <sys/uio.h>
+#include <unistd.h>
+
+struct imode        /* interpreter mode */
 {
-    void (*eat)();		/* consume one token */
-    void (*prompt)();		/* display a mode-specific prompt */
+    xtk eat;       /* consume one token */
+    xtk prompt;    /* display a mode-specific prompt */
 };
 
 /*
@@ -44,53 +48,12 @@ struct imode			/* interpreter mode */
  * length.
  */
 static struct text source;
-static ssize_t first;		/* goes from -start to 0 */
+static ssize_t first;       /* goes from -start to 0 */
 
-struct string parsed;		/* for errors */
+struct string parsed;       /* for errors */
 
-#if 0
-/* Parse whitespace-delimited tokens */
-void mu_token_old()
+static void mu_return_token(ssize_t last, int trailing)
 {
-    ssize_t last;
-    int trailing;
-
-    /* regardless of the outcome, we return (start, length) */
-    DROP(-2);
-
-    if (first == 0)
-    {
-	STK(1) = TOP = 0;
-	return;
-    }
-	
-    /* Skip leading whitespace */
-    for (;;)
-    {
-	if (!isspace(source.end[first])) break;
-	if (++first == 0)
-	{
-	    STK(1) = TOP = 0;
-	    return;
-	}
-    }
-
-    /*
-     * Now scan for trailing delimiter and consume it,
-     * unless we run out of input text first.
-     */
-    last = first;
-    trailing = 1;
-    for (;;)
-    {
-	if (isspace(source.end[last])) break;
-	if (++last == 0)
-	{
-	    trailing = 0;
-	    break;
-	}
-    }
-
     /* Get address and length of the token */
     parsed.data = source.end + first;
     parsed.length = last - first;
@@ -98,146 +61,58 @@ void mu_token_old()
     /* Account for characters processed, return token */
     first = last + trailing;
 
-    STK(1) = (cell_t) parsed.data;
-    TOP = parsed.length;
-}
-#endif
+    NIPN(-1);    /* make room for result */
+    SND = (cell) parsed.data;
+    T = parsed.length;
 
-void mu_token()
+#ifdef DEBUG_TOKEN
+    write(2, parsed.data, parsed.length);
+    write(2, "\n", 1);
+#endif
+}
+
+void mu_token()  /* -- start len */
 {
     ssize_t last;
-    int trailing;
+
+    DUP;   /* we'll be setting T when we're done */
 
     /* Skip leading whitespace */
-    for (;;)
-    {
-	if (first == 0)
-	    break;
-
-	if (!isspace(source.end[first]))
-	    break;
-
-	first++;
-    }
+    for (; first != 0 && isspace(source.end[first]); first++)
+        ;
 
     /*
-     * Now scan for trailing delimiter and consume it,
-     * unless we run out of input text first.
+     * Scan for trailing delimiter and consume it, unless we run out of
+     * input text first.
      */
-    last = first;
-    trailing = 1;
-    for (;;)
-    {
-	if (last == 0)
-	{
-	    trailing = 0;
-	    break;
-	}
-	if (isspace(source.end[last]))
-	    break;
+    for (last = first; last != 0; last++)
+        if (isspace(source.end[last]))
+        {
+            mu_return_token(last, 1);
+            return;
+        }
 
-	last++;
-    }
-
-    /* Get address and length of the token */
-    parsed.data = source.end + first;
-    parsed.length = last - first;
-
-    /* Account for characters processed, return token */
-    first = last + trailing;
-
-    STK(-1) = (cell_t) parsed.data;
-    STK(-2) = parsed.length;
-    DROP(-2);
+    mu_return_token(last, 0);
 }
 
-#if 0
-/* Parse token using arbitrary delimiter; do not skip leading delimiters */
-void mu_parse_old()
+void mu_parse()  /* delim -- start len */
 {
     ssize_t last;
-    int trailing;
-    int c;
 
-    c = TOP;
-
-    /* regardless of the outcome, we return (start, length) */
-    DROP(-1);
-
-    if (first == 0)
-    {
-	STK(1) = TOP = 0;
-	return;
-    }
-	
-    last = first;
+    /* The first character of unseen input is the first character of token. */
 
     /*
-     * Now scan for trailing delimiter and consume it,
-     * unless we run out of input text first.
+     * Scan for trailing delimiter and consume it, unless we run out of
+     * input text first.
      */
-    trailing = 1;
-    for (;;)
-    {
-	if (c == source.end[last]) break;
-	if (++last == 0)
-	{
-	    trailing = 0;
-	    break;
-	}
-    }
+    for (last = first; last != 0; last++)
+        if (T == source.end[last])
+        {
+            mu_return_token(last, 1);
+            return;
+        }
 
-    /* Get address and length of the token */
-    parsed.data = source.end + first;
-    parsed.length = last - first;
-
-    /* Account for characters processed, return token */
-    first = last + trailing;
-
-    STK(1) = (cell_t) parsed.data;
-    TOP = parsed.length;
-}
-#endif
-
-void mu_parse()
-{
-    ssize_t last;
-    int trailing;
-    int c;
-
-    c = TOP;
-
-    /* The first character of unseen input is the first character of token */
-    last = first;
-
-    /*
-     * Scan for trailing delimiter and consume it,
-     * unless we run out of input text first.
-     */
-    trailing = 1;
-    for (;;)
-    {
-	if (last == 0)
-	{
-	    trailing = 0;
-	    break;
-	}
-	if (c == source.end[last])
-	    break;
-
-	++last;
-    }
-
-    /* Get address and length of the token */
-    parsed.data = source.end + first;
-    parsed.length = last - first;
-
-    /* Account for characters processed, return token */
-    first = last + trailing;
-
-    TOP = (cell_t) parsed.data;
-    STK(-1) = parsed.length;
-    DROP(-1);
+    mu_return_token(last, 0);
 }
 
 /*
@@ -252,14 +127,16 @@ void mu_complain()
     mu_throw();
 }
 
+static pw p_mu_complain = &mu_complain;
+
 void mu_huh()
 {
     if (POP) return;
     mu_complain();
 }
 
-void (*mu_number)() = mu_complain;
-void (*mu_number_comma)() = mu_complain;
+static xtk mu_number = &p_mu_complain;
+static xtk mu_number_comma = &p_mu_complain;
 
 void mu_push_tick_number()
 {
@@ -271,6 +148,8 @@ void mu_push_tick_number_comma()
     PUSH(&mu_number_comma);
 }
 
+void mu_execute() { EXECUTE; }
+
 /* The interpreter's "consume" function. */
 void mu__lbracket()
 {
@@ -278,10 +157,10 @@ void mu__lbracket()
     mu_find();
     if (POP)
     {
-	EXECUTE;
-	return;
+        EXECUTE;
+        return;
     }
-    execute((cell_t) mu_number);
+    EXEC(mu_number);
 }
 
 /* The compiler's "consume" function. */
@@ -291,21 +170,21 @@ void mu__rbracket()
     mu_find();
     if (POP)
     {
-	EXECUTE;
-	return;
+        EXECUTE;
+        return;
     }
     mu_push_forth_chain();
     mu_find();
     if (POP)
     {
-	mu_compile_call();
-	return;
+        mu_compile();
+        return;
     }
-    execute((cell_t) mu_number_comma);
+    EXEC(mu_number_comma);
 }
 
-void mu_nope() {}		/* very useful NO-OP */
-void mu_zzz() {}		/* a convenient GDB breakpoint */
+void mu_nope() {}       /* very useful NO-OP */
+void mu_zzz() {}        /* a convenient GDB breakpoint */
 
 /*
  * Remember that the second part of a struct imode is a pointer to code to
@@ -313,25 +192,14 @@ void mu_zzz() {}		/* a convenient GDB breakpoint */
  * facilities. Until these are defined in startup.mu4, the prompts are
  * noops.
  */
-static struct imode forth_interpreter  = { mu__lbracket, mu_nope };
-static struct imode forth_compiler     = { mu__rbracket, mu_nope };
+static pw p_mu__lbracket = &mu__lbracket;
+static pw p_mu__rbracket = &mu__rbracket;
+pw p_mu_nope = &mu_nope;
+
+static struct imode forth_interpreter  = { &p_mu__lbracket, &p_mu_nope };
+static struct imode forth_compiler     = { &p_mu__rbracket, &p_mu_nope };
 
 static struct imode *state = &forth_interpreter;
-
-void mu_push_cell_size(void)
-{
-	PUSH(sizeof(cell_t));
-}
-
-void mu_push_fcell_size(void)
-{
-	PUSH(sizeof(float_t));
-}
-
-void mu_push_cell_bits(void)
-{
-	PUSH(sizeof(cell_t) * 8);
-}
 
 void mu_push_state()
 {
@@ -350,54 +218,52 @@ void mu_minus_rbracket()
 
 void mu_push_parsed()
 {
-    STK(-1) = (cell_t) parsed.data;
-    STK(-2) = parsed.length;
-    DROP(-2);
-}
-
-static int within_stack(cell_t *sp, cell_t *lo, cell_t *hi)
-{
-	/* The "sp <= hi" is a tough one.  But, with an empty stack
-	 * sp == hi.
-	 */
-	return (sp >= lo && sp <= hi);
+    DUP; NIPN(-1);
+    SND = (cell) parsed.data;
+    T = parsed.length;
 }
 
 static void mu_qstack()
 {
-    if (!within_stack(sp, stack, S0) &&
-	!within_stack(sp, dbg_stack, dbg_S0))
+    if (SP > S0)
     {
-	PUSH(ate_the_stack);
-	mu_throw();
+        PUSH(ate_the_stack);
+        mu_throw();
     }
-
-    if (!within_stack(rsp, rstack, R0) &&
-	!within_stack(rsp, dbg_rstack, dbg_R0))
+#ifdef DEBUG
+    /* print stack */
     {
-	PUSH(ate_the_rstack);
-	mu_throw();
-    }
+        cell *p;
 
+        printf("  [ ");
+
+        for (p = S0; p > SP; )
+            printf("%x ", *--p);
+
+        printf("] %x\n", T);
+    }
+#endif
 }
 
 void mu_interpret()
 {
-    source.end = (char *) STK(1) + TOP;	/* the _end_ of the text */
-    source.start = -TOP;		/* offset to the start of text */
-    DROP(2);
+    source.end = (char *) SND + T; /* the _end_ of the text */
+    source.start = -T;        /* offset to the start of text */
+    DROP2;
 
     first = source.start;
 
     for (;;)
     {
-	mu_token();
-	if (TOP == 0) break;
-	execute((cell_t) state->eat);	/* consume(); */
-	mu_qstack();
+        mu_token();
+        if (T == 0) break;
+        EXEC(state->eat);   /* consume(); */
+        mu_qstack();
     }
-    DROP(2);
+    DROP2;
 }
+
+static pw p_mu_interpret = &mu_interpret;
 
 void mu_evaluate()
 {
@@ -407,18 +273,20 @@ void mu_evaluate()
     saved_source = source;
     saved_first = first;
 
-    PUSH(mu_interpret);
+    PUSH(&p_mu_interpret);
     mu_catch();
     source = saved_source;
     first = saved_first;
     mu_throw();
 }
 
+pw p_mu_evaluate = &mu_evaluate;
+
 void mu_start_up()
 {
-    PUSH("warm");		/* push the token "warm" */
+    PUSH("warm");       /* push the token "warm" */
     PUSH(4);
-    mu__lbracket();		/* ... and execute it! */
+    mu__lbracket();     /* ... and execute it! */
 }
 
 void mu_bye()

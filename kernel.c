@@ -3,7 +3,7 @@
  *
  * This file is part of muforth.
  *
- * Copyright (c) 1997-2004 David Frech. All rights reserved, and all wrongs
+ * Copyright (c) 1997-2005 David Frech. All rights reserved, and all wrongs
  * reversed.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -25,146 +25,114 @@
 
 #include "muforth.h"
 
-#define MIN(a,b)	(((a) < (b)) ? (a) : (b))
+#define MIN(a,b)    (((a) < (b)) ? (a) : (b))
 
-void mu_add()
+/* Thanks to Michael Pruemm for the idea of comparing RP to rp_saved as a
+ * way to see when we're "done".
+ */
+static void run()
 {
-    cell_t x = POP;
-    TOP += x;
+    xtk **rp_saved = RP;
+
+    while (RP <= rp_saved)
+        NEXT;
 }
 
-void mu_and()
+/* The most important "word" of all: */
+void mu_do_colon() { NEST; IP = (xtk *)&W[1]; run(); }
+
+/* The base of create/does>. */
+void mu_do_does() { NEST; IP = (xtk *)W[1]; PUSH(W[2]); run(); }
+
+void mu_exit()   { UNNEST; }
+
+pw p_mu_exit = &mu_exit;
+
+void mu_literal_() { PUSH(*IP++); }
+
+cell mu_pop_dstack() { cell t = T; DROP; return t; }
+
+void mu_add() { T += SND; NIP; }
+void mu_and() { T &= SND; NIP; }
+void mu_or()  { T |= SND; NIP; }
+void mu_xor() { T ^= SND; NIP; }
+
+void mu_negate() { T = -T; }
+void mu_invert() { T = ~T; }
+
+void mu_2star()               { T <<= 1; }
+void mu_2slash()              { T >>= 1; }
+void mu_u2slash()   { (unsigned)T >>= 1; }
+
+void mu_shift_left()             { T = SND << T; NIP; }
+void mu_shift_right()            { T = SND >> T; NIP; }
+void mu_ushift_right() { T = (unsigned)SND >> T; NIP; }
+
+void mu_fetch()  { T =    *(cell *) T; }
+void mu_cfetch() { T = *(uint8_t *) T; }
+
+void mu_store()       { *(cell *)T = SND; DROP2; }
+void mu_cstore()   { *(uint8_t *)T = SND; DROP2; }
+void mu_plus_store() { *(cell *)T += SND; DROP2; }
+
+void mu_dup()  { DUP; }
+void mu_nip()  { NIP; }
+void mu_drop() { DROP; }
+void mu_2drop() { DROP2; }
+void mu_swap() { cell t = T; T = SND; SND = t; }
+void mu_over() { DUP; T = TRD; }          /* a b -> a b a */
+
+void mu_rot()       { cell t = T; T = TRD; TRD = SND; SND = t; }
+void mu_minus_rot() { cell t = T; T = SND; SND = TRD; TRD = t; }
+
+void mu_uless() { T = (SND < (unsigned) T) ? -1 : 0; NIP; }
+void mu_less()  { T = (SND < T)            ? -1 : 0; NIP; }
+
+void mu_zless()  { T = (T < 0)  ? -1 : 0; }
+void mu_zequal() { T = (T == 0) ? -1 : 0; }
+
+void mu_depth() { cell d = S0 - SP; PUSH(d); }
+void mu_sp_reset() { SP = S0; T = 0xdecafbad; }
+
+void mu_branch_()    { BRANCH; }
+void mu_eqzbranch_() { if (T == 0) BRANCH; else IP++; }
+void mu_zbranch_()   { mu_eqzbranch_(); DROP; }
+
+/* r stack functions */
+void mu_push()   { RPUSH(POP); }
+void mu_pop()    { PUSH(RPOP); }
+void mu_rfetch() { PUSH(RP[0]); }
+
+/* for, ?for, next */
+/* for is simply "push" */
+/* ?for has to matched with "then" */
+void mu_qfor_()
 {
-    cell_t x = POP;
-    TOP &= x;
+    if (T == 0) { BRANCH; DROP; }
+    else        { IP++; RPUSH(POP); }
 }
 
-void mu_or()
+void mu_next_()
 {
-    cell_t x = POP;
-    TOP |= x;
+    if (--(cell)RP[0] == 0) { IP += 1; RP += 1; } /* skip branch, pop counter */
+    else                    { BRANCH; }           /* take branch */
 }
 
-void mu_xor()
-{
-    cell_t x = POP;
-    TOP ^= x;
-}
-
-void mu_negate()
-{
-    TOP = -TOP;
-}
-
-void mu_invert()
-{
-    TOP = ~TOP;
-}
-
-void mu_two_star() { TOP = TOP << 1; }
-void mu_two_slash() { TOP = TOP >> 1; }
-void mu_two_slash_unsigned() { TOP = ((unsigned) TOP) >> 1; }
-
-void mu_shift_left()
-{
-    cell_t sh = POP;
-    TOP <<= sh;
-}
-
-void mu_shift_right()
-{
-    cell_t sh = POP;
-    TOP >>= sh;
-}
-
-void mu_shift_right_unsigned()
-{
-    cell_t sh = POP;
-    (unsigned) TOP >>= sh;
-}
-
-void mu_fetch()
-{
-    TOP = *(cell_t *) TOP;
-}
-
-void mu_cfetch()
-{
-    TOP = *(uint8_t *) TOP;
-}
-
-void mu_store()
-{
-    cell_t *p = (cell_t *) TOP;
-
-    *p = STK(1);
-    DROP(2);
-}
-
-void mu_cstore()
-{
-    uint8_t *p = (uint8_t *) TOP;
-
-    *p = (uint8_t) STK(1);
-    DROP(2);
-}
-
-void mu_plus_store()
-{
-    cell_t *p = (cell_t *) TOP;
-
-    *p += STK(1);
-    DROP(2);
-}
-
-void mu_rot()
-{
-    cell_t t = TOP;
-    TOP = STK(2);
-    STK(2) = STK(1);
-    STK(1) = t;
-}
-
-void mu_minus_rot()
-{
-    cell_t t = TOP;
-    TOP = STK(1);
-    STK(1) = STK(2);
-    STK(2) = t;
-}
-
-void mu_dupe()
-{
-    cell_t t = TOP;
-    PUSH(t);
-}
-
-void mu_nip()
-{
-    cell_t t = POP;
-    TOP = t;
-}
-
-void mu_swap()
-{
-    cell_t t = TOP;
-    TOP = STK(1);
-    STK(1) = t;
-}
-
-void mu_over()
-{
-    cell_t s = STK(1);
-    PUSH(s);
-}
-
-void mu_tuck()  /* a b - b a b */
-{
-    cell_t t = TOP;
-    TOP = STK(1);
-    STK(1) = t;
-    PUSH(t);
-}
+/*
+ * C, or at least gcc, is sooooo fucking retarded! I cannot define "cell/"
+ * the way I want, because gcc (on x86 at least) compiles /= by a power of
+ * two of a _signed_ integer as an _un_signed_ shift! What gives!
+ *
+ * So I have to go to extra effort and circumvent my tool, which, instead of
+ * helping me get my job done, is in the way. Sigh.
+ *
+ * Actually, C is even more retarded than I thought. I was going to check
+ * the sizeof(cell) and set SH_CELL accordingly...but I can't do
+ * "environmental queries" in the preprocessor! So the user gets to do this
+ * by hand! Hooray for automation!
+*/
+void mu_cells(void)      { T <<= SH_CELL; }
+void mu_cell_slash(void) { T >>= SH_CELL; }
 
 /*
  * Like C and unlike Forth, mu_string_compare returns an integer representing
@@ -189,82 +157,50 @@ void mu_tuck()  /* a b - b a b */
  */
 void mu_string_compare()
 {
-    STK(3) = string_compare((char *)STK(3), STK(2), (char *)STK(1), TOP);
-    DROP(3);
+    T = string_compare((char *)SP[2], TRD, (char *)SND, T);
+    NIPN(3);
 }
 
 int string_compare(const char *string1, size_t length1,
-		   const char *string2, size_t length2)
+                   const char *string2, size_t length2)
 {
     int ordering;
 
     /* Careful: if lengths differ the strings can't compare as equal! */
     if (length1 == length2)
-	ordering = strncmp(string1, string2, length1);
+        ordering = strncmp(string1, string2, length1);
     else
     {
-	int cmp;
+        int cmp;
 
-	/* Compare as many characters as we can */
-	cmp = strncmp(string1, string2, MIN(length1, length2));
+        /* Compare as many characters as we can */
+        cmp = strncmp(string1, string2, MIN(length1, length2));
 
-	/*
-	 * If all equal, then their lengths determine the outcome (the
-	 * shorter string is "less"). Otherwise, use the result of the
-	 * strncmp (which tells us how the first characters that differed
-	 * differed).
-	 */
-	if (cmp == 0)
-	{
-	    if (length1 < length2)
-		ordering = -string2[length1];
-	    else
-		ordering =  string1[length2];
-	}
-	else
-	    ordering = cmp;
+        /*
+         * If all equal, then their lengths determine the outcome (the
+         * shorter string is "less"). Otherwise, use the result of the
+         * strncmp (which tells us how the first characters that differed
+         * differed).
+         */
+        if (cmp == 0)
+        {
+            if (length1 < length2)
+                ordering = -string2[length1];
+            else
+                ordering =  string1[length2];
+        }
+        else
+            ordering = cmp;
     }
     return ordering;
 }
 
-void mu_uless()
-{
-    STK(1) = (STK(1) < (unsigned) TOP) ? -1 : 0;
-    DROP(1);
-}
-
-void mu_less()
-{
-    STK(1) = (STK(1) < TOP) ? -1 : 0;
-    DROP(1);
-}
-
-void mu_zless()
-{
-    TOP = (TOP < 0) ? -1 : 0;
-}
-
-void mu_zequal()
-{
-    TOP = (TOP == 0) ? -1 : 0;
-}
-
-void mu_sp_fetch()
-{
-    PUSH(sp);
-}
-
-void mu_sp_store()
-{
-    sp = (cell_t *) TOP;
-}
-
 void mu_cmove()
 {
-    void *src = (void *) STK(2);
-    void *dest = (void *) STK(1);
-    size_t count = TOP;
+    void *src = (void *) TRD;
+    void *dest = (void *) SND;
+    size_t count = T;
 
     memcpy(dest, src, count);
-    DROP(3);
+    DROPN(3);
 }

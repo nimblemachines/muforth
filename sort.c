@@ -3,7 +3,7 @@
  *
  * This file is part of muforth.
  *
- * Copyright (c) 1997-2004 David Frech. All rights reserved, and all wrongs
+ * Copyright (c) 1997-2005 David Frech. All rights reserved, and all wrongs
  * reversed.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -28,7 +28,7 @@
 #include "muforth.h"
 #include <stdlib.h>
 
-#define C_IS_COMPLETELY_RETARDED	1
+#define C_IS_COMPLETELY_RETARDED    1
 
 #ifdef  C_IS_COMPLETELY_RETARDED
 static int struct_string_compare(const void *p1, const void *p2)
@@ -40,7 +40,7 @@ static int struct_string_compare(const void *p1, const void *p2)
 }
 #else /* this should work, but doesn't */
 static int struct_string_compare(const struct string *s1,
-				 const struct string *s2)
+                                 const struct string *s2)
 {
     return string_compare(s1->data, s1->length, s2->data, s2->length);
 }
@@ -49,6 +49,6 @@ static int struct_string_compare(const struct string *s1,
 void mu_string_quicksort()
 {
     /* base, number, size, compare */
-    qsort((void *)STK(1), TOP, sizeof(struct string), struct_string_compare);
-    DROP(2);
+    qsort((void *)SND, T, sizeof(struct string), struct_string_compare);
+    DROP2;
 }

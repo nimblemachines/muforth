@@ -3,7 +3,7 @@
  *
  * This file is part of muforth.
  *
- * Copyright (c) 1997-2004 David Frech. All rights reserved, and all wrongs
+ * Copyright (c) 1997-2005 David Frech. All rights reserved, and all wrongs
  * reversed.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -38,15 +38,15 @@ void mu_pci_read()
 {
     struct pci_io p;
 
-    p.pi_sel.pc_bus  = (TOP >> 16) & 0xff;
-    p.pi_sel.pc_dev  = (TOP >> 11) & 0x1f;
-    p.pi_sel.pc_func = (TOP >> 8)  & 0x07;
-    p.pi_reg         =  TOP        & 0xff;
+    p.pi_sel.pc_bus  = (T >> 16) & 0xff;
+    p.pi_sel.pc_dev  = (T >> 11) & 0x1f;
+    p.pi_sel.pc_func = (T >> 8)  & 0x07;
+    p.pi_reg         =  T        & 0xff;
     p.pi_width       = 4;
   
-    STK(-1) = ioctl(fd_pci, PCIOCREAD, &p);
-    TOP = p.pi_data;
-    DROP(-1);
+    NIPN(-1);
+    SND = ioctl(fd_pci, PCIOCREAD, &p);
+    T = p.pi_data;
 }
 
 /* We need to open R/W, otherwise the ioctl, above, fails. */

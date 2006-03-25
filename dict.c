@@ -3,7 +3,7 @@
  *
  * This file is part of muforth.
  *
- * Copyright (c) 1997-2004 David Frech. All rights reserved, and all wrongs
+ * Copyright (c) 1997-2005 David Frech. All rights reserved, and all wrongs
  * reversed.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -28,32 +28,35 @@
 
 struct dict_entry
 {
-    struct dict_entry *link;
-    void *code;
-    unsigned char length;
-    char name[0];
+    /* char name[];           */
+    /* char padding[];        */
+    /* unsigned char length;  */
+    struct dict_entry *link;  /* links point to link field */
+    pw code;
+    uint8 body[];
 };
 
 /* the forth and compiler "vocabulary" chains */
-struct dict_entry *forth_chain = NULL;
-struct dict_entry *compiler_chain = NULL;
+static struct dict_entry *forth_chain = NULL;
+static struct dict_entry *compiler_chain = NULL;
 
 /* current chain to compile into */
-struct dict_entry **current_chain = &forth_chain;
+static struct dict_entry **current_chain = &forth_chain;
 
-void (*mu_name_hook)() = mu_nope;	/* called when a name is created */
+static xtk mu_name_hook = &p_mu_nope;  /* called when a name is created */
 
 /* bogus C-style dictionary init */
-struct inm			/* "initial name" */
+struct inm          /* "initial name" */
 {
     char *name;
-    void (*code)();
+    pw   code;
 };
 
 struct inm initial_forth[] = {
     { "version", mu_push_version },
     { "build-time", mu_push_build_time },
     { ":", mu_colon },
+    { "<:>", mu_set_colon_code },
     { "name", mu_make_new_name },
     { "'name-hook", mu_push_tick_name_hook },
     { ".forth.", mu_push_forth_chain },
@@ -63,17 +66,14 @@ struct inm initial_forth[] = {
     { "'number,", mu_push_tick_number_comma },
     { "h", mu_push_h },
     { "r", mu_push_r },
-    { "cell", mu_push_cell_size },
-    { "cell-bits", mu_push_cell_bits },
-    { "fcell", mu_push_fcell_size }, 
     { "s0", mu_push_s0 },
-    { "sp", mu_push_sp },
     { "catch", mu_catch },
     { "throw", mu_throw },
     { "command-line", mu_push_command_line },
     { "token", mu_token },
     { "parse", mu_parse },
     { "find", mu_find },
+    { "execute", mu_execute },
     { "interpret", mu_interpret },
     { "evaluate", mu_evaluate },
     { "create-file", mu_create_file },
@@ -84,23 +84,20 @@ struct inm initial_forth[] = {
     { "mmap-file", mu_mmap_file },    
     { "load-file", mu_load_file },
     { "readable?", mu_readable_q },
-    { "load-literal", mu_compile_literal_load },
-    { "push-literal", mu_compile_literal_push },
-    { "load-fliteral", mu_compile_fliteral_load },
-    { "push-fliteral", mu_compile_fliteral_push },
-    { "fetch-literal", mu_fetch_literal_value },
-    { "compile,", mu_compile_call },
-    { "resolve", mu_resolve },
+    { "compile,", mu_compile },
     { "state", mu_push_state },
     { "-]", mu_minus_rbracket },
     { "parsed", mu_push_parsed },
     { "huh?", mu_huh },
     { "complain", mu_complain },
-    { "(0branch)", mu_compile_destructive_zbranch },
-    { "(=0branch)", mu_compile_nondestructive_zbranch },
-    { "(branch)", mu_compile_branch },
-    { "(?for)", mu_compile_qfor },
-    { "(next)", mu_compile_next },
+    { "^", mu_exit },
+    { "<does>", mu_set_does_code },
+    { "(branch)", mu_branch_ },
+    { "(=0branch)", mu_eqzbranch_ },
+    { "(0branch)", mu_zbranch_ },
+    { "(next)", mu_next_ },
+    { "(?for)", mu_qfor_ },
+    { "(lit)", mu_literal_ },
     { "scrabble", mu_scrabble },
     { "nope", mu_nope },
     { "zzz", mu_zzz },
@@ -114,12 +111,12 @@ struct inm initial_forth[] = {
     { "0<", mu_zless },
     { "0=", mu_zequal },
     { "<", mu_less },
-    { "2*", mu_two_star },
-    { "2/", mu_two_slash },
-    { "u2/", mu_two_slash_unsigned },
+    { "2*", mu_2star },
+    { "2/", mu_2slash },
+    { "u2/", mu_u2slash },
     { "<<", mu_shift_left },
     { ">>", mu_shift_right },
-    { "u>>", mu_shift_right_unsigned },
+    { "u>>", mu_ushift_right },
     { "d+", mu_dplus },
     { "dnegate", mu_dnegate },
     { "um*", mu_um_star },
@@ -128,43 +125,46 @@ struct inm initial_forth[] = {
     { "fm/mod", mu_fm_slash_mod },
     { "@", mu_fetch },
     { "c@", mu_cfetch },
-    { "f@", mu_ffetch },
     { "!", mu_store },
     { "c!", mu_cstore },
-    { "f!", mu_fstore },
     { "+!", mu_plus_store },
     { "rot", mu_rot },
     { "-rot", mu_minus_rot },
-    { "dup", mu_dupe },
+    { "dup", mu_dup },
+    { "drop", mu_drop },
+    { "2drop", mu_2drop },
     { "nip", mu_nip },
     { "swap", mu_swap },
     { "over", mu_over },
-    { "tuck", mu_tuck },
+    { "push", mu_push },
+    { "pop", mu_pop },
+    { "r@", mu_rfetch },
     { "string-compare", mu_string_compare },
     { "read", mu_read_carefully },
     { "write", mu_write_carefully },
-    { "sp@", mu_sp_fetch },
-    { "sp!", mu_sp_store },
+    { "sp!", mu_sp_reset },
+    { "depth", mu_depth },
     { "cmove", mu_cmove },
+    { "cells", mu_cells },
+    { "cell/", mu_cell_slash },
+ 
+    /* time.c */
     { "local-time", mu_local_time },
     { "utc", mu_global_time },
     { "clock", mu_push_clock },
+
 #ifdef __FreeBSD__
+    /* pci.c */
     { "pci", mu_pci_open },
     { "pci@", mu_pci_read },
 #endif
+
     /* tty.c */
     { "get-termios", mu_get_termios },
     { "set-termios", mu_set_termios },
     { "set-raw", mu_set_termios_raw },
     { "set-min-time", mu_set_termios_min_time },
     { "set-speed", mu_set_termios_speed },
-
-#ifdef DEBUG
-    /* debugger.c */
-    { "dbg", mu_dbg },
-    { "debugger", mu_debugger },
-#endif /* DEBUG */
 
     /* select.c */
     { "fd-zero", mu_fd_zero },
@@ -176,37 +176,16 @@ struct inm initial_forth[] = {
     /* sort.c */
     { "string-quicksort", mu_string_quicksort },
 
-    /* float.c */
-    { "f/", mu_fdiv },
-    { "f*", mu_fmul },
-    { "fneg", mu_fneg },
-    { "f+", mu_fadd },
-    { "d->f", mu_d_to_f },
-    { "f->d", mu_f_to_d },
-    { "(f.)", mu_fdot },
-    { "str->f", mu_str_to_f },
-
     { "bye", mu_bye },
 
     { "#code", mu_push_code_size},
     { "#data", mu_push_data_size},
-    { "#name", mu_push_name_size},
     { NULL, NULL }
 };
 
 struct inm initial_compiler[] = {
     { ";", mu_semicolon },
-    { "^", mu_compile_exit },
     { "[", mu_lbracket },
-    { "drop", mu_compile_drop },
-    { "2drop", mu_compile_2drop },
-    { "push", mu_compile_push_to_r },
-    { "2push", mu_compile_2push_to_r },
-    { "pop", mu_compile_pop_from_r },
-    { "2pop", mu_compile_2pop_from_r },
-    { "r@", mu_compile_copy_from_r },
-    { "shunt", mu_compile_shunt },
-    { "execute", mu_compile_execute },
     { NULL, NULL }
 };
 
@@ -233,53 +212,66 @@ void mu_push_compiler_chain()
 /* find  ( a u chain - a u 0 | code -1) */
 void mu_find()
 {
-    char *token = (char *) STK(2);
-    cell_t length = STK(1);
-    struct dict_entry *pde = (struct dict_entry *) TOP;
+    char *token = (char *) TRD;
+    cell length = SND;
+    struct dict_entry *pde = (struct dict_entry *) T;
+    char *pnm;
+    cell dict_length;
 
     while ((pde = pde->link) != NULL)
     {
-	if (pde->length != length) continue;
-	if (memcmp(pde->name, token, length) != 0) continue;
+        pnm = (uint8 *)&pde->link;
+        dict_length = pnm[-1];
+        if (dict_length != length) continue;
+        if (memcmp(pnm - ALIGNED(dict_length + 1), token, length) != 0)
+            continue;
 
-	/* found: drop token, push code address and true flag */
-	STK(2) = (cell_t) pde->code;
-	STK(1) = -1;
-	DROP(1);
-	return;
+        /* found: drop token, push code address and true flag */
+        NIP;
+        SND = (cell) &pde->code;  /* XXX: should be body? */
+        T = -1;
+        return;
     }
     /* not found: leave token, push false */
-    TOP = 0;
+    T = 0;
 }
 
 static void compile_dict_entry(
-    struct dict_entry **ppde, char *name, int length, void *pcode)
+    struct dict_entry **ppde, char *name, int length)
 {
-    struct dict_entry *pde = (struct dict_entry *) pnm;
+    char *pnm;
+    struct dict_entry *pde;
 
-    pde->link = *ppde;		/* compile link to last */
-    *ppde = pde;		/* link onto front of chain */
-    pde->code = pcode;		/* compile code pointer */
-    pde->length = length;
-    memcpy(pde->name, name, length);	/* copy name string */
-    pnm = (uint8_t *)ALIGNED(pde->name + length);
+    pnm = (char *)ALIGNED(pcd);
 
-#if defined(LIST_DICT_ENTRIES)
-    printf("%*s: %p\n", length, pde->name, pcode);
-#endif /* LIST_DICT_ENTRIES */
+    /* Lay down the name and padding. Leave room for count byte. */
+    memcpy(pnm, name, length);                 /* copy name string */
+    pnm = (char *)ALIGNED(pnm + length + 1);   /* "allot" it, with count */
+    pnm[-1] = length;                          /* store count */
+
+    pde = (struct dict_entry *)pnm;
+    pde->link = *ppde;      /* compile link to last */
+    *ppde = pde;        /* link onto front of chain */
+
+    /* Allot entry; now pointing to code field. */
+    pcd = (cell *)&pde->code;
+
+#if defined(BEING_DEFINED)
+    printf("  %p %.*s\n", pcd, length, name);
+#endif
 }
 
-/* called from Forth */
+/* Called from Forth. Only creates a name; does NOT set the code field! */
 void mu_compile_name()
 {
-    compile_dict_entry(current_chain, (char *) STK(1), STK(0), pcd);
-    DROP(2);
+    compile_dict_entry(current_chain, (char *)SND, T);
+    DROP2;
 }
 
 void mu_make_new_name()
 {
     mu_token();
-    execute((cell_t) mu_name_hook);
+    EXEC(mu_name_hook);
     mu_compile_name();
 }
 
@@ -287,45 +279,98 @@ void mu_push_tick_name_hook()
 {
     PUSH(&mu_name_hook);
 }
+
+static void init_chain(struct dict_entry **pchain, struct inm *pinm)
+{
+    for (; pinm->name != NULL; pinm++)
+    {
+        compile_dict_entry(pchain, pinm->name, strlen(pinm->name));
+        *pcd++ = (cell)pinm->code;  /* set code pointer */
+        }
+}
+
+void init_dict()
+{
+    init_chain(&forth_chain, initial_forth);
+    init_chain(&compiler_chain, initial_compiler);
+}
+
+static void print_name(cell *pcode)
+{
+    char *pnm = (char *)(pcode - 1);  /* back up over link field */
+    int length = pnm[-1];
+
+    printf("%.*s", length, pnm - ALIGNED(length + 1));
+}
+
+
+/* returns termination flag */
+static int print_w(xtk *ip)
+{
+    xtk w = *ip;
+
+    if ((w > (xtk)pcd0) && (w < (xtk)pcd) && (*w < (pw)pcd0))
+    {
+        printf("\n%p: ", ip);
+        print_name((cell *)w);
+    }
+    else
+    {
+        printf(" %x", (cell)w);
+    }
+    return w == &p_mu_exit;
+}
+
+void dis(xtk *ip)
+{
+    if (*(pw *)ip == &mu_do_colon)
+        print_name((cell *)ip++);
+
+    for (;;)
+    {
+        if (print_w(ip++)) break;
+    }
+    printf("\n");
+}
     
 /* 
-We're going to take some pointers from Martin Tracy and zenFORTH.
-`last-link' is a 2variable that stores (link, chain) of the last
-named word defined.  We don't actually link it into the dictionary
-until we think it's safe to do so, thereby obviating the need for
-`smudge'.
+   We're going to take some pointers from Martin Tracy and zenFORTH.
+   `last-link' is a 2variable that stores (link, chain) of the last
+   named word defined.  We don't actually link it into the dictionary
+   until we think it's safe to do so, thereby obviating the need for
+   `smudge'.
 
-2variable last-link  ( &link &chain)
-variable last-code   ( pointer to last-compiled code field)
-variable last-word   ( last compiled word)
+   2variable last-link  ( &link &chain)
+   variable last-code   ( pointer to last-compiled code field)
+   variable last-word   ( last compiled word)
 
-: show     last-link 2@  ( &link chain)  !   ; 
-: use      ( code -)  last-code @ !  ;
-: patch	   pop @  use	; 
+   : show     last-link 2@  ( &link chain)  !   ; 
+   : use      ( code -)  last-code @ !  ;
+   : patch    pop @  use   ; 
 
-: ?unique  ( a u - a u)
+   : ?unique  ( a u - a u)
    2dup current @  ?unique-hook  find  if
    drop  2dup  fd-out @ push  >stderr  type  ."  again.  "  pop writes 
    then   2drop ;
 
-: code,   0 , ( lex)  here last-code !  0 , ( code)  ;
-: token,  ( - 'link)  token  ?unique  here  scrabble>  allot  ;
-: link,   ( here)  current @  dup @ ,  last-link 2!  ;
-: head,   token,  link,  ;
+   : code,   0 , ( lex)  here last-code !  0 , ( code)  ;
+   : token,  ( - 'link)  token  ?unique  here  scrabble>  allot  ;
+   : link,   ( here)  current @  dup @ ,  last-link 2!  ;
+   : head,   token,  link,  ;
 
-: name        head,  code,  ;
-: noname   0 align,  code,  ;
+   : name        head,  code,  ;
+   : noname   0 align,  code,  ;
 
-( Dictionary structure)
-: link>name   1- ( char-)  dup c@  swap over -  swap  ;
-: >link  ( body - link)  cell- cell- cell- ;
-: link>  ( link - body)  cell+ cell+ cell+ ;
-: >name  ( body - a u)   >link  link>name  ;
-: >lex   ( body - lex)   cell- cell-  ;
-: >code  ( body - code)  cell-  ;
+   ( Dictionary structure)
+   : link>name   1- ( char-)  dup c@  swap over -  swap  ;
+   : >link  ( body - link)  cell- cell- cell- ;
+   : link>  ( link - body)  cell+ cell+ cell+ ;
+   : >name  ( body - a u)   >link  link>name  ;
+   : >lex   ( body - lex)   cell- cell-  ;
+   : >code  ( body - code)  cell-  ;
 */
 
-#ifdef DEBUG
+#ifdef DEBUG_FOO
 /*
  * daf: stripped the mu_ off the names of these routines, since they conform
  * to C stack API rather than muforth stack API.
@@ -341,32 +386,32 @@ variable last-word   ( last compiled word)
  * addr and the start of the function of each chain in which
  * the addr matches.
  */
-static struct dict_entry *find_pde_code_range(struct dict_entry *chain, cell_t addr)
+static struct dict_entry *find_pde_code_range(struct dict_entry *chain, cell addr)
 {
-	struct dict_entry *pde, *best;
-	u_int32_t closest, delta;
+    struct dict_entry *pde, *best;
+    u_int32_t closest, delta;
 
-	/*
-	 * First pass: Check for direct hit
-	 */
-	pde = chain;
-	best = NULL;
-	closest = 0x7FFF;
-	do {
-		if (addr == (cell_t) pde->code)
-			return pde;
-		delta = addr - (cell_t) pde->code;
-		if (delta < closest) {
-			best = pde;
-			closest = delta;
-		}
-		pde = pde->link;
-	} while (pde);
+    /*
+     * First pass: Check for direct hit
+     */
+    pde = chain;
+    best = NULL;
+    closest = 0x7FFF;
+    do {
+        if (addr == (cell) pde->code)
+            return pde;
+        delta = addr - (cell) pde->code;
+        if (delta < closest) {
+            best = pde;
+            closest = delta;
+        }
+        pde = pde->link;
+    } while (pde);
 
-	if (closest != 0x7FFF)
-		return best;
+    if (closest != 0x7FFF)
+        return best;
 
-	return NULL;
+    return NULL;
 }
 
 /*
@@ -380,43 +425,43 @@ static struct dict_entry *find_pde_code_range(struct dict_entry *chain, cell_t a
  * which pde has the smallest difference between the supplied addr
  * and the start of the code for that pde.
  */
-static struct dict_entry *find_pde_by_addr(cell_t addr)
+static struct dict_entry *find_pde_by_addr(cell addr)
 {
-	struct dict_entry *pde_compiler, *pde_forth, *pde;
-	u_int32_t comp_code, forth_code;
+    struct dict_entry *pde_compiler, *pde_forth, *pde;
+    u_int32_t comp_code, forth_code;
 
-	pde_compiler = find_pde_code_range(compiler_chain, addr);
-	pde_forth = find_pde_code_range(forth_chain, addr);
+    pde_compiler = find_pde_code_range(compiler_chain, addr);
+    pde_forth = find_pde_code_range(forth_chain, addr);
 
-	if (!pde_compiler && !pde_forth)
-		return NULL;
+    if (!pde_compiler && !pde_forth)
+        return NULL;
 
-	if (pde_compiler)
-		comp_code = (cell_t) pde_compiler->code;
-	else
-		comp_code = 0;
+    if (pde_compiler)
+        comp_code = (cell) pde_compiler->code;
+    else
+        comp_code = 0;
 
-	if (pde_forth)
-		forth_code = (cell_t) pde_forth->code;
-	else
-		forth_code = 0;
+    if (pde_forth)
+        forth_code = (cell) pde_forth->code;
+    else
+        forth_code = 0;
 
-	if (comp_code  == addr)
-		pde = pde_compiler;
-	else if (forth_code == addr)
-		pde = pde_forth;
-	else {
-		/*
-		 * This is the heuristic: we check to see which code
-		 * segment start is the closet to the supplied addr.
-		 */
-		if ((addr - comp_code) < (addr - forth_code))
-			pde = pde_compiler;
-		else
-			pde = pde_forth;
-	}
+    if (comp_code  == addr)
+        pde = pde_compiler;
+    else if (forth_code == addr)
+        pde = pde_forth;
+    else {
+        /*
+         * This is the heuristic: we check to see which code
+         * segment start is the closet to the supplied addr.
+         */
+        if ((addr - comp_code) < (addr - forth_code))
+            pde = pde_compiler;
+        else
+            pde = pde_forth;
+    }
 
-	return pde;
+    return pde;
 }
 
 /*
@@ -428,41 +473,26 @@ static struct dict_entry *find_pde_by_addr(cell_t addr)
  *
  * It returns the base address of the muforth word.
  */
-cell_t snprint_func_name(char *line, int size, cell_t addr)
+cell snprint_func_name(char *line, int size, cell addr)
 {
-	struct dict_entry *pde;
-	cell_t code;
-	int idx;
+    struct dict_entry *pde;
+    cell code;
+    int idx;
 
-	pde = find_pde_by_addr(addr);
+    pde = find_pde_by_addr(addr);
 
-	if (!pde) {
-		snprintf(line, size, "Unknown function: address %p", (cell_t *) addr);
-		return addr;
-	}
+    if (!pde) {
+        snprintf(line, size, "Unknown function: address %p", (cell *) addr);
+        return addr;
+    }
 
-	code = (cell_t) pde->code;
+    code = (cell) pde->code;
 
-	idx = snprintf(line, size, "%*s", pde->length, pde->name);
-	if (code != addr) {
-		snprintf(line +idx, size -idx, " + %d", addr - code);
-	}
+    idx = snprintf(line, size, "%.*s", pde->length, pde->name);
+    if (code != addr) {
+        snprintf(line +idx, size -idx, " + %d", addr - code);
+    }
 
-	return code;
+    return code;
 }
 #endif /* DEBUG */
-
-static void init_chain(struct dict_entry **pchain, struct inm *pinm)
-{
-    for (; pinm->name != NULL; pinm++)
-	compile_dict_entry(pchain, pinm->name, strlen(pinm->name), pinm->code);
-}
-
-void init_dict()
-{
-    init_chain(&forth_chain, initial_forth);
-    init_chain(&compiler_chain, initial_compiler);
-}
-
-
-
