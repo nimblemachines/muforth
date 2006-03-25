@@ -49,18 +49,21 @@ ${ALLOBJS} : ${DEPFILES}
 muforth.o : version.h
 
 public.h : ${ALLOBJS:S/.o/.ph/}
-	(echo "/* This file is automagically generated. Do not edit! */"; \
+	@echo Making ${.TARGET}
+	@(echo "/* This file is automagically generated. Do not edit! */"; \
 	cat ${.ALLSRC}) > ${.TARGET}
 
 forth_chain.h : public.h gen_dict_chain.sed
-	(echo "/* This file is automagically generated. Do not edit! */"; \
+	@echo Making ${.TARGET}
+	@(echo "/* This file is automagically generated. Do not edit! */"; \
 	sed -E \
 		-e '/^void mu_compiler/d' \
 		-f gen_dict_chain.sed ${.ALLSRC} \
 	) > ${.TARGET}
 
 compiler_chain.h : public.h gen_dict_chain.sed
-	(echo "/* This file is automagically generated. Do not edit! */"; \
+	@echo Making ${.TARGET}
+	@(echo "/* This file is automagically generated. Do not edit! */"; \
 	sed -E \
 		-e '/^void mu_compiler/!d' \
 		-e 's/mu_compiler_/mu_/' \
@@ -95,8 +98,9 @@ env.h : envtest
 	./envtest > ${.TARGET}
 
 version.h : Makefile ${VERSOBJS}
-	echo "#define VERSION \"${VERSION}\"" > version.h
-	echo "time_t build_time = `date \"+%s\"`;" >> version.h
+	@echo Making ${.TARGET}
+	@echo "#define VERSION \"${VERSION}\"" > version.h
+	@echo "time_t build_time = `date \"+%s\"`;" >> version.h
 
 muforth : ${ALLOBJS} ${DEPFILES}
 	${CC} ${LDFLAGS} -o $@ ${ALLOBJS} ${LIBS}
