@@ -2,7 +2,7 @@
 #
 # This file is part of muforth.
 #
-# Copyright (c) 1997-2004 David Frech. All rights reserved, and all wrongs
+# Copyright (c) 1997-2006 David Frech. All rights reserved, and all wrongs
 # reversed.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
