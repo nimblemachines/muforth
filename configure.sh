@@ -7,32 +7,31 @@ if make --version 2> /dev/null | grep -q "GNU Make"; then
 cat <<EOF
 Looks like you're running GNU make. I'm going to create a compatible
 makefile for you.
+
 EOF
-  sed -E -f make.sed Makefile.in > Makefile
-  echo "Done."
+  sed -E -f scripts/make.sed -f scripts/gnu.make.sed Makefile.in > Makefile
 else
   cat <<EOF
 Looks like you're running a non-GNU (perhaps BSD?) make. I'm going to
 assume it's a BSD make and create a makefile for you. If the build
 fails, try running "gmake" instead of "make".
+
 EOF
-  cp Makefile.in Makefile
-  echo "Done."
+  sed -E -f scripts/make.sed Makefile.in > Makefile
 fi
 
 cat <<EOF
-You can build a native x86 version, or an indirect-threaded (ITC) version
-of muFORTH.
+You can build a native x86 version, or an indirect-threaded (ITC)
+version of muFORTH. Type
 
-Type
+  make native=yes
 
-  make X86=yes
+for the native x86 version, or
 
-for the native version, or
-
-  make ITC=yes
+  make
 
 for the indirect-threaded one.
 
 Enjoy muFORTH!
+
 EOF

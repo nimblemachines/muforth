@@ -54,7 +54,7 @@ extern cell  *SP;     /* parameter stack pointer */
 
 typedef void (*pw)(void);    /* ptr to word's machine code */
 
-#ifdef X86
+#ifdef native
 
 typedef pw xtk;              /* "execution token" is a pointer to code */
 #define TOP         SP[0]

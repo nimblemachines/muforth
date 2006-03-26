@@ -7,12 +7,3 @@
 # Edit the Makefile.in and re-run configure.sh.
 
 s/Makefile\.in/Makefile/
-
-s/^.(ifdef|else|endif|include)/\1/
-
-s/\{\.TARGET\}/@/g
-s/\{\.ALLSRC\}/^/g
-s/\{\.IMPSRC\}/</g
-s/\{\.OODATE\}/?/g
-
-/### BSD start ###/,/### BSD end ###/d
