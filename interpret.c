@@ -135,8 +135,8 @@ void mu_huh_q()
     mu_complain();
 }
 
-static xtk mu_number = &p_mu_complain;
-static xtk mu_number_comma = &p_mu_complain;
+static xtk mu_number = XTK(mu_complain);
+static xtk mu_number_comma = XTK(mu_complain);
 
 void mu_push_tick_number()
 {
@@ -196,8 +196,8 @@ static pw p_mu__lbracket = &mu__lbracket;
 static pw p_mu__rbracket = &mu__rbracket;
 pw p_mu_nope = &mu_nope;
 
-static struct imode forth_interpreter  = { &p_mu__lbracket, &p_mu_nope };
-static struct imode forth_compiler     = { &p_mu__rbracket, &p_mu_nope };
+static struct imode forth_interpreter  = { XTK(mu__lbracket), XTK(mu_nope) };
+static struct imode forth_compiler     = { XTK(mu__rbracket), XTK(mu_nope) };
 
 static struct imode *state = &forth_interpreter;
 
@@ -273,14 +273,14 @@ void mu_evaluate()
     saved_source = source;
     saved_first = first;
 
-    PUSH(&p_mu_interpret);
+    PUSH(XTK(mu_interpret));
     mu_catch();
     source = saved_source;
     first = saved_first;
     mu_throw();
 }
 
-pw p_mu_evaluate = &mu_evaluate;
+static pw p_mu_evaluate = &mu_evaluate;
 
 void mu_load_file()
 {
@@ -290,7 +290,7 @@ void mu_load_file()
     mu_open_file();
     fd = TOP;
     mu_mmap_file();
-    PUSH(&p_mu_evaluate);
+    PUSH(XTK(mu_evaluate));
     mu_catch();
     close(fd);
     mu_throw();

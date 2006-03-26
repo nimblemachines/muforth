@@ -43,7 +43,7 @@ static struct dict_entry *compiler_chain = NULL;
 /* current chain to compile into */
 static struct dict_entry **current_chain = &forth_chain;
 
-static xtk mu_name_hook = &p_mu_nope;  /* called when a name is created */
+static xtk mu_new_hook = XTK(mu_nope);  /* called when a new name is created */
 
 /* bogus C-style dictionary init */
 struct inm          /* "initial name" */
@@ -136,7 +136,7 @@ static void compile_dict_entry(
 }
 
 /* Called from Forth. Only creates a name; does NOT set the code field! */
-void mu_compile_name()
+static void mu_compile_name()
 {
     compile_dict_entry(current_chain, (char *)ST1, TOP);
     DROP(2);
@@ -145,13 +145,13 @@ void mu_compile_name()
 void mu_new()
 {
     mu_token();
-    EXEC(mu_name_hook);
+    EXEC(mu_new_hook);
     mu_compile_name();
 }
 
-void mu_push_tick_name_hook()
+void mu_push_tick_new_hook()
 {
-    PUSH(&mu_name_hook);
+    PUSH(&mu_new_hook);
 }
 
 static void init_chain(struct dict_entry **pchain, struct inm *pinm)
@@ -167,44 +167,6 @@ void init_dict()
 {
     init_chain(&forth_chain, initial_forth);
     init_chain(&compiler_chain, initial_compiler);
-}
-
-static void print_name(cell *pcode)
-{
-    char *pnm = (char *)(pcode - 1);  /* back up over link field */
-    int length = pnm[-1];
-
-    printf("%.*s", length, pnm - ALIGNED(length + 1));
-}
-
-
-/* returns termination flag */
-static int print_w(xtk *ip)
-{
-    xtk w = *ip;
-
-    if ((w > (xtk)pcd0) && (w < (xtk)pcd) && (*w < (pw)pcd0))
-    {
-        printf("\n%p: ", ip);
-        print_name((cell *)w);
-    }
-    else
-    {
-        printf(" %x", (cell)w);
-    }
-    return w == &p_mu_exit;
-}
-
-void dis(xtk *ip)
-{
-    if (*(pw *)ip == &mu_do_colon)
-        print_name((cell *)ip++);
-
-    for (;;)
-    {
-        if (print_w(ip++)) break;
-    }
-    printf("\n");
 }
     
 /* 
@@ -249,6 +211,45 @@ void dis(xtk *ip)
  * daf: stripped the mu_ off the names of these routines, since they conform
  * to C stack API rather than muforth stack API.
  */
+
+
+static void print_name(cell *pcode)
+{
+    char *pnm = (char *)(pcode - 1);  /* back up over link field */
+    int length = pnm[-1];
+
+    printf("%.*s", length, pnm - ALIGNED(length + 1));
+}
+
+
+/* returns termination flag */
+static int print_w(xtk *ip)
+{
+    xtk w = *ip;
+
+    if ((w > (xtk)pcd0) && (w < (xtk)pcd) && (*w < (pw)pcd0))
+    {
+        printf("\n%p: ", ip);
+        print_name((cell *)w);
+    }
+    else
+    {
+        printf(" %x", (cell)w);
+    }
+    return w == XTK(mu_exit);
+}
+
+void dis(xtk *ip)
+{
+    if (*(pw *)ip == &mu_do_colon)
+        print_name((cell *)ip++);
+
+    for (;;)
+    {
+        if (print_w(ip++)) break;
+    }
+    printf("\n");
+}
 
 /*
  * find_pde_code_range()

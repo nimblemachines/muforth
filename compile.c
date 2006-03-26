@@ -90,16 +90,9 @@ void mu_colon()
 
 void mu_compiler_semicolon()
 {
-    PUSH(&p_mu_exit);
-    mu_compile_comma();
+    mu_compile_exit();
     mu_compiler_lbracket();
 }
-
-void mu_set_colon_code() { *pcd++ = (cell)&mu_do_colon; }
-
-void mu_set_does_code()  { *pcd++ = (cell)&mu_do_does; }
-
-void mu_compile_comma() { *pcd++ = POP; }
 
 /*
   compiler definitions

@@ -27,29 +27,6 @@
 
 #define MIN(a,b)    (((a) < (b)) ? (a) : (b))
 
-/* Thanks to Michael Pruemm for the idea of comparing RP to rp_saved as a
- * way to see when we're "done".
- */
-static void run()
-{
-    xtk **rp_saved = RP;
-
-    while (RP <= rp_saved)
-        NEXT;
-}
-
-/* The most important "word" of all: */
-void mu_do_colon() { NEST; IP = (xtk *)&W[1]; run(); }
-
-/* The base of create/does>. */
-void mu_do_does() { NEST; IP = (xtk *)W[1]; PUSH(W[2]); run(); }
-
-void mu_exit()   { UNNEST; }
-
-pw p_mu_exit = &mu_exit;
-
-void mu_literal_() { PUSH(*IP++); }
-
 cell mu_pop_dstack() { cell t = TOP; DROP(1); return t; }
 
 void mu_plus() { TOP += ST1; NIP(1); }

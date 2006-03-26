@@ -33,22 +33,9 @@ typedef unsigned char uint8;
 /* data stack */
 #define STACK_SIZE 4096
 #define STACK_SAFETY 256
-#define S0  &stack[STACK_SIZE - STACK_SAFETY]
-#define R0  &rstack[STACK_SIZE]
-
-typedef void (*pw)(void);    /* ptr to word's code */
-typedef pw *ppw;             /* ptr to ptr to word's code */
-typedef ppw xtk;             /* "execution token" - ptr to ptr to code */
-
-/* from mip, with changes */
-extern cell  *SP;     /* parameter stack pointer */
-extern cell   TOP;    /* top of stack */
-extern xtk  **RP;     /* return stack pointer */
-extern xtk   *IP;     /* instruction pointer */
-extern xtk    W;      /* on entry, points to the current Forth word */
-
 extern cell stack[];
-extern xtk *rstack[];
+extern cell  *SP;     /* parameter stack pointer */
+#define S0  &stack[STACK_SIZE - STACK_SAFETY]
 
 /* TOP is a synonym for ST0 */
 #define ST0      TOP
@@ -62,8 +49,36 @@ extern xtk *rstack[];
 
 #define PUSH(v)  (DUP, TOP = (cell)(v))
 #define POP      mu_pop_dstack()
-#define EXEC(x)  (W = (xtk)(x), (*W)())
+
 #define EXECUTE  EXEC(POP)
+
+typedef void (*pw)(void);    /* ptr to word's machine code */
+
+#ifdef X86
+
+typedef pw xtk;              /* "execution token" is a pointer to code */
+#define TOP         SP[0]
+#define EXEC(x)     *((xtk)(x))()
+#define XTK(w)      (w)     /* make an execution token from a word's name */
+
+#else /* ITC */
+
+typedef pw *ppw;             /* ptr to ptr to word's code */
+typedef ppw xtk;             /* "execution token" - ptr to ptr to code */
+
+/* from mip, with changes */
+extern cell   TOP;    /* top of stack */
+extern xtk   *IP;     /* instruction pointer */
+extern xtk    W;      /* on entry, points to the current Forth word */
+
+/* return stack - ITC only */
+extern xtk *rstack[];
+extern xtk  **RP;     /* return stack pointer */
+#define R0  &rstack[STACK_SIZE]
+
+#define EXEC(x)  (W = (xtk)(x), (*W)())
+#define XTK(w)   (&p_ ## w)   /* make an execution token from a word's name */
+
 #define NEXT     EXEC(*IP++)
 #define BRANCH   (IP = *(xtk **)IP)
 
@@ -73,15 +88,17 @@ extern xtk *rstack[];
 #define NEST     RPUSH(IP)
 #define UNNEST   (IP = RPOP)
 
+#endif /* ifdef X86 */
+
+#define ALIGN_SIZE  sizeof(cell)
+#define ALIGNED(x)  (((cell)(x) + ALIGN_SIZE - 1) & -ALIGN_SIZE)
+
 #ifdef DEBUG
 #include <stdio.h>
 #define BUG printf
 #else
 #define BUG
 #endif
-
-#define ALIGN_SIZE  sizeof(cell)
-#define ALIGNED(x)  (((cell)(x) + ALIGN_SIZE - 1) & -ALIGN_SIZE)
 
 /*
  * struct string is a "normal" string: pointer to the first character, and
