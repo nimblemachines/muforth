@@ -47,9 +47,9 @@ void mu_readable_q()
     euid = geteuid();
     egid = getegid();
 
-    if (stat((char *)T, &st) == -1)
+    if (stat((char *)TOP, &st) == -1)
     {
-        T = 0;    /* failed */;
+        TOP = 0;    /* failed */;
         return;
     }
 
@@ -75,34 +75,34 @@ void mu_readable_q()
     }
 
     /* failed all tests, return false */
-    T = 0;
+    TOP = 0;
 }
 
 void mu_create_file()       /* C-string-name - fd */
 {
     int fd;
 
-    fd = open((char *)T, O_CREAT | O_TRUNC | O_WRONLY, 0666);
+    fd = open((char *)TOP, O_CREAT | O_TRUNC | O_WRONLY, 0666);
     if (fd == -1)
     {
-        T = (cell) counted_strerror();
+        TOP = (cell) counted_strerror();
         mu_throw();
     }
-    T = fd;
+    TOP = fd;
 }
 
 void mu_open_file()     /* C-string-name flags - fd */
 {
     int fd;
 
-    fd = open((char *)SND, T);
+    fd = open((char *)ST1, TOP);
     if (fd == -1)
     {
-        T = (cell) counted_strerror();
+        TOP = (cell) counted_strerror();
         mu_throw();
     }
-    NIP;
-    T = fd;
+    NIP(1);
+    TOP = fd;
 }
 
 void mu_push_r_slash_o()
@@ -119,15 +119,15 @@ void mu_close_file()
 {
     for (;;)
     {
-        if (close(T) == -1)
+        if (close(TOP) == -1)
         {
             if (errno == EINTR) continue;
-            T = (cell) counted_strerror();
+            TOP = (cell) counted_strerror();
             mu_throw();
         }
         break;
     }
-    DROP;
+    DROP(1);
 }
 
 void mu_mmap_file()     /* fd - addr len */
@@ -136,25 +136,25 @@ void mu_mmap_file()     /* fd - addr len */
     struct stat s;
     int fd;
 
-    fd = T;
+    fd = TOP;
 
     if (fstat(fd, &s) == -1)
     {
         close(fd);
-        T = (cell) counted_strerror();
+        TOP = (cell) counted_strerror();
         mu_throw();
     }
     p = (char *) mmap(0, s.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
     if (p == MAP_FAILED)
     {
         close(fd);
-        T = (cell) counted_strerror();
+        TOP = (cell) counted_strerror();
         mu_throw();
     }
 
-    NIPN(-1);
-    SND = (cell) p;
-    T = s.st_size;
+    NIP(-1);
+    ST1 = (cell) p;
+    TOP = s.st_size;
 }
 
 /* NOTE: These two routines will be obsoleted by buf_* routines. */
@@ -165,10 +165,10 @@ void mu_read_carefully()
     size_t len;
     ssize_t count;
 
-    fd = TRD;
-    buffer = (char *) SND;
-    len = T;
-    DROP2;
+    fd = ST2;
+    buffer = (char *) ST1;
+    len = TOP;
+    DROP(2);
 
     for (;;)
     {
@@ -176,12 +176,12 @@ void mu_read_carefully()
         if (count == -1)
         {
             if (errno == EINTR) continue;
-            T = (cell) counted_strerror();
+            TOP = (cell) counted_strerror();
             mu_throw();
         }
         break;
     }
-    T = count;
+    TOP = count;
 }
 
 void mu_write_carefully()
@@ -191,10 +191,10 @@ void mu_write_carefully()
     size_t len;
     ssize_t written;
 
-    fd = TRD;
-    buffer = (char *) SND;
-    len = T;
-    DROPN(3);
+    fd = ST2;
+    buffer = (char *) ST1;
+    len = TOP;
+    DROP(3);
 
     while (len > 0)
     {

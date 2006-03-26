@@ -35,26 +35,26 @@
 
 void mu_get_termios()
 {
-    tcgetattr(SND, (struct termios *)T);
+    tcgetattr(ST1, (struct termios *)TOP);
 
-    NIP;
-    T = sizeof(struct termios);
+    NIP(1);
+    TOP = sizeof(struct termios);
 }
 
 void mu_set_termios()
 {
     /* drain out, flush in, set */
-    if (tcsetattr(SND, TCSAFLUSH, (struct termios *)T) == -1)
+    if (tcsetattr(ST1, TCSAFLUSH, (struct termios *)TOP) == -1)
     {
-        T = (cell) counted_strerror();
+        TOP = (cell) counted_strerror();
         mu_throw();
     }
-    DROP2;
+    DROP(2);
 }
 
 void mu_set_termios_raw()
 {
-    struct termios *pti = (struct termios *) T;
+    struct termios *pti = (struct termios *) TOP;
 
     pti->c_iflag &= ~(PARMRK | ISTRIP | INLCR | IGNCR | 
                       ICRNL | IXON | IXOFF);
@@ -67,24 +67,24 @@ void mu_set_termios_raw()
     pti->c_cflag &= ~(CSIZE | PARENB | CRTSCTS);
     pti->c_cflag |= (CS8 | CLOCAL);
 
-    DROP;
+    DROP(1);
 }
 
 void mu_set_termios_min_time()
 {
-    struct termios *pti = (struct termios *) TRD;
-    pti->c_cc[VMIN] = SND;
-    pti->c_cc[VTIME] = T;
-    DROPN(3);
+    struct termios *pti = (struct termios *) ST2;
+    pti->c_cc[VMIN] = ST1;
+    pti->c_cc[VTIME] = TOP;
+    DROP(3);
 }
 
 void mu_set_termios_speed()
 {
-    struct termios *pti = (struct termios *) SND;
+    struct termios *pti = (struct termios *) ST1;
 
-#define BPS(x)  case x: T = B ## x; break
+#define BPS(x)  case x: TOP = B ## x; break
 
-    switch(T)
+    switch(TOP)
     {
         BPS(  9600);
         BPS( 19200);
@@ -93,11 +93,11 @@ void mu_set_termios_speed()
         BPS(115200);
         BPS(230400);
     default:
-        T = (cell) "Unsupported speed";
+        TOP = (cell) "Unsupported speed";
         mu_throw();
     }
-    pti->c_ospeed = pti->c_ispeed = T;
-    DROP2;
+    pti->c_ospeed = pti->c_ispeed = TOP;
+    DROP(2);
 }
 
 #if 0

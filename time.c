@@ -31,11 +31,11 @@
 static void push_forth_time_from_libc_time (struct tm *ptm, char *tz)
 {
     DUP;
-    NIPN(-8);
-    T = strlen (tz);
-    SND = (cell) tz;
-    TRD = ptm->tm_sec;
-    SP[2] = ptm->tm_min;
+    NIP(-8);
+    TOP = strlen (tz);
+    ST1 = (cell) tz;
+    ST2 = ptm->tm_sec;
+    ST3 = ptm->tm_min;
     SP[3] = ptm->tm_hour;
     SP[4] = ptm->tm_yday;     /* 0 to 365 */
     SP[5] = ptm->tm_mday;

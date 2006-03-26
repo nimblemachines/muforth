@@ -25,37 +25,37 @@
     .globl  mu_dplus
 mu_dplus:
     movl    SP,%eax
-	movl    0(%eax),%edx  # SND = lo1
+	movl    0(%eax),%edx  # ST1 = lo1
     addl    %edx,8(%eax)  # FTH = lo2
-	movl    T,%edx
-    adcl    4(%eax),%edx  # sum hi = T + TRD
-    movl    %edx,T
+	movl    TOP,%edx
+    adcl    4(%eax),%edx  # sum hi = TOP + TRD
+    movl    %edx,TOP
     addl    $8,SP
     ret
 
     .globl  mu_dnegate
 mu_dnegate:
     movl    SP,%eax
-    negl    T
+    negl    TOP
     negl    0(%eax)
-    sbbl    $0,T
+    sbbl    $0,TOP
     ret
 
     .globl  mu_um_star
 mu_um_star:
     movl    SP,%ecx
-    movl    T,%eax
+    movl    TOP,%eax
     mull    0(%ecx)
-    movl    %edx,T        # product hi
+    movl    %edx,TOP        # product hi
     movl    %eax,0(%ecx)  # product lo
     ret
 
     .globl  mu_m_star
 mu_m_star:
     movl    SP,%ecx
-    movl    T,%eax
+    movl    TOP,%eax
     imull   0(%ecx)
-    movl    %edx,T        # product hi
+    movl    %edx,TOP        # product hi
     movl    %eax,0(%ecx)  # product lo
     ret
 
@@ -64,9 +64,9 @@ mu_um_slash_mod:
     movl    SP,%ecx
     movl    0(%ecx),%edx    # dividend hi
     movl    4(%ecx),%eax    # dividend lo
-    divl    T               # divisor on stack
+    divl    TOP               # divisor on stack
     movl    %edx,4(%ecx)    # remainder
-    movl    %eax,T          # quotient, on top
+    movl    %eax,TOP          # quotient, on top
     addl    $4,SP
     ret
 
@@ -75,9 +75,9 @@ mu_sm_slash_rem:
     movl    SP,%ecx
     movl    0(%ecx),%edx    # hi word at lower address
     movl    4(%ecx),%eax    # dividend = edx:eax, divisor on stack
-    idivl   T               # now rem = edx, quotient = eax
+    idivl   TOP               # now rem = edx, quotient = eax
     movl    %edx,4(%ecx)    # leave remainder and
-    movl    %eax,T          # quotient on stack, quotient on top
+    movl    %eax,TOP          # quotient on stack, quotient on top
     addl    $4,SP
     ret
 
@@ -106,7 +106,7 @@ mu_sm_slash_rem:
 mu_fm_slash_mod:
     pushl   %ebx            # callee saved!
     movl    SP,%ecx
-	movl    T,%ebx
+	movl    TOP,%ebx
     movl    0(%ecx),%edx    # hi word at lower address
     movl    4(%ecx),%eax    # dividend = edx:eax, divisor on stack
     idivl   %ebx            # now modulus = edx, quotient = eax  
@@ -115,9 +115,9 @@ mu_fm_slash_mod:
     orl     %edx,%edx
     je      1f              # do nothing if mod == 0
     decl    %eax            # otherwise quot = quot - 1
-    addl    T,%edx          #            mod = mod + divisor
+    addl    TOP,%edx          #            mod = mod + divisor
 1:  movl    %edx,4(%ecx)    # leave modulus and
-    movl    %eax,T          # quotient on stack, quotient on top
+    movl    %eax,TOP          # quotient on stack, quotient on top
     addl    $4,SP
     popl    %ebx            # callee saved!
     ret

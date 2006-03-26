@@ -62,8 +62,8 @@ static char *compile_counted_string(char *string, size_t length)
  */
 void mu_scrabble()  /* ( a u - z") */
 {
-    T = (cell)compile_counted_string((char *)SND, T);
-    NIP;
+    TOP = (cell)compile_counted_string((char *)ST1, TOP);
+    NIP(1);
 }
 
 /*

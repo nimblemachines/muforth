@@ -61,9 +61,9 @@ static void mu_return_token(ssize_t last, int trailing)
     /* Account for characters processed, return token */
     first = last + trailing;
 
-    NIPN(-1);    /* make room for result */
-    SND = (cell) parsed.data;
-    T = parsed.length;
+    NIP(-1);    /* make room for result */
+    ST1 = (cell) parsed.data;
+    TOP = parsed.length;
 
 #ifdef DEBUG_TOKEN
     write(2, parsed.data, parsed.length);
@@ -75,7 +75,7 @@ void mu_token()  /* -- start len */
 {
     ssize_t last;
 
-    DUP;   /* we'll be setting T when we're done */
+    DUP;   /* we'll be setting TOP when we're done */
 
     /* Skip leading whitespace */
     for (; first != 0 && isspace(source.end[first]); first++)
@@ -106,7 +106,7 @@ void mu_parse()  /* delim -- start len */
      * input text first.
      */
     for (last = first; last != 0; last++)
-        if (T == source.end[last])
+        if (TOP == source.end[last])
         {
             mu_return_token(last, 1);
             return;
@@ -218,9 +218,9 @@ void mu_minus_rbracket()
 
 void mu_push_parsed()
 {
-    DUP; NIPN(-1);
-    SND = (cell) parsed.data;
-    T = parsed.length;
+    DUP; NIP(-1);
+    ST1 = (cell) parsed.data;
+    TOP = parsed.length;
 }
 
 static void mu_qstack()
@@ -240,27 +240,27 @@ static void mu_qstack()
         for (p = S0; p > SP; )
             printf("%x ", *--p);
 
-        printf("] %x\n", T);
+        printf("] %x\n", TOP);
     }
 #endif
 }
 
 void mu_interpret()
 {
-    source.end = (char *) SND + T; /* the _end_ of the text */
-    source.start = -T;        /* offset to the start of text */
-    DROP2;
+    source.end = (char *) ST1 + TOP; /* the _end_ of the text */
+    source.start = -TOP;        /* offset to the start of text */
+    DROP(2);
 
     first = source.start;
 
     for (;;)
     {
         mu_token();
-        if (T == 0) break;
+        if (TOP == 0) break;
         EXEC(state->eat);   /* consume(); */
         mu_qstack();
     }
-    DROP2;
+    DROP(2);
 }
 
 static pw p_mu_interpret = &mu_interpret;
@@ -288,7 +288,7 @@ void mu_load_file()
 
     mu_push_r_slash_o();
     mu_open_file();
-    fd = T;
+    fd = TOP;
     mu_mmap_file();
     PUSH(&p_mu_evaluate);
     mu_catch();

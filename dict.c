@@ -86,9 +86,9 @@ void mu_push_compiler_chain()
 /* find  ( a u chain - a u 0 | code -1) */
 void mu_find()
 {
-    char *token = (char *) TRD;
-    cell length = SND;
-    struct dict_entry *pde = (struct dict_entry *) T;
+    char *token = (char *) ST2;
+    cell length = ST1;
+    struct dict_entry *pde = (struct dict_entry *) TOP;
     char *pnm;
     cell dict_length;
 
@@ -101,13 +101,13 @@ void mu_find()
             continue;
 
         /* found: drop token, push code address and true flag */
-        NIP;
-        SND = (cell) &pde->code;  /* XXX: should be body? */
-        T = -1;
+        NIP(1);
+        ST1 = (cell) &pde->code;  /* XXX: should be body? */
+        TOP = -1;
         return;
     }
     /* not found: leave token, push false */
-    T = 0;
+    TOP = 0;
 }
 
 static void compile_dict_entry(
@@ -138,8 +138,8 @@ static void compile_dict_entry(
 /* Called from Forth. Only creates a name; does NOT set the code field! */
 void mu_compile_name()
 {
-    compile_dict_entry(current_chain, (char *)SND, T);
-    DROP2;
+    compile_dict_entry(current_chain, (char *)ST1, TOP);
+    DROP(2);
 }
 
 void mu_new()

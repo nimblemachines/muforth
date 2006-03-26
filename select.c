@@ -32,51 +32,51 @@
 
 void mu_fd_reset()
 {
-    FD_ZERO((fd_set *) T);
-    T = sizeof(fd_set);   /* so we can allot space in Forth */
+    FD_ZERO((fd_set *) TOP);
+    TOP = sizeof(fd_set);   /* so we can allot space in Forth */
 }
 
 void mu_fd_set()
 {
-    FD_SET(T, (fd_set *) SND);
-    DROP2;
+    FD_SET(TOP, (fd_set *) ST1);
+    DROP(2);
 }
 
 void mu_fd_clr()
 {
-    FD_CLR(T, (fd_set *) SND);
-    DROP2;
+    FD_CLR(TOP, (fd_set *) ST1);
+    DROP(2);
 }
 
 void mu_fd_isset()
 {
     /* Return a Forth-compatible flag */
-    SND = FD_ISSET(T, (fd_set *) SND) ? -1 : 0;
-    DROP;
+    ST1 = FD_ISSET(TOP, (fd_set *) ST1) ? -1 : 0;
+    DROP(1);
 }
 
 void mu_select()
 {
     int count;
     cell nfds = SP[3];
-    fd_set *readfds = (fd_set *) SP[2];
-    fd_set *writefds = (fd_set *) TRD;
-    fd_set *exceptfds = (fd_set *) SND;
-    struct timeval *timeout = (struct timeval *) T;
+    fd_set *readfds = (fd_set *) ST3;
+    fd_set *writefds = (fd_set *) ST2;
+    fd_set *exceptfds = (fd_set *) ST1;
+    struct timeval *timeout = (struct timeval *) TOP;
 
-    NIPN(4);
+    NIP(4);
     for (;;)
     {
         count = select(nfds, readfds, writefds, exceptfds, timeout);
         if (count == -1)
         {
             if (errno == EINTR) continue;
-            T = (cell) counted_strerror();
+            TOP = (cell) counted_strerror();
             mu_throw();
         }
         break;
     }
-    T = count;
+    TOP = count;
 }
 /*
   FD_ZERO could return the size of an FD! This way from Forth we can do:

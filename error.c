@@ -98,19 +98,19 @@ void mu_catch()
     last_tf = tf.prev;
 
     /* return thrown value */
-    T = thrown;
+    TOP = thrown;
 }
 
 void mu_throw()
 {
-    if (T != 0)
+    if (TOP != 0)
     {
         if (last_tf)
-            LONGJMP(last_tf->jb, T);
+            LONGJMP(last_tf->jb, TOP);
         else
-            die((char *)T);
+            die((char *)TOP);
     }
-    DROP;
+    DROP(1);
 }
 
 char *counted_strerror()

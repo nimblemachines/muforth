@@ -42,7 +42,7 @@ typedef ppw xtk;             /* "execution token" - ptr to ptr to code */
 
 /* from mip, with changes */
 extern cell  *SP;     /* parameter stack pointer */
-extern cell   T;      /* top of stack */
+extern cell   TOP;    /* top of stack */
 extern xtk  **RP;     /* return stack pointer */
 extern xtk   *IP;     /* instruction pointer */
 extern xtk    W;      /* on entry, points to the current Forth word */
@@ -50,17 +50,17 @@ extern xtk    W;      /* on entry, points to the current Forth word */
 extern cell stack[];
 extern xtk *rstack[];
 
-#define SND      SP[0]
-#define TRD      SP[1]
-#define DUP      (*--SP = T)
-#define NIP      (SP++)
-#define NIP2     (SP += 2)
-#define NIPN(n)  (SP += (n))
-#define DROP     (T = SND, NIP)
-#define DROP2    (T = TRD, NIP2)
-#define DROPN(n) (T = SP[(n)-1], NIPN(n))
+/* TOP is a synonym for ST0 */
+#define ST0      TOP
+#define ST1      SP[0]
+#define ST2      SP[1]
+#define ST3      SP[2]
 
-#define PUSH(n)  (DUP, T = (cell)(n))
+#define DUP      (*--SP = TOP)
+#define NIP(n)   (SP += (n))
+#define DROP(n)  (TOP = SP[(n)-1], NIP(n))
+
+#define PUSH(v)  (DUP, TOP = (cell)(v))
 #define POP      mu_pop_dstack()
 #define EXEC(x)  (W = (xtk)(x), (*W)())
 #define EXECUTE  EXEC(POP)
