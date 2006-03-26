@@ -1,6 +1,6 @@
 # $Id$
 
-# sed script to convert a BSD makefile (yay!) to a GNU makefile (ewwww).
+# sed script to mark a generated makefile so that it doesn't get edited.
 
 /Id: Makefile/c\
 # This Makefile is automatically generated; do not edit! \
