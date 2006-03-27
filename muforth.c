@@ -163,7 +163,7 @@ static void convert_command_line(int argc, char *argv[])
     /* null terminate and align */
     pdt = pline;
     *pdt++ = 0;
-    pdt = (uint8_t *)ALIGNED(pdt);
+    pdt = (uint8 *)ALIGNED(pdt);
 }
 
 void mu_push_command_line()
