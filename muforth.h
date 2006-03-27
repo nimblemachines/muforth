@@ -27,6 +27,8 @@
 #include "env.h"
 
 typedef int cell;
+typedef unsigned int ucell;
+
 typedef char int8;
 typedef unsigned char uint8;
 

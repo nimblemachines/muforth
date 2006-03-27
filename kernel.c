@@ -114,6 +114,91 @@ void mu_next_()
 }
 
 /*
+ * Single-length math routines.
+ *
+ * Sometimes I really hate C and gcc. This is one of those times. It is
+ * trivially easy to write the basic Forth word fm/mod in assembler. The
+ * machine gives you the pieces you need: given two 32bit operands, it
+ * multiplies and gives a 64bit result; then you divide that by another
+ * 32bit operand. There is no opportunity for over- or underflow, and it's
+ * about 6 instructions - including stack moves - in x86 assembler.
+ *
+ * It's impossible to do this in gcc. Grrr.
+ *
+ * Also, since integer divide by definition gives you both quotient and
+ * remainder, why does C make you calculate them separately? It's stupid.
+ *
+ * So, I've given up on double-length math for muFORTH. It's a beautiful
+ * and elegant part of Forth, but since I intend muFORTH mostly for
+ * cross-compiling (to 32bit architectures at the moment, though that could
+ * change!), single-length is plenty. So don't try using star-slash. ;-)
+ */
+
+/*
+ * We don't need a ustar, since single-length star and ustar yield the same
+ * answers! (Prove this!)
+ */
+void mu_star()    { TOP *= ST1; NIP(1); }
+
+void mu_uslash_mod()  /* u1 u2 -- um uq */
+{
+    ucell umod;
+    ucell uquot;
+
+    uquot = (unsigned)ST1 / TOP;
+    umod  = (unsigned)ST1 % TOP;
+    ST1 = umod;
+    TOP = uquot;
+}
+
+/*
+ * Of course, I'm not giving up floored division. ;-)
+ *
+ * Most processors do symmetric division. To fix this (to make it _FLOOR_)
+ * we have to adjust the quotient and remainder when BOTH rem /= 0 AND the
+ * divisor and dividend are different signs. (This is NOT the same as quot
+ * < 0, because the quot could be truncated to zero by symmetric division
+ * when the actual quotient is < 0!) The adjustment is:
+ *
+ *   q' = q - 1
+ *   r' = r + divisor
+ *
+ * This preserves the invariant a / b => (r,q) s.t. qb + r = a.
+ *
+ *   q'b + r' = (q - 1)b + (r + b) = qb - b + r + b
+ *            = qb + r
+ *            = a
+ *
+ * where q',r' are the _floored_ quotient and remainder (really, modulus),
+ * and q,r are the symmetric quotient and remainder.
+ *
+ */
+void mu_slash_mod()  /* n1 n2 -- m q */
+{
+    cell mod;
+    cell quot;
+
+    quot = ST1 / TOP;
+    mod  = ST1 % TOP;
+
+#ifndef HOST_DIVIDE_FLOORS
+    /*
+     * We now have the results of a stupid symmetric division, which wehave
+     * to convert to floored. We only do this if the modulus was non-zero
+     * and if the dividend and divisor had opposite signs.
+     */
+    if (mod != 0 && (ST1 ^ TOP) < 0)
+    {
+        quot -= 1;
+        mod  += TOP;
+    }
+#endif
+
+    ST1 = mod;
+    TOP = quot;
+}
+
+/*
  * C, or at least gcc, is sooooo fucking retarded! I cannot define "cell/"
  * the way I want, because gcc (on x86 at least) compiles /= by a power of
  * two of a _signed_ integer as an _un_signed_ shift! What gives!

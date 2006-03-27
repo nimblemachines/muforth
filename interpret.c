@@ -82,16 +82,18 @@ void mu_token()  /* -- start len */
         ;
 
     /*
-     * Scan for trailing delimiter and consume it, unless we run out of
+     * Scan for trailing whitespace and consume it, unless we run out of
      * input text first.
      */
     for (last = first; last != 0; last++)
         if (isspace(source.end[last]))
         {
+            /* found trailing whitespace; consume it */
             mu_return_token(last, 1);
             return;
         }
 
+    /* ran out of text; don't consume trailing */
     mu_return_token(last, 0);
 }
 
@@ -108,10 +110,12 @@ void mu_parse()  /* delim -- start len */
     for (last = first; last != 0; last++)
         if (TOP == source.end[last])
         {
+            /* found trailing delimiter; consume it */
             mu_return_token(last, 1);
             return;
         }
 
+    /* ran out of text; don't consume trailing */
     mu_return_token(last, 0);
 }
 

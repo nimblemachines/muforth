@@ -666,9 +666,8 @@ defer ?radix
 
 : @digit?   (s a - a digit T | a junk F)   dup c@  digit?  ;
 
-: *digit  (s ud a digit - ud*base+digit a)
-   swap push ( a)  swap ( lo dig hi)  radix @ um* drop  rot ( dig hi*radix lo)
-   radix @ um*  d+  pop  dpl @ 0< 1+  dpl +!  ;
+: *digit  (s u a digit - u*base+digit a)
+   swap push ( a)  swap ( dig u)  radix @ * +  pop  dpl @ 0< 1+  dpl +!  ;
 
 ( 2002-mar-23. I still don't like how number parsing works. It seems
   clumsy. On the one hand, we know ahead of time exactly how many
@@ -682,14 +681,14 @@ defer ?radix
   And that "dpl!" in ?dot bugs me, too.)
 
 ( ANS compatible!)
-: >number  (s ud1 a1 c1 - ud2 a2 c2)  ( a2 is first unconvertible char)
+: >number  (s u1 a1 c1 - u2 a2 c2)  ( a2 is first unconvertible char)
    =if  for  @digit?  while  *digit 1+ next  0 ^  then
                                 drop  pop  then  ;
 
-: fancy-number  (s a u - d)  ( was -: )
-   2push  0 0  2pop  ?radix  ?sign push  dpl on
+: fancy-number  (s a u - n)  ( was -: )
+   2push  0  2pop  ?radix  ?sign push  dpl on
    begin  >number  =while ( still chars)  ?dot  repeat
-   2drop  pop  if dnegate then  ;
+   2drop  pop  if negate then  ;
 
 ( Now some help for the colon compiler. Note that the colon compiler now
   calls `number,' to convert-and-compile and calls `number' when interpreting.
@@ -703,10 +702,10 @@ defer ?radix
    radix @ push   ['] fancy-number  catch   pop radix !  throw  ;
 ( always reset the radix, even in case of error)
 
--: (number)  dpl @  0< if  drop literal ^  then  swap  literal literal ;
+-: (number)  literal ;
 'number, !
 
--: (number)  dpl @  0< if  drop  then  ;
+-: (number)  ;
 'number !
 
 ( Make it easy to call "number" and "number," from interpreter mode words.)
@@ -759,22 +758,17 @@ variable fd-out
 
 
 ( Pictured numeric output.)
-: /digit   (s ud - udquot urem)
-   0 radix @ um/mod  ( 0:hi / radix -> urhi uqhi)  push
-   ( urhi:lo)  radix @ um/mod  ( urlo uqlo)  pop rot  ;
+: /digit   (s u - umod uquot)  radix @  u/mod swap ;
 
 : >digit   (s n - ch)  ( convert 1 binary digit to char; hex to uppercase)
    9 over u<  7 and +  char 0 +  ;
 
-: s->d  (s n - d)  dup 0<  ;  ( only works if true flag is all 1s!)
-
-: abs   (s n - |n|)   s->d  if  negate then ;
-: dabs  (s d - |d|)   s->d  if dnegate then ;
+: abs   (s n - |n|)   dup 0<  if  negate then ;
 
 : spaces  (s n)  0 max  ?for  space  next  then  ;
 
-( pad is where we convert numbers to ASCII. A double number is 2 cells -
-  64 bits - and in binary would take 64 characters to represent, plus a
+( pad is where we convert numbers to ASCII. A number is 1 cell - could be
+  64 bits! - and in binary would take 64 characters to represent, plus a
   character for the sign. pad returns the address of the _end_ of the
   buffer, since conversion occurs right-to-left.)
 
@@ -783,24 +777,17 @@ variable fd-out
 variable hld
 : hold   -1 hld +!  hld @ c! ;
 : <#     pad hld !  ;
-: #>     (s ud - a #)  2drop  hld @  pad over - ;
+: #>     (s u - a #)  drop  hld @  pad over - ;
 : sign   (s n -)   0< if  char - hold  then  ;
 
-: #     (s ud - ud')   /digit  >digit  hold  ;
-: #s    (s ud - 0 0)  begin  #  2dup or 0=  until  ;
+: #     (s u - u')   /digit  >digit  hold  ;
+: #s    (s u - 0)  begin  #  dup 0=  until  ;
 
-: (ud.)   (s ud - a #)  <# #s #>  ;
-: ud.     (s ud -)      (ud.)  type  space  ;
-
-: (u.)    (s u - a #)   0  (ud.)  ;
+: (u.)    (s u - a #)   <# #s #> ;
 : u.      (s u -)       (u.)  type  space  ;
 
-: (d.)    (s d - a #)
-          dup push ( sign)  dabs  <# #s  pop sign  #>  ;
-: d.      (s d -)       (d.)  type  space  ;
-
-: (.)     (s n - a #)   s->d  (d.)  ;
-: .       (s n -)       (.)  type  space  ;
+: (.)     (s n - a #)   dup push ( sign)  abs  <# #s  pop sign  #> ;
+: .       (s n -)       (.)  type  space ;
 
 ( This should truncate to field length. Actually, it shouldn't. Does it?)
 : truncating-field   (s a c field - a' field)   tuck swap -  ( a field field-c)
@@ -1040,13 +1027,14 @@ asmXXX
   extra-credit challenge: is "m* drop" always equal to "um* drop"? Why or
   why not? ;-)
 
+comment single-length-only
 : *       (s n1 n2 - n1*n2)   um*  drop  ;  ( what's in fig)
 
-:  */mod  (s n1 n2 n3 - r q)  push   m*   pop           fm/mod ;
-: u*/mod  (s u1 u2 u3 - r q)  push  um*   pop           um/mod ;
+:  */mod  (s n1 n2 n3 - m q)  push   m*   pop           fm/mod ;
+: u*/mod  (s u1 u2 u3 - m q)  push  um*   pop           um/mod ;
 
-:  /mod   (s n1    n2 - r q)  push  s->d  pop ( d1 n2)  fm/mod ;
-: u/mod   (s u1    u2 - r q)          0 swap ( ud1 u2)  um/mod ;
+:  /mod   (s n1    n2 - m q)  push  s->d  pop ( d1 n2)  fm/mod ;
+: u/mod   (s u1    u2 - m q)          0 swap ( ud1 u2)  um/mod ;
 
 :  */     (s n1 n2 n3 - n1*n2/n3)   */mod  nip ;
 : u*/     (s u1 u2 u3 - u1*u2/u3)  u*/mod  nip ;
@@ -1056,7 +1044,7 @@ asmXXX
 
 :  mod    (s n1 n2 - mod)     /mod  drop ;
 : umod    (s u1 u2 - umod)   u/mod  drop ;
-
+single-length-only
 
 ( Within.)
 : within  (s n lo hi - lo <= n < hi)  over - push  - pop u<  ;
@@ -1207,7 +1195,7 @@ variable csp  ( what does this stand for? `check stack pointer'?)
 
 ( Time, timestamp.)
 : "hold  (s a #)  dup negate  hld +!  hld @  swap cmove  ;
-: ##   (s n)  0  # #  2drop  ;
+: ##   (s n)   # #  drop  ;
 
 ( Separators)
 : ":   char : hold  ;
@@ -1221,8 +1209,8 @@ variable csp  ( what does this stand for? `check stack pointer'?)
 ( clock returns a count of seconds since 1970-jan-01 00:00:00 UTC,
   the Unix "epoch".)
 
-: (date)   (s year month mday yday - 0 0)
-   drop  ## "-  month" "hold "-  0 #s ( year)  ;
+: (date)   (s year month mday yday - 0)
+   drop  ## "-  month" "hold "-  #s ( year)  ;
 
 : hh:mm:ss  (s hms)  ## ":  ## ":  ## ;
 : hh:mm     (s hms)  drop ( sec)  ## ":  ## ;
@@ -1233,7 +1221,7 @@ variable csp  ( what does this stand for? `check stack pointer'?)
 
 : (short-time")  ( year month mday yday hour min sec 'zone #zone - a #)
    radix @ push  decimal
-   <#  2drop ( zone)  hh:mm  ||  (date)  #>
+   <#  drop ( zone)  hh:mm  ||  (date)  #>
    pop radix !  ;
 
 : time"   (s epoch - a #)  local-time  (time")  ;

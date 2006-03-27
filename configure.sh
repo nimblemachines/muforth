@@ -2,14 +2,37 @@
 
 # $Id$
 
-# configures which make to use
-if gmake --version 2> /dev/null | grep -q "GNU Make"; then
-cat <<EOF
+# This not a GNU configure script! It simply configures the makefile for
+# muforth based on which make you have, and which version you want to
+# build.
+
+while [ "$1" ]; do
+  case "$1" in
+    native)  native=yes ;;
+       gnu)   gnu=yes ;;
+         *) ;;
+  esac
+  shift
+done
+
+if [ "${native}" = "yes" ]; then
+  cat <<EOF > /tmp/version.sed
+/# Configure options/a\
+native=yes
+EOF
+else
+  cp /dev/null /tmp/version.sed
+fi
+
+if [ "${gnu}" = "yes" ] || 
+    make --version 2> /dev/null | grep -q "GNU Make"; then
+  cat <<EOF
 Looks like you're running GNU make. I'm going to create a compatible
 makefile for you.
 
 EOF
   sed -E \
+    -f /tmp/version.sed \
     -f scripts/make.sed \
     -f scripts/gnu-make.sed \
     -e 's/^### Makefile/### GNU Makefile/' Makefile.in > Makefile
@@ -17,21 +40,30 @@ else
   cat <<EOF
 Looks like you're running a non-GNU (perhaps BSD?) make. I'm going to
 assume it's a BSD make and create a makefile for you. If the build
-fails, try running "gmake" instead of "make".
+fails, try re-running configure like this:
+
+  ./configure [native] gnu
+
+Then type "gmake" instead of "make".
 
 EOF
   sed -E \
+    -f /tmp/version.sed \
     -f scripts/make.sed \
     -e 's/^### Makefile/### BSD Makefile/' Makefile.in > Makefile
 fi
 
+rm /tmp/version.sed
+
 cat <<EOF
-You can build a native x86 version, or an indirect-threaded (ITC)
-version of muFORTH. To build the native x86 version, type
+There are two versions of muFORTH: you can build a native x86 version, or
+an indirect-threaded (ITC) version. This script defaults to configuring
+the ITC version; to build the native x86 version, re-run the script like
+this:
 
-  make native=yes
+  ./configure.sh native
 
-or, for the indirect-threaded one,
+To build it, just type
 
   make
 
