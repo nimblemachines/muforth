@@ -26,14 +26,19 @@
 #include "muforth.h"
 #include <stdio.h>
 
+/* Names live in _data_ space */
+
+/* Eventually ;-) I'd like to change this to be Chuck-compatible in that
+ * dict entries to _past_ the code word and so xt's (on ITC systems) are
+ * "parameter field addresses". Unfortunately I don't think this plays well
+ * with native code. */
+
 struct dict_entry
 {
-    /* char name[];           */
-    /* char padding[];        */
-    /* unsigned char length;  */
-    struct dict_entry *link;  /* links point to link field */
-    pw code;
-    uint8 body[];
+    struct dict_entry *link;
+    void *pbody;                /* pts _at_ code field in code space */
+    unsigned char length;
+    char name[0];
 };
 
 /* the forth and compiler "vocabulary" chains */
@@ -89,20 +94,15 @@ void mu_find()
     char *token = (char *) ST2;
     cell length = ST1;
     struct dict_entry *pde = (struct dict_entry *) TOP;
-    char *pnm;
-    cell dict_length;
 
     while ((pde = pde->link) != NULL)
     {
-        pnm = (uint8 *)&pde->link;
-        dict_length = pnm[-1];
-        if (dict_length != length) continue;
-        if (memcmp(pnm - ALIGNED(dict_length + 1), token, length) != 0)
-            continue;
+        if (pde->length != length) continue;
+        if (memcmp(pde->name, token, length) != 0) continue;
 
         /* found: drop token, push code address and true flag */
         NIP(1);
-        ST1 = (cell) &pde->code;  /* XXX: should be body? */
+        ST1 = (cell) pde->pbody;  /* XXX: should be body? */
         TOP = -1;
         return;
     }
@@ -113,25 +113,21 @@ void mu_find()
 static void compile_dict_entry(
     struct dict_entry **ppde, char *name, int length)
 {
-    char *pnm;
     struct dict_entry *pde;
 
-    pnm = (char *)ALIGNED(pcd);
+    pde = (struct dict_entry *)ALIGNED(pdt);
 
-    /* Lay down the name and padding. Leave room for count byte. */
-    memcpy(pnm, name, length);                 /* copy name string */
-    pnm = (char *)ALIGNED(pnm + length + 1);   /* "allot" it, with count */
-    pnm[-1] = length;                          /* store count */
-
-    pde = (struct dict_entry *)pnm;
     pde->link = *ppde;      /* compile link to last */
     *ppde = pde;        /* link onto front of chain */
+    pde->pbody = pcd;       /* pt to code field in code space */
+    pde->length = length;
+    memcpy(pde->name, name, length);          /* copy name string */
 
-    /* Allot entry; now pointing to code field. */
-    pcd = (cell *)&pde->code;
+    /* Allot entry */
+    pdt = (uint8 *)ALIGNED(pde->name + length);
 
 #if defined(BEING_DEFINED)
-    printf("  %p %.*s\n", pcd, length, name);
+    printf("  %p %.*s\n", pdt, length, name);
 #endif
 }
 
@@ -160,7 +156,7 @@ static void init_chain(struct dict_entry **pchain, struct inm *pinm)
     {
         compile_dict_entry(pchain, pinm->name, strlen(pinm->name));
         *pcd++ = (cell)pinm->code;  /* set code pointer */
-        }
+    }
 }
 
 void init_dict()

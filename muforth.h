@@ -36,7 +36,6 @@ typedef unsigned char uint8;
 #define STACK_SIZE 4096
 #define STACK_SAFETY 256
 extern cell stack[];
-extern cell  *SP;     /* parameter stack pointer */
 #define S0  &stack[STACK_SIZE - STACK_SAFETY]
 
 /* TOP is a synonym for ST0 */
@@ -59,17 +58,20 @@ typedef void (*pw)(void);    /* ptr to word's machine code */
 #ifdef native
 
 typedef pw xtk;              /* "execution token" is a pointer to code */
+extern cell  *SP;     /* parameter stack pointer */
 #define TOP         SP[0]
 #define EXEC(x)     *((xtk)(x))()
 #define XTK(w)      (w)     /* make an execution token from a word's name */
 
 #else /* ITC */
 
+typedef cell code;
 typedef pw *ppw;             /* ptr to ptr to word's code */
 typedef ppw xtk;             /* "execution token" - ptr to ptr to code */
 
 /* from mip, with changes */
-extern cell   TOP;    /* top of stack */
+extern cell  *SP   ;     /* parameter stack pointer */
+extern cell   TOP  ;    /* top of stack */
 extern xtk   *IP;     /* instruction pointer */
 extern xtk    W;      /* on entry, points to the current Forth word */
 

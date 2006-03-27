@@ -256,7 +256,7 @@ forth
   using comment, changing "comment" to "uncomment" will interpret the
   bracketed text - the delimiter becomes a noop.)
 
-: comment  token  begin  2dup token  string-compare 0=  until  2drop ;
+: comment  token  begin  2dup token  string= until  2drop ;
 : uncomment  new \ ^ ;  ( create a noop word)
 
 
@@ -443,13 +443,13 @@ forth
 
 
 ( "nameless" colon words.)
-: -:   here <:> -] ;
+: -:  here <:> -] ;
 
 ( For comparison, the regular : compiler is defined thus:
-  : :  new <:> -] ; )
+:  :   new <:> -] ; )
 
 : -create  here <does> ;  ( nameless do_does word)
-: create   new <does> ;  ( nameful do_does word)
+:  create   new <does> ;   ( nameful do_does word)
 : does>  (s constant)
     pop  compile, ( compile IP of parent does)
     compile, ;  ( compile constant)
@@ -545,11 +545,13 @@ XXXperimental
   a pointer to the code field. We need to be able to convert this to point
   to other parts of the structure.)
 
+: >body  cell+ ;
+comment no-more
 : >link  cell- ;
 : link>  cell+ ;
-: >body  cell+ ;
 : >name  (s code - a n)
    >link  dup  1- c@ dup push ( length)  1+ aligned -  pop ;
+no-more
 
 ( What about the last word defined? "current @ @" will yield a pointer to a
   link field.)
@@ -615,6 +617,12 @@ decimal
 : off  0 swap !  ;
 
 ( Punctuation in numbers: sign, radix, decimal point, separators.)
+
+( 2006-mar-26. Ok, so this *totally* sucks. The presence of these bits of
+  punctuation can mask a word not being found in the dictionary. A bare /,
+  for instance, with no digits to keep it company, is happily parsed as a
+  number. The number? 0. Urgh.)
+
 : punct  (s a u ch - a' u' matched)
    over if ( still chars to process)  swap push  over c@  xor if
    ( no match)  pop 0 ^ then
@@ -702,11 +710,9 @@ defer ?radix
    radix @ push   ['] fancy-number  catch   pop radix !  throw  ;
 ( always reset the radix, even in case of error)
 
--: (number)  literal ;
-'number, !
+-:   (number)  literal ;  'number, !
+   ' (number)             'number !
 
--: (number)  ;
-'number !
 
 ( Make it easy to call "number" and "number," from interpreter mode words.)
 : number   'number  @execute ;
@@ -995,9 +1001,10 @@ asmXXX
 ( !!!!-------------------- Add changes below this line -------------------!!!!)
 
 ( Word listing. Putting this in as soon as possible. Needs `space'.)
+: link>name  [ 2 cells ] +  dup 1+ swap c@ ;
 : words   0  current @  ( count link)
   begin  @  =while  1 u+
-            dup link> >name type space space  repeat
+            dup link>name type space space  repeat
   drop  ." ("  . ." words)" ;
 
 
@@ -1035,16 +1042,17 @@ comment single-length-only
 
 :  /mod   (s n1    n2 - m q)  push  s->d  pop ( d1 n2)  fm/mod ;
 : u/mod   (s u1    u2 - m q)          0 swap ( ud1 u2)  um/mod ;
-
-:  */     (s n1 n2 n3 - n1*n2/n3)   */mod  nip ;
-: u*/     (s u1 u2 u3 - u1*u2/u3)  u*/mod  nip ;
+single-length-only
 
 :  /      (s n1 n2 - quot)    /mod  nip ;
 : u/      (s u1 u2 - uquot)  u/mod  nip ;
 
 :  mod    (s n1 n2 - mod)     /mod  drop ;
 : umod    (s u1 u2 - umod)   u/mod  drop ;
-single-length-only
+
+: */mod   (s n1 n2 n3 - mod quot)   push  *  pop  /mod ;
+: */      (s n1 n2 n3 - n1*n2/n3)   */mod  nip ;
+
 
 ( Within.)
 : within  (s n lo hi - lo <= n < hi)  over - push  - pop u<  ;

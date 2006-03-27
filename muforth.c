@@ -44,11 +44,12 @@ xtk    W;      /* on entry, points to the current Forth word */
 int  cmd_line_argc;
 char **cmd_line_argv;
 
-uint8 *pdt0;   /* ptrs to name & data spaces */
-cell  *pcd0;   /* ptr to names & code space */
+code  *pcd0;   /* pointer to start of code space */
+uint8 *pdt0;   /* ... data space */
 
-uint8 *pdt;    /* ptrs to next free byte in each space */
-cell  *pcd;
+code  *pcd;    /* ptrs to next free byte in code space */
+uint8 *pdt;    /* ... data space */
+
 
 /* XXX: Gross hack alert! */
 char *ate_the_stack;
@@ -64,7 +65,7 @@ static void init_stacks()
 
 static void mu_find_init_file()
 {
-    /* these don't have to be proper counted strings because they are
+    /* These don't have to be proper counted strings because they are
      * used only by C code hereafter.
      */
     PUSH("startup.mu4");

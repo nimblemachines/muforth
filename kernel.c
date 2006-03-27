@@ -131,7 +131,8 @@ void mu_next_()
  * So, I've given up on double-length math for muFORTH. It's a beautiful
  * and elegant part of Forth, but since I intend muFORTH mostly for
  * cross-compiling (to 32bit architectures at the moment, though that could
- * change!), single-length is plenty. So don't try using star-slash. ;-)
+ * change!), single-length is plenty. So don't try using star-slash with
+ * large operands. ;-)
  */
 
 /*
@@ -155,18 +156,19 @@ void mu_uslash_mod()  /* u1 u2 -- um uq */
  * Of course, I'm not giving up floored division. ;-)
  *
  * Most processors do symmetric division. To fix this (to make it _FLOOR_)
- * we have to adjust the quotient and remainder when BOTH rem /= 0 AND the
- * divisor and dividend are different signs. (This is NOT the same as quot
- * < 0, because the quot could be truncated to zero by symmetric division
- * when the actual quotient is < 0!) The adjustment is:
+ * we have to adjust the quotient and remainder when rem != 0 and the
+ * divisor and dividend are different signs. (This is NOT the same as
+ * quotient < 0, because the quotient could have been truncated to zero by
+ * symmetric division when the actual (floored) quotient is < 0!) The
+ * adjustment is:
  *
- *   q' = q - 1
- *   r' = r + divisor
+ *  quot_floored = quot_symm - 1
+ *   mod_floored =  rem_symm + divisor
  *
- * This preserves the invariant a / b => (r,q) s.t. qb + r = a.
+ * This preserves the invariant a / b => (r,q) s.t. (q * b) + r = a.
  *
- *   q'b + r' = (q - 1)b + (r + b) = qb - b + r + b
- *            = qb + r
+ *   (q' * b) + r' = (q - 1) * b + (r + b) = (q * b) - b + r + b
+ *            = (q * b) + r
  *            = a
  *
  * where q',r' are the _floored_ quotient and remainder (really, modulus),
@@ -183,8 +185,8 @@ void mu_slash_mod()  /* n1 n2 -- m q */
 
 #ifndef HOST_DIVIDE_FLOORS
     /*
-     * We now have the results of a stupid symmetric division, which wehave
-     * to convert to floored. We only do this if the modulus was non-zero
+     * We now have the results of a stupid symmetric division, which we
+     * must convert to floored. We only do this if the modulus was non-zero
      * and if the dividend and divisor had opposite signs.
      */
     if (mod != 0 && (ST1 ^ TOP) < 0)
@@ -214,7 +216,21 @@ void mu_slash_mod()  /* n1 n2 -- m q */
 void mu_cells(void)      { TOP <<= SH_CELL; }
 void mu_cell_slash(void) { TOP >>= SH_CELL; }
 
+void mu_string_equal()   /* a1 len1 a2 len2 -- flag */
+{
+    if (ST2 != TOP)
+        TOP = 0;            /* unequal if lengths differ */
+    else
+        TOP = (memcmp((char *)ST3, (char *)ST1, TOP) == 0) ? -1 : 0;
+
+    NIP(3);
+}
+
+#ifdef THIS_IS_SILLY
 /*
+ * I thought I wanted to be able to sort string, but I have more
+ * interesting ideas about what muFORTH is good for. ;-)
+ *
  * Like C and unlike Forth, mu_string_compare returns an integer representing
  * an ordering (in general the difference between the ASCII codes of the first
  * two non-matching characters):
@@ -274,6 +290,7 @@ int string_compare(const char *string1, size_t length1,
     }
     return ordering;
 }
+#endif
 
 void mu_cmove()
 {
