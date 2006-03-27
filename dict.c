@@ -26,12 +26,16 @@
 #include "muforth.h"
 #include <stdio.h>
 
-/* Names live in _data_ space */
+/*
+ * Names currently live in _data_ space, rather than in their own name space.
+ */
 
-/* Eventually ;-) I'd like to change this to be Chuck-compatible in that
- * dict entries to _past_ the code word and so xt's (on ITC systems) are
- * "parameter field addresses". Unfortunately I don't think this plays well
- * with native code. */
+/*
+ * Eventually ;-) I'd like to change this to be Chuck-compatible in that a
+ * dict entry's pbody points _past_ the code word and so xt's (on ITC
+ * systems) are "parameter field addresses". Unfortunately I don't think
+ * this plays well with native code.
+ */
 
 struct dict_entry
 {
