@@ -46,10 +46,10 @@ void mu_shift_right()            { TOP = ST1 >> TOP; NIP(1); }
 void mu_ushift_right() { TOP = (unsigned)ST1 >> TOP; NIP(1); }
 
 void mu_fetch()  { TOP =    *(cell *) TOP; }
-void mu_cfetch() { TOP = *(uint8_t *) TOP; }
+void mu_cfetch() { TOP = *(uint8 *) TOP; }
 
 void mu_store()       { *(cell *)TOP = ST1; DROP(2); }
-void mu_cstore()   { *(uint8_t *)TOP = ST1; DROP(2); }
+void mu_cstore()   { *(uint8 *)TOP = ST1; DROP(2); }
 void mu_plus_store() { *(cell *)TOP += ST1; DROP(2); }
 
 void mu_dup()  { DUP; }
