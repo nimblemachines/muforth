@@ -90,7 +90,7 @@ void mu_colon()
 
 void mu_compiler_semicolon()
 {
-    mu_compile_exit();
+    mu_compiler_exit();
     mu_compiler_lbracket();
 }
 

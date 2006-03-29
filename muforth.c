@@ -25,9 +25,6 @@
 #include "version.h"
 
 #include <sys/mman.h>
-#include <stdio.h>
-#include <ctype.h>
-#include <stdlib.h>
 
 /* data stack */
 cell stack[STACK_SIZE];
@@ -44,10 +41,10 @@ xtk    W;      /* on entry, points to the current Forth word */
 int  cmd_line_argc;
 char **cmd_line_argv;
 
-code  *pcd0;   /* pointer to start of code space */
+cell  *pcd0;   /* pointer to start of code space */
 uint8 *pdt0;   /* ... data space */
 
-code  *pcd;    /* ptrs to next free byte in code space */
+cell  *pcd;    /* ptrs to next free byte in code space */
 uint8 *pdt;    /* ... data space */
 
 

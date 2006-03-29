@@ -145,7 +145,7 @@ static void mu_compile_name()
 void mu_new()
 {
     mu_token();
-    EXEC(mu_new_hook);
+    execute(mu_new_hook);
     mu_compile_name();
 }
 

@@ -25,40 +25,95 @@
 
 #include "muforth.h"
 
-void mu_compile_exit()
+cell *pcd_last_call;
+cell *pcd_jump_dest;
+
+/* Normal exit */
+static void mu_exit()   { UNNEST; }
+
+/* Tail-call exit */
+static void mu_tail_call()  { W = *IP; UNNEST; (*W)(); }
+
+pw p_mu_exit = &mu_exit;
+pw p_mu_tail_call = &mu_tail_call;
+
+void mu_literal_() { PUSH(*IP++); }
+
+void mu_code_comma() { *pcd++ = POP; }
+
+/*
+ * Resolve a forward or backward jump, from src to dest.
+ */
+void mu_resolve()  /* src dest - */
 {
-    PUSH(&p_mu_exit);
-    mu_compile_comma();
+    /* In ITC land, this is easy: just store dest at src. */
+    cell *src = (cell *)ST1;
+    cell dest = TOP;
+    *src = dest;
+    DROP(2);
+
+    /* also set up last jump destination, for tail-call code */
+    pcd_jump_dest = (cell *)dest;
+}
+
+void _mu_compiler_exit()
+{
+    cell w;
+
+    /* Convert call in tail position to jump. */
+    /* Convert "word; EXIT" to "TAIL; word" */
+    if (pcd == pcd_last_call && pcd != pcd_jump_dest)
+    {
+        w = pcd[-1];    /* last word compiled */
+        pcd[-1] = (cell)XTK(mu_tail_call);
+        *pcd++ = w;
+    }
+    else
+        *pcd++ = (cell)XTK(mu_exit);
+}
+
+void mu_compiler_exit()
+{
+    *pcd++ = (cell)XTK(mu_exit);
 }
 
 void mu_set_colon_code() { *pcd++ = (cell)&mu_do_colon; }
 
 void mu_set_does_code()  { *pcd++ = (cell)&mu_do_does; }
 
-void mu_compile_comma() { *pcd++ = POP; }
-
+void mu_compile_comma()
+{
+    *pcd++ = POP;
+    pcd_last_call = pcd;
+}
 
 /* Thanks to Michael Pruemm for the idea of comparing RP to rp_saved as a
  * way to see when we're "done".
  */
-static void run()
+void execute(xtk x)
 {
-    xtk **rp_saved = RP;
+    xtk **rp_saved;
 
-    while (RP <= rp_saved)
+    rp_saved = RP;
+
+    EXEC(x);
+    while (RP < rp_saved)
         NEXT;
 }
 
 /* The most important "word" of all: */
-void mu_do_colon() { NEST; IP = (xtk *)&W[1]; run(); }
+void mu_do_colon()
+{
+    NEST;                   /* entering a new word; push IP */
+    IP = (xtk *)&W[1];      /* new IP is address of parameter field */
+}
 
-/* The base of create/does>. */
-void mu_do_does() { NEST; IP = (xtk *)W[1]; PUSH(W[2]); run(); }
-
-void mu_exit()   { UNNEST; }
-
-pw p_mu_exit = &mu_exit;
-
-void mu_literal_() { PUSH(*IP++); }
+/* The basis of create/does>. */
+void mu_do_does()
+{
+    NEST;                   /* entering a new word; push IP */
+    IP = (xtk *)W[1];       /* new IP is stored in the parameter field */
+    PUSH(W[2]);             /* push the constant stored in 2nd word */
+}
 
 

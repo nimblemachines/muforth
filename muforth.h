@@ -50,7 +50,6 @@ extern cell stack[];
 #define PUSH(v)  (DUP, TOP = (cell)(v))
 #define POP      mu_pop_dstack()
 
-#define EXECUTE  EXEC(POP)
 
 typedef void (*pw)(void);    /* ptr to word's machine code */
 
@@ -59,12 +58,12 @@ typedef void (*pw)(void);    /* ptr to word's machine code */
 typedef pw xtk;              /* "execution token" is a pointer to code */
 extern cell  *SP;     /* parameter stack pointer */
 #define TOP         SP[0]
+#define EXECUTE  EXEC((xtk)POP)
 #define EXEC(x)     *((xtk)(x))()
 #define XTK(w)      (w)     /* make an execution token from a word's name */
 
 #else /* ITC */
 
-typedef cell code;
 typedef pw *ppw;             /* ptr to ptr to word's code */
 typedef ppw xtk;             /* "execution token" - ptr to ptr to code */
 
@@ -79,6 +78,8 @@ extern xtk *rstack[];
 extern xtk  **RP;     /* return stack pointer */
 #define R0  &rstack[STACK_SIZE]
 
+#define EXECUTE  execute((xtk)POP)
+
 #define EXEC(x)  (W = (xtk)(x), (*W)())
 #define XTK(w)   (&p_ ## w)   /* make an execution token from a word's name */
 
@@ -90,6 +91,8 @@ extern xtk  **RP;     /* return stack pointer */
 
 #define NEST     RPUSH(IP)
 #define UNNEST   (IP = RPOP)
+
+void execute(xtk x);
 
 #endif /* ifdef X86 */
 
