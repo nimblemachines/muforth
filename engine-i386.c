@@ -23,7 +23,7 @@
  * limitations under the License.
  */
 
-/* Compiler essentials for Intel architecture */
+/* Compiler & execution engine essentials for Intel architecture */
 
 #include "muforth.h"
 

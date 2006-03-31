@@ -28,6 +28,15 @@
 # sed rocks!
 #
 
+# keep the /* filename.c */ comments
+/^\/\* .*\.c/ {
+i\
+\
+
+s/^\//	\//
+p
+}
+
 # lose lines *not* starting with "void mu_"
 /^void mu_/!d
 

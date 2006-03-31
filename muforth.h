@@ -28,6 +28,13 @@
 
 #include "env.h"
 
+/*
+ * XXX: Thought: I could create a file that gets included here, instead of
+ * defining -Dengine_itc on the gcc command line.
+ *
+ * #include "engine.h"
+ */
+
 typedef int cell;
 typedef unsigned int ucell;
 
@@ -60,8 +67,8 @@ extern cell stack[];
 #define POP      pop_dstack()
 
 typedef void (*pw)(void);    /* ptr to word's machine code */
-typedef pw *ppw;             /* ptr to ptr to word's code */
-typedef ppw xtk;             /* "execution token" - ptr to ptr to code */
+typedef pw    *ppw;          /* ptr to ptr to word's code */
+typedef ppw    xtk;          /* "execution token" - ptr to ptr to code */
 
 /* from mip, with changes */
 extern cell  *SP;     /* parameter stack pointer */
@@ -82,26 +89,27 @@ extern xtk  **RP;     /* return stack pointer */
  */
 #define XTK(w)   (&p_ ## w)   /* make an execution token from a word's name */
 
-#define EXECUTE  execute((xtk)POP)
-#define EXEC(x)  (W = (xtk)(x), (*W)())
-#define NEXT     EXEC(*IP++)
-#define BRANCH   (IP = *(xtk **)IP)
+#define EXECUTE   execute_xtk((xtk)POP)
+#define CALL(x)   (W = (xtk)(x), (*W)())
+#define NEXT      CALL(*IP++)
+#define BRANCH    (IP = *(xtk **)IP)
 
 #define RPUSH(n)  (*--RP = (xtk *)(n))
 #define RPOP      (*RP++)
-#define NEST     RPUSH(IP)
-#define UNNEST   (IP = RPOP)
+
+#define NEST      RPUSH(IP)
+#define UNNEST    (IP = RPOP)
 
 #else
 
 #  ifdef engine_i386
 
-typedef pw xtk;              /* "execution token" is a pointer to code */
-extern cell  *SP;     /* parameter stack pointer */
-#define TOP         SP[0]
-#define EXECUTE  EXEC((xtk)POP)
-#define EXEC(x)     *((xtk)(x))()
-#define XTK(w)      (w)     /* make an execution token from a word's name */
+typedef pw   xtk;              /* "execution token" is a pointer to code */
+extern cell  *SP;              /* parameter stack pointer */
+#define TOP      SP[0]
+#define EXECUTE  CALL((xtk)POP)
+#define CALL(x)  *((xtk)(x))()
+#define XTK(w)   (w)       /* make an execution token from a word's name */
 
 #  else  /* !engine_itc && !engine_i386 */
 
@@ -114,15 +122,6 @@ extern cell  *SP;     /* parameter stack pointer */
 
 #define ALIGN_SIZE  sizeof(cell)
 #define ALIGNED(x)  (((cell)(x) + ALIGN_SIZE - 1) & -ALIGN_SIZE)
-
-#ifdef DEBUG
-#include <stdio.h>
-#define BUG(f,x)   fprintf(stderr, f, x)
-#define BUG2(f,x1,x2)   fprintf(stderr, f, x1, x2)
-#else
-#define BUG(f,x)
-#define BUG2(f,x1,x2)
-#endif
 
 /*
  * struct string is a "normal" string: pointer to the first character, and
@@ -180,7 +179,7 @@ extern char *version;
 #include "public.h"
 
 #ifdef engine_itc
-void execute(xtk x);
+void execute_xtk(xtk x);
 #endif
 
 /* compile.c */

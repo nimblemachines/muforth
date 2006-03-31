@@ -34,11 +34,7 @@
 #include <sys/uio.h>
 #include <unistd.h>
 
-#ifdef DEBUG_STACK
-#include <stdio.h>
-#endif
-
-#ifdef DEBUG_TOKEN
+#if defined (DEBUG_STACK) || defined(DEBUG_TOKEN)
 #include <stdio.h>
 #endif
 
@@ -140,31 +136,16 @@ void mu_complain()
     mu_throw();
 }
 
-static pw p_mu_complain = &mu_complain;
-
 void mu_huh_q()
 {
     if (POP) return;
     mu_complain();
 }
 
-static xtk mu_number = XTK(mu_complain);
-static xtk mu_number_comma = XTK(mu_complain);
-
-void mu_push_tick_number()
-{
-    PUSH(&mu_number);
-}
-
-void mu_push_tick_number_comma()
-{
-    PUSH(&mu_number_comma);
-}
-
 void mu_execute() { EXECUTE; }
 
 /* The interpreter's "consume" function. */
-void mu__lbracket()
+void _mu__lbracket()
 {
     mu_push_forth_chain();
     mu_find();
@@ -173,11 +154,11 @@ void mu__lbracket()
         EXECUTE;
         return;
     }
-    execute(mu_number);
+    mu_complain();
 }
 
 /* The compiler's "consume" function. */
-void mu__rbracket()
+void _mu__rbracket()
 {
     mu_push_compiler_chain();
     mu_find();
@@ -193,11 +174,11 @@ void mu__rbracket()
         mu_compile_comma();
         return;
     }
-    execute(mu_number_comma);
+    mu_complain();
 }
 
-void mu_nope() {}       /* very useful NO-OP */
-void mu_zzz() {}        /* a convenient GDB breakpoint */
+void mu_nope() {}    /* very useful NO-OP */
+void mu_zzz()  {}    /* a convenient GDB breakpoint */
 
 /*
  * Remember that the second part of a struct imode is a pointer to code to
@@ -205,14 +186,17 @@ void mu_zzz() {}        /* a convenient GDB breakpoint */
  * facilities. Until these are defined in startup.mu4, the prompts are
  * noops.
  */
-static pw p_mu__lbracket = &mu__lbracket;
-static pw p_mu__rbracket = &mu__rbracket;
-pw p_mu_nope = &mu_nope;
 
-static struct imode forth_interpreter  = { XTK(mu__lbracket), XTK(mu_nope) };
-static struct imode forth_compiler     = { XTK(mu__rbracket), XTK(mu_nope) };
+static struct imode forth_interpreter  = { XTK(_mu__lbracket), XTK(mu_nope) };
+static struct imode forth_compiler     = { XTK(_mu__rbracket), XTK(mu_nope) };
 
 static struct imode *state = &forth_interpreter;
+
+
+static void consume()
+{
+    execute_xtk(state->eat);      /* call the current consume function */
+}
 
 void mu_push_state()
 {
@@ -276,13 +260,11 @@ void mu_interpret()
     {
         mu_token();
         if (TOP == 0) break;
-        execute(state->eat);   /* consume(); */
+        consume();
         mu_qstack();
     }
     DROP(2);
 }
-
-static pw p_mu_interpret = &mu_interpret;
 
 void mu_evaluate()
 {
@@ -298,8 +280,6 @@ void mu_evaluate()
     first = saved_first;
     mu_throw();
 }
-
-static pw p_mu_evaluate = &mu_evaluate;
 
 void mu_load_file()
 {
@@ -319,7 +299,7 @@ void mu_start_up()
 {
     PUSH("warm");       /* push the token "warm" */
     PUSH(4);
-    mu__lbracket();     /* ... and execute it! */
+    _mu__lbracket();    /* ... and execute it! */
 }
 
 void mu_bye()

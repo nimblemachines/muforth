@@ -54,7 +54,7 @@ static struct dict_entry *compiler_chain = NULL;
 /* current chain to compile into */
 static struct dict_entry **current_chain = &forth_chain;
 
-static xtk mu_new_hook = XTK(mu_nope);  /* called when a new name is created */
+static xtk xtk_new_hook = XTK(mu_nope);  /* called when a new name is created */
 
 /* bogus C-style dictionary init */
 struct inm          /* "initial name" */
@@ -146,7 +146,7 @@ static void mu_compile_name()
 
 void mu_new_()
 {
-    execute(mu_new_hook);
+    execute_xtk(xtk_new_hook);
     mu_compile_name();
 }
 
@@ -158,7 +158,7 @@ void mu_new()
 
 void mu_push_tick_new_hook()
 {
-    PUSH(&mu_new_hook);
+    PUSH(&xtk_new_hook);
 }
 
 static void init_chain(struct dict_entry **pchain, struct inm *pinm)

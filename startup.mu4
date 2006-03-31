@@ -460,17 +460,35 @@ defer ?radix
   would be set to 4. Then `0' pushes 0 on the stack but doesn't affect dpl,
   so Forth tries to convert it, and BOOM.)
 
-: (number)  (s a u - d)
+: number  (s a u - n)
    radix @ push   ['] fancy-number  catch   pop radix !  throw ;
 ( always reset the radix, even in case of error)
 
--:   (number)  literal ;  'number, !
-   ' (number)             'number !
+( Ok, folks, now that we have number parsing code we can redefine the
+  interpreter and compiler, which up till this point have simply complained
+  if they saw something not in the dictionary.)
 
+( Ready for our new & improved interpreter and compiler? Here we go!)
 
-( Make it easy to call "number" and "number," from interpreter mode words.)
-: number   'number  @execute ;
-: number,  'number, @execute ;
+( To set the compiler consumer, we need a sneaky word to get the value of
+  state while compiling - we use the same trick later to set the compiler
+  prompt.)
+
+compiler
+: 'compiler-consume  state @ ;
+forth
+
+( Redefine, and then set the forth "consume".)
+-:   ( interpret one token)
+      .forth. find  if  execute ^  then  number ;     state @  !
+
+( Now set the compiler "consumer". To get access to the value of state at
+  compile time, we turn on the compiler, but don't compile anything!)
+
+-:   ( compile one token)
+   .compiler. find  if  execute ^  then
+      .forth. find  if  compile, ^  then  number literal ;
+                                      -]  'compiler-consume [  !
 
 
 ( Basic character i/o.)
@@ -717,6 +735,7 @@ being-defined -v  ( be verbose)
 ( Defining new dictionary chains. These used to be in an array but are now
   independent of each other; now they are simply variables that point to the
   last-defined word on the chain.)
+
 : chain  variable ;
 
 chain .conditional.

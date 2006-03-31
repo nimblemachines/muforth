@@ -23,9 +23,21 @@
  * limitations under the License.
  */
 
-/* Nuts and bolts of threaded-code compiler */
+/* Nuts and bolts of threaded-code compiler & execution engine */
 
 #include "muforth.h"
+
+/*
+ * ITC code pointers, so we can create XTKs for these words. Their code
+ * pointers also exist in the dictionary, but we'd have to query for them
+ * and still store them somewhere. This is easier.
+ */
+pw p_mu_nope = &mu_nope;
+pw p_mu_interpret = &mu_interpret;
+pw p_mu_evaluate = &mu_evaluate;
+pw p__mu__lbracket = &_mu__lbracket;
+pw p__mu__rbracket = &_mu__rbracket;
+
 
 /* Normal exit */
 void mu_exit()      { UNNEST; }
@@ -35,6 +47,75 @@ void mu_literal_()  { PUSH(*IP++); }
 /* These are the same for the ITC engine, but aren't necessarily the same. */
 void mu_compile_comma()  { *pcd++ = POP; }
 void mu_code_comma()     { *pcd++ = POP; }
+
+void mu_set_colon_code() { *pcd++ = (cell)&mu_do_colon; }
+
+void mu_set_does_code()  { *pcd++ = (cell)&mu_do_does; }
+
+/*
+ * This is where all the magic happens. Any time we have the address of a
+ * word to execute (an execution token, or XTK) - either because we looked
+ * it up in the dictionary, or because we fetched it out of a variable - we
+ * call execute_xtk. It is most commonly invoked by EXECUTE, which POPs an
+ * xtk off the D stack, and calls execute_xtk.
+ *
+ * We need magic here because of the hybrid nature of the system. It is
+ * *not* a truly indirect-threaded Forth, where you set up IP and go, and
+ * never look back. We're executing C code, then Forth, then C... The Forth
+ * inner interpreter never runs "free"; in fact, we run it in this routine!
+ *
+ * How do we know if the XTK refers to a Forth word or to a C routine? We
+ * don't...until we run it. If it's Forth, the first thing it will do is
+ * NEST - push the caller's IP - and then it will set IP to point to its
+ * own code. In fact, that's *all* Forth words do when you execute them!
+ *
+ * So we save RP, then call the word. Then we loop *while* the current RP
+ * is *strictly* less than the saved. If we didn't call a Forth word, this
+ * will not be true, and we'll exit. But the word we called - the C routine
+ * - will have run its course and done all its work.
+ *
+ * If it *was* a Forth word, it NESTED, and RP < rp_saved. So now we run
+ * NEXT - a "constrained" threaded interpreter - until RP >= rp_saved, which
+ * will happen precisely when the called (Forth) word executes UNNEST
+ * (EXIT).
+ *
+ * That's all there is to it!
+ *
+ * Thanks to Michael Pruemm for the idea of comparing RP to rp_saved as a
+ * way to see when we're "done".
+ */
+void execute_xtk(xtk x)
+{
+    xtk **rp_saved;
+
+    rp_saved = RP;
+
+    CALL(x);
+    while (RP < rp_saved)
+        NEXT;
+}
+
+/* The most important "word" of all: */
+void mu_do_colon()
+{
+    NEST;                   /* entering a new word; push IP */
+    IP = (xtk *)&W[1];      /* new IP is address of parameter field */
+}
+
+/* The basis of create/does>. */
+void mu_do_does()
+{
+    NEST;                   /* entering a new word; push IP */
+    IP = (xtk *)W[1];       /* new IP is stored in the parameter field */
+    PUSH(W[2]);             /* push the constant stored in 2nd word */
+}
+
+/*
+ * For compiling control structures, we need architecture-specific help. We
+ * don't know, eg, how long displacements are, and we don't know how to
+ * resolve branches. So we isolate the specifics here, and put the
+ * generalities in startup.mu4.
+ */
 
 /*
  * Mark a branch source for later fixup.
@@ -58,59 +139,8 @@ void mu_resolve()  /* src dest - */
     DROP(2);
 }
 
-void mu_set_colon_code() { *pcd++ = (cell)&mu_do_colon; }
-
-void mu_set_does_code()  { *pcd++ = (cell)&mu_do_does; }
-
-/* Thanks to Michael Pruemm for the idea of comparing RP to rp_saved as a
- * way to see when we're "done".
- */
-
-void execute(xtk x)
-{
-    xtk **rp_saved;
-
-    rp_saved = RP;
-
-    EXEC(x);
-    while (RP < rp_saved)
-        NEXT;
-}
-
-/* The most important "word" of all: */
-void mu_do_colon()
-{
-    NEST;                   /* entering a new word; push IP */
-    IP = (xtk *)&W[1];      /* new IP is address of parameter field */
-}
-
-/* The basis of create/does>. */
-void mu_do_does()
-{
-    NEST;                   /* entering a new word; push IP */
-    IP = (xtk *)W[1];       /* new IP is stored in the parameter field */
-    PUSH(W[2]);             /* push the constant stored in 2nd word */
-}
-
 /*
- * "kernel" routines whose definition is specific to the implementation
- * type. So we'll implement these differently in the native version.
- */
-
-/*
- * For compiling control structures, we need architecture-specific help. We
- * don't know, eg, how long displacements are, and we don't know how to
- * resolve branches. So we isolate the specifics here, and put the
- * generalities in startup.mu4.
- */
-
-/*
- * To bootstrap ourselves, we need "if".
- * : if    (s - src)   (0branch)  mark> ;
- */
-
-/*
- * These do_ words are the workhorses.
+ * These are the control structure runtime workhorses.
  */
 void mu_branch_()            { BRANCH; }
 void mu_equal_zero_branch_() { if (TOP == 0) BRANCH; else IP++; }
@@ -153,7 +183,8 @@ void mu_next_()
  * Similarly for R stack functions. In the x86 native code, "push" and
  * "pop" are compiler words. Here they don't need to be.
  */
-/* r stack functions */
+
+/* R stack functions */
 void mu_push()   { RPUSH(POP); }
 void mu_pop()    { PUSH(RPOP); }
 void mu_rfetch() { PUSH(RP[0]); }
