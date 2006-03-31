@@ -1,7 +1,8 @@
 # $Id$
 # Make a link to nimblemachines in all the source code.
 
-# this matches the C comment
+# This matches C comments, Makefile etc comments, and lines starting with
+# zero or more spaces.
 /^[ *#]*This file is part of muforth/ {
 s/^([ *#]*)(This.*)muforth.$/\1\2muFORTH; for project details, visit\
 \1\
