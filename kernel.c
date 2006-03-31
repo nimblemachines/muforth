@@ -29,49 +29,49 @@
 
 #define MIN(a,b)    (((a) < (b)) ? (a) : (b))
 
-cell pop_dstack() { cell t = TOP; DROP(1); return t; }
+cell pop_dstack()  { cell t = TOP; DROP(1); return t; }
 
-void mu_plus() { TOP += ST1; NIP(1); }
-void mu_and() { TOP &= ST1; NIP(1); }
-void mu_or()  { TOP |= ST1; NIP(1); }
-void mu_xor() { TOP ^= ST1; NIP(1); }
+void mu_plus()  { TOP += ST1; NIP(1); }
+void mu_and()   { TOP &= ST1; NIP(1); }
+void mu_or()    { TOP |= ST1; NIP(1); }
+void mu_xor()   { TOP ^= ST1; NIP(1); }
 
-void mu_negate() { TOP = -TOP; }
-void mu_invert() { TOP = ~TOP; }
+void mu_negate()  { TOP = -TOP; }
+void mu_invert()  { TOP = ~TOP; }
 
-void mu_2star()                  { TOP <<= 1; }
-void mu_2slash()                 { TOP >>= 1; }
-void mu_u2slash()  { TOP = (unsigned)TOP >>  1; }
+void mu_2star()                   { TOP <<= 1; }
+void mu_2slash()                  { TOP >>= 1; }
+void mu_u2slash()  { TOP = (unsigned)TOP >> 1; }
 
-void mu_shift_left()             { TOP = ST1 << TOP; NIP(1); }
-void mu_shift_right()            { TOP = ST1 >> TOP; NIP(1); }
-void mu_ushift_right() { TOP = (unsigned)ST1 >> TOP; NIP(1); }
+void mu_shift_left()              { TOP = ST1 << TOP; NIP(1); }
+void mu_shift_right()             { TOP = ST1 >> TOP; NIP(1); }
+void mu_ushift_right()  { TOP = (unsigned)ST1 >> TOP; NIP(1); }
 
-void mu_fetch()  { TOP =    *(cell *) TOP; }
-void mu_cfetch() { TOP = *(uint8 *) TOP; }
+void mu_fetch()   { TOP =  *(cell *)TOP; }
+void mu_cfetch()  { TOP = *(uint8 *)TOP; }
 
-void mu_store()       { *(cell *)TOP = ST1; DROP(2); }
-void mu_cstore()   { *(uint8 *)TOP = ST1; DROP(2); }
-void mu_plus_store() { *(cell *)TOP += ST1; DROP(2); }
+void mu_store()        { *(cell *)TOP = ST1; DROP(2); }
+void mu_cstore()      { *(uint8 *)TOP = ST1; DROP(2); }
+void mu_plus_store()  { *(cell *)TOP += ST1; DROP(2); }
 
-void mu_dup()  { DUP; }
-void mu_nip()  { NIP(1); }
-void mu_drop() { DROP(1); }
-void mu_2drop() { DROP(2); }
-void mu_swap() { cell t = TOP; TOP = ST1; ST1 = t; }
-void mu_over() { DUP; TOP = ST2; }          /* a b -> a b a */
+void mu_dup()    { DUP; }
+void mu_nip()    { NIP(1); }
+void mu_drop()   { DROP(1); }
+void mu_2drop()  { DROP(2); }
+void mu_swap()   { cell t = TOP; TOP = ST1; ST1 = t; }
+void mu_over()   { DUP; TOP = ST2; }          /* a b -> a b a */
 
-void mu_rot()       { cell t = TOP; TOP = ST2; ST2 = ST1; ST1 = t; }
-void mu_minus_rot() { cell t = TOP; TOP = ST1; ST1 = ST2; ST2 = t; }
+void mu_rot()        { cell t = TOP; TOP = ST2; ST2 = ST1; ST1 = t; }
+void mu_minus_rot()  { cell t = TOP; TOP = ST1; ST1 = ST2; ST2 = t; }
 
-void mu_uless() { TOP = (ST1 < (unsigned) TOP) ? -1 : 0; NIP(1); }
-void mu_less()  { TOP = (ST1 < TOP)            ? -1 : 0; NIP(1); }
+void mu_uless()  { TOP = (ST1 < (unsigned) TOP) ? -1 : 0; NIP(1); }
+void mu_less()   { TOP = (ST1 < TOP)            ? -1 : 0; NIP(1); }
 
-void mu_zero_less()  { TOP = (TOP < 0)  ? -1 : 0; }
-void mu_zero_equal() { TOP = (TOP == 0) ? -1 : 0; }
+void mu_zero_less()   { TOP = (TOP < 0)  ? -1 : 0; }
+void mu_zero_equal()  { TOP = (TOP == 0) ? -1 : 0; }
 
-void mu_depth() { cell d = S0 - SP; PUSH(d); }
-void mu_sp_reset() { SP = S0; TOP = 0xdecafbad; }
+void mu_depth()     { cell d = S0 - SP; PUSH(d); }
+void mu_sp_reset()  { SP = S0; TOP = 0xdecafbad; }
 
 /*
  * Single-length math routines.
@@ -173,8 +173,8 @@ void mu_slash_mod()  /* n1 n2 -- m q */
  * "environmental queries" in the preprocessor! So the user gets to do this
  * by hand! Hooray for automation!
 */
-void mu_cells(void)      { TOP <<= SH_CELL; }
-void mu_cell_slash(void) { TOP >>= SH_CELL; }
+void mu_cells(void)       { TOP <<= SH_CELL; }
+void mu_cell_slash(void)  { TOP >>= SH_CELL; }
 
 void mu_string_equal()   /* a1 len1 a2 len2 -- flag */
 {
@@ -184,6 +184,16 @@ void mu_string_equal()   /* a1 len1 a2 len2 -- flag */
         TOP = (memcmp((char *)ST3, (char *)ST1, TOP) == 0) ? -1 : 0;
 
     NIP(3);
+}
+
+void mu_cmove()
+{
+    void *src = (void *) ST2;
+    void *dest = (void *) ST1;
+    size_t count = TOP;
+
+    memcpy(dest, src, count);
+    DROP(3);
 }
 
 #ifdef THIS_IS_SILLY
@@ -251,13 +261,3 @@ int string_compare(const char *string1, size_t length1,
     return ordering;
 }
 #endif
-
-void mu_cmove()
-{
-    void *src = (void *) ST2;
-    void *dest = (void *) ST1;
-    size_t count = TOP;
-
-    memcpy(dest, src, count);
-    DROP(3);
-}
