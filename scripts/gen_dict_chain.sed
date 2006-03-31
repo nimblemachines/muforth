@@ -48,6 +48,7 @@ s/zero/0/
 s/reset/!/
 s/star(_|$)/*/
 s/slash/\//
+s/back/\\\\/
 s/plus/+/
 s/minus/-/
 s/shift_left/<</

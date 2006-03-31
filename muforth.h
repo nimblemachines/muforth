@@ -103,13 +103,13 @@ extern cell  *SP;     /* parameter stack pointer */
 #define EXEC(x)     *((xtk)(x))()
 #define XTK(w)      (w)     /* make an execution token from a word's name */
 
-#  else  /* !ITC && !native */
+#  else  /* !engine_itc && !engine_i386 */
 
 #error Undefined execution engine.
 
-#  endif  /* native */
+#  endif  /* engine_i386 */
 
-#endif  /* ITC */
+#endif  /* engine_itc */
 
 
 #define ALIGN_SIZE  sizeof(cell)

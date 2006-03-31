@@ -224,6 +224,12 @@ void mu_compiler_lbracket()
     state = &forth_interpreter;
 }
 
+/* to make it easier to compile into ; */
+void mu_back_lbracket()
+{
+    state = &forth_interpreter;
+}
+
 void mu_minus_rbracket()
 {
     state = &forth_compiler;

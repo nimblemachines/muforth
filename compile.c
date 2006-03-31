@@ -90,17 +90,6 @@ void mu_colon()
     mu_minus_rbracket();
 }
 
-void mu_compiler_semicolon()
-{
-    mu_compiler_exit();
-    mu_compiler_lbracket();
-}
-
-void mu_compiler_minus_semicolon()
-{
-    mu_compiler_semicolon();
-}
-
 /*
   compiler definitions
   : ^   lit unnest compile,  ;   ( right now this doesn't do anything fancy)

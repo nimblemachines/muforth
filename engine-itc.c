@@ -27,37 +27,14 @@
 
 #include "muforth.h"
 
-#ifdef DEBUG_RSTACK
-#include <stdio.h>
-#endif
-#ifdef DEBUG_POP
-#include <stdio.h>
-#endif
-
-cell *pcd_last_call;
-cell *pcd_jump_dest;
-
 /* Normal exit */
-static void mu_exit()   { UNNEST; }
+void mu_exit()      { UNNEST; }
 
-/* Tail-call exit */
-static void mu_tail_call()  { W = *IP; UNNEST; (*W)(); }
+void mu_literal_()  { PUSH(*IP++); }
 
-/* ITC "trampolines" so we can get an indirect pointer to code */
-pw p_mu_exit = &mu_exit;
-pw p_mu_tail_call = &mu_tail_call;
-
-void mu_literal_() { PUSH(*IP++); }
-
-void mu_code_comma() { *pcd++ = POP; }
-
-static void compile_comma(xtk x)
-{
-    BUG2("%p   %p\n", pcd, x);
-
-    *pcd++ = (cell)x;
-    pcd_last_call = pcd;
-}
+/* These are the same for the ITC engine, but aren't necessarily the same. */
+void mu_compile_comma()  { *pcd++ = POP; }
+void mu_code_comma()     { *pcd++ = POP; }
 
 /*
  * Mark a branch source for later fixup.
@@ -79,41 +56,11 @@ void mu_resolve()  /* src dest - */
     cell dest = TOP;
     *src = dest;
     DROP(2);
-
-    /* also set up last jump destination, for tail-call code */
-    pcd_jump_dest = (cell *)dest;
-}
-
-void _mu_compiler_minus_exit()
-{
-    xtk w;
-
-    /* Convert call in tail position to jump. */
-    /* Convert "word; EXIT" to "TAIL; word" */
-    if (pcd == pcd_last_call && pcd != pcd_jump_dest)
-    {
-        BUG("%p    => tail\n", pcd);
-        w = (xtk)pcd[-1];    /* last word compiled */
-        pcd[-1] = (cell)XTK(mu_tail_call);
-        compile_comma(w);
-    }
-    else
-        *pcd++ = (cell)XTK(mu_exit);  /* don't let _this_ get re-ordered! */
-}
-
-void mu_compiler_exit()
-{
-    compile_comma(XTK(mu_exit));
 }
 
 void mu_set_colon_code() { *pcd++ = (cell)&mu_do_colon; }
 
 void mu_set_does_code()  { *pcd++ = (cell)&mu_do_does; }
-
-void mu_compile_comma()
-{
-    compile_comma((xtk)POP);
-}
 
 /* Thanks to Michael Pruemm for the idea of comparing RP to rp_saved as a
  * way to see when we're "done".
@@ -124,10 +71,6 @@ void execute(xtk x)
     xtk **rp_saved;
 
     rp_saved = RP;
-
-#ifdef DEBUG_RSTACK
-    fprintf(stderr, "saved RP %p\n", RP);
-#endif
 
     EXEC(x);
     while (RP < rp_saved)
