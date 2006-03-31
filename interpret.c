@@ -32,6 +32,14 @@
 #include <sys/uio.h>
 #include <unistd.h>
 
+#ifdef DEBUG_STACK
+#include <stdio.h>
+#endif
+
+#ifdef DEBUG_TOKEN
+#include <stdio.h>
+#endif
+
 struct imode        /* interpreter mode */
 {
     xtk eat;       /* consume one token */
@@ -66,8 +74,7 @@ static void mu_return_token(ssize_t last, int trailing)
     TOP = parsed.length;
 
 #ifdef DEBUG_TOKEN
-    write(2, parsed.data, parsed.length);
-    write(2, "\n", 1);
+    fprintf(stderr, "%.*s\n", parsed.length, parsed.data);
 #endif
 }
 
@@ -234,7 +241,7 @@ static void mu_qstack()
         PUSH(ate_the_stack);
         mu_throw();
     }
-#ifdef DEBUG
+#ifdef DEBUG_STACK
     /* print stack */
     {
         cell *p;

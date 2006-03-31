@@ -71,48 +71,6 @@ void mu_zero_equal() { TOP = (TOP == 0) ? -1 : 0; }
 void mu_depth() { cell d = S0 - SP; PUSH(d); }
 void mu_sp_reset() { SP = S0; TOP = 0xdecafbad; }
 
-void mu_branch_()    { BRANCH; }
-void mu_equal_zero_branch_() { if (TOP == 0) BRANCH; else IP++; }
-void mu_zero_branch_()   { mu_equal_zero_branch_(); DROP(1); }
-
-/* r stack functions */
-void mu_push()   { RPUSH(POP); }
-void mu_pop()    { PUSH(RPOP); }
-void mu_rfetch() { PUSH(RP[0]); }
-
-/* for, ?for, next */
-/* for is simply "push" */
-/* ?for has to matched with "then" */
-void mu_qfor_()
-{
-    if (TOP == 0)
-    {
-        BRANCH;
-        DROP(1);
-    }
-    else
-    {
-        IP++;
-        RPUSH(POP);
-    }
-}
-
-void mu_next_()
-{
-    cell *prtop;
-    prtop = (cell *)&RP[0];
-
-    if (--*prtop == 0)          /* decrement top of R stack */
-    {
-        IP += 1;                /* skip branch */
-        RP += 1;                /* pop counter */
-    }
-    else
-    {
-        BRANCH;                 /* take branch */
-    }
-}
-
 /*
  * Single-length math routines.
  *

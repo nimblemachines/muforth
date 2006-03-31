@@ -101,9 +101,11 @@ void execute(xtk x);
 
 #ifdef DEBUG
 #include <stdio.h>
-#define BUG printf
+#define BUG(f,x)   fprintf(stderr, f, x)
+#define BUG2(f,x1,x2)   fprintf(stderr, f, x1, x2)
 #else
-#define BUG
+#define BUG(f,x)
+#define BUG2(f,x1,x2)
 #endif
 
 /*

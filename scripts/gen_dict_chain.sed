@@ -64,6 +64,7 @@ s/comma$/,/
 s/tick/'/
 s/exit/^/
 s/q/?/
+s/from/>/
 s/(.*)_size/#\1/
 
 # turn foo_ to (foo)
