@@ -11,9 +11,9 @@ engine=itc
 
 while [ "$1" ]; do
   case "$1" in
-    native)  native=yes ;;
-       gnu)   gnu=yes ;;
-         *) ;;
+    i386)  engine=i386 ;;
+     gnu)     gnu=yes ;;
+       *) ;;
   esac
   shift
 done
@@ -36,7 +36,7 @@ Looks like you're running a non-GNU (perhaps BSD?) make. I'm going to
 assume it's a BSD make and create a makefile for you. If the build
 fails, try re-running configure like this:
 
-  ./configure [native] gnu
+  ./configure [i386] gnu
 
 Then type "gmake" instead of "make".
 
@@ -53,7 +53,7 @@ an indirect-threaded (ITC) version. This script defaults to configuring
 the ITC version; to build the native x86 version, re-run the script like
 this:
 
-  ./configure.sh native
+  ./configure.sh i386
 
 To build it, just type
 

@@ -29,7 +29,7 @@
 
 #define MIN(a,b)    (((a) < (b)) ? (a) : (b))
 
-cell mu_pop_dstack() { cell t = TOP; DROP(1); return t; }
+cell pop_dstack() { cell t = TOP; DROP(1); return t; }
 
 void mu_plus() { TOP += ST1; NIP(1); }
 void mu_and() { TOP &= ST1; NIP(1); }

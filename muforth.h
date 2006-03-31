@@ -39,6 +39,13 @@ typedef unsigned char uint8;
 extern cell stack[];
 #define S0  &stack[STACK_SIZE - STACK_SAFETY]
 
+/*
+ * I'm not sure if I'm still going to try to combine the ITC and x86 native
+ * versions of muforth into one. But in case I do, I'm keeping the defines
+ * for both here.
+ */
+#ifdef engine_itc
+
 /* TOP is a synonym for ST0 */
 #define ST0      TOP
 #define ST1      SP[0]
@@ -50,12 +57,44 @@ extern cell stack[];
 #define DROP(n)  (TOP = SP[(n)-1], NIP(n))
 
 #define PUSH(v)  (DUP, TOP = (cell)(v))
-#define POP      mu_pop_dstack()
-
+#define POP      pop_dstack()
 
 typedef void (*pw)(void);    /* ptr to word's machine code */
+typedef pw *ppw;             /* ptr to ptr to word's code */
+typedef ppw xtk;             /* "execution token" - ptr to ptr to code */
 
-#ifdef native
+/* from mip, with changes */
+extern cell  *SP;     /* parameter stack pointer */
+extern cell   TOP;    /* top of stack */
+extern xtk   *IP;     /* instruction pointer */
+extern xtk    W;      /* on entry, points to the current Forth word */
+
+/* return stack */
+extern xtk *rstack[];
+extern xtk  **RP;     /* return stack pointer */
+#define R0  &rstack[STACK_SIZE]
+
+/*
+ * For a handful of words defined in the C kernel we need indirect code
+ * pointers. These have been compiled into the dictionary, but to use those
+ * we have to search for them; so we simply define them. They are
+ * conventionally named "p_<mu_name>".
+ */
+#define XTK(w)   (&p_ ## w)   /* make an execution token from a word's name */
+
+#define EXECUTE  execute((xtk)POP)
+#define EXEC(x)  (W = (xtk)(x), (*W)())
+#define NEXT     EXEC(*IP++)
+#define BRANCH   (IP = *(xtk **)IP)
+
+#define RPUSH(n)  (*--RP = (xtk *)(n))
+#define RPOP      (*RP++)
+#define NEST     RPUSH(IP)
+#define UNNEST   (IP = RPOP)
+
+#else
+
+#  ifdef engine_i386
 
 typedef pw xtk;              /* "execution token" is a pointer to code */
 extern cell  *SP;     /* parameter stack pointer */
@@ -64,39 +103,14 @@ extern cell  *SP;     /* parameter stack pointer */
 #define EXEC(x)     *((xtk)(x))()
 #define XTK(w)      (w)     /* make an execution token from a word's name */
 
-#else /* ITC */
+#  else  /* !ITC && !native */
 
-typedef pw *ppw;             /* ptr to ptr to word's code */
-typedef ppw xtk;             /* "execution token" - ptr to ptr to code */
+#error Undefined execution engine.
 
-/* from mip, with changes */
-extern cell  *SP   ;     /* parameter stack pointer */
-extern cell   TOP  ;    /* top of stack */
-extern xtk   *IP;     /* instruction pointer */
-extern xtk    W;      /* on entry, points to the current Forth word */
+#  endif  /* native */
 
-/* return stack - ITC only */
-extern xtk *rstack[];
-extern xtk  **RP;     /* return stack pointer */
-#define R0  &rstack[STACK_SIZE]
+#endif  /* ITC */
 
-#define EXECUTE  execute((xtk)POP)
-
-#define EXEC(x)  (W = (xtk)(x), (*W)())
-#define XTK(w)   (&p_ ## w)   /* make an execution token from a word's name */
-
-#define NEXT     EXEC(*IP++)
-#define BRANCH   (IP = *(xtk **)IP)
-
-#define RPUSH(n)  (*--RP = (xtk *)(n))
-#define RPOP      (*RP++)
-
-#define NEST     RPUSH(IP)
-#define UNNEST   (IP = RPOP)
-
-void execute(xtk x);
-
-#endif /* ifdef X86 */
 
 #define ALIGN_SIZE  sizeof(cell)
 #define ALIGNED(x)  (((cell)(x) + ALIGN_SIZE - 1) & -ALIGN_SIZE)
@@ -164,6 +178,10 @@ extern char *version;
  * taking no arguments. Other functions need to be put here explicitly.
  */
 #include "public.h"
+
+#ifdef engine_itc
+void execute(xtk x);
+#endif
 
 /* compile.c */
 char *to_counted_string(char *);
