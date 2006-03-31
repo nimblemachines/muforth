@@ -38,12 +38,6 @@ pw p_mu_evaluate = &mu_evaluate;
 pw p__mu__lbracket = &_mu__lbracket;
 pw p__mu__rbracket = &_mu__rbracket;
 
-
-/* Normal exit */
-void mu_exit()      { UNNEST; }
-
-void mu_literal_()  { PUSH(*IP++); }
-
 /* These are the same for the ITC engine, but aren't necessarily the same. */
 void mu_compile_comma()  { *pcd++ = POP; }
 void mu_code_comma()     { *pcd++ = POP; }
@@ -109,6 +103,12 @@ void mu_do_does()
     IP = (xtk *)W[1];       /* new IP is stored in the parameter field */
     PUSH(W[2]);             /* push the constant stored in 2nd word */
 }
+
+/* Normal exit */
+void mu_exit()      { UNNEST; }
+
+/* Push an inline literal */
+void mu_literal_()  { PUSH(*IP++); }
 
 /*
  * For compiling control structures, we need architecture-specific help. We
@@ -180,8 +180,8 @@ void mu_next_()
 }
 
 /*
- * Similarly for R stack functions. In the x86 native code, "push" and
- * "pop" are compiler words. Here they don't need to be.
+ * Runtime workhorses for R stack functions. In the x86 native code, "push"
+ * and "pop" are compiler words. Here they don't need to be.
  */
 
 /* R stack functions */
