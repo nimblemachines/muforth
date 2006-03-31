@@ -6,6 +6,9 @@
 # muforth based on which make you have, and which version you want to
 # build.
 
+# default to ITC
+engine=itc
+
 while [ "$1" ]; do
   case "$1" in
     native)  native=yes ;;
@@ -15,15 +18,6 @@ while [ "$1" ]; do
   shift
 done
 
-if [ "${native}" = "yes" ]; then
-  cat <<EOF > /tmp/version.sed
-/# Configure options/a\
-native=yes
-EOF
-else
-  cp /dev/null /tmp/version.sed
-fi
-
 if [ "${gnu}" = "yes" ] || 
     make --version 2> /dev/null | grep -q "GNU Make"; then
   cat <<EOF
@@ -32,7 +26,7 @@ makefile for you.
 
 EOF
   sed -E \
-    -f /tmp/version.sed \
+    -e s/#engine#/${engine}/ \
     -f scripts/make.sed \
     -f scripts/gnu-make.sed \
     -e 's/^### Makefile/### GNU Makefile/' Makefile.in > Makefile
@@ -48,12 +42,10 @@ Then type "gmake" instead of "make".
 
 EOF
   sed -E \
-    -f /tmp/version.sed \
+    -e s/#engine#/${engine}/ \
     -f scripts/make.sed \
     -e 's/^### Makefile/### BSD Makefile/' Makefile.in > Makefile
 fi
-
-rm /tmp/version.sed
 
 cat <<EOF
 There are two versions of muFORTH: you can build a native x86 version, or
