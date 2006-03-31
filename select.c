@@ -48,7 +48,7 @@ void mu_fd_clr()
     DROP(2);
 }
 
-void mu_fd_isset()
+void mu_fd_in_set_q()
 {
     /* Return a Forth-compatible flag */
     ST1 = FD_ISSET(TOP, (fd_set *) ST1) ? -1 : 0;
