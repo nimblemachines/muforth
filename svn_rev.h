@@ -1,2 +1,2 @@
 /* $Revision$ */
-#define SVN_REV 503
+#define SVN_REV 504
