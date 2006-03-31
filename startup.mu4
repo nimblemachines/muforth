@@ -182,11 +182,9 @@ forth
 
 : @execute  @ execute ;
 
-( XXX: can this be refactored to get rid of some of the swaps?)
-( XXX: can this be got rid of entirely?)
-: vector    (s n a)  swap cells +  @execute ;
-: |vector|  (s n a mask)  rot and  swap  vector  ;
-: jump  (s n max)  cells pop + @execute ;  ( XXX)
+(w jump allows jumping thru a table of addresses; you are responsible for
+  making sure the index is within range!)
+: jump  (s n max)  cells pop + @execute ;
 
 ( Compiler nuts and bolts.)
 : aligned  [ cell 1- ] +  [ cell negate ] and ;
@@ -282,167 +280,11 @@ forth
 
 
 ( 2002-mar-18. New and modern create/does. Everything changes dramatically
-  with native compilation. Let's look at what we have.
+  with native compilation. Let's look at what we have.)
 
-  First of all, "does>" changes from compiling an _address_ to compiling a
-  _constant_ - which could, of course, be an address. does> splits the code
-  to push a constant into two parts: a load part and a push part. The load 
-  part is the code:
-
-    movl $constant,%edx
-
-  The push part is the call [or jump!] to push-literal. This is the same
-  code that "literal" generates; we're splitting it into two parts to save
-  code space.
-
-  Here's how it works. Let's say we're writing an assembler and need words
-  for addressing modes. Like many create/does> words, these consist of a
-  _constant_ and some code. The old way to do this would go something like:
-
-    : md  create ,  does> @  a b c ;
-
-  This is a clumsy way to work with constants - compiling them into the
-  word only to fetch them out again - and is inefficient when compiled to
-  native code. My modernized way looks like this:
-
-    : md  create  does>  a b c ;
-    octal 004 md deferred
-
-  does> by default creates a constant, which gets pushed when the child
-  word - "deferred" in this example - is executed. The actual code that is
-  compiled looks like this:
-
-  md: call create         ; define-time
-      call ;does          ; define-time
-  md_does:
-      call push_literal   ; run-time
-      call a              ; run-time
-      call b              ; run-time
-      jmp  c              ; run-time
-
-  deferred:
-      movl $004, %edx
-      jmp md_does
-
-  Wait a minute! How did that ";does" thing get in there? Well, does> is
-  actually a _compiler_ word. It compiles "call ;does" followed by "call
-  push_literal" into the word being defined - "md" in this case.
-
-  When md is called - to create a child word, or, equivalently [for OO
-  types] an _instance_ - md create's the new word and then ;does compiles
-  the load constant and the jump to md's run-time code.
-
-  If we hadn't split the push-constant part, the code in each child word -
-  and there could be lots of them! - would have to have an extra call:
-
-  md: call create         ; define-time
-      call ;does          ; define-time
-  md_does:
-      call a              ; run-time
-      call b              ; run-time
-      jmp  c              ; run-time
-
-  deferred:
-      movl $'006, %edx
-      call push_literal
-      jmp md_does
-
-  What we have essentially done is move the "call push_literal", since it
-  is common to every child word, out of the child and into the parent.
-
-  With that long-winded intro, we can now get into some of the odd
-  subtleties of this brave new world.
-
-  The first subtlety is that while does> and constant - as defined below -
-  both create some type of constant, they do it slightly differently.
-  constant creates a word and writes code to push a constant - both the
-  load and push halves of that action - and then forces a _tail-call
-  conversion_ of the call to push_literal, changing it to a _jump_ and
-  thereby ending the word. It can do nothing more than push its constant.
-
-  This ends up being syntactic sugar;
-
-    4 constant cell
-
-  and
-
-    : cell  4 ;
-
-  produce exactly the same code; namely:
-
-  cell:
-    movl $4,%edx
-    jmp  push_literal
-
-  does> is different; it leaves open - in fact encourages! - doing
-  something exciting with the constant that has just been pushed. [Remember
-  that this constant could be the address of some data structure.] It
-  splits the constant-pushing task into two parts, as described above,
-  putting the load into the child and the push into the parent, but leaves
-  the call to push_literal as a _call_ that is expected to be followed, as
-  in "md" above, with code that processes the constant.
-
-  To drive home this subtle difference, assume that we defined constant
-  thus:
-
-    : constant  create does> ;
-    4 constant cell
-
-  Now what do we have?
-
-  constant:
-    call create
-    call ;does
-  constant_does:
-    jmp  push_literal
-
-  cell:
-    movl $4,%edx
-    jmp  constant_does
-
-  This is slightly less efficient; it compiles extra code into the parent
-  word - the run-time code "jmp push_literal" - and to execute this
-  constant we do a jump to a jump, which is both silly and slow.
-
-  Note: the trailing ; in our example definition of "constant" above
-  changed the "call push_literal" to "jmp push_literal". Sneaky!
-
-  The other important subtlety is that these constants - esp. when they are
-  the address of some data structure - can be in the way when compiling
-  said data structure. The constant that you want compiled into the child
-  word has to be on the stack when does> [really ;does] executes. It's a
-  bit clumsy, but you have to do something like this:
-
-    : clumsy  create  ram  push  , ,  pop  does>  a b c ;
-    thing1 thing2 clumsy example
-
-  I suppose you could write that like this too, with consequent changes in
-  how the data is "fetched" and used in a, b, and c:
-
-    : less-clumsy  create  literal  does>  a' b' c' ;
-    thing1 thing2 less-clumsy example
-
-  In this case we compile _two_ literals, the second one being "split in
-  two" in the canonical way:
-
-  less_clumsy:
-    call create
-    call literal    ; compiles code to load & push a literal
-    call ;does
-  less_clumsy_does:
-    call push_literal
-    call aprime
-    call bprime
-    jmp  cprime
-
-  example:
-    movl $thing2,%edx
-    call push_literal
-    movl $thing1,%edx
-    jmp  less_clumsy_does
-
-  With this new kind of create/does>, you choose how to do it.)
-
+( 2006-mar-30. I removed the big comment about create/does>. It's all in
+  the README now, and also all out of date, since it's about the
+  native-code version of muforth.)
 
 ( "nameless" colon words.)
 : -:  here <:> -] ;
@@ -456,111 +298,14 @@ forth
     pop  code, ( compile IP of parent does)
     code, ;  ( compile constant)
 
-comment XXXalternative with do_does words laid out like this:
-   do_does
-   <constant>
-   <new IP>
-
-: create (s constant)  new <does>  , ( constant) ;
-: does>  pop , ( parent IP) ;
-XXXalternative
-
-: constant  create  does> ;  ( NOTAIL)
+: constant  create  does> ;
 : _buffer  (s bytes - ram)  ram swap  aligned  cell/  ?for 0 , next then ;
-: buffer  _buffer constant ;  ( XXX: untested)
+: buffer  _buffer constant ;
 
-: _var  create  ram  does> ;  ( NOTAIL)
-: variable   _var  0 , ;
-: 2variable  _var  0 , 0 , ;
-
-comment not-yet
-: array   (s n - ) _var ;  ( XXX: Fixme: I like arrays to be self-indexing.)
-not-yet
-
-( These depended on the data space being zeroed, which makes me nervous.
-  And well I should have been nervous: temporary strings - for file names,
-  among other things - are allocated there. And this just bit me. I was
-  assuming that variables would be zero when allocated; instead I got a
-  bunch of junk. As I was generating a linked-list head pointer - actually
-  a dictionary chain - what was supposed to be a null pointer at the end
-  was instead an invalid pointer off into the weeds!
-
-  : buffer  ram constant  allot ;
-  : variable       cell buffer ;
-  : 2variable   2 cells buffer ; )
-
-( 2002-mar-30. Experimenting with an alternative here.)
-
-( If any code is _compiled_ between create and does>, bad things will
-  happen. The reason for this experimental way is to get the constant out
-  of the way; but by splitting the compilation of the load constant and
-  jump to the does code into two a potentially dangerous situation arises.
-
-  Maybe ;does should look back and "steer" the last-compiled call to point
-  to the code that follows it; this way a complete load-and-call-push could
-  be compiled, then partly un-compiled when the does comes along.
-
-  But does> has compiled a push-literal [call push_literal] into the parent
-  word at the start of its shared does code; this needs to immediately
-  follow a register load in the child word. Which means, once again, that
-  no code can intervene between the two. In fact, as I have envisioned
-  them, does words _only_ consist of a load constant and jump to the
-  parent's code; though I guess if this is the _last_ thing in the child
-  word that it's ok. That means compiling everything in does> and ;does as
-  I am now, instead of doing anything in create. Hmm.
-
-  In fact, as it works now does> does all the work; create is simply a
-  synonym for "name".
-
-  In any case, this allow us to write
-
-    ram create  cells allot  does>
-
-  instead of
-
-    create  ram swap  cells allot  does>
-
-  Maybe it's not such a big deal, but the first seems a lot cleaner.
-
-  Urr. It's still a problem. I going to bed; I'll think about this
-  tomorrow.)
-
-comment XXXperimental 
-( -create is basically the same as "here".)
-: create   new  load-literal ;  ( loads a constant)
-: constant  create  push-literal  \ ^ ;  ( syntactic sugar for : foo  89 ; )
-: 'buffer  ram constant ;
-: buffer   'buffer allot ;
-
-: variable    'buffer  0 , ;
-: 2variable   'buffer  0 , 0 , ;
-
-( These depended on the data space being zeroed, which makes me nervous:
-  : variable       cell buffer ;
-  : 2variable   2 cells buffer ; )
-
-: ;does   -compile  pop compile, \ ^ ;
-compiler
-: does>   ['] ;does compile,  push-literal ;
-forth
-XXXperimental 
-
-( We need words to help us navigate the dictionary structure. find returns
-  a pointer to the code field. We need to be able to convert this to point
-  to other parts of the structure.)
-
-: >body  cell+ ;
-comment no-more
-: >link  cell- ;
-: link>  cell+ ;
-: >name  (s code - a n)
-   >link  dup  1- c@ dup push ( length)  1+ aligned -  pop ;
-no-more
-
-( What about the last word defined? "current @ @" will yield a pointer to a
-  link field.)
-
-: last  current @ @ ;
+: variable      cell  buffer ;
+: 2variable   2 cells buffer ;
+: array     (s n - )   cells _buffer
+     does>  (s i - a)  cells + ;  ( self-indexing!)
 
 ( I guess we can have deferred words, even though they are, in some ways,
   inelegant. The alternative - creating a variable and a colon word that
@@ -587,7 +332,7 @@ no-more
 
 variable undeferred  ' nope undeferred !
 : defer  create  ram  undeferred @ ,  does> @execute ;
-: >data  >body cell+ @ ;  ( given code addr of does word, fetch its constant)
+: >data  [ 2 cells ] + @ ;  ( given code addr of does word, fetch its constant)
 : 'data  ' >data ;
 
 ( test!!)
@@ -815,9 +560,9 @@ variable hld
 ( Useful.)
 : ?  @ .  ;
 
-( XXX: wordlength-specific.)
+: bits/cell  [ cell 8 * ] ;
 : rotate  ( rotates _right_; without =if/then, rotates by 0 break on x86.) 
-  =if  2dup u>> push  negate bl ( 32) +  <<  pop xor ^ then drop ;
+  =if  2dup u>> push  negate bits/cell +  <<  pop xor ^ then drop ;
 
 
 ( : p  ctrl J parse  2dup  u. u. char | emit type char | emit ; XXX )
@@ -853,20 +598,12 @@ variable hld
 : count  (s z" - a u)  dup  cell- @ ;
 : (.")  count type ;  ( no more jumping over strings at run-time!)
 
-comment XXX
-: (warn")   (s f z")  swap  if
-   last-link cell+ @ ( link) cell+ count type ( name)  ." : "
-   count type ( warning)  ^ then  drop  ;
-: (error")  ; XXX
-
 ( Compiled strings.)
 compiler
 : z"   (s - z")   char " string,  literal ;  ( z means zero-terminated)
 :  "   (s - a c)  \ z"  \ count ;
 : ."             \ z"  \ (.") ;
 : error"         \ z"  \ throw ;  ( compile a C-style string for throw'ing)
-comment XXX
-: warn"          \ z"  \ (warn")   ; XXX
 
 ( Interpreted strings. Strings that return an address always get compiled!)
 forth
@@ -898,110 +635,6 @@ being-defined -v  ( be verbose)
 -:  error" undefined deferred word" ;  undeferred !
 
 
-( Ok. Tiny asm!)
-comment do-this-but-later!
-
-( These compile 1-4 bytes of machine code.)
-: asm,  create  does>  swap  here !  h +! ;
-   1 asm, 1,
-   2 asm, 2,
-   3 asm, 3,
-   4 asm, 4,
-
-variable offset  ( for effective memory addresses)
-variable sib     ( sib byte )
-variable immed
-variable variant
-
-octal
-( regs)
-: a  300 ;  : sp  304 ;
-: b  303 ;  : bp  305 ;
-: c  301 ;  : si  306 ;
-: d  302 ;  : di  307 ;
-
-: 00r    7 and ;
-: m00  300 and ;
-: >0r0  00r  3 << ;
-
-( These abbrevs are used in the following stack comments:
-  o = offset, b = base reg, i = index reg, s = scale, m = mod_rm, r = reg)
-
-: osize  (s o - m)
-   dup offset !  =if  200 + 400 u< if  100 ^ then  200 ^ then ;
-
-: bpfix  dup 005 xor if ^ then  100 xor ;  ( 005 -> 105)
-: md    (s o b     - m)  00r  swap osize xor ;
-: >sib  (s o b i s - m)  6 <<  swap >0r0 xor  over 00r xor  sib !  md ;
-: +sib  (s m - m')  m00  004 xor ;
-
-( converts 004/xx5 -> 104/xx5; these are mod_rm/sib pairs)
-: ri)  (s o b i s - m)                >sib  bpfix  +sib ;
-: i)   (s o   i s - m)  bp -rot ( b)  >sib         +sib ;
-: r)   (s o b     - m)  dup sp xor if  md bpfix ^  then  sp 0 ri) ;
-   
-: )   offset !  005 ;
-: $  (s imm)  immed !  cell variant ! ;
-: d-bit  (s r m | m r - m r d-bit)  dup m00 300 xor if  swap 0 ^  then  2 ;
-
-: md->osize
-   307 and  dup 005 xor if  dup 004 xor if  ^  then
-   sib @ 00r 5 xor if  ^  then  then  drop 200 ;
-
-: o8,   offset @ 1, ;
-: o32,  offset @ 4, ;
-: offset,
-   md->osize  6 >> jump  nope o8, o32, nope [
-
-: sib,  00r 004 xor if ^ then  sib @ 1, ;
-: ea,  (s m0r 0r0)  >0r0 xor dup 1,  dup sib, offset, ;
-: mov  d-bit  [ hex 89 octal ] xor 1,  ea, ;
-: addi    [ hex 83 ] 1,  0 ea,  1, ;
-compiler
-: time  [ hex 310f ] 2,  sp ) c mov  [ 8 negate ] sp ) addi
-   a [ 4 negate ] c r) mov     d [ 8 negate ] c r) mov ;
-forth
-
-( a fun test)
-decimal
-: t time ;  ( contents of TSC: time since boot in processor clock ticks)
-( : clockspeed  750000000 ;  ( on starbuck, a 750 M Athlon)
-: clockspeed  597070000 ;  ( on stubb, a 600 M Celeron/P3)
-: uptime  (s - s)  t clockspeed um/mod nip ;
-
-( PCI bus scan!)
-: getsp  (s r)  sp ) swap mov ;
-: sp+    (s o)  sp ) addi ;
-: ret  "c3 1, ;
-create out  c getsp  0 c r) d mov  4 c r) a mov  "ef 1, 8 sp+  ret
-create in   c getsp  0 c r) d mov  "ed 1,  a 0 c r) mov  ret
-: north  "cf8 out  "cfc in ; ( FreeBSD won't let me!)
-
-hex
-( here . ." start of assembler tests"  cr)
-
-a c mov
-0 bp r) d mov
-0 sp r) d mov
-si 4 negate sp r) mov
-c 0 c 2 i) mov
-c 0 bp c 2 ri) mov
-
-decimal
-: big  -1 -1 um*  1000000 for  2dup (ud.) 2drop next  2drop ;
-do-this-but-later!
-
-comment asmXXX
-: ,s  for  1,  next ;
-: @sp     >0r0  [ octal -] 005 + 1,  sp 4, ;
-compiler ( should I join Chuck in calling this "macro"?)
-: sp->r  [ hex -] 8b 1,    @sp ;
-: +sp    [ hex -] 83 1,  0 @sp  1, ;
-: r->r/m  [ hex -] 89 1, ;
-forth
-asmXXX
-
-
 ( !!!!-------------------- Add changes below this line -------------------!!!!)
 
 ( Word listing. Putting this in as soon as possible. Needs `space'.)
@@ -1022,31 +655,18 @@ asmXXX
 
 ( Go forth and multiply ... and divide.
 
-  These routines are all based on a handful of low-level primitives:
-     um* : u1 u2 - ud
-      m* : n1 n1 -  d
-  um/mod : ud  u - urem uquot
-  fm/mod :  d  n - mod quot  [floored division]
+  As of r438 - 2006-mar-26 - there are no double-length numbers!
+
+  Our new primitives are:
+      * : n1 n2 - n3 [single-length product]
+   /mod : n1 n2 - mod quot
+  u/mod : u1 u2 - umod uquot
 
   Any word whose name starts with 'u' is unsigned, both in its arguments
   and its results; the others are signed.
 
-  All of the */ variants calculate a double-length intermediate product.)
-
-( To calculate a single-length signed product, calculate a double-length
-  _unsigned_ product and drop the high-order word. Weird but true. And an
-  extra-credit challenge: is "m* drop" always equal to "um* drop"? Why or
-  why not? ;-)
-
-comment single-length-only
-: *       (s n1 n2 - n1*n2)   um*  drop  ;  ( what's in fig)
-
-:  */mod  (s n1 n2 n3 - m q)  push   m*   pop           fm/mod ;
-: u*/mod  (s u1 u2 u3 - m q)  push  um*   pop           um/mod ;
-
-:  /mod   (s n1    n2 - m q)  push  s->d  pop ( d1 n2)  fm/mod ;
-: u/mod   (s u1    u2 - m q)          0 swap ( ud1 u2)  um/mod ;
-single-length-only
+  */ and */mod no longer calculate a double-length intermediate product,
+  so beware!)
 
 :  /      (s n1 n2 - quot)    /mod  nip ;
 : u/      (s u1 u2 - uquot)  u/mod  nip ;
@@ -1075,33 +695,6 @@ single-length-only
 
 : .s  ( stack)
    depth  s0 cell- swap  ?for  cell- dup @ .  next then  drop  ;
-
-
-comment %%
-( Even more useful backtrace of return stack.)
-: rdepth  r0  rp@ -  cell/  1-  ;  ( remember: there's a return addr on R!)
-
-: where  ( ip - offset z" ip)  push  forth  0
-   begin  drop  @  =while  r@ over link> -
-   ( offset)  dup 0< 0= until  ( 'link offset) swap cell+  pop  ^
-   then  ( 'link = 0)  z" ????"  pop  ;
-
-: .where  ( offset z" ip)  hex  .a16  decimal
-   count type  ?dup if  cell/  ."  + "  u.  then  ;
-
-: backtrace  ( a n)
-   radix @ push
-   for  dup @  where  cr .where  cell+  next  drop  cr
-   pop radix !  ;
-
-( The `push .s pop' removes the abort string from the stack dump.)
-: stacks  rp@ rdepth backtrace  ." Stack: "  push .s pop  cr  ;
-( now stacks  is aborting)
-
-( I was going to put `backtrace' into `better-error' but then realized that
-  `better-error' is called as the result of a `throw', so much of the return
-  stack info has been lost. Instead I put a hook into abort".)
-%%
 
 
 ( Conditional compilation)
@@ -1182,13 +775,9 @@ forth
 ( Two useful sets of units; these adhere to SI and IEC guidelines. ;-)
 : k   10* 10* 10* ;  ( "kilo": 10^3.)
 : M   k k ;          ( "mega": 10^6.)
-: G   k M ;          ( "giga": 10^9.)   ( too big)
-: T   k G ;          ( "tera": 10^12.)  ( too big)
 
 : Ki  10 << ;   ( "Kibi", or "kilobinary": 2^10.)
 : Mi  Ki Ki ;   ( "Mebi", or "megabinary": 2^20.)
-: Gi  Ki Mi ;   ( "Gibi", or "gigabinary": 2^30.)  ( too big)
-: Ti  Ki Gi ;   ( "Tebi", or "terabinary": 2^40.)  ( too big)
 
 ( For loading, to see if we've left anything lying about.)
 variable csp  ( what does this stand for? `check stack pointer'?)
@@ -1309,20 +898,6 @@ defer canonical  ( XXX: is this obsolete?)
 
 ( Identify ourselves.)
 trues muforth
-
-comment %%
-( marker, empty)
-( 1-may-2000. marker now saves current as well.)
-( 2001-jan-23. remember is now marker, to be slightly less incompatible.)
-: marker
-   create
-     current  max-chains 1+ for  dup @ ,  cell-  next drop   ( save chains)
-   does>  ( from to)
-     current  max-chains 1+ for  push  @+  r@ !  pop cell-  next  drop
-      ( new `here')  h !  ;
-
-marker empty
-%%
 
 (  here  pop -  constant startup-size)
 
