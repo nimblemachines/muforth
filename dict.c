@@ -131,7 +131,7 @@ static void compile_dict_entry(
     pdt = (uint8 *)ALIGNED(pde->name + length);
 
 #if defined(BEING_DEFINED)
-    printf("  %p %.*s\n", pdt, length, name);
+    fprintf(stderr, "%p %.*s\n", pcd, length, name);
 #endif
 }
 
@@ -142,11 +142,16 @@ static void mu_compile_name()
     DROP(2);
 }
 
+void mu_new_()
+{
+    execute(mu_new_hook);
+    mu_compile_name();
+}
+
 void mu_new()
 {
     mu_token();
-    execute(mu_new_hook);
-    mu_compile_name();
+    mu_new_();
 }
 
 void mu_push_tick_new_hook()
