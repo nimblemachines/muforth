@@ -39,9 +39,9 @@ void mu_xor()   { TOP ^= ST1; NIP(1); }
 void mu_negate()  { TOP = -TOP; }
 void mu_invert()  { TOP = ~TOP; }
 
-void mu_2star()                   { TOP <<= 1; }
-void mu_2slash()                  { TOP >>= 1; }
-void mu_u2slash()  { TOP = (unsigned)TOP >> 1; }
+void mu_2star()                    { TOP <<= 1; }
+void mu_2slash()                   { TOP >>= 1; }
+void mu_u2slash()  { TOP = (unsigned)TOP >>  1; }
 
 void mu_shift_left()              { TOP = ST1 << TOP; NIP(1); }
 void mu_shift_right()             { TOP = ST1 >> TOP; NIP(1); }
@@ -64,10 +64,10 @@ void mu_over()   { DUP; TOP = ST2; }          /* a b -> a b a */
 void mu_rot()        { cell t = TOP; TOP = ST2; ST2 = ST1; ST1 = t; }
 void mu_minus_rot()  { cell t = TOP; TOP = ST1; ST1 = ST2; ST2 = t; }
 
-void mu_uless()  { TOP = (ST1 < (unsigned) TOP) ? -1 : 0; NIP(1); }
-void mu_less()   { TOP = (ST1 < TOP)            ? -1 : 0; NIP(1); }
+void mu_uless()  { TOP = (ST1 < (unsigned)TOP) ? -1 : 0; NIP(1); }
+void mu_less()   { TOP = (ST1 < TOP)           ? -1 : 0; NIP(1); }
 
-void mu_zero_less()   { TOP = (TOP < 0)  ? -1 : 0; }
+void mu_zero_less()   { TOP = (TOP <  0) ? -1 : 0; }
 void mu_zero_equal()  { TOP = (TOP == 0) ? -1 : 0; }
 
 void mu_depth()     { cell d = S0 - SP; PUSH(d); }
