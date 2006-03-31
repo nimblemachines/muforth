@@ -1,7 +1,9 @@
 /*
  * $Id$
  *
- * This file is part of muforth.
+ * This file is part of muFORTH; for project details, visit
+ *
+ *    http://nimblemachines.com/browse?show=MuForth
  *
  * Copyright (c) 1997-2006 David Frech. All rights reserved, and all wrongs
  * reversed.
