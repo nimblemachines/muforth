@@ -25,7 +25,6 @@
 
 #include "muforth.h"
 #include "version.h"
-#include "svn_rev.h"
 
 #include <sys/mman.h>
 
@@ -179,11 +178,6 @@ void mu_push_version()
 void mu_push_build_time()
 {
     PUSH(build_time);
-}
-
-void mu_push_svn_rev()
-{
-    PUSH(SVN_REV);
 }
 
 int main(int argc, char *argv[])
