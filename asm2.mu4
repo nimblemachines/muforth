@@ -1,0 +1,447 @@
+( $Id$
+
+  This file is part of muFORTH; for project details, visit
+
+     http://nimblemachines.com/browse?show=MuForth
+
+  Copyright 1997-2006 David Frech. All rights reserved, and all wrongs
+  reversed.
+
+  Licensed under the Apache License, Version 2.0 [the "License"];
+  you may not use this file except in compliance with the License.
+  You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+  or see the file LICENSE in the top directory of this distribution.
+
+  Unless required by applicable law or agreed to in writing, software
+  distributed under the License is distributed on an "AS IS" BASIS,
+  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  See the License for the specific language governing permissions and
+  limitations under the License.)
+
+( ARM assembler!)
+
+cr " Assembler "  file[#
+
+( daf 2006-apr-01. Totally reworked! Keeping lots of tagged data on the
+  stack as we build the insn is totally for the birds. I want something
+  lean and simple. For the most part - it has some scary corners - the ARM
+  insn set is regular and simple. So this assembler should be too!)
+
+( This is an assembler for the ARM7 series of processors. Right now it has
+  pretty complete coverage for ARM7 and ARM7DI - the core in the Sharp
+  LH77790 on ARM's AEB-1 board. A few things are missing from this file and
+  from the disassembler for full coverage of the TDMI extensions.)
+
+( 2002-mar-29. Converting to my new Forth, muForth.)
+
+( 2001-feb-02. Another change of heart. Things should be like Forth.
+  Instructions read left to right, and two instructions - MRC/MCR and
+  MRS/MSR - have been renamed, to MVC and MVS resp.)
+
+( 13-apr-1999. Change of heart. Decided that, with some instructions re-
+  quiring millions of operands, the order should be EXACTLY THE SAME,
+  left-to-right, as in the ARM assembler. Otherwise everyone will go
+  insane. This means that MRC, MCR and MRS, MSR make [some] sense again.)
+
+( 6-apr-1999. Merged a bunch of stuff from the v25/8086 assembler.)
+
+( 15-sep-1998.  -from a86-
+  Target words, when executed [we only ever want to do this in the assember]
+  push the first word of their body.  This is generally the ram address of
+  their contents -- useful for USER and regular variables, and tasks.)
+
+( Global comments.  Each instruction has a slightly different order for the
+  registers. This follows the in ARM's definitions. I'm keeping mine the
+  same way just in case -I- ever have to program using ARM's assembler, but
+  I'm not happy about it.)
+
+forth hex
+
+( Error.)
+: oops    error" : bogus operand"  -;
+
+
+( Some bit definitions.)
+1 #25 <<  constant I     ( I immed bit)
+1 #24 <<  constant Pre   ( P bit: 0=post, 1=pre)
+1 #23 <<  constant U     ( U bit; 0=down, 1=up; 
+                                 set to 1 - Up - in the index types)
+1 #22 <<  constant PSR   ( S bit for LDM/STM: load PSR or force user mode)
+1 #21 <<  constant W     ( W bit; 0=leave base alone, 1=write back new base;
+                                 sets USER access mode in post-index)
+1 #20 <<  constant S     ( S bit: "set condition codes")
+  
+
+( XXX: Outstanding question: should cond's and S bit be post-fix [in which
+  case they dig up the compiled insn and alter it], or prefix, in which
+  case they have to modify a variable, rather than something on the stack,
+  since in the case of B/BL what is on the stack is an address that has to
+  be modified into an offset, and not some random bits that can be munged.
+  Same is true of register values on the stack.
+
+  I think I'm going for conditions and S being postfix.)
+
+( Conditions, S-bit.)
+: op   (w address of compiled op)  |here cell- ;
+: op1  (s n)  (w set some bits in op)      op @       or   op ! ;
+: op0  (s n)  (w reset some bits in op)    op @  swap bic  op ! ;
+: op^  (s n)  (w twiddle some bits in op)  op @       xor  op ! ;
+
+: >cond   #28 << ;
+: icond   create  >cond  does>  [ 0f >cond ] op0 op1 ;
+
+assembler
+ 00 icond eq
+ 01 icond ne
+
+ 02 icond cs   02 icond hs  02 icond u>=
+ 03 icond cc   03 icond lo  03 icond u<
+ 
+ 04 icond mi   04 icond 0<
+ 05 icond pl   05 icond 0>=
+
+ 06 icond vs
+ 07 icond vc
+
+ 08 icond hi   08 icond u>
+ 09 icond ls   09 icond u<=
+
+ 0a icond ge   0a icond >=
+ 0b icond lt   0b icond <
+
+ 0c icond gt   0c icond >
+ 0d icond le   0d icond <=
+
+: s   S op1 ;  ( set "set condition codes" bit)
+
+forth
+
+ 0e constant always   ( 0f = never, but is RESERVED TO ARM.)
+
+variable pair  ( which of an insn pair to compile)
+( XXX: init word to capture all the state that needs setting/resetting for
+  each insn?)
+
+( Compile the insn!)
+: op,  [ always >cond ] or  |,   pair off ;
+
+
+forth
+
+( Create words to insert reg nums into op in the right place, depending on
+  the register function.)
+
+: |reg   create  ( sh)  does>  ( r op sh)  rot  0f and  swap <<  or ;
+  0 |reg Rm   ( 2nd operand register; multiplicand)
+  8 |reg Rs   ( shift amount reg; multiplier)
+#12 |reg Rd   ( destination)
+#16 |reg Rn   ( 1st operand)
+
+( Registers.)
+assembler
+ 0a constant top ( t)
+ 0b constant up  ( u)
+ 0c constant sp  ( s)
+ 0d constant rp  ( r)
+ 0e constant lr  ( l?)
+ 0f constant pc  ( p or i?)
+forth
+
+
+( Immediate. The word `#' converts its operand, as much as possible, into
+  bits that can be OR'ed into an instruction. The complication is that
+  sometimes we can use the inverted value, and sometimes not.
+
+  There are three pairs of operands that are related by inversion of their
+  immediate operand: and/bic, adc/sbc, and mov/mvn. If we can only make an
+  immediate literal by inversion, we call +pair to signal this fact, so the
+  paired insn can choose the 2nd of the pair.)
+
+: +pair  4 pair ! ;
+
+: rotate32  ( in case host's cell is bigger)
+   =if  2dup u>> push  negate #32 +  <<  pop xor ^ then drop ;
+
+: RORable?  ( n - #ror<<8+imm t | n f)
+   #16 for  dup 100 u<  if  10 pop -  8 << +  -1 ^  then
+   #30 rotate32  next  0 ;  ( rotate goes RIGHT; #30 rotate goes 2 LEFT)
+
+assembler
+( ?? is this factored usefully for meta compiler?)
+: #  ( n - #)
+   RORable? if  I or        ^  then  invert
+   RORable? if  I or  +pair ^  then  oops ;
+
+forth
+
+( Shift type. Type shift_t. As with the immediate types above, we try to
+  convert the operand into bits of an instruction.  Bit 4 is set on a
+  register-specified shift.
+
+  Actual opcodes available for shifting are  LSL, LSR, ASR, ROR, with
+  a few special cases:
+                  LSR #0 encodes LSR #32.
+                  ASR #0 encodes ASR #32.
+                  ROR #0 encodes RRX.
+  So only LSL #0 means what it says.
+
+  Thus: LSR #0, ASR #0, and ROR #0, if specified in the application code,
+  -should- be converted to LSL #0. This is what ARM's assembler does. We're
+  not going to bother, as it creates unnecessary hassle and disallows our
+  clever representation of RRX as 0 ror. So be careful!
+
+  Since registers and shift counts can't be confused - unless someone wants
+  an incredibly huge shift like 10000004 - we're dropping the `#' after the
+  number. Less typing this way. Actually putting in the `#' is harmless and
+  still works.)
+
+: regshift  ( Rm Rs - op)
+   create  ( shiftop)  5 <<
+   does>  ( Rm Rs shift - op)   Rs Rm  10 or ;
+
+: immshift  ( Rm n - op)
+   create  ( shiftop)  5 <<
+   does>  ( Rm n shift)   swap  1f and  7 << or  Rm ;
+
+assembler
+ 00 regshift asl
+ 00 regshift lsl
+ 01 regshift lsr
+ 02 regshift asr
+ 03 regshift ror
+
+ 00 immshift #asl
+ 00 immshift #lsl
+ 01 immshift #lsr
+ 02 immshift #asr
+ 03 immshift #ror
+( assemble  00 ror  c;  constant rrx)
+: rrx   0 \a #ror  ;
+
+forth
+
+( NOTES. Data processing instructions are next, and they're kinda gnarly.
+  There are several complications. We have to deal with shifts. We have to
+  deal with setting the flags or not. We have to deal with complicated
+  encoding: the PSR xfer insns MRS, MSR are encoded as TEQ, TST, CMP, CMN
+  with the S flag CLEAR. And note that TEQ TST CMP CMN ignore Rd, and that
+  MOV MVN ignore Rn.)
+
+( Basics:  data processing insn formats.
+  <op2>  Rd          MOV, MVN
+  <op2>  Rn          CMP, CMN, TEQ, TST
+  <op2>  Rn  Rd      AND, EOR, SUB, RSB, ADD, ADC, SBC, RSC, ORR, BIC
+
+  <op2> is:     n #
+                Rm
+                Rm  n <shift>
+                Rm  Rs <shift>
+                Rm  RRX
+
+  <shift> is ASR, ASL, LSL, LSR, ROR.
+  ARM doesn't define ROL!!  While <n> # ROL could be synthesized from
+  <32-n> # ROR, when shifting by a register it doesn't work that way.
+  Do we also just leave it out?  The writer can always say
+
+  Rn Rm 32 17 - # ROR Rd add.
+
+There are three kinds of data processing instructions:
+  -1- true 2ops like ADD SUB ADC SBC etc.
+  -2- tests like TEQ TST - they ignore Rd and always set the S bit
+  -3- MOV MVN - ignore Rn, the first operand.)
+
+( Opcode pairs. Ugh.)
+
+: aop   #21 << ;  ( to alu op)
+: ?pair  ( op - op')  pair @ >>  0f and  aop ;
+
+( Out of luck, a bare register number is in Rm position, where it's needed
+  - but we don't get a chance to and with 0f, so there is some room for
+  error here.)
+
+: Operand2
+   ( # op | Rm op | shift op)  or ;
+
+( Out of luck or good design - on the part of ARM - setting the Operand2
+  shift to 0 encodes Rm LSL #0, which is what we want when nothing is
+  specified.)
+
+( a b pair => bbbb_aaaa)
+: pairop  ( a b - pairop)   4 <<  or  ;
+: 1mi1  create  does>  ?pair  Rd  Rn   Operand2        op, ;
+: 1mi2  create  does>  aop        Rn   Operand2  S or  op, ;
+: 1mi3  create  does>  ?pair  Rd       Operand2        op, ;
+
+assembler
+  0 0e pairop 1mi1 and  ( pairs with bic)
+  0e 0 pairop 1mi1 bic  ( pairs with and)
+   5 6 pairop 1mi1 adc  ( pairs with sbc)
+   6 5 pairop 1mi1 sbc  ( pairs with adc)
+ 0d 0f pairop 1mi3 mov  ( pairs with mvn)
+ 0f 0d pairop 1mi3 mvn  ( pairs with mov)
+
+ ( 0      and)
+   1 1mi1 eor
+   2 1mi1 sub
+   3 1mi1 rsb
+   4 1mi1 add
+ ( 5      adc)
+ ( 6      sbc)
+   7 1mi1 rsc  
+   8 1mi2 tst
+   9 1mi2 teq
+  0a 1mi2 cmp
+  0b 1mi2 cmn
+  0c 1mi1 or
+( 0d      mov)
+( 0e      bic)
+( 0f      mvn)
+
+forth
+
+( B, BL -- easy)
+: |pc-  ( to from - offset)   8 + ( compensate for prefetch)  - ;
+: >branch-offset  ( dest - bits)   |pc-  cell/  00ffffff and ;
+
+assembler
+: b   ( dest)  |here >branch-offset  0a000000 or  op, ;
+: bl  ( dest)  |here >branch-offset  0b000000 or  op, ;
+forth
+
+comment %%
+  Load, Store. LDR, STR. More than a little bit icky. The instruction formats
+  are somewhat, though not terribly, different from ARM's. Be careful: the
+  `I' bit has the reverse encoding here than for the data processing and move
+  status instructions. Here it is 1 if offset is a register, 0 if immediate.
+
+  Instruction formats:
+  <indexed> Rd {user} ldr{b}/str{b} {<cond>}
+               `user' sets user mode in post-indexed mode
+  Indexed operators:
+  <addr>   pc)    calculates pc-relative address, pre-indexed
+  <off> Rn  +)    pre-indexed, increment, fixed 12-bit offset
+  <off> Rn   )+   post-indexed, increment, fixed 12-bit offset
+
+  <off> Rn  -)    pre-indexed, decrement, fixed 12-bit offset
+  <off> Rn   )-   post-indexed, decrement, fixed 12-bit offset
+
+  XXX; should these be "i" instead or "r" - index rather than register?
+  <idx> Rn  r+)   pre-indexed, increment, indexed register offset
+  <idx> Rn  r)+   post-indexed, increment, indexed register offset
+
+  <idx> Rn  r-)   pre-indexed, decrement, indexed register offset
+  <idx> Rn   r)-   post-indexed, decrement, indexed register offset %%
+
+( offset1 can override the setting of U that in]dex sets.)
+: offset1  ( n op - op')
+   over  0fff +  1fff u<  if  ( will fit into sign/magnitude 12 bit offset)
+      over 0< if  U bic  swap negate or  ^  then
+                  U or               or  ^  then
+   oops  -;
+
+: immindex   create does>  ( off Rn op - op)   Rn offset1 ;
+: regindex   create does>  ( idx op - op)   Rn or  dup 10 and if oops then ;
+
+( Since post-indexing _always_ writes back to the base reg, the W bit is
+  redundant if Pre is clear [ie, Post is true]. So ARM have attached wholly
+  different semantics to W in this case: it means, when in Supervisor mode,
+  do a User mode transfer instead. Remember: this is usable _only_ when the
+  Pre bit is clear.)
+
+: 2mi  ( ldr/str)  create does>  ( index/offset Rd op)  Rd or op, ;
+
+assembler
+ 
+: !   W or ;
+
+: user  ( before instruction, after index)
+   dup Pre and  if oops then  W or ;
+
+Pre U or        immindex +)
+Pre             immindex -)
+
+( Post) U       immindex )+
+0               immindex )-
+
+I Pre or U or   regindex r+)
+I Pre or        regindex r-)
+
+I ( Post) U or  regindex r)+
+I               regindex r)-
+
+( This fixes only one way to do this. It might be nice to be able to use
+  indexed offsets too.)
+
+: pc)  ( addr - index)  |here |pc-  \a pc  ( n R15)   \a +)  ;
+
+( Now the instructions.)
+04100000 2mi ldr
+04000000 2mi str
+04500000 2mi ldrb
+04400000 2mi strb
+forth
+
+( Block data transfer. LDM, STM.)
+
+( ?? comment on register list syntax)
+
+( Types of transfers. P bit means Pre: add offset before xfer.
+                      U bit means Up:  add offset to base.
+  STM defaults to P,-U.  LDM defaults to -P,U.  This is a `full descending'
+  stack.  The other types are created by twiddling bits.
+
+  The actions of the IA/IB/DA/DB types do not depend on the operation -
+  they map directly to UP bits: D=-U, I=U, A=-P, B=P.)
+
+: >PU  #23 << ;
+: PUstack  >PU create  does>  op^ ;
+: PU       >PU create  does>  [ %11 >PU ] op0 ( clear PU)  op1  ;
+
+assembler
+%00 PUstack fd   ( full descending stack - default)
+%01 PUstack fa   ( full ascending stack)
+%11 PUstack ea   ( empty ascending stack)
+%10 PUstack ed   ( empty descending stack)
+
+%00 PU      da   ( decrement after)
+%01 PU      ia   ( increment after)
+%11 PU      ib   ( increment before)
+%10 PU      db   ( decrement before)
+
+forth
+: >mask  ( n - 2^n)  1 swap <<  ;
+: R>n    ( Rn - n)   0f and  ;
+: ?mask  ( mask | reg - mask')
+   dup 0< if  ( mask) negate ^  then  ( reg) R>n >mask ;
+
+assembler
+
+: to   ( Rlo Rhi - -mask)  ( returns a negated mask)
+   R>n 1+ >mask 1-  swap R>n >mask 1-  xor  negate ;
+
+: {    ( - mark)  -1 ;
+: }    ( mark Rx|mask1 .. Ry|maskn - mask)
+   0 ( mask)   begin  over -1 xor while  swap ?mask or  repeat  nip ;
+
+: }^   ( mark Rx .. Ry - mask+!PSR)  \a }  PSR or  ;  
+
+forth
+
+0 [if]
+-1 W Rn ^bits ^Rn!
+0ffff B or ^bits ^Rmask
+: 3mi  create  does> ( reg-mask+!PSR Rn+W op)  ^Rn!  ^Rmask  op,  ;
+
+assembler
+                  ( 0000 100P USWL ...)
+08900000 3mi ldm  ( 0000 1000 1001 ...; -P,  U)
+09000000 3mi stm  ( 0000 1001 0000 ...;  P, -U)
+
+forth
+
+[then]
+
+#]file
