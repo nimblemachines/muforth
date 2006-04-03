@@ -127,7 +127,7 @@ static void compile_dict_entry(
     *ppde = pde;        /* link onto front of chain */
     pde->pbody = pcd;       /* pt to code field in code space */
     pde->length = length;
-    memcpy(pde->name, name, length);          /* copy name string */
+    bcopy(name, pde->name, length);          /* copy name string */
 
     /* Allot entry */
     pdt = (uint8 *)ALIGNED(pde->name + length);

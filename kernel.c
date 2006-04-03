@@ -186,13 +186,13 @@ void mu_string_equal()   /* a1 len1 a2 len2 -- flag */
     NIP(3);
 }
 
-void mu_cmove()
+void mu_cmove()  /* src dest count */
 {
     void *src = (void *) ST2;
     void *dest = (void *) ST1;
     size_t count = TOP;
 
-    memcpy(dest, src, count);
+    bcopy(src, dest, count);  /* allows overlapping strings */
     DROP(3);
 }
 

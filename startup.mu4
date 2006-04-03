@@ -266,7 +266,7 @@ forth
   bracketed text - the delimiter becomes a noop.)
 
 : comment  token  begin  2dup token  string= until  2drop ;
-: uncomment  new \ ^ ;  ( create a noop word)
+: uncomment  new <:> \ ^ ;  ( create a noop word)
 
 
 ( Defining words are next. Right now we only `know' how to make `colon'
@@ -308,13 +308,29 @@ forth
     code, ;  ( compile constant)
 
 : constant  create  does> ;
-: _buffer  (s bytes - ram)  ram swap  aligned  cell/  ?for 0 , next then ;
+( XXX: these words compile the buffer first, then the word - is this ok?)
+( XXX: rework this. cells, to compile cells, ram constant before buffer, etc)
+: __buffer  (s cells - ram)   ram swap  ?for 0 , next then ;
+: _buffer  (s bytes - ram)   aligned  cell/  __buffer ;
 : buffer  _buffer constant ;
 
 : variable      cell  buffer ;
 : 2variable   2 cells buffer ;
-: array     (s n - )   cells _buffer
-     does>  (s i - a)  cells + ;  ( self-indexing!)
+
+: _array    does>  (s i - a)  swap cells + ;  ( self-indexing!)
+: array     (s cells)
+   create  __buffer  _array ;
+
+( An array with every cell set initially to a default value)
+: defarray  (s default cells)
+   create  ram push   ?for dup , next then  drop  pop  _array ;
+
+( Note: "table" is *not* the same as "ram constant"! Since the latter
+  fetches ram pointer *before* calling create, which allocates dictionary
+  space ... right where the ram pointer used to point!)
+
+: table create ram does> ;  ( followed by <val> , <val> , etc)
+
 
 ( I guess we can have deferred words, even though they are, in some ways,
   inelegant. The alternative - creating a variable and a colon word that
@@ -474,6 +490,11 @@ defer ?radix
 
 ( Ready for our new & improved interpreter and compiler? Here we go!)
 
+( XXX: Is this the right way to do this? Truly, while it's "nice" to have
+  the new interpreters written in - and running in! - true Forth, the only
+  parts that have changed from the C version are the bits after the last
+  "then": number [in interpreter], and "number literal" [in compiler].)
+
 ( To set the compiler consumer, we need a sneaky word to get the value of
   state while compiling - we use the same trick later to set the compiler
   prompt.)
@@ -554,7 +575,10 @@ variable fd-out
   character for the sign. pad returns the address of the _end_ of the
   buffer, since conversion occurs right-to-left.)
 
-: pad  [ 65 allot ram ] ;  ( 64 digits + sign + alignment)
+( Let's make this more configurable.)
+variable 'pad
+: pad  'pad @ ;
+65 allot ram 'pad !  ( 64 digits + sign + alignment)
 
 variable hld
 : hold   -1 hld +!  hld @ c! ;
@@ -617,12 +641,10 @@ variable hld
   Things are _much_ simpler this way!)
 
 ( all compiled strings have a zero terminator.)
-: copy-string   scrabble (s z") ;
-: allot-string   cell- @  cell+ 1+  allot ;
-: make-string   copy-string  dup  allot-string ;
-: string,   (s ch - z")  parse   make-string ;
-: token,       (s - z")  token   make-string ;
 : count  (s z" - a u)  dup  cell- @ ;
+: _string    scrabble  count cell+ 1+  allot ;
+: string,   (s ch - z")  parse  _string ;
+: token,       (s - z")  token  _string ;
 : (.")  count type ;  ( no more jumping over strings at run-time!)
 
 ( Compiled strings.)
@@ -645,11 +667,12 @@ forth
 -: ( a u)  2dup current @ find if  fd-out @ push >stderr
      drop  2dup type ."  again.  "  pop writes ^  then  2drop ;
 being-defined -redef
--redef
+ -redef
 
 ( A useful list of words as they're being defined.)
 -: ( a u)   current @ ( chain) . here .  2dup type  cr ;
 being-defined -v  ( be verbose)
+// -v
 
 ( You can only do one of these at a time! Is there an easy way to hook
   the hook?)
@@ -807,8 +830,8 @@ variable csp  ( what does this stand for? `check stack pointer'?)
 
 
 ( Time, timestamp.)
-: "hold  (s a #)  dup negate  hld +!  hld @  swap cmove  ;
-: ##   (s n)   # #  drop  ;
+: "hold  (s a n)  dup negate  hld +!  hld @  swap cmove  ;
+: ##     (s n)   # #  drop  ;
 
 ( Separators)
 : ":   char : hold  ;
@@ -816,29 +839,39 @@ variable csp  ( what does this stand for? `check stack pointer'?)
 : ".   char . hold  ;
 : ||   bl hold  ;  ( a space)
 
-: month"  (s n - a #)  ( n is 0--11)
-   3 *  z" janfebmaraprmayjunjulaugsepoctnovdec"  +  3  ;
+: month"  (s n - a n)  ( n is 0--11)
+   3 *  z" janfebmaraprmayjunjulaugsepoctnovdec" +  3 ;
 
 ( clock returns a count of seconds since 1970-jan-01 00:00:00 UTC,
   the Unix "epoch".)
 
-: (date)   (s year month mday yday - 0)
-   drop  ## "-  month" "hold "-  #s ( year)  ;
+( leaves a 0 which is consumed by #>)
+: <date>   (s year month mday yday - 0)
+   drop  ## "-  month" "hold "-  #s ( year) ;
 
-: hh:mm:ss  (s hms)  ## ":  ## ":  ## ;
-: hh:mm     (s hms)  drop ( sec)  ## ":  ## ;
+: <hh:mm:ss>  (s hms)        ## ":  ## ":  ## ;
+: <hh:mm>     (s hms)  drop ( sec)  ## ":  ## ;
+
 : (time")  (s year month mday yday hour min sec 'zone #zone - a #)
    radix @ push  decimal
-   <#  "hold  ( zone)  || hh:mm:ss  ||  (date)  #>
+   <#  "hold  ( zone)  ||  <hh:mm:ss>  ||  <date>  #>
    pop radix !  ;
 
 : (short-time")  ( year month mday yday hour min sec 'zone #zone - a #)
    radix @ push  decimal
-   <#  drop ( zone)  hh:mm  ||  (date)  #>
+   <#  2drop ( zone)  <hh:mm>  ||  <date>  #>
    pop radix !  ;
 
-: time"   (s epoch - a #)  local-time  (time")  ;
-: utc"    (s epoch - a #)         utc  (time")  ;
+: (date")  (s year month mday yday hour min sec 'zone #zone - a #)
+   radix @ push  decimal
+   <#  2drop 2drop drop  <date>  #>
+   pop radix !  ;
+
+: date    (s epoch - y m d yday)  local-time  2drop 2drop drop ;
+
+: date"   (s epoch - a n)  local-time  (date") ;
+: time"   (s epoch - a n)  local-time  (time") ;
+: utc"    (s epoch - a n)         utc  (time") ;
 
 ( Better primitives? More elegant, certainly.)
 : s->sm    (s s - s m)    60 u/mod ;
@@ -855,37 +888,12 @@ variable csp  ( what does this stand for? `check stack pointer'?)
 : smhdy->s  [ 365 3 * 366 + ] * ( quarter-days/yr)  push 4 * pop +  smhq->s ;
 
 ( for command-line args)
-: ld  token make-string  load-file ;
+: ld  token _string  load-file ;
 : -f  ( load file)  ld ;
 : --file  -f  ;
 : -d  ( define)  trues  ;
 : --define  -d  ;
 
-
-( Prompt, quit, and warm.)
-compiler
-: 'compiler-prompt  state @  cell+ ;
-forth
--: ."  (compiling)"  'compiler-prompt  ;  !  ( bwa ha ha!)
-
-: .mode-prompt   state @  cell+  @execute ;  ( secondary prompt)
-: .Ok   ."  Ok"  ;
-: prompt   .Ok  .mode-prompt  ;  ( ` Ok' then sub-prompt)
-
-
-defer canonical  ( XXX: is this obsolete?)
--:  forth  \ [ ;  is canonical
-
-: quit
-   begin  cr  <stdin  >stdout  typing interpret  >stderr  prompt  again  [
-   ( infinite loop, until error... )
-
-( 2004-jun-26. error now expects a cell-length-prefixed compiled string.)
-: error  parsed type space  count type  ( cr) ;
-: carefully  catch  =if  error  sp!  ^  then  drop ;
-
-( XXX: difference betw error and warning, so that, eg, "isn't defined"
-  doesn't clear the stack.)
 
 ( Link to project home page.)
 : info
@@ -917,9 +925,35 @@ ld revision.mu4
   the banner.)
 
 compiler
-: $Revision:  ( - rev)
+: $Revision:  ( compiles a literal into the word in which it appears)
    token number literal  token 2drop ( match number, then trailing $) ;
 forth
+
+
+( Prompt, quit, and warm.)
+compiler
+: 'compiler-prompt  state @  cell+ ;
+forth
+-: ."  (compiling)"  'compiler-prompt  ;  !  ( bwa ha ha!)
+
+: .mode-prompt   state @  cell+  @execute ;  ( secondary prompt)
+: .Ok   ."  Ok"  ;
+: prompt   .Ok  .mode-prompt  ;  ( ` Ok' then sub-prompt)
+
+
+defer canonical  ( XXX: is this obsolete?)
+-:  forth  \ [ ;  is canonical
+
+: quit
+   begin  cr  <stdin  >stdout  typing interpret  >stderr  prompt  again  [
+   ( infinite loop, until error... )
+
+( 2004-jun-26. error now expects a cell-length-prefixed compiled string.)
+: error  parsed type space  count type  ( cr) ;
+: carefully  catch  =if  error  sp!  ^  then  drop ;
+
+( XXX: difference betw error and warning, so that, eg, "isn't defined"
+  doesn't clear the stack.)
 
 : banner
 ( Print banner.)

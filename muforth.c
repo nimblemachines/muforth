@@ -135,7 +135,7 @@ static struct counted_string *pcmd_line;
 
 static char *copy_string(char *to, char *from, size_t length)
 {
-    memcpy(to, from, length);
+    bcopy(from, to, length);
     to += length;
     *to++ = ' ';
     return to;

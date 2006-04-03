@@ -40,10 +40,7 @@ pw p__mu__rbracket = &_mu__rbracket;
 
 /* These are the same for the ITC engine, but aren't necessarily the same. */
 void mu_compile_comma()  { *pcd++ = POP; }
-void mu_code_comma()     { *pcd++ = POP; }
-
 void mu_set_colon_code() { *pcd++ = (cell)&mu_do_colon; }
-
 void mu_set_does_code()  { *pcd++ = (cell)&mu_do_does; }
 
 /*

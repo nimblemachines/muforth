@@ -37,6 +37,11 @@ void mu_push_r()        /* "ram" space pointer */
     PUSH(&pdt);
 }
 
+/*
+ * Compile (that is, *copy*) a cell into the current code space.
+ */
+void mu_code_comma()     { *pcd++ = POP; }
+
 void mu_push_s0()       /* address of stack bottom */
 {
     PUSH(S0);
@@ -52,7 +57,7 @@ static char *compile_counted_string(char *string, size_t length)
     s.data = string;
     s.length = length;
     cs->length = s.length;  /* prefix count cell */
-    memcpy(&cs->data[0], s.data, s.length);
+    bcopy(s.data, &cs->data[0], s.length);
     cs->data[s.length] = 0; /* zero terminate */
     return &cs->data[0];
 }
