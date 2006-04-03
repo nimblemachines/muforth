@@ -94,7 +94,7 @@ forth hex
 : icond   create  >cond  does>  [ 0f >cond ] op0 op1 ;
 
 assembler
- 00 icond eq
+ 00 icond eq   00 icond 0=
  01 icond ne
 
  02 icond cs   02 icond hs  02 icond u>=
@@ -142,7 +142,8 @@ forth
 
 ( Registers.)
 assembler
- 0a constant top ( t)
+ 09 constant top ( t)
+ 0a constant ct  ( c)  ( for loop count reg)
  0b constant up  ( u)
  0c constant sp  ( s)
  0d constant rp  ( r)
@@ -256,7 +257,9 @@ There are three kinds of data processing instructions:
 ( Opcode pairs. Ugh.)
 
 : aop   #21 << ;  ( to alu op)
-: ?pair  ( op - op')  pair @ >>  0f and  aop ;
+: ?pair  ( op - op')
+   pair @ =if  over 100 and ( pairable)  0= if oops then then
+   >>  0f and  aop ;
 
 ( Out of luck, a bare register number is in Rm position, where it's needed
   - but we don't get a chance to and with 0f, so there is some room for
@@ -269,36 +272,31 @@ There are three kinds of data processing instructions:
   shift to 0 encodes Rm LSL #0, which is what we want when nothing is
   specified.)
 
-( a b pair => bbbb_aaaa)
-: pairop  ( a b - pairop)   4 <<  or  ;
-: 1mi1  create  does>  ?pair  Rd  Rn   Operand2        op, ;
-: 1mi2  create  does>  aop        Rn   Operand2  S or  op, ;
-: 1mi3  create  does>  ?pair  Rd       Operand2        op, ;
+( a b pair => 1_bbbb_aaaa)
+: pairop  ( a b - pairop)   4 <<  or  100 or  ;
+: 1mi1  create  pairop  does>  ?pair  Rd  Rn   Operand2        op, ;
+: 1mi2  create          does>  ?pair  Rd  Rn   Operand2        op, ;
+: 1mi3  create          does>  ?pair      Rn   Operand2  S or  op, ;
+: 1mi4  create  pairop  does>  ?pair  Rd       Operand2        op, ;
 
 assembler
-  0 0e pairop 1mi1 and  ( pairs with bic)
-  0e 0 pairop 1mi1 bic  ( pairs with and)
-   5 6 pairop 1mi1 adc  ( pairs with sbc)
-   6 5 pairop 1mi1 sbc  ( pairs with adc)
- 0d 0f pairop 1mi3 mov  ( pairs with mvn)
- 0f 0d pairop 1mi3 mvn  ( pairs with mov)
 
- ( 0      and)
-   1 1mi1 eor
-   2 1mi1 sub
-   3 1mi1 rsb
-   4 1mi1 add
- ( 5      adc)
- ( 6      sbc)
-   7 1mi1 rsc  
-   8 1mi2 tst
-   9 1mi2 teq
-  0a 1mi2 cmp
-  0b 1mi2 cmn
-  0c 1mi1 or
-( 0d      mov)
-( 0e      bic)
-( 0f      mvn)
+ 0 0e 1mi1 and  ( pairs with bic)
+ 1    1mi2 eor
+ 2    1mi2 sub
+ 3    1mi2 rsb
+ 4    1mi2 add
+ 5 6  1mi1 adc  ( pairs with sbc)
+ 6 5  1mi1 sbc  ( pairs with adc)
+ 7    1mi2 rsc  
+ 8    1mi3 tst
+ 9    1mi3 teq
+0a    1mi3 cmp
+0b    1mi3 cmn
+0c    1mi2 or
+0d 0f 1mi4 mov  ( pairs with mvn)
+0e 0  1mi1 bic  ( pairs with and)
+0f 0d 1mi4 mvn  ( pairs with mov)
 
 forth
 

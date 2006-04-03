@@ -31,7 +31,7 @@ cr " ARM kernel "  file[#
 ( Few words we need to try this out.)
 
 -:  ."  (assembling)"  ;
--:  .assembler. find  if  execute ^  then  number ;
+-:   .assembler. find  if  execute ^  then  number ;
 mode asm-loop
 
 -:  ."  (assembling a macro)"  ;
@@ -45,18 +45,27 @@ compiler
 forth
 
 assembler
+: '   .target. chain' execute ;
+: (    \f ( ;
 : ;c    \ [ ;
 forth
 
-: code  create ( code word?)  pair off  asm-loop ;
+( code & ;c should use ?csp to make sure nothing bad has happened...)
+: code  target create forth  |here  pair off  asm-loop
+        does> ;
 
 assembler
+( Useful macros.)
 : push  ( r)  <asm  4 sp -) !  \f swap  str  asm> ;
 : pop   ( r)  <asm  4 sp )+    \f swap  ldr  asm> ;
+
+: nest    ( r)  <asm  4 rp -) !  \f swap  str  asm> ;
+: unnest  ( r)  <asm  4 rp )+    \f swap  ldr  asm> ;
+
+: ret     <asm  lr pc mov  asm> ;
 : st1   <asm  0 sp +)  asm> ;
 : st2   <asm  4 sp +)  asm> ;
 : st3   <asm  8 sp +)  asm> ;
-: ret   <asm  lr pc mov  asm> ;
 forth
 
 code +     0 pop   top 0 top add   ret  ;c
@@ -64,6 +73,12 @@ code -     0 pop   top 0 top sub   ret  ;c
 code and   0 pop   top 0 top and   ret  ;c
 code or    0 pop   top 0 top or    ret  ;c
 code xor   0 pop   top 0 top eor   ret  ;c
+
+( By moving 1-insn words into compiler/inside and making them macros, we
+  get inlining... ;-)
+
+code negate   0 # top top rsb   ret  ;c
+code invert       top top mvn   ret  ;c
 
 code dup   top push  ret  ;c
 code nip     0 pop   ret  ;c
@@ -91,16 +106,23 @@ code u<    0 pop   top 0 cmp   -1 # top mov u<  0 # top mov u>=  ret  ;c
 code <     0 pop   top 0 cmp   -1 # top mov  <  0 # top mov  >=  ret  ;c
 code 0<          top top tst   -1 # top mov 0<  0 # top mov 0>=  ret  ;c
 
-code branch    0 lr )+ 0 ldr   0 lr pc add   ;c
+code branch    4 lr )+ 0 ldr   0 lr pc add   ;c
 code zbranch   top top tst   top pop
-               0 lr )+ 0 ldr 0=   0 lr pc add 0=   4 # lr pc add   ;c
+               4 lr )+ 0 ldr 0=   0 lr pc add 0=   4 # lr pc add   ;c
 
-code lit       0 lr )+ 0 ldr   top push   0 top mov   ret  ;c
+code (for)     ct nest   top ct mov   ' drop b  ;c
 
-code do_does   ( r0 has child's lr; r1 has parent's lr)
-               top push   0 top mov  ( child const)
-               
+code (?for)    top top tst   top 0 mov   top pop
+               4 lr )+ 0 ldr 0=   0 lr pc add 0=
+               ct nest   0 ct mov   4 # lr pc add   ;c
+
+code (next)    1 # ct ct sub s   ct unnest 0=   4 # lr pc add 0=
+               4 lr )+ 0 ldr   0 lr pc add   ;c
+
+code lit            top push   4 lr )+ top ldr   ret  ;c
+code lit_noreturn   top push   0 lr )+ top ldr   pc unnest  ;c
+
+code push   top nest   ' drop b  ( 1 word shorter)  ;c
+code pop    top push   top unnest   ret  ;c
 
 #]file
-
-
