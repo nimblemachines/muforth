@@ -85,7 +85,7 @@ forth hex
   I think I'm going for conditions and S being postfix.)
 
 ( Conditions, S-bit.)
-: op   (w address of compiled op)  |here cell- ;
+: op   (w address of compiled op)  |here cell- |+ ;
 : op1  (s n)  (w set some bits in op)      op @       or   op ! ;
 : op0  (s n)  (w reset some bits in op)    op @  swap bic  op ! ;
 : op^  (s n)  (w twiddle some bits in op)  op @       xor  op ! ;
@@ -336,11 +336,10 @@ comment %%
   <idx> Rn   r)-   post-indexed, decrement, indexed register offset %%
 
 ( offset1 can override the setting of U that in]dex sets.)
+( disallow negative offset? I think that might be best...)
 : offset1  ( n op - op')
-   over  0fff +  1fff u<  if  ( will fit into sign/magnitude 12 bit offset)
-      over 0< if  U bic  swap negate or  ^  then
-                  U or               or  ^  then
-   oops  -;
+   over 1000 u<  if  ( non-negative offset, fits in 12 bits)
+   or  ^ then  oops  -;
 
 : immindex   create does>  ( off Rn op - op)   Rn offset1 ;
 : regindex   create does>  ( idx op - op)   Rn or  dup 10 and if oops then ;
@@ -355,7 +354,7 @@ comment %%
 
 assembler
  
-: !   W or ;
+: !   W or ;  ( set writeback bit; for LDR/STR & LDM/STM)
 
 : user  ( before instruction, after index)
    dup Pre and  if oops then  W or ;
@@ -424,16 +423,14 @@ assembler
 
 : {    ( - mark)  -1 ;
 : }    ( mark Rx|mask1 .. Ry|maskn - mask)
-   0 ( mask)   begin  over -1 xor while  swap ?mask or  repeat  nip ;
+   0 ( mask)   begin  over -1 xor while  swap ?mask or  repeat  nip
+   0ffff and ;
 
-: }^   ( mark Rx .. Ry - mask+!PSR)  \a }  PSR or  ;  
+: }^   ( mark Rx .. Ry - mask+PSR)  \a }  PSR or ;
 
 forth
 
-0 [if]
--1 W Rn ^bits ^Rn!
-0ffff B or ^bits ^Rmask
-: 3mi  create  does> ( reg-mask+!PSR Rn+W op)  ^Rn!  ^Rmask  op,  ;
+: 3mi  create  does> ( reg-mask+Rn op)  Rn or  op, ;
 
 assembler
                   ( 0000 100P USWL ...)
@@ -441,7 +438,5 @@ assembler
 09000000 3mi stm  ( 0000 1001 0000 ...;  P, -U)
 
 forth
-
-[then]
 
 #]file

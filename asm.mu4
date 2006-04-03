@@ -69,23 +69,41 @@ forth hex
 : |code  ( a)  |here cell-  |+  ;
 
 
-comment old-conditionals
 ( Conditions, S-bit.)
-: icond  create 10000000 *
-   does>  |code @ f0000000 bic  ( clear condition)
-   or  ( new condition)  |code !  ;
+variable cond   ( current conditional)
+: icond   create #28 <<   does> cond ! ;
 
-assembler  ( ?? need 0< u< etc here)
- 00 icond eq   01 icond ne   02 icond cs   03 icond cc
-                             02 icond hs   03 icond lo
- 04 icond mi   05 icond pl   06 icond vs   07 icond vc
- 08 icond hi   09 icond ls   0a icond ge   0b icond lt
- 0c icond gt   0d icond le
- ( 0e = always;  0f = never, but is RESERVED TO ARM.)
+assembler
+ 00 icond eq
+ 01 icond ne
+
+ 02 icond cs   02 icond hs  02 icond u>=
+ 03 icond cc   03 icond lo  03 icond u<
+ 
+ 04 icond mi   04 icond 0<
+ 05 icond pl   05 icond 0>=
+
+ 06 icond vs
+ 07 icond vc
+
+ 08 icond hi   08 icond u>
+ 09 icond ls   09 icond u<=
+
+ 0a icond ge   0a icond >=
+ 0b icond lt   0b icond <
+
+ 0c icond gt   0c icond >
+ 0d icond le   0d icond <=
+ 0e icond always   ( 0f = never, but is RESERVED TO ARM.)
 
 forth
-old-conditionals
+: op,   cond @  xor  |,  \a always ;
 
+00100000 1bits S
+
+assembler
+: s  |code @  S  |code !  ;
+forth
 
 ( set Immediate bit)  
 02000000 constant I
@@ -113,17 +131,10 @@ old-conditionals
 6 >type dup  type? range?     type! range_t
 
 
+comment %deprecated%
 ( 2001-feb-03. Better way to do conditionals.)
 ( S-bit:  set condition codes)
 : icond   >cond  0a000000 xor  constant ;  ( make a conditional branch)
-
-variable cond   ( current conditional)
-: op,   cond @  xor  |,  ;
-
-00100000 1bits S
-
-assembler
-: s  |code @  S  |code !  ;
 
 ( condition codes - these are actually conditional branch instructions)
 ( and are the -inverse- of what it seems they should be - we want to branch
@@ -137,7 +148,7 @@ assembler
 : |else   cond @  \a not  cond ! ;
 : |then   \a false  \a |if ;
 forth
-
+ %deprecated%
 
 0 [if]
 : xreg   create  does> ( reg op shift)  rot  0f and  swap  lshift  xor  ;
@@ -184,16 +195,15 @@ forth
   value, and sometimes not. If the value was inverted, it takes type
   -imm_t; otherwise imm_t.)
 
-: -RORable?  ( n - #ror<<8+imm f | n t)
-   #16 for  dup 100 u<  if  10 pop -  8 lshift +  0 ^  then
-   #30 rotate  next  -1  ;  ( rotate goes RIGHT; #30 rotate goes 2 LEFT)
+: RORable?  ( n - #ror<<8+imm t | n f)
+   #16 for  dup 100 u<  if  10 pop -  8 lshift +  -1 ^  then
+   #30 rotate  next  0 ;  ( rotate goes RIGHT; #30 rotate goes 2 LEFT)
 
 assembler
 ( ?? is this factored usefully for meta compiler?)
 : #  ( n - #)
-   -RORable? if  invert
-   -RORable? if  oops  then
-            -imm_t  ^  then  imm_t  ;
+   RORable? if   imm_t ^  then  invert
+   RORable? if  -imm_t ^  then  oops ;
 
 forth
 
@@ -256,7 +266,7 @@ forth
   MOV MVN ignore Rn.)
 
 ( Basics:  data processing insn formats.
-  <op2>  Rd          MOV, MVN
+  <op2>      Rd      MOV, MVN
   <op2>  Rn          CMP, CMN, TEQ, TST
   <op2>  Rn  Rd      AND, EOR, SUB, RSB, ADD, ADC, SBC, RSC, ORR, BIC
 
@@ -314,8 +324,22 @@ assembler
  0d 0f pair 1mi3 mov  ( pairs with mvn)
  0f 0d pair 1mi3 mvn  ( pairs with mov)
 
-   1 1mi1 eor   2 1mi1 sub   3 1mi1 rsb   4 1mi1 add   7 1mi1 rsc  
-   8 1mi2 tst   9 1mi2 teq  0a 1mi2 cmp  0b 1mi2 cmn  0c 1mi1 orr
+ ( 0      and)
+   1 1mi1 eor
+   2 1mi1 sub
+   3 1mi1 rsb
+   4 1mi1 add
+ ( 5      adc)
+ ( 6      sbc)
+   7 1mi1 rsc  
+   8 1mi2 tst
+   9 1mi2 teq
+  0a 1mi2 cmp
+  0b 1mi2 cmn
+  0c 1mi1 or
+( 0d      mov)
+( 0e      bic)
+( 0f      mvn)
 
 forth
 
@@ -610,21 +634,22 @@ forth
 ( ?? Still have to figure out literal pools. NOT! We just say HERE lit , or
   LIT, <n> or something; then use the address in a CODE word.)
 
-
+comment %%later%%
 ( Control structures)
 assembler
 : if       ( cond - fwd)  |,  |here cell- ;
-: ahead    ( - fwd)  \a false  \a if ;
+: ahead    ( - fwd)  \a always  \a if ;
 : then     ( fwd)  |here over >branch-offset  over |+ @  xor  swap |+ ! ;
 : else     ( fwd - fwd')  \a ahead  swap  \a then ;
 : begin    ( - back)  |here ;
 : until    ( back cond)  \a |if  \a b  \a |then ;
-: again    ( back)  \a false  \a until ;
+: again    ( back)  \a always  \a until ;
 : while    ( back cond - fwd back)  \a if  swap ;
 : repeat   ( fwd back)  \a again  \a then ;
 ( ... and you too can use `begin .. while .. again then' or, even more
   interesting: `begin .. while .. until .. then ..)
 forth
+ %%later%%
 
 [then]
 

@@ -1,0 +1,106 @@
+( $Id$
+
+  This file is part of muFORTH; for project details, visit
+
+     http://nimblemachines.com/browse?show=MuForth
+
+  Copyright 1997-2006 David Frech. All rights reserved, and all wrongs
+  reversed.
+
+  Licensed under the Apache License, Version 2.0 [the "License"];
+  you may not use this file except in compliance with the License.
+  You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+  or see the file LICENSE in the top directory of this distribution.
+
+  Unless required by applicable law or agreed to in writing, software
+  distributed under the License is distributed on an "AS IS" BASIS,
+  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  See the License for the specific language governing permissions and
+  limitations under the License.)
+
+cr " ARM kernel "  file[#
+
+( 2006-apr-01.)
+
+( Can't stand the pain of fiddling with the assembler, so I'm going to
+  launch into writing a simple kernel, of sorts.)
+
+( Few words we need to try this out.)
+
+-:  ."  (assembling)"  ;
+-:  .assembler. find  if  execute ^  then  number ;
+mode asm-loop
+
+-:  ."  (assembling a macro)"  ;
+-:   .compiler. find  if  execute ^ then
+    .assembler. find  if  compile, ^  then  number literal ;
+mode macro-loop
+
+compiler
+: <asm   macro-loop ;
+: asm>   -] ;
+forth
+
+assembler
+: ;c    \ [ ;
+forth
+
+: code  create ( code word?)  pair off  asm-loop ;
+
+assembler
+: push  ( r)  <asm  4 sp -) !  \f swap  str  asm> ;
+: pop   ( r)  <asm  4 sp )+    \f swap  ldr  asm> ;
+: st1   <asm  0 sp +)  asm> ;
+: st2   <asm  4 sp +)  asm> ;
+: st3   <asm  8 sp +)  asm> ;
+: ret   <asm  lr pc mov  asm> ;
+forth
+
+code +     0 pop   top 0 top add   ret  ;c
+code -     0 pop   top 0 top sub   ret  ;c
+code and   0 pop   top 0 top and   ret  ;c
+code or    0 pop   top 0 top or    ret  ;c
+code xor   0 pop   top 0 top eor   ret  ;c
+
+code dup   top push  ret  ;c
+code nip     0 pop   ret  ;c
+code drop  top pop   ret  ;c
+code swap  top 0 mov   st1 top ldr   st1 0 str  ret  ;c
+code rot
+   { 0 1 } sp ldm
+   top 2 mov   0 top mov   1 0 mov   2 1 mov
+   { 0 1 } sp stm  ret  ;c
+
+code -rot
+   { 0 1 } sp ldm
+   top 2 mov   1 top mov   0 1 mov   2 0 mov
+   { 0 1 } sp stm  ret  ;c
+
+code <<    0 pop   0 top lsl top mov   ret  ;c
+code >>    0 pop   0 top asr top mov   ret  ;c
+code u>>   0 pop   0 top lsr top mov   ret  ;c
+
+code 2/    top 1 #asr top mov  ret  ;c
+code u2/   top 1 #lsr top mov  ret  ;c
+code 2*    top 1 #lsl top mov  ret  ;c
+
+code u<    0 pop   top 0 cmp   -1 # top mov u<  0 # top mov u>=  ret  ;c
+code <     0 pop   top 0 cmp   -1 # top mov  <  0 # top mov  >=  ret  ;c
+code 0<          top top tst   -1 # top mov 0<  0 # top mov 0>=  ret  ;c
+
+code branch    0 lr )+ 0 ldr   0 lr pc add   ;c
+code zbranch   top top tst   top pop
+               0 lr )+ 0 ldr 0=   0 lr pc add 0=   4 # lr pc add   ;c
+
+code lit       0 lr )+ 0 ldr   top push   0 top mov   ret  ;c
+
+code do_does   ( r0 has child's lr; r1 has parent's lr)
+               top push   0 top mov  ( child const)
+               
+
+#]file
+
+
