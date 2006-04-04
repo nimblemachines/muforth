@@ -43,6 +43,13 @@ mode macro-loop
 -:    .outside. find  if  execute ^  then  number ;
 mode outside-loop
 
+-:  ."  (compiling definer)"  ;
+-:   .definer. find  if  execute ^  then
+    .compiler. find  if  execute ^  then
+     .outside. find  if  compile, ^  then  number literal ;
+    ( Note: doesn't search .forth. !!)
+mode definer-loop
+
 compiler
 : <asm   macro-loop ;
 : asm>   -] ;
@@ -63,9 +70,16 @@ outside
 : literal   \m lit @  \a bl  |, ;
 : comment   comment ;
 : //        \f // ;
-: {{{  \ [ ;  ( escape to host forth)
+: {  \ [ ;  ( escape to host forth)
 : '   .target. chain' execute ;
 : char   \f char ;
+( So we can calculate stuff inside of colon def'ns.)
+: +  + ;
+: -  - ;
+: and  and ;
+: or   and ;
+: xor  xor ;
+
 "ffff0400 constant uart1
 forth
 
@@ -98,15 +112,16 @@ variable csp  ( what does this stand for? `check stack pointer'?)
          =if  . ." stack depth change: "  hex  .s cr  ^  then  drop  ;
 
 outside
+: create   target create forth ;
+: assemble     pair off  asm-loop ;
 ( code & ;c should use ?csp to make sure nothing bad has happened...)
-: code  target create forth  !csp  |here  pair off  asm-loop
-        does> ;
+: code   \o create  !csp  |here  \o assemble  does> ;
 
 ( Using [new], we can make a .target. entry too.)
 : implement   |here  .machine. chain' execute ( get addr)  !
-        pair off  asm-loop  !csp ;
+        \o assemble  !csp ;
 
-: :     target create forth  !csp  |here  <asm  lr nest  asm>
+: :     \o create   !csp  |here  <asm  lr nest  asm>
            inside-loop ( target compiler)
         does> ( just get its address) ;
 
@@ -115,13 +130,14 @@ outside
 : -]   inside-loop ( re-start colon compiler) ;
 : ]    \o literal  \o -]  ( make literal and restart :)  ;
 
-( So we can calculate stuff inside of colon def'ns.)
-: +  + ;
-: -  - ;
-: and  and ;
-: or   and ;
-: xor  xor ;
+( and so we can make more defining words while we're in the middle of the
+  kernel code...)
+: definer:   outside : forth   definer-loop ;
 
+( Now the whole point of the above:)
+definer
+: does>   ;
+: ;code   ;
 
 inside
 : (    \f ( ;
@@ -130,7 +146,7 @@ inside
 : ;    \i ^  \i [  ?csp ;  ( no tail-recursion - yet!)
 
 forth
-: }}}  \i [ ;   ( return to meta)
+: }  \i [ ;   ( return to meta)
 
 assembler
 : '   .target. chain' execute ;
@@ -187,6 +203,7 @@ outside-loop
 
 code +     0 pop   top 0 top add   ret  ;c
 code -     0 pop   top 0 top sub   ret  ;c
+code *     0 pop   0 top top mul   ret  ;c
 code and   0 pop   top 0 top and   ret  ;c
 code or    0 pop   top 0 top or    ret  ;c
 code xor   0 pop   top 0 top eor   ret  ;c
@@ -201,9 +218,8 @@ code dup   top push  ret  ;c
 code nip     0 pop   ret  ;c
 code drop  top pop   ret  ;c
 
-( XXX: Use SWP insn??)
-code swap  top 0 mov   st1 top ldr   st1 0 str  ret  ;c
-// code swap   top sp top swp  ( swap top with TOS)  ;c
+// code swap  top 0 mov   st1 top ldr   st1 0 str  ret  ;c
+code swap   top sp top swp  ( swap top with TOS)  ret  ;c
 code over   top push   st2 top ldr   ret  ;c
 
 code rot
@@ -311,20 +327,23 @@ code c!   { 0 1 } ! sp ldm   0 top +) 0 strb   1 top mov   ret  ;c
   bit fuzzy still.)
 
 comment %%
+definer: +user  ( size)
+   create  #user \f @ ,  #user \f +!
+   ;code   ??
    0 +user status      ( code pointer; determines the wakefulness of the task)
    0 +user me          ( synonym)
 cell +user link        ( link to next task in list)
 cell +user bottom      ( bottom of D stack)
 cell +user top         ( pointer to saved stack)  %%
 
-{{{
+{
 target
 0 cells constant status
 1 cells constant link
 2 cells constant bottom
 3 cells constant top
 forth
-}}}
+}
 
 ( 15-sep-1998.  This is now different; see above.  The idea still applies;
   only the location of the counters has changed.  Well, that and that the
@@ -374,30 +393,53 @@ decimal
 : 16/mod   dup 4 u>>   swap 15 and ;
 
 : .   8 for  16/mod >digit swap  next  drop
-      8 for  emit  next ;
+      8 for  emit  next  space ;
 
-: ?a   dup 15 and 0= if  cr  dup .  space space  then ;
+: ?a   dup 15 and 0= if  cr  dup .  space  then ;
 : @+  dup 4 +  swap @ ;
-: dump  ( a n - a+n)   for  ?a  @+ .  space  next ;
-: showit  0 "400 dump   cr  "8000 "400 dump  cr  "4010000 "80 dump ;
-
+: dump  ( a n - a+n)   for  ?a  @+ .  next ;
 : 1+  1 + ;
+
+( dump the memory segment map)
+hex
+: fixmem   800 ffffa008 !  ( low end of sram just above chip sram)
+         40000 ffffa028 !  ( hi end of sram just above chip sram) ;
+
+( try mem access before it's fixed)
+: fill  ( a n)  for  dup dup !  4 +  next  drop ;
+: trymem       800 @ .    28000 @ . ;
+: trymem2  4000800 @ .  4028000 @ . ; ( same, but up in flash)
+: try2
+   trymem cr  trymem2 cr 
+   800 40 fill  [ 40000 100 - ] 40 fill
+   800 40 dump  cr   [ 40000 100 - ] 40 dump cr ;
+
+: showit
+   try2  fixmem  try2
+   ffffa000 64 2 >> dump  cr  ffffa100 2c 2 >> dump  cr
+   ffffa400 2 dump  cr ;
+
+decimal
+
 : count2  "13579bdf 8 for 16/mod >digit emit  next drop ;
 
 
 : ppi!   "80 "ffff1c0c c! ;
-: delay   60_000 for next ;
+: delay   20_000 for next ;
 : leds    15 and 4 << "ffff1c08 ( port C) c! ;
 : count  0 16 for  dup leds 1+  delay  next drop ;
 
 : chars  32  [ 128 32 - ] for  dup emit  1+  next  drop  cr ;
-: doit   showit  count2   ppi!   begin  count  chars  again  ;
 
-{{{
+: times  6789 123456 * .   -1029484 485 * . ;
+
+: doit   showit  times  count2   ppi!   begin  count  chars  again  ;
+
+{
 "8000 8 Ki + dup  4 Ki +
 
-}}}
+}
 code _boot   # rp mov  # sp mov   ' doit b  ;c
-' _boot {{{ 'boot !
+' _boot { 'boot !
 
 #]file
