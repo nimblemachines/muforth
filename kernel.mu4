@@ -51,6 +51,7 @@ forth
 machine
 variable branch
 variable zbranch
+variable eqzbranch
 variable for
 variable ?for
 variable next
@@ -61,8 +62,11 @@ outside
 : compile,  ( targetxt)  \a bl ;  ( that's it!)
 : literal   \m lit @  \a bl  |, ;
 : comment   comment ;
+: //        \f // ;
 : {{{  \ [ ;  ( escape to host forth)
 : '   .target. chain' execute ;
+: char   \f char ;
+"ffff0400 constant uart1
 forth
 
 -:  ."  (inside)"  ;
@@ -78,30 +82,52 @@ assembler
 : nest    ( r)  <asm  4 rp -) !  \f swap  str  asm> ;
 : unnest  ( r)  <asm  4 rp )+    \f swap  ldr  asm> ;
 
-: ret     <asm  lr pc mov  asm> ;
+: ret   <asm  lr pc mov  asm> ;
+
 : st1   <asm  0 sp +)  asm> ;
 : st2   <asm  4 sp +)  asm> ;
 : st3   <asm  8 sp +)  asm> ;
 
+forth
+
+( For loading, to see if we've left anything lying about.)
+( This repeats code in startup, but it won't collide with that variable.)
+variable csp  ( what does this stand for? `check stack pointer'?)
+: !csp   depth  csp !  ;
+: ?csp   depth  csp @  -
+         =if  . ." stack depth change: "  hex  .s cr  ^  then  drop  ;
+
 outside
 ( code & ;c should use ?csp to make sure nothing bad has happened...)
-: code  target create forth  |here  pair off  asm-loop
+: code  target create forth  !csp  |here  pair off  asm-loop
         does> ;
 
 ( Using [new], we can make a .target. entry too.)
 : implement   |here  .machine. chain' execute ( get addr)  !
-        pair off  asm-loop ;
+        pair off  asm-loop  !csp ;
 
-: :     target create forth  |here  <asm  lr nest  asm>
+: :     target create forth  !csp  |here  <asm  lr nest  asm>
            inside-loop ( target compiler)
         does> ( just get its address) ;
 
   ( change to deferred - compile, then later execute?)
 
+: -]   inside-loop ( re-start colon compiler) ;
+: ]    \o literal  \o -]  ( make literal and restart :)  ;
+
+( So we can calculate stuff inside of colon def'ns.)
+: +  + ;
+: -  - ;
+: and  and ;
+: or   and ;
+: xor  xor ;
+
+
 inside
+: (    \f ( ;
 : [    outside-loop ;
 : ^    <asm  pc unnest  asm> ;
-: ;    \i ^  \i [ ;  ( no tail-recursion - yet!)
+: ;    \i ^  \i [  ?csp ;  ( no tail-recursion - yet!)
 
 forth
 : }}}  \i [ ;   ( return to meta)
@@ -109,7 +135,9 @@ forth
 assembler
 : '   .target. chain' execute ;
 : (    \f ( ;
-: ;c   \i [ ;
+: //   \f // ;
+: comment   comment ;
+: ;c   \i [  ?csp ;
 : label   assembler create forth  |here does> ;
 
 outside
@@ -119,15 +147,17 @@ outside
 : mark>   0 |,  |here ;
 
 inside
-// : =if   (s - src)  ['] (=0branch) compile,  mark> ;
-: if    (s - src)   \m zbranch @  \o compile,  \o mark> ;
+: =if   (s - src)   \m eqzbranch @  \o compile,  \o mark> ;
+: if    (s - src)     \m zbranch @  \o compile,  \o mark> ;
 : then  (s src)  |here \o resolve> ;
+
 // : else      (s src0 - src1)  \ (branch) mark>  swap  \ then ;
+
 : begin   (s - dest)  |here ;
-// : =until  (s dest -)       \i =if  <resolve ;
-: until   (s dest -)        \i if  <resolve ;
+: =until  (s dest -)  \i =if  <resolve ;
+: until   (s dest -)   \i if  <resolve ;
 : again   (s dest -)  \m branch @  \o compile,  \o mark>  \o <resolve ;
-// : =while  (s dest - src dest)  \i =if  swap ;
+: =while  (s dest - src dest)  \i =if  swap ;
 : while   (s dest - src dest)   \i if  swap ;
 : repeat  (s src dest -)   \i again  \i then ;
 
@@ -135,8 +165,8 @@ inside
 ( n ?for .. next then   goes n times; 0 if n=0 )
 
 : for     (s - dest)      \m  for @  \o compile,  \i begin ;
-: ?for    (s - src dest)  \m ?for @  \o compile,  \o  mark>  \i begin ;
-: next    (s dest -)      \m next @ \o compile,  \o mark>  \o <resolve ;
+: ?for    (s - src dest)  \m ?for @  \o compile,  \o mark>  \i begin ;
+: next    (s dest -)      \m next @  \o compile,  \o mark>  \o <resolve ;
 
 
 ( XXX)
@@ -173,6 +203,9 @@ code drop  top pop   ret  ;c
 
 ( XXX: Use SWP insn??)
 code swap  top 0 mov   st1 top ldr   st1 0 str  ret  ;c
+// code swap   top sp top swp  ( swap top with TOS)  ;c
+code over   top push   st2 top ldr   ret  ;c
+
 code rot
    { 0 1 } sp ldm
    top 2 mov   0 top mov   1 0 mov   2 1 mov
@@ -194,19 +227,31 @@ code 2*    top 1 #lsl top mov  ret  ;c
 code u<    0 pop   top 0 cmp   -1 # top mov u<  0 # top mov u>=  ret  ;c
 code <     0 pop   top 0 cmp   -1 # top mov  <  0 # top mov  >=  ret  ;c
 code 0<          top top tst   -1 # top mov 0<  0 # top mov 0>=  ret  ;c
+code 0=          top top tst   -1 # top mov 0=  0 # top mov ne   ret  ;c
 
-implement branch    4 lr )+ 0 ldr   0 lr pc add   ;c
-implement zbranch   top top tst   top pop
-               4 lr )+ 0 ldr 0=   0 lr pc add 0=   4 # lr pc add   ;c
+( "implement" fixes up forward references.)
+implement branch
+    4 lr )+ 0 ldr   0 lr pc add   ;c
 
-implement for     ct nest   top ct mov   ' drop b  ;c
+implement zbranch
+    top top tst   top pop
+label zbr1
+    4 lr )+ 0 ldr 0=   0 lr pc add 0=   4 # lr pc add   ;c
 
-implement ?for    top top tst   top 0 mov   top pop
-               4 lr )+ 0 ldr 0=   0 lr pc add 0=
-               ct nest   0 ct mov   4 # lr pc add   ;c
+implement eqzbranch
+    top top tst   zbr1 b  ;c
 
-implement next    1 # ct ct sub s   ct unnest 0=   4 # lr pc add 0=
-               4 lr )+ 0 ldr   0 lr pc add   ;c
+implement for
+    ct nest   top ct mov   ' drop b  ;c
+
+implement ?for
+    top top tst   top 0 mov   top pop
+    4 lr )+ 0 ldr 0=   0 lr pc add 0=
+    ct nest   0 ct mov   4 # lr pc add   ;c
+
+implement next
+    1 # ct ct sub s   ct unnest 0=   4 # lr pc add 0=
+    4 lr )+ 0 ldr   0 lr pc add   ;c
 
 implement lit            top push   4 lr )+ top ldr   ret  ;c
 implement lit_noreturn   top push   0 lr )+ top ldr   pc unnest  ;c
@@ -309,10 +354,50 @@ label run
    ' top ( offset in user area) up +) sp ldr     ( setup sp)
    { top ct rp pc } ! sp ldm         ( load context and go!)  ;c
 
-: bic  invert and ;
-: 10*  dup  2* 2* +  2* ;
+decimal
 
-: doit  begin  dup @ while  70 bic  repeat ;
+: pause ;  ( not yet!)
+: emit   ( ch)
+   begin  [ uart1 "14 + ] c@ "20 and  0= while  pause  repeat
+   [ uart1 ] c! ;
+
+: key?   [ uart1 "14 + ] c@  1 and ;
+: key   begin  key? 0= while  pause  repeat  [ uart1 ] c@ ;
+
+: cr  13 emit  10 emit ;
+: space  32 emit ;
+
+( Printing hex.)
+: >digit   ( n - ch)  ( convert 1 binary digit to char; hex to uppercase)
+   9 over u<  7 and +  [ char 0 ] +  ;
+
+: 16/mod   dup 4 u>>   swap 15 and ;
+
+: .   8 for  16/mod >digit swap  next  drop
+      8 for  emit  next ;
+
+: ?a   dup 15 and 0= if  cr  dup .  space space  then ;
+: @+  dup 4 +  swap @ ;
+: dump  ( a n - a+n)   for  ?a  @+ .  space  next ;
+: showit  0 "400 dump   cr  "8000 "400 dump  cr  "4010000 "80 dump ;
+
+: 1+  1 + ;
+: count2  "13579bdf 8 for 16/mod >digit emit  next drop ;
+
+
+: ppi!   "80 "ffff1c0c c! ;
+: delay   60_000 for next ;
+: leds    15 and 4 << "ffff1c08 ( port C) c! ;
+: count  0 16 for  dup leds 1+  delay  next drop ;
+
+: chars  32  [ 128 32 - ] for  dup emit  1+  next  drop  cr ;
+: doit   showit  count2   ppi!   begin  count  chars  again  ;
 
 {{{
+"8000 8 Ki + dup  4 Ki +
+
+}}}
+code _boot   # rp mov  # sp mov   ' doit b  ;c
+' _boot {{{ 'boot !
+
 #]file
