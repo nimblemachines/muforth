@@ -65,9 +65,13 @@ variable next
 variable lit
 variable lit_noreturn
 
+forth
+( Support for tail-recursion.)
+variable last-call   ( points *just past* last compiled bl)
+
 outside
-: compile,  ( targetxt)  \a bl ;  ( that's it!)
-: literal   \m lit @  \a bl  |, ;
+: compile,  ( targetxt)  \a bl  |here last-call ! ;  ( that's it!)
+: literal   \m lit @  \o compile,  |, ;
 : comment   comment ;
 : //        \f // ;
 : {  \ [ ;  ( escape to host forth)
@@ -88,28 +92,55 @@ forth
        .target. find  if  execute  \o compile, ^  then  number \o literal ;
 mode inside-loop
 
-assembler
-( Useful macros.)
-: push  ( r)  <asm  4 sp -) !  \f swap  str  asm> ;
-: pop   ( r)  <asm  4 sp )+    \f swap  ldr  asm> ;
-
-: nest    ( r)  <asm  4 rp -) !  \f swap  str  asm> ;
-: unnest  ( r)  <asm  4 rp )+    \f swap  ldr  asm> ;
-
-: ret   <asm  lr pc mov  asm> ;
-
-: st1   <asm  0 sp +)  asm> ;
-: st2   <asm  4 sp +)  asm> ;
-: st3   <asm  8 sp +)  asm> ;
-
-forth
-
 ( For loading, to see if we've left anything lying about.)
 ( This repeats code in startup, but it won't collide with that variable.)
 variable csp  ( what does this stand for? `check stack pointer'?)
 : !csp   depth  csp !  ;
 : ?csp   depth  csp @  -
          =if  . ." stack depth change: "  hex  .s cr  ^  then  drop  ;
+
+( Create a macro word in current chain. Used for macro: and inline.)
+: _macro   new <:> forth   macro-loop  !csp ;
+: macro:   assembler _macro ;
+compiler
+: ;macro   \ ^  \ [  ?csp ;  ( returns to host forth)
+forth
+
+macro: push  ( r)  4 sp -) !  \f swap  str  ;macro
+macro: pop   ( r)  4 sp )+    \f swap  ldr  ;macro
+
+macro: nest    ( r)  4 rp -) !  \f swap  str  ;macro
+macro: unnest  ( r)  4 rp )+    \f swap  ldr  ;macro
+
+macro: ret   lr pc mov  ;macro
+
+macro: st1   0 sp +)  ;macro
+macro: st2   4 sp +)  ;macro
+macro: st3   8 sp +)  ;macro
+
+( Support for tail-recursion. We need to convert "bl foo" to "b foo" -
+  branch-and-link to branch - and we need to be careful about not
+  disappearing exits at forward branch destinations that directly follow a
+  tail-call.)
+
+( If |here matches last-call, convert last bl to b by clearing link bit.
+  Check if this location is also the dest of a forward branch; if so,
+  compile a return for that. Otherwise, compile a return.)
+
+: -tail   last-call off ;  ( spoil conversion - used by 'then')
+: tail^
+   |here last-call @ = if  [ cell negate ] |h +!  ( uncompile)
+      |here |+ @  [ 1 #24 << ] bic  ( bl insn -> b)
+      1- ( because we're compiling an insn before the b, its offset changes)
+      <asm  lr unnest  asm>  |,  ^  then
+   <asm  pc unnest  asm> ;
+
+inside
+: (    \f ( ;
+: [    outside-loop ;
+// : ^    <asm  pc unnest  asm> ;  ( no tail-recursion - yet!)
+ : ^    tail^ ;
+: ;    \i ^  \i [  ?csp ;
 
 outside
 : create   target create forth ;
@@ -127,6 +158,19 @@ outside
 
   ( change to deferred - compile, then later execute?)
 
+( Turning inlining on and off isn't as easy as I had hoped; the inlined
+  versions need to have the trailing "ret" stripped off...
+
+  But now I have ;inline, which can compile ret if not inlining...)
+
+: inline  ( makes a "macro" that compiles code when this word is executed)
+   inside  _macro ;
+
+compiler
+( returns to outside)
+: ;inline   ( to terminate inline words)  \ ^  \i [  ?csp ;
+outside
+
 : -]   inside-loop ( re-start colon compiler) ;
 : ]    \o literal  \o -]  ( make literal and restart :)  ;
 
@@ -138,12 +182,6 @@ outside
 definer
 : does>   ;
 : ;code   ;
-
-inside
-: (    \f ( ;
-: [    outside-loop ;
-: ^    <asm  pc unnest  asm> ;
-: ;    \i ^  \i [  ?csp ;  ( no tail-recursion - yet!)
 
 forth
 : }  \i [ ;   ( return to meta)
@@ -158,14 +196,16 @@ assembler
 
 outside
 ( Basic conditionals)
-: resolve>  (s src dest)  over -  swap cell- |+ ! ( 32-bit displacement) ;
+: resolve>  (s src dest)
+   over -  swap cell- |+ ! ( 32-bit displacement) ;
+
 : <resolve  (s dest src)  swap \o resolve> ;
 : mark>   0 |,  |here ;
 
 inside
 : =if   (s - src)   \m eqzbranch @  \o compile,  \o mark> ;
 : if    (s - src)     \m zbranch @  \o compile,  \o mark> ;
-: then  (s src)  |here \o resolve> ;
+: then  (s src)  |here \o resolve>  -tail ;
 
 // : else      (s src0 - src1)  \ (branch) mark>  swap  \ then ;
 
@@ -211,15 +251,16 @@ code xor   0 pop   top 0 top eor   ret  ;c
 ( By moving 1-insn words into compiler/inside and making them macros, we
   get inlining... ;-)
 
-code negate   0 # top top rsb   ret  ;c
-code invert       top top mvn   ret  ;c
+inline negate   0 # top top rsb   ;inline
+inline invert       top top mvn   ;inline
 
-code dup   top push  ret  ;c
-code nip     0 pop   ret  ;c
-code drop  top pop   ret  ;c
+inline dup   top push  ;inline
+inline nip   0 pop     ;inline
+inline drop  top pop   ;inline
 
 // code swap  top 0 mov   st1 top ldr   st1 0 str  ret  ;c
-code swap   top sp top swp  ( swap top with TOS)  ret  ;c
+inline swap   top sp top swp  ( swap top with TOS)  ;inline
+
 code over   top push   st2 top ldr   ret  ;c
 
 code rot
@@ -236,14 +277,14 @@ code <<    0 pop   0 top lsl top mov   ret  ;c
 code >>    0 pop   0 top asr top mov   ret  ;c
 code u>>   0 pop   0 top lsr top mov   ret  ;c
 
-code 2/    top 1 #asr top mov  ret  ;c
-code u2/   top 1 #lsr top mov  ret  ;c
-code 2*    top 1 #lsl top mov  ret  ;c
+inline 2/    top 1 #asr top mov  ;inline
+inline u2/   top 1 #lsr top mov  ;inline
+inline 2*    top 1 #lsl top mov  ;inline
 
-code u<    0 pop   top 0 cmp   -1 # top mov u<  0 # top mov u>=  ret  ;c
-code <     0 pop   top 0 cmp   -1 # top mov  <  0 # top mov  >=  ret  ;c
-code 0<          top top tst   -1 # top mov 0<  0 # top mov 0>=  ret  ;c
-code 0=          top top tst   -1 # top mov 0=  0 # top mov ne   ret  ;c
+code u<    0 pop   top 0 cmp   -1 # top mov u<   0 # top mov u>=  ret  ;c
+code <     0 pop   top 0 cmp   -1 # top mov  <   0 # top mov  >=  ret  ;c
+code 0<          top top tst   -1 # top mov 0<   0 # top mov 0>=  ret  ;c
+code 0=          top top tst   -1 # top mov 0=   0 # top mov ne   ret  ;c
 
 ( "implement" fixes up forward references.)
 implement branch
@@ -258,7 +299,9 @@ implement eqzbranch
     top top tst   zbr1 b  ;c
 
 implement for
-    ct nest   top ct mov   ' drop b  ;c
+    ct nest   top ct mov
+label popret
+    top pop   ret  ;c
 
 implement ?for
     top top tst   top 0 mov   top pop
@@ -272,14 +315,15 @@ implement next
 implement lit            top push   4 lr )+ top ldr   ret  ;c
 implement lit_noreturn   top push   0 lr )+ top ldr   pc unnest  ;c
 
-code push   top nest   ' drop b  ( 1 word shorter)  ;c
+code push   top nest   popret b  ( one word shorter, but slower!)  ;c  
 code pop    top push   top unnest   ret  ;c
 
-code @    0 top +) top ldr    ret  ;c
-code c@   0 top +) top ldrb   ret  ;c
+inline @    0 top +) top ldr   ;inline
+inline c@   0 top +) top ldrb  ;inline
 
 code !    { 0 1 } ! sp ldm   0 top +) 0 str    1 top mov   ret  ;c
 code c!   { 0 1 } ! sp ldm   0 top +) 0 strb   1 top mov   ret  ;c
+
 
 ( How about a multitasker? First we need user variables...)
 
@@ -416,8 +460,10 @@ hex
 
 : showit
    try2  fixmem  try2
-   ffffa000 64 2 >> dump  cr  ffffa100 2c 2 >> dump  cr
+   ffffa000 64 2/ 2/ dump  cr  ffffa100 2c 2 >> dump  cr
    ffffa400 2 dump  cr ;
+
+: echo  begin  key  dup #13 xor while  1+ emit  repeat  drop ;
 
 decimal
 
@@ -425,7 +471,7 @@ decimal
 
 
 : ppi!   "80 "ffff1c0c c! ;
-: delay   20_000 for next ;
+: delay   40_000 for next ;
 : leds    15 and 4 << "ffff1c08 ( port C) c! ;
 : count  0 16 for  dup leds 1+  delay  next drop ;
 
@@ -433,7 +479,7 @@ decimal
 
 : times  6789 123456 * .   -1029484 485 * . ;
 
-: doit   showit  times  count2   ppi!   begin  count  chars  again  ;
+: doit   showit  echo  times  count2   ppi!   begin  count  chars  again  ;
 
 {
 "8000 8 Ki + dup  4 Ki +
