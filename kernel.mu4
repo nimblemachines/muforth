@@ -31,7 +31,7 @@ cr " ARM kernel "  file[#
 ( Few words we need to try this out.)
 
 -:  ."  (assembling)"  ;
--:   .assembler. find  if  execute ^  then  number ;
+-:  .assembler. find  if  execute ^  then  number ;
 mode asm-loop
 
 -:  ."  (assembling a macro)"  ;
@@ -39,20 +39,36 @@ mode asm-loop
     .assembler. find  if  compile, ^  then  number literal ;
 mode macro-loop
 
+-:  ."  (outside)"  ;
+-:    .outside. find  if  execute ^  then  number ;
+mode outside-loop
+
 compiler
 : <asm   macro-loop ;
 : asm>   -] ;
 forth
 
-assembler
+machine
+variable branch
+variable zbranch
+variable for
+variable ?for
+variable next
+variable lit
+variable lit_noreturn
+
+outside
+: compile,  ( targetxt)  \a bl ;  ( that's it!)
+: literal   \m lit @  \a bl  |, ;
+: comment   comment ;
+: {{{  \ [ ;  ( escape to host forth)
 : '   .target. chain' execute ;
-: (    \f ( ;
-: ;c    \ [ ;
 forth
 
-( code & ;c should use ?csp to make sure nothing bad has happened...)
-: code  target create forth  |here  pair off  asm-loop
-        does> ;
+-:  ."  (inside)"  ;
+-:     .inside. find  if  execute ^  then
+       .target. find  if  execute  \o compile, ^  then  number \o literal ;
+mode inside-loop
 
 assembler
 ( Useful macros.)
@@ -66,7 +82,78 @@ assembler
 : st1   <asm  0 sp +)  asm> ;
 : st2   <asm  4 sp +)  asm> ;
 : st3   <asm  8 sp +)  asm> ;
+
+outside
+( code & ;c should use ?csp to make sure nothing bad has happened...)
+: code  target create forth  |here  pair off  asm-loop
+        does> ;
+
+( Using [new], we can make a .target. entry too.)
+: implement   |here  .machine. chain' execute ( get addr)  !
+        pair off  asm-loop ;
+
+: :     target create forth  |here  <asm  lr nest  asm>
+           inside-loop ( target compiler)
+        does> ( just get its address) ;
+
+  ( change to deferred - compile, then later execute?)
+
+inside
+: [    outside-loop ;
+: ^    <asm  pc unnest  asm> ;
+: ;    \i ^  \i [ ;  ( no tail-recursion - yet!)
+
 forth
+: }}}  \i [ ;   ( return to meta)
+
+assembler
+: '   .target. chain' execute ;
+: (    \f ( ;
+: ;c   \i [ ;
+: label   assembler create forth  |here does> ;
+
+outside
+( Basic conditionals)
+: resolve>  (s src dest)  over -  swap cell- |+ ! ( 32-bit displacement) ;
+: <resolve  (s dest src)  swap \o resolve> ;
+: mark>   0 |,  |here ;
+
+inside
+// : =if   (s - src)  ['] (=0branch) compile,  mark> ;
+: if    (s - src)   \m zbranch @  \o compile,  \o mark> ;
+: then  (s src)  |here \o resolve> ;
+// : else      (s src0 - src1)  \ (branch) mark>  swap  \ then ;
+: begin   (s - dest)  |here ;
+// : =until  (s dest -)       \i =if  <resolve ;
+: until   (s dest -)        \i if  <resolve ;
+: again   (s dest -)  \m branch @  \o compile,  \o mark>  \o <resolve ;
+// : =while  (s dest - src dest)  \i =if  swap ;
+: while   (s dest - src dest)   \i if  swap ;
+: repeat  (s src dest -)   \i again  \i then ;
+
+( n for .. next         goes n times; 4 billion+ if n=0 )
+( n ?for .. next then   goes n times; 0 if n=0 )
+
+: for     (s - dest)      \m  for @  \o compile,  \i begin ;
+: ?for    (s - src dest)  \m ?for @  \o compile,  \o  mark>  \i begin ;
+: next    (s dest -)      \m next @ \o compile,  \o mark>  \o <resolve ;
+
+
+( XXX)
+outside
+: remote   drop ;
+forth
+
+-:  ."  (interacting)"  ;
+-:     .target. find  if  execute  \o remote ^  then
+      .outside. find  if  execute ^  then  number ;
+mode interact-loop
+
+comment =====================================================================
+        The real kernel starts here!!
+        =====================================================================
+
+outside-loop
 
 code +     0 pop   top 0 top add   ret  ;c
 code -     0 pop   top 0 top sub   ret  ;c
@@ -83,6 +170,8 @@ code invert       top top mvn   ret  ;c
 code dup   top push  ret  ;c
 code nip     0 pop   ret  ;c
 code drop  top pop   ret  ;c
+
+( XXX: Use SWP insn??)
 code swap  top 0 mov   st1 top ldr   st1 0 str  ret  ;c
 code rot
    { 0 1 } sp ldm
@@ -106,23 +195,124 @@ code u<    0 pop   top 0 cmp   -1 # top mov u<  0 # top mov u>=  ret  ;c
 code <     0 pop   top 0 cmp   -1 # top mov  <  0 # top mov  >=  ret  ;c
 code 0<          top top tst   -1 # top mov 0<  0 # top mov 0>=  ret  ;c
 
-code branch    4 lr )+ 0 ldr   0 lr pc add   ;c
-code zbranch   top top tst   top pop
+implement branch    4 lr )+ 0 ldr   0 lr pc add   ;c
+implement zbranch   top top tst   top pop
                4 lr )+ 0 ldr 0=   0 lr pc add 0=   4 # lr pc add   ;c
 
-code (for)     ct nest   top ct mov   ' drop b  ;c
+implement for     ct nest   top ct mov   ' drop b  ;c
 
-code (?for)    top top tst   top 0 mov   top pop
+implement ?for    top top tst   top 0 mov   top pop
                4 lr )+ 0 ldr 0=   0 lr pc add 0=
                ct nest   0 ct mov   4 # lr pc add   ;c
 
-code (next)    1 # ct ct sub s   ct unnest 0=   4 # lr pc add 0=
+implement next    1 # ct ct sub s   ct unnest 0=   4 # lr pc add 0=
                4 lr )+ 0 ldr   0 lr pc add   ;c
 
-code lit            top push   4 lr )+ top ldr   ret  ;c
-code lit_noreturn   top push   0 lr )+ top ldr   pc unnest  ;c
+implement lit            top push   4 lr )+ top ldr   ret  ;c
+implement lit_noreturn   top push   0 lr )+ top ldr   pc unnest  ;c
 
 code push   top nest   ' drop b  ( 1 word shorter)  ;c
 code pop    top push   top unnest   ret  ;c
 
+code @    0 top +) top ldr    ret  ;c
+code c@   0 top +) top ldrb   ret  ;c
+
+code !    { 0 1 } ! sp ldm   0 top +) 0 str    1 top mov   ret  ;c
+code c!   { 0 1 } ! sp ldm   0 top +) 0 strb   1 top mov   ret  ;c
+
+( How about a multitasker? First we need user variables...)
+
+( Multitask!)
+
+( 15-sep-1998.  This is new.  I figured this all out when I couldn't sleep.
+  There is a new [to me] and beautiful way to do multitasking that is in
+  between my old way and the elusive polyFORTH brochure's "one machine
+  instruction per task" way.  My new way is the middle way, and is intimately
+  related to indirect threaded code; the major difference is that it is -not-
+  the `canonical Chuck' way to do ITC.  The `word' pointer -- in this case
+  it points to a -task- -- points -at- rather than -after- the code pointer.
+  It just works out more nicely this way.
+
+  There is a necessary adjustment, however.  In this new way what determines
+  whether a task is awake or asleep is its code pointer.  If it points to
+  `robin' the task is asleep, and `robin' will cycle to the next task [and
+  take only two instructions!].  If the task is awake, its code points to
+  `restore', which sets up the user pointer `u' and pops the task's context
+  and executes `next', as usual.  The adjustment is this:  where do we store
+  the sleep/wakeup count information, which used to be also the awake/asleep
+  flag?  The answer is, `where it matters'.  In the case of an i/o queue,
+  the `right place' for this information is in the queue, -not- in the task
+  that reads from or writes to it.
+
+  In this new world order the tasks or interrupt service routines that used
+  to simply increment or decrement a counter have a little bit more work to
+  do to wake or lull a task.  But it's not too bad, and the task loop is
+  purer, more flexible, and one instruction quicker per task!
+
+  Generally, when a task is using a resource that resource points to the task.
+  This has two purposes:  when this pointer is zero, the resource is -free-.
+  When non-zero, it points to the task that should be woken when the resource
+  is `ready'.  The task points back at some part of the resource, thru the
+  `depend' pointer.  Thus if a task is waiting on serial input from a queue,
+  the queue -resource- would point to the task; the task's `depend' would
+  point to the count of characters available to be read from the queue.  When
+  a character comes in from the serial port, the service routine puts the
+  character in the queue and increments the count.  It then checks if the
+  `depend' pointer has become non-zero, or >0, or whatever the criterion is.
+  If so, it wakes the task by changing its `status' code pointer.
+
+  Alternatively the ISR could increment the counter pointed to by the task's
+  `depend' pointer.  ISR.owner->task.depend->counter.  These details are a
+  bit fuzzy still.)
+
+comment %%
+   0 +user status      ( code pointer; determines the wakefulness of the task)
+   0 +user me          ( synonym)
+cell +user link        ( link to next task in list)
+cell +user bottom      ( bottom of D stack)
+cell +user top         ( pointer to saved stack)  %%
+
+{{{
+target
+0 cells constant status
+1 cells constant link
+2 cells constant bottom
+3 cells constant top
+forth
+}}}
+
+( 15-sep-1998.  This is now different; see above.  The idea still applies;
+  only the location of the counters has changed.  Well, that and that the
+  counters now run `the right way'.
+
+  If a task has an associated IRQ, use STATUS as a sema-
+  phore -- use AWAIT to sleep and <task> #] dec, [in IRQ
+  routine] to awaken.  Incrementing and decrementing STATUS is
+  an atomic action.  In this case only  ACTIVATE ever sets STATUS.
+  This will happen before the interrupt is enabled so it's OK.
+
+  In other cases it doesn't matter; however, incrementing and
+  decrementing STATUS makes a useful auto-wakeup semaphore.)
+
+( On what other architecture can you write a multitasker loop in 6
+  instructions?)
+
+code pause
+   { top ct rp lr } ! sp stm                   ( save context on stack)
+   ' top ( offset in user area) up +) sp str   ( save stack ptr in user area)
+   
+label wait ( robin)
+   ' link ( offset)   up +) up ldr  ( follow task link)
+   ' status ( offset) up +) pc ldr  ( jump thru status)
+
+label run
+   ' top ( offset in user area) up +) sp ldr     ( setup sp)
+   { top ct rp pc } ! sp ldm         ( load context and go!)  ;c
+
+: bic  invert and ;
+: 10*  dup  2* 2* +  2* ;
+
+: doit  begin  dup @ while  70 bic  repeat ;
+
+{{{
 #]file
