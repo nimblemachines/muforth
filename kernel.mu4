@@ -118,14 +118,12 @@ macro: st1   0 sp +)  ;macro
 macro: st2   4 sp +)  ;macro
 macro: st3   8 sp +)  ;macro
 
-( Support for tail-recursion. We need to convert "bl foo" to "b foo" -
-  branch-and-link to branch - and we need to be careful about not
-  disappearing exits at forward branch destinations that directly follow a
-  tail-call.)
+( Support for tail-recursion.)
 
-( If |here matches last-call, convert last bl to b by clearing link bit.
-  Check if this location is also the dest of a forward branch; if so,
-  compile a return for that. Otherwise, compile a return.)
+( If |here matches last-call, we decompile the last bl,
+  compile "unnest lr", convert the bl to b by clearing the link bit,
+  modifying the offset - the insn has moved forward one word - by -1, and
+  recompiling the insn.)
 
 : -tail   last-call off ;  ( spoil conversion - used by 'then')
 : tail^
@@ -163,12 +161,15 @@ outside
 
   But now I have ;inline, which can compile ret if not inlining...)
 
-: inline  ( makes a "macro" that compiles code when this word is executed)
-   inside  _macro ;
+( makes a "macro" that compiles code when this word is executed)
+// : inline   inside  _macro ;
+: inline   \o code ;   ( non-inlined)
 
-compiler
-( returns to outside)
-: ;inline   ( to terminate inline words)  \ ^  \i [  ?csp ;
+// compiler
+( To terminate inline words. Returns to outside)
+// : ;inline           \ ^  \i [  ?csp ;
+ assembler
+ : ;inline   \a ret  \ ^  \i [  ?csp ;  ( non-inlined)
 outside
 
 : -]   inside-loop ( re-start colon compiler) ;
@@ -273,9 +274,10 @@ code -rot
    top 2 mov   1 top mov   0 1 mov   2 0 mov
    { 0 1 } sp stm  ret  ;c
 
-code <<    0 pop   0 top lsl top mov   ret  ;c
-code >>    0 pop   0 top asr top mov   ret  ;c
-code u>>   0 pop   0 top lsr top mov   ret  ;c
+code <<       0 pop   0 top lsl top mov   ret  ;c
+code >>       0 pop   0 top asr top mov   ret  ;c
+code u>>      0 pop   0 top lsr top mov   ret  ;c
+code rotate   0 pop   0 top ror top mov   ret  ;c
 
 inline 2/    top 1 #asr top mov  ;inline
 inline u2/   top 1 #lsr top mov  ;inline
@@ -418,6 +420,9 @@ label run
    { top ct rp pc } ! sp ldm         ( load context and go!)  ;c
 
 decimal
+{
+." Kernel size "  |# .  ." bytes." cr
+}
 
 : pause ;  ( not yet!)
 : emit   ( ch)
@@ -469,17 +474,23 @@ decimal
 
 : count2  "13579bdf 8 for 16/mod >digit emit  next drop ;
 
+: clock   "ffffac28 c@ . cr ;
 
 : ppi!   "80 "ffff1c0c c! ;
-: delay   40_000 for next ;
+: delay   60_000 for next ;
 : leds    15 and 4 << "ffff1c08 ( port C) c! ;
 : count  0 16 for  dup leds 1+  delay  next drop ;
+
+: 2dup  over over ;
+: bounce  1 4 for   dup leds  2*  delay  next
+            4 for  u2/  dup leds  delay  next  drop ;
 
 : chars  32  [ 128 32 - ] for  dup emit  1+  next  drop  cr ;
 
 : times  6789 123456 * .   -1029484 485 * . ;
 
-: doit   showit  echo  times  count2   ppi!   begin  count  chars  again  ;
+: doit   showit  clock  echo  times  count2   ppi!
+   begin  bounce  chars  again  [
 
 {
 "8000 8 Ki + dup  4 Ki +
