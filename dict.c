@@ -42,7 +42,6 @@
 struct dict_entry
 {
     struct dict_entry *link;
-    void *pbody;                /* pts _at_ code field in code space */
     unsigned char length;
     char name[0];
 };
@@ -108,7 +107,7 @@ void mu_find()
 
         /* found: drop token, push code address and true flag */
         NIP(1);
-        ST1 = (cell) pde->pbody;  /* XXX: should be body? */
+        ST1 = (cell) ALIGNED(pde->name + length);
         TOP = -1;
         return;
     }
@@ -121,16 +120,15 @@ static void compile_dict_entry(
 {
     struct dict_entry *pde;
 
-    pde = (struct dict_entry *)ALIGNED(pdt);
+    pde = (struct dict_entry *)ALIGNED(pcd);
 
     pde->link = *ppde;      /* compile link to last */
     *ppde = pde;        /* link onto front of chain */
-    pde->pbody = pcd;       /* pt to code field in code space */
     pde->length = length;
     bcopy(name, pde->name, length);          /* copy name string */
 
     /* Allot entry */
-    pdt = (uint8 *)ALIGNED(pde->name + length);
+    pcd = (cell *)ALIGNED(pde->name + length);
 
 #if defined(BEING_DEFINED)
     fprintf(stderr, "%p %.*s\n", pcd, length, name);
@@ -212,169 +210,3 @@ void init_dict()
    : >lex   ( body - lex)   cell- cell-  ;
    : >code  ( body - code)  cell-  ;
 */
-
-#ifdef DEBUG_FOO
-/*
- * daf: stripped the mu_ off the names of these routines, since they conform
- * to C stack API rather than muforth stack API.
- */
-
-
-static void print_name(cell *pcode)
-{
-    char *pnm = (char *)(pcode - 1);  /* back up over link field */
-    int length = pnm[-1];
-
-    printf("%.*s", length, pnm - ALIGNED(length + 1));
-}
-
-
-/* returns termination flag */
-static int print_w(xtk *ip)
-{
-    xtk w = *ip;
-
-    if ((w > (xtk)pcd0) && (w < (xtk)pcd) && (*w < (pw)pcd0))
-    {
-        printf("\n%p: ", ip);
-        print_name((cell *)w);
-    }
-    else
-    {
-        printf(" %x", (cell)w);
-    }
-    return w == XTK(mu_exit);
-}
-
-void dis(xtk *ip)
-{
-    if (*(pw *)ip == &mu_do_colon)
-        print_name((cell *)ip++);
-
-    for (;;)
-    {
-        if (print_w(ip++)) break;
-    }
-    printf("\n");
-}
-
-/*
- * find_pde_code_range()
- *
- * This routine will locate the supplied address to a specific
- * word within a given chain.  The caller (mu_fund_pde_by_addr()) will
- * determine if a word is in the compiler chain or the forth chain.
- * It does this by determining which has the lowest gap between
- * addr and the start of the function of each chain in which
- * the addr matches.
- */
-static struct dict_entry *find_pde_code_range(struct dict_entry *chain, cell addr)
-{
-    struct dict_entry *pde, *best;
-    u_int32_t closest, delta;
-
-    /*
-     * First pass: Check for direct hit
-     */
-    pde = chain;
-    best = NULL;
-    closest = 0x7FFF;
-    do {
-        if (addr == (cell) pde->code)
-            return pde;
-        delta = addr - (cell) pde->code;
-        if (delta < closest) {
-            best = pde;
-            closest = delta;
-        }
-        pde = pde->link;
-    } while (pde);
-
-    if (closest != 0x7FFF)
-        return best;
-
-    return NULL;
-}
-
-/*
- * find_pde_by_addr()
- *
- * This routine calls mu_find_pde_code_range() to identify a possible
- * pde in both chains.  If nothing is found, it returns NULL.  Else,
- * it returns the pde for which the code segment is most likely the
- * the correct code segment for this address.  The heuristic for this
- * is, if the addr does not match the start address of either pde,
- * which pde has the smallest difference between the supplied addr
- * and the start of the code for that pde.
- */
-static struct dict_entry *find_pde_by_addr(cell addr)
-{
-    struct dict_entry *pde_compiler, *pde_forth, *pde;
-    u_int32_t comp_code, forth_code;
-
-    pde_compiler = find_pde_code_range(compiler_chain, addr);
-    pde_forth = find_pde_code_range(forth_chain, addr);
-
-    if (!pde_compiler && !pde_forth)
-        return NULL;
-
-    if (pde_compiler)
-        comp_code = (cell) pde_compiler->code;
-    else
-        comp_code = 0;
-
-    if (pde_forth)
-        forth_code = (cell) pde_forth->code;
-    else
-        forth_code = 0;
-
-    if (comp_code  == addr)
-        pde = pde_compiler;
-    else if (forth_code == addr)
-        pde = pde_forth;
-    else {
-        /*
-         * This is the heuristic: we check to see which code
-         * segment start is the closet to the supplied addr.
-         */
-        if ((addr - comp_code) < (addr - forth_code))
-            pde = pde_compiler;
-        else
-            pde = pde_forth;
-    }
-
-    return pde;
-}
-
-/*
- * snprint_func_name()
- *
- * Given an address, this routine will print the name of the muforth word
- * which is associated with that address.  Also, it will print an offset
- * value if the address isn't the start of the code segment.
- *
- * It returns the base address of the muforth word.
- */
-cell snprint_func_name(char *line, int size, cell addr)
-{
-    struct dict_entry *pde;
-    cell code;
-    int idx;
-
-    pde = find_pde_by_addr(addr);
-
-    if (!pde) {
-        snprintf(line, size, "Unknown function: address %p", (cell *) addr);
-        return addr;
-    }
-
-    code = (cell) pde->code;
-
-    idx = snprintf(line, size, "%.*s", pde->length, pde->name);
-    if (code != addr) {
-        snprintf(line +idx, size -idx, " + %d", addr - code);
-    }
-
-    return code;
-}
-#endif /* DEBUG */

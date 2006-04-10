@@ -159,8 +159,8 @@ extern struct string parsed;    /* for errors */
 extern int  cmd_line_argc;
 extern char **cmd_line_argv;
 
-extern uint8 *pdt0;   /* ptrs to name & data spaces */
-extern cell  *pcd0;   /* ptr to names & code space */
+extern uint8 *pdt0;   /* ptr to data space */
+extern cell  *pcd0;   /* ptr to code & names space */
 
 extern uint8 *pdt;    /* ptrs to next free byte in each space */
 extern cell  *pcd;
