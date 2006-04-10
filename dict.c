@@ -130,6 +130,9 @@ static void compile_dict_entry(
     /* Allot entry */
     pcd = (cell *)ALIGNED(pde->name + length);
 
+    /* Account for its size */
+    names_size += (caddr_t)pcd - (caddr_t)pde;
+
 #if defined(BEING_DEFINED)
     fprintf(stderr, "%p %.*s\n", pcd, length, name);
 #endif

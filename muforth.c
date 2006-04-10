@@ -43,6 +43,8 @@ xtk    W;      /* on entry, points to the current Forth word */
 int  cmd_line_argc;
 char **cmd_line_argv;
 
+int   names_size;   /* count of bytes alloted to names */
+
 cell  *pcd0;   /* pointer to start of code & names space */
 uint8 *pdt0;   /* ... data space */
 
@@ -80,7 +82,12 @@ static void mu_find_init_file()
 
 void mu_push_code_size()
 {
-    PUSH((caddr_t)pcd - (caddr_t)pcd0);
+    PUSH(((caddr_t)pcd - (caddr_t)pcd0) - names_size);
+}
+
+void mu_push_names_size()
+{
+    PUSH(names_size);
 }
 
 void mu_push_data_size()
