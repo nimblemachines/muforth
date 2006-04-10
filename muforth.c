@@ -56,7 +56,6 @@ uint8 *pdt;    /* ... data space */
 char *ate_the_stack;
 char *ate_the_rstack;
 char *isnt_defined;
-char *version;
 
 static void init_stacks()
 {
@@ -122,7 +121,6 @@ static void make_constant_strings()
     ate_the_stack = to_counted_string("ate the stack");
     ate_the_rstack = to_counted_string("ate the return stack");
     isnt_defined =  to_counted_string("isn't defined");
-    version =  to_counted_string(VERSION);
 }
 
 /*
@@ -175,11 +173,6 @@ static void convert_command_line(int argc, char *argv[])
 void mu_push_command_line()
 {
     PUSH(&pcmd_line->data);
-}
-
-void mu_push_version()
-{
-    PUSH(version);
 }
 
 void mu_push_build_time()

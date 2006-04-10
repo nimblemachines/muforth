@@ -171,7 +171,6 @@ extern cell  *pcd;
 extern char *ate_the_stack;
 extern char *ate_the_rstack;
 extern char *isnt_defined;
-extern char *version;
 
 /* declare common functions */
 
