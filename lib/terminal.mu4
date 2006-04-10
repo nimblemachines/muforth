@@ -37,16 +37,16 @@ decimal
   while testing the terminal download code. Shit!)
 
 ( Open serial device.)
-: tty-target  [ z" /dev/cuad0" r/w open-file ] ;
-tty-target raw  ( disallows signals)
+variable fd-target
+: tty-target  z" /dev/cuad0" r/w  open-file  fd-target ! ;
 
 : bps   ( fd speed)
    over ram get-termios drop  ram swap set-termios-speed
   ( fd) ram set-termios ;
 
-: te-slow     tty-target   9600 bps  ;
-: te-fast     tty-target  57600 bps  ;
-: te-smokin'  tty-target 115200 bps  ;  te-smokin'
+: te-slow     fd-target @   9600 bps  ;
+: te-fast     fd-target @  57600 bps  ;
+: te-smokin'  fd-target @ 115200 bps  ;
 
 ( Keymaps)
 -: ( self)  emit  0 ;  256 defarray term-keys
@@ -80,25 +80,27 @@ new-fd-set fds
 ( Serial input to screen, keyboard input to serial.)
 
 : serial->screen
-   fds tty-target fd-in-set? if
-     tty-target reads  tty writes  typing type
+   fds fd-target @ fd-in-set? if
+     fd-target @ reads  tty writes  typing type
   then ;
 
 : keyboard->serial  ( - done?)
    fds tty fd-in-set? if
-     tty reads  tty-target writes  key dup term-keys @execute ^
+     tty reads  fd-target @ writes  key dup term-keys @execute ^
    then  0 ;
 
 : te-stream
-   begin  tty tty-target 2 te-select
+   begin  tty fd-target @ 2 te-select
       serial->screen  keyboard->serial  until  tty writes  ;
 
-: <drain  begin  tty-target 1 te-select  serial->screen  until
-   tty-target writes  ;
+: <drain  begin  fd-target @ 1 te-select  serial->screen  until
+   fd-target @ writes  ;
 
 : te  ( terminal)
+   tty-target  fd-target @ raw  ( disallows signals)
+   te-smokin'
    radix @ push  tty raw   ['] te-stream catch
-                 tty cooked  pop radix !  throw ;
+                 tty cooked  fd-target @ close-file  pop radix !  throw ;
 
 
 comment %v25-specific%
@@ -109,7 +111,7 @@ comment %v25-specific%
   after a cmd.)
 
 ( Expect/send.)
-: ><target  tty reads  tty writes  (  tty-target reads  tty-target writes)  ;
+: ><target  tty reads  tty writes  (  fd-target @ reads  fd-target @ writes)  ;
 : |cr  #CR emit  ;
 
 : ?prompt  ( ch)  begin  key  over = until  drop  ;
