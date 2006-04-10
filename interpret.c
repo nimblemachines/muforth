@@ -54,14 +54,14 @@ struct imode        /* interpreter mode */
  * length.
  */
 static struct text source;
-static ssize_t first;       /* goes from -start to 0 */
+static char *first;       /* goes from source.start to source.end */
 
 struct string parsed;       /* for errors */
 
-static void mu_return_token(ssize_t last, int trailing)
+static void mu_return_token(char *last, int trailing)
 {
     /* Get address and length of the token */
-    parsed.data = source.end + first;
+    parsed.data = first;
     parsed.length = last - first;
 
     /* Account for characters processed, return token */
@@ -78,20 +78,20 @@ static void mu_return_token(ssize_t last, int trailing)
 
 void mu_token()  /* -- start len */
 {
-    ssize_t last;
+    char *last;
 
     DUP;   /* we'll be setting TOP when we're done */
 
     /* Skip leading whitespace */
-    for (; first != 0 && isspace(source.end[first]); first++)
+    for (; first < source.end && isspace(*first); first++)
         ;
 
     /*
      * Scan for trailing whitespace and consume it, unless we run out of
      * input text first.
      */
-    for (last = first; last != 0; last++)
-        if (isspace(source.end[last]))
+    for (last = first; last < source.end; last++)
+        if (isspace(*last))
         {
             /* found trailing whitespace; consume it */
             mu_return_token(last, 1);
@@ -104,7 +104,7 @@ void mu_token()  /* -- start len */
 
 void mu_parse()  /* delim -- start len */
 {
-    ssize_t last;
+    char *last;
 
     /* The first character of unseen input is the first character of token. */
 
@@ -112,8 +112,8 @@ void mu_parse()  /* delim -- start len */
      * Scan for trailing delimiter and consume it, unless we run out of
      * input text first.
      */
-    for (last = first; last != 0; last++)
-        if (TOP == source.end[last])
+    for (last = first; last < source.end; last++)
+        if (TOP == *last)
         {
             /* found trailing delimiter; consume it */
             mu_return_token(last, 1);
@@ -250,8 +250,8 @@ static void mu_qstack()
 
 void mu_interpret()
 {
-    source.end = (char *) ST1 + TOP; /* the _end_ of the text */
-    source.start = -TOP;        /* offset to the start of text */
+    source.start = (char *)ST1;
+    source.end =   (char *)ST1 + TOP;
     DROP(2);
 
     first = source.start;
@@ -269,7 +269,7 @@ void mu_interpret()
 void mu_evaluate()
 {
     struct text saved_source;
-    ssize_t saved_first;
+    char *saved_first;
 
     saved_source = source;
     saved_first = first;

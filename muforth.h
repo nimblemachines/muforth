@@ -144,8 +144,8 @@ struct string
 
 struct text
 {
+    char *start;
     char *end;
-    ssize_t start;  /* ssize_t is a _signed_ type */
 };
 
 struct counted_string
