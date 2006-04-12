@@ -7,7 +7,7 @@ compiler
 forth
 : \[   ;
 
-: literal  (literal) (literal) compile, code, ;
+: literal  (literal) (literal) compile,  code, ;
 
 : ]   literal -] ;
 : char   token  drop  c@ ;
@@ -56,23 +56,13 @@ forth
   As defined in the kernel, the interpreter/compiler is very simple; it
   only knows how to do the following things:
 
-  1. compile a call to an already-defined word [Forth for "named piece of
-     code"];
+  1. create a new colon word, making a dictionary entry for it;
 
-  2. convert a compiled call into a jump, if it would be followed by a
-     "return" instruction [so-called "tail-call conversion"];
+  2. compile a "call" to an already-defined word [Forth lingo for
+     "named piece of code"], by appending its execution address to the end
+     of the colon word we are compiling.
 
-  3. create a new word, making a dictionary entry for it;
-
-  4. compile code to push a constant onto the stack [an "inline literal"];
-
-  5. compile code to do a few stack manipulations, or stack tests [TOP ==
-     0, for instance], that are difficult or impossible to do in Forth, or
-     involve machine dependencies.
-
-  That's it! The machine-dependent compiler code - in this first pass at
-  the problem, for the x86 architecture - is around 300 lines of C code,
-  but in principle very simple.
+  That's it!
 
   In this file, in Forth, we need to extend the interpreter/compiler to do
   the following:
@@ -82,7 +72,7 @@ forth
   2. compile data structures: variables, constants, create/does words;
 
   3. read and write numbers - an interesting exercise since muforth starts
-     life _not_ even knowing only the constant 1!
+     life not even knowing the constants 0 or 1;
 
   4. read and write strings.
 
@@ -209,6 +199,15 @@ forth
 
 
 ( Compiler nuts and bolts.)
+
+// Do something like this: (of course, I can't compile the variable yet...)
+//  variable dp
+//  : code   h dp ! ;  ( switch to code space)
+//  : data   r dp ! ;  ( switch to data space)
+//  : here   dp @ @ ;
+//  : allot  aligned  dp @ +! ;
+//  : ,      dp @ !  cell allot ;
+
 : here   h @ ;  ( h points to the first free byte in code space)
 : ram    r @ ;  ( r points to the first free byte in data space)
 
@@ -295,29 +294,50 @@ forth
   the README now, and also all out of date, since it's about the
   native-code version of muforth.)
 
+( 2006-apr-11. Revamped create & does again. This time I think I got it
+  right.
+
+  Since a word's data are not stored in the dict [code] space, we compile a
+  pointer into the word's definition [in code space] instead. This is not
+  new, but the way it happens, and the semantics of some of the related
+  words - like constant and create - is new.
+
+  The fundamental defining word for data is *constant*. create is defined
+  in terms of it. Words that allocate space in "ram" compile a pointer to
+  that ram space as their constant.
+
+  constant creates the head and compiles a code word pointing to <does>, an
+  empty ip [does] pointer, and the constant. It then calls does>, which
+  immediately rewrites the empty ip to point to constant's null does> body.)
+
 ( "nameless" colon words.)
 : -:  here <:> -] ;
 
 ( For comparison, the regular : compiler is defined thus:
 :  :   new <:> -] ; )
 
-: -create  here <does> ;  ( nameless do_does word)
-:  create   new <does> ;   ( nameful do_does word)
-: does>  (s constant)
-    pop  code, ( compile IP of parent does)
-    code, ;  ( compile constant)
+( Quick dictionary structure words.)
+: link>name   cell+  dup 1+ swap c@ ;
+: link>code   link>name +  aligned ;
+: code>does  ( 'code - 'does)      cell+ ;
+: code>body  ( 'code - 'body)  [ 2 cells ] + ;
 
-: constant  create  does> ;
-: table   ram constant ;  ( followed by <val> , <val> , etc)
+: latest  current @ @ ;
+: does>  pop  latest link>code code>does  ! ;
+
+( Nameless versions? Don't speculate!)
+: constant   new <does>  0 code, ( does ip)  code, ( constant)  does> ;
+: create   ram constant ;
+
 : _buffer  (s default cells)  ?for dup , next then  drop ;
-: buffer   table  aligned  cell/  0 swap  _buffer ;
+: buffer   create  aligned  cell/  0 swap  _buffer ;
 
-: variable    table  0 , ;
+: variable    create  0 , ;
 : 2variable   variable  0 , ;
 
 ( An array with every cell set to a default value:)
 : defarray  (s default cells)
-   create  ram push  _buffer  pop
+   create  _buffer
    does>  (s i - a)  swap cells + ;  ( self-indexing!)
 
 : array     (s cells)  0 swap  defarray ;
@@ -347,7 +367,9 @@ forth
   architecture-specific code!)
 
 variable undeferred  ' nope undeferred !
-: defer  create  ram  undeferred @ ,  does> @execute ;
+: defer  create  undeferred @ ,  does> @execute ;
+
+( XXX: define in terms of link>name, etc?)
 : >data  [ 2 cells ] + @ ;  ( given code addr of does word, fetch its constant)
 : 'data  ' >data ;
 
@@ -369,7 +391,7 @@ forth
 variable dpl    ( location of , or . )
 variable radix
 
-: radixer  create  does>  radix ! ;
+: radixer  constant  does>  radix ! ;
 
 2 2* 2* dup 2* ( 16!)  radixer hex
 dup            (  8!)  radixer octal
@@ -646,7 +668,7 @@ forth
 : ."    char " parse ( a #)  type  ;  ( not compiled)
 
 ( Words that do something with each word being defined.)
-: being-defined  create  does> 'new-hook ! ;
+: being-defined  constant  does> 'new-hook ! ;
 
 ( To warn of re-defining a word.)
 -: ( a u)  2dup current @ find if  fd-out @ push >stderr
@@ -673,9 +695,6 @@ being-defined -v  ( be verbose)
 ( !!!!-------------------- Add changes below this line -------------------!!!!)
 
 ( Word listing. Putting this in as soon as possible. Needs `space'.)
-: link>name   cell+  dup 1+ swap c@ ;
-: link>body   link>name +  aligned ;
-
 : words   0  current @  ( count link)
   begin  @  =while  1 u+
             dup link>name type space space  repeat
@@ -739,7 +758,7 @@ being-defined -v  ( be verbose)
           `conditional' vocab.)
 
 ( Compiler/interpreter modes.)
-: mode   create  (s prompt interpret)  ram push , ,   pop  does>  state ! ;
+: mode   create  (s prompt interpret)  ,  ,  does>  state ! ;
 
 ( Defining new dictionary chains. These used to be in an array but are now
   independent of each other; now they are simply variables that point to the
@@ -777,7 +796,7 @@ forth
 : [with]    \ [with]  ;
 
 ( A defining word that makes words that return -1)  
-: trues  create  -1 does> ;
+: trues   -1 constant ;
 
 ( The defining word `with' for creating conditional compilation words.
   No matter what chain we are compiling into, define the word - using
