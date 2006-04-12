@@ -209,7 +209,7 @@ void mu_compiler_lbracket()
 }
 
 /* to make it easier to compile into ; */
-void mu_back_lbracket()
+void mu_backslash_lbracket()
 {
     state = &forth_interpreter;
 }
@@ -281,7 +281,7 @@ void mu_evaluate()
     mu_throw();
 }
 
-void mu_load_file()
+void mu_load_file()    /* c-string-name */
 {
     int fd;
 

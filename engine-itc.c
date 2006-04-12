@@ -38,7 +38,6 @@ pw p_mu_evaluate = &mu_evaluate;
 pw p__mu__lbracket = &_mu__lbracket;
 pw p__mu__rbracket = &_mu__rbracket;
 
-/* These are the same for the ITC engine, but aren't necessarily the same. */
 void mu_compile_comma()  { *pcd++ = POP; }
 void mu_set_colon_code() { *pcd++ = (cell)&mu_do_colon; }
 void mu_set_does_code()  { *pcd++ = (cell)&mu_do_does; }
@@ -108,45 +107,18 @@ void mu_exit()      { UNNEST; }
 void mu_literal_()  { PUSH(*IP++); }
 
 /*
- * For compiling control structures, we need architecture-specific help. We
- * don't know, eg, how long displacements are, and we don't know how to
- * resolve branches. So we isolate the specifics here, and put the
- * generalities in startup.mu4.
+ * These are the control structure runtime workhorses. They are static
+ * because we don't export them directly to muforth; instead we export
+ * words that *compile* them.
  */
-
-/*
- * Mark a branch source for later fixup.
- * : mark>  (s - src)  here  0 code, ;
- */
-void mu_mark_from()
-{
-    PUSH(pcd);  /* leave the address of the following 0 */
-    *pcd++ = 0;
-}
-
-/*
- * Resolve a forward or backward jump, from src to dest.
- */
-void mu_resolve()  /* src dest - */
-{
-    /* In ITC land, this is easy: just store dest at src. */
-    cell *src = (cell *)ST1;
-    cell dest = TOP;
-    *src = dest;
-    DROP(2);
-}
-
-/*
- * These are the control structure runtime workhorses.
- */
-void mu_branch_()            { BRANCH; }
-void mu_equal_zero_branch_() { if (TOP == 0) BRANCH; else IP++; }
-void mu_zero_branch_()       { mu_equal_zero_branch_(); DROP(1); }
+static void mu_branch_()            { BRANCH; }
+static void mu_equal_zero_branch_() { if (TOP == 0) BRANCH; else IP++; }
+static void mu_zero_branch_()       { mu_equal_zero_branch_(); DROP(1); }
 
 /* for, ?for, next */
 /* for is simply "push" */
 /* ?for has to matched with "then" */
-void mu_qfor_()
+static void mu_qfor_()
 {
     if (TOP == 0)
     {
@@ -160,7 +132,7 @@ void mu_qfor_()
     }
 }
 
-void mu_next_()
+static void mu_next_()
 {
     cell *prtop;
     prtop = (cell *)RP;
@@ -176,6 +148,91 @@ void mu_next_()
     }
 }
 
+/*
+ * Since we're now compiling control structure bits in this file, we need
+ * some more ITC code pointers. Since the "workhorse" words aren't even
+ * going into the dictionary, we definitely need these code pointers!
+ */
+
+/*
+ * For compiling control structures, we need architecture-specific help. We
+ * don't know, eg, how long displacements are, and we don't know how to
+ * resolve branches. So we isolate the specifics here, and put the
+ * generalities in startup.mu4.
+ */
+
+/*
+ * Mark a branch source for later fixup.
+ * : mark>  (s - src)  here  0 code, ;
+ */
+void mu_mark_forward()
+{
+    PUSH(pcd);  /* leave the address of the following 0 */
+    *pcd++ = 0;
+}
+
+/*
+ * Resolve a forward or backward jump, from src to dest.
+ */
+void mu_resolve_forward()  /* src dest - */
+{
+    /* In ITC land, this is easy: just store dest at src. */
+    cell *src = (cell *)ST1;
+    cell dest = TOP;
+    *src = dest;
+    DROP(2);
+}
+
+enum mu_branch_t { BRANCH_T, ZBRANCH_T, EQZBRANCH_T, FOR_T, QFOR_T, NEXT_T };
+
+static pw p_mu_branches[] = {
+    &mu_branch_,
+    &mu_zero_branch_,
+    &mu_equal_zero_branch_,
+    &mu_push,
+    &mu_qfor_,
+    &mu_next_
+};
+
+static void compile_branch(enum mu_branch_t br)
+{
+    *pcd++ = (cell)&p_mu_branches[br];
+}
+
+/*
+ * Words that *compile* the above control structure words.
+ */
+void mu_branch_comma()
+{
+    compile_branch(BRANCH_T);
+}
+
+void mu_zero_branch_comma()      
+{
+    compile_branch(ZBRANCH_T);
+}
+
+void mu_equal_zero_branch_comma()
+{
+    compile_branch(EQZBRANCH_T);
+}
+
+void mu_for_comma()
+{
+    compile_branch(FOR_T);
+}
+
+void mu_qfor_comma()
+{
+    compile_branch(QFOR_T);
+}
+
+void mu_next_comma()
+{
+    compile_branch(NEXT_T);
+}
+
+   
 /*
  * Runtime workhorses for R stack functions. In the x86 native code, "push"
  * and "pop" are compiler words. Here they don't need to be.

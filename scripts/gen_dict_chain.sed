@@ -56,8 +56,8 @@ s/equal/=/
 s/zero/0/
 s/reset/!/
 s/star(_|$)/*/
+s/backslash/\\\\/
 s/slash/\//
-s/back/\\\\/
 s/plus/+/
 s/minus/-/
 s/shift_left/<</
@@ -74,7 +74,7 @@ s/comma$/,/
 s/tick/'/
 s/exit/^/
 s/q/?/
-s/from/>/
+s/forward/>/
 s/(.*)_size/#\1/
 
 # turn foo_ to (foo)
