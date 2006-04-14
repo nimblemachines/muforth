@@ -72,18 +72,18 @@ in do_constant write `lr do_does BL'. Now in do_does `w' points to the data
 in the parameter field, and `lr' points to the high-level code to execute.
 
 defined_word:
-	w do_constant BL
-	<data>
+        w do_constant BL
+        <data>
 
 do_constant:
-	lr do_does BL
-	<high level code>
+        lr do_does BL
+        <high level code>
 
 do_does:
-	push w on data stack
-	push ip on return stack
-	ip <- lr
-	<next>
+        push w on data stack
+        push ip on return stack
+        ip <- lr
+        <next>
 
 That was a more involved example than I had hoped. As it is, since we can't
 specify the link register, we have to kludge very slightly and save `lr'
@@ -135,23 +135,23 @@ number of transfers necessary.
 The work-horse instructions have the following clock counts (from 7TDMI
 datasheet):
 
-Instruction	Clocks		Additional clocks
-^^^^^^^^^^^	^^^^^^		^^^^^^^^^^^^^^^^^
-<alu>		1S		+1I  for shift by register
-				+1S + 1N  if dest is PC
-LDR		1S + 1N +1I	+1S + 1N  if dest is PC
-STR		2N		(really 1S + 1N + 1I)
-B,BL		2S + 1N
+Instruction     Clocks          Additional clocks
+^^^^^^^^^^^     ^^^^^^          ^^^^^^^^^^^^^^^^^
+<alu>           1S              +1I  for shift by register
+                                +1S + 1N  if dest is PC
+LDR             1S + 1N +1I     +1S + 1N  if dest is PC
+STR             2N              (really 1S + 1N + 1I)
+B,BL            2S + 1N
 
 With the simplification that I=1 and N=S+1, let's rewrite this as:
 
-Instruction	Clocks		Additional clocks
-^^^^^^^^^^^	^^^^^^		^^^^^^^^^^^^^^^^^
-<alu>		1S		+ 1  for shift by register
-				+ 2S + 1  if dest is PC
-LDR		2S + 2		+ 2S + 1  if dest is PC
-STR		2S + 2
-B,BL		3S + 1
+Instruction     Clocks          Additional clocks
+^^^^^^^^^^^     ^^^^^^          ^^^^^^^^^^^^^^^^^
+<alu>           1S              + 1  for shift by register
+                                + 2S + 1  if dest is PC
+LDR             2S + 2          + 2S + 1  if dest is PC
+STR             2S + 2
+B,BL            3S + 1
 
 Ahh. Much better. Now we can talk about timings and not go completely mad.
 
@@ -169,31 +169,31 @@ analogous to the real machine's hardware instruction fetch and execute.
 First, some virtual machine mechanisms.
 
 BL_nest:
-	str	lr, [rp, -4]!	; push lr
+        str     lr, [rp, -4]!   ; push lr
 
 BL_unnest:
-	ldr	pc, [rp], 4
+        ldr     pc, [rp], 4
 
 BL_unnest_tail:
-	ldr	lr, [rp], 4	; for tail-call optimization
+        ldr     lr, [rp], 4     ; for tail-call optimization
 
 DT_nest:
-	str	ip, [rp, -4]!	; push ip
-	mov	ip, lr		; load new ip from lr
+        str     ip, [rp, -4]!   ; push ip
+        mov     ip, lr          ; load new ip from lr
 
 IT_nest:
-	str	ip, [rp, -4]!	; push ip
-	mov	ip, w		; load new ip from w
-	
+        str     ip, [rp, -4]!   ; push ip
+        mov     ip, w           ; load new ip from w
+        
 // Machine code word //
 BL:   BL foo; <machine code for foo>; MOV pc, lr
 DT:   DT_next; <machine code for foo>
 IT:   IT_next; <machine code for foo>
 
 // High-level word //
-BL:	BL foo; BL_nest; <foo>; <bar>; BL_unnest
+BL:     BL foo; BL_nest; <foo>; <bar>; BL_unnest
 BL_tail_optimized:
-	BL foo; BL_nest; <foo>; BL_unnest_tail; B <bar>;
+        BL foo; BL_nest; <foo>; BL_unnest_tail; B <bar>;
 
 DT:   DT_next; BL DT_nest; DT_nest; <foo>; DT_next; DT_unnest
 
@@ -210,8 +210,8 @@ IT:   <do_create>; IT_next
 
 Block       Instructions        Clocks         Block total clocks
 ^^^^^       ^^^^^^^^^^^^        ^^^^^^         ^^^^^^^^^^^^^^^^^^
-BL_nest:    STR lr, [rp, -4]!   2S + 2	       2S + 2
-BL_unnest:  LDR pc, [rp], 4     4S + 3	       4S + 3
+BL_nest:    STR lr, [rp, -4]!   2S + 2         2S + 2
+BL_unnest:  LDR pc, [rp], 4     4S + 3         4S + 3
 
 BL_code:    BL foo              3S + 1         6S + 2
 foo:        <machine code for foo>
@@ -224,28 +224,28 @@ foo:        MOV w, lr           1S
             MOV pc, w           3S + 1
 
 BL_create:  BL foo
-	    LDR w, [pc], 0
-	    B push_const
-	    STR top, [sp, -4]!
-	    MOV top, w
-	    MOV pc, lr
+            LDR w, [pc], 0
+            B push_const
+            STR top, [sp, -4]!
+            MOV top, w
+            MOV pc, lr
 
 BL_inline_does:
             BL foo              3S + 1         15S + 9
 foo:        BL_nest             2S + 2
-	    BL do_definer       3S + 1
+            BL do_definer       3S + 1
 definer:    STR top, [sp, -4]!  2S + 2
             MOV top, lr         1S
-	    <foo>
-	    BL_unnest		4S + 3
+            <foo>
+            BL_unnest           4S + 3
 
 BL_colon:   BL foo              3S + 1          9S + 6
 foo:        BL_nest             2S + 2
-	    <foo>
-	    BL_unnest		4S + 3
+            <foo>
+            BL_unnest           4S + 3
 
 BL_colon2:  BL foo              3S + 1         21S + 10
-foo:	    STR lr, [rp, -4]!   2S + 2
+foo:        STR lr, [rp, -4]!   2S + 2
             BL a; MOV pc, lr    6S + 2
             BL b; MOV pc, lr    6S + 2
             LDR pc, [rp], 4     4S + 3
@@ -277,22 +277,22 @@ DT_create:  DT_next             4S + 3         7S + 4
             <do_create>
 
 DT_inline_does:
-	    DT_next		4S + 3        22S + 14
-	    BL do_definer       3S + 1
+            DT_next             4S + 3        22S + 14
+            BL do_definer       3S + 1
 definer:    STR top, [sp, -4]!  2S + 2
             MOV top, lr         1S
             BL DT_nest          3S + 1
-	    DT_nest             3S + 2
-	    <foo>
-	    DT_next             4S + 3
-	    DT_unnest		2S + 2
+            DT_nest             3S + 2
+            <foo>
+            DT_next             4S + 3
+            DT_unnest           2S + 2
 
 DT_inline_nest:
-	    STR ip, [rp, -4]!   2S + 2         3S + 2
-	    MOV ip, pc          1S
+            STR ip, [rp, -4]!   2S + 2         3S + 2
+            MOV ip, pc          1S
 
 DT_colon_inline:
-	    DT_next             4S + 3        13S + 10
+            DT_next             4S + 3        13S + 10
             DT_inline_nest      3S + 2
             <foo>
             DT_next             4S + 3
@@ -308,22 +308,22 @@ DT_colon:   DT_next             4S + 3        16S + 11
 DT_colon2:  DT_next             4S + 3        24S + 17
             BL DT_nest          3S + 1
             DT_nest             3S + 2
-	    DT_next; <a>	4S + 3
-	    DT_next; <b>	4S + 3
+            DT_next; <a>        4S + 3
+            DT_next; <b>        4S + 3
             DT_next             4S + 3
             DT_unnest           2S + 2
 
 DT_colon2_tail:
-	    DT_next             4S + 3        21S + 14
+            DT_next             4S + 3        21S + 14
             BL DT_nest          3S + 1
             DT_nest             3S + 2
-	    DT_next; <a>	4S + 3
-	    DT_unnest_tail; <b>	7S + 5
+            DT_next; <a>        4S + 3
+            DT_unnest_tail; <b> 7S + 5
 
 DT_unnest_tail:
-	    MOV w, ip		1S	       7S + 5
-	    LDR ip, [rp], 4     2S + 2
-	    LDR pc, [w], 4      4S + 3
+            MOV w, ip           1S             7S + 5
+            LDR ip, [rp], 4     2S + 2
+            LDR pc, [w], 4      4S + 3
 
 IT_next:    LDR w, [ip], 4      2S + 2         6S + 5
             LDR pc, [w, -4]!    4S + 3
@@ -338,19 +338,19 @@ IT_unnest:  LDR ip, [rp], 4     2S + 2         2S + 2
 IT_code:    IT_next             6S + 5         6S + 5
             <machine code for foo>
 
-IT_create:  IT_next             6S + 5         6S + 5	
+IT_create:  IT_next             6S + 5         6S + 5   
             <do_create>
 
 IT_do_does: STR top, [sp, -4]!  2S + 2         6S + 4
-	    MOV top, w          1S
-	    IT_nest             3S + 2
+            MOV top, w          1S
+            IT_nest             3S + 2
 
-IT_does:    IT_next             6S + 5	      23S + 17
-	    BL IT_do_does       3S + 1
-            IT_do_does		6S + 4
-	    <word>
-            IT_next		6S + 5
-	    IT_unnest           2S + 2
+IT_does:    IT_next             6S + 5        23S + 17
+            BL IT_do_does       3S + 1
+            IT_do_does          6S + 4
+            <word>
+            IT_next             6S + 5
+            IT_unnest           2S + 2
 
 IT_colon:   IT_next             6S + 5        17S + 14
             IT_nest             3S + 2
@@ -361,7 +361,7 @@ IT_colon:   IT_next             6S + 5        17S + 14
 
 An indirect-threaded call to machine code looks like this:
 
-	<next>; <machine code>; [<next>]
+        <next>; <machine code>; [<next>]
 
 The <next> that follows the machine code is considered to be part of the
 call to the next word - a kind of pipelining, and one of the elegances of
@@ -372,7 +372,7 @@ access, N is a non-sequential access, and I is an internal cycle.
 
 A branch-and-link call to machine code looks like:
 
-	bl; <machine code>; mov lr -> pc
+        bl; <machine code>; mov lr -> pc
 
 Its cost is two branches. On a pipelined load-store architecture like the
 ARM, two branches will cost 2S + 1N cycles each, or 4S + 2N. Assuming that
@@ -385,7 +385,7 @@ an S cycle (as they definitely do on the Sharp '790), the totals are:
 
 An threaded call to high-level code looks like this:
 
-	<next, nest>  <next, body>  <next, unnest>
+        <next, nest>  <next, body>  <next, unnest>
 
 If we want to calculated only the overhead of the -call-, we have to ignore
 the time taken to execute the body, including its preceding <next>. If we
@@ -401,7 +401,7 @@ Cycle overheads:
 
 A branch-and-link call to `high-level' (non-leaf) code looks like:
 
-	bl; <push lr>; <machine code>; <pop pc>
+        bl; <push lr>; <machine code>; <pop pc>
 
 Overhead is 3 + 2 + 5 = 10 cycles.
 
