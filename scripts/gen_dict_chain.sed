@@ -75,6 +75,7 @@ s/tick/'/
 s/exit/^/
 s/q/?/
 s/forward/>/
+s/to(_|$)/>/
 s/(.*)_size/#\1/
 
 # turn foo_ to (foo)

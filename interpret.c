@@ -58,6 +58,19 @@ static char *first;       /* goes from source.start to source.end */
 
 struct string parsed;       /* for errors */
 
+/*
+ * This isn't exactly ANS-kosher, since traditionally >IN contained an
+ * offset within the input text that went from 0 to length-1; here it goes
+ * from source.start to source.end-1, but the important effect is that we
+ * can do this:
+ *
+ * >in @ <parse> >in ! <re-parse>
+ */
+void mu_to_in()
+{
+    PUSH(&first);
+}
+
 static void mu_return_token(char *last, int trailing)
 {
     /* Get address and length of the token */
