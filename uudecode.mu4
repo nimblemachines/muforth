@@ -1,0 +1,74 @@
+( $Id$
+
+  This file is part of muFORTH; for project details, visit
+
+     http://nimblemachines.com/browse?show=MuForth
+
+  Copyright 1997-2006 David Frech. All rights reserved, and all wrongs
+  reversed.
+
+  Licensed under the Apache License, Version 2.0 [the "License"];
+  you may not use this file except in compliance with the License.
+  You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+  or see the file LICENSE in the top directory of this distribution.
+
+  Unless required by applicable law or agreed to in writing, software
+  distributed under the License is distributed on an "AS IS" BASIS,
+  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  See the License for the specific language governing permissions and
+  limitations under the License.)
+
+( Since we have uuencode, we need decode as well. Esp since the Philips
+  LPC2000 parts can send back memory contents in uuencoded format.)
+
+
+( Decodes 4 chars of 6 bits - base64 - into 3 chars of 8 bits.)
+
+cr " UUdecode "  file[#
+
+: uu1decode   bl -  63 and ;  ( maps both space and ` to 0)
+: uupeel   dup 8 >> ;
+: uu3peel   uupeel  uupeel ;
+
+( high to low:  c0:c1:c2)
+: c,   ram c!  1 r +! ;
+: c@+   (s a - a+1 c)  dup 1+ swap c@ ;
+: 6b@   ( a n - a+1 n')  6 <<  push  c@+ uu1decode  pop  +  ;
+: uu3decode,   uu3peel  c,  c,  c, ;
+
+( Each letter represents 2 bits; so aaaa is a byte.)
+: uu3   ( a - a+4)  0  6b@  6b@  6b@  6b@   ( aaa:abb:bbc:ccc)  uu3decode, ;
+: uu2   ( a - a+3)  0  6b@  6b@  6b@  2 >>  ( aaa:abb:bb0)  uupeel c, c, ;
+: uu1   ( a - a+2)  0  6b@  6b@       6 >>  ( aaa:a00)      c,  ;
+
+: uuleft   ( a 0|1|2 - a+)  jump  nope  uu1  uu2  [
+: uuline  ( a)
+   c@+ uu1decode ( count)
+   3 /mod ( m q)  swap push ( m)  ?for  uu3  next  then  pop  uuleft  drop ;
+
+
+#]file
+
+
+( test)
+chain .uu.
+
+.uu. definitions
+: begin  ram ( capture start addr)  \f // ;  ( throw away line)
+: end    ram aligned  r !  ram over -    \f // ;  ( throw away line)
+forth
+
+' nope
+-:  .uu. find  if execute ^ then  drop ( n)  uuline ;
+mode _uudec
+
+: uudec  _uudec  ld  \ [ ;
+
+: uuenc  token _string create-file
+  fd-out @ push  dup push writes  uu  pop close-file   pop writes ;
+
+uudec muforth.uu
+uuenc muforth.uu.mu4

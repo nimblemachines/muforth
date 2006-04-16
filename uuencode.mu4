@@ -39,25 +39,29 @@ variable u
 : uflush  uubuf  u @  over - type ;
 : u,  u @  c!  1 u +! ;
 
-: uu1encode   63 and  bl +  ;
-: uupeel   dup 6 rshift  ;
+( : uu1encode   63 and  bl +  ;  ( XXX: encodes 0 as 32, not as 96 `)
+: uu1encode   63 and  dup 0= if  64 +  then  bl +  ;
+: uupeel   dup 6 >>  ;
 : uu4peel   uupeel  uupeel  uupeel  ;
 
 : uu1encode,   uu1encode  u,  ;
 
 ( high to low:  c0:c1:c2)
 : c@+   (s a - a+1 c)  dup 1+ swap c@ ;
-: 8b@   ( a n - a+1 n')  8 lshift  push  c@+  pop  +  ;
+: 8b@   ( a n - a+1 n')  8 <<  push  c@+  pop  +  ;
 : uu4encode,
    uu4peel   uu1encode,  uu1encode,  uu1encode,  uu1encode,  ;
 
-: uu3   ( a - a+3)  0  8b@  8b@  8b@       ( 0:c0:c1:c2)   uu4encode,  ;
-: uu2   ( a - a+2)  0  8b@  8b@  8 lshift  ( 0:c0:c1:0)    uu4encode,  ;
-: uu1   ( a - a+1)  0  8b@      16 lshift  ( 0:c0:0:0)     uu4encode,  ;
+( Each letter represents 2 bits; so aaaa is a byte; colons separate chars
+  as they will be sent out, in groups of 6 bits.)
+
+: uu3   ( a - a+3)  0  8b@  8b@  8b@   ( aaa:abb:bbc:ccc)  uu4encode, ;
+: uu2   ( a - a+2)  0  8b@  8b@  8 <<  ( aaa:abb:bb0:000)  uu4encode, ;
+: uu1   ( a - a+1)  0  8b@      16 <<  ( aaa:a00:000:000)  uu4encode, ;
 
 : cr,   ctrl J  u,  ;
 
-: uuleft  ( a 0|1|2 - a+)  jump  nope  uu1  uu2  -;
+: uuleft  ( a 0|1|2 - a+)  jump  nope  uu1  uu2  [
 : uuline  ( a n - a+n)
    clean
    cr,  dup uu1encode, ( count)
@@ -77,19 +81,15 @@ variable u
 ( Tests)
 
 0 [if]
-ld ARM/memory.d4   ram
-
-jiffies
-[then]
 
 : tt  z" /tmp/aeb.uue" create-file  dup writes
    z" ../../ARM/AEB-1/Revc1.bin" r/o open-file dup mmap-file  ( a #)  uu
     close-file ( aeb.uue)  close-file     >stdout ;
-  [else]
 
-( 'image #image)  "40000000 "b4000  uu  close drop  [then]
+( 'image #image)  "40000000 "b4000  uu  close drop
 
 >stdout  (  jiffies  swap-  .  ." jiffies "  0  bye)
+
 [then]
 
 
