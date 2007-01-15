@@ -23,6 +23,7 @@
 
 ( Simple terminal and serial expect/send code.)
 
+( 2007-jan-15. Moved v25 and ARM things elsewhere.)
 ( 2002-mar-27. Converted to muforth.)
 
 ( Created 5-aug-1999.)
@@ -31,22 +32,14 @@ cr " Terminal "  file[#
 
 decimal
 
-( test)
-( by setting rom-start wrong here, to "4000000, instead of
-  "4000000 64 Ki +, I managed to b0rk the bootloader on one of my boards
-  while testing the terminal download code. Shit!)
-
 ( Open serial device.)
 variable fd-target
 : tty-target  z" /dev/cuad0" r/w  open-file  fd-target ! ;
 
-: bps   ( fd speed)
+: bps   ( speed)
+   fd-target @
    over ram get-termios drop  ram swap set-termios-speed
   ( fd) ram set-termios ;
-
-: te-slow     fd-target @   9600 bps  ;
-: te-fast     fd-target @  57600 bps  ;
-: te-smokin'  fd-target @ 115200 bps  ;
 
 ( Keymaps)
 -: ( self)  emit  0 ;  256 defarray term-keys
@@ -98,33 +91,9 @@ new-fd-set fds
 
 : te  ( terminal)
    tty-target  fd-target @ raw  ( disallows signals)
-   te-smokin'
+   115200 bps  ( default to hi speed)
    radix @ push  tty raw   ['] te-stream catch
                  tty cooked  fd-target @ close-file  pop radix !  throw ;
-
-
-comment %v25-specific%
-( Downloading initial image to target.)
-
-( IDEA: Use this code to stream stuff to the v25 and have it show, on the
-  screen, what it's returning. Or simply to consume all the text before or
-  after a cmd.)
-
-( Expect/send.)
-: ><target  tty reads  tty writes  (  fd-target @ reads  fd-target @ writes)  ;
-: |cr  #CR emit  ;
-
-: ?prompt  ( ch)  begin  key  over = until  drop  ;
-
-variable 'boot   rom-start "435 + 'boot !  ( XXX: just for fun)
-( Execute!)
-: pc!  ( n)   ." pc" .w16 |cr  ." gos" |cr ;
-
-
-( Load the chat interactive stuff here.)
-ld v25/chat-host.d4		( interactive debugging)
-%v25-specific%
-
 
 ( Special keys.)
 
@@ -150,57 +119,9 @@ ld v25/chat-host.d4		( interactive debugging)
 
 esc: [  ( vt10x)  CSI  0 ;
 
-: |cr  #CR emit  ;
-variable 'boot  ( filled in later!)
-
 -: drop  #BS emit  0 ;   #DEL term-keys !  ( DEL sends BS)
 
-esc: k  ( smoke)  te-smokin'  0  ;
-esc: f  ( fast)   te-fast  0  ;
-esc: s  ( slow)   te-slow  0  ;
-
-esc: d  ( download)      ." flashload " rom-start .w16  |cr  0 ;
-esc: r  ( ram download)  ." download"  |cr  0 ;
-
-esc: u  ( uuencode)  'image |#  uu  0 ;
-esc: p  ( pc)  ." pc " 'boot @ .w16 |cr  0 ;
-esc: g  ( go)  ." gos" ( |cr)  0 ;
-
 esc: q  ( quit)  -1 ;
-
-comment %v25-specific%
--:
-   tty-target reads  tty-target writes  te-slow
-   |cr-chat  char * ?prompt  " l" send  z" loader" "download  " g" send
-   char g ?prompt  te-fast
-   ( changes target serial speed - can't await prompt)  0  ;
-                                   char l  term-esc-keys !  ( loader)
--:
-   tty-target reads  tty-target writes
-   |cr-chat  char * ?prompt  " l" send  z" image" "download
-   initial-sync  0  ;
-                                   char i  term-esc-keys !  ( image)
--:
-   tty-target reads  tty-target writes
-   |cr-chat  char * ?prompt  |boot @ pc!  " r" send  0  ;
-                                   char b  term-esc-keys !  ( boot)
--:
-   tty-target reads  tty-target writes
-   |cr-chat  char * ?prompt  " g" send  <LF> ?prompt
-   ( target responds "g CR LF")   chat!  -1 ( quit term)  ;
-                                   char g  term-esc-keys !  ( go)
-
-( 2002-mar-30. Comments. About reading prompts and so on. Make an 8 byte
-  ring buffer that you copy the target responses into. Keep looping around
-  and copying until the last 5 characters match "Boot:".
-
-  Alternatively, use human intelligence combined with "macro" keystrokes.
-  Read the prompt yourself, then type "M-d"; terminal sends "download<CR>";
-  target responds; type "M-u" to uuencode and send; target responds. This
-  is probably easier. And once we get something into Flash that can be a
-  debugging stub we won't even need to do this anymore.)
-
-%v25-specific%
 
 00 [if]
 
