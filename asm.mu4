@@ -28,12 +28,17 @@
   the Z80 and getting ready to totally blow Intel's x80 market share away.
   Hmm, then what happened to Zilog? They really fumbled the 32bit market.)
 
+( I'm going to use the term "8080" to mean the 8080 and 8085. As mentioned,
+  the only difference _to the programmer_ - the hardware is a _lot_ nicer -
+  is the two new instructions. You 8080 programmers out there - both of you
+  - just don't use those two insns.)
+
 ( I'm going to change some of the mnemonics. Most hardware vendors choose
   awful mnemonics. [Thankfully ARM is better than most, though their
   mnemonics do imply a source/dest ordering that doesn't work as well with
   postfix assemblers.] Atmel's AVR is a good example: a decent
   architecture, a somewhat complex insn encoding, and completely awful,
-  brain-dead, and confusing mnemonics . The 8080/5 mnemonics are a mix.
+  brain-dead, and confusing mnemonics . The 8080 mnemonics are a mix.
   Some are ok, but others - mostly the "immediate with A" insns - are
   awful. So I'm going to change them. If I remember, I'll note this in the
   definition of the insn.)
@@ -55,30 +60,31 @@
 ( I'm considering putting cycle times into the insns. We'll see how that
   works.)
 
+( Space for compiling into. 8080 only has 64k address space.)
+64 Ki buffer image
 
-: 0r0  ( reg op)  3 <<  or ;
-: 0R0  ( regpair op)  6 and  3 <<  or ;
-: b,   op, ;
-: w,   b,  8 >>  b, ;
+: 0r0  ( reg op)      swap  7 and  3 <<  or ;
+: b,   ( compile byte)  
+: w,   ( compile word, little-endian)  b,  8 >>  b, ;
 
 octal
 assembler
 
-( Immediate, direct, indirect?)
-: #   XXX ;   ( immed)
-: )   XXX ;   ( indirect)
-: #)   XXX ;  ( direct)
-
-( Registers. Register pairs - BC, DE, HL - are identified by B, D, H,
-  resp.)
+( Registers.)
 0 constant b
 1 constant c
 2 constant d
 3 constant e
 4 constant h
 5 constant l
-6 constant m   6 constant sp   6 constant psw
+6 constant m
 7 constant a
+
+( Register pairs have high bit set.)
+200 constant bc
+202 constant de
+204 constant hl
+206 constant sp  206 constant psw ( af?)
 
 ( group 000)
 000 nop
@@ -115,8 +121,17 @@ assembler
 ( group 005)
 005 0r0 dec  ( intel: dcr)
 
+( Hmm. why not this:)
+( reg regpair)
+  004 003 xxx inc
+  005 013 xxx dec
+
 ( group 006)
 006 0r0 movi
+
+( Similarly to inc/dec; this combines movi and lxi)
+( reg regpair)
+  006 001 xxx movi
 
 ( group 007)
 ( Hmm: should these be called rola, rora, rlca, rrca, daa, coma, since they
@@ -137,24 +152,16 @@ assembler
 166 halt  ( intel: hlt; encoded as mov m,m)
 
 ( groups 200 - 207; low order digit is src register)
-200 00r add
-210 00r adc
-220 00r sub
-230 00r sbb
-240 00r and  ( intel: ana)
-250 00r xor  ( intel: xra)
-260 00r or   ( intal: ora)
-270 00r cmp
-
-( group 306)
-306 addi  ( intel: adi)
-316 adci  ( intel: aci)
-326 subi  ( intel: sui)
-336 sbbi  ( intel: sbi)
-346 andi  ( intel: ani)
-356 xori  ( intel: xri)
-366 ori   ( intel: ori)
-376 cmpi  ( intel: cpi)
+                              ( group 306)
+( regreg adds 200; imm adds 306)
+000 dup 00r add                   addi  ( intel: adi)
+010 dup 00r adc                   adci  ( intel: aci)
+020 dup 00r sub                   subi  ( intel: sui)
+030 dup 00r sbb                   sbbi  ( intel: sbi)
+040 dup 00r and  ( intel: ana)    andi  ( intel: ani)
+050 dup 00r xor  ( intel: xra)    xori  ( intel: xri)
+060 dup 00r or   ( intal: ora)    ori   ( intel: ori)
+070 dup 00r cmp                   cmpi  ( intel: cpi)
 
 ( group 300)
 ( Conditional return)
@@ -164,8 +171,8 @@ assembler
 301 0R0 pop  ( also 321, 341, 361)
 311 ret
 ( 331)
-351 pchl
-371 sphl
+351 pchl  ( pc! vector go run)
+371 sphl  ( sp!)
 
 ( group 302)
 ( Conditions, encoded in the negative, so we can used them with "if" and
