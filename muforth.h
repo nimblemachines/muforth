@@ -136,12 +136,14 @@ struct string
 };
 
 /*
- * struct text is an odd beast. It's intended for parsing, and other
- * applications that scan a piece of text. To make this more efficient
- * we store a pointer to the _end_ of the text, and a _negative_
- * offset to its start, rather than the way struct string works.
+ * struct text is intended for parsing, and other applications that scan a
+ * piece of text. Because we will be scanning the text but also making sure
+ * we don't run off the end, we store a pointer to the first character
+ * (start) and a pointer to the first character not belonging to the text
+ * (end). This way we can increment start and check that its less than end.
+ * If we used struct string instead we'd have to keep adding length to data
+ * to see if we've overrun.
  */
-
 struct text
 {
     char *start;

@@ -40,22 +40,12 @@
 
 struct imode        /* interpreter mode */
 {
-    xtk eat;       /* consume one token */
-    xtk prompt;    /* display a mode-specific prompt */
+    xtk eat;        /* consume one token */
+    xtk prompt;     /* display a mode-specific prompt */
 };
 
-/*
- * In the parsing code that follows, the variables first and last are
- * negative offsets from the _end_ of the input text. They increase from
- * left to right, and are always non-positive (ie, <= 0).
- *
- * Because they increase from left to right, just like "normal" text
- * pointers, a "last - first" difference yields a non-negative (>=0)
- * length.
- */
 static struct text source;
-static char *first;       /* goes from source.start to source.end */
-
+static char *first;         /* goes from source.start to source.end */
 struct string parsed;       /* for errors */
 
 /*
