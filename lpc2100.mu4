@@ -1,0 +1,104 @@
+( $Id$
+
+  This file is part of muFORTH; for project details, visit
+
+     http://nimblemachines.com/browse?show=MuForth
+
+  Copyright 1997-2006 David Frech. All rights reserved, and all wrongs
+  reversed.
+
+  Licensed under the Apache License, Version 2.0 [the "License"];
+  you may not use this file except in compliance with the License.
+  You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+  or see the file LICENSE in the top directory of this distribution.
+
+  Unless required by applicable law or agreed to in writing, software
+  distributed under the License is distributed on an "AS IS" BASIS,
+  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  See the License for the specific language governing permissions and
+  limitations under the License.)
+
+( Support for Philips LPC2100 series of ARM 7TDMI microcontrollers.)
+
+cr " Philips LPC21xx support "  file[#
+
+( Boostrap loader [BSL] support.)
+
+chain .isp.
+: isp   .isp. definitions ;
+
+defer resync
+
+: (status")  fd-out @ push   >stderr  count type  pop writes ;
+
+compiler
+: status"   \ z"  \ (status") ;
+
+isp
+( ISP command return codes.)
+:  0  status" Success" ;
+:  1  status" Invalid command" ;
+:  2  status" Source address not word-aligned" ;
+:  3  status" Destination address not word-aligned" ;
+:  4  status" Source address not mapped" ;
+:  5  status" Destination address not mapped" ;
+:  6  status" Byte count not a multiple of 4" ;
+:  7  status" Invalid sector number" ;
+:  8  status" Sector not blank" ;
+:  9  status" Sector not prepared for write" ;
+: 10  status" Source and destination data not equal" ;
+: 11  status" Busy flashing" ;
+: 12  status" Parameter error" ;
+: 13  status" Address not word-aligned" ;
+: 14  status" Address not mapped" ;
+: 15  status" Command locked" ;
+: 16  status" Invalid unlock code" ;
+: 17  status" Invalid baud rate" ;
+: 18  status" Invalid stop bit setting" ;
+: 19  status" Code read protection enabled" ;
+
+: 196353  status" LPC2131" ;
+: 196369  status" LPC2132" ;
+: 196370  status" LPC2134" ;
+: 196387  status" LPC2136" ;
+: 196389  status" LPC2138" ;
+
+: Synchronized   ." Synchronized"  status" Synchronized"  cr ;
+
+( Chose these values for begin ... until use.)
+: OK     -1 ;  ( true)
+: RESEND  0 ;  ( false)
+
+forth
+
+' nope ( prompt)
+-:  .isp. find  if execute ^ then  ( uudecode) ;
+mode listening
+
+( Get input from target.)
+: process  ( end a key - end a' done)
+   dup #LF if drop  0 ^ then
+   dup #CR if drop -1 ^ then ( done)
+   over c!  1+  2dup = ;
+
+: straight  ( - a u)  ( I think this is what Chuck called it. ;-)
+   inbuf #inbuf  over + swap ( end inbuf)
+   begin  key  process  until  nip  inbuf swap ( inbuf a)  over - ;
+
+: xtal   ." 14745" cr ( xtal speed) ;
+
+: listen  straight listening evaluate \ [ ;
+: sync  begin  char ? emit  listen  until  ( OK will return -1)
+        begin  xtal  listen  until
+        begin  char J emit  listen until
+        now nope is resync ;
+
+now sync is resync
+
+: testing  char J emit cr
+   straight type   straight type ;  now testing is resync
+
+#]file
