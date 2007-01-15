@@ -1,0 +1,202 @@
+( $Id$
+
+  This file is part of muFORTH; for project details, visit
+
+     http://nimblemachines.com/browse?show=MuForth
+
+  Copyright 1997-2007 David Frech. All rights reserved, and all wrongs
+  reversed.
+
+  Licensed under the Apache License, Version 2.0 [the "License"];
+  you may not use this file except in compliance with the License.
+  You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+  or see the file LICENSE in the top directory of this distribution.
+
+  Unless required by applicable law or agreed to in writing, software
+  distributed under the License is distributed on an "AS IS" BASIS,
+  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  See the License for the specific language governing permissions and
+  limitations under the License.)
+
+( Of course, for any "new" target - even one designed in 1976 - we need an
+  assembler. This is an assembler for the 8080/8085. It includes the two -
+  count 'em! - instructions, sim and rim, that Intel added when they
+  developed the 8085. Revolutionary! At the same time Zilog was developing
+  the Z80 and getting ready to totally blow Intel's x80 market share away.
+  Hmm, then what happened to Zilog? They really fumbled the 32bit market.)
+
+( I'm going to change some of the mnemonics. Most hardward vendors choose
+  awful mnemonics. Atmel's AVR is a good example - completely awful and
+  brain-dead. The 8080/5 mnemonics are a mix. Some are ok, but some -
+  mostly the "immediate with A" insns - are awful. So I'm going to change
+  them. If I remember, I'll note this in the definition of the insn.)
+
+( One nice thing about the insn encoding is that, when you look at it with
+  your octal glasses on, you see really nice simple patterns. Most insns
+  group by first and last octal digit, while the middle digit chooses the
+  member of the group. Eg, 302 is the condition jump group:
+
+  302 jnz
+  312 jz
+  322 jnc
+  332 jc
+  342 jpo
+  352 jpe
+  362 jp
+  372 jm)
+
+( I'm considering putting cycles times into the insns. We'll see how that
+  works.)
+
+octal
+
+: 0r0  ( reg op)  3 <<  or op, ;
+: 0R0  ( regpair op)  6 and  3 <<  or op, ;
+assembler
+
+( Registers. Register pairs - BC, DE, HL - are identified by B, D, H, resp.)
+0 constant b
+1 constant c
+2 constant d
+3 constant e
+4 constant h
+5 constant l
+6 constant m   6 constant sp
+7 constant a
+
+( group 000)
+000 nop
+( 010)
+( 020)
+( 030)
+040 rim
+( 050)
+060 sim
+( 070)
+
+( group 001)
+001 0R0 lxi  ( also 021, 041, 061)
+011 0R0 dad  ( also 031, 051, 071)
+
+( group 002)
+( or maybe like zilog just ld & st?)
+002 0R0 stax ( only works for BC, and DE...)
+012 0R0 ldax ( ditto)
+( 022 encodes stax d)
+( 032 encodes ldax d)
+042 sthl  ( intel: shld)
+052 ldhl  ( intel: lhld)
+062 sta
+072 lda
+
+( group 003)
+003 0R0 inx  ( also 023, 043, 063)
+013 0R0 dcx  ( also 033, 053, 073)
+
+( group 004)
+004 0r0 inc  ( intel: inr)
+
+( group 005)
+005 0r0 dec  ( intel: dcr)
+
+( group 006)
+006 0r0 movi
+
+( group 007)
+007 rl   ( intel: rlc! not thru carry)
+017 rr   ( intel: rrc! ditto)
+027 rlc  ( intel: ral! thru carry)
+037 rrc  ( intel: rar! ditto)
+047 da   ( intel: daa)
+057 com  ( intel: cma)
+067 setc ( intel: stc)
+077 comc ( intel: cmc)
+
+( groups 100 - 107; low order digit is src register)
+100 mov
+166 halt  ( intel: hlt; encoded as mov m,m)
+
+( groups 200 - 207; low order digit is src register)
+200 00r add
+210 00r adc
+220 00r sub
+230 00r sbb
+240 00r and  ( intel: ana)
+250 00r xor  ( intel: xra)
+260 00r or   ( intal: ora)
+270 00r cmp
+
+( group 306)
+306 addi  ( intel: adi)
+316 adci  ( intel: aci)
+326 subi  ( intel: sui)
+336 sbbi  ( intel: sbi)
+346 andi  ( intel: ani)
+356 xori  ( intel: xri)
+366 ori   ( intel: ori)
+376 cmpi  ( intel: cpi)
+
+( group 300)
+forth ( meta?)
+: retcond  300 ;
+assembler
+
+( group 301)
+301 0R0 pop
+311 ret
+( 331)
+351 pchl
+371 sphl
+
+( group 302)
+( Conditions)
+0 constant eq
+1 constant ne
+2 constant u<
+3 constant u>=
+( 4 and 5 have to do with parity - we don't care!)
+6 constant 0<
+7 constant 0>=
+
+forth ( meta?)
+: jcond  302 ;
+assembler
+
+( group 303)
+303 jmp
+( 313)
+323 out
+333 in
+343 xthl
+353 xchg
+363 di
+373 ei
+
+( group 304)
+
+forth ( meta?)
+: callcond  304 ;
+assembler
+
+( group 305)
+305 0R0 push  ( also 325, 345, 365)
+315 call
+( 335)
+( 355)
+( 375)
+
+( group 306)
+306 addi  ( intel: adi)
+316 adci  ( intel: aci)
+326 subi  ( intel: sui)
+336 sbbi  ( intel: sbi)
+346 andi  ( intel: ani)
+356 xori  ( intel: xri)
+366 ori   ( intel: ori)
+376 cmpi  ( intel: cpi)
+
+( group 307)
+307 0r0 restart  ( intel: rst)
