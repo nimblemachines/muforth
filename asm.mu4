@@ -29,15 +29,17 @@
   Hmm, then what happened to Zilog? They really fumbled the 32bit market.)
 
 ( I'm going to change some of the mnemonics. Most hardward vendors choose
-  awful mnemonics. Atmel's AVR is a good example - completely awful and
-  brain-dead. The 8080/5 mnemonics are a mix. Some are ok, but some -
-  mostly the "immediate with A" insns - are awful. So I'm going to change
-  them. If I remember, I'll note this in the definition of the insn.)
+  awful mnemonics. Atmel's AVR is a good example: a decent architecture, a
+  somewhat complex insn encoding, and completely awful, brain-dead, and
+  confusing mnemonics . The 8080/5 mnemonics are a mix. Some are ok, but
+  some - mostly the "immediate with A" insns - are awful. So I'm going to
+  change them. If I remember, I'll note this in the definition of the
+  insn.)
 
 ( One nice thing about the insn encoding is that, when you look at it with
   your octal glasses on, you see really nice simple patterns. Most insns
   group by first and last octal digit, while the middle digit chooses the
-  member of the group. Eg, 302 is the condition jump group:
+  member of the group. Eg, 302 is the conditional jump group:
 
   302 jnz
   312 jz
@@ -48,7 +50,7 @@
   362 jp
   372 jm)
 
-( I'm considering putting cycles times into the insns. We'll see how that
+( I'm considering putting cycle times into the insns. We'll see how that
   works.)
 
 octal
@@ -57,14 +59,20 @@ octal
 : 0R0  ( regpair op)  6 and  3 <<  or op, ;
 assembler
 
-( Registers. Register pairs - BC, DE, HL - are identified by B, D, H, resp.)
+( Immediate, direct, indirect?)
+: #   XXX ;   ( immed)
+: )   XXX ;   ( indirect)
+: #)   XXX ;  ( direct)
+
+( Registers. Register pairs - BC, DE, HL - are identified by B, D, H,
+  resp.)
 0 constant b
 1 constant c
 2 constant d
 3 constant e
 4 constant h
 5 constant l
-6 constant m   6 constant sp
+6 constant m   6 constant sp   6 constant psw
 7 constant a
 
 ( group 000)
@@ -106,14 +114,18 @@ assembler
 006 0r0 movi
 
 ( group 007)
-007 rl   ( intel: rlc! not thru carry)
-017 rr   ( intel: rrc! ditto)
-027 rlc  ( intel: ral! thru carry)
-037 rrc  ( intel: rar! ditto)
-047 da   ( intel: daa)
-057 com  ( intel: cma)
-067 setc ( intel: stc)
-077 comc ( intel: cmc)
+( Hmm: should these be called rola, rora, rlca, rrca, daa, coma, since they
+  only work on a? Here is one place where the intel mnemonics are
+  COMPLETELY! retarded.)
+007 rol   ( intel: rlc! 8 bits, not thru carry)
+017 ror   ( intel: rrc! ditto)
+027 rolc  ( intel: ral! 9 bits, thru carry)
+037 rorc  ( intel: rar! ditto)
+047 da    ( intel: daa)
+057 com   ( intel: cma)
+
+067 setc  ( intel: stc)
+077 comc  ( intel: cmc)
 
 ( groups 100 - 107; low order digit is src register)
 100 mov
@@ -140,30 +152,27 @@ assembler
 376 cmpi  ( intel: cpi)
 
 ( group 300)
-forth ( meta?)
-: retcond  300 ;
-assembler
+( Conditional return)
+: retcc  300 ;
 
 ( group 301)
-301 0R0 pop
+301 0R0 pop  ( also 321, 341, 361)
 311 ret
 ( 331)
 351 pchl
 371 sphl
 
 ( group 302)
-( Conditions)
-0 constant eq
-1 constant ne
-2 constant u<
-3 constant u>=
-( 4 and 5 have to do with parity - we don't care!)
+( Conditions, encoded in the negative, so we can used them with "if" and
+  "until".)
+: not  1 xor ;
+0 constant 0=
+2 constant u<   2 constant cs  ( carry set)
+4 constant even  ( parity - why did they even bother?)
 6 constant 0<
-7 constant 0>=
 
-forth ( meta?)
-: jcond  302 ;
-assembler
+( Conditional jump)
+: jcc  302 ;
 
 ( group 303)
 303 jmp
@@ -176,10 +185,8 @@ assembler
 373 ei
 
 ( group 304)
-
-forth ( meta?)
-: callcond  304 ;
-assembler
+( Conditional call)
+: callcc  304 ;  ( This is the only even mildly amusing thing in this file. ;-)
 
 ( group 305)
 305 0R0 push  ( also 325, 345, 365)
