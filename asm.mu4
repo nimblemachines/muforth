@@ -60,35 +60,65 @@
 ( I'm considering putting cycle times into the insns. We'll see how that
   works.)
 
+cr " 8080 assembler "  file[#
+
 ( Space for compiling into. 8080 only has 64k address space.)
-64 Ki buffer image
+64 Ki constant #image  ( this is as big as it can get!)
+#image buffer 'image
+
+( Since there are no segments on the 8080, we may need to define a non-zero
+  origin, esp. for ROMed code.)
+
+variable dA   ( offset from target address to image address)
+   ( set so that   dA @ +   equals   origin -  'image +  )
+: |+    ( a - a')  dA @ +  ;	( suggests adding to edge of region)
+
+( Dictionary operators.)
+variable |h	( image dictionary pointer)
+: |here  ( - a)  |h @  ;
+: |c,    ( ch)   |here |+ c!  1 |h +!  ;
+: |,     ( n)    |c,  8 >> |c, ;
+: |#     ( - n)  |here |+  'image -  ;  ( return the number of bytes in image)
+
+( Initialization.)
+: wipe      'image  #image  ( erase)   "55  fill  ;
+: org   ( buffer len org)
+//   tuck tuck + ( buf org org org+len)  |limits 2!  dup |h !  -  dA !  ;
+   nip  ( buf org)  dup |h !  -  dA !  ;  ( XXX testing)
+
+wipe  'image #image  0  org
 
 : 0r0  ( reg op - op')      swap  7 and  3 <<  or ;
-: b,   ( compile byte)  
-: w,   ( compile word, little-endian)  b,  8 >>  b, ;
+: b,   ( compile byte)  |c, ;
+: w,   ( compile word, little-endian)  dup  b,  8 >>  b, ;
 
 octal
 
-( Defining words.)                                                ( op)
-: op       ( op)          constant  does>  ( op)                    b, ;
-: 1reg     ( op)          constant  does>  ( reg op)        0r0     b, ;
-: 2reg     ( op)          constant  does>  ( src dst op)    0r0 or  b, ;
+( Check use of register pairs.)
+: ?pair  200 u< if error" needs register pair" then ;  ( UNUSED)
 
-: regpair  ( opreg oppair)  10 << or constant
-   does>  ( reg op)  over 200 and if ( pair)  10 >> then    0r0     b, ;
+( Defining words.)                                      ( op imm)
+: op       ( op)  constant  does>  ( op)                   b, ;
+: 1reg     ( op)  constant  does>  ( reg op)       0r0     b, ;
+: 2reg     ( op)  constant  does>  ( src dst op)   0r0 or  b, ;
 
-: direct   ( op)          constant  does>  ( addr op)               b, w, ;
-: ?direct  ( op)          constant  does>  ( addr cond op)  0r0     b, w, ;
-: immed    ( op)          constant  does>  ( addr op)               b, b, ;
+: immed    ( op)  constant  does>  ( imm op)               b, b, ;
+: immedx   ( op)  constant  does>  ( imm op)               b, w, ;
 
-: 2opreg   ( op)  200 or  constant  does>  ( src op)            or  b, ;
+: immreg   ( op)  constant  does>  ( imm reg op)   0r0     b, b, ;
+: immregx  ( op)  constant  does>  ( imm reg op)   0r0     b, w, ;
+
+: 2opreg   ( op)  200 or
+                  constant  does>  ( src op)           or  b, ;
 : 2opimm   ( op)  306 or  immed ;
 : 2op      ( op)  10 << dup 2opreg 2opimm ;
 
-( Check use of register pairs.)
-: ?pair  200 u< if error" needs register pair" then ;
+// : pair     ( op)  constant  does>  ( pair op)  ?pair  0r0     b, ;
+// : regpair  ( opreg oppair)  10 << or constant
+//   does>  ( reg op)  over 200 and if ( pair)  10 >> then    0r0     b, ;
 
 assembler
+: ;c   \c [  ?csp ;
 
 ( Registers.)
 0 constant b
@@ -100,7 +130,7 @@ assembler
 6 constant m
 7 constant a
 
-( Register pairs have high bit set.)
+( Register pairs have high bit set. Usage is currently unchecked.)
 200 constant bc
 202 constant de
 204 constant hl
@@ -124,27 +154,29 @@ assembler
 060 op sim  ( 8085 only)
 ( 070)
 
-( group 001 odds)
-011 1reg addx  ( intel: dad; mip suggested "index") ( also 031, 051, 071)
+( group 001)
+001 immregx lix  ( intel: lxi)  ( 001 evens)
+011 1reg addx  ( intel: dad; mip suggested "index") ( 001 odds)
 
 ( group 002)
 ( or maybe like zilog just ld & st?)
 002 1reg stax ( also 022)
 012 1reg ldax ( also 032)
-042 direct sthl  ( intel: shld)
-052 direct ldhl  ( intel: lhld)
-062 direct sta
-072 direct lda
+042 immedx sthl  ( intel: shld)
+052 immedx ldhl  ( intel: lhld)
+062 immedx sta
+072 immedx lda
 
-( groups 003, 004, 005)
-( reg regpair)
-  004 003 regpair inc  ( intel: inr, inx)  ( 003 evens)
-  005 013 regpair dec  ( intel: dcr, dcx)  ( 003 odds)
+( group 003)
+003 1reg incx  ( intel: inx)  ( 003 evens)
+013 1reg decx  ( intel: dcx)  ( 003 odds)
 
-( groups 006, 001 evens)
-( Similarly to inc/dec; this combines movi and lxi)
-( reg regpair)
-  006 001 regpair movi
+( groups 004, 005)
+004 1reg inc  ( intel: inr)
+005 1reg dec  ( intel: dcr)
+
+( group 006)
+006 immreg li  ( intel: mvi)
 
 ( group 007)
 ( Hmm: should these be called rola, rora, rlca, rrca, daa, coma, since they
@@ -188,10 +220,10 @@ assembler
 
 ( group 302)
 ( Conditional jump)
-302 ?direct ?jmp  ( cond)
+302 immregx ?jmp  ( cond)
 
 ( group 303)
-303 direct jmp
+303 immedx jmp
 ( 313)
 323 immed out
 333 immed in
@@ -202,14 +234,18 @@ assembler
 
 ( group 304)
 ( Conditional call)
-304 ?direct ?call  ( cond)
+304 immregx ?call  ( cond)
 
 ( group 305)
 305 1reg push  ( also 325, 345, 365)
-315 direct call
+315 immedx call
 ( 335)
 ( 355)
 ( 375)
 
 ( group 307)
 307 1reg restart  ( intel: rst)
+
+decimal forth
+
+#]file
