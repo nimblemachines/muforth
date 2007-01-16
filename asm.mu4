@@ -33,15 +33,29 @@
   is the two new instructions. You 8080 programmers out there - both of you
   - just don't use those two insns.)
 
-( I'm going to change some of the mnemonics. Most hardware vendors choose
+( After much tearing of hair and gnashing of teeth, I have decided to keep
+  the mnemonics the same as Intel's, even though some of them are quite
+  strange. As it happens, I'm used to them, and so, probably, are others.
+  It is always possible to make aliases - this is Forth, after all! - if
+  you absolutely must have different ones. I have suggested some
+  alternatives for each instruction, following its definition.
+
+  The only mnemonics I didn't use are the ones for conditional jmp, call,
+  and return. Rather than defining all 24 mnemonics, I've defined the
+  conditions - 0= 0< u< & even [parity], and a way to negate each - and the
+  conditional insns - ?jmp ?call ?ret - separately.)
+
+( The previous paragraph renders this one false. ;-]
+
+  I'm going to change some of the mnemonics. Most hardware vendors choose
   awful mnemonics. [Thankfully ARM is better than most, though their
   mnemonics do imply a source/dest ordering that doesn't work as well with
   postfix assemblers.] Atmel's AVR is a good example: a decent
   architecture, a somewhat complex insn encoding, and completely awful,
-  brain-dead, and confusing mnemonics . The 8080 mnemonics are a mix.
-  Some are ok, but others - mostly the "immediate with A" insns - are
-  awful. So I'm going to change them. If I remember, I'll note this in the
-  definition of the insn.)
+  brain-dead, and confusing mnemonics . The 8080 mnemonics are a mix. Some
+  are ok, but others - mostly the "immediate with A" insns - are awful. So
+  I'm going to change them. If I remember, I'll note this in the definition
+  of the insn.)
 
 ( One nice thing about the insn encoding is that, when you look at it with
   your octal glasses on, you see really nice simple patterns. Most insns
@@ -111,11 +125,7 @@ octal
 : 2opreg   ( op)  200 or
                   constant  does>  ( src op)           or  b, ;
 : 2opimm   ( op)  306 or  immed ;
-: 2op      ( op)  10 << dup 2opreg 2opimm ;
-
-// : pair     ( op)  constant  does>  ( pair op)  ?pair  0r0     b, ;
-// : regpair  ( opreg oppair)  10 << or constant
-//   does>  ( reg op)  over 200 and if ( pair)  10 >> then    0r0     b, ;
+: 2op      ( op)  3 << dup 2opreg 2opimm ;
 
 assembler
 : ;c   \c [  ?csp ;
@@ -130,19 +140,21 @@ assembler
 6 constant m
 7 constant a
 
-( Register pairs have high bit set. Usage is currently unchecked.)
+( Register pairs have high bit set. Usage is currently unchecked. Using the
+  single character name for the pair will also work!)
 200 constant bc
 202 constant de
 204 constant hl
 206 constant sp  206 constant psw ( af?)
 
-( Conditions, encoded in the negative, so we can use them
-  with "if" and "until".)
-: not  1 xor ;
-0 constant 0=
-2 constant u<   2 constant cs  ( carry set)
-4 constant even  ( parity - why did they even bother?)
-6 constant 0<
+( Conditions, encoded in the positive; ie, "0< ?jmp" is jmi.)
+1 constant 0=
+3 constant u<   2 constant cs  ( carry set)
+5 constant even  ( parity - why did they even bother?)
+7 constant 0<
+
+( Negate condition, so we can use them with "if" and "until".)
+: not  1 xor ;  ( 1 bic instead?)
 
 ( group 000)
 000 op nop
@@ -155,57 +167,77 @@ assembler
 ( 070)
 
 ( group 001)
-001 immregx lix  ( intel: lxi)  ( 001 evens)
-011 1reg addx  ( intel: dad; mip suggested "index") ( 001 odds)
+001 immregx lxi  ( lix mvxi mvix)  ( 001 evens)
+011 1reg dad  ( addx; mip suggested "index") ( 001 odds)
 
 ( group 002)
-( or maybe like zilog just ld & st?)
 002 1reg stax ( also 022)
 012 1reg ldax ( also 032)
-042 immedx sthl  ( intel: shld)
-052 immedx ldhl  ( intel: lhld)
+042 immedx shld  ( sthl)
+052 immedx lhld  ( ldhl)
 062 immedx sta
 072 immedx lda
 
 ( group 003)
-003 1reg incx  ( intel: inx)  ( 003 evens)
-013 1reg decx  ( intel: dcx)  ( 003 odds)
+003 1reg inx  ( incx)  ( 003 evens)
+013 1reg dcx  ( decx)  ( 003 odds)
 
 ( groups 004, 005)
-004 1reg inc  ( intel: inr)
-005 1reg dec  ( intel: dcr)
+004 1reg inr  ( inc)
+005 1reg dcr  ( dec)
 
 ( group 006)
-006 immreg li  ( intel: mvi)
+006 immreg mvi  ( li ldi movi)
 
 ( group 007)
 ( Hmm: should these be called rola, rora, rlca, rrca, daa, coma, since they
   only work on a? Here is one place where the intel mnemonics are
   COMPLETELY! retarded.)
-007 op rol   ( intel: rlc! 8 bits, not thru carry)
-017 op ror   ( intel: rrc! ditto)
-027 op rolc  ( intel: ral! 9 bits, thru carry)
-037 op rorc  ( intel: rar! ditto)
+
+( DANGER DANGER DANGER: Intel's mnemonics for rotate are DUMB. There are 4
+  rotates: (right or left) x (thru carry or not). Here are the definitions.
+  L = left, R = right, C = thru carry, N = not thru carry:
+
+  LN   msb -> carry, msb -> lsb, all others shift left. 8 bits rotate.
+  RN   lsb -> carry, lsb -> msb, all others shift right. 8 bits rotate.
+  LC   msb -> carry, carry -> lsb, all others shift left. 9 bits rotate.
+  RC   lsb -> carry, carry -> msb, all others shift right. 9 bits rotate.
+
+  Intel has defined their rotates in the following way - they rotate the A
+  register:
+
+  RLC = LN
+  RRC = RN
+  RAL = LC  
+  RAR = RC
+
+  Which is backwards from what it "should" be, and what every other CPU
+  maker has done. Be careful!)
+
+007 op rlc   ( 8 bits, not thru carry)  ( rol, rola)
+017 op rrc   ( ditto)                   ( ror, rora)
+027 op ral   ( 9 bits, thru carry)      ( rlc, rolc)
+037 op rar   ( ditto)                   ( rrc, rorc)
 047 op daa
-057 op com   ( intel: cma)
-067 op setc  ( intel: stc)
-077 op comc  ( intel: cmc)
+057 op cma   ( complement A)      ( com, coma)
+067 op stc   ( set carry)         ( setc)
+077 op cmc   ( complement carry)  ( comc)
 
 ( groups 100 - 107; low order digit is src register)
 100 2reg mov
-166 op   halt  ( intel: hlt; encoded as mov m,m)
+166 op   hlt  ( halt; encoded as mov m,m)
 
 ( groups 200 - 207; low order digit is src register)
 ( group 306 are immediates)
 ( regreg adds 200; imm adds 306; op is shifted to middle digit)
-0 2op add  addi  ( intel: adi)
-1 2op adc  adci  ( intel: aci)
-2 2op sub  subi  ( intel: sui)
-3 2op sbb  sbbi  ( intel: sbi)
-4 2op and  andi  ( intel: ana, ani)
-5 2op xor  xori  ( intel: xra, xri)
-6 2op or   ori   ( intel: ora, ori)
-7 2op cmp  cmpi  ( intel: cpi)
+0 2op add  adi  ( add   addi)
+1 2op adc  aci  ( adc   adci)
+2 2op sub  sui  ( sub   subi)
+3 2op sbb  sbi  ( sbb   sbbi)
+4 2op ana  ani  ( and   andi)
+5 2op xra  xri  ( xor   xori)
+6 2op ora  ori  ( or    ori)
+7 2op cmp  cpi  ( cmp   cmpi)
 
 ( group 300)
 ( Conditional return)
@@ -244,7 +276,7 @@ assembler
 ( 375)
 
 ( group 307)
-307 1reg restart  ( intel: rst)
+307 1reg rst  ( restart)
 
 decimal forth
 
