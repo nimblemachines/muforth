@@ -63,11 +63,31 @@
 ( Space for compiling into. 8080 only has 64k address space.)
 64 Ki buffer image
 
-: 0r0  ( reg op)      swap  7 and  3 <<  or ;
+: 0r0  ( reg op - op')      swap  7 and  3 <<  or ;
 : b,   ( compile byte)  
 : w,   ( compile word, little-endian)  b,  8 >>  b, ;
 
 octal
+
+( Defining words.)                                                ( op)
+: op       ( op)          constant  does>  ( op)                    b, ;
+: 1reg     ( op)          constant  does>  ( reg op)        0r0     b, ;
+: 2reg     ( op)          constant  does>  ( src dst op)    0r0 or  b, ;
+
+: regpair  ( opreg oppair)  10 << or constant
+   does>  ( reg op)  over 200 and if ( pair)  10 >> then    0r0     b, ;
+
+: direct   ( op)          constant  does>  ( addr op)               b, w, ;
+: ?direct  ( op)          constant  does>  ( addr cond op)  0r0     b, w, ;
+: immed    ( op)          constant  does>  ( addr op)               b, b, ;
+
+: 2opreg   ( op)  200 or  constant  does>  ( src op)            or  b, ;
+: 2opimm   ( op)  306 or  immed ;
+: 2op      ( op)  10 << dup 2opreg 2opimm ;
+
+( Check use of register pairs.)
+: ?pair  200 u< if error" needs register pair" then ;
+
 assembler
 
 ( Registers.)
@@ -86,138 +106,110 @@ assembler
 204 constant hl
 206 constant sp  206 constant psw ( af?)
 
-( group 000)
-000 nop
-( 010)
-( 020)
-( 030)
-040 rim
-( 050)
-060 sim
-( 070)
-
-( group 001)
-001 0R0 lxi  ( also 021, 041, 061)
-011 0R0 dad  ( also 031, 051, 071)
-
-( group 002)
-( or maybe like zilog just ld & st?)
-002 0R0 stax ( only works for BC, and DE...)
-012 0R0 ldax ( ditto)
-( 022 encodes stax d)
-( 032 encodes ldax d)
-042 sthl  ( intel: shld)
-052 ldhl  ( intel: lhld)
-062 sta
-072 lda
-
-( group 003)
-003 0R0 inx  ( also 023, 043, 063)
-013 0R0 dcx  ( also 033, 053, 073)
-
-( group 004)
-004 0r0 inc  ( intel: inr)
-
-( group 005)
-005 0r0 dec  ( intel: dcr)
-
-( Hmm. why not this:)
-( reg regpair)
-  004 003 xxx inc
-  005 013 xxx dec
-
-( group 006)
-006 0r0 movi
-
-( Similarly to inc/dec; this combines movi and lxi)
-( reg regpair)
-  006 001 xxx movi
-
-( group 007)
-( Hmm: should these be called rola, rora, rlca, rrca, daa, coma, since they
-  only work on a? Here is one place where the intel mnemonics are
-  COMPLETELY! retarded.)
-007 rol   ( intel: rlc! 8 bits, not thru carry)
-017 ror   ( intel: rrc! ditto)
-027 rolc  ( intel: ral! 9 bits, thru carry)
-037 rorc  ( intel: rar! ditto)
-047 da    ( intel: daa)
-057 com   ( intel: cma)
-
-067 setc  ( intel: stc)
-077 comc  ( intel: cmc)
-
-( groups 100 - 107; low order digit is src register)
-100 mov
-166 halt  ( intel: hlt; encoded as mov m,m)
-
-( groups 200 - 207; low order digit is src register)
-                              ( group 306)
-( regreg adds 200; imm adds 306)
-000 dup 00r add                   addi  ( intel: adi)
-010 dup 00r adc                   adci  ( intel: aci)
-020 dup 00r sub                   subi  ( intel: sui)
-030 dup 00r sbb                   sbbi  ( intel: sbi)
-040 dup 00r and  ( intel: ana)    andi  ( intel: ani)
-050 dup 00r xor  ( intel: xra)    xori  ( intel: xri)
-060 dup 00r or   ( intal: ora)    ori   ( intel: ori)
-070 dup 00r cmp                   cmpi  ( intel: cpi)
-
-( group 300)
-( Conditional return)
-: retcc  300 or b, w, ;
-
-( group 301)
-301 0R0 pop  ( also 321, 341, 361)
-311 ret
-( 331)
-351 pchl  ( pc! vector go run)
-371 sphl  ( sp!)
-
-( group 302)
-( Conditions, encoded in the negative, so we can used them with "if" and
-  "until".)
+( Conditions, encoded in the negative, so we can use them
+  with "if" and "until".)
 : not  1 xor ;
 0 constant 0=
 2 constant u<   2 constant cs  ( carry set)
 4 constant even  ( parity - why did they even bother?)
 6 constant 0<
 
+( group 000)
+000 op nop
+( 010)
+( 020)
+( 030)
+040 op rim  ( 8085 only)
+( 050)
+060 op sim  ( 8085 only)
+( 070)
+
+( group 001 odds)
+011 1reg addx  ( intel: dad; mip suggested "index") ( also 031, 051, 071)
+
+( group 002)
+( or maybe like zilog just ld & st?)
+002 1reg stax ( also 022)
+012 1reg ldax ( also 032)
+042 direct sthl  ( intel: shld)
+052 direct ldhl  ( intel: lhld)
+062 direct sta
+072 direct lda
+
+( groups 003, 004, 005)
+( reg regpair)
+  004 003 regpair inc  ( intel: inr, inx)  ( 003 evens)
+  005 013 regpair dec  ( intel: dcr, dcx)  ( 003 odds)
+
+( groups 006, 001 evens)
+( Similarly to inc/dec; this combines movi and lxi)
+( reg regpair)
+  006 001 regpair movi
+
+( group 007)
+( Hmm: should these be called rola, rora, rlca, rrca, daa, coma, since they
+  only work on a? Here is one place where the intel mnemonics are
+  COMPLETELY! retarded.)
+007 op rol   ( intel: rlc! 8 bits, not thru carry)
+017 op ror   ( intel: rrc! ditto)
+027 op rolc  ( intel: ral! 9 bits, thru carry)
+037 op rorc  ( intel: rar! ditto)
+047 op daa
+057 op com   ( intel: cma)
+067 op setc  ( intel: stc)
+077 op comc  ( intel: cmc)
+
+( groups 100 - 107; low order digit is src register)
+100 2reg mov
+166 op   halt  ( intel: hlt; encoded as mov m,m)
+
+( groups 200 - 207; low order digit is src register)
+( group 306 are immediates)
+( regreg adds 200; imm adds 306; op is shifted to middle digit)
+0 2op add  addi  ( intel: adi)
+1 2op adc  adci  ( intel: aci)
+2 2op sub  subi  ( intel: sui)
+3 2op sbb  sbbi  ( intel: sbi)
+4 2op and  andi  ( intel: ana, ani)
+5 2op xor  xori  ( intel: xra, xri)
+6 2op or   ori   ( intel: ora, ori)
+7 2op cmp  cmpi  ( intel: cpi)
+
+( group 300)
+( Conditional return)
+300 1reg ?ret  ( cond)
+
+( group 301)
+301 1reg pop  ( also 321, 341, 361)
+311 op ret
+( 331)
+351 op pchl  ( pc! vector go run)
+371 op sphl  ( sp!)
+
+( group 302)
 ( Conditional jump)
-: jcc  302 or b, w, ;
+302 ?direct ?jmp  ( cond)
 
 ( group 303)
-303 jmp
+303 direct jmp
 ( 313)
-323 out
-333 in
-343 xthl
-353 xchg
-363 di
-373 ei
+323 immed out
+333 immed in
+343 op xthl
+353 op xchg
+363 op di
+373 op ei
 
 ( group 304)
 ( Conditional call)
-
-( This is the only even mildly amusing thing in this file. ;-)
-: callcc  304 or b, w, ;
+304 ?direct ?call  ( cond)
 
 ( group 305)
-305 0R0 push  ( also 325, 345, 365)
-315 call
+305 1reg push  ( also 325, 345, 365)
+315 direct call
 ( 335)
 ( 355)
 ( 375)
 
-( group 306)
-306 addi  ( intel: adi)
-316 adci  ( intel: aci)
-326 subi  ( intel: sui)
-336 sbbi  ( intel: sbi)
-346 andi  ( intel: ani)
-356 xori  ( intel: xri)
-366 ori   ( intel: ori)
-376 cmpi  ( intel: cpi)
-
 ( group 307)
-307 0r0 restart  ( intel: rst)
+307 1reg restart  ( intel: rst)
