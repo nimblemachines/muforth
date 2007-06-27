@@ -26,6 +26,7 @@
 #include "muforth.h"
 #include "version.h"
 
+#include <stdlib.h>
 #include <sys/mman.h>
 
 /* data stack */
@@ -178,6 +179,18 @@ void mu_push_command_line()
 void mu_push_build_time()
 {
     PUSH(build_time);
+}
+
+static void mu_start_up()
+{
+    PUSH("warm");       /* push the token "warm" */
+    PUSH(4);
+    _mu__lbracket();    /* ... and execute it! */
+}
+
+void mu_bye()
+{
+    exit(0);
 }
 
 int main(int argc, char *argv[])

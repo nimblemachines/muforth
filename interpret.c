@@ -27,7 +27,6 @@
 
 #include "muforth.h"
 
-#include <stdlib.h>
 #include <ctype.h>
 
 /* for debug */
@@ -296,18 +295,6 @@ void mu_load_file()    /* c-string-name */
     mu_catch();
     close(fd);
     mu_throw();
-}
-
-void mu_start_up()
-{
-    PUSH("warm");       /* push the token "warm" */
-    PUSH(4);
-    _mu__lbracket();    /* ... and execute it! */
-}
-
-void mu_bye()
-{
-    exit(0);
 }
 
 /*
