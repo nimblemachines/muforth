@@ -11,53 +11,60 @@ engine=itc
 
 while [ "$1" ]; do
   case "$1" in
-    i386)  engine=i386 ;;
      gnu)     gnu=yes ;;
        *) ;;
   esac
   shift
 done
 
+if sed --version 2> /dev/null | grep -q "GNU"; then
+  cat <<EOF
+Found GNU sed; using "-r" for extended regular expressions.
+
+EOF
+  sedext="-r"
+else
+  cat <<EOF
+Found BSD sed; using "-E" for extended regular expressions.
+
+EOF
+  sedext="-E"
+fi
+
 if [ "${gnu}" = "yes" ] || 
     make --version 2> /dev/null | grep -q "GNU Make"; then
   cat <<EOF
-Looks like you're running GNU make. I'm going to create a compatible
-makefile for you.
+Found GNU make. I'm going to create a compatible makefile for you.
 
 EOF
-  sed -E \
-    -e s/#engine#/${engine}/ \
+  sed ${sedext} \
+    -e "s/%sedext%/${sedext}/g" \
+    -e s/%engine%/${engine}/ \
     -f scripts/make.sed \
     -f scripts/gnu-make.sed \
     -e 's/^### Makefile/### GNU Makefile/' Makefile.in > Makefile
 else
   cat <<EOF
-Looks like you're running a non-GNU (perhaps BSD?) make. I'm going to
-assume it's a BSD make and create a makefile for you. If the build
-fails, try re-running configure like this:
+Found non-GNU (perhaps BSD?) make. I'm going to assume it's a BSD make and
+create a makefile for you. If the build fails, try re-running configure
+like this:
 
-  ./configure [i386] gnu
+  ./configure gnu
 
 Then type "gmake" instead of "make".
 
 EOF
-  sed -E \
-    -e s/#engine#/${engine}/ \
+  sed ${sedext} \
+    -e "s/%sedext%/${sedext}/g" \
+    -e s/%engine%/${engine}/ \
     -f scripts/make.sed \
     -e 's/^### Makefile/### BSD Makefile/' Makefile.in > Makefile
 fi
 
 cat <<EOF
-There are two versions of muFORTH: you can build a native x86 version, or
-an indirect-threaded (ITC) version. This script defaults to configuring
-the ITC version; to build the native x86 version, re-run the script like
-this:
+Once it builds successfully, run it like this:
 
-  ./configure.sh i386
-
-To build it, just type
-
-  make
+  ./muforth
 
 Enjoy muFORTH!
 

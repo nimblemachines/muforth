@@ -25,6 +25,9 @@
 ### Makefile for muforth, a "micro" Forth
 ###
 
+# Set by configure
+SEDEXT=		%sedext%
+
 CFLAGS=		-O2 -Wall -fomit-frame-pointer
 #CFLAGS=	-g -Wall -fomit-frame-pointer -DDEBUG -DBEING_DEFINED
 LDFLAGS=
@@ -33,9 +36,10 @@ LDFLAGS=
 COREOBJS=	kernel.o interpret.o compile.o dict.o file.o \
 			error.o time.o tty.o select.o
 
-# Different compile & execution engines: native and ITC
-ENGINE=		engine-#engine#.o
-CFLAGS+=	-Dengine_#engine#
+# Different compile & execution engines: native and ITC. Someday the i386
+# native version might work again.
+ENGINE=		engine-%engine%.o
+CFLAGS+=	-Dengine_%engine%
 
 # If any of these files changes, make a new version.h
 VERSOBJS=	${COREOBJS} ${ENGINE}
@@ -53,13 +57,13 @@ muforth.o : version.h
 
 public.h : ${ALLOBJS:.o=.ph}
 	@echo Making ${.TARGET}
-	@(echo "/* This file is automagically generated. Do not edit! */"; \
+	(echo "/* This file is automagically generated. Do not edit! */"; \
 	cat ${.ALLSRC}) > ${.TARGET}
 
 forth_chain.h : public.h scripts/gen_dict_chain.sed
 	@echo Making ${.TARGET}
 	@(echo "/* This file is automagically generated. Do not edit! */"; \
-	sed -E \
+	sed ${SEDEXT} \
 		-e '/^void mu_compiler/d' \
 		-f scripts/gen_dict_chain.sed public.h \
 	) > ${.TARGET}
@@ -67,7 +71,7 @@ forth_chain.h : public.h scripts/gen_dict_chain.sed
 compiler_chain.h : public.h scripts/gen_dict_chain.sed
 	@echo Making ${.TARGET}
 	@(echo "/* This file is automagically generated. Do not edit! */"; \
-	sed -E \
+	sed ${SEDEXT} \
 		-e '/^void mu_compiler/!d' \
 		-e 's/mu_compiler_/mu_/' \
 		-f scripts/gen_dict_chain.sed \
@@ -81,7 +85,7 @@ dict.o : forth_chain.h compiler_chain.h
 .c.ph : Makefile
 	@echo Making ${.TARGET}
 	@(echo "/* ${.IMPSRC} */"; \
-	sed -E -n \
+	sed ${SEDEXT} -n \
 		-e '/^#if/,/^#endif/d' \
 		-e '/^static /d' \
 		-e 's/^([a-z]+ \**[a-z_0-9]+)\((void)?\).*$$/\1(void);/p' \
@@ -120,10 +124,10 @@ SEDFILES=	README Makefile.in muforth.h *.c *.mu4
 MU4DIRS=	Test cf games lib target target/common target-arm
 httplink :
 	for f in ${SEDFILES}; do \
-		sed -E -f scripts/httplink.sed $$f > $$f.sed; done
+		sed ${SEDEXT} -f scripts/httplink.sed $$f > $$f.sed; done
 	for d in ${MU4DIRS}; do \
 		for f in $$d/*.mu4; do \
-			sed -E -f scripts/httplink.sed $$f > $$f.sed; done; done
+			sed ${SEDEXT} -f scripts/httplink.sed $$f > $$f.sed; done; done
 
 diffsed :
 	-(for f in ${SEDFILES}; do diff -u $$f $$f.sed ; done) | less
@@ -164,20 +168,5 @@ dist : distclean GNUmakefile
 		gzip -9 > muforth.tar.gz)
 
 dists ! dist distmax
-
-## For merging changes in other branches into HEAD
-.if defined (BRANCH)
-
-syncpoint !
-	cvs rtag -r ${BRANCH} -F ${BRANCH}_merged_to_HEAD muforth
-
-do_merge !
-	cvs update -j ${BRANCH}_merged_to_HEAD -j ${BRANCH}
-
-merge ! do_merge syncpoint
-
-.elif make(syncpoint) || make(do_merge) || make(merge)
-.error You need to define a source BRANCH to merge from.
-.endif
 
 ### BSD end ###
