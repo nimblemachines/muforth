@@ -1,0 +1,180 @@
+( stuff still to add to asm2)
+
+
+( MSR, MRS. Processor status transfer.)
+( ?? change the names again!)
+
+( Impossible encodings!
+000- Op -S- Rn - Rd -HHHH-H-TT-0- Rm    ALU, shifted by immed
+000- Op -S- Rn - Rd - Rs -0-TT-1- Rm    ALU, shifted by reg
+001- Op -S- Rn - Rd - Rot-   Imm        ALU, immediate
+
+000-10P0-0-1111- Rd -0000-00000000000   MRS  move status to reg
+000-10P1-0-1001-1111-0000-0-00-0- Rm    MSR  move reg to status
+000-10P1-0-1000-1111-0000-0-00-0- Rm    MSR  flag
+001-10P1-0-1000-1111- Rot-   Imm        MSR  flag, immediate
+
+  Opcodes 1000 thru 1011 are TST, TEQ, CMP, and CMN which always set S.)
+
+( Status registers.)
+assembler
+00090000 constant cpsr
+00080000 constant cpsr_flg
+00490000 constant spsr
+00480000 constant spsr_flg
+
+forth
+
+( MSR, MRS)
+( 2001-feb-03. We're going with MVS - `move status'.)
+( Bad names. MSR means `to status from register'. But in Forth we're writing
+  the operands the other way. Can't be helped; we're powering thru.)
+
+assembler
+: mvs  ( psr Rd | Rm psr | # psr)
+   dup  reg? if  010f0000  Rd  or  op,  ^  then
+   0120f000  or
+   over reg? if    Rm  op,  ^  then  
+   over   #? if  ^imm  op,  ^  then  oops  -;
+
+
+forth
+
+( MUL, MLA. Multiply and Multiply-accumulate. Careful with this: the
+  multiplies swap Rn and Rd in their encodings.)
+
+: ,mul  ( Rm Rs Rn Rd op)
+   over push  Rn ( Rd!)  Rd ( Rn!)  Rs  ( Rm op)
+   over pop = if  oops  then  ( barf if Rm == Rd)  Rm  op,  ;
+  
+assembler
+: mul  ( Rm Rs Rd)      ( Rd := Rm * Rs; ignore Rn - we set to 0)
+   0 ( Rn)  swap  00000090  ,mul  ;
+: mla  ( Rm Rs Rn Rd)   ( Rd := Rm * Rs + Rn)
+                  00200090  ,mul  ;
+
+forth
+( Single data swap. SWP. Easy. Format:
+
+  Rm Rn Rd swp {byte}
+
+  Rn holds the address. Rm is the source. Rd is the dest. Rm may equal Rd.)
+
+assembler
+: swp  ( Rm Rn Rd)  01000090  Rd  Rn  Rm  op, ;  ( `byte' will change to byte)
+
+( SWI.)
+: swi  ( n)  00ffffff and  0f000000 or  op,  ;
+
+forth
+
+
+( Coprocessor data operations. CDP.
+
+  NOTE: The ARM 710 only supports coprocessor #15, which only supports the
+  MRC and MCR instructions.  CDP is -undefined- on the ARM710 and will
+  cause an exception.
+
+  proc# CPopc CRd CRn CRm cdp |
+  proc# CPopc CRd CRn CRm CPinfo cdp)
+
+: CP#  ( n op)  swap  8 <<  swap  Rs  ;
+: CPinfo  ( proc# CPopc CRd CRn CRm {CPinfo} op - 
+                                        proc# CPopc CRd CRn CRm op')
+   over typeless? if  ( CPinfo) swap  7 and 5 << or  then  ;
+   
+assembler
+: cdp  ( proc# CPopc CRd CRn CRm | proc# CPopc CRd CRn CRm CPinfo )
+   0e000000 ( op)  CPinfo
+   Rm  Rn  Rd  ( CPopc) swap 0f and #20 <<  or  ( proc#)  CP#  op,  ;
+
+forth
+
+
+comment %%
+  Coprocessor data transfers. LDC, STC.
+
+  NOTE: The ARM 710 only supports coprocessor #15, which only supports the
+  MRC and MCR instructions.  LDC and STC are -undefined- on the ARM710 and
+  will cause an exception.
+
+  NOTE: The indexing operators from LDM/STM are used here as well.
+  Their behavior is slightly different. Post-indexed addressing modes
+  require explicit setting of the W bit. The offset is 8 bits, but is a
+  -word- offset - shifted left 2 bits before being used. To accomodate both
+  ways, `),' will -set- the W bit. The instructions can OR it in
+  differently. Likewise, the offset will be `compiled' by the indexing
+  operators as 12 bits; LDC and STC will check that it fits in eight.
+
+  Operands:
+  proc# CRd <Address>
+
+  <Address>:
+  <addr> pc)
+  offset <Rn> ,)    pre-indexed
+  offset <Rn> ,)!   pre-indexed, write-back
+  offset <Rn> ),    post-indexed  %%
+
+01af00ff ^bits ^index-coproc  ( ---P U-W-, Rn, offset)
+: 4mi  ( ldc,stc )  create  does> swap  ( proc# CRd op index)
+   dup index? if  dup I and if  oops  then  ( register-offset not allowed)
+   dup 0fff and ( offset)  dup 400 u< not if  oops  then
+   ( offset fits into 8b WORD offset)
+   ( index offset)  2/ 2/ ( -> word offset)  swap  0fff bic  xor  swap
+   ^index-coproc  Rd  CP#  op,  ^  then  oops  -;
+
+assembler
+: long  ( set long transfer)  \a byte  ;
+  ( !! sets the N bit, which is in the same place as the B bit for LDR/STR)
+
+0c100000 4mi ldc
+0c000000 4mi stc
+
+forth
+
+
+( Coprocessor register transfers. MRC, MCR.
+
+  Operands:
+  proc# CPopc Rd CRn CRm {CPinfo} )
+
+: 5mi  ( MRC, MCR )  create does>  ( proc# CPopc Rd CRn CRm {CPinfo} op)
+   CPinfo   Rm  Rn  Rd  ( CPopc) swap 7 and #21 <<  or
+   ( proc#)  CP#  op,  ;
+
+assembler
+0e100010 5mi mrc    ( move coproc to ARM reg)   ( ?? names!)
+0e000010 5mi mcr    ( move ARM reg to coproc)
+
+forth
+
+
+( Undefined instruction. There is no direct way to generate this. Just like
+  in the ARM assembler! The encoding looks like this:
+
+  |cond-011-xxxx-x-xxxx-xxxx-xxxx-x-xx-1-xxxx|
+
+  The encoding is very similar to the LDR/STR - in fact, the 1 in bit 4 is
+  the only thing that distinguishes them, and also what disallows using
+  register-specified shift amounts in those instructions.)
+
+
+
+
+( ?? Still have to figure out literal pools. NOT! We just say HERE lit , or
+  LIT, <n> or something; then use the address in a CODE word.)
+
+( Control structures)
+assembler
+: if       ( cond - fwd)  |,  |here cell- ;
+: ahead    ( - fwd)  \a always  \a if ;
+: then     ( fwd)  |here over >branch-offset  over |+ @  xor  swap |+ ! ;
+: else     ( fwd - fwd')  \a ahead  swap  \a then ;
+: begin    ( - back)  |here ;
+: until    ( back cond)  \a |if  \a b  \a |then ;
+: again    ( back)  \a always  \a until ;
+: while    ( back cond - fwd back)  \a if  swap ;
+: repeat   ( fwd back)  \a again  \a then ;
+( ... and you too can use `begin .. while .. again then' or, even more
+  interesting: `begin .. while .. until .. then ..)
+forth

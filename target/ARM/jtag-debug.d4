@@ -1,0 +1,73 @@
+( jtag-debug - debugging an ARM7DI thru the JTAG interface. 28-apr-1999.)
+
+cr " JTAG debug "  file[#
+
+decimal
+
+( TEST)
+
+: lsb  ( n - n' bit)  dup u2/  swap     ;
+: msb  ( n - n' bit)  dup 2*   swap 0<  ;
+
+: ms  ( n #bits)
+   for  lsb  TMS  TCK  next  drop  ;
+   
+: di/do  TDI  TCK  TDO  ;
+: di  ( n #bits)  ( prints output in binary)  ( 0 TMS)
+   <#  char - hold  for  lsb  di/do  >digit hold  next  0  #>  type  ;
+
+( Resting state should be Run-Test/Idle or Update-xR. They have the same
+  transitions. We don't necessarily always want to go to Run-Test/Idle
+  because that will clock the ARM7DI core.)
+
+: TRST  -1 5 ms  ( jtag reset)  0 1 ms  ;  TRST
+: ->dr      %01 2 ms  ;  ( ->capture-dr; with TMS 0, further TCKs will shift)
+: ->ir     %011 3 ms  ;  ( ->capture-ir; ditto)
+: shift->   %11 2 ms  ;  ( ->update)
+: shift4   4 di  shift->  ;
+
+: ir!    ( n)         ->ir  shift4  ;
+: scan!  ( n)  2 ir!  ->dr  shift4  ;
+
+: data><  ( n - n)  32 for  msb di/do            or  next  ;
+: data    ( n # - n)   for  lsb di/do  1 rotate  or  next  ;
+
+: ?id   "e ir!  "17601061 dup  32  ->dr data shift->  xor
+   if ." Chip ID is wrong." then  ;
+
+: db  ( databus breakpt - databus' breakpt')
+   1 scan!  ->dr ( breakpt) di/do  swap data>< swap  shift->  ;
+
+( Notes. In scan chain 1, the order of bits is d0 .. d31 breakpt.
+  In scan chain 2, it's  r/w a4 .. a0 d31 .. d0. So remember to convert
+  data `backwards' for scan1. That's what data>< is for.)
+
+: >ice>  ( r/w addr data - data)
+   2 scan!  ->dr  32 data  swap  5 data drop  swap di/do drop  shift->  ;
+
+: ice!  ( data addr - data)  swap  1 ( write) -rot  >ice>  ;
+: ice@  (      addr - data)  0 ( read) swap  0      >ice>  ;
+
+( There's a strange pipeline effect with all this scanning stuff. Every
+  time you scan stuff in, you're getting out the captured data from the
+  -last- scan. This will be confusing.
+
+  For instance, to read an ICEBreaker register you scan in some bogus data,
+  the register you want, and r/w = 0. Now you have to scan the value out.
+  If you were about to write a register you could combine the two. A read
+  scans in garbage and then needs something more to scan out the data. A
+  write scans in the data, and doesn't need anything read out.
+
+  Can we untangle this and make it invisible to higher layers? Reading and
+  writing the data bus - scan chain 1 - is similar, and we'll be doing a lot
+  of that during debugging.
+
+  Diagram:
+  IN >>>   n0    n1    n2    n3    junk
+ OUT >>>  junk   n0    n1    n2     n3
+
+  So if you can arrange a series of operations - the longer the better -
+  that will minimize the wasted scanning. Set Scan#2 at the start, and go.)
+
+#]file
+

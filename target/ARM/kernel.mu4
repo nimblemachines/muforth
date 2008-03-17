@@ -1,0 +1,492 @@
+( $Id$
+
+  This file is part of muFORTH; for project details, visit
+
+     http://nimblemachines.com/browse?show=MuForth
+
+  Copyright 1997-2006 David Frech. All rights reserved, and all wrongs
+  reversed.
+
+  Licensed under the Apache License, Version 2.0 [the "License"];
+  you may not use this file except in compliance with the License.
+  You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+  or see the file LICENSE in the top directory of this distribution.
+
+  Unless required by applicable law or agreed to in writing, software
+  distributed under the License is distributed on an "AS IS" BASIS,
+  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  See the License for the specific language governing permissions and
+  limitations under the License.)
+
+cr " ARM kernel "  file[#
+
+( 2006-apr-01.)
+
+( Can't stand the pain of fiddling with the assembler, so I'm going to
+  launch into writing a simple kernel, of sorts.)
+
+( Few words we need to try this out.)
+
+-:  ."  (assembling)"  ;
+-:  .assembler. find  if  execute ^  then  number ;
+mode asm-loop
+
+-:  ."  (assembling a macro)"  ;
+-:   .compiler. find  if  execute ^ then
+    .assembler. find  if  compile, ^  then  number literal ;
+mode macro-loop
+
+-:  ."  (outside)"  ;
+-:    .outside. find  if  execute ^  then  number ;
+mode outside-loop
+
+compiler
+: <asm   macro-loop ;
+: asm>   -] ;
+forth
+
+machine
+variable branch
+variable zbranch
+variable eqzbranch
+variable for
+variable ?for
+variable next
+variable lit
+variable lit_noreturn
+
+forth
+( Support for tail-recursion.)
+variable last-call   ( points *just past* last compiled bl)
+
+outside
+: compile,  ( targetxt)  \a bl  |here last-call ! ;  ( that's it!)
+: literal   \m lit @  \o compile,  |, ;
+: comment   comment ;
+: //        \f // ;
+: {  \ [ ;  ( escape to host forth)
+: '   .target. chain' execute ;
+( So we can calculate stuff inside of colon def'ns.)
+: +  + ;
+: -  - ;
+: and  and ;
+: or   and ;
+: xor  xor ;
+
+"ffff0400 constant uart1
+forth
+
+-:  ."  (inside)"  ;
+-:     .inside. find  if  execute ^  then
+       .target. find  if  execute  \o compile, ^  then  number \o literal ;
+mode inside-loop
+
+( For loading, to see if we've left anything lying about.)
+( This repeats code in startup, but it won't collide with that variable.)
+variable csp  ( what does this stand for? `check stack pointer'?)
+: !csp   depth  csp !  ;
+: ?csp   depth  csp @  -
+         =if  . ." stack depth change: "  hex  .s cr  ^  then  drop  ;
+
+( Create a macro word in current chain. Used for macro: and inline.)
+: _macro   new <:> forth   macro-loop  !csp ;
+: macro:   assembler _macro ;
+compiler
+: ;macro   \ ^  \ [  ?csp ;  ( returns to host forth)
+forth
+
+macro: push  ( r)  4 sp -) !  \f swap  str  ;macro
+macro: pop   ( r)  4 sp )+    \f swap  ldr  ;macro
+
+macro: nest    ( r)  4 rp -) !  \f swap  str  ;macro
+macro: unnest  ( r)  4 rp )+    \f swap  ldr  ;macro
+
+macro: ret   lr pc mov  ;macro
+macro: st1   0 sp +)  ;macro
+macro: st2   4 sp +)  ;macro
+macro: st3   8 sp +)  ;macro
+
+( Support for tail-recursion.)
+
+( If |here matches last-call, we decompile the last bl,
+  compile "unnest lr", convert the bl to b by clearing the link bit,
+  modifying the offset - the insn has moved forward one word - by -1, and
+  recompiling the insn.)
+
+: -tail   last-call off ;  ( spoil conversion - used by 'then')
+: tail^
+   |here last-call @ = if  [ cell negate ] |h +!  ( uncompile)
+      |here |+ @  [ 1 #24 << ] bic  ( bl insn -> b)
+      1- ( because we're compiling an insn before the b, its offset changes)
+      <asm  lr unnest  asm>  |,  ^  then
+   <asm  pc unnest  asm> ;
+
+inside
+: (    \f ( ;
+: [    outside-loop ;
+// : ^    <asm  pc unnest  asm> ;  ( no tail-recursion - yet!)
+ : ^    tail^ ;
+: ;    \i ^  \i [  ?csp ;
+
+outside
+: create   target  |here constant ( forth) ;
+: assemble     pair off  asm-loop ;
+( code & ;c should use ?csp to make sure nothing bad has happened...)
+: code   \o create  !csp  \o assemble ;
+
+( Using [new], we can make a .target. entry too.)
+: implement   |here  .machine. chain' execute ( get addr)  !
+        \o assemble  !csp ;
+
+: :     \o create   !csp  <asm  lr nest  asm>
+        inside-loop ( target compiler) ;
+
+  ( change to deferred - compile, then later execute?)
+
+( Turning inlining on and off isn't as easy as I had hoped; the inlined
+  versions need to have the trailing "ret" stripped off...
+
+  But now I have ;inline, which can compile ret if not inlining...)
+
+( makes a "macro" that compiles code when this word is executed)
+// : inline   inside  _macro ;
+: inline   \o code ;   ( non-inlined)
+
+// compiler
+( To terminate inline words. Returns to outside)
+// : ;inline           \ ^  \i [  ?csp ;
+ assembler
+ : ;inline   \a ret  \ ^  \i [  ?csp ;  ( non-inlined)
+outside
+
+: -]   inside-loop ( re-start colon compiler) ;
+: ]    \o literal  \o -]  ( make literal and restart :)  ;
+
+( and so we can make more defining words while we're in the middle of the
+  kernel code...)
+: definer:   outside : forth   definer-loop ;
+
+( Now the whole point of the above:)
+definer
+: does>   ;
+: ;code   ;
+
+forth
+: }  \i [ ;   ( return to meta)
+
+assembler
+: '   .target. chain' execute ;
+: (    \f ( ;
+: //   \f // ;
+: comment   comment ;
+: ;c   \i [  ?csp ;
+: label   assembler constant  ( forth)  does> ;
+
+outside
+( Basic conditionals)
+: resolve>  (s src dest)
+   over -  swap cell- |+ ! ( 32-bit displacement) ;
+
+: <resolve  (s dest src)  swap \o resolve> ;
+: mark>   0 |,  |here ;
+
+inside
+: =if   (s - src)   \m eqzbranch @  \o compile,  \o mark> ;
+: if    (s - src)     \m zbranch @  \o compile,  \o mark> ;
+: then  (s src)  |here \o resolve>  -tail ;
+
+// : else      (s src0 - src1)  \ (branch) mark>  swap  \ then ;
+
+: begin   (s - dest)  |here ;
+: =until  (s dest -)  \i =if  <resolve ;
+: until   (s dest -)   \i if  <resolve ;
+: again   (s dest -)  \m branch @  \o compile,  \o mark>  \o <resolve ;
+: =while  (s dest - src dest)  \i =if  swap ;
+: while   (s dest - src dest)   \i if  swap ;
+: repeat  (s src dest -)   \i again  \i then ;
+
+( n for .. next         goes n times; 4 billion+ if n=0 )
+( n ?for .. next then   goes n times; 0 if n=0 )
+
+: for     (s - dest)      \m  for @  \o compile,  \i begin ;
+: ?for    (s - src dest)  \m ?for @  \o compile,  \o mark>  \i begin ;
+: next    (s dest -)      \m next @  \o compile,  \o mark>  \o <resolve ;
+
+
+( XXX)
+outside
+: remote   drop ;
+forth
+
+-:  ."  (interacting)"  ;
+-:     .target. find  if  execute  \o remote ^  then
+      .outside. find  if  execute ^  then  number ;
+mode interact-loop
+
+comment =====================================================================
+        The real kernel starts here!!
+        =====================================================================
+
+outside-loop
+
+code +     0 pop   top 0 top add   ret  ;c
+code -     0 pop   top 0 top sub   ret  ;c
+code *     0 pop   0 top top mul   ret  ;c
+code and   0 pop   top 0 top and   ret  ;c
+code or    0 pop   top 0 top or    ret  ;c
+code xor   0 pop   top 0 top eor   ret  ;c
+
+( By moving 1-insn words into compiler/inside and making them macros, we
+  get inlining... ;-)
+
+inline negate   0 # top top rsb   ;inline
+inline invert       top top mvn   ;inline
+
+inline dup   top push  ;inline
+inline nip   0 pop     ;inline
+inline drop  top pop   ;inline
+
+// code swap  top 0 mov   st1 top ldr   st1 0 str  ret  ;c
+inline swap   top sp top swp  ( swap top with TOS)  ;inline
+
+code over   top push   st2 top ldr   ret  ;c
+
+code rot
+   { 0 1 } sp ldm
+   top 2 mov   0 top mov   1 0 mov   2 1 mov
+   { 0 1 } sp stm  ret  ;c
+
+code -rot
+   { 0 1 } sp ldm
+   top 2 mov   1 top mov   0 1 mov   2 0 mov
+   { 0 1 } sp stm  ret  ;c
+
+code <<       0 pop   0 top lsl top mov   ret  ;c
+code >>       0 pop   0 top asr top mov   ret  ;c
+code u>>      0 pop   0 top lsr top mov   ret  ;c
+code rotate   0 pop   0 top ror top mov   ret  ;c
+
+inline 2/    top 1 #asr top mov  ;inline
+inline u2/   top 1 #lsr top mov  ;inline
+inline 2*    top 1 #lsl top mov  ;inline
+
+code u<    0 pop   top 0 cmp   -1 # top mov u<   0 # top mov u>=  ret  ;c
+code <     0 pop   top 0 cmp   -1 # top mov  <   0 # top mov  >=  ret  ;c
+code 0<          top top tst   -1 # top mov 0<   0 # top mov 0>=  ret  ;c
+code 0=          top top tst   -1 # top mov 0=   0 # top mov ne   ret  ;c
+
+( "implement" fixes up forward references.)
+implement branch
+    4 lr )+ 0 ldr   0 lr pc add   ;c
+
+implement zbranch
+    top top tst   top pop
+label zbr1
+    4 lr )+ 0 ldr 0=   0 lr pc add 0=   4 # lr pc add   ;c
+
+implement eqzbranch
+    top top tst   zbr1 b  ;c
+
+implement for
+    ct nest   top ct mov
+label popret
+    top pop   ret  ;c
+
+implement ?for
+    top top tst   top 0 mov   top pop
+    4 lr )+ 0 ldr 0=   0 lr pc add 0=
+    ct nest   0 ct mov   4 # lr pc add   ;c
+
+implement next
+    1 # ct ct sub s   ct unnest 0=   4 # lr pc add 0=
+    4 lr )+ 0 ldr   0 lr pc add   ;c
+
+implement lit            top push   4 lr )+ top ldr   ret  ;c
+implement lit_noreturn   top push   0 lr )+ top ldr   pc unnest  ;c
+
+code push   top nest   popret b  ( one word shorter, but slower!)  ;c  
+code pop    top push   top unnest   ret  ;c
+
+inline @    0 top +) top ldr   ;inline
+inline c@   0 top +) top ldrb  ;inline
+
+code !    { 0 1 } ! sp ldm   0 top +) 0 str    1 top mov   ret  ;c
+code c!   { 0 1 } ! sp ldm   0 top +) 0 strb   1 top mov   ret  ;c
+
+
+( How about a multitasker? First we need user variables...)
+
+( Multitask!)
+
+( 15-sep-1998.  This is new.  I figured this all out when I couldn't sleep.
+  There is a new [to me] and beautiful way to do multitasking that is in
+  between my old way and the elusive polyFORTH brochure's "one machine
+  instruction per task" way.  My new way is the middle way, and is intimately
+  related to indirect threaded code; the major difference is that it is -not-
+  the `canonical Chuck' way to do ITC.  The `word' pointer -- in this case
+  it points to a -task- -- points -at- rather than -after- the code pointer.
+  It just works out more nicely this way.
+
+  There is a necessary adjustment, however.  In this new way what determines
+  whether a task is awake or asleep is its code pointer.  If it points to
+  `robin' the task is asleep, and `robin' will cycle to the next task [and
+  take only two instructions!].  If the task is awake, its code points to
+  `restore', which sets up the user pointer `u' and pops the task's context
+  and executes `next', as usual.  The adjustment is this:  where do we store
+  the sleep/wakeup count information, which used to be also the awake/asleep
+  flag?  The answer is, `where it matters'.  In the case of an i/o queue,
+  the `right place' for this information is in the queue, -not- in the task
+  that reads from or writes to it.
+
+  In this new world order the tasks or interrupt service routines that used
+  to simply increment or decrement a counter have a little bit more work to
+  do to wake or lull a task.  But it's not too bad, and the task loop is
+  purer, more flexible, and one instruction quicker per task!
+
+  Generally, when a task is using a resource that resource points to the task.
+  This has two purposes:  when this pointer is zero, the resource is -free-.
+  When non-zero, it points to the task that should be woken when the resource
+  is `ready'.  The task points back at some part of the resource, thru the
+  `depend' pointer.  Thus if a task is waiting on serial input from a queue,
+  the queue -resource- would point to the task; the task's `depend' would
+  point to the count of characters available to be read from the queue.  When
+  a character comes in from the serial port, the service routine puts the
+  character in the queue and increments the count.  It then checks if the
+  `depend' pointer has become non-zero, or >0, or whatever the criterion is.
+  If so, it wakes the task by changing its `status' code pointer.
+
+  Alternatively the ISR could increment the counter pointed to by the task's
+  `depend' pointer.  ISR.owner->task.depend->counter.  These details are a
+  bit fuzzy still.)
+
+comment %%
+definer: +user  ( size)
+   create  #user \f @ ,  #user \f +!
+   ;code   ??
+   0 +user status      ( code pointer; determines the wakefulness of the task)
+   0 +user me          ( synonym)
+cell +user link        ( link to next task in list)
+cell +user bottom      ( bottom of D stack)
+cell +user top         ( pointer to saved stack)  %%
+
+{
+target
+0 cells constant status
+1 cells constant link
+2 cells constant bottom
+3 cells constant top
+forth
+}
+
+( 15-sep-1998.  This is now different; see above.  The idea still applies;
+  only the location of the counters has changed.  Well, that and that the
+  counters now run `the right way'.
+
+  If a task has an associated IRQ, use STATUS as a sema-
+  phore -- use AWAIT to sleep and <task> #] dec, [in IRQ
+  routine] to awaken.  Incrementing and decrementing STATUS is
+  an atomic action.  In this case only  ACTIVATE ever sets STATUS.
+  This will happen before the interrupt is enabled so it's OK.
+
+  In other cases it doesn't matter; however, incrementing and
+  decrementing STATUS makes a useful auto-wakeup semaphore.)
+
+( On what other architecture can you write a multitasker loop in 6
+  instructions?)
+
+code pause
+   { top ct rp lr } ! sp stm                   ( save context on stack)
+   ' top ( offset in user area) up +) sp str   ( save stack ptr in user area)
+   
+label wait ( robin)
+   ' link ( offset)   up +) up ldr  ( follow task link)
+   ' status ( offset) up +) pc ldr  ( jump thru status)
+
+label run
+   ' top ( offset in user area) up +) sp ldr     ( setup sp)
+   { top ct rp pc } ! sp ldm         ( load context and go!)  ;c
+
+decimal
+{
+." Kernel size "  |# .  ." bytes." cr
+}
+
+: pause ;  ( not yet!)
+: emit   ( ch)
+   begin  [ uart1 "14 + ] c@ "20 and  0= while  pause  repeat
+   [ uart1 ] c! ;
+
+: key?   [ uart1 "14 + ] c@  1 and ;
+: key   begin  key? 0= while  pause  repeat  [ uart1 ] c@ ;
+
+: cr  13 emit  10 emit ;
+: space  32 emit ;
+
+( Printing hex.)
+: >digit   ( n - ch)  ( convert 1 binary digit to char; hex to uppercase)
+   9 over u<  7 and +  [ char 0 ] +  ;
+
+: 16/mod   dup 4 u>>   swap 15 and ;
+
+: .   8 for  16/mod >digit swap  next  drop
+      8 for  emit  next  space ;
+
+: ?a   dup 15 and 0= if  cr  dup .  space  then ;
+: @+  dup 4 +  swap @ ;
+: dump  ( a n - a+n)   for  ?a  @+ .  next ;
+: 1+  1 + ;
+
+( dump the memory segment map)
+hex
+: fixmem   800 ffffa008 !  ( low end of sram just above chip sram)
+         40000 ffffa028 !  ( hi end of sram just above chip sram) ;
+
+( try mem access before it's fixed)
+: fill  ( a n)  for  dup dup !  4 +  next  drop ;
+: trymem       800 @ .    28000 @ . ;
+: trymem2  4000800 @ .  4028000 @ . ; ( same, but up in flash)
+: try2
+   trymem cr  trymem2 cr 
+   800 40 fill  [ 40000 100 - ] 40 fill
+   800 40 dump  cr   [ 40000 100 - ] 40 dump cr ;
+
+: showit
+   try2  fixmem  try2
+   ffffa000 64 2/ 2/ dump  cr  ffffa100 2c 2 >> dump  cr
+   ffffa400 2 dump  cr ;
+
+: echo  begin  key  dup #13 xor while  1+ emit  repeat  drop ;
+
+decimal
+
+: count2  "13579bdf 8 for 16/mod >digit emit  next drop ;
+
+: clock   "ffffac28 c@ . cr ;
+
+: ppi!   "80 "ffff1c0c c! ;
+: delay   60_000 for next ;
+: leds    15 and 4 << "ffff1c08 ( port C) c! ;
+: count  0 16 for  dup leds 1+  delay  next drop ;
+
+: 2dup  over over ;
+: bounce  1 4 for   dup leds  2*  delay  next
+            4 for  u2/  dup leds  delay  next  drop ;
+
+: chars  32  [ 128 32 - ] for  dup emit  1+  next  drop  cr ;
+
+: times  6789 123456 * .   -1029484 485 * . ;
+
+: doit   showit  clock  echo  times  count2   ppi!
+   begin  bounce  chars  again  [
+
+{
+"8000 8 Ki + dup  4 Ki +
+
+}
+code _boot   # rp mov  # sp mov   ' doit b  ;c
+' _boot { 'boot !
+
+#]file

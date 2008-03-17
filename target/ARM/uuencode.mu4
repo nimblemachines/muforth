@@ -1,0 +1,95 @@
+( $Id$
+
+  This file is part of muFORTH; for project details, visit
+
+     http://nimblemachines.com/browse?show=MuForth
+
+  Copyright 1997-2006 David Frech. All rights reserved, and all wrongs
+  reversed.
+
+  Licensed under the Apache License, Version 2.0 [the "License"];
+  you may not use this file except in compliance with the License.
+  You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+  or see the file LICENSE in the top directory of this distribution.
+
+  Unless required by applicable law or agreed to in writing, software
+  distributed under the License is distributed on an "AS IS" BASIS,
+  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  See the License for the specific language governing permissions and
+  limitations under the License.)
+
+( uuencode.mu4 - uuencode the image for download to AEB-1.)
+
+( 2002-mar-29. Converted to muForth.)
+
+( 17-may-2000. Created, after studying GNU sharutils source for uuencode
+  and uudecode.)
+
+( Encodes 3 chars of 8 bits - 24 bits - into 4 chars of 6 bits.)
+
+cr " UUencode "  file[#
+
+( 1 line of chars: 45 input bytes -> 60 output, plus count and cr)
+64 buffer uubuf
+variable u
+: clean  uubuf u ! ;
+: uflush  uubuf  u @  over - type ;
+: u,  u @  c!  1 u +! ;
+
+( : uu1encode   63 and  bl +  ;  ( XXX: encodes 0 as 32, not as 96 `)
+: uu1encode   63 and  dup 0= if  64 +  then  bl +  ;
+: uupeel   dup 6 >>  ;
+: uu4peel   uupeel  uupeel  uupeel  ;
+
+: uu1encode,   uu1encode  u,  ;
+
+( high to low:  c0:c1:c2)
+: c@+   (s a - a+1 c)  dup 1+ swap c@ ;
+: 8b@   ( a n - a+1 n')  8 <<  push  c@+  pop  +  ;
+: uu4encode,
+   uu4peel   uu1encode,  uu1encode,  uu1encode,  uu1encode,  ;
+
+( Each letter represents 2 bits; so aaaa is a byte; colons separate chars
+  as they will be sent out, in groups of 6 bits.)
+
+: uu3   ( a - a+3)  0  8b@  8b@  8b@   ( aaa:abb:bbc:ccc)  uu4encode, ;
+: uu2   ( a - a+2)  0  8b@  8b@  8 <<  ( aaa:abb:bb0:000)  uu4encode, ;
+: uu1   ( a - a+1)  0  8b@      16 <<  ( aaa:a00:000:000)  uu4encode, ;
+
+: cr,   ctrl J  u,  ;
+
+: uuleft  ( a 0|1|2 - a+)  jump  nope  uu1  uu2  [
+: uuline  ( a n - a+n)
+   clean
+   cr,  dup uu1encode, ( count)
+   3 /mod  ( r q)  swap push  ?for  uu3  next  then  pop uuleft
+   uflush ;
+
+: uuimage  ( a len)
+   45 /mod  ( r q)  swap push  ?for  45 uuline  next   then
+                          pop   dup  if uuline drop ^  then  2drop ;
+
+: uu(  ." begin 600 image" ;
+: )uu  cr  0 uu1encode emit  cr  ." end"  cr  ;
+: uu  uu(  uuimage  )uu  ;
+
+#]file
+
+( Tests)
+
+0 [if]
+
+: tt  z" /tmp/aeb.uue" create-file  dup writes
+   z" ../../ARM/AEB-1/Revc1.bin" r/o open-file dup mmap-file  ( a #)  uu
+    close-file ( aeb.uue)  close-file     >stdout ;
+
+( 'image #image)  "40000000 "b4000  uu  close drop
+
+>stdout  (  jiffies  swap-  .  ." jiffies "  0  bye)
+
+[then]
+
+

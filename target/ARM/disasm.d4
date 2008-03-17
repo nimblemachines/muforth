@@ -1,0 +1,258 @@
+( disasm - ARM disassembler. 22-apr-1999.)
+
+cr s" Disassembler "  file[#
+
+( At the moment this is basic ARM7 stuff - no long multiplies, no Thumb.)
+
+( Printing numbers without trailing space.)
+( Can also do this with `0 .r')
+: |.   (.) type  ;
+: |u.  (u.) type  ;
+: #.    char # emit  |.  ;
+: #u.   char # emit  |u.  ;
+
+( Extracting fields.)
+: extract  ( i sh mask - n)  push  rshift  pop and  ;
+
+( Extracting registers.)
+: reg-extract  ( i body - i reg)  @  ( i shift)  over swap  "f extract  ;
+: R.  ( reg char)   emit   radix @ push  decimal  |u.  pop radix !  ;
+: Rname.  ( reg)
+   dup 13 u< if  char R  R.  else  13 -  2*  z" SPLRPC" +  2 type  then  ;
+: reg   create ( shift) ,  does>  ( i body - i)  reg-extract  Rname.  ;
+: creg  create ( shift) ,  does>  ( i body - i)  reg-extract  char c  R.  ;
+
+ 0 reg Rm    0 creg CRm
+ 8 reg Rs    8 creg CRs
+12 reg Rd   12 creg CRd
+16 reg Rn   16 creg CRn
+
+( Various syntactic bits.)
+: tab   9 emit  ;
+: ",    ." , "  ;
+: ",[   ." , ["  ;
+: "],   ." ], "  ;
+: "]    char ] emit  ;
+
+( Masked match.)
+: -match  ( i mask n - i f)  push  over and  pop xor  ;
+
+( A defining word for decoding.)
+: decode:  name  ( mask n)  , ,  ]
+   does>  dup  cell+ cell+ push  2@  ( i mask n)  -match  if shunt then  ;
+
+( Helpers: Generic.)
+: .icond   dup 28 "f extract  dup 14 u< if
+   ( 14=always, 15=never - print nothing)
+   2*  z" EQNECSCCMIPLVSVCHILSGELTGTLE"  +  2 type  else  drop  then  ;
+
+"00100000 "00100000 decode: S   char S emit  ;
+"00400000 "00400000 decode: B   char B emit  ;
+"00400000 "00400000 decode: }^  char ^ emit  ;
+"00400000 "00400000 decode: L   char L emit  ;
+"00200000 "00200000 decode: Write-back  char ! emit  ;
+"01200000 "00200000 decode: T   char T emit  ;
+
+
+: imm   ( insn - imm)
+   dup "ff and ( value)  swap 8 "f extract 2*  ( n rot) rotate  ;
+
+: .imm   dup imm  #u.  ;
+
+: |pc+  ( a offset - a ea)   over  8 + ( compensate for prefetch) +  ;
+
+
+( Helpers: MUL/MLA.)
+: mul-regs   ( Rn, Rd are swapped!)  Rn ( Rd!)  ",  Rm  ",  Rs  ;
+
+
+( Helpers: MSR/MRS.)
+: psr  dup "00400000 and if  char S  else  char C  then  emit  ." PSR"  ;
+: psr_flg,   psr  ." _flg,"  ;
+
+
+( Helpers: ALU.)
+( ALU ops. Remember: TST, TEQ, CMP, CMN ignore Rd; MOV, MVN ignore Rn.)
+: alu-op   dup 21 "f extract  3*
+   z" ANDEORSUBRSBADDADCSBCRSCTSTTEQCMPCMNORRMOVBICMVN" +   3 type  ;
+
+: alu-Rd,Rn,   alu-op  .icond S tab
+   "01800000 "01000000 -match if  ( not TST--CMN)  Rd ",  then
+   "01a00000 "01a00000 -match if  ( not MOV, MVN)  Rn ",  then  ;
+
+( Needs to handle the special cases.
+                  LSR #0 encodes LSR #32.
+                  ASR #0 encodes ASR #32.
+                  ROR #0 encodes RRX.
+  So only LSL #0 means what it sez.)
+
+: shift-op   ",  dup 5 3 extract  3*  z" LSLLSRASRROR" +  3 type  space  ;
+: shift-reg   shift-op  Rs  ;
+"ff0 "000 decode: lsl0     shunt -;  ( print nothing)
+"ff0 "020 decode: lsr0     ." , LSR #"  32 |u.  shunt  -;
+"ff0 "040 decode: asr0     ." , ASR #"  32 |u.  shunt  -;
+"ff0 "060 decode: ror0     ." , RRX"      shunt  -;
+: shift-imm   lsl0  lsr0  asr0  ror0  ( not special, do normal)
+   shift-op  dup 7 "1f extract  #u.  ;
+
+
+( Helpers: Indexing.)
+: Post   dup "01000000 and if  ",  else  "],  then  ;
+: Pre    dup "01000000 and if  "]  Write-back  then  ;
+: ldr-str-Rd,[
+   dup "00100000 and if  ." LDR"  else  ." STR"  then
+   .icond  B T tab  Rd  ",[  ;
+
+: Rn,   Rn  Post  ;
+: Down?  ( i - f)   "00800000 and 0=  ;
+: >offset12  ( i - offset i)
+   dup "fff and  over Down? if  negate  then  swap  ;
+
+: [contents]  ( a)  tab  ." = "  |@  |u.  ;
+
+
+( Effective addresses.)
+
+( For instructions that don't calculate one, return the -contents- of the
+  address given to it.)
+
+: -ea   ( a i - a [a])  drop  dup |@  ;
+
+"f0000 "f0000 decode: pc-offset  ( a offset i - a ea)
+   push  |pc+  dup |u.  pop Pre drop   dup [contents]  shunt  -;
+
+: .offset   pc-offset   Rn,  swap  #.  Pre  -ea  ;
+: #offset12   ( a i - a ea)  >offset12  .offset  ;
+: reg-offset   Rn,  dup Down? if  char - emit  then  Rm shift-imm  Pre  ;
+
+( for ADRs)
+: adr-Rd,   ." ADR"  .icond tab  Rd ",  imm  ;
+: adr-ea   |pc+  dup  #u.  ;
+
+
+( Helpers: B/BL.)
+: >branch-dest  ( a i - a ea)
+   "ffffff and  dup "00800000 and if
+   ( negative offset)    "ff000000 or ( sign ext)  then  cells  |pc+  ;
+
+
+( Helpers: LDM/STM.)
+: PU   dup 23 3 extract  2*  z" DAIADBIB" +  2 type  ;
+
+: first1   ( bits cur - cur' bits')
+   begin  swap  dup 1 and 0= while  u2/ swap  1+  repeat  ;
+
+( A little ugly, but it works.)
+: reg-list
+   char { push   dup "ffff and  0   begin   over while  ( bits cur)
+      pop emit space  first1 1+  over Rm  first1 1-  -rot  ( bits ix1 ix0)
+      1- tuck  xor  if  char - emit  Rm  then  1+  char , push
+   repeat   pop drop  2drop  ."  }"  ;
+
+
+( Helpers: LDC/STC.)
+: >offset8   ( i - offset i)
+   dup "ff and  over Down? if  negate  then  cells  swap  ;
+
+: #offset8   >offset8  .offset  ;
+: CP#   dup 8 "f extract  char p  R.  ;
+
+( Helpers: CDP, MRC/MCR.)
+: CPinfo   dup 5 7 extract  ?dup if  ", |u.  then  ;
+
+
+( The instructions!)
+"0fc000f0 "00000090 decode: mul-mla
+   dup "00200000 and if
+   ." MLA"  .icond S tab  mul-regs  ",  Rd ( Rn!)  -ea  shunt  then
+   ." MUL"  .icond S tab  mul-regs                 -ea  shunt  -;
+
+"0fb00ff0 "01000090 decode: swp
+   ." SWP"  .icond B tab   Rd ", Rm ",[ Rn "]  -ea  shunt  -;
+
+"0fbf0fff "010f0000 decode: mrs
+   ." MRS"  .icond tab  Rd ",  psr  -ea  shunt  -;
+
+"0fbffff0 "0129f000 decode: msr-reg
+   ." MSR"  .icond tab  psr ",  Rm  -ea  shunt  -;
+
+"0fbffff0 "0128f000 decode: msr-flag-reg
+   ." MSR"  .icond tab  psr_flg,  Rm  -ea  shunt  -;
+
+"0fbff000 "0328f000 decode: msr-flag-imm
+   ." MSR"  .icond tab  psr_flg,  .imm  -ea  shunt  -;
+
+( Check for ADD/SUB relative to PC; these are ADRs.)
+"0fef0000 "028f0000 decode: add-imm-pc   adr-Rd,          adr-ea  shunt  -;
+"0fef0000 "024f0000 decode: sub-imm-pc   adr-Rd,  negate  adr-ea  shunt  -;
+
+"0e000000 "02000000 decode: alu-imm
+   alu-Rd,Rn,  .imm  -ea  shunt  -;
+
+"0e000010 "00000000 decode: alu-reg-imm-shift
+   alu-Rd,Rn,  Rm  shift-imm   -ea  shunt  -;
+
+"0e000090 "00000010 decode: alu-reg-reg-shift
+   alu-Rd,Rn,  Rm  shift-reg   -ea  shunt  -;
+
+"0e000000 "04000000 decode: ldr-str-imm   ldr-str-Rd,[  #offset12  shunt  -;
+
+"0e000010 "06000000 decode: ldr-str-reg   ldr-str-Rd,[  reg-offset  
+   -ea  shunt  -;
+
+"0e000010 "06000010 decode: undefined
+   ." UNDEFINED"  -ea  shunt  -;
+
+"0e000000 "08000000 decode: ldm-stm
+   dup "00100000 and if  ." LDM"  else  ." STM"  then  .icond  PU  tab
+   Rn  Write-back  ",  reg-list  }^  -ea  shunt  -;
+
+"0e000000 "0a000000 decode: b-bl  ( a i - a ea)
+   dup "01000000 and if  ." BL"  else  ." B"  then  .icond tab
+   >branch-dest  dup |u.  shunt  -;
+
+"0e000000 "0c000000 decode: ldc-stc
+   dup "00100000 and if  ." LDC"  else  ." STC"  then  .icond L tab
+   CP# ",  CRd  ",[  #offset8  shunt  -;
+
+"0f000010 "0e000000 decode: cdp
+   ." CDP"  .icond tab  CP# ",  dup 20 "f extract |u.  ", ( CPopc)
+   CRd ",  CRn ",  CRm  CPinfo  -ea  shunt  -;
+
+"0f000010 "0e000010 decode: mrc-mcr
+   dup "00100000 and if  ." MRC"  else  ." MCR"  then  .icond tab
+   CP# ",  dup 21 7 extract  |u. ", ( CPopc)
+   Rd ",  CRn ",  CRm  CPinfo  -ea  shunt  -;
+
+"0f000000 "0f000000 decode: swi
+   ." SWI"  .icond tab  dup "ffffff and |u.  -ea  shunt  -;
+
+: reserved  ." RESERVED"  -ea  ;
+
+: shred  ( a i - a ea)
+   mul-mla   swp   mrs   msr-reg   msr-flag-reg   msr-flag-imm
+   add-imm-pc  sub-imm-pc  ( ADRs)
+   alu-imm   alu-reg-imm-shift   alu-reg-reg-shift
+   ldr-str-imm  ldr-str-reg   undefined
+   ldm-stm   b-bl   ldc-stc   cdp   mrc-mcr   swi
+   ( and if none matched:)  reserved  ;
+
+
+( The workhorse.)
+: 1dis  ( a - a ea)
+   cr dup .a16  inspect-nesting  dup |@ ( a i)
+   dup .w16 tab  shred  ( - a ea)  ;
+
+' 1dis '1dis !  ( for mode switching)
+' -1   '1see !  ( quits)
+
+( Interactive)
+: dis  ( |a - |a+)  lit 1dis  cell  inspect  ;
+
+( Batch mode)
+: disses   ( start limit)
+   inspect-sp off
+   swap  begin  1dis drop  cell+  2dup u<  until  2drop  ;
+
+
+#]file
