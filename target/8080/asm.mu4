@@ -1,0 +1,283 @@
+( $Id$
+
+  This file is part of muFORTH; for project details, visit
+
+     http://nimblemachines.com/browse?show=MuForth
+
+  Copyright 1997-2007 David Frech. All rights reserved, and all wrongs
+  reversed.
+
+  Licensed under the Apache License, Version 2.0 [the "License"];
+  you may not use this file except in compliance with the License.
+  You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+  or see the file LICENSE in the top directory of this distribution.
+
+  Unless required by applicable law or agreed to in writing, software
+  distributed under the License is distributed on an "AS IS" BASIS,
+  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  See the License for the specific language governing permissions and
+  limitations under the License.)
+
+( Of course, for any "new" target - even one designed in 1976 - we need an
+  assembler. This is an assembler for the 8080/8085. It includes the two -
+  count 'em! - instructions, sim and rim, that Intel added when they
+  developed the 8085. Revolutionary! At the same time Zilog was developing
+  the Z80 and getting ready to totally blow Intel's x80 market share away.
+  Hmm, then what happened to Zilog? They really fumbled the 32bit market.)
+
+( I'm going to use the term "8080" to mean the 8080 and 8085. As mentioned,
+  the only difference _to the programmer_ - the hardware is a _lot_ nicer -
+  is the two new instructions. You 8080 programmers out there - both of you
+  - just don't use those two insns.)
+
+( After much tearing of hair and gnashing of teeth, I have decided to keep
+  the mnemonics the same as Intel's, even though some of them are quite
+  strange. As it happens, I'm used to them, and so, probably, are others.
+  It is always possible to make aliases - this is Forth, after all! - if
+  you absolutely must have different ones. I have suggested some
+  alternatives for each instruction, following its definition.
+
+  The only mnemonics I didn't use are the ones for conditional jmp, call,
+  and return. Rather than defining all 24 mnemonics, I've defined the
+  conditions - 0= 0< u< & even [parity], and a way to negate each - and the
+  conditional insns - ?jmp ?call ?ret - separately.)
+
+( The previous paragraph renders this one false. ;-]
+
+  I'm going to change some of the mnemonics. Most hardware vendors choose
+  awful mnemonics. [Thankfully ARM is better than most, though their
+  mnemonics do imply a source/dest ordering that doesn't work as well with
+  postfix assemblers.] Atmel's AVR is a good example: a decent
+  architecture, a somewhat complex insn encoding, and completely awful,
+  brain-dead, and confusing mnemonics . The 8080 mnemonics are a mix. Some
+  are ok, but others - mostly the "immediate with A" insns - are awful. So
+  I'm going to change them. If I remember, I'll note this in the definition
+  of the insn.)
+
+( One nice thing about the insn encoding is that, when you look at it with
+  your octal glasses on, you see really nice simple patterns. Most insns
+  group by first and last octal digit, while the middle digit chooses the
+  member of the group. Eg, 302 is the conditional jump group:
+
+  302 jnz
+  312 jz
+  322 jnc
+  332 jc
+  342 jpo
+  352 jpe
+  362 jp
+  372 jm)
+
+( I'm considering putting cycle times into the insns. We'll see how that
+  works.)
+
+cr " 8080 assembler "  file[#
+
+( Space for compiling into. 8080 only has 64k address space.)
+64 Ki constant #image  ( this is as big as it can get!)
+#image buffer 'image
+
+( Since there are no segments on the 8080, we may need to define a non-zero
+  origin, esp. for ROMed code.)
+
+variable dA   ( offset from target address to image address)
+   ( set so that   dA @ +   equals   origin -  'image +  )
+: |+    ( a - a')  dA @ +  ;	( suggests adding to edge of region)
+
+( Dictionary operators.)
+variable |h	( image dictionary pointer)
+: |here  ( - a)  |h @  ;
+: |c,    ( ch)   |here |+ c!  1 |h +!  ;
+: |,     ( n)    |c,  8 >> |c, ;
+: |#     ( - n)  |here |+  'image -  ;  ( return the number of bytes in image)
+
+( Initialization.)
+: wipe      'image  #image  ( erase)   "55  fill  ;
+: org   ( buffer len org)
+//   tuck tuck + ( buf org org org+len)  |limits 2!  dup |h !  -  dA !  ;
+   nip  ( buf org)  dup |h !  -  dA !  ;  ( XXX testing)
+
+wipe  'image #image  0  org
+
+: 0r0  ( reg op - op')      swap  7 and  3 <<  or ;
+: b,   ( compile byte)  |c, ;
+: w,   ( compile word, little-endian)  dup  b,  8 >>  b, ;
+
+octal
+
+( Check use of register pairs.)
+: ?pair  200 u< if error" needs register pair" then ;  ( UNUSED)
+
+( Defining words.)                                      ( op imm)
+: op       ( op)  constant  does>  ( op)                   b, ;
+: 1reg     ( op)  constant  does>  ( reg op)       0r0     b, ;
+: 2reg     ( op)  constant  does>  ( src dst op)   0r0 or  b, ;
+
+: immed    ( op)  constant  does>  ( imm op)               b, b, ;
+: immedx   ( op)  constant  does>  ( imm op)               b, w, ;
+
+: immreg   ( op)  constant  does>  ( imm reg op)   0r0     b, b, ;
+: immregx  ( op)  constant  does>  ( imm reg op)   0r0     b, w, ;
+
+: 2opreg   ( op)  200 or
+                  constant  does>  ( src op)           or  b, ;
+: 2opimm   ( op)  306 or  immed ;
+: 2op      ( op)  3 << dup 2opreg 2opimm ;
+
+assembler
+: ;c   \c [  ?csp ;
+
+( Registers.)
+0 constant b
+1 constant c
+2 constant d
+3 constant e
+4 constant h
+5 constant l
+6 constant m
+7 constant a
+
+( Register pairs have high bit set. Usage is currently unchecked. Using the
+  single character name for the pair will also work!)
+200 constant bc
+202 constant de
+204 constant hl
+206 constant sp  206 constant psw ( af?)
+
+( Conditions, encoded in the positive; ie, "0< ?jmp" is jmi.)
+1 constant 0=
+3 constant u<   2 constant cs  ( carry set)
+5 constant even  ( parity - why did they even bother?)
+7 constant 0<
+
+( Negate condition, so we can use them with "if" and "until".)
+: not  1 xor ;  ( 1 bic instead?)
+
+( group 000)
+000 op nop
+( 010)
+( 020)
+( 030)
+040 op rim  ( 8085 only)
+( 050)
+060 op sim  ( 8085 only)
+( 070)
+
+( group 001)
+001 immregx lxi  ( lix mvxi mvix)  ( 001 evens)
+011 1reg dad  ( addx; mip suggested "index") ( 001 odds)
+
+( group 002)
+002 1reg stax ( also 022)
+012 1reg ldax ( also 032)
+042 immedx shld  ( sthl)
+052 immedx lhld  ( ldhl)
+062 immedx sta
+072 immedx lda
+
+( group 003)
+003 1reg inx  ( incx)  ( 003 evens)
+013 1reg dcx  ( decx)  ( 003 odds)
+
+( groups 004, 005)
+004 1reg inr  ( inc)
+005 1reg dcr  ( dec)
+
+( group 006)
+006 immreg mvi  ( li ldi movi)
+
+( group 007)
+( Hmm: should these be called rola, rora, rlca, rrca, daa, coma, since they
+  only work on a? Here is one place where the intel mnemonics are
+  COMPLETELY! retarded.)
+
+( DANGER DANGER DANGER: Intel's mnemonics for rotate are DUMB. There are 4
+  rotates: (right or left) x (thru carry or not). Here are the definitions.
+  L = left, R = right, C = thru carry, N = not thru carry:
+
+  LN   msb -> carry, msb -> lsb, all others shift left. 8 bits rotate.
+  RN   lsb -> carry, lsb -> msb, all others shift right. 8 bits rotate.
+  LC   msb -> carry, carry -> lsb, all others shift left. 9 bits rotate.
+  RC   lsb -> carry, carry -> msb, all others shift right. 9 bits rotate.
+
+  Intel has defined their rotates in the following way - they rotate the A
+  register:
+
+  RLC = LN
+  RRC = RN
+  RAL = LC  
+  RAR = RC
+
+  Which is backwards from what it "should" be, and what every other CPU
+  maker has done. Be careful!)
+
+007 op rlc   ( 8 bits, not thru carry)  ( rol, rola)
+017 op rrc   ( ditto)                   ( ror, rora)
+027 op ral   ( 9 bits, thru carry)      ( rlc, rolc)
+037 op rar   ( ditto)                   ( rrc, rorc)
+047 op daa
+057 op cma   ( complement A)      ( com, coma)
+067 op stc   ( set carry)         ( setc)
+077 op cmc   ( complement carry)  ( comc)
+
+( groups 100 - 107; low order digit is src register)
+100 2reg mov
+166 op   hlt  ( halt; encoded as mov m,m)
+
+( groups 200 - 207; low order digit is src register)
+( group 306 are immediates)
+( regreg adds 200; imm adds 306; op is shifted to middle digit)
+0 2op add  adi  ( add   addi)
+1 2op adc  aci  ( adc   adci)
+2 2op sub  sui  ( sub   subi)
+3 2op sbb  sbi  ( sbb   sbbi)
+4 2op ana  ani  ( and   andi)
+5 2op xra  xri  ( xor   xori)
+6 2op ora  ori  ( or    ori)
+7 2op cmp  cpi  ( cmp   cmpi)
+
+( group 300)
+( Conditional return)
+300 1reg ?ret  ( cond)
+
+( group 301)
+301 1reg pop  ( also 321, 341, 361)
+311 op ret
+( 331)
+351 op pchl  ( pc! vector go run)
+371 op sphl  ( sp!)
+
+( group 302)
+( Conditional jump)
+302 immregx ?jmp  ( cond)
+
+( group 303)
+303 immedx jmp
+( 313)
+323 immed out
+333 immed in
+343 op xthl
+353 op xchg
+363 op di
+373 op ei
+
+( group 304)
+( Conditional call)
+304 immregx ?call  ( cond)
+
+( group 305)
+305 1reg push  ( also 325, 345, 365)
+315 immedx call
+( 335)
+( 355)
+( 375)
+
+( group 307)
+307 1reg rst  ( restart)
+
+decimal forth
+
+#]file
