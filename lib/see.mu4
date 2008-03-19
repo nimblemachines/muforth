@@ -19,19 +19,17 @@ decimal
 ( We defer these so that, later, the target compiler can possibly read from
   the target, rather than local memory.)
 
+( Let's make this less ARM/x86 specific.)
+variable |cell
 defer |c@
 defer |@
-
-( test)
-now @ is |@
-now c@ is |c@
 
 ( NOTE: These are `backwards' from the words defined in dforth.m4, which are
   in turn `backwards' from what the rest of the world does. I'm still not sure
   which I like better. The dforth.m4 style is another of CM's `innovations'
   in cmForth.)
-: |c@+  ( |a - |a+1 ch)   dup 1+     swap |c@  ;
-: |@+   ( |a - |a+4 n)    dup cell+  swap |@  ;
+: |c@+  ( |a - |a+1 ch)       dup 1+       swap |c@ ;
+: |@+   ( |a - |a+|cell n)    dup |cell @ +  swap |@ ;
 
 
 ( Call, return.)
@@ -47,11 +45,11 @@ variable inspect-sp  ( stack pointer)  0 inspect-sp !
    inspect-sp @  dup if
       1- dup  inspect-sp !  inspect-stack @  nip ^  then  drop  ;
 
-: inspect-nesting  inspect-sp @  ?for  char > emit  next  space  then  ;
+: .nesting  inspect-sp @  ?for  char > emit  next  space  then  ;
 
 ( For switching inspection modes.)
 defer 1inspect
-variable skip
+variable skip  ( number of |cell's to skip)
 : inspect!  ( '1inspect default-skip)  skip !  is 1inspect ;
 
 
@@ -66,7 +64,7 @@ variable skip
 : key:  -:  \f char  seekeys ! ;
 
 ( advance rounds down to nearest `skip'.)
-: advance  ( a ea skip - a')  nip  +  skip @ negate  and  0 ;
+: advance  ( a ea skip - a')  nip + ( advance)  skip @ negate and ( round)  0 ;
 
 -: ( skip+)  skip @         advance ;
   dup     32 seekeys !
@@ -108,53 +106,95 @@ key: g ( go)      ( old ea - ea f)       nip                 0  ;
 
 
 ( Byte and word conversion to ascii)
-: .b16    hex   <#              # #  #>  type  ; 
-: .b8    octal  <#            # # #  #>  type  ;
-: .w16    hex   <#  # # # # # # # #  #>  type  ;
-: .a16    .w16  space space  ;
-: .a_16   -16 and  .a16  ;  ( round down 16)
+( These should right adjust to a field size.)
+: .h8     hex   <#    # #  #>  type ;
+: .o8    octal  <#  # # #  #>  type ;
+: .hcell  hex   <#  |cell @ 2* for # next  #>  type ;
 
-: .a-space   ( a - a)  10 spaces  ;  ( .w16 + 2 spaces)
+: .addr   cr  ( -16 and)  .hcell  space ;  ( round addr down 16)
+: _addr   cr  |cell @ 2* 1+ spaces ;
 
-variable #field
+comment
+ ====================================================
+  How much horizontal room does each four bytes take?
+  First, with octal:
+
+   A   \   3   &
+  aa  bb  cc  dd
+ 000 000 000 000
+    ffff    ffff
+        97ffee00
+
+  group*(digits + space between)
+    char: 4*(1 + 3) = 16
+     hex: 4*(2 + 2) = 16
+   octal: 4*(3 + 1) = 16     #field = 4
+  word16: 2*(4 + 4) = 16
+  word32: 1*(8 + 8) = 16
+
+  Then, without octal:
+
+  A  \  3  &
+ aa bb cc dd
+  ffff  ffff
+    97ffee00
+
+  group*(digits + space between)
+    char: 4*(1 + 2) = 12
+     hex: 4*(2 + 1) = 12     #field = 3
+  word16: 2*(4 + 2) = 12
+  word32: 1*(8 + 4) = 12
+ ====================================================
+
+variable #field ( width of each byte, rendered)
+( XXX This doesn't work if we put spacing before chars. Need to use
+field-1,and put spacing after chars, since the addr it will be 1..16 rather
+than 0..15!)
+
 : .padding   ( a - a)
-   inspect-nesting  dup  15 and  dup  #field @ *  swap 2/ 2/ +  spaces  ;
+   .nesting  dup  15 and  dup  #field @ *  swap 2/ 2/ +  spaces ;
 
-: |_field|   ( width)  #field @ 1-  swap -  spaces  ;
+: |_field|   ( width)  #field @  swap -  spaces ;
 
-: #bytes     ( a - a #bytes)  16 over  15 and -  ;
-: spacing    ( a - a)  1 over 3 and 0= -  spaces  ;
+: #bytes    ( a - a #bytes)  16 over  15 and -  ;  ( 1 .. 16, end on multiple)
+: .spacing  ( a - a) dup 3 and 0= if space then ;  ( every 4th add a space)
 
 ( >letter is pickier than >graphic, to make strings easier to read. This is
-  America-centric and anti-Euro! Which is unfortunate...)
+  America-centric and not very international, which is unfortunate.)
 
 : >letter   ( ch - ch')  dup letter?   if ^ then  drop bl  ;
 : >graphic  ( ch - ch')  dup graphic?  if ^ then  drop bl  ;
 
-: .chars  ( a)   cr   dup .a_16      .padding   #bytes for
-   |c@+ ( a+1 ch)  >graphic  1 |_field|  emit  spacing  next  drop  ;
+defer .byte
+: .char  >graphic  1 |_field|  emit ;
+: .hex-byte        2 |_field|  .h8 ;
+: .oct-byte        3 |_field|  .o8 ;
+: .hex-cell   #field @ 2 - |cell @ * spaces  .hcell ; 
 
-: .hex-bytes  ( a)       cr  .a-space .padding   #bytes for
-   |c@+ ( a+1 ch)  2 |_field|  .b16   spacing  next  drop  ;
+: .bytes  ( a)       .padding  #bytes for
+   |c@+  .byte  .spacing  next  drop  ;
 
-defer .other  ( hex-words or octal-bytes, depending on arch)
-: .hex-words  ( a)   cr  .a-space  -4 and  .padding   #bytes cell/ for
-   |@+ ( a+4 n)  3 spaces  .w16  spacing  next  drop  ;
+: .cells  ( a)  dup _addr
+   |cell @ negate and  .padding  #bytes |cell @ / for
+   |@+  .hex-cell  .spacing  next  drop  ;
 
-: .octal-bytes  ( a)       cr  .a-space .padding   #bytes for
-   |c@+ ( a+1 ch)  3 |_field|  .b8  spacing  next  drop  ;
+( .chars is first, and prints the address)
+: .chars      ( a)  dup .addr  ['] .char     is .byte  .bytes ;
+: .hex-bytes  ( a)  dup _addr  ['] .hex-byte is .byte  .bytes ;
+: .oct-bytes  ( a)  dup _addr  ['] .oct-byte is .byte  .bytes ;
 
+defer .other  ( hex-bytes or octal-bytes, depending on arch)
 : .other!  #field !  is .other ;
-: octal-bytes  ['] .octal-bytes   4  .other!  ;
-: hex-words    ['] .hex-words     3  .other!  ;
-hex-words
-
+: octal-bytes  ['] .oct-bytes   4  .other!  ;
+: hex-bytes    ['] .hex-bytes   3  .other!  ;
+octal-bytes
 
 : 1dump  ( a - a ea)
-   dup .chars  dup .hex-bytes  dup .other  ( a)  dup |@  ( a ea)  ;
+   dup .chars  dup .hex-bytes  dup .oct-bytes  dup .cells
+   ( a)  dup |@  ( a ea)  ;
 
 ' 1dump '1dump !
-: du   ( a - a')  ['] 1dump  16  inspect  ;
+: du   ( a - a')  ['] 1dump 16 inspect  ;
 
 ( Batch mode)
 : dumps   ( start limit)
