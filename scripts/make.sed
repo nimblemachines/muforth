@@ -1,5 +1,3 @@
-# $Id$
-
 # Mark a generated makefile so that it doesn't get edited.
 
 /Id: Makefile/c\

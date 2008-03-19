@@ -1,5 +1,3 @@
-# $Id$
-
 # change the names around...
 
 # T -> TOP

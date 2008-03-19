@@ -1,5 +1,3 @@
-# $Id$
-
 # sed script to convert a BSD makefile (yay!) to a GNU makefile (ewwww).
 
 # elide the leading . for directives
