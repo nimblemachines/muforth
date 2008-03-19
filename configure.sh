@@ -35,7 +35,8 @@ fi
 sed ${sedext} \
   -e "s/%sedext%/${sedext}/g" \
   scripts/do_sed.sh.in > scripts/do_sed.sh
-  
+chmod 755 scripts/do_sed.sh
+ 
 if [ "${gnu}" = "yes" ] || 
     make --version 2> /dev/null | grep -q "GNU Make"; then
   cat <<EOF

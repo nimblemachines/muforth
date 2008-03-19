@@ -12,14 +12,4 @@
 # note that in Forth code we can't include the (c) because of the parens!
 /Copyright.*David Frech/ {
 s/(199.-200)./\18/
-# grab next
-n
-s/(reversed\.)/\1 (See the file COPYRIGHT for details.)/
-# then delete following empty line
-n
-/^[#* ]*$/d
 }
-
-# We're just deleting the license text. This will match any comment style.
-/^[#* ]*Licensed under the Apache License, Version 2.0/,/^[#* ]*limitations under the License./d
-
