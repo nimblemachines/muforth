@@ -1,6 +1,9 @@
 #!/bin/sh
 
-# $Id$
+# This file is part of muFORTH: http://pages.nimblemachines.com/muforth
+#
+# Copyright (c) 1997-2008 David Frech. All rights reserved, and all wrongs
+# reversed. (See the file COPYRIGHT for details.)
 
 # This not a GNU configure script! It simply configures the makefile for
 # muforth based on which make you have, and which version you want to
