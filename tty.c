@@ -17,6 +17,7 @@
 
 /* XXX: Use cfmakeraw, cfsetispeed, cfsetospeed? */
 
+/* stack: ( fd termios - sizeof(termios) ) */
 void mu_get_termios()
 {
     tcgetattr(ST1, (struct termios *)TOP);
@@ -25,6 +26,7 @@ void mu_get_termios()
     TOP = sizeof(struct termios);
 }
 
+/* stack: ( fd termios - ) */
 void mu_set_termios()
 {
     /* drain out, flush in, set */
@@ -62,13 +64,14 @@ void mu_set_termios_min_time()
     DROP(3);
 }
 
+/* stack: ( speed termios - ) */
 void mu_set_termios_speed()
 {
-    struct termios *pti = (struct termios *) ST1;
+    struct termios *pti = (struct termios *) TOP;
 
-#define BPS(x)  case x: TOP = B ## x; break
+#define BPS(x)  case x: ST1 = B ## x; break
 
-    switch(TOP)
+    switch(ST1)
     {
         BPS(  9600);
         BPS( 19200);
@@ -80,7 +83,14 @@ void mu_set_termios_speed()
         TOP = (cell) "Unsupported speed";
         mu_throw();
     }
-    pti->c_ospeed = pti->c_ispeed = TOP;
+#ifdef __linux__
+    /* Linux needs more than a poke in the eye with a stick. Should we
+     * do the same with BSD?
+     */
+    cfsetspeed(pti, ST1);
+#else
+    pti->c_ospeed = pti->c_ispeed = ST1;
+#endif
     DROP(2);
 }
 
