@@ -71,7 +71,7 @@ mode inside-loop
 variable csp  ( what does this stand for? `check stack pointer'?)
 : !csp   depth  csp !  ;
 : ?csp   depth  csp @  -
-         =if  . ." stack depth change: "  hex  .s cr  ^  then  drop  ;
+         =if  . ." (meta) stack depth change: "  hex  .s cr  ^  then  drop  ;
 
 ( Create a macro word in current chain. Used for macro: and inline.)
 : _macro   new <:> forth   macro-loop  !csp ;
@@ -114,14 +114,14 @@ inside
 : ;    \i ^  \i [  ?csp ;
 
 outside
-: create   target  |here constant ( forth) ;
+: create   |here  target constant forth ;
 : assemble     pair off  asm-loop ;
 ( code & ;c should use ?csp to make sure nothing bad has happened...)
 : code   \o create  !csp  \o assemble ;
 
 ( Using [new], we can make a .target. entry too.)
-: implement   |here  .machine. chain' execute ( get addr)  !
-        \o assemble  !csp ;
+: implement  |here  .machine. chain' execute ( get addr)  !
+        !csp  \o assemble ;
 
 : :     \o create   !csp  <asm  lr nest  asm>
         inside-loop ( target compiler) ;
@@ -147,6 +147,7 @@ outside
 : -]   inside-loop ( re-start colon compiler) ;
 : ]    \o literal  \o -]  ( make literal and restart :)  ;
 
+comment b0rken
 ( and so we can make more defining words while we're in the middle of the
   kernel code...)
 : definer:   outside : forth   definer-loop ;
@@ -154,7 +155,7 @@ outside
 ( Now the whole point of the above:)
 definer
 : does>   ;
-: ;code   ;
+: ;code   ;   b0rken
 
 forth
 : }  \i [ ;   ( return to meta)
@@ -165,7 +166,7 @@ assembler
 : //   \f // ;
 : comment   comment ;
 : ;c   \i [  ?csp ;
-: label   assembler constant  ( forth)  does> ;
+: label   |here  assembler constant forth ;
 
 outside
 ( Basic conditionals)
@@ -197,7 +198,6 @@ inside
 : ?for    (s - src dest)  \m ?for @  \o compile,  \o mark>  \i begin ;
 : next    (s dest -)      \m next @  \o compile,  \o mark>  \o <resolve ;
 
-
 ( XXX)
 outside
 : remote   drop ;
@@ -218,6 +218,7 @@ code +     0 pop   top 0 top add   ret  ;c
 code -     0 pop   top 0 top sub   ret  ;c
 code *     0 pop   0 top top mul   ret  ;c
 code and   0 pop   top 0 top and   ret  ;c
+code bic   0 pop   top 0 top bic   ret  ;c
 code or    0 pop   top 0 top or    ret  ;c
 code xor   0 pop   top 0 top eor   ret  ;c
 
@@ -435,23 +436,37 @@ hex
    800 40 fill  [ 40000 100 - ] 40 fill
    800 40 dump  cr   [ 40000 100 - ] 40 dump cr ;
 
-: showit
-   try2  fixmem  try2
-   ffffa000 64 2/ 2/ dump  cr  ffffa100 2c 2 >> dump  cr
-   ffffa400 2 dump  cr ;
+: setbits  ( u a)  dup c@  rot or   swap c! ;
+: clrbits  ( u a)  dup c@  rot bic  swap c! ;
 
-: echo  begin  key  dup #13 xor while  1+ emit  repeat  drop ;
+: dump-uart1
+   80 [ uart1 0c + ] setbits  ( set DLAB so we can read baud rate divisors)
+   [ uart1 ] c@ ( div low)  [ uart1 4 + ] c@ ( div high)
+   80 [ uart1 0c + ] setbits  ( clr DLAB so we can use the uart!)
+   . .  ( high low)  cr
+   [ uart1 ] 8 dump  cr ;
+
+: showmap
+   ffffa000 64 2/ 2/ dump  cr  ffffa100 2c 2 >> dump  cr ;
+   
+: showit
+   showmap
+   try2  fixmem  try2
+   showmap
+   dump-uart1 ;
+
+: echo  begin  key  dup #13 xor while  1+ emit  repeat  drop  cr ;
 
 decimal
 
-: count2  "13579bdf 8 for 16/mod >digit emit  next drop ;
+: count2  "13579bdf 8 for 16/mod >digit emit  next drop  cr ;
 
 : clock   "ffffac28 c@ . cr ;
 
 : ppi!   "80 "ffff1c0c c! ;
 : delay   60_000 for next ;
 : leds    15 and 4 << "ffff1c08 ( port C) c! ;
-: count  0 16 for  dup leds 1+  delay  next drop ;
+: count  0 16 for  dup leds 5 +  delay  next drop ;
 
 : 2dup  over over ;
 : bounce  1 4 for   dup leds  2*  delay  next
@@ -459,10 +474,10 @@ decimal
 
 : chars  32  [ 128 32 - ] for  dup emit  1+  next  drop  cr ;
 
-: times  6789 123456 * .   -1029484 485 * . ;
+: times  6789 123456 * .   -1029484 485 * .  cr ;
 
 : doit   showit  clock  echo  times  count2   ppi!
-   begin  bounce  chars  again  [
+   begin  bounce  chars  count  chars  again  [
 
 {
 "8000 8 Ki + dup  4 Ki +
@@ -470,5 +485,7 @@ decimal
 }
 code _boot   # rp mov  # sp mov   ' doit b  ;c
 ' _boot { 'boot !
+
+4 |cell !  ( set the target cell size for memory dumping etc)
 
 #]file
