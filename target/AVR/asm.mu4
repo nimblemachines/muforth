@@ -5,25 +5,116 @@
 
 ( Assembler for AVR 8 bit microcontroller.)
 
+cr " AVR assembler " file[#
+
+( Debug)
+: _     char _ hold ;
+: ####  # # # # ;
+: .b  radix @ push  binary  <# #### _ #### _ #### _ #### #> type  pop radix ! ;
+
+comment
+==========================================================================
+  If I decide I want to *carefully* support the different flavors of the AVR
+  instruction set, I should put the common core insns into .assembler. and
+  make separate chains for each extension. Then the name of the device would
+  be a word which would choose a search sequence, including only the insns
+  that belong to that CPU.
+==========================================================================
+
 hex
 
-( Weird encodings.)
-: Rr  ( reg - bits)  dup 0f bic 5 <<  swap 0f and  or ;
-: Rd  ( reg - bits)  01f and  4 << ;
-: K8  ( const - bits)  dup 0f bic  4 <<  swap 0f and  or ;
-: K6  ( const - bits)  dup 30 and  2 <<  swap 0f and  or ;
-: Kjmp  ( addr - lo hi)  dup  #16 u>>  dup  3e and 3 <<  swap 1 and or ;
+forth
+
+( Error checking.)
+forth
+: (err")  ( f z")  swap if throw then  drop ;
+compiler
+: err"  \ z" \ (err") ;
+
+forth
+// : op,  |, ;
+: op,  .b  space ;
+
+ 
+comment
+==========================================================================
+  Weird encodings, of constants and registers, in different and alarming ways.
+
+  Rd     d_dddd -> 0000_000d_dddd_0000  ( dest reg)
+  Rs     s_ssss -> 0000_00s0_0000_ssss  ( source reg)
+  I6    ii_iiii -> 0000_0ii0_0000_iiii  ( 6 bit io offset: 0-63)
+  I5     i_iiii -> 0000_0000_iiii_i000  ( 5 bit io offset: 0-31)
+  Rh       dddd -> 0000_0000_dddd_0000  ( high regs, 16 to 31)
+  Rp         dd -> 0000_0000_00dd_0000  ( pointer/pairs, 0=24/25, 1=26/27 etc)
+  K8  kkkk_kkkk -> 0000_kkkk_0000_kkkk  ( 8 bit immed data)
+  K6    kk_kkkk -> 0000_0000_kk00_kkkk  ( 6 bit immed data - word insns)
+* Ah    kk_kkkk -> 0000_000k_kkkk_000k  ( long jmp/call high 6 bits)
+  S7   sss_ssss -> 0000_00ss_ssss_s000  ( 7 bit signed branch offset)
+  U6    uu_uuuu -> 00u0_uu00_0000_0uuu  ( 6 bit unsigned offset for ld/st Y,Z)
+
+*Unused in ATtiny, and in ATmega smaller than 16k.
+==========================================================================
+
+( I've put similar words next to each other to make them easier to read.)
+
+: Rd  ( reg op - bits)    swap  1f and  4 << or ;
+: I5  ( io op - bits)     swap  1f and  3 << or ;
+: S7  ( off op - bits)    swap  7f and  3 << or ;
+: Rs  ( reg op - bits)    over  10 and  5 << or  swap 0f and  or ;
+: I6  ( io op - bits)     over  30 and  5 << or  swap 0f and  or ;
+: K8  ( const op - bits)  over 0f0 and  4 << or  swap 0f and  or ;
+: K6  ( const op - bits)  over  30 and  2 << or  swap 0f and  or ;
+: K3  ( const op - bits)  swap  07 and  or ;
+
+: U6   ( off op - bits)
+   over 20 and 8 << or  over 18 and 7 << or  swap 7 and  or ;
+
+: Rp? ( reg op - index op)
+   swap  #24 - dup 0< err" only even regs 24 to 30 allowed"  u2/ swap ;
+
+: Rh? ( reg op - index op)
+   swap  #16 - dup 0< err" only regs 16 to 31 allowed"  swap ;
+
+: Rp  ( reg op - bits)  Rp?  Rd ;
+: Rh  ( reg op - bits)  Rh?  Rd ;
+
+: 2op    ( Rs Rd)   constant does>  (  Rs Rd op)  Rd Rs op, ;
+: io     ( io Rd)   constant does>  (  io Rd op)  Rd I6 op, ;
+: 1op    ( Rd)      constant does>  (     Rd op)  Rd    op, ;
+: bi     ( imm Rd)  constant does>  ( imm Rd op)  Rd K8 op, ;
+: wi     ( imm Rp)  constant does>  ( imm Rp op)  Rp K6 op, ;
+: iobit  ( io bit)  constant does>  ( bit io op)  I5 K3 op, ;
+
+: Ah  ( addr op - lo hibits)
+   over #16 u>>  dup 3e and 3 <<  swap 1 and  or  or ;
+
+: ljmp  ( a32)    constant does>  ( a32 op)  Ah op, op, ;
+
+( Note: |here is a byte address; the relative jump offset is a _word_ offset.)
+: >offset  ( dest)   |here - 2/ 1- ;
+
+( Add range/2 to dest; check if that is u< range; complain if not; if it
+  fits, mask to range-1)
+
+: ?inrange  ( dest range - offset)  >offset  push  dup  r@ u2/ +   r@ u< not
+   err" relative jump out of range"  pop 1- and ;
+
+( Relative branch offsets, short and not-quite-so-short.)
+: Krelshort  ( dest op - bits)  swap    80 ?inrange  3 <<  or ;
+: Krel       ( dest op - bits)  swap  1000 ?inrange        or ;
+
+: rjmp  ( dest)     constant does>  ( dest op)  Krel  op, ;
+: br    ( dest)     constant does>  ( dest op)  Krelshort  op, ;
+
+( 2opw - pppp pppp dddd ssss. d,r >> 1)
+: movw  ( Rs Rd -)  u2/ 4 <<  swap u2/ or  0100 or op, ;
+
+assembler
 
 ( Once again, issues of using the manufacturer's mnemonics - which are
   absolutely terrible - or inventing my own.)
 
-: 2op  ( Rs Rd -)  constant does> @  ( Rs Rd op)  Rd Rs op, ;
-: 1op  ( Rd -)     constant does> @  (    Rd op)  Rd    op, ;
-: bi   ( Rd imm -)
-( 2opw - pppp pppp dddd rrrr. d,r >> 1)
-: movw  ( Rs Rd -)  u2/ 4 <<  swap u2/ or  0100 or op, ;
-
-( 2ops - pppp pprd dddd rrrr)
+( 2op - pppp ppsd dddd ssss)
 0400 2op cpc  ( cmpc)
 0800 2op sbc  ( subc)
 0c00 2op add
@@ -60,68 +151,176 @@ e000 bi ldi
 : rol  dup \a adc ;
 
 ( long jump and call - pppp pppk kkkk pppk, kkkk kkkk kkkk kkkk)
-940c ljmp jmp
-940e ljmp call
+940c ljmp ljmp
+940e ljmp lcall
 
-( 1001 000d dddd 0000, followed by kkkk kkkk kkkk kkkk)
-: lds  9000 xxx ;  ( Rd <- [k])
+( Indexed load & store.)
+( X can be post-inc, pre-dec, offset by 0. Y & Z can be post-inc, pre-dec,
+  and offset by 0-63.)
+forth
+: ld/st           ( Rd)  constant does>  (  Rd op)  Rd ;
+: ix       (     op+Rd)  constant does>  (     op ix)  or    op, ;
+: ix_off   ( off op+Rd)  constant does>  ( off op ix)  or U6 op, ;
+: ix_data  ( off op+Rd)  constant does>  ( off op ix)  or    op, op, ;
 
-9001 1op ldz+
-9002 1op ld-z
-9201 1op stz+
-9202 1op st-z
+assembler
+8000 ld/st ld  ( Rd - bits)
+8200 ld/st st  ( Rd - bits)
 
-( There is a lame redundant encoding for "r0 lpmz" which we don't encode.)
-9004 1op lpmz
-9005 1op lpmz+
-
-9009 1op ldy+
-900a 1op ld-y
-9209 1op sty+
-920a 1op st-y
-
-900c 1op ldx   ( rd <- [x])
-900d 1op ldx+  ( rd <- [x], x <- x + 1)
-900e 1op ld-x  ( x <- x - 1, rd <- [x])
-920c 1op stx   ( rd <- [x])
-920d 1op stx+  ( rd <- [x], x <- x + 1)
-920e 1op st-x  ( x <- x - 1, rd <- [x])
-
-( ppqp qqpd dddd pqqq)
-( Atmel uses "ldd" and "std" - load/store with displacement?)
-8008 1op ldy,  ( rd <- [y + q])
-: ldy  0 ldy, ;
-8208 1op sty,  ( rd <- [y + q])
-: sty  0 sty, ;
-
-8000 1op ldz,  ( rd <- [z + q])
-: ldz  0 ldz, ;
-8200 1op stz,  ( rd <- [z + q])
-: stz  0 stz, ;
+( suffixes - these do the action)
+0000 ix_off  ,z   ( u6 op+Rd)
+0008 ix_off  ,y   ( u6 op+Rd)
+1000 ix_data  s   ( a16 op+Rd)  ( data space - compiles op then following addr)
+1001 ix       z+
+1002 ix      -z
+1004 ix     pmz  ( prog mem)
+1005 ix     pmz+ ( prog mem)
+1009 ix       y+
+100a ix      -y
+100c ix       x
+100d ix       x+
+100e ix      -x
 
 ( wi - word immed. pppp pppp kkdd kkkk. dd=0..3 -> r24,26,28,30)
 9600 wi adiw  ( addiw)
 9700 wi sbiw  ( subiw)
 
 ( iobit - set/clear bit in io space - pppp pppp aaaa abbb)
+( These can address 0-31 in io space.)
 9800 iobit cbi   ( clear bit io)
 9900 iobit sbic  ( skip if bit io clear)
 9a00 iobit sbi   ( set bit io)
 9b00 iobit sbis  ( skip if bit io set)
 
-( io - pppp paar rrrr aaaa)
-b000 io in    ( Rr <- io[a])
-b800 io out   ( io[a] <- Rr)
+( io - pppp piid dddd iiii)
+( These address 0-63 in io space.)
+b000 io in    ( Rd <- io[i])
+b800 io out   ( io[i] <- Rd)
 
-( rel jump and call - pppp kkkk kkkk kkkk kkkk)
+( rel jump and call - pppp kkkk kkkk kkkk)
 c000 rjmp rjmp
 d000 rjmp rcall
+
+comment
+=============================================================================
+Digression on the AVR's condition code idiosyncrasies, and an explanation
+of how carry and borrow work.
+
+First, let's define how condition code flags represent the results of a
+signed subtract (or compare). If we execute X - Y, where both are _signed_
+values, then the N (negative), V (overflow) and Z (zero) bits are set as
+follows:
+
+  (LT)  X < Y  ==   N xor V
+  (GE)  X >= Y == !(N xor V)
+  (GT)  X > Y  == !(N xor V) and !Z
+               == !(N xor V) or   Z)  (deMorgan's law)
+  (LE)  X <= Y ==  (N xor V) or   Z 
+
+I've written on the left the tradition "conditional branch" names for each
+relation.
+
+There are two conditional branch instructions on the AVR: each tests a
+single bit in the status register; one branches if the bit is set, the
+other if clear.
+
+AVR defines a bit S == N xor V. So S set is equivalent to "<"; S clear
+means ">=". The only way to test "<=" or ">" is to switch the order of the
+operands; we have no way of testing (Z or S) (<=) or !(Z or S) (>)
+directly. Slightly odd, but it works.
+
+We have a similar issue with subtract or compare of _unsigned_ values. But
+before discussing that we have to understand what the carry bit represents.
+Since the natural way of doing subtraction to _add_ the two's complement of
+the subtrahend - ie:
+
+  X - Y == X + (-Y)
+
+and since two's complement is the one's complement plus one:
+
+  -Y == ~Y + 1
+
+we can write subtract as
+
+  X - Y == X + ~Y + 1
+
+and subtract with a _borrow_ as
+
+  X - Y - 1 == X + ~Y
+
+Note something odd here: the carry in complemented: we carry in a one when
+there is no carry in (ie, no borrow); and carry in a zero when there _is_ a
+borrow. So, carry = ~borrow.
+
+There are only two architectures that I know of that represent carry this
+way: ARM and 6502. All others use a synthesized carry, where carry =
+borrow. Since the AVR is one of these latter, in the following we'll
+understand C = 1 to mean borrow, and C = 0 to mean no borrow.
+
+So let's define how X - Y affects the condition codes, if X and Y are
+_unsigned_.
+
+  (LO)  X < Y   ==   C
+  (HS)  X >= Y  ==  !C
+  (HI)  X > Y   ==  !C and !Z
+                == !(C or   Z)   (deMorgan's law)
+  (LS)  X <= Y  ==   C or   Z
+
+Again I've written tradition conditional branch names for these conditions.
+LO == lower; HS == higher or same; HI == higher; LS == lower or same.
+
+NOTE: On AVR "HS" does **NOT** mean "higher or same" but instead "half
+carry bit set"!! This is another COMPLETELY RETARDED choice of mnemonics.
+BRHS and BRCC mean "branch if half carry set" and "branch if half carry
+clear", resp. The branch if higher or same is BRSH (branch if same or
+higher). Barf!! Has this caused bugs? I'm sure of it.
+
+Here again, since we can only test one bit (C) we have to synthesize HI and
+LS by swapping the arguments to the compare or subtract.
+=============================================================================
 
 ( conditional branches; test status reg bit; branch if set/clear)
 ( br bit clear: 1111 01kk kkkk ksss)
 ( br bit set:   1111 00kk kkkk ksss)
-( Status: ITHS VNZC)
-: br  f400 xxx ;
+
+forth
+: cond  ( branchop bit)  or  constant ;
+
+assembler
+( Status register bit names)
+
+( XXX: rename these? so that C doesn't conflict with "0C? call them what?
+  .C? C.? And that brings up other issues with number parsing which should
+  also be fixed! Or at least documented... .C and C. are not parsed as
+  numbers, because of the way the loops work. Is this right? And what about
+  sign and radix? Do we prefer #-10 or -#10? Or should both work? Right now
+  sign must precede radix.)
+
+0 constant C
+1 constant Z
+2 constant N
+3 constant V
+4 constant S
+5 constant H
+6 constant T
+7 constant I
+
+: u<  \a C ;  ( carry set)
+: 0=  \a Z ;  ( zero  set)
+: 0<  \a N ;  ( negative set)
+: <   \a S ;  ( signed bit set; ie N xor V == 1)
 : not  400 xor ;  ( toggle sense of condition code)
-: cond  constant ;
-0 cond 
+
+
+( XXX testing)
+: ;c  \c [ ;
+: .  . ;
+: .b  .b ;
+
+forth
+-:  ."  (assembling)"  ;
+-:  .assembler. find  if  execute ^  then  number ;
+mode asm
+
+#]file
+
