@@ -100,41 +100,23 @@ static void mu_zero_branch_()       { mu_equal_zero_branch_(); DROP(1); }
 /* for, ?for, next */
 /* for is simply "push" */
 /* ?for has to matched with "then" */
+/* At run-time, if TOP is zero we skip the entire loop; otherwise we could
+ * be looping for a long time - 2^(#bits in CELL)!
+ */
 static void mu_qfor_()
 {
-    if (TOP == 0)
-    {
-        BRANCH;
-        DROP(1);
-    }
-    else
-    {
-        IP++;
-        RPUSH(POP);
-    }
+    if (TOP == 0) { BRANCH; DROP(1); }   /* take branch, pop stack */
+    else          { IP++; RPUSH(POP); }  /* skip branch, push count onto R */
 }
 
 static void mu_next_()
 {
     cell *prtop;
-    prtop = (cell *)RP;
+    prtop = (cell *)RP;  /* counter on top of R stack */
 
-    if (--*prtop == 0)          /* decrement top of R stack */
-    {
-        IP += 1;                /* skip branch */
-        RP += 1;                /* pop counter */
-    }
-    else
-    {
-        BRANCH;                 /* take branch */
-    }
+    if (--*prtop == 0) { IP++; RP++; }  /* skip branch, pop counter */
+    else               { BRANCH; }      /* take branch */
 }
-
-/*
- * Since we're now compiling control structure bits in this file, we need
- * some more ITC code pointers. Since the "workhorse" words aren't even
- * going into the dictionary, we definitely need these code pointers!
- */
 
 /*
  * For compiling control structures, we need architecture-specific help. We
@@ -164,6 +146,12 @@ void mu_resolve_forward()  /* src dest - */
     *src = dest;
     DROP(2);
 }
+
+/*
+ * Since we're now compiling control structure bits in this file, we need
+ * some more ITC code pointers. Since the "workhorse" words aren't even
+ * going into the dictionary, we definitely need these code pointers!
+ */
 
 enum mu_branch_t { BRANCH_T, ZBRANCH_T, EQZBRANCH_T, FOR_T, QFOR_T, NEXT_T };
 
