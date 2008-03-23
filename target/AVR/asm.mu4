@@ -51,6 +51,7 @@ comment
 * Ah    kk_kkkk -> 0000_000k_kkkk_000k  ( long jmp/call high 6 bits)
   S7   sss_ssss -> 0000_00ss_ssss_s000  ( 7 bit signed branch offset)
   U6    uu_uuuu -> 00u0_uu00_0000_0uuu  ( 6 bit unsigned offset for ld/st Y,Z)
+  B3        bbb -> 0000_0000_0bbb_0000  ( status bit)
 
 *Unused in ATtiny, and in ATmega smaller than 16k.
 ==========================================================================
@@ -84,24 +85,27 @@ comment
 
 : ljmp  ( a32)    constant does>  ( a32 op)  Ah op, op, ;
 
-( Note: |here is a byte address; the relative jump offset is a _word_ offset.)
-: >offset  ( dest)   |here - 2/ 1- ;
-
-( Add range/2 to dest; check if that is u< range; complain if not; if it
-  fits, mask to range-1)
-
-: ?inrange  ( dest range - offset)  >offset  push  dup  r@ u2/ +   r@ u< not
-   err" relative jump out of range"  pop 1- and ;
-
-( Relative branch offsets, short and not-quite-so-short.)
-: Krelshort  ( dest op - bits)  swap    80 ?inrange  3 <<  or ;
-: Krel       ( dest op - bits)  swap  1000 ?inrange        or ;
-
-: rjmp  ( dest)     constant does>  ( dest op)  Krel  op, ;
-: br    ( dest)     constant does>  ( dest op)  Krelshort  op, ;
-
 ( 2opw - pppp pppp dddd ssss. d,r >> 1)
 : movw  ( Rs Rd -)  u2/ 4 <<  swap u2/ or  0100 or op, ;
+
+( Branch and jump plumbing.)
+
+( Note: dest and src are byte addresses; the relative jump offset is a
+  _word_ offset. Also, src points to word _following_ the branch!)
+: >offset  ( dest src - off)  - 2/ ;
+
+( Add range/2 to offset; check if that is u< range; if so, mask offset)
+( Use with range of 80 for short conditional jump;
+    with range of 1000 for rcall & rjmp)
+
+: inrange?  ( dest src range - offset f | offset' t)
+   push  >offset  dup r@ u2/ +   r@ u< if  pop 1- and  -1 ^ then
+   pop drop  0 ;
+
+: _rjmp    |here  >offset 1- 0fff and or  op, ;
+
+( XXX: fix to generate long call/jmp when necessary)
+: rjmp  ( dest)  constant does>  ( dest op)  _rjmp ;
 
 assembler
 
@@ -112,25 +116,28 @@ assembler
 forth
 : 2op    ( Rs Rd)   constant does>  (  Rs Rd op)  Rd Rs op, ;
 assembler
-0400 2op cpc  ( cmpc)
-0800 2op sbc  ( subc)
+0400 2op cpc   (       Rd - Rs - carry)  ( cmpc)
+0800 2op sbc   ( Rd <- Rd - Rs - carry)  ( subc)
 0c00 2op add
-1000 2op cpse ( cmpskipeq)
-1400 2op cp   ( cmp)
-1800 2op sub
+1000 2op cpse  (       Rd - Rs)  ( cmpskipeq)
+1400 2op cp    (       Rd - Rs)  ( cmp)
+1800 2op sub   ( Rd <- Rd - Rs)
 1c00 2op adc
 2000 2op and
 2400 2op eor
 2800 2op or
 2c00 2op mov
+: tst  dup \a and ;  ( tst == and Rd,Rd)
+: clr  dup \a eor ;  ( clr == eor Rd,Rd)
 
 ( bi - byte immed. pppp kkkk dddd kkkk - r16-31)
 forth
 : bi     ( imm Rd)  constant does>  ( imm Rd op)  Rd K8 op, ;
 assembler
-3000 bi cpi  ( cmpi)
-4000 bi sbci ( subci)
-5000 bi subi
+( No addi or adci! Interesting.)
+3000 bi cpi  (       Rd - K)         ( cmpi)
+4000 bi sbci ( Rd <- Rd - K - carry) ( subci)
+5000 bi subi ( Rd <- Rd - K)
 6000 bi ori
 7000 bi andi
 e000 bi ldi
@@ -141,17 +148,25 @@ forth
 assembler
 9400 1op com
 9401 1op neg
+9402 1op swap  ( swap nibbles)
 9403 1op inc
 9405 1op asr
 9406 1op lsr
 9407 1op ror
 940a 1op dec
-: lsl  dup \a add ;  ( lsl == add rd,rd)
-: rol  dup \a adc ;  ( rol == adc rd,rd)
+: lsl  dup \a add ;  ( lsl == add Rd,Rd)
+: rol  dup \a adc ;  ( rol == adc Rd,Rd)
 
 ( long jump and call - pppp pppk kkkk pppk, kkkk kkkk kkkk kkkk)
 940c ljmp ljmp
 940e ljmp lcall
+
+( STATUS bit set & clear)
+forth
+: statusbit  ( bit)  constant does>  ( bit op)  B3 op, ;
+assembler
+9408 statusbit bset ( set STATUS bit)
+9488 statusbit bclr ( clr STATUS bit)
 
 ( Indexed load & store.)
 ( X can be post-inc, pre-dec, offset by 0. Y & Z can be post-inc, pre-dec,
@@ -198,7 +213,7 @@ assembler
 ( iobit - set/clear bit in io space - pppp pppp aaaa abbb)
 ( These can address 0-31 in io space.)
 forth
-: iobit  ( io bit)  constant does>  ( bit io op)  I5 K3 op, ;
+: iobit  ( bit io)  constant does>  ( bit io op)  I5 K3 op, ;
 assembler
 9800 iobit cbi   ( clear bit io)
 9900 iobit sbic  ( skip if bit io clear)
@@ -211,11 +226,33 @@ forth
 : io     ( io Rd)   constant does>  (  io Rd op)  Rd I6 op, ;
 assembler
 b000 io in    ( Rd <- io[i])
-b800 io out   ( io[i] <- Rd)
+b800 io out   ( Rd -> io[i])
 
 ( rel jump and call - pppp kkkk kkkk kkkk)
 c000 rjmp rjmp
 d000 rjmp rcall
+
+( Load, store, and test bits in registers.)
+forth
+: regbit  ( bit reg)  constant does>  ( bit reg op)  Rd K3 op, ;
+assembler
+f800 regbit bld  ( load from Status.T)
+fa00 regbit bst  ( store to Status.T)
+                 ( the difference is 0200! like all ld/st pairs)
+fc00 regbit sbrc  ( skip if bit in reg clear)
+fe00 regbit sbrs  ( skip if bit in reg set)
+
+( Zero ops.)
+forth
+: 0op  constant does> op, ;
+assembler
+0000 0op nop
+9508 0op ret
+9518 0op reti
+9509 0op icall
+9409 0op ijmp
+9588 0op sleep
+95a8 0op wdr    ( watchdog reset)
 
 comment
 =============================================================================
@@ -227,14 +264,16 @@ signed subtract (or compare). If we execute X - Y, where both are _signed_
 values, then the N (negative), V (overflow) and Z (zero) bits are set as
 follows:
 
-  (LT)  X < Y  ==   N xor V
-  (GE)  X >= Y == !(N xor V)
-  (GT)  X > Y  == !(N xor V) and !Z
-               == !(N xor V) or   Z)  (deMorgan's law)
-  (LE)  X <= Y ==  (N xor V) or   Z 
+Let S = N xor V. Then
 
-I've written on the left the tradition "conditional branch" names for each
-relation.
+  (LT)  X < Y  ==   S
+  (GE)  X >= Y ==  !S
+  (GT)  X > Y  ==  !S and !Z
+               == !(S or   Z)  (deMorgan's law)
+  (LE)  X <= Y ==   S or   Z 
+
+I've written on the left the traditional "conditional branch" names for
+each relation.
 
 There are two conditional branch instructions on the AVR: each tests a
 single bit in the status register; one branches if the bit is set, the
@@ -242,7 +281,7 @@ other if clear.
 
 AVR defines a bit S == N xor V. So S set is equivalent to "<"; S clear
 means ">=". The only way to test "<=" or ">" is to switch the order of the
-operands; we have no way of testing (Z or S) (<=) or !(Z or S) (>)
+operands; we have no way of testing (S or Z) (LE) or !(S or Z) (GT)
 directly. Slightly odd, but it works.
 
 We have a similar issue with subtract or compare of _unsigned_ values. But
@@ -282,25 +321,19 @@ _unsigned_.
                 == !(C or   Z)   (deMorgan's law)
   (LS)  X <= Y  ==   C or   Z
 
-Again I've written tradition conditional branch names for these conditions.
-LO == lower; HS == higher or same; HI == higher; LS == lower or same.
+Again I've written traditional conditional branch names for these
+conditions. LO == lower; HS == higher or same; HI == higher; LS == lower or
+same.
 
 NOTE: On AVR "HS" does **NOT** mean "higher or same" but instead "half
 carry bit set"!! This is another COMPLETELY RETARDED choice of mnemonics.
-BRHS and BRCC mean "branch if half carry set" and "branch if half carry
+BRHS and BRHC mean "branch if half carry set" and "branch if half carry
 clear", resp. The branch if higher or same is BRSH (branch if same or
 higher). Barf!! Has this caused bugs? I'm sure of it.
 
 Here again, since we can only test one bit (C) we have to synthesize HI and
 LS by swapping the arguments to the compare or subtract.
 =============================================================================
-
-( conditional branches; test status reg bit; branch if set/clear)
-( br bit clear: 1111 01kk kkkk ksss)
-( br bit set:   1111 00kk kkkk ksss)
-
-forth
-: cond  ( branchop bit)  or  constant ;
 
 assembler
 ( Status register bit names)
@@ -312,21 +345,48 @@ assembler
   sign and radix? Do we prefer #-10 or -#10? Or should both work? Right now
   sign must precede radix.)
 
-0 constant C
-1 constant Z
-2 constant N
-3 constant V
-4 constant S
-5 constant H
-6 constant T
-7 constant I
+0 constant .C
+1 constant .Z
+2 constant .N
+3 constant .V
+4 constant .S
+5 constant .H
+6 constant .T
+7 constant .I
 
-: u<  \a C ;  ( carry set)
-: 0=  \a Z ;  ( zero  set)
-: 0<  \a N ;  ( negative set)
-: <   \a S ;  ( signed bit set; ie N xor V == 1)
+: u<  \a .C ;  ( carry set)
+: 0=  \a .Z ;  ( zero  set)
+: 0<  \a .N ;  ( negative set)
+: <   \a .S ;  ( signed bit set; ie N xor V == 1)
+
+( Conditional branches: test status reg bit; branch if set/clear)
+( branch if bit clear: 1111 01kk kkkk ksss)
+( branch if bit set:   1111 00kk kkkk ksss)
 : not  400 xor ;  ( toggle sense of condition code)
 
+forth
+( Note: stack _opposite_ of !)
+: |xor  ( a bits)  over |@ xor  swap |! ;
+
+machine
+: resolve>  (s src dest)  ( can only do short jumps)
+   over 80 inrange? if  3 <<  |xor  then
+   error" relative jump out of range" ;
+
+: <resolve  (s dest src)  ;  ( can compile short jump around longer one)
+  ( if too long: 0404 xor with branch - makes it skip following -
+    compile rjmp)
+
+: branch,  (s dest)  ;
+
+assembler
+: if    (s bit - src)  f400 xor op, |here ;  ( compile branch if bit clr)
+: then  (s src)        |here resolve> ;
+: begin   (s - dest)   |here ;
+: until   (s bit dest -)   \a if  \m <resolve ;
+: again   (s dest -)    branch, mark>  <resolve ;
+: while   (s bit dest - src dest)   \a if  swap ;
+: repeat  (s src dest -)   \a again  \a then ;
 
 ( XXX testing)
 : ;c  \c [ ;
