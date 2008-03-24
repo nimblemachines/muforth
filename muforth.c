@@ -148,7 +148,7 @@ static void convert_command_line(int argc, char *argv[])
     pcmd_line->length = pline - pcmd_line->data;
 
     /* null terminate and align */
-    pdt = pline;
+    pdt = (uint8 *)pline;
     *pdt++ = 0;
     pdt = (uint8 *)ALIGNED(pdt);
 }
