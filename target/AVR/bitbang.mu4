@@ -1,0 +1,110 @@
+assembler
+
+decimal
+
+( Z top of stack, Y data stack pointer )
+( Inverted logic )
+
+( 30 constant top      ( top of stack, is Z)
+28 constant sp       ( Y register is stack pointer SP)
+29 constant sph
+
+"3d constant SPL     ( addressing system stack reg in io land)
+"3e constant SPH
+
+: hi  8 >> ;
+
+16 constant temp
+17 constant bitcnt
+
+"16 constant serpin    ( to read value of portb pins)
+"17 constant serddr
+"18 constant serport   ( which port has serial port on it)
+1 constant rx          ( which pin to read from)
+4 constant tx          ( which pin to transmit on)
+
+( 32 regs and 64 iospace and 256 ram )
+( NOTE: AVR stack pointer is postdec, and preinc, so we dec r0)
+32 64 256 + +  dup 1- constant r0  ( bottom of R stack)
+32 -                  constant s0  ( bottom of D stack)
+
+// ////////////////////////////////////////////////////////////
+
+outside-loop
+
+forward
+
+( 115200 baud is 69 cycles per bit @ 8MHz.
+  Outputting a bit - in emit - takes 9 cycles, including loop overhead.
+  So we need to consume 30 cycles here, INCLUDING the call [3] and
+  return [4] to halfbit. So, 23 cycles in the loop.
+
+  Inner loop takes 3 cycles except the last time, which takes two. But the
+  ldi at the start makes it up. So the main loop is 7 * 3 = 21 cycles,
+  plus two at the end.)
+
+code halfbit
+   7 temp ldi ( 1~)
+   begin  temp dec ( 1~)  0= until ( 2~, except fall thru of 1~)
+   nop2  ret  ;c
+
+( Since lsr shifts in zeros from the left, which we shift out as stop bits -
+  and which should be _high_ on the wire - we invert the sense of the data
+  bits up front, and then as we shift we them out, we invert them again: a
+  zero shifted into carry is output high; a one is output low.
+
+  This double inversion generates the character with "positive logic" on
+  the wire, but lets our shifted-in zeros serve as stop bits. This idea -
+  in fact this code pretty much verbatim - is from Atmel's AVR305 AppNote.)
+
+( shift out 10 bits - 1 start, 8 data, 1 stop )
+code emit
+   10 bitcnt ldi
+   top com ( invert sense)
+   .C bset ( set carry - start bit! )
+   begin  .C if  tx serport cbi
+           else  tx serport sbi  nop  ( make branch cycle counts match)
+           then
+      halfbit  halfbit  ( delay one bit time)
+   top lsr  bitcnt dec
+   0= until  drop ret  ;c
+
+( Wait for char, return its ascii value)
+code key
+   dup  ( push top)
+   9 bitcnt ldi  ( bit count - 8 data, 1 stop)
+   begin   rx serpin sbic   again
+   ( Got low - start bit! So delay 0.5 bit time, then enter loop)
+   halfbit
+   begin   halfbit halfbit
+      .C bclr   rx serpin sbic   .C bset
+      bitcnt dec
+   0= not while
+      top ror  nop
+   repeat  ret  ;c
+
+code chars
+   begin  top inc  "7f top andi  dup  emit  again  ;c
+
+code echo
+   begin  key  emit  again  ;c
+
+code crlf
+   dup  13 top ldi  emit  dup  10 top ldi  emit  ret  ;c
+
+code hello
+   8 18 ldi  42 top ldi  begin  dup emit  18 dec  0= until  crlf  ret  ;c
+
+resolve
+label reset
+   ( getting the wrong dup!! fuck)
+   ( Set up R stack)
+   r0    temp ldi    SPL temp out
+   r0 hi temp ldi    SPH temp out
+   ( Set up D stack)  s0 sp ldi   s0 hi sph ldi
+   ( Set up portB)  tx serport sbi ( marking hi)   tx serddr sbi  ( output)
+   hello   echo  ;c
+
+host
+
+

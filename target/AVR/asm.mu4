@@ -24,17 +24,8 @@ comment
 hex
 
 forth
-
-( Error checking.)
-forth
-: (err")  ( f z")  swap if throw then  drop ;
-compiler
-: err"  \ z" \ (err") ;
-
-forth
 // : op,  |, ;
-: op,  .b  space ;
-
+ : op,  ( compile)  dup |,  ( and print)  .b  cr ;
 
 comment
 ==========================================================================
@@ -51,13 +42,14 @@ comment
 * Ah    kk_kkkk -> 0000_000k_kkkk_000k  ( long jmp/call high 6 bits)
   S7   sss_ssss -> 0000_00ss_ssss_s000  ( 7 bit signed branch offset)
   U6    uu_uuuu -> 00u0_uu00_0000_0uuu  ( 6 bit unsigned offset for ld/st Y,Z)
-  B3        bbb -> 0000_0000_0bbb_0000  ( status bit)
+  T3        bbb -> 0000_0000_0bbb_0000  ( status bit)
 
 *Unused in ATtiny, and in ATmega smaller than 16k.
 ==========================================================================
 
 ( I've put similar words next to each other to make them easier to read.)
 
+: S3  ( const op - bits)  swap  07 and  4 << or ;
 : Rd  ( reg op - bits)    swap  1f and  4 << or ;
 : I5  ( io op - bits)     swap  1f and  3 << or ;
 : S7  ( off op - bits)    swap  7f and  3 << or ;
@@ -71,10 +63,11 @@ comment
    over 20 and 8 << or  over 18 and 7 << or  swap 7 and  or ;
 
 : Rp? ( reg op - index op)
-   swap  #24 - dup 0< err" only even regs 24 to 30 allowed"  u2/ swap ;
+   swap  #24 - dup 0< if error" only even regs 24 to 30 allowed" then
+   u2/ swap ;
 
 : Rh? ( reg op - index op)
-   swap  #16 - dup 0< err" only regs 16 to 31 allowed"  swap ;
+   swap  #16 - dup 0< if error" only regs 16 to 31 allowed"  then  swap ;
 
 : Rp  ( reg op - bits)  Rp?  Rd ;
 : Rh  ( reg op - bits)  Rh?  Rd ;
@@ -92,17 +85,26 @@ comment
 
 ( Note: dest and src are byte addresses; the relative jump offset is a
   _word_ offset. Also, src points to word _following_ the branch!)
-: >offset  ( dest src - off)  - 2/ ;
+: >offset  ( dest src - offset)  - 2/ ;
 
-( Add range/2 to offset; check if that is u< range; if so, mask offset)
-( Use with range of 80 for short conditional jump;
-    with range of 1000 for rcall & rjmp)
+( Computes the jump offset from src to dest; checks if within range;
+  if so, masks to range-1, and returns -1; else returns offset and 0.
+  Range check is done by adding range/2 to offset and checking if that
+  is u< range.)
 
-: inrange?  ( dest src range - offset f | offset' t)
-   push  >offset  dup r@ u2/ +   r@ u< if  pop 1- and  -1 ^ then
-   pop drop  0 ;
+: inrange?  ( offset range - offset f | offset' t)
+   push  dup r@ u2/ +   r@ u< if  pop 1- and  -1 ^ then
+                                  pop drop     0 ;
 
-: _rjmp    |here  >offset 1- 0fff and or  op, ;
+( Conditional jumps - cjmps - have a range of 80. Relative jmps - rjmps
+  have a range of 1000.)
+
+: checkrange  ( offset range - offset | throw)
+   inrange?  if ^ then   error" relative jump out of range" ;
+
+( Called when |here points _at_ rjmp/call, not past it, so we fix up
+  the offset.)
+: _rjmp  ( dest op)  swap  |here >offset 1-  1000 checkrange  or op, ;
 
 ( XXX: fix to generate long call/jmp when necessary)
 : rjmp  ( dest)  constant does>  ( dest op)  _rjmp ;
@@ -132,12 +134,12 @@ assembler
 
 ( bi - byte immed. pppp kkkk dddd kkkk - r16-31)
 forth
-: bi     ( imm Rd)  constant does>  ( imm Rd op)  Rd K8 op, ;
+: bi     ( imm Rh)  constant does>  ( imm Rh op)  Rh K8 op, ;
 assembler
 ( No addi or adci! Interesting.)
-3000 bi cpi  (       Rd - K)         ( cmpi)
-4000 bi sbci ( Rd <- Rd - K - carry) ( subci)
-5000 bi subi ( Rd <- Rd - K)
+3000 bi cpi  (       Rh - K)         ( cmpi)
+4000 bi sbci ( Rh <- Rh - K - carry) ( subci)
+5000 bi subi ( Rh <- Rh - K)
 6000 bi ori
 7000 bi andi
 e000 bi ldi
@@ -163,7 +165,7 @@ assembler
 
 ( STATUS bit set & clear)
 forth
-: statusbit  ( bit)  constant does>  ( bit op)  B3 op, ;
+: statusbit  ( bit)  constant does>  ( bit op)  S3 op, ;
 assembler
 9408 statusbit bset ( set STATUS bit)
 9488 statusbit bclr ( clr STATUS bit)
@@ -195,13 +197,20 @@ assembler
 1005 ix     pmz+ ( prog mem)
 1009 ix       y+
 100a ix      -y
-100c ix       x
+100c ix       x  ( XXX: should this be x@ or something?)
 100d ix       x+
 100e ix      -x
 100f ix     stk  ( for push and pop!)
 
 : push  ( Rd)  \a st \a stk ;
 : pop   ( Rd)  \a ld \a stk ;
+
+1e constant z
+1f constant zh
+: top   \a z ;
+: toph  \a zh ;
+: sp+  \a y+ ;
+: -sp  \a -y ;
 
 ( wi - word immed. pppp pppp kkdd kkkk. dd=0..3 -> r24,26,28,30)
 forth
@@ -247,6 +256,7 @@ forth
 : 0op  constant does> op, ;
 assembler
 0000 0op nop
+c000 0op nop2  ( rjmp to following word; takes 2 cycles!)
 9508 0op ret
 9518 0op reti
 9509 0op icall
@@ -365,38 +375,117 @@ assembler
 : not  400 xor ;  ( toggle sense of condition code)
 
 forth
-( Note: stack _opposite_ of !)
-: |xor  ( a bits)  over |@ xor  swap |! ;
 
-machine
-: resolve>  (s src dest)  ( can only do short jumps)
-   over 80 inrange? if  3 <<  |xor  then
-   error" relative jump out of range" ;
+( Calculate offset encoding for the jmp, by first inspecting the opcode
+  to see what kind of jmp it is.)
 
-: <resolve  (s dest src)  ;  ( can compile short jump around longer one)
-  ( if too long: 0404 xor with branch - makes it skip following -
-    compile rjmp)
+( src points to word _after_ jmp)  ( this code doesn't work if checkrange
+  calcs its own offset)
 
-: branch,  (s dest)  ;
+( checkrange masks the offset to fit into range)
+: offsetbits  ( jmp offset - jmp bits)  over f000 and f000 = if
+   ( short)   80 checkrange  3 <<  ^  then
+    ( rel)  1000 checkrange  ;
+
+: resolve>  (s src dest)  ( doesn't change type of jmp - short or relative)
+   over >offset push  ( src)  2 - ( point to jmp)
+   dup |@ pop ( 'jmp jmp offset)  offsetbits  or  swap |! ;
+
+( <resolve can _in theory_ compile a short jump around an rjmp. If the
+  offset is too large to fit in 7 bits, 0404 xor with branch - makes it
+  skip following - and then compile rjmp. For now, let's get this going
+  with short branches.
+
+  I say _in theory_ because we are *not* doing this for three reasons:
+
+    * It's simpler. This is important.
+
+    * resolve is symmetric if we don't rewrite jumps - we can't rewrite
+      forward jumps because there isn't room to add an rjmp afterwards
+      since we've already compiled code there;
+
+    * There really should be no need. Code words should be short. We can
+      jump +/-64 words. That is plenty.)
+
+: <resolve  ( dest src)  swap resolve> ;
+
+( Compile a conditional jump; on entry stack has status bit, possibly or'ed
+  with 400 to reverse its sense, so we should xor into opcode. By default
+  opcode generated is jump if status bit _clear_.)
+
+: cjmp,  ( statusbit - src)  f400 xor op,  |here ;
+
+( Unconditional jmp)
+: rjmp,   ( - src)  c000 op,  |here ;
 
 assembler
-: if    (s bit - src)  f400 xor op, |here ;  ( compile branch if bit clr)
-: then  (s src)        |here resolve> ;
-: begin   (s - dest)   |here ;
-: until   (s bit dest -)   \a if  \m <resolve ;
-: again   (s dest -)    branch, mark>  <resolve ;
+( These are different from the pure Forth ones. Forward conditional branches
+  are always _short_, but backwards branches can be short or long. A long
+  branch is formed by inverting the condition to branch _around_ the
+  longer branch.
+
+  Thus we need words to compile forward conditional branches, forward
+  unconditional branches, and backwards branches of either kind.)
+
+( if compiles "branch if bit clr")
+: if      (s bit - src)    cjmp, ;
+: then    (s src)          |here resolve> ;
+: else    (s src1 - src2)  rjmp, swap  \a then ;
+: begin   (s - dest)       |here ;
+: until   (s bit dest -)   \a if  <resolve ;
+: again   (s dest -)       rjmp,  <resolve ;
 : while   (s bit dest - src dest)   \a if  swap ;
 : repeat  (s src dest -)   \a again  \a then ;
 
 ( XXX testing)
-: ;c  \c [ ;
 : .  . ;
+: .s  .s ;
 : .b  .b ;
 
 forth
 -:  ."  (assembling)"  ;
--:  .assembler. find  if  execute ^  then  number ;
+-:  .assembler. find  if  execute ^  then
+       .target. find  if  execute ^  then  number ;
 mode asm
+
+-:  ."  (outside)"  ;
+-:    .outside. find  if  execute ^  then  number ;
+mode outside-loop
+
+-:  ."  (assembling a macro)"  ;
+-:   .compiler. find  if  execute ^ then
+    .assembler. find  if  compile, ^  then  number literal ;
+mode macro-loop
+
+-:  ."  (calculator)"  ;
+-:  .assembler. find  if  execute ^  then
+        .forth. find  if  execute ^  then  number ;
+mode deskcalc
+
+outside
+: label  |here dup . cr target constant forth  asm ;
+: code   \o label  does>  \a rcall ;
+: '   .target. chain' execute ;
+: forward  rjmp, ;
+: resolve  |here resolve> ;
+: host  \ [ ;
+
+compiler
+: <asm   macro-loop ;
+: asm>   -] ;
+forth
+
+assembler
+: (   \f ( ;
+: {    deskcalc ;
+: ;c   outside-loop ;
+
+( macro to pop d stack)
+: drop  <asm  top  ld sp+  toph ld sp+  asm> ;
+: dup   <asm  toph st -sp  top  st -sp  asm> ;
+
+forth
+: }  asm ;
 
 #]file
 
