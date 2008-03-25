@@ -174,8 +174,8 @@ void init_dict()
     init_chain(&forth_chain, initial_forth);
     init_chain(&compiler_chain, initial_compiler);
 }
-    
-/* 
+
+/*
    We're going to take some pointers from Martin Tracy and zenFORTH.
    `last-link' is a 2variable that stores (link, chain) of the last
    named word defined.  We don't actually link it into the dictionary
@@ -186,13 +186,13 @@ void init_dict()
    variable last-code   ( pointer to last-compiled code field)
    variable last-word   ( last compiled word)
 
-   : show     last-link 2@  ( &link chain)  !   ; 
+   : show     last-link 2@  ( &link chain)  !   ;
    : use      ( code -)  last-code @ !  ;
-   : patch    pop @  use   ; 
+   : patch    pop @  use   ;
 
    : ?unique  ( a u - a u)
    2dup current @  ?unique-hook  find  if
-   drop  2dup  fd-out @ push  >stderr  type  ."  again.  "  pop writes 
+   drop  2dup  fd-out @ push  >stderr  type  ."  again.  "  pop writes
    then   2drop ;
 
    : code,   0 , ( lex)  here last-code !  0 , ( code)  ;

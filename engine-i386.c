@@ -65,7 +65,7 @@ static void compile_stack_adjust(int n)
     help[1] = n & 0xff;		/* 8 bit offset */
     pcd += 7;
 }
-    
+
 void mu_compile_drop()
 {
     compile_stack_adjust(4);
@@ -197,7 +197,7 @@ static void compile_stack_move(int n)
     mu_compile_sp_to_eax();
     compile_stack_adjust(n);
 }
-    
+
 /* Next challenge: for/next. These require popping and pushing the _other_
  * stack: the return (hardware) stack.
  */
@@ -207,7 +207,7 @@ void mu_compile_pop_from_r()
     compile_stack_move(-4);	/* eax = sp; sp-- */
     *(uint32_t *) pcd = 0xfc408f;	/* popl -4(%eax) */
     pcd += 3;
-    
+
 }
 
 void mu_compile_2pop_from_r()

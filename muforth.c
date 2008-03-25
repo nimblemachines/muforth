@@ -114,7 +114,7 @@ static void make_constant_strings()
   : "copy  ( to from u - to+u)   push  over  r@ cmove  pop +  bl over c!  ;
 
   : command-line  ( skip first one: the program name)
-  ram  argv cell+  ram  argc 1- ?for  
+  ram  argv cell+  ram  argc 1- ?for
   over @  dup string-length "copy  1+ ( keep blank)  cell u+  next  then
   nip  ( start end)  over -  ( a u)  dup allot ( aligns) ;
 */

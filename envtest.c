@@ -30,6 +30,6 @@ int main(int argc, char *argv[])
 
     /* verify that int and void * are the same size: */
     if (sizeof(int) != sizeof(void *))
-        printf("#error \"Hmm. Pointer and int types are different sizes.\"\n");        
+        printf("#error \"Hmm. Pointer and int types are different sizes.\"\n");
     return 0;
 }

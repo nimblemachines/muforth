@@ -52,7 +52,7 @@ struct trapframe
 };
 
 static struct trapframe *last_tf;    /* top of "stack" of trap frames */
-    
+
 void mu_catch()
 {
     struct trapframe tf;
@@ -71,7 +71,7 @@ void mu_catch()
     {
         EXECUTE;
         DUP;     /* make room for thrown value */
-    }        
+    }
     else
     {
         SP = tf.sp;  /* we longjmp'ed; restore sp, rp, & ip */

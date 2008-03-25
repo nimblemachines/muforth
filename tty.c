@@ -42,7 +42,7 @@ void mu_set_termios_raw()
 {
     struct termios *pti = (struct termios *) TOP;
 
-    pti->c_iflag &= ~(PARMRK | ISTRIP | INLCR | IGNCR | 
+    pti->c_iflag &= ~(PARMRK | ISTRIP | INLCR | IGNCR |
                       ICRNL | IXON | IXOFF);
     pti->c_iflag |= IGNBRK;
 
@@ -114,4 +114,4 @@ void mu_raw_termios()
 
 
 
-    
+

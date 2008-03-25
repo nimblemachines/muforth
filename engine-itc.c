@@ -177,7 +177,7 @@ void mu_branch_comma()
     compile_branch(BRANCH_T);
 }
 
-void mu_zero_branch_comma()      
+void mu_zero_branch_comma()
 {
     compile_branch(ZBRANCH_T);
 }
@@ -202,7 +202,7 @@ void mu_next_comma()
     compile_branch(NEXT_T);
 }
 
-   
+
 /*
  * Runtime workhorses for R stack functions. In the x86 native code, "push"
  * and "pop" are compiler words. Here they don't need to be.
