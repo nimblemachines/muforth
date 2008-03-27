@@ -28,8 +28,9 @@ static struct dict_entry *compiler_chain = NULL;
 /* current chain to compile into */
 static struct dict_entry **current_chain = &forth_chain;
 
-/* pointer to latest word defined; doesn't depend on current *still* pointing
- * to the chain it *was* pointing to when the word was defined...*/
+/* pointer to latest word defined; doesn't depend on current *still*
+ * pointing to the chain it *was* pointing to when the word was
+ * defined... */
 static struct dict_entry *latest = NULL;
 
 /* hook called when a new name is created */
@@ -52,11 +53,28 @@ struct inm initial_compiler[] = {
     { NULL, NULL }
 };
 
+/*
+ * NOTE: The value of current_chain is a pointer to a variable (like
+ * forth_chain) that itself points to a struct dict_entry. Here we are
+ * pushing its address since we're expecting to fetch or store its value in
+ * Forth.
+ */
 void mu_push_current()
 {
     PUSH(&current_chain);
 }
 
+/*
+ * .forth. and .compiler. push the address of the respective variable,
+ * since the first thing the dictionary search code does is dereference
+ * the pointer to get the first struct dict_entry.
+ *
+ * Actually the truth is more disgusting than that. mu_find expects a
+ * (struct dict_entry *) on the stack. When we start looking down a
+ * chain, we initially push a pointer to a pointer, which looks like
+ * the struct, which - conveniently - has its link pointer as the first
+ * entry, so "p->link" is essentially "*p". It's ugly but it works.
+ */
 void mu_push_forth_chain()
 {
     PUSH(&forth_chain);
@@ -67,7 +85,8 @@ void mu_push_compiler_chain()
     PUSH(&compiler_chain);
 }
 
-/* NOTE: Though "latest" is a variable, we never want to store into it,
+/*
+ * NOTE: Though "latest" is a variable, we never want to store into it,
  * so push its _value_ rather than its _address_.
  */
 void mu_push_latest()
