@@ -6,7 +6,7 @@
 # - homepage (it's going to change at least once more ;-)
 
 find . \( -name BUILDING -o -name NOTES -o -name README -o -name TODO \
-       -o -name Makefile.in \
+       -o -name COPYRIGHT -o -name Makefile.in \
        -o -name "*.c" -o -name "*.h" -o -name "*.mu4" \) \
        -exec $1 {} \;
 
