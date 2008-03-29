@@ -10,13 +10,6 @@
 
 #include "env.h"
 
-/*
- * XXX: Thought: I could create a file that gets included here, instead of
- * defining -Dengine_itc on the gcc command line.
- *
- * #include "engine.h"
- */
-
 typedef int cell;
 typedef unsigned int ucell;
 
@@ -27,13 +20,6 @@ typedef unsigned char uint8;
 #define STACK_SAFETY 256
 extern cell stack[];
 #define S0  &stack[STACK_SIZE - STACK_SAFETY]
-
-/*
- * I'm not sure if I'm still going to try to combine the ITC and x86 native
- * versions of muforth into one. But in case I do, I'm keeping the defines
- * for both here.
- */
-#ifdef engine_itc
 
 /* TOP is a synonym for ST0 */
 #define ST0      TOP
@@ -81,26 +67,6 @@ extern xtk  **RP;     /* return stack pointer */
 
 #define NEST      RPUSH(IP)
 #define UNNEST    (IP = RPOP)
-
-#else
-
-#  ifdef engine_i386
-
-typedef pw   xtk;              /* "execution token" is a pointer to code */
-extern cell  *SP;              /* parameter stack pointer */
-#define TOP      SP[0]
-#define EXECUTE  CALL((xtk)POP)
-#define CALL(x)  *((xtk)(x))()
-#define XTK(w)   (w)       /* make an execution token from a word's name */
-
-#  else  /* !engine_itc && !engine_i386 */
-
-#error Undefined execution engine.
-
-#  endif  /* engine_i386 */
-
-#endif  /* engine_itc */
-
 
 #define ALIGN_SIZE  sizeof(cell)
 #define ALIGNED(x)  (((cell)(x) + ALIGN_SIZE - 1) & -ALIGN_SIZE)
@@ -163,9 +129,8 @@ extern char *isnt_defined;
  */
 #include "public.h"
 
-#ifdef engine_itc
+/* engine-itc.c */
 void execute_xtk(xtk x);
-#endif
 
 /* compile.c */
 char *to_counted_string(char *);

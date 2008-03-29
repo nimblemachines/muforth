@@ -86,42 +86,35 @@ void mu_do_does()
 void mu_exit()      { UNNEST; }
 
 /* Push an inline literal */
-static void mu_literal_()  { PUSH(*IP++); }
-
-/* Compile a literal. This has to be done here because it is specific to
- * ITC. It used to be in startup, but there it was defined in a way that
- * assumed ITC. This is wrong.
- */
-pw p_mu_literal_ = &mu_literal_;
-void mu_literal()
-{
-    PUSH(XTK(mu_literal_));
-    mu_compile_comma();         /* compile call to push literal code */
-    mu_code_comma();            /* copy the literal on the stack to dict */
-}
+void mu_lit_()  { PUSH(*IP++); }
 
 /*
  * These are the control structure runtime workhorses. They are static
  * because we don't export them directly to muforth; instead we export
  * words that *compile* them.
  */
-static void mu_branch_()            { BRANCH; }
-static void mu_equal_zero_branch_() { if (TOP == 0) BRANCH; else IP++; }
-static void mu_zero_branch_()       { mu_equal_zero_branch_(); DROP(1); }
+void mu_branch_()            { BRANCH; }
+void mu_equal_zero_branch_() { if (TOP == 0) BRANCH; else IP++; }
+void mu_zero_branch_()       { mu_equal_zero_branch_(); DROP(1); }
 
-/* for, ?for, next */
-/* for is simply "push" */
-/* ?for has to be matched with "then" */
-/* At run-time, if TOP is zero we skip the entire loop; otherwise we could
- * be looping for a long time - 2^(#bits in CELL)!
+/*
+ * for, ?for, next
+ *
+ * for simply compiles "push"; it pairs with next.
+ *
+ * ?for compiles (?for); it has to be matched with "next" and "then".  At
+ * run-time (ie when (?for) executes), if TOP is zero we skip the entire
+ * loop by jumping to "then"; otherwise we could be looping for a long time
+ * - 2^(#bits in CELL)!
  */
-static void mu_qfor_()
+
+void mu_qfor_()
 {
     if (TOP == 0) { BRANCH; DROP(1); }   /* take branch, pop stack */
     else          { IP++; RPUSH(POP); }  /* skip branch, push count onto R */
 }
 
-static void mu_next_()
+void mu_next_()
 {
     cell *prtop;
     prtop = (cell *)RP;  /* counter on top of R stack */
@@ -129,91 +122,6 @@ static void mu_next_()
     if (--*prtop == 0) { IP++; RP++; }  /* skip branch, pop counter */
     else               { BRANCH; }      /* take branch */
 }
-
-/*
- * For compiling control structures, we need architecture-specific help. We
- * don't know, eg, how long displacements are, and we don't know how to
- * resolve branches. So we isolate the specifics here, and put the
- * generalities in startup.mu4.
- */
-
-/*
- * Mark a branch source for later fixup.
- * : mark>  (s - src)  here  0 code, ;
- */
-void mu_mark_forward()
-{
-    PUSH(pcd);  /* leave the address of the following 0 */
-    *pcd++ = 0;
-}
-
-/*
- * Resolve a forward or backward jump, from src to dest.
- */
-void mu_resolve_forward()  /* src dest - */
-{
-    /* In ITC land, this is easy: just store dest at src. */
-    cell *src = (cell *)ST1;
-    cell dest = TOP;
-    *src = dest;
-    DROP(2);
-}
-
-/*
- * Since we're now compiling control structure bits in this file, we need
- * some more ITC code pointers. Since the "workhorse" words aren't even
- * going into the dictionary, we definitely need these code pointers!
- */
-
-enum mu_branch_t { BRANCH_T, ZBRANCH_T, EQZBRANCH_T, FOR_T, QFOR_T, NEXT_T };
-
-static pw p_mu_branches[] = {
-    &mu_branch_,
-    &mu_zero_branch_,
-    &mu_equal_zero_branch_,
-    &mu_push,
-    &mu_qfor_,
-    &mu_next_
-};
-
-static void compile_branch(enum mu_branch_t br)
-{
-    *pcd++ = (cell)&p_mu_branches[br];
-}
-
-/*
- * Words that *compile* the above control structure words.
- */
-void mu_branch_comma()
-{
-    compile_branch(BRANCH_T);
-}
-
-void mu_zero_branch_comma()
-{
-    compile_branch(ZBRANCH_T);
-}
-
-void mu_equal_zero_branch_comma()
-{
-    compile_branch(EQZBRANCH_T);
-}
-
-void mu_for_comma()
-{
-    compile_branch(FOR_T);
-}
-
-void mu_qfor_comma()
-{
-    compile_branch(QFOR_T);
-}
-
-void mu_next_comma()
-{
-    compile_branch(NEXT_T);
-}
-
 
 /*
  * Runtime workhorses for R stack functions. In the x86 native code, "push"
@@ -226,3 +134,26 @@ void mu_pop()    { PUSH(RPOP); }
 void mu_rfetch() { PUSH(RP[0]); }
 
 void mu_shunt()  {  RP++; }
+
+#if 0
+/*
+ * Using these two words - r@+ and ?^ - it would be easy to implement the
+ * branch runtime words in Forth rather than in C.
+ */
+
+/* Whether positive or negative logic can easily be changed; whether it
+ * consumes TOP can be changed as well, depending on what seems to work
+ * best. However, unnest-if-false should probably be called -?^ */
+
+void mu_qexit()  { if (TOP) UNNEST; DROP(1); }
+
+/* So we can easily define compile and (lit) in Forth. Fetches and pushes
+ * to D stack top value on R stack; increments that value by sizeof(cell).
+ * That yield an IP pointer on D stack; to get the _value_ we need to
+ * fetch. This fetch could be built into the word, and maybe renamed to
+ * r@+@ or something equally ungainly. Or maybe it could get a more
+ * mnemonic (what it means), rather than functional (what it does) name.
+ */
+static void mu_rfetch_plus()  { PUSH(RP[0]); RP[0]++; }
+#endif
+

@@ -9,9 +9,6 @@
 # muforth based on which make you have, and which version you want to
 # build.
 
-# default to ITC
-engine=itc
-
 while [ "$1" ]; do
   case "$1" in
      gnu)     gnu=yes ;;
@@ -48,7 +45,6 @@ Found GNU make. I'm going to create a compatible makefile for you.
 EOF
   sed ${sedext} \
     -e "s/%sedext%/${sedext}/g" \
-    -e s/%engine%/${engine}/ \
     -f scripts/make.sed \
     -f scripts/gnu-make.sed \
     -e 's/^### Makefile/### GNU Makefile/' Makefile.in > Makefile
@@ -65,7 +61,6 @@ Then type "gmake" instead of "make".
 EOF
   sed ${sedext} \
     -e "s/%sedext%/${sedext}/g" \
-    -e s/%engine%/${engine}/ \
     -f scripts/make.sed \
     -e 's/^### Makefile/### BSD Makefile/' Makefile.in > Makefile
 fi

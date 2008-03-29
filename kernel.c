@@ -159,8 +159,9 @@ void mu_slash_mod()  /* n1 n2 -- m q */
  * about the host machine environment. But, really, it should be possible
  * (and easy!) to do this from the preprocessor.)
 */
-void mu_cells(void)       { TOP <<= SH_CELL; }
-void mu_cell_slash(void)  { TOP >>= SH_CELL; }
+
+/* By defining cell-shift here, I can define cells and cell/ in startup! */
+void mu_cell_shift(void)  { PUSH(SH_CELL); }
 
 void mu_string_equal()   /* a1 len1 a2 len2 -- flag */
 {
