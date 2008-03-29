@@ -70,13 +70,6 @@ char *to_counted_string(char *zstring)
     return counted_string;
 }
 
-void mu_colon()
-{
-    mu_new();
-    mu_set_colon_code();
-    mu_minus_rbracket();
-}
-
 /*
   compiler definitions
   : ^   lit unnest compile,  ;   ( right now this doesn't do anything fancy)
