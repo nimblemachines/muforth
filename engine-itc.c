@@ -86,7 +86,19 @@ void mu_do_does()
 void mu_exit()      { UNNEST; }
 
 /* Push an inline literal */
-void mu_literal_()  { PUSH(*IP++); }
+static void mu_literal_()  { PUSH(*IP++); }
+
+/* Compile a literal. This has to be done here because it is specific to
+ * ITC. It used to be in startup, but there it was defined in a way that
+ * assumed ITC. This is wrong.
+ */
+pw p_mu_literal_ = &mu_literal_;
+void mu_literal()
+{
+    PUSH(XTK(mu_literal_));
+    mu_compile_comma();         /* compile call to push literal code */
+    mu_code_comma();            /* copy the literal on the stack to dict */
+}
 
 /*
  * These are the control structure runtime workhorses. They are static
