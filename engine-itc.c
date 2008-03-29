@@ -111,7 +111,7 @@ static void mu_zero_branch_()       { mu_equal_zero_branch_(); DROP(1); }
 
 /* for, ?for, next */
 /* for is simply "push" */
-/* ?for has to matched with "then" */
+/* ?for has to be matched with "then" */
 /* At run-time, if TOP is zero we skip the entire loop; otherwise we could
  * be looping for a long time - 2^(#bits in CELL)!
  */

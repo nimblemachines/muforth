@@ -154,6 +154,10 @@ void mu_slash_mod()  /* n1 n2 -- m q */
  * the sizeof(cell) and set SH_CELL accordingly...but I can't do
  * "environmental queries" in the preprocessor! So the user gets to do this
  * by hand! Hooray for automation!
+ *
+ * (Not really. envtest runs and outputs env.h, which contains useful info
+ * about the host machine environment. But, really, it should be possible
+ * (and easy!) to do this from the preprocessor.)
 */
 void mu_cells(void)       { TOP <<= SH_CELL; }
 void mu_cell_slash(void)  { TOP >>= SH_CELL; }
