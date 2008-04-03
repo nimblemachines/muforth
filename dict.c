@@ -9,10 +9,19 @@
 
 #include "muforth.h"
 #include <stdio.h>
+#include <sys/mman.h>
 
 /*
  * Names currently live in _code_ space, rather than in their own name space.
  */
+
+int   names_size;   /* count of bytes alloted to names */
+
+cell  *pcd0;   /* pointer to start of code & names space */
+uint8 *pdt0;   /* ... data space */
+
+cell  *pcd;    /* ptrs to next free byte in code & names space */
+uint8 *pdt;    /* ... data space */
 
 struct dict_entry
 {
@@ -53,6 +62,36 @@ struct inm initial_compiler[] = {
     { NULL, NULL }
 };
 
+void mu_push_h()        /* "here" code space pointer */
+{
+    PUSH(&pcd);
+}
+
+void mu_push_r()        /* "ram" space pointer */
+{
+    PUSH(&pdt);
+}
+
+/*
+ * Compile (that is, *copy*) a cell into the current code space.
+ */
+void mu_code_comma()     { *pcd++ = POP; }
+
+void mu_push_code_size()
+{
+    PUSH(((caddr_t)pcd - (caddr_t)pcd0) - names_size);
+}
+
+void mu_push_names_size()
+{
+    PUSH(names_size);
+}
+
+void mu_push_data_size()
+{
+    PUSH(pdt - pdt0);
+}
+
 /*
  * NOTE: The value of current_chain is a pointer to a variable (like
  * forth_chain) that itself points to a struct dict_entry. Here we are
@@ -92,6 +131,47 @@ void mu_push_compiler_chain()
 void mu_push_latest()
 {
     PUSH(latest);
+}
+
+/* the char *string param here does _not_ need to be zero-terminated!! */
+static char *compile_counted_string(char *string, size_t length)
+{
+    struct counted_string *cs;
+    struct string s;
+
+    cs = (struct counted_string *)pdt;
+    s.data = string;
+    s.length = length;
+    cs->length = s.length;  /* prefix count cell */
+    bcopy(s.data, &cs->data[0], s.length);
+    cs->data[s.length] = 0; /* zero terminate */
+    return &cs->data[0];
+}
+
+/*
+ * copy string; return a counted string (addr of first character;
+ * prefix count cell _precedes_ first character of string).
+ * This does _not_ allot space in the dictionary!
+ */
+void mu_scrabble()  /* ( a u - z") */
+{
+    TOP = (cell)compile_counted_string((char *)ST1, TOP);
+    NIP(1);
+}
+
+/*
+ * this is _only_ called from C; zstring _must_ be zero-terminated!!
+ * this routine _does_ allot space in the dictionary!
+ */
+char *to_counted_string(char *zstring)
+{
+    size_t length;
+    char *counted_string;
+
+    length = strlen(zstring);
+    counted_string = compile_counted_string(zstring, length);
+    pdt = (uint8 *)ALIGNED(counted_string + length + 1);  /* count null */
+    return counted_string;
 }
 
 /*
@@ -179,6 +259,11 @@ void mu_push_tick_new_hook()
     PUSH(&xtk_new_hook);
 }
 
+/*
+ * All the words defined by this function are CODE words. Their bodies are
+ * defined in C; this routine compiles a code pointer into the dict entry
+ * that points to the C function.
+ */
 static void init_chain(struct dict_entry **pchain, struct inm *pinm)
 {
     for (; pinm->name != NULL; pinm++)
@@ -188,8 +273,25 @@ static void init_chain(struct dict_entry **pchain, struct inm *pinm)
     }
 }
 
+static void allocate()
+{
+    pcd0 = (cell *)  mmap(0, 256 * 4096, PROT_READ | PROT_WRITE,
+                            MAP_ANON | MAP_PRIVATE, -1, 0);
+
+    pdt0 = (uint8 *) mmap(0, 1024 * 4096, PROT_READ | PROT_WRITE,
+                            MAP_ANON | MAP_PRIVATE, -1, 0);
+
+    if (pcd0 == MAP_FAILED || pdt0 == MAP_FAILED)
+        die("couldn't allocate memory");
+
+    /* init compiler ptrs */
+    pcd = pcd0;
+    pdt = pdt0;
+}
+
 void init_dict()
 {
+    allocate();
     init_chain(&forth_chain, initial_forth);
     init_chain(&compiler_chain, initial_compiler);
 }

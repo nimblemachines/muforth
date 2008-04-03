@@ -54,6 +54,7 @@ void mu_zero_equal()  { TOP = (TOP == 0) ? -1 : 0; }
 
 void mu_depth()     { cell d = S0 - SP; PUSH(d); }
 void mu_sp_reset()  { SP = S0; TOP = 0xdecafbad; }
+void mu_push_s0()   { PUSH(S0); }   /* address of stack bottom */
 
 /*
  * Single-length math routines.

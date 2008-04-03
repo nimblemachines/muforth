@@ -9,7 +9,6 @@
 #include "version.h"
 
 #include <stdlib.h>
-#include <sys/mman.h>
 
 /* data stack */
 cell stack[STACK_SIZE];
@@ -25,20 +24,6 @@ xtk    W;      /* on entry, points to the current Forth word */
 
 int  cmd_line_argc;
 char **cmd_line_argv;
-
-int   names_size;   /* count of bytes alloted to names */
-
-cell  *pcd0;   /* pointer to start of code & names space */
-uint8 *pdt0;   /* ... data space */
-
-cell  *pcd;    /* ptrs to next free byte in code & names space */
-uint8 *pdt;    /* ... data space */
-
-
-/* XXX: Gross hack alert! */
-char *ate_the_stack;
-char *ate_the_rstack;
-char *isnt_defined;
 
 static void init_stacks()
 {
@@ -60,50 +45,6 @@ static void mu_find_init_file()
     if (POP) return;
 
     die("couldn't find startup.mu4 init file");
-}
-
-void mu_push_code_size()
-{
-    PUSH(((caddr_t)pcd - (caddr_t)pcd0) - names_size);
-}
-
-void mu_push_names_size()
-{
-    PUSH(names_size);
-}
-
-void mu_push_data_size()
-{
-    PUSH(pdt - pdt0);
-}
-
-static void allocate()
-{
-    pcd0 = (cell *)  mmap(0, 256 * 4096, PROT_READ | PROT_WRITE,
-                            MAP_ANON | MAP_PRIVATE, -1, 0);
-
-    pdt0 = (uint8 *) mmap(0, 1024 * 4096, PROT_READ | PROT_WRITE,
-                            MAP_ANON | MAP_PRIVATE, -1, 0);
-
-    if (pcd0 == MAP_FAILED || pdt0 == MAP_FAILED)
-        die("couldn't allocate memory");
-
-    /* init compiler ptrs */
-    pcd = pcd0;
-    pdt = pdt0;
-}
-
-/*
- * This is a horrendous hack. gcc 3.3 is smart enough to let me do what
- * I want using initializers, but 2.95 complains. So I have to run a bit
- * of code that compiles some strings into the dictionary, and sets a
- * few globals to point to them. It's really ugly.
- */
-static void make_constant_strings()
-{
-    ate_the_stack = to_counted_string("ate the stack");
-    ate_the_rstack = to_counted_string("ate the return stack");
-    isnt_defined =  to_counted_string("isn't defined");
 }
 
 /*
@@ -177,10 +118,9 @@ void mu_bye()
 
 int main(int argc, char *argv[])
 {
-    allocate();
     init_dict();
     convert_command_line(argc, argv);
-    make_constant_strings();    /* XXX: Hack! */
+    init_interpret();
     init_stacks();
     mu_find_init_file();
     mu_load_file();
