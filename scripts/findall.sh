@@ -8,5 +8,5 @@
 find . \( -name BUILDING -o -name NOTES -o -name README -o -name TODO \
        -o -name COPYRIGHT -o -name Makefile.in \
        -o -name "*.c" -o -name "*.h" -o -name "*.mu4" \) \
-       -exec $1 {} \;
+       -exec "$@" {} \;
 
