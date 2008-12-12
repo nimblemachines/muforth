@@ -1,5 +1,11 @@
 # Make a link to nimblemachines in all the source code.
 
+# I think every file has good links; now we just need to keep them updated.
+s#http://pages.nimblemachines.com/muforth#http://sites.nimblemachines.com/muforth#
+
+# skip the rest - it's only of historical interest
+b skip
+
 # put a link into the startup banner of startup.mu4
 /\( ### httplink ###/ {
 # get next line
@@ -21,3 +27,6 @@ s/^([#* ]*).*/\1This file is part of muFORTH: http:\/\/pages.nimblemachines.com\
 # This matches C comments, Makefile etc comments, and lines starting with
 # zero or more spaces.
 s/^([ *#]*This file is part of )muforth\.$/\1muFORTH: http:\/\/pages.nimblemachines.com\/muforth/
+
+: skip
+
