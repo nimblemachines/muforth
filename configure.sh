@@ -1,6 +1,6 @@
 #!/bin/sh
 
-# This file is part of muFORTH: http://sites.nimblemachines.com/muforth
+# This file is part of muFORTH: http://muforth.nimblemachines.com/
 #
 # Copyright (c) 1997-2009 David Frech. All rights reserved, and all wrongs
 # reversed. (See the file COPYRIGHT for details.)

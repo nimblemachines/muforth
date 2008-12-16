@@ -1,7 +1,7 @@
 # Make a link to nimblemachines in all the source code.
 
 # I think every file has good links; now we just need to keep them updated.
-s#http://pages.nimblemachines.com/muforth#http://sites.nimblemachines.com/muforth#
+s#http://sites.nimblemachines.com/muforth#http://muforth.nimblemachines.com/#
 
 # skip the rest - it's only of historical interest
 b skip
