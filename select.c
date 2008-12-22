@@ -49,16 +49,10 @@ void mu_select()
     struct timeval *timeout = (struct timeval *) TOP;
 
     NIP(4);
-    for (;;)
+    while((count = select(nfds, readfds, writefds, exceptfds, timeout)) == -1)
     {
-        count = select(nfds, readfds, writefds, exceptfds, timeout);
-        if (count == -1)
-        {
-            if (errno == EINTR) continue;
-            TOP = (cell) counted_strerror();
-            mu_throw();
-        }
-        break;
+        if (errno == EINTR) continue;
+        throw_strerror();
     }
     TOP = count;
 }

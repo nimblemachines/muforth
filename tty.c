@@ -12,9 +12,6 @@
 #include <sys/ioctl.h>
 #include <termios.h>
 
-/* XXX: for testing only? */
-#include <errno.h>
-
 /* XXX: Use cfmakeraw, cfsetispeed, cfsetospeed? */
 
 /* stack: ( fd termios - sizeof(termios) ) */
@@ -32,8 +29,7 @@ void mu_set_termios()
     /* drain out, flush in, set */
     if (tcsetattr(ST1, TCSAFLUSH, (struct termios *)TOP) == -1)
     {
-        TOP = (cell) counted_strerror();
-        mu_throw();
+        throw_strerror();
     }
     DROP(2);
 }
@@ -80,8 +76,7 @@ void mu_set_termios_speed()
         BPS(115200);
         BPS(230400);
     default:
-        TOP = (cell) "Unsupported speed";
-        mu_throw();
+        throw("Unsupported speed");
     }
 #ifdef __linux__
     /* Linux needs more than a poke in the eye with a stick. Should we

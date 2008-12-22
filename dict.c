@@ -160,21 +160,6 @@ void mu_scrabble()  /* ( a u - z") */
 }
 
 /*
- * this is _only_ called from C; zstring _must_ be zero-terminated!!
- * this routine _does_ allot space in the dictionary!
- */
-char *to_counted_string(char *zstring)
-{
-    size_t length;
-    char *counted_string;
-
-    length = strlen(zstring);
-    counted_string = compile_counted_string(zstring, length);
-    pdt = (uint8 *)ALIGNED(counted_string + length + 1);  /* count null */
-    return counted_string;
-}
-
-/*
  * 2004-apr-01. After giving a talk on muforth to SVFIG, and in particular
  * after Randy asked me some pointed questions, I decided that find should
  * have positive logic after all. I have renamed -"find to find to indicate

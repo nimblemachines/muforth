@@ -117,11 +117,6 @@ extern cell  *pcd0;   /* ptr to code & names space */
 extern uint8 *pdt;    /* ptrs to next free byte in each space */
 extern cell  *pcd;
 
-/* XXX: Gross hack alert! */
-extern char *ate_the_stack;
-extern char *ate_the_rstack;
-extern char *isnt_defined;
-
 /* declare common functions */
 
 /* public.h is automagically generated, and can match every public function
@@ -137,6 +132,7 @@ char *to_counted_string(char *);
 
 /* error.c */
 void die(const char *msg);
+void throw(const char *zstring);
 
 /* kernel.c */
 int string_compare(const char *string1, size_t length1,

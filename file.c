@@ -69,9 +69,9 @@ void mu_create_file()       /* C-string-name - fd */
     fd = open((char *)TOP, O_CREAT | O_TRUNC | O_WRONLY, 0666);
     if (fd == -1)
     {
-        TOP = (cell) counted_strerror();
-        mu_throw();
+        throw_strerror();
     }
+
     TOP = fd;
 }
 
@@ -82,8 +82,7 @@ void mu_open_file()     /* C-string-name flags - fd */
     fd = open((char *)ST1, TOP);
     if (fd == -1)
     {
-        TOP = (cell) counted_strerror();
-        mu_throw();
+        throw_strerror();
     }
     NIP(1);
     TOP = fd;
@@ -101,15 +100,10 @@ void mu_push_r_slash_w()
 
 void mu_close_file()
 {
-    for (;;)
+    while (close(TOP) == -1)
     {
-        if (close(TOP) == -1)
-        {
-            if (errno == EINTR) continue;
-            TOP = (cell) counted_strerror();
-            mu_throw();
-        }
-        break;
+        if (errno == EINTR) continue;
+        throw_strerror();
     }
     DROP(1);
 }
@@ -125,15 +119,13 @@ void mu_mmap_file()     /* fd - addr len */
     if (fstat(fd, &s) == -1)
     {
         close(fd);
-        TOP = (cell) counted_strerror();
-        mu_throw();
+        throw_strerror();
     }
     p = (char *) mmap(0, s.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
     if (p == MAP_FAILED)
     {
         close(fd);
-        TOP = (cell) counted_strerror();
-        mu_throw();
+        throw_strerror();
     }
 
     NIP(-1);
@@ -154,16 +146,10 @@ void mu_read_carefully()
     len = TOP;
     DROP(2);
 
-    for (;;)
+    while((count = read(fd, buffer, len)) == -1)
     {
-        count = read(fd, buffer, len);
-        if (count == -1)
-        {
-            if (errno == EINTR) continue;
-            TOP = (cell) counted_strerror();
-            mu_throw();
-        }
-        break;
+        if (errno == EINTR) continue;
+        throw_strerror();
     }
     TOP = count;
 }
@@ -186,8 +172,7 @@ void mu_write_carefully()
         if (written == -1)
         {
             if (errno == EINTR) continue;
-            PUSH(counted_strerror());
-            mu_throw();
+            throw_strerror();
         }
         buffer += written;
         len -= written;

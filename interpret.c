@@ -29,22 +29,6 @@ static struct text source;
 static char *first;         /* goes from source.start to source.end */
 struct string parsed;       /* for errors */
 
-/* XXX: Gross hack alert! */
-char *ate_the_stack;
-char *isnt_defined;
-
-/*
- * This is a horrendous hack. gcc 3.3 is smart enough to let me do what
- * I want using initializers, but 2.95 complains. So I have to run a bit
- * of code that compiles some strings into the dictionary, and sets a
- * few globals to point to them. It's really ugly.
- */
-static void make_constant_strings()
-{
-    ate_the_stack = to_counted_string("ate the stack");
-    isnt_defined  = to_counted_string("isn't defined");
-}
-
 /*
  * This isn't exactly ANS-kosher, since traditionally >IN contained an
  * offset within the input text that went from 0 to length-1; here it goes
@@ -132,8 +116,7 @@ defer not-defined  now complain is not-defined
 
 void mu_complain()
 {
-    PUSH(isnt_defined);
-    mu_throw();
+    throw("isn't defined");
 }
 
 void mu_huh_q()
@@ -224,8 +207,7 @@ static void mu_qstack()
 {
     if (SP > S0)
     {
-        PUSH(ate_the_stack);
-        mu_throw();
+        throw("ate the stack");
     }
 #ifdef DEBUG_STACK
     /* print stack */
@@ -287,11 +269,6 @@ void mu_load_file()    /* c-string-name */
     mu_catch();
     close(fd);
     mu_throw();
-}
-
-void init_interpret()   /* called at init time */
-{
-    make_constant_strings();    /* XXX: Hack! */
 }
 
 /*

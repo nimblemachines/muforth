@@ -89,6 +89,9 @@ void mu_throw()
 {
     if (TOP != 0)
     {
+        if (TOP == -1)        /* generic error value */
+            TOP = (cell)"Unspecified fatal error";
+
         if (last_tf)
             LONGJMP(last_tf->jb, TOP);
         else
@@ -97,7 +100,30 @@ void mu_throw()
     DROP(1);
 }
 
-char *counted_strerror()
+/*
+ * throw() is shorthand for PUSH(zstring); mu_throw();
+ *
+ * Since we're going to reset the SP anyway, why not always do a
+ * PUSH(zstring) and then mu_throw()? In other words, don't worry about
+ * whether it's ok to simply assign TOP to the zstring. Let's always PUSH,
+ * and let catch reset the stack.
+ *
+ * This code assumes that zstring != 0. Otherwise, the assumption that we
+ * can always PUSH is false, since throw()ing 0 doesn't change the stack.
+ */
+
+void throw(const char *zstring)
 {
-    return to_counted_string(strerror(errno));
+    PUSH(zstring);
+    mu_throw();
+}
+
+/*
+ * We've returned to using C strings for throw()ing. Since all we ever do
+ * with strerror strings is throw() them, let's roll the two ideas into
+ * one.
+ */
+void throw_strerror()
+{
+    throw(strerror(errno));
 }
