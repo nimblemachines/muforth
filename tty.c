@@ -12,7 +12,7 @@
 #include <sys/ioctl.h>
 #include <termios.h>
 
-/* XXX: Use cfmakeraw, cfsetispeed, cfsetospeed? */
+/* XXX: Use cfsetispeed, cfsetospeed? */
 
 /* stack: ( fd termios - sizeof(termios) ) */
 void mu_get_termios()
@@ -34,10 +34,23 @@ void mu_set_termios()
     DROP(2);
 }
 
-void mu_set_termios_raw()
-{
-    struct termios *pti = (struct termios *) TOP;
+/*
+ * I need two "raw" modes: one for human interaction (char by char), and
+ * one for interacting with target devices connected via serial port.
+ *
+ * For humans, I want the interrupt chars to work, and I want no timeout (a
+ * read will wait forever).
+ *
+ * For targets, I want no interrupt chars, no modem signalling, no hardware
+ * handshake, but I want RS232 breaks to be received and rendered as null
+ * chars; also I want a 0.5s timeout, so that code that expects a char from
+ * the target will "immediately" exit with an error if there isn't a
+ * character waiting.
+ */
 
+/* TEST */
+static void set_termios_raw_by_hand(struct termios *pti)
+{
     pti->c_iflag &= ~(PARMRK | ISTRIP | INLCR | IGNCR |
                       ICRNL | IXON | IXOFF);
     pti->c_iflag |= IGNBRK;
@@ -48,16 +61,30 @@ void mu_set_termios_raw()
 
     pti->c_cflag &= ~(CSIZE | PARENB | CRTSCTS);
     pti->c_cflag |= (CS8 | CLOCAL);
+}
 
+void mu_set_termios_user_raw()
+{
+    struct termios *pti = (struct termios *) TOP;
+    cfmakeraw(pti);
+    //set_termios_raw_by_hand(pti);
+    pti->c_oflag |= (OPOST);  /* set opost, so newlines become CR/LF */
+    //pti->c_lflag |= (ISIG);   /* accept special chars and gen signals */
+    pti->c_cc[VMIN] = 1;
+    pti->c_cc[VTIME] = 0;
     DROP(1);
 }
 
-void mu_set_termios_min_time()
+void mu_set_termios_target_raw()
 {
-    struct termios *pti = (struct termios *) ST2;
-    pti->c_cc[VMIN] = ST1;
-    pti->c_cc[VTIME] = TOP;
-    DROP(3);
+    struct termios *pti = (struct termios *) TOP;
+    cfmakeraw(pti);
+    //set_termios_raw_by_hand(pti);
+    pti->c_cflag &= ~(CRTSCTS);   /* no handshaking */
+    pti->c_cflag |= (CLOCAL);     /* no modem signalling */
+    pti->c_cc[VMIN] = 0;          /* return even if no chars avail */
+    pti->c_cc[VTIME] = 5;         /* timeout in decisecs */
+    DROP(1);
 }
 
 /* stack: ( speed termios - ) */
