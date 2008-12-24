@@ -81,7 +81,8 @@ void mu_set_termios_target_raw()
     cfmakeraw(pti);
     //set_termios_raw_by_hand(pti);
     pti->c_cflag &= ~(CRTSCTS);   /* no handshaking */
-    pti->c_cflag |= (CLOCAL);     /* no modem signalling */
+    pti->c_cflag |= (CLOCAL | CSTOPB);     /* no modem signalling */
+                                           /* two stop bits */
     pti->c_cc[VMIN] = 0;          /* return even if no chars avail */
     pti->c_cc[VTIME] = 5;         /* timeout in decisecs */
     DROP(1);
@@ -105,15 +106,20 @@ void mu_set_termios_speed()
     default:
         throw("Unsupported speed");
     }
-#ifdef __linux__
-    /* Linux needs more than a poke in the eye with a stick. Should we
-     * do the same with BSD?
-     */
     cfsetspeed(pti, ST1);
-#else
-    pti->c_ospeed = pti->c_ispeed = ST1;
-#endif
     DROP(2);
+}
+
+/*
+ * We need to be able to send RS232 BREAKs. In at least one case (HC908
+ * bootloader) target hardware requires this - or at least it may make
+ * debugging the connection easier. ;-)
+ */
+/* stack: ( fd) */
+void mu_tty_send_break()
+{
+    tcsendbreak(TOP, 0);         /* most implementions ignore the duration */
+    DROP(1);
 }
 
 #if 0

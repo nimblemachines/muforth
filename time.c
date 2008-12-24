@@ -10,6 +10,7 @@
 #include "muforth.h"
 
 #include <time.h>
+#include <errno.h>
 
 /* time and date */
 static void push_forth_time_from_libc_time (struct tm *ptm, char *tz)
@@ -53,5 +54,25 @@ void mu_utc()
 void mu_push_clock()
 {
     PUSH(time(NULL));       /* seconds since UNIX epoch */
+}
+
+/*
+ * We need a way to do short sleeps for talking to sensitive hardware
+ * targets (like the Freescale HC908 series). I'm not getting good data
+ * from the bootloader, and wondering if some short pauses would help.
+ */
+void mu_nanosleep()
+{
+    struct timespec ts;
+
+    ts.tv_sec = ST1;
+    ts.tv_nsec = TOP;
+
+    while (nanosleep(&ts, &ts) == -1)
+    {
+        if (errno == EINTR) continue;
+        throw_strerror();
+    }
+    DROP(2);
 }
 
