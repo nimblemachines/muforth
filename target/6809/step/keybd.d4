@@ -1,0 +1,91 @@
+( keybd -- for stepper )
+
+forth target
+
+( selects a row, reads column mask, deselects row. )
+( fetches the column mask, masking off limit switch bits )
+( and complementing, so keys down show up as 1's )
+( column mask is shifted left 2 bits )
+code row@  ( row# -- mask*4 )
+   1 u #) lda    ( row# )
+   decimal
+     72 # adda   ( starting latch # )
+   hex
+   b400 ^ sta    ( select row -- drive line LOW )
+   b401 ^ ldb  comb  03c # andb  ( read porta, complement, mask )
+     80 # ora    ( deselect row -- drive HI )
+   b400 ^ sta    ( select row -- drive line LOW )
+   clra
+      u ) std    ( mask on stack )
+   next end-code
+
+decimal
+( copy first 8 entries to +ph for the steppers; then )
+( zero the first 12 -- the up/dn motors )
+code 0dir  ( -- )
+  << u y a >> pshs
+  addr dir # ldx
+  addr +ph # ldy
+         0 # ldu
+         4 # ldb
+         s ) stb   ( count )
+  begin  x ) ldd  x )++ stu  y )++ std  s ) dec  0= until
+  ( now zero remaining dirs )
+  x )++ stu  x )++ stu
+  << u y a >> puls next end-code
+
+: manual?  ( key# -- manual? )  24 - 0< ( < ) ;
+
+( keyDn sets dir to nonzero value only if limit switches allow. )
+: keyDn  ( key# -- )
+  dup manual? if
+    dup half swap  ( motor# key# )
+    1 and if ( odd is down ) 1 else -1 endif ( motor# dir )
+    2dup @limit? if drop 0 endif ( motor# dir )  swap dir!
+  else ( "go" dc motor )
+    ( keys 24-27 map to motors 12-15 so: )
+    12 - ( motor# ) dup dir@ ( motor dir ) 2dup @limit?
+    if 0 swap - ( motor -dir ) swap dir! else 2drop endif
+  endif ;
+
+( row scans the column mask, calling keyDn with the key# )
+( corresponding to that row and column for every one bit )
+( in the column mask.  the low-order 2 bits of the column )
+( mask are the top&bottom limit switches. )
+
+: row  ( row# col-mask -- )
+  32 0 do ( for each column bit in mask; i is "offset" )
+    ( row# col ) dup 4 and ( row# col down? )
+    if over i + ( row# col key# ) keyDn endif
+    half ( shift col-mask right )
+  8 +loop
+  2drop ;
+
+
+: doMotor
+  0dir  ( initial direction of zero for steppers and 1st 4 dc's )
+  0via  ( set ports and timer AND enable interrupts )
+  ( set row strobes to ONE )
+  255 72 8 unravel
+  begin
+    0dir  ( dir->+ph; 0->dir )
+    8 0 do ( 8 rows )
+      i row@  ?dup if i swap row endif
+    loop
+    run/dir
+  again ;
+
+
+hex
+reset handler
+  800 # lds
+  780 # ldu
+  ( this is kludgy, but who cares; set last 4 dc motor's dir )
+  ( to UP: )
+  -1 # ldd
+  addr dir 0c + # ldx
+  x )++ std  x ) std
+  pfa-of doMotor # ldy ( init ip )
+  next end-handler
+
+

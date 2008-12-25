@@ -1,0 +1,91 @@
+( fast.piano -- a faster piano driver )
+( daf  3-feb-93  created )
+( daf 10-feb-93  borrowed from drums, modified to leave out lights )
+( daf 12 apr 94  finalized )
+( daf 14 jul 94  piano !! --  adapted from fast.perc )
+
+forth target
+
+decimal
+
+var status-mask  ( set by channel change )
+                 ( high byte is mask; low is value to match )
+cvar vel0    ( current index of 0 velocity in duration list )
+128 array follow    ( array of 'link' ptrs for duration list )
+128 array duration  ( array of durations )
+     ( each entry in duration is a note# or -1 )
+     ( this buffer is circular; the first index is )
+     ( vel0; to find a particular value:  )
+     ( i vel0 c@ + 128 mod duration + c@ )
+
+hex
+( define some equates; these do *not* generate code on the target )
+( but only create mnemonics useful for assembler programming. )
+
+( caller of PlayNote *must* guarantee that note and velocity )
+( values do *not* have the high bit set. )
+code PlayNote ( status note vel -- )
+  ( *** check if proper channel *** )
+  5 u #) lda  ( status )
+  addr status-mask ^ anda  ( and with mask )
+  addr status-mask 1 + ^ cmpa  ( match? )
+  0= if
+    3 u #) ldb  ( note )
+    1 u #) lda  ( vel = 0 ? )
+    0!= if  ( on if vel != 0 )
+      addr follow # ldx  b x r) tst
+      0< if  ( only put note in if not in already; ie, link -1 )
+        ( in other words, we ignore a note that is played )
+        ( again before its first incarnation has expired. )
+        ( it's too hard to delete it from the list )
+        addr vel0 ^ adda  ( duration buffer is circular )
+        7f # anda         ( modulo 128 )
+        << y >> pshu
+        addr duration # ldy
+        a y r) leay ( y->head of list )
+        ( make note# new head of list @ duration[vel] )
+        y )    lda  ( old head )
+        b x r) sta  ( new note follow = old head )
+        y )    stb  ( new note is new head )
+        << y >> pulu
+
+        80 #   orb  ( play it )
+        b400 ^ stb  ( turn on note -- portB -- sustain )
+        b800 ^ stb  ( turn on note -- portC -- velocity )
+        b401 ^ ldb  b401 ^ stb  ( pulse portC )
+      endif
+    else ( vel = 0; off )
+      b400 ^ stb  ( turn off portB -- sustain; let portA fade out )
+    endif
+  endif
+  6 u #) leau
+  next end-code
+
+hex
+code clear-notes
+    ff # lda
+ b402 ^  sta  ( all bits of ports A and B are output )
+ b403 ^  sta
+  0aa #  lda
+ b40c ^  sta ( ports a & b pulse mode )
+  clra 
+  << y a >> pshu  ( counter on top )
+  addr follow # ldy  ( follow is 128 bytes )
+  addr duration # ldx
+  -1 # ldb    ( NIL )
+  begin
+    y )+ stb  ( clear follow pointers )
+    x )+ stb  ( .. and duration )
+    u )  lda  ( top of stack )
+  b400 ^ sta  ( note-off, port B )
+  b800 ^ sta  ( note-off, port C )
+  b401 ^ lda  b401 ^ sta  ( pulse port C )
+    u ) inc   ( counter )
+  0< until
+  << y a >> pulu
+
+  addr vel0 ^ clr
+  next end-code
+
+only forth defs
+

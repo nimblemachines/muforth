@@ -1,0 +1,491 @@
+( SEISMIC)
+
+( Copyright 1999-2001 David Frech. All rights reserved.)
+
+( Seismic main program.)
+
+cr s" SEISMIC "  file[  decimal
+
+signature" SEISMIC sequencer version 1.1. "
+signature" Copyright (c) 1999-2001 "
+signature" David Frech & Remmy Demmy Productions. "
+signature" P0<7>=set/-reset; P0<6:0>=latch#. "
+signature" P1<7>=strobe 0; P1<6>=strobe 1; P1<5>=strobe 2; P1<4>=strobe 3. "
+signature" P2<0>=auto/-MIDI; pulling LOW disables the sequencer. "
+created-on
+
+
+ 00   ( don't execute target's '0'!)
+( #s  #r  #u)
+ 128 256  32  BACKGROUND Operator  ( larger stack for `terminal task')
+ 128 128  32  BACKGROUND father-time  ( AGES)
+ 128 128  32  BACKGROUND slave        ( MIDI)
+ 128 128  32  BACKGROUND v1
+ 128 128  32  BACKGROUND v2
+ 128 128  32  BACKGROUND v3
+ 128 128  32  BACKGROUND v4
+debug [if]  128 256  32  BACKGROUND debugger  [then]
+                                        CIRCLE Operator
+
+( ports)   hex
+f10 CONSTANT sense
+
+: PORTS   0 latches IO!  f0 strobes IO!  ( data low, strobes hi)
+          0 f01 IOW!   ( port0: data, oooo/oooo)
+       000f f09 IOW!   ( port1: data, oooo/iiii)
+       00ff f11 IOW!   ( port2: data, iiii/iiii)  ;  decimal
+
+00 [if]
+Ports:
+P0 =  S/-R  d6  d5  d4  d3  d2  d1  d0  ( set/reset, data)
+P1 =  /S0 /S1  /S2 /S3  X   X   X   X  ( strobes, low)
+P2 =   x   x     x   x   x  x   x   /midi
+[then]
+
+( ------------------------------- Fancy maths --------------------------------)
+
+( A few lines of code to add high-precision math ops. Wow!)
+CODE TM+  ( 1lo 1mi 1hi incr - Sumlo Summi Sumhi)
+   DX POP, ( 1hi)  CX POP, ( 1mi)  AX POP, ( 1lo)  
+   t AX ADD,  AX PUSH,  0 # CX ADC,  CX PUSH,  0 # DX ADC,
+   DX t MOV,  NEXT,  C;
+
+: UT*  ( ud u - ulo umid uhi)
+   TUCK  UM* 2PUSH   UM* 0  2POP  D+  ;  ( PF elegant, eh?)
+
+: UT/MOD  ( ulo umid uhi udivisor - urem uqlo uqhi)
+   PUSH  R@ UM/MOD  -ROT  ( qhi ulo rhi)  POP UM/MOD  ( qhi rlo qlo)  ROT  ;
+
+: UT/     ( ulo umid uhi udivisor - uqlo uqhi)
+   UT/MOD  ROT DROP  ;
+
+: M*/  ( ud u1 u2 - ud=ud*u1/u2; 48 bit intermediate result)
+   PUSH  UT*  R@ U2/ TM+  POP  UT/  ;
+
+( dpANS spec sez that M*/ is usually implemented with d and n1 signed, but
+  the divisor >0. It sez that making provision for negative divisors costs
+  a lot of processor time. It would still add some overhead to make it work:
+  something like this:
+
+  :  M*/  PUSH  2DUP XOR PUSH [ sign]  ABS PUSH  DABS POP
+          UT*  2POP SWAP PUSH  UT/MOD  ROT DROP  POP ?NEGATE  ;  )
+
+
+( --------------------------------- RANDOM -----------------------------------)
+( Random. From ARM cookbook. We number bits starting at 0=LSB, so their
+  algorithm becomes new bit = bit 32 XOR bit 19.)
+
+( Result: new bit 32 = old bit 0; the low 32 bits are the following;
+  rows are XORed:
+
+  || 32 31 30 29  28 27 26 25  24 23 22 21  20 19 18 17 ||   High word
+  || 19 18 17 16  15 14 13 12  11 10 09 08  07 06 05 04 ||
+
+  || 16 15 14 13  12 11 10 09  08 07 06 05  04 03 02 01 ||   Low word
+  || 03 02 01 00  32 31 30 29  28 27 26 25  24 23 22 21 ||
+  || -- -- -- --  19 18 17 16  15 14 13 12  11 10 09 08 ||   )
+
+03 ARRAY random-bits   ( offset 0:<32>; 2: <31:16>; 4: <15:0>)
+
+: seed    random-bits  !+ !+ !  ;
+
+CODE random  ( - lo hi)
+   t PUSH, ( t will have hi)
+   SS: random-bits     ) DX MOV, ( bit 32)  1 # DX SHR, ( bit 32 -> cy)
+   SS: random-bits 2 + )  t MOV, ( hi)      1 #  t RCR, ( cy->31; 16->cy)
+   SS: random-bits 4 + ) AX MOV, ( lo)  AX CX MOV, ( copy)
+                                              1 # AX RCR, ( cy->15; 0->cy)
+   DX DX ADC, ( 32<-0)  SS: DX random-bits ) MOV,
+   ( Now the gnarly part)
+   ( t=<32:17>; AX=<16:1>; set DX=<19:4> and xor into t)
+    t DX MOV,  3 # DX ROR,  "e0 # DH AND,  DH BH XOR,
+   AX DX MOV,  3 # DX SHR,                 DX  t XOR,
+   ( Now the low word. XOR hi 12 bits of t into low 12 of AX)
+    t DX MOV,  4 # DX SHR,                 DX AX XOR,
+               4 # CX ROR,  "f0 # CH AND,  CH AH XOR,
+   ( Done!)
+   SS: AX random-bits 4 + ) MOV,  SS: t random-bits 2 + ) MOV,
+   AX PUSH,  NEXT,  C;
+
+: urandom  ( u - random)  random  ROT UT*  NIP NIP  ;
+
+( ---------------------------------- TIMING ----------------------------------)
+
+( NOTE: There is an inherent, cumulative loss of accuracy using the old
+  system [note that `tick' has been renamed `pulse']:
+
+  : PULSES  [ #]  0  NOW  D+  @PULSE  ;
+
+  At every time delay there is a truncation error when specifying the number
+  of pulses to delay, and also a delay uncertainty, depending on when within
+  the current pulse's period the delay is requested. Small pulse deltas are
+  the worst offenders in this regard. Using xtime or something that doesn't
+  scale exactly to pulses aggravates the problem.
+
+  It seems that a better way would be for each task to have its own idea of
+  what time it is. When a delay is specified, the delay amount is added to
+  the task's `current time' and -that- time is the one anticipated, rather
+  than the result of adding an offset to NOW. This also allows us to use
+  fractional arithmetic and keep the fraction around, in order to avoid
+  truncation errors. Scaling is done at the high-level instead of the low,
+  in order to retain as much accuracy as possible.
+
+  What would this look like?)
+
+06 USER instant    ( task's local time, in pulses; 16-bit fraction)
+
+CODE +PULSE  ( ddelta - dpulse)   ( advance time and return new `target' time)
+   SS: u ) w MOV,  AX POP, ( delta-lo)
+   SS:  instant 4 + [w]  AX ADD, ( instant frac)
+   SS:  AX  instant 4 + [w] MOV,
+   SS:  instant 2 + [w]   t ADC, ( instant low)
+   SS:   t  instant 2 + [w] MOV,  t PUSH,
+   SS:  instant 0 + [w]   t MOV, ( instant high)
+                        0 # t ADC,
+   SS:   t  instant 0 + [w] MOV,  NEXT,  C;
+
+04 USER tempo    ( task's tempo, or pulse increment; 16-bit fraction)
+
+( 03-oct-1999. We need to have the idea of rubato. rubato = 0 means really
+  tight timing. rubato=1 means that the timing could be off by as much as
+  a whole tempo period.
+
+  Rubato can affect whole pulses; it doesn't need to be more accurate than
+  that. It doesn't, however, at all affect the time that the task -thinks-
+  that it is. This is an important distinction.)
+
+VARIABLE rubato  ( a fraction from 0 to .99...)
+.08 \ drop  CONSTANT rubato-low
+.95 \ drop  CONSTANT rubato-high
+
+: +RUBATO  ( - drubato)
+   tempo @ ( integer pulses)  rubato @  UM* NIP  ( total rubato possible)
+   random NIP  ( take this to be a -signed- fraction)  M* NIP  S->D  ;
+
+: +BEAT  tempo 2@  +PULSE  +RUBATO D+  @PULSE  ;
+
+: SYNC   NOW  instant 2!  instant 4 + OFF  ;  ( zero fraction)
+
+: +ms  ( ms_scaled -)  pulses/ms  M*/   +PULSE  @PULSE  ;
+: +mt  ( mt_scaled -)  pulses/mt  M*/   +PULSE  @PULSE  ;
+
+
+\ remember new-music  ( so we can reload at will)
+
+ld v25/seismUSic.d4  ( seismic music)
+
+
+( Divide and conquer. The world in pieces.)
+( West latitude is considered < 0; east is >0.  -180 = 180 = the date line.
+  South longitude is <0; north is >0. Poles are +/-90.)
+
+( A bunch of data points.
+  Edge of Alaska is -170 long.
+  Panama is @ 10 lat.
+  Americas betw -140 and -30 long, exc Alaska.
+  N america is -140,15 to -30,15 to N pole.
+     alaska and hawaii are part of orient N.
+  S america is -120,15 to -30,15 to S pole.
+  S orient is complicated.
+
+  europe is  -30 to 30 long, N of 35 lat.
+  japan  is  130,30 to 150,40 + 140,40 to 150,50.
+  africa is -30,35 to 60,35 to S pole.  mediterranean is roughly lat 35.
+  india/pakistan is 60 to 90 long, S of 35. includes some of china. oh well.
+  Because orient-s is a funny shape, anything not belonging to one of the
+  other areas belongs to it.
+
+  To put it more simply, there are two sections, and a big exception for
+  japan. West of long -30 are the americas, divided n/s @ 15 N.  So every-
+  thing N of 15, from -140 to -30 is N america; everthing S of 15, from
+  -120 to -30 is S america.
+
+  East of long -30 is everything else. The n/s line is @ lat 35.
+  N: -30 to 30 is europe; 30 to 180 + -180 to -140 is russia !! This
+  includes alaska!!
+  S: -30 to 60 is africa; 60 to 90 is india/pakistan.
+  japan is as above.
+
+  Phew!)
+
+( Places.)
+: n.america         lit lactose-free     blues     /1_/2  ;
+: s.america         lit milk/vibes+xylo  major     /1_/2  ;
+: europe            lit lactose-free     major     /1_/2  ;
+: africa            lit milk+marimba     major     /1_/2  ;
+: russia            lit lactose-free     scriabin  /2_/4  ;
+: china+s.pacific   lit lactose-free     penta1    /1_/2  ;
+: japan             lit lactose-free     penta2    /2_/4  ;
+: india+pakistan    lit lactose-free     sitar     /2_/4  ;
+
+: ?n.america   ( lat long)
+    -140 > IF  DROP n.america  EXIT  THEN
+   ( lat)  35 > IF  russia  ELSE  china+s.pacific  THEN  ;
+
+: ?s.america   ( lat long)
+   NIP  -120 > IF  s.america  ELSE  china+s.pacific  THEN  ;
+
+: ?colonize-western  ( lat long)
+   OVER 15 > IF  ?n.america  ELSE  ?s.america  THEN  ;
+
+: ?n.east   ( long)
+   30 < IF  europe  ELSE  russia  THEN  ;
+
+: ?s.east   ( long)
+   DUP 60 < IF  DROP africa  EXIT  THEN
+       90 < IF  india+pakistan  ELSE  china+s.pacific  THEN  ;
+
+: ?colonize-eastern  ( lat long)
+   ( japan is complicated!)
+   ( japan  is  130,30 to 150,40 + 140,40 to 150,50; these are
+     x,y or long,lat. The quarter 130,40 to 140,50 is russia.)
+   DUP  130 150 WITHIN IF  OVER  30 50 WITHIN IF  ( the NW 1/4 is russia)
+      140 >  SWAP 40 <  OR IF  japan  ELSE  russia  THEN  EXIT
+   THEN  THEN
+   SWAP 35 > IF  ?n.east  ELSE  ?s.east  THEN  ;
+
+: colonize  ( lat long - scale 'code)
+   DUP -30 < IF  ?colonize-western  ELSE  ?colonize-eastern  THEN  ;
+
+
+( ---------------------------- Server/interpreter ----------------------------)
+
+( Text output.)
+08 CONSTANT <bs>
+13 CONSTANT <cr>
+10 CONSTANT <lf>
+32 CONSTANT bl  ( like fig-FORTH)
+
+VARIABLE 'echo
+: +echo   lit EMIT  'echo !  ;
+: -echo   lit DROP  'echo !  ;
+: echo   'echo @EXECUTE  ;
+
+: cr   <cr> echo  <lf> echo  ;  ( we only want `cr's in echo mode)
+: space   bl EMIT  ;            ( but keep the spaces)
+
+( ??? Maybe copy the string to PAD and then type it?)
+: type   ( a n)  FOR  C@+     EMIT  NEXT  DROP  ;
+: >type  ( a n)  FOR  ROMC@+  EMIT  NEXT  DROP  ;
+
+( String primitives.)
+: >count   ROMC@+  ;
+: (.")   >count  >type  ;
+: aligned   ( a - a')  1+ -2 AND  ( DUP 1 AND +)  ;
+: lit"   ( - c")  POP  ( c")  DUP  >count + aligned  PUSH  ;
+
+( ABORT!)
+: abort   SP!  [ HERE ] nope  -;  ( will be `quit')
+: (error")   ( c")  (.")  abort  -;
+
+( Host word need to compile strings.)
+:O >,"   ( ch -)   \t lit"  parse  ( a u)   
+         >here >+  scrabble  c@ ( count)  1+ >aligned  >h +!  ;O
+
+:I error"   char "  \o >,"  \t (error")  ;I
+:I ."       char "  \o >,"  \t (.")      ;I
+
+
+( Error.)
+: huh?  error" ??"  -;
+
+( Numbers.)
+10 CONSTANT radix
+VARIABLE rpl   ( radix point location)
+
+: +STRING  ( a n incr - a+incr n-incr)  ROT OVER + -ROT  -  ;
+
+:D punct  CREATE  , ]   ( char  <mismatch; match> )
+    DOES>   ( a c - a+? c-? ??)  PUSH
+    OVER C@  R@ ROMC@  =  DUP IF  ( match)  DROP  1 +STRING  CELL  THEN
+         POP  CELL+ +  ROM@EXECUTE  ;
+
+                       ( mismatch  match)
+char -  punct ?sign         0       -1    [
+char .  punct ?dot        huh?     nope   [
+
+( We're ignoring anything but decimal here.)
+: digit?    ( ch - digit T | junk F)
+   char 0 -  DUP radix  U<  ;
+
+: @digit?   ( a - a digit T | a junk F)   DUP C@  digit?  ;
+
+: *digit  ( ud a digit - ud*base+digit a)
+   SWAP PUSH ( a)  SWAP ( lo dig hi)  radix UM* DROP  ROT ( dig hi*radix lo)
+   radix UM*  D+  POP  rpl @  0< 1+  rpl +!  ;
+
+: convert  ( ud1 a1 c1 - ud2 a2 c2)  ( a2 is first unconvertible char)
+   DUP IF  FOR  @digit?  WHILE  *digit 1+ NEXT  0 EXIT  THEN
+                                DROP  POP  THEN  ;
+
+: (number)  ( a n - ud sign)
+   2PUSH  0 0  2POP  ?sign PUSH  -1
+   BEGIN  rpl !  convert  DUP WHILE ( still chars left)
+      ?dot  0 REPEAT  2DROP  POP  ;
+
+: exp  ( n - 10^n)  1 SWAP  ?FOR radix * NEXT THEN  ;
+: >scaled  ( d - frac int)
+   rpl @  exp PUSH  R@ U2/ -ROT ( rounding offset; half of divisor)
+   POP  UT/  ( qlo qhi)  ;
+
+: number  ( a n - n | d)
+   (number)  PUSH ( sign)  rpl @  0< IF
+      DROP     POP  IF NEGATE THEN   ELSE
+      >scaled  POP  IF DNEGATE THEN   THEN  ;
+
+( Number output, for test.)
+( Pictured Numeric)
+: >digit   ( n - ch)  ( convert 1 binary digit to char; hex to uppercase)
+   9 OVER U<  7 AND +  char 0 +  ;
+
+: /digit   ( ud - ud' r)
+   0  radix  UM/MOD  PUSH ( qhi)  radix UM/MOD ( r q)  POP  ROT  ;
+
+32 ALLOT RAM CONSTANT pad
+VARIABLE hld
+: hold  ( ch)  -1 hld +!  hld @  C!  ;
+: <#    pad hld !  ;
+: #>    ( ud - a #)  2DROP  hld @  pad OVER -  ;
+: #     ( ud - ud')   /digit  >digit  hold  ;
+: #s    ( ud - 0 0)  BEGIN  #  2DUP OR 0=  UNTIL  ;
+
+: (ud.)   ( ud - a #)  <# #s #>  ;
+: ud.   ( ud)    (ud.)  type  space  ;
+: u.    ( u)  0  (ud.)  type  space  ;
+
+
+( Scanning text.)
+2VARIABLE source
+: skip   ( a n ch - start a' n' ch)  PUSH ( ch)
+   BEGIN  DUP WHILE  OVER C@ R@ =   WHILE  1 +STRING  REPEAT  THEN
+   OVER SWAP ( start a' n')  POP ( ch)  ;
+
+: scan   ( a n ch - end a' n')  PUSH ( ch)
+   BEGIN  DUP WHILE  OVER C@ R@ XOR WHILE  1 +STRING  REPEAT  THEN
+   OVER SWAP ( end a' n')  POP ( ch)  DROP  ;
+
+: token  ( - a n)  source 2@  bl  skip  scan  source 2!  OVER -  ;
+
+debug [if]
+: tokens  ( a n)
+   source 2!  BEGIN  token ( a n)  DUP WHILE  type  REPEAT  2DROP  ;
+[then]
+
+( It turns out the BEGIN .. WHILE .. REPEAT loop beats the FOR once you try
+  to do backspace...You need both the initial and current addresses.)
+
+: backspace   ( a_0 room a BS - a_0 room' a')
+   DROP  PUSH ( a)  OVER R@ U< ( a_0 u< a)  POP SWAP  IF
+      1 +STRING  <bs> echo  bl echo  <bs> echo  THEN  ;
+
+: printable   ( a_0 room a ch - a_0 room-1 a+1)
+   DUP echo  OVER C!  -1 +STRING  ( a_0 room-1 a+1)  ;
+
+: accept  ( a_0 room - a_0 #in)
+   OVER  ( a_0 room a)
+   BEGIN   OVER WHILE ( room != 0)   KEY  ( a_0 room a ch)
+     DUP <cr> XOR WHILE ( not EOL)
+     DUP <bs> =  IF  backspace  ELSE  printable  THEN
+   REPEAT  DROP ( RET)  THEN
+   space  ( EOL or no room)  NIP ( room)  OVER -  ;
+   
+: typing   ( - a n)   bottom @  128  accept  ;
+
+
+: write-music   ( lat long dmag - 'code)
+   mag!  2DUP randomize  colonize  ( 'code scale)  7 urandom 1+  meloritmo  ;
+: go-live     ( lat long dmag)  write-music  brrrt  EXECUTE  ;
+: go-replay   ( lat long dmag)  write-music         EXECUTE  ;
+: note-on-test  ( instr note#)  -pf-  SWAP 1-  instrument C!  (1play)  ;
+
+
+( Dictionary.)
+:O 2"    bl parse  drop  @  ;O
+:O ,2"   \o 2"  \o ,  ;O  ( for compiling dict)
+
+CREATE dict
+  ,2" li  ' go-live ,        ( `Ok' when done)
+  ,2" re  ' go-replay ,      ( ditto)
+  ,2" zz  ' idle ,           ( `Ok' immediately; runs till interrupted)
+  ,2" sh  ' shh ,            ( start up in this state)
+  ,2" on  ' note-on-test ,
+  ,2" u.  ' u.  ,            ( useful?)
+  ,2" -e  ' -echo ,          ( for machine-to-machine comm)
+  ,2" +e  ' +echo ,          ( for human-to-machine comm)
+debug [if]
+  ,2" br  ' BRK ,            ( break back into monitor)
+[then]
+  00 , ( ends)
+
+: find  ( 2" - code T | F)  PUSH ( 2")
+   dict BEGIN  ROM@+  DUP WHILE  R@ XOR WHILE  CELL+  REPEAT
+   ( found)  ROM@  POP ( T; HACK!)  EXIT  THEN
+   ( end of dict)  NIP  POP DROP  ;
+
+( High-level interpreter.)
+: ?stack   DEPTH 0<  if error" Underflow"  then  ;
+
+: consume  ( a u)  ( token)
+   OVER @ ( 2")
+   find IF ( a n xt)  NIP NIP EXECUTE  EXIT  THEN  number  ;
+
+: interpret  ( a n)
+   source 2!  BEGIN  token ( a u)  DUP WHILE  consume  ?stack  REPEAT  2DROP  ;
+
+: MIDIswitch   ( a n)
+   sense IO@ 1 AND  IF  ( switch in NORMAL mode)   interpret   ELSE
+                        ( switch in MIDI mode)    2DROP  shh   THEN  ;
+
+: quit   RP!  BEGIN  cr  typing  MIDIswitch  ." Ok"  AGAIN  -;
+' quit  \ swap  \ >+ \ >!  ( fix abort)
+
+: hi   +echo  cr  error" SEISMusIC 1.1"  -;
+
+
+: +SERIAL-TALK
+   0 SERIAL  [ 57600 ] BPS  +Rx +Tx 8N1  input0  ReceiveISR0  ;
+
+: OK   PORTS  +MUSIC  ;
+: TASKS   600 us  father-time AGES  slave MIDI
+   ( MIDImonitor SWITCHES)  PAUSE  ;
+   ( let them run once and do their 1DOWN)
+
+: +ALL-SYSTEMS    OK  TASKS  100 mt  +SERIAL-TALK  +IRQ  ;
+: BOOT  +ALL-SYSTEMS  hi  -;
+
+debug [if]
+: boot   +ALL-SYSTEMS  ;
+[then]
+
+
+00 [if]
+
+." This isn't printed."
+
+( junkyard)
+
+  32  32  16  BACKGROUND MIDImonitor  ( switches server interaction off)
+
+   BEGIN  1 sense LOW   "40 RxIRQ SOURCE ( disable)  shh  1000 ms ( debounce)
+          1 sense HIGH  "40 RxIRQ SINK   ( enable)        1000 ms ( debounce)
+   ( The sculpture is now quiet until it receives a command.)
+   AGAIN  -;
+
+CODE SC*  ( sc1 sc2 - sc*)  ( each scaled is a double number)
+   r PUSH,  s r MOV, ( reference stack off r)
+   ( Stack in:  6: lo2 | 4 hi2 | 2 lo1 | 0 r | t=hi1)
+   ( Low to high; w = high word of result, CX = low)
+   6 [r] AX MOV,  2 [r] MUL, ( lo2*lo1)  DX CX MOV,   w w XOR,
+   6 [r] AX MOV,      t MUL, ( lo1*hi2)  AX CX ADD,  DX w ADC,
+   2 [r] AX MOV,  4 [r] MUL, ( lo2*hi1)  AX CX ADD,  DX w ADC,
+       t AX MOV,  4 [r] MUL, ( hi2*hi1)  AX  w ADD,
+
+   ( fixup difference)
+   4 [r] AX MOV, ( sc1hi)
+   AX AX OR,  0< IF,  2 [r] w SUB,  THEN,
+    t  t OR,  0< IF,  6 [r] w SUB,  THEN,
+   r POP,  6 # s ADD,  CX PUSH,  w t MOV,  NEXT,  C;
+
+[then]
+
+]file

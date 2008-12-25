@@ -1,0 +1,245 @@
+( fast.midi -- the heart of a FAST midi-driver )
+( daf 9-feb-93  created )
+( daf 4-aug-93 modified for PHFFT! so that portA is percussion; )
+(         and portB wind; portA is channel 1, portB channel 2 )
+( daf 6-dec-93 modified for ultimate speed by doing things the )
+(         amsterdam way, where the return stack remembers what )
+(        we're doing -- just like Chuck said! )
+( daf 12 apr 94  FINALLY coherent.  )
+
+only forth
+also tforth defs
+( we need a word for some forward assembler jump table kludges )
+: >resolve  ( a1 n1 -- )  >here + swap >! ;
+
+forth target
+
+( client of this file must define the following: )
+( var status-mask  ( high byte is AND'ed with status; low must match )
+( cvar vel0    ( current index of 0 velocity in duration list )
+( 128 array follow    ( array of 'link' ptrs for duration list )
+( 128 array duration  ( array of durations )
+     ( each entry in duration is a note# or -1 )
+     ( this buffer is circular; the first index is )
+     ( vel0; to find a particular value:  )
+     ( i vel0 c@ + 128 mod duration + c@ )
+( PlayNote ( status note vel -- )
+( clear-notes  ( -- )
+
+( serial queue stuff: )
+decimal
+
+cvar qrd  ( reading offset )
+cvar qwr  ( writing offset )
+cvar q#   ( count in queue )
+256 array midiQ
+
+code q.init
+  clra  addr qrd ^ sta  addr qwr ^ sta  addr q# ^ sta
+  next end-code
+  
+hex
+( acia equates )
+b000 equ ser-control
+b001 equ ser-data
+
+( via equates )
+b404 equ timer1
+b40b equ aux-cntl
+b40c equ cntl
+b40d equ intp-flags  ( interrupt flags reg )
+b40e equ intp-masks  ( interrupt mask reg )
+
+cvar tick
+
+firq handler  ( acia *and* via interrupt )
+  ( firq doesn't save *any* registers )
+  intp-flags ^ tst  ( high bit set if via interrupt )
+  0< if  ( timer int )
+    addr tick ^ inc
+    timer1 ^ tst  ( clr interrupt by reading timer1 low )
+    rti  ( ** timer interrupt exits here ** )
+  endif
+
+  ( else acia interrupt )
+  ( assume interrupt is recv data reg full... )
+  << x d >> pshs
+  ser-data ^ ldb
+  f8 # cmpb  ( not a real-time byte? )
+  u< if
+    addr midiQ 80 + # ldx  ( point to middle of queue )
+    addr qwr ^ lda
+    a x r) stb  ( put data in q )
+    inca
+    addr qwr ^ sta
+    addr q# ^ inc
+  endif
+  << x d >> puls
+  rti end-handler
+
+
+hex
+code init-acia
+  3 # lda
+  ser-control ^ sta  ( master reset of 6850 )
+  95 # lda  ( rcv int en, rts=low, tx int dis, 8b 1s 0p, /16 )
+  ser-control ^ sta
+  0af # andcc      ( **enable firq, and irq** )
+  next end-code
+
+code timer
+  5802 # ldd   ( tick time = 600 usec, byte-swapped )
+  timer1 ^     std
+  40 #         lda
+  aux-cntl ^   sta   ( continuous interrupts from timer1 )
+  0c0 #        lda
+  intp-masks ^ sta   ( timer1 will generate interrupt )
+  addr tick ^  clr
+  next end-code
+
+hex
+( getB sometimes "returns" by jumping thru a table; that is, )
+( by fudging ip before doing next. )
+code getB ( -- byte )
+  begin
+    ( age-notes )
+    addr tick ^ tst
+    0!= if
+      << y >> pshu      ( we'll need it )
+      addr tick ^ dec  ( usu just one anyway )
+      addr duration # ldx  ( array of heads of duration lists )
+      addr vel0 ^ lda
+      a x r) leay ( y->first note to turn off, or -1 )
+      addr follow # ldx  ( array of next note pointers )
+      ( turn off all velocity zero notes )
+      -1 # ldb
+      w[
+        b400 ^ sta  ( turn off note )
+        a x r) leay ( extra hand )
+      ]w
+        y )    lda  ( follow ptr )
+        y )    stb  ( fill with NIL ptr )
+        tsta
+      0< until  ( until NIL ptr reached )
+      << y >> pulu
+      ( advance to next velocity )
+      addr vel0 ^ lda inca 7f # anda ( mod 128 ) addr vel0 ^ sta
+    endif
+
+    addr q# ^ tst
+  0!= until
+
+  ( got something, get it out of queue )
+  addr midiQ 80 + # ldx  ( point to middle of queue )
+  addr qrd ^ lda
+  a x r) ldb  ( get data from q )
+  inca
+  addr qrd ^ sta
+  addr q# ^ dec
+  clra
+  tstb 0>= if << d >> pshu next endif  ( "normal" exit )
+
+  ( b is status byte )
+  800 40 - # ldu   ( fresh stack )
+  << d >> pshu  ( push status )
+  70 # andb lsrb lsrb lsrb  ( map 8x->0, 9x->2, ax->4 etc )
+  here 1 + 0 # ldx  ( x -> jtable )
+  b x r) ldy     ( set ip from table )
+  next end-code
+
+: skip  ( status -- )
+  begin  getB drop again ;
+  ( infinite, until getB decides not to return )
+
+( jtable )
+  00 >resolve ( ldx insn )
+  here 00 ,     ( 8x = note-off )
+  here 00 ,     ( 9x = note-on  )
+  pfa-of skip , ( Ax )
+  pfa-of skip , ( Bx )
+  pfa-of skip , ( Cx )
+  pfa-of skip , ( Dx )
+  pfa-of skip , ( Ex )
+  pfa-of skip , ( Fx )
+
+( resolve jump before going into : compilation )
+02 >resolve
+: NoteOn  ( status -- )
+  begin
+    dup ( status ) getB ( note# ) getB ( vel ) PlayNote
+  again ;
+
+02 >resolve
+: NoteOff  ( status -- )
+  begin
+    dup ( status ) getB ( note# ) getB ( vel ) drop 0 PlayNote
+  again ;
+
+
+var channel  ( -1=omni; 0-15 -> chan 1->16 )
+
+( Digit skeleton: )
+( +  +-a-+ )
+( !  f   b )
+( h  +-g-+ )
+( !  e   c )
+( +  +-d-+ )
+
+( byte to display is:  habc defg )
+
+here   ( digits: omni..16, omni is Donner, 7 is eurostyle )
+host 2 base ! target
+( habcdefg )
+  00010011 c, ( DonnerZeichen )
+  00110000 c, ( 1 )
+  01101101 c, ( 2 )
+  01111001 c, ( 3 )
+  00110011 c, ( 4 )
+  01011011 c, ( 5 )
+  01011111 c, ( 6 )
+  01110010 c, ( 7 )
+  01111111 c, ( 8 )
+  01111011 c, ( 9 )
+  11111110 c, ( 10 )
+  10110000 c, ( 11 = h + 1 )
+  11101101 c, ( 12 )
+  11111001 c, ( 13 )
+  10110011 c, ( 14 )
+  11011011 c, ( 15 )
+  11011111 c, ( 16 -- PHEW! )
+
+hex
+: show  ( channel# -- )
+  dup 1+  ( 0=omni, 1-16 ) literal + c@ b40f c!
+  0f00 or dup 0>= and  status-mask !  ;
+  ( 0f00 + channel, or 0 if omni; high byte is mask, low is )
+  ( value to match. )
+
+decimal
+: om
+  clear-notes  ( sets up via ports )
+  channel @ show   4000 0 do loop ( delay a bit )
+  q.init  timer
+  init-acia  ( enables interrupts )
+  0 skip ;
+
+hex
+reset handler
+  -1 # ldd
+  begin  ( leave addr for panel switch handler )
+  addr channel ^ std
+  800 # lds
+  800 40 - # ldu
+  pfa-of om # ldy
+  next end-handler
+
+decimal
+irq handler
+  ( panel switch )
+  addr channel ^ ldd
+  1 # addd
+  15 # andb  ( 0 - 15 )
+  again  ( branch into reset handler )
+  end-handler
+
+

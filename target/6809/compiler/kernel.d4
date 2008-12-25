@@ -1,0 +1,286 @@
+( kernel -- the 6809 forth kernel )
+( daf  21-dec-92   created  ( or thereabouts )
+( daf  18-jan-92   dr. martin luther king jr's b-day! )
+(                  changed all branching words to use 8-bit )
+(                  signed offsets.  slower but shorter. )
+( daf  20-jan      changed >do, >loop, >+loop to use top of loop )
+(         pointer on rstack; changed leave to ?leave and made it )
+(         a true code word. )
+( daf  16-jun-93   made changes to add new defining words )
+
+
+( Here's the start of the kernel... )
+
+only forth
+
+target compiler
+
+: code  SaveContext target-asm  create ;
+  ( create in tforth does the work )
+
+: :     SaveContext target-colon
+       create smudge ]  ;code
+     << y >> pshs ( push ip )  2 x #) leay ( x=pfa )  next end-code
+
+: const create ,  ;code
+     2 x #) ldx  << x >> pshu  next end-code
+
+: array  ( size -- ) create allot ;code
+     pfa>x  ( x=pfa )  << x >> pshu  next end-code
+
+
+: var  2 [ also tdefiner ] array [ toss ] ;
+: cvar 1 [ also tdefiner ] array [ toss ] ;
+
+: create  create ;code  2 x #) leax << x >> pshu next end-code
+
+
+
+target ( start defining the target )
+
+also forth >here >blit ! toss
+code blit   ( byte literal -- zero-extends )
+  y )+ ldb  clra  << d >> pshu  next end-code
+
+also forth >here >lit ! toss
+code lit    ( word literal )
+  y )++ ldd ( from insn stream )  << d >> pshu  next end-code
+
+also forth >here >exit ! toss
+code exit
+  << y >> puls ( pop ip )  next end-code
+
+also forth >here >branch ! toss
+code branch
+  begin ( for zbranch )
+  y ) ldb  ( offset )
+  b y r) leay  ( first use of accum offset! )
+  next end-code
+
+also forth >here >zbranch ! toss
+code zbranch
+  u )++ ldd  ( pop tos; can't use pulu because it won't set cc )
+  0!= until
+  ( branch not taken; skip offset )
+  1 y #) leay
+  next end-code
+
+hex
+( this is a forth-83 do: it takes ixMax and ixMin on the pstack )
+( and calculates dix and ixMin' and puts them on the return )
+( stack.  when the threshold beween 7fffh and 8000h -- overflow -- )
+( is crossed, the loop exits.  getting the index involves sub- )
+( tracting dix from ix'.  See i, j. )
+( (do also pushes the address of the 'top' of the loop, for use )
+( by (loop and (+loop; (do is followed by a byte offset that is )
+( used by (do and ?leave to leave the loop. )
+( stack: ixMax ixMin -- )
+( rstack: -- top^ dix ixMin' )
+also forth >here >do ! toss
+code (do)
+ -6 s #) leas  ( room for top^, ixStart, dix on return stack )
+  8000 # ldd
+  2 u #) subd  ( d = 8000 - ixMax = dix )
+  2 s #) std   ( dix )
+  u )    addd  ( d = dix + ixMin = ixMin' )
+  s )    std   ( return stack: -- dix ixMin' )
+  4 u #) leau  ( pop pstack )
+  1 y #) leay  ( skip offset following >do )
+  4 s #) sty   ( store top^ on rstack )
+  next end-code
+
+also forth >here >loop ! toss
+code (loop)
+  s )    ldd   ( d = ix' )
+  1 #    addd  ( loop incr )
+  novfl  if    ( branch to termination code if overflow )
+  s )    std   ( put incremented ix back on stack )
+  4 s #) ldy   ( ip=top^ )
+  next
+  endif
+begin  ( for (+loop, below )
+  6 s #) leas  ( pop loop parms )
+  next end-code
+  
+also forth >here >+loop ! toss
+code (+loop)
+  s )    ldd   ( d = ix )
+  u )++  addd  ( d = ix + incr )
+  novfl  until ( branch if ovfl )
+  s )    std   ( incremented ix )
+  4 s #) ldy   ( ip = top^ )
+  next end-code
+
+also forth >here >?leave ! toss
+code ?leave  ( f -- )  ( leaves loop if true )
+  u )++  ldd
+  0!= if
+    4 s #) ldy   ( y = top^ )
+    y -)   ldb   ( byte offset after >do )
+    b y r) leay  ( y points past end of loop )
+    6 s #) leas  ( pop loop parms )
+  endif
+  next end-code
+
+code @
+  u ) [] ldd  ( load d indirect thru top of stack )
+  u )    std
+  next end-code
+
+code !
+  2 u #) ldd  ( store 2nd word )
+  u ) [] std  ( indirect thru top )
+begin  ( entry for "2drop" )
+  4 u #) leau ( clean stack )
+  next end-code
+
+( ready for a total hack? )
+code 2drop
+  forth -2 >allot ( back up over code field ) >, ( into target )
+  target
+
+code c@
+  u ) [] ldb
+         clra
+  u )    std
+  next end-code
+
+code c!
+  3 u #) ldb
+  u ) [] stb
+  4 u #) leau
+  next end-code
+
+code +
+  << d >> pulu
+  u ) addd
+  u ) std
+  next end-code
+
+code -
+  2 u #) ldd   ( d = 2nd # )
+  u )++  subd  ( d = 2nd - top )
+  u )    std
+  next end-code
+
+code i  ( loop index )
+  s )    ldd   ( d = ix' )
+  2 s #) subd  ( d = ix = ix' - dix )
+  << d >> pshu
+  next end-code
+
+code and
+  << d >> pulu
+  u )     anda
+  1 u #)  andb
+  u )     std
+  next end-code
+
+code or
+  << d >> pulu
+  u )     ora
+  1 u #)  orb
+  u )     std
+  next end-code
+
+code xor
+  << d >> pulu
+  u )     eora
+  1 u #)  eorb
+  u )     std
+  next end-code
+
+code dup
+  u )  ldd
+  << d >> pshu
+  next end-code
+
+code 2dup
+      u ) ldd  ( tos )
+   2 u #) ldx  ( second )
+<< x d >> pshu next end-code
+
+code swap
+  u )    ldd
+  2 u #) ldx
+  2 u #) std
+  u )    stx
+  next end-code
+
+code drop
+  2 u #) leau next end-code
+
+code over
+  2 u #) ldd
+  << d >> pshu
+  next end-code
+
+code rot
+  4 u #) ldd
+  2 u #) ldx
+  4 u #) stx
+  u )    ldx
+  2 u #) stx
+  u )    std  next end-code
+
+code 0=
+  clra clrb
+  u ) ldx
+  0= if
+    1 # subd
+  endif
+  u ) std
+  next end-code
+
+code 0>=
+  clra clrb
+  u ) cmpd  ( 0 - top )
+  <= if
+    1 # subd  ( true flag )
+  endif
+  u ) std next end-code
+
+code 0<
+  clrb
+  u ) asl   ( shift high bit to carry )
+  0 # sbcb
+  sex
+  u ) std next end-code
+
+code ?dup
+  u ) ldd
+  0!= if
+    << d >> pshu
+  endif next end-code
+
+code execute  ( cfa -- )
+  << x >> pulu  x ) [] jmp end-code
+
+code double
+  1 u #) asl  u ) rol next end-code
+
+code >r
+  << d >> pulu
+  << d >> pshs
+  next end-code
+
+code r>
+  << d >> puls
+  << d >> pshu
+  next end-code
+
+code r@
+  s ) ldd
+  << d >> pshu
+  next end-code
+
+0  const 0
+1  const 1
+-1 const -1
+
+code 1+
+  u ) ldx  1 x #) leax  u ) stx  next end-code
+
+code 1-
+  u ) ldx -1 x #) leax  u ) stx  next end-code
+

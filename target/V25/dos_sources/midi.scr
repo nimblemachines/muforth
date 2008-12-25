@@ -1,0 +1,112 @@
+                   = V25 MIDI DRIVER =
+
+Copyright (c) 1995, 1996  David Frech & Remmy Demmy Productions.
+
+1 is LOAD
+
+
+
+
+
+
+
+
+
+
+
+( Midi load)
+2001 LOAD  3001 LOAD
+( serial   fix   )
+//   : DEBUG  \ //  ;   : EPROM  ;        ( production)
+ : DEBUG        ;   : EPROM  \ //  ;  ( debug)
+4001 LOAD  5001 LOAD  1003 LOAD  6001 LOAD
+( compiler   kernel    TASKs       chat )
+DEBUG  7001 LOAD  ( load cold here for debug)
+8001 LOAD  ( midicore)    CR ." (( Midi "  4 6 +THRU  ." )) "
+EPROM  7001 LOAD  ( load cold here for eprom)
+.USER
+QUIT  ( set interpreter to target)
+
+
+
+
+( THIS BLOCK MUST CONTAIN A SIGNATURE!!)
+
+SIGN" V25 MIDI driver v1.0. "
+SIGN" P0=latch data; P1=strobes, channel IRQ; P2=disp. "
+SIGN" Copyright (c) 1995, 1996 "
+SIGN" David Frech & Remmy Demmy Productions."
+
+
+
+SKIP  Loaded by kernel at start of memory.
+
+
+
+
+
+
+( TASKs )       ( THIS BLOCK MUST CONTAIN TASK DEFS!!)
+ 00   ( don't execute target's '0'!)
+( #s  #r  #u)
+ 128 128  32  BACKGROUND Operator
+ 128 128  32  BACKGROUND father-time
+ 128 128  32  BACKGROUND player
+DEBUG  128 128  32  BACKGROUND debug
+                                        CIRCLE Operator
+
+
+
+
+
+
+
+
+( PORTS  OK  LISTENS )                 HEX
+: PORTS   0 f00 IO!  c0 f08 IO!  ( data low, strobes hi)
+             0 f01 IOW!   ( port0 is data, oooo/oooo)
+          000f f09 IOW!   ( port1 is data, oooo/iiii)
+             0 f11 IOW!   ( port2 is data, oooo/oooo)  ;
+                                       DECIMAL
+
+SKIP       7    6    5   4   3   2   1   0
+Port 0:   s/-r  d6  d5  d4  d3  d2  d1  d0
+Port 1:   /vel /hold  x  x   /chan  x  x  x
+Port 2:   display bits
+
+
+
+
+
+( channels)
+:: BINARY  2 BASE !  ;;   BINARY
+CREATE digits   ( 0 = omni; 1 .. 16)
+ ( habcdefg             habcdefg             habcdefg  )
+   00010011 C, ( omni)  00110000 C, ( 1)     01101101 C, ( 2)
+   01111001 C, ( 3)     00110011 C, ( 4)     01011011 C, ( 5)
+   01011111 C, ( 6)     01110010 C, ( 7)     01111111 C, ( 8)
+   01111011 C, ( 9)     11111110 C, ( 10)    10110000 C, ( 11)
+   11101101 C, ( 12)    11111001 C, ( 13)    10110011 C, ( 14)
+   11011011 C, ( 15)    11011111 C, ( 16)    ( Phew!!)
+SKIP
+ +  +-a-+
+ h  f   b
+ +  +-g-+
+ h  e   c
+ +  +-d-+
+( channels   BOOT )                       DECIMAL
+: SHOW  ( chan# -)
+   1+  ( 0=omni; 1-16)  digits + ROM@  $f10 IO!  ;
+
+: SURF  ( ie channels)  +MIDI-IRQS  +MIDI
+   OMNI  BEGIN  channel @ SHOW  player LISTEN
+   200 MS  8 $f08 LOW  CHANNEL+  CLEAR  AGAIN  ;    RECOVER
+
+: OK   PORTS  CLEAR  600 uS  +CLOCK  father-time AGES  ;
+
+: BOOT  +DIVIDE  MULTI  OK  SURF  ;  RECOVER
+
+EPROM SKIP
+: boot  debug ACTIVATE  BOOT  1 AWAIT  ;
+: q  MIDI Q!  ;
+

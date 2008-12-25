@@ -1,0 +1,157 @@
+( memory model )
+( daf 10-dec-92  created -- everything is getting too big, and )
+(        I needed this stuff for the assembler and target compiler )
+(        and got frustrated by their co-dependence. )
+( daf  7-jan-93  make all > words work in interactive mode and )
+(        added image>@ and image>c@ for when we want the local )
+( daf  18-feb-93  changed chat stuff so that host expressly )
+(          requests sp from target. )
+( daf  20-aug-93  changed to new 3-cmd chat architecture )
+( daf 17-sep-93  no more {}'s; added NMI debug )
+
+only forth definitions
+
+( the memory model goes into FORTH since it is used everywhere )
+
+
+( memory "management" )
+( this stuff defines the target memory model and how we )
+( interact with it. )
+hex
+var image   4000 allot  ( 4004h bytes total )
+  here 4 -
+const imageMax  ( where we put out of bounds values )
+  imageMax image -
+const imageSize
+
+var spReg  ( stack pointer )
+var next^ ( pointer to next routine in target -- debug only )
+var start^ ( pointer to start routine in target )
+var dp^   ( dictionary pointer -- in both ram-only and eprom )  
+var ram^  ( ram allocation pointer -- only used in eprom mode )
+var semaNMI^  ( pointer to NMI debug interrupt's semaphore )
+var dA    ( dA + >addr -> image-addr; dA = -origin + image )
+var interactive  ( true when chatting with target )
+var ram-only     ( true when in ram-only mode )
+
+hex
+
+( default values in case we forget to say 'chat' when we start up )
+( chat mode )
+image dA !
+10 dp^ !  ( skip interrupt vectors )
+( we don't care about ram^ )
+
+
+hex
+var rBase   ( works for big and small alike; set by "hi" )
+80 const stackSize
+: pBase  rBase @ stackSize - ;
+
+: >here  dp^ @ ; ( absolute target addr )
+: >allot ( #b -- )  dp^ +! ;
+: >image ( >addr -- image-addr )  dA @ +  imageMax min ;
+: >origin  ( -- >addr )  image dA @ - ;
+
+: image>@  ( >addr -- w )   >image w@ ;
+: image>c@ ( >addr -- b )   >image c@ ;
+
+: >@   ( >addr -- w )
+  interactive @ if chat>@  else image>@  endif ;
+
+: >c@  ( >addr -- b )
+  interactive @ if chat>c@ else image>c@ endif ;
+
+( when storing data into image, we want, if currently interacting )
+( with the target, to store it there as well. )
+
+: >!  ( w >addr -- )
+  interactive @ if 2dup chat>! endif
+  >image w!  ( odd-smart w! ) ;
+
+: >c!  ( b >addr -- )
+  interactive @ if 2dup chat>c! endif
+  >image c! ;
+
+: >,   ( w -- )  >here >!  2 >allot ;
+: >c,  ( b -- )  >here >c! 1 >allot ;
+
+: >fill   ( addr #b b -- )
+  rot rot over + swap do dup i >c! loop drop ;
+
+decimal
+: chunk  ( addrHost addrTarg count -- addrH' addrT' count' OR -- 0 )
+  dup 256 <= if
+    chat>chunk! 0
+  else
+    >r 2dup 256 chat>chunk!
+    256 + swap 256 + swap r> 256 -
+  endif ;
+
+( copy image to target )
+: image>
+  image 0 >here  ( addrHost addrTarget count )
+  begin chunk ?dup 0= until ;
+
+: reg  create c,  does> c@ spReg @ + ;
+
+decimal
+0 reg cc  1 reg a   2 reg b   1 reg d   3 reg dp
+4 reg x   6 reg y   8 reg u   10 reg pc
+
+
+decimal
+( copy host stack to top-level ( if we ever have multitasking )
+( stack. )
+: stack>  ( copy param stack to target's param stack )
+  depth 2* pBase dup rot - ( room for entries )
+  dup u ( param stack ) chat>!
+  depth if
+    do
+      i chat>!
+    2 +loop
+  else 2drop
+  endif ;
+
+( stack< is sensitive to stack level.  If figures the difference )
+( between the stack pointer and its base by ignoring the high bits. )
+( this way we'll always get the stack of the current task, in a )
+( multitasking version. Its also sensitive to running pure )
+( assembler: it doesn't copy the stack if next^ is zero, indicating )
+( that the target isn't running forth. )
+: stack<  ( copy param stack from target )
+  next^ @ if ( only do this if non-zero )
+    sp!
+    u chat>@ dup pBase >  abort" target stack underflow"
+    
+    dup ( u u ) stackSize 1- ( bit mask ) and
+    if ( only move if something TO move )
+      dup ( u u ) 2- ( top of stack -2 )
+      swap ( u-2 u ) stackSize + ( round up )
+         [ stackSize 1- -1 xor ] literal and 2- 
+      ( mask low bits; base of stack - 2 )
+      do
+        i chat>@
+      -2 +loop
+    else drop ( u )
+    endif
+  endif ;
+  
+
+( go always fetches the stack; thus, the host's stack is always )
+( a mirror of the target's.  go also sets the NMI semaphore to 1. )
+
+hex
+: reset-sema  1 semaNMI^ @ >c! ;
+: go   reset-sema  chat>goSync ( -- sp ) spReg ! stack< ;
+: g=  ( pc -- )  pc chat>! go ;
+
+( ga does not wait for the 6809 box to return )
+: ga ( go async )  reset-sema  chat>goAsync ;
+: ga= ( pc -- )  pc chat>! ga ;
+
+
+
+
+
+

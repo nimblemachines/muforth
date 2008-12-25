@@ -1,0 +1,413 @@
+( fix )
+( daf 16-sep-92	created )
+( daf 26-sep-92	changed forget to forget vocabs; rename old one to old-forget )
+(			added TOSS to ONLY )
+( daf  1-oct-92	added VOCAB and DEFS to ONLY as shorthand; )
+(			added VAR and CONST to FORTH as shorthand. )
+( daf  6-dec-92	removed search? from my-find to speed it up )
+( daf 11-dec-92  moved aliased names to aliases; created YERK )
+(     and moved all forth words into FORTH to try to speed compiling )
+( daf 15-dec-92  my attempts met with partial success; but when )
+(                a compiled YERK kernel was re-loaded, it suffered )
+(                an address error, and I was not in the mood to )
+(                waste more time.  So we're back to slow compilation. )
+( daf 28-feb-92  Made this whole thing, esp my-quit and my-abort, )
+(                much more fig-like.  I hope this solves the weird )
+(                yerk idiosyncrasies. )
+
+( This file contains code to make Yerkes Forth look a lot like )
+( Forth-83. )
+
+
+
+4 constant /a    ( bytes per address )
+: a1+ 4+ ;       ( increment address )
+
+( aliases and fixes )
+: ?dup  -dup ;
+: endif  [compile] then ; immediate  ( I hate THEN )
+: [ [compile] <[ ; immediate  ( renamed in Yerkes )
+: ] ]> ;
+
+( need to fix SMUDGE and : .  SMUDGE is immediate, and colon doesn't )
+( smudge.  We don't need to change Yerkes' ; because it unsmudges by always )
+( ANDing the length byte with 0DFh. )
+( We need the fixed : before we can define variable in terms of )
+( variable and ONLY's toss in terms of FORTH's toss and so on. )
+( Otherwise, infinite loopyness! )
+
+hex 'c smudge >name 40 toggle   ( smudge is no longer immed )
+decimal
+
+( redefine : so it smudges )
+: :  [ smudge ] [compile] : ( old colon )   smudge ; immediate
+
+( 83 version of variable )
+: variable  0 variable ;  ( had to wait till colon smudged )
+: var  variable ;  ( shorthand )
+: const  constant ;
+
+hex
+( f-83 sign )
+: sign  0< if ascii - hold endif ;
+: pad   here 44 + ;  ( just like fig's )
+
+( 83 version of create )
+: create  <builds does> ;
+
+( fix, once and for all, the annoying fact that w! and w@ break )
+( when given odd addresses: )
+
+: w@  ( addr -- w )
+  dup 1 and if ( odd )
+    dup c@ 8 << swap 1+ c@ +
+  else w@ endif ;
+
+: w!  ( w addr -- )
+  dup 1 and if ( odd )
+    over 8 >> over c!  ( high byte )
+    1+ c!  ( low byte )
+  else w! endif ;
+
+( make yerk's system variables -- now "values" -- look like )
+( "normal" variables, pushing their address instead of their value. )
+( We tick them, skip over the cfa's, then form a const, using this )
+( pfa as the value. )
+decimal
+'c base 12 +    const base
+'c state 12 +   const state
+'c dp 12 +      const dp
+'c current 12 + const current
+'c fence 12 +   const fence
+'c out 12 +     const out   ( used by disasm )
+'c dpl 12 +     const dpl   ( used by target compiler's interpret )
+'c hld 12 +     const hld
+'c voc-link 12 + const voc-link  ( daf 28-feb-93 )
+
+
+( make r@ a synonym for r; can't do this in a colon def, as )
+( that would always yield the return addr from r into r@ ! )
+create r@ -8 allot ( backup to code fld )
+  'c r @ , ( get code addr, compile into r@ )
+
+
+( daf 28feb93: don't need this if we change my-find so it doesn't )
+( return to find. )
+( : old-context!  -> context ;  ( alias )
+
+6 /a * constant #contexts  ( # of bytes of transient contexts )
+var context  ( new context array )
+  #contexts allot ( #contexts+1 elements )
+
+here constant context-end
+
+context #contexts a1+ erase  ( transient + fixed )
+#contexts /a - constant #context-move
+
+
+( need this stuff for later target compilation; we often have )
+( to change the search context and compilation vocab on the fly. )
+
+var context'  #contexts 4- allot  ( # bytes of transient context )
+var current'                   ( copy of compilation voc )
+
+: SaveContext
+  current @ current' !
+  context   context' #contexts cmove ;
+
+: RestoreContext
+  current' @ current !
+  context'   context #contexts cmove ;
+
+
+( here we go: vocabulary stuff )
+
+( var voc-link )  0 voc-link !
+  ( since we're redefining vocabulary, we have to pretend )
+  ( that no other type exists )
+  ( *change* daf 28-feb-93: try using *old* voc-link, as it )
+  ( is setup at startup from init params and probably will )
+  ( work better this way. )
+
+hex here 8120 w, 0 ,  ( dummy dict entry with zero link )
+const dummy-header
+
+: vocabulary ( --    : name )
+	( reads name out of input stream and creates vocab; unlike fig, )
+	( vocabularies are sealed -- the first word created in a vocab )
+	( points to the dummy word whose link field is )
+	( zero.  This is so the find primitive works and is fast. )
+
+	<builds
+		dummy-header ,		( initial link: points to dummy above )
+							( context, current point here )
+		here voc-link @ , voc-link !  ( link into vocab list )
+	does> context ! ;	( run-time: store address of link into context )
+
+decimal
+
+: definitions ( -- )
+	context @  current ! ;
+
+
+( my-find is called from FIND via ufind; FIND does bl word and )
+( then calls ufind and then does lots of bogus stuff, so we don't )
+( return to FIND, but to its caller. Ha. )
+: my-find   ( -- false : if not found )
+            ( -- pfa len-byte true : if found )
+            ( searches context )
+  false context-end context do  ( word to search at here )
+    i @
+    if
+      drop ( flag )
+      here i @ @ (find) dup if leave endif
+    endif
+  /a +loop
+  r> drop  ( don't execute FIND, the caller, any further ) ;
+
+
+vocabulary forth   latest  ' forth a1+ !  ( actually points to itself )
+forth definitions
+
+'c my-find -> ufind  ( start using it now )
+
+
+( SEARCH-CURRENT is a helper word for FORGET -- it searches only current )
+( and aborts if not found )
+: search-current  ( -- cfa, or it aborts )
+	bl word here latest (find) 0= abort" not found " drop cfa ;
+
+( show search order and compilation vocab )
+: .voc-name  ( nameLast^^ -- )
+	8-   >name id. ;
+
+( also adds vocab to search list by moving search list down one )
+: also  ( -- )
+  context context a1+ #context-move  cmove ;
+
+( define the ONLY vocab.  defined in FORTH )
+( contains only the words to get to FORTH and to )
+( move around in vocabs. )
+
+vocabulary only 
+	
+also only definitions
+
+( need the following so they appear in ONLY )
+: forth  forth ;
+: definitions  definitions ;
+: defs    definitions ;  ( shorthand )
+: vocabulary  vocabulary ;
+: vocab   vocabulary ;  ( shorthand )
+: words  words ;
+: also  also ;
+
+( null word so end-of-text is caught )
+hex 8100 here  : x  r> drop ;  	( return to caller's caller )
+	w! decimal immediate
+
+( change run-time of ONLY to erase first four items of CONTEXT )
+( and to install itself as first and last )
+here ] context #contexts erase  dup
+     ( tos is ONLY's v-link field )
+	context !   context #contexts + !
+     ( put ONLY in first and last )
+	;s [
+	' only !   ( old-style DOES> -- replace pfa with ptr to above code )
+
+: only  only ;  ( this MUST come AFTER above code, otherwise we'll )
+                 ( "fix" the wrong ONLY, leading to disaster )
+
+
+( toss throws away first item in CONTEXT and moves the others up )
+: toss  ( -- )
+  context a1+ context #context-move  cmove
+  ( and clear last transient entry )  0 context #context-move + ! ;
+
+: order   cr ." Searches: " context-end context
+	do
+		i @ ?dup if .voc-name else ."  --  " endif
+	/a +loop
+	cr ." Compiling: "  current @ .voc-name cr ;
+
+only forth defs
+
+( these forget's -- in particular FORGET -- need to be defined )
+( in FORTH so they'll 'replace' the old one in yerk.  If we define )
+( forget only in ONLY, which I did, and if we're also searching )
+( FORTH, we'll get the *old* yerk forget before we find the one )
+( in only.  SO, we define it in forth and alias it in only. )
+( Also, forget now executes ONLY, so we have to define it after )
+( we define only. )
+
+( FORGET is modeled after Kilbridge's smart fig forget, but adheres to )
+( the -83 conventions; that is, these are all error conditions: )
+(   -- if the word is not found )
+(   -- if the word is within FENCE )
+(   -- if the deletion of the word would 'forget' a vocabulary )
+
+( here is the remodeled forget.  I hope I get it right, since fucking MS Word )
+( got confused and lost my other copy.  This one deletes vocabs since that )
+( makes it easier to recompile.  It tells you what's being deleted. )
+
+decimal
+: forget	
+	search-current ( reads next token, searches compilation vocab, leaves cfa )
+	>name dup fence @ u< abort" in protected dictionary "
+	>r  ( name^ to return stack )  voc-link @
+	
+	( first unlink all vocabs defined after name^ )
+	begin
+		r@ over u<  ( name^ < vocNext^ )
+	while
+		dup 4- cr .voc-name  ." : deleted"
+		only forth definitions  ( so we don't end up lost )
+		@ ( follow vocNext^ ) dup voc-link ! ( unlink voc from chain )
+	repeat
+
+	( now unlink words defined in vocab after name^ )
+	begin
+		dup 4- cr .voc-name  ." :  "    0 out !
+		dup 4- @  ( -- vocNext^ nameLast^ )
+		begin
+			dup r@ u>  ( -- vocNext^ nameLast^ f )
+		while  ( nameLast^ > name^ )
+			out @ 60 > if cr  0 out ! endif  dup id.
+			name> >link @  ( unlink word )
+		repeat
+		over 4-  ( -- vocNext^ nameLast^ nameLast^^ )
+		!  ( set nameLast^ to first word before name^ )
+		@  ( follow vocNext^ )   ?dup 0=
+	until  ( end of voc-link list )
+	cr  r> dp ! ;  ( if all well, make name^ the end of dict )
+		
+: old-forget
+	search-current ( reads next token, searches compilation vocab, leaves cfa )
+	>name dup fence @ u< abort" in protected dictionary "
+	>r  ( name^ to return stack )  voc-link @
+	begin
+		r@ over 12 - >name ( -- vocNext^ name^ nameVoc^ )
+		u< abort" would also forget a vocabulary "
+
+		( now unlink words defined in vocab after name^ )
+		dup 4- cr .voc-name  ." :  "
+		dup 4- @  ( -- vocNext^ nameLast^ )
+		begin
+			dup r@ u>  ( -- vocNext^ nameLast^ f )
+		while  ( nameLast^ > name^ )
+			dup id.
+			name> >link @  ( unlink word )
+		repeat
+		over 4-  ( -- vocNext^ nameLast^ nameLast^^ )
+		!  ( set nameLast^ to first word before name^ )
+
+		( special case: forgetting a vocab ) ( -- vocNext^ )
+		dup @ swap  ( -- @vocNext^ vocNext^ )
+		12 - >name r@ =
+		if ( name^ == nameVoc^ ) ( -- @vocNext^ )
+			dup voc-link  ! ( unlink this vocab from chain )
+		endif  ?dup 0=
+	until  ( end of voc-link list )
+	r>  dp ! ;  ( if all well, make name^ the end of dict )
+
+
+only defs forth
+: forget  forget ;
+
+forth defs
+
+: my-quit  ( redefined, based on fig )
+  [compile] [
+  begin
+    rp! mp! cr state @ 0= if ok endif ( ok is really prompt )
+    query interpret
+  again ;
+
+: my-abort
+  ( do the rest of the ABORT, since we're replacing yerk's abort )
+  ( from fig: )
+  sp! 'c key -> keyvec ( just to make sure ) 1 -> curs
+  $ a850 trap ( initCursor )
+  cr ." Frech's Fixed Forth, v1.0"
+  only forth defs my-quit ( never returns ) ;
+
+( fixed abort-quote, patched in as first word of (ab")
+: (err")  ( f -- )
+   r> drop  ( we don't want to return to broken ab" )
+   ( now the return stack has pointer to string to print if error )
+   ?dup
+   if  ( flag true, do error )
+      cr here count type ( print token causing error )  ." ?  "
+      r@ count type      ( print error msg )
+
+      ( if interpreting from a file, print line that caused error, )
+      ( call cleanup and restore cursor )
+      curs 0=  ( // hides the cursor )
+      if
+         cr cleanup ( close files )
+         tib in type     ( type input buffer up to error point )
+         true -> curs ( restore cursor )
+      endif
+      sp!  ( clr parm stack )  my-quit ( quit will clr return stack )
+   endif
+   ( no error if we're here )
+   r> count + align >r  ( skip over string and keep going ) ;   
+
+: fixit
+  ( fix what is broken )
+  'c (err") ' (ab") !
+  'c my-quit ' quit !
+  'c my-abort ' abort !
+  'c my-find -> ufind ;
+
+fixit
+
+: cold-start
+  fixit   my-abort  ;
+
+'c cold-start -> quitvec  ( execute on startup )
+
+hex
+: --   ( delete latest word if error occurred )
+   latest c@ 20 and
+   if ( smudged )
+      latest dup 
+      name> >link @ ( get prev word )  current @ !  ( make it latest )
+      dp ! ( back up dp to start of old latest )
+   endif ;
+
+
+( multi-way switch )
+
+: (#switch)  ( # -- )  ( picks one cfa of several and executes it )
+  4*  ( convert # to byte index ) dup
+  r@ w@  ( -- #index #index #bCfa )  <
+  if  ( in range, do the switch )
+    r@ 2+ + @ ( get cfa ) execute
+  else
+    drop ( index )
+  endif
+  r> dup w@ + 2+ ( new return address ) >r ;
+
+: #switch    ( # -- )
+             ( compile: -- cfaFirst^ 5 )
+
+  ?comp  compile (#switch)  0 w,  here  5  ;  immediate
+
+: endswitch  ( -- )
+             ( compile: cfaFirst^ 5 -- )
+  ?comp  5 ?pairs
+  here over -  ( #bytes of cfa's )  swap 2- w!  ;  immediate
+
+
+: (lit")  ( -- string^ ) r@    r@ c@ r> + 1+ align >r ;
+: lit"    ( -- ) compile (lit") word" c@ 1+ align allot ;  immediate
+
+: on  -1 swap ! ;
+: off  0 swap ! ;
+
+here fence  ! ( protect all of this stuff )
+
+
+
+

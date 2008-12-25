@@ -1,0 +1,157 @@
+( drums -- drums and lights midi controller for OnTheBoards )
+( daf  3-feb-93  created )
+
+forth tt
+
+hex
+( define some equates; these do *not* generate code on the target )
+( but only create mnemonics useful for assembler programming. )
+
+( via address constants )
+b400 equ driver
+b401 equ light-strobe ( port a )
+b800 equ light   ( port c )
+b40f equ disp
+
+decimal
+
+( assume 600 microsec/tick; 8 ticks/light tick )
+100  equ light-time  ( in *clocks* ) ( about 480ms )
+
+var ticks  -1 allot ( byte count of clock ticks that have occurred )
+var light-ticks -1 allot
+var notesMac    ( pointer just past last time-note pair )
+var lightsMac
+
+var notes  254 allot  ( room for 128 time-note pairs )
+label notesMax  ( used only in code words )
+
+var lights 254 allot  ( room for 128 light pairs )
+label lightsMax
+
+hex
+( if vel=0, add-note does nothing; it just pops the params )
+( and returns. )
+code add-note  ( midinote# vel -- )
+  1 u #) tst   ( vel = 0 ? )
+  0!= if
+    addr notesMac ^ ldx  ( get latest ptr )
+    notesMax # cmpx ( any room? )
+    u< if
+      1 u #) lda  ( vel in a reg )
+      3 u #) ldb  ( note# in b )
+      7f #   andb ( mask off high bit just in case )
+      x )++  std  ( put in array )
+      addr notesMac ^ stx  ( new value )
+      80 #   orb
+      driver ^ stb  ( turn on note -- portb of via )
+
+      ( also turn on light )
+      ( make sure there is room, tho there should be; and if )
+      ( there isn't, then this driver will *seem* to malfunction: )
+      ( the drum will play, but no light will go on. )
+      addr lightsMac ^ ldx
+      lightsMax # cmpx  ( room? )
+      u< if
+        light-time # lda  ( hold time in clocks )
+        7f # andb
+        x )++  std  ( time/note pair )
+        addr lightsMac ^ stx
+        80 # orb
+        light ^ stb  ( turn on light )
+        disp ^ ldb
+        light-strobe ^ stb  ( strobe latches )
+      endif
+    endif
+  endif
+  4 u #)  leau  ( pop params )
+  next end-code
+
+( because this is real-time interrupt code, we have to be a little )
+( bit careful; to wit, to avoid race conditions with 'tick' )
+( interrupt, we grab the value of ticks at the start of this )
+( routine, and use that value -- pushed on to the stack -- )
+( to decrement the note timers.  Then at the end we subtract )
+( our save tick count from the actual tick count at the time of )
+( the subtract instructions.  That way, if an interrupt occurs )
+( during the processing of the list, that tick is not lost. )
+( Also, in order for the operation )
+(   lda   ticks )
+(   suba  ,u )
+(   sta   ticks )
+( to be *atomic*, as it must be if we want to ensure that a )
+( tick occuring during *that* operation is not lost, we must )
+( disable interrupts. )
+
+hex
+code age-notes  ( -- ) ( check if ticks !=0; decr if so )
+  addr ticks ^ lda
+  0!= if
+    << y a >> pshu  ( save y, ticks -- ticks are on top )
+    addr notes # ldx
+    addr notes # ldy   ( point to array of time-note pairs )
+    ( here we try out our nifty spiffy new *while* structure: )
+    w[
+      x )++ ldd   ( next pair )
+      u )   suba  ( subt ticks from time remaining )
+      u<= if
+        driver ^ stb  ( turn off note )
+      else
+        y )++  std  ( keep in array if time != 0 )
+      endif
+    ]w
+      addr notesMac ^ cmpx  ( done? )
+    u< while
+    addr notesMac ^ sty  ( y is new pointer to end of array )
+
+    ( do lights ticks )
+    addr light-ticks ^ lda
+    u ) suba  ( subtract clock ticks )
+    addr light-ticks ^ sta
+
+    50 # orcc  ( mask interrupts )
+    addr ticks ^ lda
+    u ) suba
+    addr ticks ^ sta   ( subtract from ticks our saved ticks )
+    0af # andcc  ( enable interrupts )
+
+    ( age lights also )
+    addr light-ticks ^ tst
+    <= if
+      addr lights # ldx
+      addr lights # ldy   ( point to array of time-note pairs )
+      w[
+        x )++ ldd   ( next pair )
+        deca        ( decr # of ticks )
+        0= if
+          light ^ stb  ( turn off note )
+          disp ^ ldb   ( get current display value )
+          light-strobe ^ stb ( write to disp port, strobing light )
+        else
+          y )++  std  ( keep in array if time != 0 )
+        endif
+      ]w
+        addr lightsMac ^ cmpx  ( done? )
+      u< while
+      addr lightsMac ^ sty  ( y is new pointer to end of array )
+
+      addr light-ticks ^ lda
+      8 # adda
+      addr light-ticks ^ sta
+    endif
+  << y a >> pulu
+  endif
+  next end-code
+
+
+hex
+: clear-notes
+  80 0 do
+    i b400 c!  i b800 c!  b40f c@ b401 c!
+  loop
+  notes notesMac !
+  lights lightsMac !
+  8 light-ticks c! ;
+
+
+only forth defs

@@ -1,0 +1,456 @@
+( V25 Interact, from 6809 sources)
+
+( Created 4-aug-2000 from 6809 sources and generic v25 spinner code.)
+
+( PHFFT! interaction )
+( daf -- 9-dec-93 created )
+( daf -- 16-dec-97    !!  fixed button needing two pushes)
+(                         added state display)
+(                         added note offs)
+( daf  16dec97  added display, fixed 2x button push)
+( daf  17dec97  merged into ONE eprom with jumper configuration)
+
+( act is NOT interrupt-driven output )
+
+
+decimal
+
+( need EPROM -type- NOT size! I thought this would be easier ;-)
+1024 constant eprom-type
+
+jiffies
+
+ld v25/devel86.d4  ( load dev system)
+
+target[
+
+[with] debug [if] with serial1-config [then]
+ld v25/kernel.d4
+
+VARIABLE dog  ( countdown watchdog timer)
+ld v25/latchesXtwo.d4
+
+VARIABLE vel
+with MIDIinteract   ld v25/MIDIcore.d4
+
+
+( Application goes here)
+cr s" Interact "  \ file[
+
+sign" V25 Interact (tm), v1.0 (evolved PHFFT!) with sequencer option. "
+sign" Copyright (c) 1995, 1996, 2000 "
+sign" David Frech & Remmy Demmy Productions. "
+sign" P1<7> Velocity strobe; "
+sign" P1<6> Hold strobe; "
+sign" P1<5> Play/Pause out; P1<4> unused; "
+sign" P1<3> NotesA; "
+sign" P1<2> ScalesA; P1<1:0> unused; "
+sign" PT<7:6> unused; "
+sign" PT<5> NotesB; "
+sign" PT<4> ScalesB; "
+sign" PT<3:2> unused; "
+sign" PT<1> Sequencer present (hi=true); "
+sign" PT<0> Go switch. "
+created-on
+
+ 0
+( #s  #r  #u)
+ 128 128  32  BACKGROUND Operator
+ 128 128  32  BACKGROUND father-time
+ 128 128  32  BACKGROUND slave
+0 [if]
+ 128 128  32  BACKGROUND 1spin
+ 128 128  32  BACKGROUND 2spin     ( wheel tasks)
+[then]
+[with] debug [if]  128 128  32  BACKGROUND debug   [then]
+                                        CIRCLE Operator
+
+
+( Ports)   hex
+
+( Bogus V25 hack! Without this external ls244 the V25 won't reset properly.
+  Apparently the inputs on port 1 changing during reset causes the chip to
+  hang. Complelely BOGUS.)
+
+f10 CONSTANT display   ( port 2)
+f38 CONSTANT inputs    ( port T)
+
+   ( bit 7 enables ls244 that protects encoder inputs from power-up glitching;
+     bits 6:0 are 7-seg display)
+
+: PORTS   0 latches IO!  c0 strobes IO!  ( data low, strobes hi, pause low)
+          1 display IO!    ( buffer enable low, display seg `g')
+       0 latches 1+ IOW!   ( port0 is data, oooo/oooo)
+    001f strobes 1+ IOW!   ( port1 is data, oooi/iiii)
+       0 display 1+ IOW!   ( port2 is data, oooo/oooo)
+              8 f3b IO!    ( portT: threshold @ Vcc/2)  ;  decimal
+
+
+( Ports:
+P0 =   S/-R    d6     d5    d4   d3   d2   d1   d0    set/reset, data
+P1 =  -perc  -hold   pause   X   A2   A1    X    X    strobe, irqs
+P2 =  -en_244   a      b     c    d    e    f    g    enable, display segments
+PT =     X      X     B2    B1    X    X  -play seq   configure)
+
+: button?   ( - flag)  ( pushed -> play seq )   inputs IO@  2 AND  0=  ;
+: seq?      ( - flag)                           inputs IO@  1 AND  ;
+: strobe-   strobes IO@  XOR  strobes IO!  ;
+: play/pause   "20 strobe-  200 ms  "20 strobe-  ;
+
+hex
+0f40 CONSTANT ExMode  ( external interrupt modes - rising or falling)
+0f4c CONSTANT ExIRQ0  ( external interrupt request controls)
+0f4d CONSTANT ExIRQ1
+0f4e CONSTANT ExIRQ2
+
+10 EQU B1   ( masks for `strobes' port)
+20 EQU B2
+
+10 EQU 1edge    ( interrupt #1 edge control)
+40 EQU 2edge    ( interrupt #2 edge control)
+
+:O 1edge->B1   ( reg)  drop  ;O  ( nop)
+:O 2edge->B2   ( reg)  <asm  1 #  \f rot  SHR,  asm>  ;O
+
+decimal
+
+( 10-aug-2000. Ok. Big change here. Getting rid of encoder tasks and doing
+  it inline. Too much confusion. We're getting back to our 6809
+  single-tasking roots.)
+
+VARIABLE 'spinner
+:D SPINNER   3 ARRAY
+  ;CODE  0 [w] w MOV,  SS: w 'spinner ) MOV,  NEXT,  C;
+
+SPINNER noter
+SPINNER scaler
+
+( Offsets into spinners)
+:D SPIN-FIELD   ( n)  CONSTANT
+   ;CODE  t PUSH,  0 [w] t MOV,  SS: 'spinner ) t ADD,  NEXT,  C;
+   ( just like a USER variable!)
+
+0 SPIN-FIELD delta       ( current value; integer part)
+2 SPIN-FIELD fraction    ( current value, frac part)
+4 SPIN-FIELD incr        ( frac incr added to fraction by IRQ)
+
+0 [if]
+( Encoder task variables)
+2 USER delta       ( current value; integer part)
+2 USER fraction    ( current value, frac part)
+2 USER incr        ( frac incr added to fraction by IRQ)
+2 USER 'action     ( action to take when `encoder' changes)
+[then]
+
+( Optical wheel interrupt - common code)
+LABEL EncoderISR  ( caller pushed AX BX)
+   ES: inputs ) AH AND,  AH AL XOR,  SS: incr [BX] AX MOV,  0= IF,  ( add)
+   SS: AX fraction [BX] ADD,  LAHF,  SS: 0 # delta [BX] ADC,  ELSE,  ( sub)
+   SS: AX fraction [BX] SUB,  LAHF,  SS: 0 # delta [BX] SBB,  THEN,   SAHF,
+   BX POP,  AX POP,  FINT,  IRET,  C;
+
+( Encoder logic:
+       A   B   inc      A   B   inc
+       R1  0    -       R1  1    +      XOR 0= IF  +  ELSE  -
+       F0  0    +       F0  1    -
+BX=spinner; AH=mask, AL=1rising/0falling)
+
+( Optical wheel interrupts)
+LABEL 1irq   ( P1)   STI,  AX PUSH,  BX PUSH,
+   ES: ExMode ) AL MOV,  ES: 1edge # ExMode ) BYTE XOR, ( fall<->rise)
+   1edge # AL AND,  AL 1edge->B1   B1 # AH MOV, ( B1 mask)
+   noter # BX MOV,  EncoderISR ) JMP,  C;
+
+LABEL 2irq   ( P2)   STI,  AX PUSH,  BX PUSH,
+   ES: ExMode ) AL MOV,  ES: 2edge # ExMode ) BYTE XOR, ( fall<->rise)
+   2edge # AL AND,  AL 2edge->B2   B2 # AH MOV, ( B2 mask)
+   scaler # BX MOV,  EncoderISR ) JMP,  C;
+
+( 'code vector# priority IRQpri IRQreg)
+  1irq    25     6     ExIRQ0  ExIRQ1   HANDLER IRQ1
+  2irq    26     6     ExIRQ0  ExIRQ2   HANDLER IRQ2
+
+
+( Spinner initialization.)
+: spin!   ( incr)  incr !  delta OFF  fraction OFF  ;
+: spun?   delta @  ;
+: accumulate   ( incr)   delta @  DUP NEGATE  delta +!  ;
+
+CODE clamp ( n - -1 | 1)
+   t t ADD, ( s -> cy)  t t SBB,  t t ADD,  t INC,  NEXT,  C;
+
+0 [if]
+( Encoder loop. 'action is called with delta on top of stack.)
+: ENCODE   ( initial incr 'action)
+   'action !  incr !   delta OFF  "8000 fraction !
+   BEGIN  STOP ( until ISR wakes us)
+     delta @   DUP NEGATE delta +!   'action @EXECUTE  AGAIN  -;
+[then]
+
+( Except for initialization, encoder values that the interrupt modifies
+  can be only changed ATOMICALLY: +!, INC, ADD, etc.)
+
+
+
+( ==== display ====)
+: show   display IO!  ;
+
+"67 CONSTANT playing  ( makes a 'P' for play)
+"36 CONSTANT pausing  ( makes a || for pause)
+
+VARIABLE chaser  ( 0--5.  segment #)
+: chaser+  ( incr - 0--5)   chaser @  +  6 MOD  DUP chaser !  ;
+
+hex
+CREATE chasers  40 C, 20 C, 10 C, 8 C, 4 C, 2 C,
+decimal
+: chase  ( incr)  chaser+  chasers + ROMC@ show  ;
+
+
+[with] debug [if]
+: test   0  BEGIN  10 ms  DUP vel @  +PERC  1+ 127 AND  AGAIN  -;
+( Use `last' to send note-off's. Use running status to save bytes - don't
+  resend the status for the note-off. Maybe only send note-on when we start
+  spinning?)
+
+( These are channel 1 and are assumed to be `percussion'. Send the `last'
+  note-off first. ??These don't seem to be used!)
+-1 [if]
+: PLAY+SEND   ( note incr - note')
+   DUP chase
+   OVER PUSH  +  127 AND  vel @  2DUP  +PERC  OVER  ( note vel note)
+   0 ( vel)  POP ( last)  "90  5 [SEND]  ;
+[else]
+: PLAY+SEND   ( note incr - note')
+   DUP chase
+   +  127 AND  DUP  vel @  +PERC  ;
+[then]
+
+0 [if]
+: NOTES!
+   [with] debug [if] MIDIout OFF  1 [else] 0 [then]  MIDIport
+   last OFF   16  "FFFF  notes spin!  ;
+
+: VEL!  ( value incr - value')  DUP chase  +  127 AND  DUP  vel !  ;
+: VELOCITIES!
+   64 DUP  vel !  "8000  scales spin!  ;
+[then]
+
+[then]  ( debug)
+
+: +WHEELS
+   0 ExMode IO! ( 2 falling, 1 falling)   IRQ1  IRQ2  ;
+
+
+( == MIDI == )
+: until-MIDIpaused  ( wait till program change)
+   -1 MIDIpaused +!  BEGIN  PAUSE  MIDIpaused @  0< 0=  UNTIL  ;
+
+: make-midi  ( note vel status)   PUSH SWAP POP  3 [SEND]  ;
+
+CODE dog?  ( - flag )  ( if dog <= 0, return true )
+   t PUSH,  SS: dog ) t MOV,  t t ADD,  t t SBB,  NEXT,  C;
+
+( pulse is for turning the blowers on and off; chan2 )
+: play2    ( note#)  DUP  +HOLD  64 "91 make-midi  ;
+: unplay2  ( note#)  DUP  -HOLD   0 "91 make-midi  ;  
+: pulse    ( note#)  DUP play2  250 ms  unplay2  ;
+
+VARIABLE last   ( last has last note played or 0)
+
+( play also unplays last)
+: play   ( note#)
+   vel @  2DUP  +PERC  OVER  ( note vel note)
+   0 ( vel)  last @  "90  5 [SEND]  last !  ;  ( chan1 send)
+
+: unplay  last @  0 "90 make-midi  ;  ( note off)
+
+
+( == blowers == )
+: blow   17 pulse  ;  ( turn on blowers )
+: -blow  16 pulse  ;  ( turn off )
+
+: dog!   25000 dog !  ;  ( 25000x600us = 15s )
+
+
+( == transpose == )
+( note in is 0-96; note out is 16-111 )
+16 EQU noteMin
+96 EQU noteRange
+
+( #transpose is 0-11, but we look up the -actual- transpose in a
+  table of circle-of-fifths)
+
+:D fifths  CREATE  0  12 for  dup C,  7 +  12 mod  next  drop  ;D
+fifths circle5
+
+VARIABLE #transpose
+CODE transpose  ( note -- note' )
+   AX AX XOR,  SS: #transpose ) w MOV,  ' circle5 [w] AL MOV,  AX t ADD,
+   noteRange # t CMP,  u< not IF,  noteRange # t SUB,  THEN,  ( wrap)
+   noteMin # t ADD, ( map to real midi note )  NEXT,  C;
+
+CODE transpose+  ( incr -- scale-incr )
+   AX AX XOR, ( scale-incr )  SS: #transpose ) t ADD,
+   0< IF,  12 # t ADD,  AX DEC,  ELSE,
+     12 # t CMP,  u< not IF,  12 # t SUB,  AX INC,  THEN,
+   THEN,
+  SS: t #transpose ) MOV,  AX t MOV, ( scale-incr)  NEXT,  C;
+
+( Octave doubling)
+VARIABLE 'doubler
+: play-single   transpose play  ;
+: play-double   DUP play-single  12 +  play-single  ;
+: double+  ( scale#)
+   1 AND  IF  lit play-double  ELSE  lit play-single  THEN  'doubler !  ;
+: fancy-play   'doubler @EXECUTE  ;
+
+( === scales === )
+( scales come in pairs: descending, then ascending )
+( or, normal and interesting? )
+
+HERE HERE
+     ( major)        7 C,  00 C, 02 C, 4 C, 5 C, 7 C, 9 C, 11 C,
+HERE HERE
+     ( pentatonic)   5 C,  00 C, 02 C, 4 C, 7 C, 9 C,
+HERE HERE
+     ( whole tone)   6 C,  00 C, 02 C, 4 C, 6 C, 8 C, 10 C,
+
+:O intervals  ( jump)   \o noteRange over /  1+  dup \o C,  0 swap  for
+     dup \o C,  over +  next  2drop  ;O
+
+HERE HERE  ( fifths)   7 intervals
+HERE HERE  ( fourths)  5 intervals
+
+0 [if]
+HERE  ( fifths)  14 C,  00 C,  7 C, 14 C, 21 C, 28 C, 35 C, 42 C,
+                        49 C, 56 C, 63 C, 70 C, 77 C, 84 C, 91 C,
+HERE  ( fourths) 20 C,  00 C,  5 C, 10 C, 15 C, 20 C, 25 C, 30 C,
+                        35 C, 40 C, 45 C, 50 C, 55 C, 60 C, 65 C,
+                        70 C, 75 C, 80 C, 85 C, 90 C, 95 C,
+[then]
+
+HERE HERE
+     ( blues1)        6 C,  00 C, 02 C, 3 C, 4 C, 7 C, 9 C,
+HERE ( harmonica ^)   4 C,  02 C, 5 C, 7 C, 11 C,
+HERE ( harmonica v)   4 C,  00 C, 4 C, 7 C, 4 C,
+HERE ( camper van ^)  3 C,  00 C, 02 C, 4 C,
+HERE ( camper van v)  3 C,  02 C, 6 C, 7 C,
+HERE ( guitar G)      4 C,  02 C, 7 C, 11 C, 7 C,
+HERE HERE
+     ( guitar C)      4 C,  00 C, 4 C, 7 C, 14 C, ( !! )
+HERE ( guitar Em9)    4 C,  4 C, 7 C, 11 C, 18 C,
+HERE HERE
+     ( chromatic)   12 C,  0 C, 1 C, 2 C, 3 C, 4 C, 5 C,
+                           6 C, 7 C, 8 C, 9 C, 10 C, 11 C,
+
+( start with chromatic)
+
+11 EQU #scales  ( !! change if you add scales !!)
+
+CREATE scales , , , , , , , , , , ,  ( compile 22 pointers )
+              , , , , , , , , , , ,
+
+VARIABLE cur-scale ( pointer to pair of scale pointers: incr then decr)
+                   ( up/dn -- cur-scale incr + @ gets a scale ptr ) 
+VARIABLE scale#   ( low-order bit is octave doubling)
+: scale+  ( incr)
+   transpose+  ( returns scale inc/dec )
+   scale# @ +  [ #scales \ 2* ] LITERAL MOD  DUP scale# !  DUP double+
+   1 BIC  CELLS  scales + cur-scale !  ;
+
+: scale!   scale# OFF   #transpose OFF   0 scale+  ;
+: scale  ( incr - 'scale)   1+  ( 0 or 2)  cur-scale @ + ROM@  ;
+: #tones  ( incr - scale-len )  scale  ROMC@  ;
+: tone>note   ( incr tone# - note# )  SWAP scale + 1+  ROMC@  ;
+
+( === octaves === )
+( flutes are 24, 36, 48, 60; 1/4 lu are 72, 84; ducks are 96 )
+( octave actually stores octave-24; we re-map later )
+VARIABLE octave
+: octave!   octave OFF  ;
+
+CODE octave+  ( tone scale-len -- tone' )
+   DX POP, ( tone)  SS: octave ) AX MOV,  DX DX OR,
+   0< IF,
+     t DX ADD, ( so it's modulo scale-len, and >0)
+     12 # AX SUB,  carry IF,  noteRange 12 - # AX MOV,  THEN, ( wrap)
+   ELSE,
+     t DX CMP, ( tone# > scale-len )
+     u< not IF,  t DX SUB, ( tone# - scale-len )
+       12 # AX ADD,  noteRange # AX CMP,
+       u< not IF,  AX AX XOR,  THEN, ( wrap)
+     THEN,
+   THEN,
+   SS: AX octave ) MOV,  DX t MOV,  NEXT,  C;
+
+( === tones === )
+VARIABLE tone
+: tone+  ( incr)  DUP tone @ +  SWAP #tones octave+  tone !  ;
+: tone!  tone OFF  ;
+
+: play-note  ( incr)  ( use incr to choose ascend/descend )
+  tone @  tone>note  octave @ +  fancy-play  ;
+
+( `noter' must have been executed recently!)
+: do-note   unplay  accumulate clamp  DUP chase  DUP tone+  play-note  dog!  ;
+( `scaler' must have been executed recently!)
+: do-scale          accumulate clamp  DUP chase      scale+            dog!  ;
+
+( === INTERACTION!! === )
+
+( These increments here might look funny. They are based on the fact that
+  the encoder will make 256 transitions in a full revolution; thus, the
+  increment will be added 256 times to delta, and we want the sum to be
+  precisely the total number of `triggers' per revolution. For the `notes'
+  wheel, this is 24; for the scales wheel, 12. The increments specified are
+  24*256 and 12*256, in hex.)
+
+: wheels!   "1800 noter spin!  "0c00 scaler spin!  ;
+
+: ?wheels
+      noter spun? IF  do-note  THEN
+     scaler spun? IF  do-scale  THEN  ;
+
+: follow  ( - button)  chaser OFF   0 chase   last OFF
+   BEGIN  PAUSE  ?wheels  button? 0=  WHILE  dog?  UNTIL  0  EXIT  THEN  -1  ;
+
+: interact  ( - button)   blow  follow  unplay  -blow  ;
+
+: (sequence)
+   playing show  until-MIDIpaused  play/pause  ;
+
+: sequence   seq?  IF (sequence) THEN  ;
+
+: go!
+   -blow  sequence
+   wheels!  scale!  octave!  tone!
+   BEGIN
+     PAUSE
+     pausing show
+     noter spun?  scaler spun?  OR
+     IF  interact  ELSE  button?  THEN
+     IF  play/pause  sequence  THEN
+   AGAIN  -;
+
+: OK   PORTS  64 vel !  ;
+: TASKS   600 us  father-time AGES  slave MIDI  PAUSE  ;
+   ( let them run once and do their 1DOWN or STOP)
+
+: BOOT  OK  TASKS  +WHEELS  +IRQ
+   [with] debug [if]  ;  [else]  go!  -;  [then]
+
+[with] debug [if]
+: go  BOOT  debug ACTIVATE  go!  STOP  ;
+[then]
+
+\ ]file
+
+
+ld v25/chat-target.d4
+ld v25/cold.d4
+
+]target   image  ( word-seg)  report  timed  meta
+
+
+

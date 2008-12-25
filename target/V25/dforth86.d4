@@ -1,0 +1,55 @@
+( dforth86 - an x86 version of dforth)
+
+( daf 2001-jan-29 created.)
+
+( ??need to save/restore SI)
+CODE (-"find)  ( a u 'link - a u t | 'body f)
+   CX POP, ( count)  DI POP, ( token)  DI PUSH,  SI PUSH, ( we need it)
+   CX DI ADD, ( end of string)  t PUSH, ( link)
+   BEGIN,  t POP, ( restore link)
+     BEGIN,  0 [t] t MOV, ( follow it)  t t OR,
+       0= not IF,  -1 [t] AL MOV, ( dict count)  CL AL XOR,
+     0= [ swap ] UNTIL,
+     ( lengths match, now compare strings)  t PUSH, ( save link)
+     -1 [t] SI LEA, ( addr of count byte)  CX t MOV,  t NEG,
+     BEGIN,  0 [BX+DI] AL MOV,  0 [BX+SI] AL XOR,
+   0= [ rot ] UNTIL
+     1 # t ADD, u< UNTIL,  ( found, carry SET; stack: token SI link)
+   BP INC, BP INC, ( junk stack contents)
+   5 [SI] CX LEA  ( skip count, link, code)
+   THEN,  ( not found, carry CLEAR; stack: SI)
+   SI POP, ( restore ip)  
+   CX PUSH, ( count [NOT FOUND] or 'body [FOUND])
+   t t SBB, ( false [NOT FOUND] or true [FOUND])
+   t NOT,   ( true [NOT FOUND] or false [FOUND])  NEXT,
+
+( this could also be called `bracket')
+CODE isolate  ( ch from_end len #scanned - 'token count #scanned+)
+   AX POP, ( size of input string)  DI POP,  AX DI ADD, ( end of input!)
+   CX POP, ( delimiter)  AX t SUB, ( -index = #scanned - #input)
+   AX PUSH, ( len of input)  4 # BP SUB,  t 4 [BP] MOV,  t 0 [BP] MOV,
+   ( provisional start & end of token)
+   0= not IF, ( bail if nothing left)
+     32 # CL CMP, ( only do initial skip if delim is a space)
+     0= IF,
+       BEGIN,  t INC,  0= not WHILE,  0 [BX+DI] CL CMP,  0= not UNTIL,
+     ( got a mis-match; found first token character)
+     [ swap ] THEN,  t 4 [BP] MOV, ( -index of start of token)
+
+     ( now scan for a trailing delimiter)
+     BEGIN,  1 # t ADD, ( sets carry if incr to 0)  u< not WHILE,
+             0 [BX+DI] CL CMP, ( clears carry)  0= UNTIL,  THEN,
+
+     ( we ran out of characters, carry is SET, OR we matched the delimiter &
+       need to move forward one char, and carry is CLEAR.)
+
+     t 0 [BP] MOV, ( -index of end of token)
+     -1 # t SBB, ( adds 0 if carry SET, 1 if carry CLEAR !!)
+
+   THEN,  THEN,  ( DI points to -end- of input text!)
+   0 [BP] CX MOV, ( -index of end of token)
+   4 [BP] DX MOV, ( -index of start of token)  DX CX SUB, ( count)
+   4 # BP ADD,  DX DI ADD, ( start of token)  AX POP, ( length of input)
+   DI PUSH, ( token start)  CX PUSH, ( token length)  AX t ADD,  NEXT,
+
+

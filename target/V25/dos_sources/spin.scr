@@ -1,0 +1,224 @@
+Generic  == S P I N N E R ==
+
+Two wheels; one is velocity, one is note#
+
+1 is load
+
+
+
+
+
+
+
+
+
+
+
+( Spinner load)
+2001 LOAD  3001 LOAD
+( serial   fix   )
+   : DEBUG  \ //  ;   : EPROM  ;        ( production)
+// : DEBUG        ;   : EPROM  \ //  ;  ( debug)
+4001 LOAD  5001 LOAD  1003 LOAD  6001 LOAD
+( compiler   kernel    TASKs       chat )
+DEBUG  7001 LOAD  ( load cold here for debug)
+8001 LOAD ( midicore)   CR ." (( Spinner "  4 13 +THRU  ." )) "
+EPROM  7001 LOAD  ( load cold here for eprom)
+.USER
+QUIT  ( set interpreter to target)
+
+
+
+
+( THIS BLOCK MUST CONTAIN A SIGNATURE!!)
+
+SIGN" Generic V25 MIDI Spinner v1.0. "
+SIGN" Copyright (c) 1995, 1996 "
+SIGN" David Frech & Remmy Demmy Productions."
+
+
+
+SKIP  Loaded by kernel at start of memory.
+
+
+
+
+
+
+
+( TASKs )       ( THIS BLOCK MUST CONTAIN TASK DEFS!!)
+ 00   ( don't execute target's '0'!)
+( #s  #r  #u)
+ 128 128  32  BACKGROUND 1spin
+ 128 128  32  BACKGROUND 2spin     ( wheel tasks)
+ 128 128  32  BACKGROUND Operator
+ 128 128  32  BACKGROUND father-time  ( AGES)
+ 128 128  32  BACKGROUND midi
+DEBUG  128 128  32  BACKGROUND debug
+                                        CIRCLE 1spin
+
+
+
+
+
+
+( I/O port initialization)                    HEX
+: PORTS    0 f00 IO!   c0 f08 IO!  ( data low, strobes hi)
+           0 f10 IO!   ( buffer enable)
+           0 f01 IOW!      ( port0 is data, oooo/oooo)
+        003f f09 IOW!      ( port1 is data, ooii/iiii)
+           0 f11 IOW!      ( port2 is data, oooo/oooo)  ;
+                                              DECIMAL
+SKIP  Ports:
+P0 =  S/-R  d6  d5  d4  d3  d2  d1  d0          set/reset, data
+P1 =  /perc  /hold  B2  B1  A2  A1  X  X    strobe, irqs
+P2 =  any pin can be use as /buffer; all are 0.
+
+lights = hi=on, low=off
+/midi goes into /int line on FAT header
+
+
+( encoder task variables)
+2 USER encoder     ( current value; integer part)
+2 USER fraction    ( current value, frac part)
+2 USER incr        ( frac incr added to fraction by IRQ)
+2 USER modulo      ( applied to encoder value when it changes)
+2 USER pos         ( modulo'ed encoder value)
+2 USER action      ( action to take when `encoder' changes)
+
+( assembler hack)
+:: LAHF,  $9F C,  ;;       ( need for 32-bit math)
+:: SAHF,  $9E C,  ;;
+
+
+
+
+
+( Optical wheel interrupt)        HEX     KCODE  ( asm)
+LABEL EncoderIRQ  ( caller pushed AX BX)
+   ES: F08 ) AH AND,  AH AL XOR,  ( set FLAGS!)
+   ' incr >DATA [BX] AX MOV,  0=, IF,  ( add)
+     AX ' fraction >DATA [BX] ADD,   LAHF,
+   0 #, ' encoder  >DATA [BX] W-PTR ADC,  ELSE,  ( subtract)
+     AX ' fraction >DATA [BX] SUB,   LAHF,
+   0 #, ' encoder  >DATA [BX] W-PTR SBB,  THEN,
+   SAHF,  0 #, 0 [BX] W-PTR SBB,  ( Up Semaphore if encoder chg)
+   BX POP,  AX POP,  FINT,  IRET,  C;
+
+SKIP   A   B   inc      A   B   inc
+       R1  0    -       R1  1    +      XOR 0= IF  +  ELSE  -
+       F0  0    +       F0  1    -
+BX=task; AH=mask, AL=toggle for rising v falling
+
+( Optical wheel interrupt)                      HEX
+CODE 1irq   ( P1)   STI,  AX PUSH,  BX PUSH,
+   ES: f40 ) AL MOV,  ES: 10 #, f40 ) XOR, ( fall<->rise)
+   10 #, AL AND,  10 #, AH MOV, ( B1 mask)
+   ' 1spin >DATA #, BX MOV,  EncoderIRQ jump,  C;
+
+CODE 2irq   ( P2)   STI,  AX PUSH,  BX PUSH,
+   ES: f40 ) AL MOV,  ES: 40 #, f40 ) XOR, ( fall<->rise)
+   40 #, AL AND,  1 #, AL SHR,  20 #, AH MOV, ( B2 mask)
+   ' 2spin >DATA #, BX MOV,  EncoderIRQ jump,  C;
+
+                                                DECIMAL
+
+
+
+
+( encoder task)
+: {{  ( - incr)  incr @  incr OFF  ;  ( `blocks' encoder)
+: }}  ( incr -)  incr !  ;
+
+: ENCODER  ( incr modulo 'action 'task -)  PUSH
+   R@ action HERS !  R@ modulo HERS !  R@ incr HERS !
+   POP ACTIVATE  {{  encoder OFF  $8000 fraction !  }}
+   pos OFF  BEGIN  1 AWAIT
+   encoder @  DUP pos @ +  modulo @ MOD  DUP pos !
+   SWAP NEGATE encoder +!  ( pos) action @EXECUTE  AGAIN  ;
+
+SKIP  Except for initialization, encoder values that the inter-
+rupt modifies can be only changed ATOMICALLY: +!, incr, etc.
+
+
+
+( spinner encoder tasks)
+VARIABLE last   ( last note sent)
+VARIABLE vel    ( velocity)
+: SEND   ( modulo -)
+   last @ SEND-OFF  16 + DUP last !  vel @  SEND-ON  ;
+
+: OUTPUTS  ( 'task -)
+   DUP 32 midi-out QINIT
+   -31 SWAP STATUS HERS +!  ( room in Q)  ;
+
+: NOTES  ( 'task -)  last OFF
+   PUSH  $2000  96  lit SEND  R@ ENCODER  POP OUTPUTS  ;
+
+SKIP  Did this ever work?  Methinks the queue stuff, here and in
+midi-setup, is all wrong and strange.  Try the experimental ver-
+sion!!  It's better designed for this sort of thing.
+( spinner encoder tasks)
+: SET-VEL  ( modulo -)  vel !  ;
+
+: SPEEDS  ( 'task -)  64 vel !  ( sanity)
+   PUSH  $8000  128  lit SET-VEL  POP  ENCODER  ;
+
+: SPIN  1spin SPEEDS  2spin NOTES  ;
+
+
+
+
+
+
+
+
+
+( midi support)
+
+: MIDI-SETUP
+   OMNI CHANNEL+ ( set chan1)  +MIDI-IRQS  midi LISTEN
+   32 midi-out QINIT  -31 STATUS +!  ( room in Q)
+   +MIDI  +MIDI-OUT  ;
+
+
+
+
+
+
+
+
+
+
+( bogus V25 hack!)
+: +WHEELS   -IRQ
+   lit 1irq 25 INSTALL ( P1)  lit 2irq 26 INSTALL ( P2)
+   0 $F40 IO! ( 2 falling, 1 falling)
+   $46 $F4C IO! ( priority 6)
+   7 $F4D IO!  7 $F4E IO! ( enable IC1,IC2)   +IRQ  ;
+
+SKIP
+  now the really gross, bogus part: enable the ls244 that
+  isolates the maskable interrupt inputs from power-up
+  glitches; without this the v25 is hosed within moments...
+
+  Actually we do this in PORTS when we drive the line low...
+
+
+
+( OK )                                        DECIMAL
+: OK  PORTS  CLEAR  father-time AGES  600 uS  +CLOCK  ;
+
+: BOOT  +DIVIDE  MULTI  OK  MIDI-SETUP  SPIN  +WHEELS
+   1 AWAIT  ;  RECOVER
+
+EPROM SKIP
+: boot  debug ACTIVATE  BOOT  1 AWAIT  ;
+
+
+
+
+
+
+
+

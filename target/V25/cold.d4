@@ -1,0 +1,73 @@
+( V25 Cold Start code  Copyright 1995-1998 David Frech)
+
+( 15-sep-1998.  Modified to run under DForth system.)
+
+cr  s" Cold "  file[
+
+hex
+
+LABEL COLD    'CODE  RESOLVES |boot
+   CLI,  FFFF # AX MOV,  AX DS MOV,
+   io-seg 100 / # 0F ) BYTE MOV,  ( high byte)
+   io-seg # AX MOV,  AX DS MOV,    ( ready to set up V25 regs)
+   80 # FE1 ) BYTE MOV,  ( Refresh off)
+[with] debug [if]
+   1555 # FE8 ) MOV,     ( ROM 1 wait state, I/O 0 wait, RAM 1 wait)
+[else]
+   1500 # FE8 ) MOV,     ( ROM 1 wait state, I/O & RAM 0 wait)
+[then]
+   04 # FEB ) BYTE MOV,  ( int. RAM disabled, CLK = fX/2)
+
+[with] eprom [if]   ( don't set up vectors in debug mode!)
+   AX AX XOR,  AX DS MOV,  ( seg 0)  20 # CX MOV,  DI DI XOR,
+   BEGIN,
+     COLD # 0 [DI] MOV,  CS 2 [DI] MOV,  ( unassigned interrupts reboot)
+     4 # DI ADD,  LOOP,  ( cont'd)
+[then]
+
+   ram-seg # AX MOV,  AX DS MOV,  AX ES MOV,  ( DS = ES = ram)
+   AX SS MOV,   8000 ram-seg 10 * - # SP MOV,  ( set up interim stack)
+
+   ( now clear ram to 5555)  4000 ram-seg 8 * - # CX MOV, ( words)
+   5555 # AX MOV,  DI DI XOR,  REP, AX STOS,  ( ES)
+
+   io-seg # PUSH,  ES POP,  ( set up I/O seg)
+   ( DS = SS = ram;  ES = i/o;  CS = rom)
+
+(  Scary picture:
+    <----ROM------>                  RAM
+    CONST       CONST               -------
+    'user <-+   'user -----+        D stack
+     S0     |    S0  ------|------> -------
+    link    +-- link       |        R stack
+                           +------> -------
+                                     User     )
+
+   ( Be sure we push 2 bytes here...)
+   aaaa # PUSH,  'CODE  CELL- RESOLVES |word-seg  DS POP,  ( word seg)
+   ( We need this for setting up the tasks, since the info describing the
+     tasks is in the word seg.  SS is still RAM.)
+
+   ' Operator # BX MOV,  ( tells everyone what to do)   BX DX MOV, ( copy)
+
+( BX=task descriptor; SI=user; DI=user->link
+  0 [BX] = user;    2 [BX] = bottom;   4 [BX] = link
+  0 [DI] = status;  2 [DI] = link;     4 [DI] = bottom;   6 [DI] = top)
+
+ BEGIN,  ( loop thru all tasks)
+   0 [BX] DI MOV, ( DI=user)  4 [BX] SI MOV, ( SI=link)
+   SS: WAIT # 0 [DI] MOV,  ( STATUS = WAIT)
+   0 [SI] AX MOV,  SS: AX 2 [DI] MOV,   ( LINK to next user)
+   2 [BX] AX MOV,  SS: AX 4 [DI] MOV,   ( setup bottom)
+   SI BX MOV,  BX DX CMP,  0= UNTIL,   ( back to Operator)
+
+   0 [BX] DI MOV,  ( Operator user area)  SS: 4 [DI] SP MOV, ( bottom)
+   -2 [DI] BX LEA,  SS: FACE # 0 [BX] MOV, ( marks bottom of R stack)
+   CAFE # PUSH, ( top)   BX PUSH, ( init BP=user-2)
+ ' BOOT # PUSH,  ( PUSH ip)  SS: SP 6 [DI] MOV,  ( set TOP)
+   SS: RUN # 0 [DI] MOV,  ( STATUS = RUN)
+
+   CLD,  RUN ) JMP,   ( DI=w=user)  C;
+         decimal        ( jump to RESTORE and go!)
+
+]file

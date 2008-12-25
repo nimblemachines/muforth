@@ -1,0 +1,512 @@
+Wheels Second Try   C O S I
+
+1 is load
+
+( patterns)
+ - spell `COSI'
+ - spell `HELLO'
+ - skitter
+ - double skitter  (2 independent)
+ - mirrored skitter
+ - rain
+ - glissando -- user controls direction
+ - ex (mirrored gliss)
+ - double ex (two halves the same)
+
+
+( Wheels load)
+2001 LOAD  3001 LOAD
+( serial   fix   )
+   : DEBUG  \ //  ;   : EPROM  ;        ( production)
+// : DEBUG        ;   : EPROM  \ //  ;  ( debug)
+4001 LOAD  5001 LOAD  1003 LOAD  6001 LOAD
+( compiler   kernel    TASKs       chat )
+DEBUG  7001 LOAD  ( load cold here for debug)
+8001 LOAD ( midicore)   CR ." (( Wheels "  4 31 +THRU  ." )) "
+EPROM  7001 LOAD  ( load cold here for eprom)
+.USER
+QUIT  ( set interpreter to target)
+
+
+
+
+( THIS BLOCK MUST CONTAIN A SIGNATURE!!)
+
+SIGN" COSI Encoder Wheels Interactive Sculpture. "
+SIGN" Copyright (c) 1995, 1996 "
+SIGN" David Frech & Remmy Demmy Productions."
+
+
+
+SKIP  Loaded by kernel at start of memory.
+
+
+
+
+
+
+
+( TASKs )       ( THIS BLOCK MUST CONTAIN TASK DEFS!!)
+ 00   ( don't execute target's '0'!)
+( #s  #r  #u)
+ 128 128  32  BACKGROUND 1spin
+ 128 128  32  BACKGROUND 2spin     ( wheel tasks)
+ 128 128  32  BACKGROUND Operator
+ 128 128  32  BACKGROUND father-time  ( AGES)
+ 128 128  32  BACKGROUND aa
+ 128 128  32  BACKGROUND bb
+ 128 128  32  BACKGROUND midi
+ 128 128  32  BACKGROUND lights
+DEBUG  128 128  32  BACKGROUND debug
+                                        CIRCLE 1spin
+
+
+
+( I/O port initialization)                    HEX
+: PORTS    0 f00 IO!   c0 f08 IO!  ( data low, strobes hi)
+           0 f10 IO!  ( lights off, wheel enable LOW)
+           0 f01 IOW!      ( port0 is data, oooo/oooo)
+        003f f09 IOW!      ( port1 is data, ooii/iiii)
+           0 f11 IOW!      ( port2 is data, oooo/oooo)  ;
+                                              DECIMAL
+SKIP  Ports:
+P0 =  S/-R  d6  d5  d4  d3  d2  d1  d0          set/reset, data
+P1 =  /perc  /hold  B2  B1  A2  A1  /midi /nmi    strobe, irqs
+P2 =  lights  /wheel  X  X    X  X  X  X
+
+lights = hi=on, low=off
+/midi goes into /int line on FAT header
+
+
+( encoder task variables)
+2 USER encoder     ( current value; integer part)
+2 USER fraction    ( current value, frac part)
+2 USER incr        ( frac incr added to fraction by IRQ)
+2 USER modulo      ( applied to encoder value when it changes)
+2 USER pos         ( modulo'ed encoder value)
+2 USER action      ( action to take when `encoder' changes)
+
+( assembler hack)
+:: LAHF,  $9F C,  ;;       ( need for 32-bit math)
+:: SAHF,  $9E C,  ;;
+
+
+
+
+
+( light support)
+: LIGHT  ( turn on lights for image)  $80 $f10 SOURCE  ;
+: DARK   ( turn off)                  $80 $f10 SINK    ;
+
+DEBUG  : LIGHT  ( debug)  111 ON+ $80 STROBE  ;
+DEBUG  : DARK   ( debug)  111 $80 STROBE  ;
+
+: +LIGHTS   lights ACTIVATE  LIGHT  10000 MS  DARK  1 AWAIT  ;
+
+
+
+
+
+
+
+
+( Optical wheel interrupt)        HEX     KCODE  ( asm)
+LABEL EncoderIRQ  ( caller pushed DS AX BX; DS = IO-SEG)
+   F08 ) AH AND,  AH AL XOR,  ( set FLAGS!)
+   DATA-SEG #, AX MOV,  AX DS MOV,
+   ' incr >DATA [BX] AX MOV,  0=, IF,  ( add)
+     AX ' fraction >DATA [BX] ADD,   LAHF,
+   0 #, ' encoder  >DATA [BX] W-PTR ADC,  ELSE,  ( subtract)
+     AX ' fraction >DATA [BX] SUB,   LAHF,
+   0 #, ' encoder  >DATA [BX] W-PTR SBB,  THEN,
+   SAHF,  0 #, 0 [BX] W-PTR SBB,  ( Up Semaphore if encoder chg)
+   BX POP,  AX POP,  DS POP,  FINT,  IRET,  C;
+
+SKIP   A   B   inc      A   B   inc
+       R1  0    -       R1  1    +      XOR 0= IF  +  ELSE  -
+       F0  0    +       F0  1    -
+BX=task; AH=mask, AL=toggle for rising v falling
+( Optical wheel interrupt)                      HEX
+CODE 1irq   ( P1)   STI,  DS PUSH,  AX PUSH,  BX PUSH,
+   68 C, IO-SEG , ( push)  DS POP,  f40 ) AL MOV,  ( edge mode)
+   10 #, AL AND,  10 #, f40 ) XOR, ( fall<->rise)
+   10 #, AH MOV, ( B1 mask)  ' 1spin >DATA #, BX MOV,
+   EncoderIRQ jump,  ( pops and returns)  C;
+
+CODE 2irq  ( P2)   STI,  DS PUSH,  AX PUSH,  BX PUSH,
+   68 C, IO-SEG , ( push)  DS POP,  f40 ) AL MOV,  ( edge mode)
+   40 #, AL AND,  40 #, f40 ) XOR, ( fall<->rise)  1 #, AL SHR,
+   20 #, AH MOV, ( B2 mask)  ' 2spin >DATA #, BX MOV,
+   EncoderIRQ jump,  ( pops and returns)  C;
+                                                DECIMAL
+
+
+
+( encoder task)
+: {{  ( - incr)  incr @  incr OFF  ;  ( `blocks' encoder)
+: }}  ( incr -)  incr !  ;
+
+: ENCODER  ( incr modulo 'action 'task -)  PUSH
+   R@ action HERS !  R@ modulo HERS !  R@ incr HERS !
+   POP ACTIVATE  {{  encoder OFF  $8000 fraction !  }}  pos OFF
+   BEGIN  1 AWAIT  +LIGHTS  ( {re-}start lights task)
+   encoder @  DUP pos @ +  modulo @ MOD  DUP pos !
+   SWAP NEGATE encoder +!  ( pos) action @EXECUTE  AGAIN  ;
+
+: PATTERN  ( 'action -)  PUSH   $3000  48  ( incr mod)  POP
+   2spin ENCODER  ;
+
+SKIP  Except for initialization, encoder values that the inter-
+rupt modifies can be only changed ATOMICALLY: +!, incr, etc.
+( RANDOM    CHOOSE )     DECIMAL
+VARIABLE seed
+: RANDOM   seed @   31421 *   6927 +   DUP seed !  ;
+                     ( from Starting Forth)
+
+: CHOOSE   ( range - val)  RANDOM  UM* NIP  ;  ( take hi word)
+
+SKIP
+: flips  FOR  9 CHOOSE .  NEXT  CR  ;
+
+: RANDOM   seed @   31421 *   6927 +   DUP seed !  ;
+                     ( from Starting Forth)
+
+: RANDOM   seed @   13709 *   13849 +   DUP seed !  ;
+                     ( from Chamberlin, Mus. App. of uProcs)
+
+( DRIP   MIRROR   2MIRROR )
+: DRIP  ( valve# -)  ( valve# is 0..47)
+   0 SWAP ( status)  16 +  34 ( *600uS)  NOTE-ON  ;
+
+: REFLECT  ( v reflex offset -)  PUSH
+   OVER R@ + DRIP   SWAP - POP + DRIP  ;
+: MIRROR   ( v -)  47 0 REFLECT  ;
+: 2MIRROR  ( v -)
+   24 MOD  DUP 23 0 REFLECT   23 24 REFLECT  ;
+
+
+
+
+
+
+
+( RAIN   GLISS   XGLISS )
+: RAIN   ( modulo -)  DROP  48 CHOOSE  DRIP  ;
+: RAINING     lit RAIN  PATTERN  ;
+
+: GLISSING    lit DRIP  PATTERN  ;
+
+: XGLISSING   lit MIRROR  PATTERN  ;
+
+: 2XGLISSING  lit 2MIRROR  PATTERN  ;
+
+
+
+
+
+
+
+( SKITTER )                             DECIMAL
+: ?REVERSE  ( dir loc - dir' loc')
+   10 CHOOSE 0=  IF  SWAP NEGATE SWAP  THEN  ;
+
+: skitters  ( dir loc - dir' loc')
+   DUP DRIP  OVER +  48 MOD  ?REVERSE  ;
+
+: xskitters  ( dir loc - dir' loc')
+   DUP MIRROR  OVER +  48 MOD  ?REVERSE  ;
+
+: EDGILY  ( action 'task -)  PUSH  R@ action HERS !  POP
+   ACTIVATE  1 24  BEGIN  1 AWAIT  action @EXECUTE  AGAIN  ;
+
+
+
+
+( SKITTER )
+: SKITTERS    ( modulo -)  DROP  aa WAKE  ;
+: 2SKITTERS   ( modulo -)  DROP  aa WAKE  bb WAKE  ;
+
+: SKITTERING  lit SKITTERS  PATTERN
+   lit skitters aa EDGILY  ;
+
+: XSKITTERING  lit SKITTERS  PATTERN
+   lit xskitters aa EDGILY  ;
+
+: 2SKITTERING  lit 2SKITTERS  PATTERN
+   lit skitters aa EDGILY   lit skitters bb EDGILY  ;
+
+
+
+
+( letters)
+:: .'  .  ;;  ( save for later!)
+:: .   2*  ;;
+:: X   .  1+  ;;
+:: |   C,  0  ;;
+:: |;  C,  ;;
+
+: 9BITS  ( valve bits:?? - valve+9)  ( high byte has bits)
+   8 FOR  DUP 0< IF  OVER DRIP  THEN
+                          1 +UNDER  2*  NEXT  DROP  1+  ;
+   ( show 8 and leave space of 1)
+
+:: LETTER  CREATE  0   DOES>  ( valve# line pfa - valve+8 line)
+   OVER PUSH   + 1- ROM@  ( bits:??)  9BITS   POP  ;
+
+
+( letters)
+LETTER 'C'
+     . X X X X . |
+     X . . . . X |
+     X . . . . . |
+     X . . . . . |
+     X . . . . . |
+     X . . . . . |
+     X . . . . . |
+     X . . . . . |
+     X . . . . X |
+     . X X X X . |;
+
+10 CONSTANT height   ( change if char size changes)
+( letters have 2 empty dots on left, 1 on right)
+25 CONSTANT linespace  ( 25 ms is a good value)
+( letters)
+LETTER 'O'
+     . X X X X . |
+     X . . . . X |
+     X . . . . X |
+     X . . . . X |
+     X . . . . X |
+     X . . . . X |
+     X . . . . X |
+     X . . . . X |
+     X . . . . X |
+     . X X X X . |;
+
+
+
+
+( letters)
+LETTER 'S'
+     . X X X X . |
+     X . . . . X |
+     X . . . . . |
+     X . . . . . |
+     . X X X X . |
+     . . . . . X |
+     . . . . . X |
+     . . . . . X |
+     X . . . . X |
+     . X X X X . |;
+
+
+
+
+( letters)
+LETTER 'I'
+     . X X X . . |
+     . . X . . . |
+     . . X . . . |
+     . . X . . . |
+     . . X . . . |
+     . . X . . . |
+     . . X . . . |
+     . . X . . . |
+     . . X . . . |
+     . X X X . . |;
+
+
+
+
+( letters)
+LETTER 'H'
+     X . . . . X |
+     X . . . . X |
+     X . . . . X |
+     X . . . . X |
+     X X X X X X |
+     X . . . . X |
+     X . . . . X |
+     X . . . . X |
+     X . . . . X |
+     X . . . . X |;
+
+
+
+
+( letters)
+LETTER 'E'
+     X X X X X X |
+     X . . . . . |
+     X . . . . . |
+     X . . . . . |
+     X X X X . . |
+     X . . . . . |
+     X . . . . . |
+     X . . . . . |
+     X . . . . . |
+     X X X X X X |;
+
+
+
+
+( letters)
+LETTER 'L'
+     X . . . . . |
+     X . . . . . |
+     X . . . . . |
+     X . . . . . |
+     X . . . . . |
+     X . . . . . |
+     X . . . . . |
+     X . . . . . |
+     X . . . . . |
+     X X X X X X |;
+
+
+
+
+( text raster scanning)
+( letters:  valve line - valve+9 line)
+: COSI   'C' 'O' 'S' 'I'       2DROP  ;
+: HELLO  'H' 'E' 'L' 'L' 'O'   2DROP  ;  ( scans a line)
+
+:: .  .'  ;;  ( back to normal)
+
+: 1cosi  ( modulo -)    DROP  height FOR
+   6 ( valve)  I 1- ( line)  COSI    linespace MS  NEXT  ;
+
+
+: 1hello  ( modulo -)   DROP  height FOR
+   1 ( valve)  I 1- ( line)  HELLO   linespace MS  NEXT  ;
+
+
+
+( text raster scanning)
+: CALLIGRAPHY  ( action -)  PATTERN
+   $300 2spin incr HERS !  ( 1/3 turn)  ;
+   ( override incr; put in time between lines)
+
+: HELLOING  lit 1hello  CALLIGRAPHY  ;
+: COSIING   lit 1cosi   CALLIGRAPHY  ;
+
+
+
+SKIP
+2 USER line       ( current line of letter scan)
+: ?BLANK  ( valve line - )
+   DUP height < IF  EXIT  THEN  POP DROP  2DROP  ;
+
+
+( selector)
+: SELECT  ( action# -)  9 MOD  ( sanity)  WHICH
+   GLISSING    XGLISSING    2XGLISSING    RAINING    ( 0-3)
+   SKITTERING  XSKITTERING  2SKITTERING              ( 4-6)
+   HELLOING    COSIING  ;                            ( 7-8)
+
+: SELECTOR
+   256  9  lit SELECT  1spin ENCODER    GLISSING ( default)  ;
+
+: BLOCK  ( 'task -)  incr HERS OFF  ;
+: IDLE   1spin BLOCK  2spin BLOCK  ;
+
+
+
+
+
+( midi support)
+: MIDI-SETUP
+   OMNI CHANNEL+ ( set chan1)  +MIDI-IRQ  midi LISTEN  ;
+
+: FLAVORS  BEGIN  SELECTOR  2 $f08 LOW
+               IDLE  +MIDI  2 $f08 HIGH  -MIDI  AGAIN ;
+
+
+
+
+
+
+
+
+
+
+( bogus V25 hack!)
+: +WHEELS   -IRQ   IDLE
+   lit 1irq 25 INSTALL ( P1)  lit 2irq 26 INSTALL ( P2)
+   0 $F40 IO! ( 2 falling, 1 falling)
+   $46 $F4C IO! ( priority 6)
+   7 $F4D IO!  7 $F4E IO! ( enable IC1,IC2)   +IRQ  ;
+
+SKIP
+  now the really gross, bogus part: enable the ls244 that
+  isolates the maskable interrupt inputs from power-up
+  glitches; without this the v25 is hosed within moments...
+
+  Actually we do this in PORTS when we drive the line low...
+
+
+
+( OK )                                        DECIMAL
+: OK  PORTS  CLEAR  DARK
+   father-time AGES  600 uS  +CLOCK  MIDI-SETUP  ;
+
+: BOOT  MULTI  +DIVIDE  OK  +WHEELS  FLAVORS  ;
+
+EPROM SKIP
+: boot  debug ACTIVATE  BOOT  1 AWAIT  ;
+
+
+
+
+
+
+
+
+( scanning test)   EPROM SKIP
+2 USER time
+: CONSTANT  ( 'action -)  aa action HERS !  aa ACTIVATE
+   15 time !
+   BEGIN  0 action @EXECUTE  400 MS  AGAIN  ;
+
+: HELLOING  lit 1hello  CONSTANT  ;
+: COSIING   lit 1cosi   CONSTANT  ;
+
+
+
+
+
+
+
+
+( DEBUG )   EPROM SKIP
+2 USER 'monitor
+: MONITOR  ( 'monitor-var -)  debug 'monitor HERS !
+   debug ACTIVATE  100 time !   0 SERIAL  ( clobber)
+   BEGIN  'monitor @ @  put   time @ MS  AGAIN  ;
+
+
+
+
+
+
+
+
+
+
+
+( arithmetic test)   EPROM SKIP
+CODE +C  ( a b - sum cy)  AX POP,  AX top ADD,  top PUSH,
+   top top SBB, ( cy -> -1)  NEXT,  C;
+
+CODE -C  ( a b - diff cy)  top NEG,  AX POP,  AX top ADD,
+   top PUSH,  top top SBB, ( cy -> -1)  NEXT,  C;
+
+SKIP
+Could make +C and -C work like they do in `hardware': ie, that
+4 + 1 -> no cy; $8000 + $8000 -> cy;
+4 + (-1) -> cy;  2 + (-3) -> no cy.
+Just complement carry on SUB (or, better, use ADD to SUB)
+
+CODE -C  ( a b - diff cy)  top AX MOV,  top POP,  AX top SUB,
+   top PUSH,  top top SBB,  NEXT,  C;
+

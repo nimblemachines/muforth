@@ -1,0 +1,176 @@
+ Generic  == S C A N N E R ==
+
+1 is load
+
+
+
+
+
+
+
+
+
+
+
+
+
+( scanner load)
+2001 LOAD  3001 LOAD
+( serial   fix   )
+// : DEBUG  \ //  ;   : EPROM  ;        ( production)
+   : DEBUG        ;   : EPROM  \ //  ;  ( debug)
+4001 LOAD  5001 LOAD  1003 LOAD  6001 LOAD
+( compiler   kernel    TASKs       chat )
+DEBUG  7001 LOAD  ( load cold here for debug)
+8001 LOAD  ( midi out)
+CR ." (( Scanner "  4 10 +THRU  ." )) "
+EPROM  7001 LOAD  ( load cold here for eprom)
+.USER
+QUIT  ( set interpreter to target)
+
+
+
+( THIS BLOCK MUST CONTAIN A SIGNATURE!!)
+
+SIGN" Generic V25 MIDI Scanner v1.0. "
+SIGN" Copyright (c) 1995, 1996 "
+SIGN" David Frech & Remmy Demmy Productions."
+
+
+
+SKIP  Loaded by kernel at start of memory.
+
+
+
+
+
+
+
+( TASKs )       ( THIS BLOCK MUST CONTAIN TASK DEFS!!)
+ 00   ( don't execute target's '0'!)
+( #s  #r  #u)
+ 128 128  32  BACKGROUND Operator
+ 128 128  32  BACKGROUND father-time  ( AGES)
+ 128 128  32  BACKGROUND midi
+DEBUG  128 128  32  BACKGROUND debug
+                                        CIRCLE Operator
+
+
+
+
+
+
+
+
+( ports)                                   HEX
+: PORTS   0 f00 IO!   c0 f08 IO!  ( data low, strobes hi)
+          0 f01 IOW!   ( port0: data, oooo/oooo)
+       000f f09 IOW!   ( port1: data, oooo/iiii)
+       0080 f11 IOW!   ( port2: data, iooo/oooo)  ;
+                                           DECIMAL
+
+
+SKIP
+Ports:
+P0 =  S/-R  d6  d5  d4  d3  d2  d1  d0  ( set/reset, data)
+P1 =  /perc  /hold  X  X  X  X  /midi  X  ( strobes, low)
+P2 =  sense  select6-0                    ( scanner)
+
+/midi shows up as /int on FAT header.
+
+( scanner histories)                         DECIMAL
+112 CARRAY closed     ( hi bit set if switch closed)
+
+: CLEAR   closed 112 ERASE  CLEAR  ;  ( call midi `core's)
+
+
+
+
+
+
+
+
+
+
+
+
+( drum pad input)                          HEX
+CODE 8SCAN  ( start# - s0 chg0 .. sn chgn n)
+   78 #, BX AND, ( sanity)  8 #, CX MOV,  AX AX XOR, ( count)
+   BEGIN,  ES: BL F10 ) MOV,  ES: F10 ) DL MOV,  DL DH MOV,
+   ' closed >DATA [BX] DL XCHG,  ( DL=prev, DH=cur)
+   DH DL XOR,  0<, IF, ( changed state)  BX PUSH, ( scan #)
+   DH DH ADD, ( cy=sign)  DX DX SBB,
+   DX PUSH, ( -1 if closed, 0 otherwise)
+   AX INC, ( count of changed)  THEN,
+   BX INC,  LOOP,  AX BX MOV, ( n to top)  NEXT,  C;
+
+                                            DECIMAL
+
+
+
+
+( scanner input)                          DECIMAL
+: CLOSE  ( scan# -)  16 +  64  SEND-ON  ;
+: OPEN   ( scan# -)  16 +      SEND-OFF  ;
+
+: HITS  ( s0 chg0 .. sn chgn n -)
+   ?FOR  IF  CLOSE  ELSE  OPEN  THEN  NEXT  THEN  ;
+: 8CHECK  ( start -)  PAUSE  8SCAN  HITS  ;
+: SCAN112   0  14 FOR  DUP 8CHECK  8 +  NEXT  DROP  ;
+: SCAN     BEGIN  SCAN112  AGAIN  ;  RECOVER
+
+
+
+
+
+
+
+( midi support)
+: MIDI-SETUP   +MIDI-IRQ
+   32 midi-out QINIT  -31 STATUS +!  ( room in Q)  +MIDI  ;
+
+: OK   PORTS  CLEAR  father-time AGES  600 uS  +CLOCK  ;
+
+: BOOT  +DIVIDE  MULTI  OK  MIDI-SETUP  SCAN  ;  RECOVER
+
+EPROM SKIP
+: boot  debug ACTIVATE  BOOT  1 AWAIT  ;
+
+
+
+
+
+
+( test)   EPROM SKIP
+
+: GEN  ( 'task -)  ACTIVATE  32 midi-out QINIT  -31 STATUS +!
+   0 BEGIN  DUP 64 SEND-ON  200 MS  DUP SEND-OFF
+            1+  128 MOD  AGAIN  ;
+
+: QSCAN  ( 'task -)  ACTIVATE  32 midi-out QINIT  -31 STATUS +!
+   SCAN  ;
+
+: -EMPTY
+   BEGIN  PAUSE  midi-out 2 + @  midi-out 4 + @  -  UNTIL ;
+: SEND  ( 'task -)  ACTIVATE
+   BEGIN  -EMPTY  midi-out Q@  put  debug WAKE  AGAIN  ;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

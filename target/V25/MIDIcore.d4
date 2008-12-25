@@ -1,0 +1,239 @@
+( V25 MIDIcore. Basic MIDI engine, MIDI merge for scanning.)
+
+( Copyright 1996-1999 David Frech.)
+
+( Created 18jan96 - pygmy-DOS version.)
+
+( Modified for dforth 05-aug-1999.)
+
+( 22-aug-1999. Split into a separate version for scanning, for now. It merges
+  scanned data with MIDI in, so it's a little different from the standard
+  version.)
+
+( 20-sep-1999. Conditionalized the midi code so scanning can share code with
+  other apps.)
+
+cr  s" MIDIcore "  file[
+
+\ >here  HERE
+
+decimal
+
+( 5 aug 1999. If we make GRIND a deferred word and reorg this file can we
+  make it clearer and avoid patching the jump table? Also we need to figure
+  out how to factor out filtering. In some cases we'll want the thing to be
+  omni, always; in others respond to fixed channels; and in yet others, to
+  have a channel set button and a channel display. This also means that we
+  need to send `status' to NOTE-ON and NOTE-OFF so they can decide what to
+  do, if they do different things based on the channel.)
+
+
+( Status byte dispatching.)
+
+( We don't `execute' words anymore, instead changing threading by setting
+  `i'. We also do the equivalent of `FRESH' before we do the jump to the
+  new status word. Even in the case when the status gets `FILTER'ed, this
+  is Ok: the stacks will be clear, and we will jump into GRIND.)
+
+CODE ?JUMP  ( returns non-status bytes or jumps to status routine)
+   BL BL OR,  0< IF, ( status or realtime)
+   ( check for realtime)  "f8 # BL CMP,  u< IF,
+   t w MOV,  "70 # w AND,  3 # w SHR, ( lo 3 bits of status, *2)
+   "100 [w] i MOV, ( force word offset; get new `i')
+   \ |here \ |+  2 - ( jump table)  EQU status-jump
+
+   ( clear both stacks, keeping status on top - `FRESH')
+   SS: u )        r MOV,  ( RP!)
+       bottom [r] s MOV,  ( SP!)  ( "cafe # PUSH,)
+   s DEC,  s DEC, ( leave sentinel alone)  NEXT,  THEN,
+
+   ( realtime - DROP, re-execute MIDI@)
+   t POP,  HERE 2 + # i MOV,  THEN, ( data)  NEXT,  C;
+
+: MIDI@  ( - b)  KEY  ?JUMP  ;
+
+: GRIND   BEGIN  MIDI@ DROP  AGAIN  -;
+   ( infinite, till `MIDI@' returns to someone else..)
+
+
+( We're sharing MIDIout among several tasks; we need to serialize access
+  to the output port.)
+VARIABLE MIDIout  ( task that owns the port)
+
+( MIDI out)
+: SEND   FOR  EMIT  NEXT  ;      ( useful if we've already got the port)
+: [SEND]   ( bn bn-1 .. b1 n -)  ( bracketed, ie ATOMIC, send)
+   MIDIout TAKE   SEND   MIDIout RELEASE  ;
+
+[with] debug [if]
+: [SEND]   1 SERIAL  [SEND]  0 SERIAL  ;
+[then]
+
+
+[with] MIDIscan [if]
+
+( subtracted from midi-in -> latch; added to latch# for midi-out)
+( Set at startup from jumpers/DIP switch.)
+VARIABLE MIDItranspose  
+
+: NOTE-ON-RUNNING  ( status)
+   PUSH ( status)
+   BEGIN   MIDI@ ( note#)  MIDI@ ( vel)
+      DUP  IF    OVER MIDItranspose @ -  OVER  +LATCH  SWAP R@  3 [SEND]
+           ELSE  OVER MIDItranspose @ -        -LATCH  SWAP R@  3 [SEND]  THEN
+   AGAIN  -;
+
+: NOTE-OFF-RUNNING  ( status)
+   PUSH ( status)
+   BEGIN   MIDI@ ( note#)  MIDI@ ( vel)
+           OVER  MIDItranspose @ -  -LATCH  SWAP R@  3 [SEND]   AGAIN  -;
+
+[then]  ( MIDIscan)
+
+
+[with] MIDIfilter [if]  ( channel filtering)
+
+( channel filtering)
+VARIABLE channel        ( value to match)
+VARIABLE channel-mask   ( bits to match)
+: CHANNEL!   ( channel mask)   channel-mask !  channel !  ;
+: CHANNEL    ( channel#)   "0f  CHANNEL!  ;
+: OMNI                    0  0  CHANNEL!  ;
+
+
+CODE FILTER  ( status - status)
+   t AX MOV, ( status)
+   SS: channel-mask ) AX AND,  SS: channel ) AX XOR,
+   0= not IF,  ' GRIND # i MOV,  THEN,  NEXT,  C;
+
+: NOTE-ON-RUNNING  ( status)
+   FILTER
+   BEGIN   MIDI@ ( note#)  MIDI@ ( vel)
+           ?DUP  IF  +LATCH  ELSE  -LATCH  THEN
+   AGAIN  -;
+
+: NOTE-OFF-RUNNING  ( status)
+   FILTER
+   BEGIN   MIDI@ ( note#)  MIDI@ ( vel)  DROP  -LATCH   AGAIN  -;
+
+[then]  ( MIDIfilter - channel filtering)
+   
+
+[with] MIDIfour [if]
+
+( subtracted from midi-in -> latch; added to latch# for midi-out)
+( The instrument is tuned to C. This transpose converts C0 [24] to E-1 [16].
+  The lowest note of the instrument is a C, but is connected to latch 16.)
+
+8 CONSTANT MIDItranspose
+
+CODE FILTER  ( status - status)
+   t AX MOV, ( status)  "0c # AX AND,  ( only respond to channels 0--3)
+   0= not IF,  ' GRIND # i MOV,  THEN,  NEXT,  C;
+
+: NOTE-ON-RUNNING  ( status)
+   FILTER  PUSH
+   BEGIN   R@ ( status)  MIDI@ ( note#) MIDItranspose -  MIDI@ ( vel)
+           ?DUP  IF  +LATCH  ELSE  2DROP  THEN
+   AGAIN  -;
+
+: NOTE-OFF-RUNNING   GRIND  -;
+
+[then]  ( MIDIfour)
+
+
+[with] MIDIinteract [if]
+
+CODE FILTER  ( status - channel)
+   t AX MOV, ( status)  "0e # AX AND,  ( only respond to channels 0--1)
+   0= not IF,  ' GRIND # i MOV,  THEN,  AX t XOR,  NEXT,  C;
+
+: NOTE-ON-RUNNING  ( status)
+   FILTER  IF
+     BEGIN   MIDI@ ( note#)  MIDI@ ( vel)
+             IF  +HOLD  ELSE  -HOLD  THEN   AGAIN
+   THEN
+     BEGIN   MIDI@ ( note#)  MIDI@ ( vel)
+             DUP IF  +PERC  ELSE  2DROP  THEN   AGAIN  -;
+
+: NOTE-OFF-RUNNING  ( status)
+   FILTER  IF
+     BEGIN   MIDI@ ( note#)  MIDI@ ( vel)  DROP -HOLD   AGAIN
+   THEN  GRIND  -;
+
+
+( set the global volume - ctrlr #7 - from MIDI stream)
+: CONTROL-CHANGE-RUNNING  ( status)
+   FILTER
+   BEGIN   MIDI@ ( ctl#)  MIDI@ ( value)
+           SWAP 7 XOR  IF  DROP  ELSE  vel !  THEN  AGAIN  -;
+
+( program change #0 pauses the sequencer)
+VARIABLE MIDIpaused
+: PROGRAM-CHANGE-RUNNING  ( status)
+   FILTER
+   BEGIN   MIDI@ ( prog#)  0= IF  1 MIDIpaused +!  THEN  AGAIN  -;
+
+
+( status byte jump table for MIDIinteract; these are ip's, not pfa's)
+HERE  status-jump  \ >!  ( resolve jump)
+]  NOTE-OFF-RUNNING  ( 8x key value)
+   NOTE-ON-RUNNING   ( 9x key value)
+   GRIND             ( Ax)
+   CONTROL-CHANGE-RUNNING   ( Bx key value)
+   PROGRAM-CHANGE-RUNNING   ( Cx key)
+   GRIND   GRIND   GRIND   [
+ (  Dx      Ex     Fx)
+
+[else]
+
+( status byte jump table; these are ip's, not pfa's)
+HERE  status-jump  \ >!  ( resolve jump)
+]  NOTE-OFF-RUNNING   NOTE-ON-RUNNING      ( 8x  9x)
+   GRIND   GRIND   GRIND   GRIND   GRIND   GRIND   [
+ (  Ax      Bx      Cx      Dx      Ex     Fx)
+
+[then]  ( MIDIinteract)
+
+
+( Set up the particulars for a MIDI port.)
+: MIDIport  ( port)  SERIAL  [ 31250 ] BPS  +Rx +Tx 8N1  ;
+
+[with] MIDIscan [if]
+( This is a little bit subtle. We need to call SERIAL from -both- the midi
+  task and the scanner task. The way in which we call LISTEN accomplishes
+  this.)
+
+: LISTEN   ( 'midi-task -)   0 MIDIport   ACTIVATE
+   0 SERIAL  input0  ReceiveISR0  GRIND  -;
+[then]
+
+
+[with] MIDIfour [if]    ( MIDI in on serial 1)
+: LISTEN   ( 'midi-task -)   ACTIVATE
+   1 MIDIport   input1  ReceiveISR1   GRIND  -;
+[then]
+
+
+[with] MIDIfilter  [with] MIDIinteract  \ or [if]   ( MIDI in on serial 0)
+: LISTEN   ( 'midi-task -)   ACTIVATE
+   0 MIDIport   input0  ReceiveISR0   GRIND  -;
+[then]
+
+
+[with] debug [if]
+: LISTEN   ( 'midi-task -)   ACTIVATE
+   1 MIDIport   input1  ReceiveISR1   GRIND  -;
+[then]
+
+[with] MIDIinteract  [if]
+: MIDI   ( task)   MIDIout OFF   MIDIpaused OFF   LISTEN  ;
+[else]
+: MIDI   ( task)   MIDIout OFF   LISTEN  ;
+[then]
+
+
+'CODE  \ swap-  ." code " .  HERE \ swap-  ." ; words "  .
+
+]file
+
