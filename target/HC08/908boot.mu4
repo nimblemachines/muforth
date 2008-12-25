@@ -3,8 +3,9 @@
   Copyright 2002-2009 David Frech. All rights reserved, and all wrongs
   reversed. (See the file COPYRIGHT for details.)
 
-( This will get moved into target/hc08 in due time. I just wanted to
-  quickly test the bootloader on my MC908QB8 chips.)
+( I want to use the bootloader on my MC908QB8 chips to bootstrap my 9S08
+  chips. This is support for talking to the ROM monitor/bootloader resident
+  on all 908 microcontrollers.)
 
 cr " Bootloader/HC08 "  file[#
 
@@ -21,8 +22,8 @@ fd-target target-raw
 
 ( For HC08 devices, use 9600.)
 9600 bps
-1000000000 9600 / constant bit-time ( ns)
-: pause  0 bit-time 4 *  nanosleep ;
+-- 1000000000 9600 / constant bit-time ( ns)
+-- : pause  0 bit-time 4 *  nanosleep ;
 
 ( Spying on the protocol.)
 variable spy  spy off
@@ -38,7 +39,7 @@ variable spy  spy off
 ( The hardware we're using means that we should recv sent chars _twice_ -
   once because of hardware loopback, and again because the target is
   - hopefully - echoing them.)
-: expect  ( ch)  push ( expected)
+: expect  ( ch)  "0ff and  push ( expected)
    spy @ if  cr ." expected " r@ .h8_ r@ .  ." received "  then
    recv recv ( loopback, target)
    r@ =  swap pop = and if ^ then  error"  - mismatch" ;
@@ -60,8 +61,9 @@ READSP: Send 0c, recv sphi, splo
 RUN: Send 28
 ==========================================================================
 hex
+: breakCheck  recv 0= if ." (break received)" then ;
 : security  ( send 8 security bytes, initally FF)  8 for  0ff send  next
-   recv u. ( target sends break after security bytes recvd) ;
+   breakCheck ( target sends break after security bytes recvd) ;
 
 : >lohi  ( w - lo hi)  dup 0ff and  swap 8 u>> ;
 : hilo>  ( hi lo - w)  swap  8 << or ;
@@ -73,23 +75,34 @@ hex
 : tgIread   ( - b0 b1)   1a send  recv recv ;
 : tgIwrite  ( byte -)    19 send  send ;
 : tgReadSp               0c send  recv recv  hilo> ;
-: tgRun                  28 send ;
+: tgRun                  28 send  recv breakCheck ;
+  ( target _seems_ to send a 00 or break when code that has been run
+  returns to the ROM monitor. This is undocumented behaviour.)
 decimal
-
-variable tsp    ( target's SP)
-variable taddr  ( current address for the bootloader's indexed write and
-                  read commands)
-taddr off
-
-( One of the following words - the empty one - is a no-op, so lines
-  starting with it will be parsed. The other - with -- - comments out the
-  rest of the line. Move the slashes to choose a Variation that suits you!)
-
-: A       ;
-: B  \ -- ;
 
 comment
 ==========================================================================
+  The operations available in the 908 bootloader are a bit odd. It is not
+  possible, easily, to read two bytes from an arbitrary location. Instead,
+  one sends the Read command, which sets the address, and returns one byte.
+  It also increments the on-chip indexing pointer.
+
+  If you now execute the Iread command, you'll read two more bytes. What do
+  you do with the third? You could just chuck it out, but you might need it
+  later, and you've got it already. So why not cache it somehow?
+
+  I thought of several ways of doing this, and considered two of them worth
+  trying out. I coded them both up, in completely different styles - first
+  Variation A, then B - then I realised that they were quite similar, and
+  refactored them to be in every way parallels. Then, using a simple
+  textual method - one of the words A and B is the line comment character,
+  and the other is a no-op - you choose which - I interleaved the
+  implementations to make both the similarities and differences more
+  apparent. Some subtle differences show up clearly, such as the fact that
+  Var A always executes its "fetch from cache" code, and sometimes refills
+  the cache first; whereas Var B either returns the _single_ byte in the
+  cache, _or_ does a refill that also yields the byte requested.
+  
   Variation A
   
   When we read from the target, always read two bytes, starting from an
@@ -106,12 +119,16 @@ comment
   Note again that after the cache is filled the chip's indexed read & write
   pointer will be pointing just _after_ the cache, and taddr will point
   there as well.
---------------------------------------------------------------------------
+
   Variation B
 
+  This time, just cache _one_ byte. If reading an arbitrary location, do a
+  Read, and also cache that byte. If doing a sequential (indexed) read, do
+  Iread - which returns two bytes - and return the first but cache the
+  second.
+
   As in the above method, taddr follows the chip's indexed addr exactly,
-  and the byte cached is always at address taddr - 1. By convention, taddr
-  == 0 will mean that the cache is invalid (empty).
+  but in this case the byte cached is always at address taddr-1.
 
   Also note: unlike in the above case, when we refill the cache, we're
   really storing a remainder there. Thus we don't always read valid data
@@ -126,28 +143,61 @@ comment
 
   For the hell of it, I'm using a metaphor of beer, beer runs, and fridges.
   Beers are bytes, fridge is the cache, a beer run is a "cache line" fetch.
+
+  Variation C?
+
+  A third variation is easy to conceive. In this case, you cache the
+  results of the last read. Read caches one byte; Iread caches two. taddr
+  points just past the cache, as before. A count is kept of valid bytes.
+  Given an address A, if (A u< taddr) and (A u>= taddr-count), then A
+  points to valid cached data.
+
+  I haven't implemented this, but it might be worth trying.
+
+  Cache invalidation
+
+  Note that the chip's bootloader also implements both Write and Iwrite
+  (indexed write) commands. Iread and Iwrite share the same pointer, and
+  we'd like to take advantage of this. Also, since my focus here is
+  simplicity and not performance, I'm not doing any exciting write-back or
+  write-through stuff. Instead, any write to memory invalidates the cache.
+  However, this does not affect the possibility the Iwrite could use a
+  previous read's address, or vice versa.
 ==========================================================================
 
-: +wrap  ( a n - a+n; fitting in 16 bits)  + "0ffff and ;
-: fridgeEmpty?  ( - f)  taddr @ 0= ;
-: useIread?   ( a - f)  taddr @ =  fridgeEmpty? not  and ;
+variable tsp    ( target's SP)
+variable taddr  ( current address for the bootloader's indexed write and
+                  read commands)
+taddr off
+
+( One of the following words - the empty one - is a no-op, so lines
+  starting with it will be parsed. The other - with -- - comments out the
+  rest of the line. Move the slashes to choose a Variation that suits you!)
+
+: A  \ -- ;
+: B       ;
 
 variable fridge  ( holds leftovers from tgRead or tgIread)
+variable fridgeFull  ( optimistic)  fridgeFull off
 
-A : inFridge?    ( a - f)  -2 and  taddr @  -2 +wrap  = ;
-B : inFridge?    ( a - f)          taddr @  -1 +wrap  = ;
-  : beerRun?     ( a - f)  inFridge? not  fridgeEmpty?  or ;
+: +wrap  ( a n - a+n; fitting in 16 bits)  + "0ffff and ;
+: useIndexed?   ( a - f)  taddr @ = ; 
+
+A : inFridge?   ( a - f)  -2 and  taddr @  -2 +wrap  = ;
+B : inFridge?   ( a - f)          taddr @  -1 +wrap  = ;
+  : beerRun?    ( a - f)  inFridge? not  fridgeFull @ not  or ;
 
 A : beerRun  ( a - a a#2 b0 b1)  dup  -2 and
-A    dup useIread? if                tgIread ( b0 b1)  ^ then
+A    dup useIndexed? if                tgIread ( b0 b1) ^  then
 A            dup tgRead  over 1 +wrap tgRead ( b0 b1) ;
 
 B : beerRun  ( a - a +a b0 b1)
-B    dup useIread? if  2 ( +a)       tgIread ( b0 b1)  ^ then
+B    dup useIndexed? if  2 ( +a)       tgIread ( b0 b1) ^  then
 B                  dup 1 ( +a) swap  tgRead dup ( b0 b0) ;
 
-A : refillFridge  ( a a#2 b0 b1 - a)  fridge 1+ c!  fridge c!     2 +wrap taddr ! ;
-B : refillFridge  ( a +a b0 b1 - b0)                fridge c!  -rot +wrap taddr ! ; 
+  : postIt  ( a +a)  +wrap taddr !  fridgeFull on ;
+A : refillFridge  ( a a#2 b0 b1 - a)  fridge 1+ c!  fridge c!     2 postIt ;
+B : refillFridge  ( a +a b0 b1 - b0)                fridge c!  -rot postIt ;
 
 A -: ( a - byte)  dup beerRun? if  beerRun refillFridge   then  1 and fridge + c@ ;
 B -: ( a - byte)  dup beerRun? if  beerRun refillFridge ^ then   drop fridge   c@ ;
@@ -156,7 +206,12 @@ B -: ( a - byte)  dup beerRun? if  beerRun refillFridge ^ then   drop fridge   c
 2 |cell !
 -: ( a - word)  dup |c@ ( hi) 8 <<  swap 1+ |c@ ( lo) or ;        is |@
 ( word from one of two caching approaches)                        is |c@
-: |c!  ( byte a)  ;
+
+: doWrite  ( byte a - a)
+   dup useIndexed? if  swap tgIwrite ^  then  tuck tgWrite ;
+
+: |c!  ( byte a)  fridgeFull off ( invalidate cache)
+   doWrite 1 +wrap taddr ! ;
 
 ( Once we have the target SP we can read & write the "exception stack
   frame" which contains all the 08 registers.
