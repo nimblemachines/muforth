@@ -29,7 +29,7 @@ forth
 : .h  radix @ push  hex <# # # #> type space  pop radix ! ;
 -- defer b,  ( so other code can decide how and where code gets assembled)
           ( XXX: is this necessary? |c! is already deferred...)
-: b,  .h cr ;
+: b,  .h cr  1 |h +! ( so branches will be righter) ;
 : w,  ( w)  dup 8 u>> b,  b, ;  ( big endian!)
 
 
@@ -87,9 +87,9 @@ assembler
 : ,x  ( offset - offset op | op)
    =if ( nonzero)  u8? if ix1 ^ then  ix2 ^ then  drop ( 0) ix ;
 
-30 constant .h  ( fake column)
 40 constant .a
 50 constant .x
+60 constant .h  ( fake column)
 forth
 
 : >col  ( col - index)  4 u>>  0f and ;
@@ -106,6 +106,7 @@ forth
 
 forth
 : inh  constant does> b, ; ( "inherent")
+: stackop  constant does>  ( reg op)  swap \a .a - >col 2* + b, ;
 assembler
 80 inh rti
 81 inh rts
@@ -113,22 +114,15 @@ assembler
 83 inh swi
 84 inh tap
 85 inh tpa
+86 stackop pul
+87 stackop psh
+( 88-8b also stack ops)
 forth
-86 inh _pula  ( .a pul)  ( we'd like one syntax with these and 1ops)
-87 inh _psha  ( .a psh)
-88 inh _pulx  ( .x pul)
-89 inh _pshx  ( .x psh)
-8a inh _pulh  ( .h pul)
-8b inh _pshh  ( .h psh)
 8c inh _clrh  ( .h clr)
 assembler
 ( 8d)
 8e inh stop
 8f inh wait
-
-( Now the visible pul and psh)
-: pul  >col  .h -  dup 3 u< if  jump  _pulh  _pula  _pulx  then  ill ;
-: psh  >col  .h -  dup 3 u< if  jump  _pshh  _psha  _pshx  then  ill ;
 
 ( 90-93 are bge/blt/bgt/ble)
 94 inh txs
@@ -202,7 +196,7 @@ forth
 assembler
 
 ( 1ops with special cases.)
-: clr  dup .h = if  drop _clrh ^ then  _clr ;
+: clr  dup \a .h = if  drop _clrh ^ then  _clr ;
 : dbnz  _dbnz disp8, ;
 
 forth
@@ -229,9 +223,9 @@ assembler
 : aix  ( n imm )  \a stx ;
 
 forth
-: bit  constant does> ;
-( Note: These are _hex_ instruction values! The sets are even; the clrs are
-  odd.)
+: bit  constant does> ( dir bit op)  swap 2* or  b, ( op)  b, ( dir) ;
+( Note: These are _hex_ instruction values! The sets are even;
+  the clrs are odd.)
 00 bit _brset
 01 bit _brclr
 assembler
@@ -241,15 +235,38 @@ assembler
 : brclr  _brclr disp8, ;
 
 forth
-: cond  constant does> ;
+( Unlike in all the other assemblers I've seen or written, I'm writing the
+  condition codes in their _positive_ sense - ie, 0< represents the BMI
+  instruction, rather than its opposite, BPL. Things were done "backwards"
+  traditionally because the semantics of "0< if w then" are to execute w
+  when 0< is true; that is, S is set. But the BMI instruction is a _branch_
+  if S set, so it would _skip_ a. Hence, the constants were traditionally
+  defined to be the _opposite_ branch: BPL for 0<, BNE for =, BCC for u<,
+  etc.
+
+  I may change my mind about this. In any case, it's easy for the control
+  flow words to negate the sense of the condition. For that matter, the
+  cond defining word could do it, making _writing_ the assembler easier, in
+  that it's easy to line up the condition _name_ with its value in the
+  opcode  map, and let the assembler do the work of the negation, which is
+  easy to get wrong.)
+
+( Put this into _if_ rather than in the cond values. Less confusing.)
+( Because we'll be using these in if/then, the condition represented is the
+  _negative_ of the one in the opcode map.)
+
 assembler
-02 cond u>  ( bhi  - C or Z clear)
-05 cond u<  ( bcs  - C set)
-07 cond eq  ( beq  - Z set)
-09 cond hc  ( bhcs - HC set - half carry )
+: not  ( cond - neg_cond)  1 xor ;
+forth
+: cond  \a not constant ;
+assembler
+02 cond u>  ( bhi      - C or Z clear; negation is bls)
+05 cond u<  ( blo bcs  - C set; negation is bhs bcc)
+07 cond =   ( beq      - Z set)
+09 cond HC  ( bhcs     - HC set - half carry )
 0b cond 0<  ( bmi  - S set)
-0d cond xx  ( bms  - I set - interrupt mask)
-0f cond xx  ( bih  - irq pin high)
+0d cond I   ( bms  - I set - interrupt mask)
+0f cond Q   ( bih  - irq pin high)
 91 cond <   ( blt  - N xor V set)
 92 cond >   ( bgt  - Z or [N xor V] clear)
 comment ^^^
@@ -258,10 +275,36 @@ macro u>=  u< not ;m
 macro  <=   > not ;m
 macro  >=   < not ;m  ^^^
 
-( Put this into _if_ rather than in the cond values. Less confusing.)
-( Because we'll be using these in if/then, the condition represented is the
-  _negative_ of the one in the opcode map.)
-: not  ( cond - neg_cond)  1 xor ;
+( Control structures.)
+( These are different from the pure Forth ones. Forward conditional branches
+  are always _short_, but backwards branches can be short or long. A long
+  branch is formed by inverting the condition to branch _around_ the
+  longer branch.
+
+  Thus we need words to compile forward conditional branches, forward
+  unconditional branches, and backwards branches of either kind.)
+
+: <resolve  ( dest src)  swap resolve> ;
+
+( Compile a conditional jump; on entry stack has status bit, possibly or'ed
+  with 400 to reverse its sense, so we should xor into opcode. By default
+  opcode generated is jump if status bit _clear_.)
+
+: cjmp,  ( statusbit - src)  f400 xor op,  |here ;
+
+( Unconditional jmp)
+: rjmp,   ( - src)  c000 op,  |here ;
+
+
+( if compiles "branch if bit clr")
+: if      (s bit - src)    cjmp, ;
+: then    (s src)          |here resolve> ;
+: else    (s src1 - src2)  rjmp, swap  \a then ;
+: begin   (s - dest)       |here ;
+: until   (s bit dest -)   \a if  <resolve ;
+: again   (s dest -)       rjmp,  <resolve ;
+: while   (s bit dest - src dest)   \a if  swap ;
+: repeat  (s src dest -)   \a again  \a then ;
 
 #]file
 
