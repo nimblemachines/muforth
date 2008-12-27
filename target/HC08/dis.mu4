@@ -42,28 +42,29 @@ compiler
 forth
 
 variable in
-: b  ( offset - byte)  ( fetch byte of instruction)           in @ + |c@ ;
-: w  ( offset - word)  ( fetch word of instruction)  |cell *  in @ + |@ ;
+: b  ( offset - byte)  ( fetch byte of instruction)  in @ + |c@ ;
+: w  ( offset - word)  ( fetch word of instruction)  in @ + |@ ;
 
-: row  ( op - op row)  dup       0f and ;
-: col  ( op - op col)  dup 4 u>> 0f and ;
-: pre  ( op - f)  dup 9e00 and ;
+: op  0 b ;
+: row  ( - row)  op       0f and ;
+: col  ( - col)  op 4 u>> 0f and ;
+: pre  ( - f)    in @ if  -1 b  9e =  ^ then  0 ;
 
 : sext   ( b - n)  dup 80 and if -100 + then ;
 : >dest  ( offset-to-rel8)  dup 1+ in @ +  swap b sext  + ;
-: .bit ( op - extra)   2 >dest u.  1 b ( dir) u.  row u2/ ( bit#) u.
-   col  choose br b  dup 1 and  choose set clr  col negate 2 + ;
+: .bit ( - extra)   2 >dest u.  1 b ( dir) u.  row u2/ ( bit#) u.
+   col  choose br b  op 1 and  choose set clr  2 col - ;
 
-: .bcond  ( op - extra)   1 >dest u.
+: .bcond  ( - extra)   1 >dest u.
    row 4" bra brn bhi bls bcc bcs bne beq bhccbhcsbpl bmi bmc bms bil bih "
    1 ;
 
 : imm  1 b u. ." # "  1 ;
 : dir  ( direct addr)  1 b u. ." ) "  1 ;
-: ext  ( extended addr)  1 w  u.  ." )  2 " ;
+: ext  ( extended addr)  1 w  u.  ." ) "  2 ;
 : .a   ." .a "  0 ;
 : .x   ." .x "  0 ;
-: ireg  pre choose ,s ,x  ;
+: ireg  pre choose ,x ,s  space ;
 : ix1  ( indexed 1 byte offset)  1 b u.  ireg  1 ;
 : ix2  ( indexed 2 byte offset)  1 w u.  ireg  2 ;
 : ix   ." 0 ,x "  0 ;
@@ -76,19 +77,17 @@ variable in
    ( a0   b0   c0   d0   e0   f0)
     imm  dir  ext  ix2  ix1   ix   [
 
-: .1op  ( op - extra)
+: .1op  ( - extra)
    row 2 = if ( special) ^ then
    row 5 = if ( spec) ^ then
    row 0e = if ( spec) ^ then
-   1ea swap
-   row 4" neg cbeq--- com lsr --- ror asr lsl rol dec dbnzinc tst mov clr "
-   swap ;
+   1ea
+   row 4" neg cbeq--- com lsr --- ror asr lsl rol dec dbnzinc tst mov clr " ;
 
-: .2op  ( op - extra)  2ea swap
-   row 4" sub cmp sbc cpx and bit lda sta eor adc ora add jmp jsr ldx stx "
-   swap ;
+: .2op  ( - extra)  2ea
+   row 4" sub cmp sbc cpx and bit lda sta eor adc ora add jmp jsr ldx stx " ;
 
-: .inh  ( op - extra)  
+: .inh  ( - extra)  
    row 4" rti rts --- swi tap tpa pulapshapulxpshxpulhpshhclrh--- stopwait"
    0 ;
  
