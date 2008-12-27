@@ -1,0 +1,108 @@
+( This file is part of muFORTH: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2009 David Frech. All rights reserved, and all wrongs
+  reversed. (See the file COPYRIGHT for details.)
+
+( Freescale HC08 disassembler.)
+
+cr " HC08 disassembler " file[#
+
+forth
+hex
+
+comment
+==========================================================================
+Since the opcode map is largely a simple matrix - with opcodes (such as
+"and") as rows and addressing modes (0,x eg) as columns, it makes sense to
+decide first whether we want the output to be prefix or postfix.
+
+If prefix, then we should dispatch on the row (opcode) so we can print it
+first. If postfix, then we should dispatch by column instead.
+
+I'm thinking it would be interesting - since all my other disassemblers
+have been prefix - to be true of Forth and try to make this one postfix
+instead.
+==========================================================================
+
+( Choosing strings to display.)
+( choose compiles the following two tokens as strings. At runtime, it
+  chooses a string to display: the first, if top is zero; the second,
+  otherwise.)
+
+( 4" is used to print a 4-char substring. At compile time the whole string
+  is compiled. At runtime, the index on the stack is scaled by 4 and used
+  to index into the string; a 4-char substring is printed.)
+
+( zero chooses first string; non-zero, the second.)
+: (choose")  ( f a1 a2)  rot if  swap  then  drop  (.") ;
+: (4")  ( - index z")  swap 2 << +  4 type space ;
+compiler
+: choose  ( choose string)  token, literal  token, literal   \ (choose") ;
+: 4"  \ z"  \ (4") ;
+forth
+
+variable in
+: b  ( offset - byte)  ( fetch byte of instruction)           in @ + |c@ ;
+: w  ( offset - word)  ( fetch word of instruction)  |cell *  in @ + |@ ;
+
+: row  ( op - op row)  dup       0f and ;
+: col  ( op - op col)  dup 4 u>> 0f and ;
+: pre  ( op - f)  dup 9e00 and ;
+
+: sext   ( b - n)  dup 80 and if -100 + then ;
+: >dest  ( offset-to-rel8)  dup 1+ in @ +  swap b sext  + ;
+: .bit ( op - extra)   2 >dest u.  1 b ( dir) u.  row u2/ ( bit#) u.
+   col  choose br b  dup 1 and  choose set clr  col negate 2 + ;
+
+: .bcond  ( op - extra)   1 >dest u.
+   row 4" bra brn bhi bls bcc bcs bne beq bhccbhcsbpl bmi bmc bms bil bih "
+   1 ;
+
+: imm  1 b u. ." # "  1 ;
+: dir  ( direct addr)  1 b u. ." ) "  1 ;
+: ext  ( extended addr)  1 w  u.  ." )  2 " ;
+: .a   ." .a "  0 ;
+: .x   ." .x "  0 ;
+: ireg  pre choose ,s ,x  ;
+: ix1  ( indexed 1 byte offset)  1 b u.  ireg  1 ;
+: ix2  ( indexed 2 byte offset)  1 w u.  ireg  2 ;
+: ix   ." 0 ,x "  0 ;
+
+: 1ea  ( op - op extra)  col 3 - jump
+   ( 30   40   50   60   70)
+    dir   .a   .x  ix1   ix   [
+
+: 2ea  ( op - op extra)  col 0a - jump
+   ( a0   b0   c0   d0   e0   f0)
+    imm  dir  ext  ix2  ix1   ix   [
+
+: .1op  ( op - extra)
+   row 2 = if ( special) ^ then
+   row 5 = if ( spec) ^ then
+   row 0e = if ( spec) ^ then
+   1ea swap
+   row 4" neg cbeq--- com lsr --- ror asr lsl rol dec dbnzinc tst mov clr "
+   swap ;
+
+: .2op  ( op - extra)  2ea swap
+   row 4" sub cmp sbc cpx and bit lda sta eor adc ora add jmp jsr ldx stx "
+   swap ;
+
+: .inh  ( op - extra)  
+   row 4" rti rts --- swi tap tpa pulapshapulxpshxpulhpshhclrh--- stopwait"
+   0 ;
+ 
+: dispatch ( op - op extra)  dup col
+   dup 2 u< if drop .bit ^ then
+   dup 2 =  if drop .bcond ^ then
+   dup 8 u< if drop .1op ^ then
+   dup 0a u< if drop .inh ^ then  drop .2op ;
+
+: 1dis  in @ |c@
+   dup 9e = if ( extension byte)  8 <<  1 in +!  in @ |c@  or  then
+   dispatch  nip ( op)  1+ in +! ;
+
+: d  1dis ;
+
+#]file
+

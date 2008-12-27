@@ -26,11 +26,12 @@ mode macro-loop
 hex  ( it rules!)
 
 forth
-: .h  radix @ push  hex <# # # #> type space  pop radix ! ;
 -- defer b,  ( so other code can decide how and where code gets assembled)
           ( XXX: is this necessary? |c! is already deferred...)
-: b,  .h cr  1 |h +! ( so branches will be righter) ;
-: w,  ( w)  dup 8 u>> b,  b, ;  ( big endian!)
+-- : b,  .h cr  1 |h +! ( so branches will be righter) ;
+-- : w,  ( w)  dup 8 u>> b,  b, ;  ( big endian!)
+: b,  |c, ;
+: w,  |, ;
 
 
 ( The bulk of errors are using an illegal operand - H register or
@@ -92,21 +93,13 @@ assembler
 60 constant .h  ( fake column)
 forth
 
-: >col  ( col - index)  4 u>>  0f and ;
+( Convert column to index)
+: col>  ( col - index)  4 u>>  0f and ;
 
-( Relative branches.)
-
-( Branch offsets are relative to the _following_ instruction, which starts
-  right after the offset, which is always the last byte.)
-
-: >rel  ( dest - offset)  |here 1+ ( src)  -
-   s8? not if error" relative branch out of range" then ;
-
-: disp8,  >rel b, ;
 
 forth
 : inh  constant does> b, ; ( "inherent")
-: stackop  constant does>  ( reg op)  swap \a .a - >col 2* + b, ;
+: stackop  constant does>  ( reg op)  swap \a .a - col> 2* + b, ;
 assembler
 80 inh rti
 81 inh rts
@@ -141,7 +134,7 @@ assembler
 
 forth
 : op,  u8? if b, ^ then  w, ;  ( output op, including pre-byte)
-: ea,  ( col)  40 - >col  jump
+: ea,  ( col)  40 - col>  jump
    ( 40   50   60   70   80   90   a0   b0   c0   d0   e0   f0
      .a   .x   --   --   .h   --  imm  dir  ext  ix2  ix1   ix)
     nope nope ill  ill  ill  ill   b,   b,   w,   w,   b,  nope   [
@@ -159,9 +152,9 @@ forth
   going on.)
 
 : ok  dup ;  ( ok as is; don't convert - this is already a 1col mode)
-: cv  ( col - col2 col1)  dup  80 - ;  ( convert and dup)
+: cv  ( col - col2 col1)  dup  80 - ;  ( dup and convert)
 : 1colCheck  ( col - 2col 1col | col)  ( make sure address mode is allowed)
-   dup  40 - >col  jump
+   dup  40 - col>  jump
    ( 40   50   60   70   80   90   a0   b0   c0   d0   e0   f0
      .a   .x   --   --   .h   --  imm  dir  ext  ix2  ix1   ix)
      ok   ok  ill  ill  ill  ill  ill   cv  ill  ill   cv   cv   [
@@ -186,7 +179,7 @@ assembler
 09 1op rol
 0a 1op dec
 forth
-0b 1op _dbnz ( special)
+0b 1op dbnz
 assembler
 0c 1op inc
 0d 1op tst
@@ -197,7 +190,6 @@ assembler
 
 ( 1ops with special cases.)
 : clr  dup \a .h = if  drop _clrh ^ then  _clr ;
-: dbnz  _dbnz disp8, ;
 
 forth
 : 2op  constant does> ( 2col row)  or  dup op,  ea, ;
@@ -226,85 +218,142 @@ forth
 : bit  constant does> ( dir bit op)  swap 2* or  b, ( op)  b, ( dir) ;
 ( Note: These are _hex_ instruction values! The sets are even;
   the clrs are odd.)
-00 bit _brset
-01 bit _brclr
 assembler
 10 bit bset
 11 bit bclr
-: brset  _brset disp8, ;  ( these are branches, so compile the offset too)
-: brclr  _brclr disp8, ;
+( Note: these two are _branches_; they compile their opcode and
+  memory address but not the branch offset. if, while, or until finishes.
+  Also, because we are using these with control structure words, their
+  senses have to be complemented.)
+01 bit brset
+00 bit brclr
 
 forth
-( Unlike in all the other assemblers I've seen or written, I'm writing the
-  condition codes in their _positive_ sense - ie, 0< represents the BMI
-  instruction, rather than its opposite, BPL. Things were done "backwards"
-  traditionally because the semantics of "0< if w then" are to execute w
-  when 0< is true; that is, S is set. But the BMI instruction is a _branch_
-  if S set, so it would _skip_ a. Hence, the constants were traditionally
-  defined to be the _opposite_ branch: BPL for 0<, BNE for =, BCC for u<,
-  etc.
+comment
+==========================================================================
+Discursus on condition codes, conditional branches, and control structures
 
-  I may change my mind about this. In any case, it's easy for the control
-  flow words to negate the sense of the condition. For that matter, the
-  cond defining word could do it, making _writing_ the assembler easier, in
-  that it's easy to line up the condition _name_ with its value in the
-  opcode  map, and let the assembler do the work of the negation, which is
-  easy to get wrong.)
+In many traditional computer architectures, the condition codes are in a
+status register, and there are usually four of them: N V C Z. That's
+Negative, oVerflow, Carry, and Zero.
 
-( Put this into _if_ rather than in the cond values. Less confusing.)
-( Because we'll be using these in if/then, the condition represented is the
-  _negative_ of the one in the opcode map.)
+How are these used and what do they mean?
 
-assembler
-: not  ( cond - neg_cond)  1 xor ;
-forth
-: cond  \a not constant ;
-assembler
-02 cond u>  ( bhi      - C or Z clear; negation is bls)
-05 cond u<  ( blo bcs  - C set; negation is bhs bcc)
-07 cond =   ( beq      - Z set)
-09 cond HC  ( bhcs     - HC set - half carry )
-0b cond 0<  ( bmi  - S set)
-0d cond I   ( bms  - I set - interrupt mask)
-0f cond Q   ( bih  - irq pin high)
-91 cond <   ( blt  - N xor V set)
-92 cond >   ( bgt  - Z or [N xor V] clear)
-comment ^^^
-macro u<=  u> not ;m
-macro u>=  u< not ;m
-macro  <=   > not ;m
-macro  >=   < not ;m  ^^^
+First, let's define how condition code flags represent the results of a
+signed subtract (or compare). If we execute X - Y, where both are _signed_
+values, then the N (negative), V (overflow) and Z (zero) bits are set as
+follows:
+
+Let S = N xor V. Then
+
+  (LT)  X < Y  ==   S
+  (GE)  X >= Y ==  !S
+  (GT)  X > Y  ==  !S and !Z
+               == !(S or   Z)  (deMorgan's law)
+  (LE)  X <= Y ==   S or   Z
+
+I've written on the left the traditional "conditional branch" names for
+each relation.
+
+So, what happens when we subtract or compare _unsigned_ values? Before
+discussing that we have to understand what the carry bit represents.  Since
+the natural way of doing subtraction to _add_ the two's complement of the
+subtrahend - ie:
+
+  X - Y == X + (-Y)
+
+and since two's complement is the one's complement plus one:
+
+  -Y == ~Y + 1
+
+we can write subtract as
+
+  X - Y == X + ~Y + 1
+
+and subtract with a _borrow_ as
+
+  X - Y - 1 == X + ~Y
+
+Note something odd here: the carry in is complemented: we carry in a one
+when there is no borrow and carry in a zero when there _is_ a borrow. So,
+carry = ~borrow. I call this a "natural" borrow.
+
+There are only two architectures that I know of that represent borrow this
+way: ARM and 6502. All others use a "synthetic" borrow, where carry =
+borrow. Since the HC08 is one of these latter, in the following we'll
+understand C = 1 to mean borrow, and C = 0 to mean no borrow.
+
+So let's define how X - Y affects the condition codes, if X and Y are
+_unsigned_.
+
+  (LO)  X < Y   ==   C
+  (HS)  X >= Y  ==  !C
+  (HI)  X > Y   ==  !C and !Z
+                == !(C or   Z)   (deMorgan's law)
+  (LS)  X <= Y  ==   C or   Z
+
+Again I've written traditional conditional branch names for these
+conditions. LO == lower; HS == higher or same; HI == higher; LS == lower or
+same.
+
+I define Forth words to represent each condition. Those words actually
+compile the opcode, and the following "if" or "until" leaves room for the
+offset, which is fixed up later. I did it this way because the brset and
+brclr instructions (branch if bit set or clear, resp.) are also conditional
+branches, but their code takes up two bytes: an opcode and direct memory
+address. So having conditionals simply leave the value of a branch
+instruction on the stack wouldn't work.
+==========================================================================
+
+( 2cond defines both a condition and its complement.)
+: 2cond  ( op)  dup 1 xor ( complement condition)  inh  inh ;
+assembler 
+22 2cond u>  u<=  ( bhi bls  - unsigned higher - C or Z clear/set)
+25 2cond u<  u>=  ( blo bhs  - unsigned lower)
+                  ( bcs bcc  - C set/clear)
+27 2cond 0=  0!=  ( beq bne  - Z set/clear)
+2b 2cond 0<  0>=  ( bmi bpl  - S set/clear)
+91 2cond <   >=   ( blt bge  - N xor V set/clear)
+92 2cond >   <=   ( bgt ble  - Z or [N xor V] clear/set)
+( The next few are for testing status bits and IRQ pin.)
+29 2cond HCS HCC  ( bhcs bhcc  - HC set - half carry )
+2d 2cond MS  MC   ( bms  bmc   - I set - interrupt mask)
+2f 2cond IH  IL   ( bih  bil   - irq pin high)
 
 ( Control structures.)
-( These are different from the pure Forth ones. Forward conditional branches
-  are always _short_, but backwards branches can be short or long. A long
-  branch is formed by inverting the condition to branch _around_ the
-  longer branch.
 
-  Thus we need words to compile forward conditional branches, forward
-  unconditional branches, and backwards branches of either kind.)
+( Branch offsets are relative to the _following_ instruction, which starts
+  right after the offset, which is always the last byte. When compiled,
+  branches leave a fixup offset pointing just _past_ the byte to be fixed
+  up.)
+
+forth
+: resolve>  ( src dest)
+   over -  s8? not if error" relative branch out of range" then
+   swap 1-  |c! ;
 
 : <resolve  ( dest src)  swap resolve> ;
 
-( Compile a conditional jump; on entry stack has status bit, possibly or'ed
-  with 400 to reverse its sense, so we should xor into opcode. By default
-  opcode generated is jump if status bit _clear_.)
+assembler
+: if      (s - src)  0 b, ( offset)  |here ;
+: then    (s src)  |here  resolve> ;
+: else    (s src1 - src2)  20 ( bra)  \a if  swap  \a then ;
 
-: cjmp,  ( statusbit - src)  f400 xor op,  |here ;
-
-( Unconditional jmp)
-: rjmp,   ( - src)  c000 op,  |here ;
-
-
-( if compiles "branch if bit clr")
-: if      (s bit - src)    cjmp, ;
-: then    (s src)          |here resolve> ;
-: else    (s src1 - src2)  rjmp, swap  \a then ;
 : begin   (s - dest)       |here ;
-: until   (s bit dest -)   \a if  <resolve ;
-: again   (s dest -)       rjmp,  <resolve ;
-: while   (s bit dest - src dest)   \a if  swap ;
-: repeat  (s src dest -)   \a again  \a then ;
+: until   (s bit dest)                \a if  <resolve ;
+: again   (s dest)         20 ( bra)  \a until ;
+: while   (s bit dest - src dest)     \a if  swap ;
+: repeat  (s src dest)                \a again  \a then ;
+forth
 
+( What's left?
+  * cbeq
+  * mov
+  * ldhx, sthx, cphx - dir & imm
+  * hcs08 special forms for ldhx, sthx, cphx 
+  Notes:
+  * cbeq and dbnz are misnamed now, since we're usin them with
+  if/while/until. What to do about this?
+  )
 #]file
 
