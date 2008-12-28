@@ -42,66 +42,122 @@ compiler
 forth
 
 variable in
-: b  ( offset - byte)  ( fetch byte of instruction)  in @ + |c@ ;
-: w  ( offset - word)  ( fetch word of instruction)  in @ + |@ ;
+: b  ( a offset - a byte)  ( fetch byte of instruction)  over +  |c@ ;
+: w  ( a offset - a word)  ( fetch word of instruction)  over +  |@ ;
 
 : op  0 b ;
-: row  ( - row)  op       0f and ;
-: col  ( - col)  op 4 u>> 0f and ;
-: pre  ( - f)    in @ if  -1 b  9e =  ^ then  0 ;
+: row  ( a - a row)  op       0f and ;
+: col  ( a - a col)  op 4 u>> 0f and ;
+: pre  ( a - a f)    dup if  -1 b  9e =  ^ then  0 ;
 
+( display machine code)
+( a000  9ee0 04
+  a003    d0 7000
+  a006    44
+  a007    08 40 fc)
+: .p  ( padding)  7 spaces ;
+: .b  ( hex byte and follwing padding)  1 b  .h8  5 spaces ;
+: .w  ( hex word and following padding) 1 w  .hcell  3 spaces ;
+
+: sadjust  ( a off - a off') ( adjust for s)  over pre nip if 1- then ;
+: ireg  space  pre choose ,x ,s  space ;
+: _dir  ( direct addr)  1 b .h8 ."  ) " ;
+
+      ( hex   text)
+: imm   .b    1 b .h8 ."  # "  1 ;
+: dir   .b    _dir  1 ;
+: ext   .w    ( extended addr)  1 w  .hcell  ."  ) "  2 ;
+: .a    .p    ." .a "  0 ;
+: .x    .p    ." .x "  0 ;
+: ix1   .b    ( indexed 1 byte offset)  1 b  sadjust  .h8  ireg  1 ;
+: ix2   .w    ( indexed 2 byte offset)  1 w  sadjust  .hcell  ireg  2 ;
+: ix    .p    ." 0 ,x "  0 ;
+
+( Sign extend byte to host cell.)
 : sext   ( b - n)  dup 80 and if -100 + then ;
-: >dest  ( offset-to-rel8)  dup 1+ in @ +  swap b sext  + ;
-: .bit ( - extra)   2 >dest u.  1 b ( dir) u.  row u2/ ( bit#) u.
-   col  choose br b  op 1 and  choose set clr  2 col - ;
 
-: .bcond  ( - extra)   1 >dest u.
+( Fetches the rel8 offset and calculates the destination address.)
+: >dest  ( a offset-to-rel8 - a dest)  over + op ( a a+off rel8)  sext + 1+ ;
+
+: set/clr  op 1 and  choose set clr ;
+: .brbit ( a - a extra)
+   ( hex)  1 b ( dir) .h8 space  2 b ( rel8) .h8 2 spaces
+   ( text)  2 >dest .hcell space  _dir  row u2/ ( bit#) .h8 space
+   ." br"  set/clr  2 ;
+
+: .bit ( a - a extra)
+   ( hex)  .b
+   ( text)  _dir  row u2/ ( bit#) .h8 space
+   ." b"  set/clr  1 ;
+
+: .bcond  ( a - a extra)
+   ( hex) .b
+   ( text) 1 >dest .hcell space
    row 4" bra brn bhi bls bcc bcs bne beq bhccbhcsbpl bmi bmc bms bil bih "
    1 ;
 
-: imm  1 b u. ." # "  1 ;
-: dir  ( direct addr)  1 b u. ." ) "  1 ;
-: ext  ( extended addr)  1 w  u.  ." ) "  2 ;
-: .a   ." .a "  0 ;
-: .x   ." .x "  0 ;
-: ireg  pre choose ,x ,s  space ;
-: ix1  ( indexed 1 byte offset)  1 b u.  ireg  1 ;
-: ix2  ( indexed 2 byte offset)  1 w u.  ireg  2 ;
-: ix   ." 0 ,x "  0 ;
-
-: 1ea  ( op - op extra)  col 3 - jump
+( display effective address as a string)
+: 1ea  ( a - a extra)  col 3 - jump
    ( 30   40   50   60   70)
     dir   .a   .x  ix1   ix   [
 
-: 2ea  ( op - op extra)  col 0a - jump
+: 2ea  ( a - a extra)  col 0a - jump
    ( a0   b0   c0   d0   e0   f0)
     imm  dir  ext  ix2  ix1   ix   [
 
-: .1op  ( - extra)
+: .1op  ( a - a extra)
    row 2 = if ( special) ^ then
    row 5 = if ( spec) ^ then
    row 0e = if ( spec) ^ then
-   1ea
-   row 4" neg cbeq--- com lsr --- ror asr lsl rol dec dbnzinc tst mov clr " ;
+   1ea  ( a extra)  swap
+   row 4" neg cne?--- com lsr --- ror asr lsl rol dec dcz?inc tst mov clr "
+   swap ;
 
-: .2op  ( - extra)  2ea
-   row 4" sub cmp sbc cpx and bit lda sta eor adc ora add jmp jsr ldx stx " ;
+: .2op  ( a - a extra)  2ea  ( a extra)  swap
+   row 4" sub cmp sbc cpx and bit lda sta eor adc ora add jmp jsr ldx stx "
+   swap ;
 
-: .inh  ( - extra)  
+: .inh  ( a - a extra)
+   .p ( we've already printed the opcode)
    row 4" rti rts --- swi tap tpa pulapshapulxpshxpulhpshhclrh--- stopwait"
    0 ;
- 
-: dispatch ( op - op extra)  dup col
-   dup 2 u< if drop .bit ^ then
+
+: dispatch ( a - a extra)  col
+   dup 0 =  if drop .brbit ^ then
+   dup 1 =  if drop .bit ^ then
    dup 2 =  if drop .bcond ^ then
    dup 8 u< if drop .1op ^ then
    dup 0a u< if drop .inh ^ then  drop .2op ;
 
-: 1dis  in @ |c@
-   dup 9e = if ( extension byte)  8 <<  1 in +!  in @ |c@  or  then
-   dispatch  nip ( op)  1+ in +! ;
+( Skipped is 1 if prefix byte found, 0 otherwise.)
+: .pre  ( a - skipped a' op)
+   0 b  ( fetch op)
+   dup 9e = if ( extension byte)  .h8  1+  1 swap ( skipped)  0 b  ^  then
+   2 spaces  0 -rot ( skipped) ;
+
+( This word is a bit complicated because we need to do two things that
+  interact: skip forward to the next instruction - offset is extra+1 - and
+  record the negative offset _from_ the next instruction _back_ to this
+  one. If not for how we handle the prefix byte, these offsets would be
+  equal - and opposite. Instead the backwards skip is sometime bigger by
+  one: when we have skipped a prefix byte. .pre tells us this, by tucking a
+  "skipped" count under the address.)
+
+: _1dis  ( a - back anext)
+   .pre .h8 space  dispatch  ( skipped a extra) 1+ ( fwd)  push
+   ( skipped a)  swap r@ + negate ( back) swap  ( back a)  pop + ;
+
+( The workhorse.)
+: 1dis  ( a - a ea)
+   dup .addr  .nesting  _1dis ;
 
 : d  1dis ;
+
+' 1dis '1dis !  ( for mode switching)
+' -1   '1see !  ( quits)
+
+( Interactive)
+: dis  ( |a - |a+)  ['] 1dis  cell  inspect  ;
 
 #]file
 
