@@ -66,8 +66,11 @@ static void set_termios_raw_by_hand(struct termios *pti)
 void mu_set_termios_user_raw()
 {
     struct termios *pti = (struct termios *) TOP;
+#ifdef __CYGWIN__
+    set_termios_raw_by_hand(pti);
+#else
     cfmakeraw(pti);
-    //set_termios_raw_by_hand(pti);
+#endif
     pti->c_oflag |= (OPOST);  /* set opost, so newlines become CR/LF */
     //pti->c_lflag |= (ISIG);   /* accept special chars and gen signals */
     pti->c_cc[VMIN] = 1;
@@ -78,8 +81,11 @@ void mu_set_termios_user_raw()
 void mu_set_termios_target_raw()
 {
     struct termios *pti = (struct termios *) TOP;
+#ifdef __CYGWIN__
+    set_termios_raw_by_hand(pti);
+#else
     cfmakeraw(pti);
-    //set_termios_raw_by_hand(pti);
+#endif
     pti->c_cflag &= ~(CRTSCTS);   /* no handshaking */
     pti->c_cflag |= (CLOCAL | CSTOPB);     /* no modem signalling */
                                            /* two stop bits */
