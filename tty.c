@@ -112,7 +112,12 @@ void mu_set_termios_speed()
     default:
         throw("Unsupported speed");
     }
+
+#ifdef __CYGWIN__
+    pti->c_ospeed = pti->c_ispeed = ST1;
+#else
     cfsetspeed(pti, ST1);
+#endif
     DROP(2);
 }
 
