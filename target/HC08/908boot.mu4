@@ -7,7 +7,7 @@
   chips. This is support for talking to the ROM monitor/bootloader resident
   on all 908 microcontrollers.)
 
-cr " Bootloader/HC08 "  file[#
+cr " HC08 Bootloader "  file[#
 
 ( Open target serial port.)
 z" /dev/ttyS0" r/w  open-file  constant fd-target
@@ -48,18 +48,9 @@ variable spy  spy off
    dup _send  expect ;
 
 ( Flush anything that's sitting in our input queue.)
-: flush  begin  recv .h8_  again ;  ( will timeout and throw)
+: _flush  begin  recv .h8_  again ;  ( recv will timeout and throw)
+: flush  ['] _flush carefully ;
 
-comment
-==========================================================================
-Target commands.
-READ: Send 4a hiaddr loaddr, recv byte
-WRITE: Send 49 hi lo data
-IREAD: Send 1a, recv byte
-IWRITE: Send 19 byte
-READSP: Send 0c, recv sphi, splo
-RUN: Send 28
-==========================================================================
 hex
 : breakCheck  recv 0= if ." (break received)" then ;
 : security  ( send 8 security bytes, initally FF)  8 for  0ff send  next
@@ -67,15 +58,24 @@ hex
 
 : >lohi  ( w - lo hi)  dup 0ff and  swap 8 u>> ;
 : hilo>  ( hi lo - w)  swap  8 << or ;
-: addr>  ( a)  >lohi send send ; 
+: addr>  ( a)  >lohi send send ;
 
 ( Target monitor commands.)
+comment
+==========================================================================
+READ:   Send 4a addrhi addrlo, recv byte; target sets index ptr to addr+1
+WRITE:  Send 49 addrhi addrlo  data; target sets index ptr to addr+1
+IREAD:  Send 1a, recv two bytes; target increments index ptr by 2
+IWRITE: Send 19 byte; target increments index ptr by 1
+READSP: Send 0c, recv sphi splo
+RUN:    Send 28
+==========================================================================
 : tgRead    ( a - byte)  4a send  addr>  recv ;
 : tgWrite   ( byte a)    49 send  addr>  send ;
 : tgIread   ( - b0 b1)   1a send  recv recv ;
 : tgIwrite  ( byte -)    19 send  send ;
-: tgReadSp               0c send  recv recv  hilo> ;
-: tgRun                  28 send  recv breakCheck ;
+: tgReadSp  ( - sp)      0c send  recv recv  hilo> ;
+: tgRun                  28 send  breakCheck ;
   ( target _seems_ to send a 00 or break when code that has been run
   returns to the ROM monitor. This is undocumented behaviour.)
 decimal
@@ -102,9 +102,9 @@ comment
   Var A always executes its "fetch from cache" code, and sometimes refills
   the cache first; whereas Var B either returns the _single_ byte in the
   cache, _or_ does a refill that also yields the byte requested.
-  
+
   Variation A
-  
+
   When we read from the target, always read two bytes, starting from an
   even address. Read the first two using tgRead; then, for sequential
   access after that, use tgIread, which returns two bytes. Keep a buffer
@@ -174,8 +174,12 @@ taddr off
   starting with it will be parsed. The other - with -- - comments out the
   rest of the line. Move the slashes to choose a Variation that suits you!)
 
+compiler
 : A  \ -- ;
 : B       ;
+forth
+: A  \ A ;
+: B  \ B ;
 
 variable fridge  ( holds leftovers from tgRead or tgIread)
 variable fridgeFull  ( optimistic)  fridgeFull off
@@ -199,18 +203,33 @@ B                  dup 1 ( +a) swap  tgRead dup ( b0 b0) ;
 A : refillFridge  ( a a#2 b0 b1 - a)  fridge 1+ c!  fridge c!     2 postIt ;
 B : refillFridge  ( a +a b0 b1 - b0)                fridge c!  -rot postIt ;
 
-A -: ( a - byte)  dup beerRun? if  beerRun refillFridge   then  1 and fridge + c@ ;
-B -: ( a - byte)  dup beerRun? if  beerRun refillFridge ^ then   drop fridge   c@ ;
+  : t908c@  ( a - byte)
+A  dup beerRun? if  beerRun refillFridge   then  1 and fridge + c@ ;
+B  dup beerRun? if  beerRun refillFridge ^ then   drop fridge   c@ ;
 
-( We want to redefine |cell, |c@ and |@ so the memory dump will work.)
-2 |cell !
--: ( a - word)  dup |c@ ( hi) 8 <<  swap 1+ |c@ ( lo) or ;        is |@
-( word from one of two caching approaches)                        is |c@
+( Hide A and B so they don't cause trouble!)
+compiler
+: A  ;
+: B  ;
+forth
+: A  \ A ;
+: B  \ B ;
+
+( Use names separate from |c@ |c! |@ |! so we have more flexibility.
+  Initially the asm will want to write into the target memory _image_.
+  Later, after connecting to a target, we can write to the memory image,
+  and to the target, by careful patching of |<whatever.)
+
+( I'm using long funny names. t908xx means "target 908 xx" because later,
+  when I've fired up the S08 that this 908 is going to talk to, I'll need
+  yet another word, so I don't want to use, eg, t@.)
+
+: t908@ ( a - word)  dup t908c@ ( hi) 8 <<  swap 1+ t908c@ ( lo) or ;
 
 : doWrite  ( byte a - a)
    dup useIndexed? if  swap tgIwrite ^  then  tuck tgWrite ;
 
-: |c!  ( byte a)  fridgeFull off ( invalidate cache)
+: t908c!  ( byte a)  fridgeFull off ( invalidate cache)
    doWrite 1 +wrap taddr ! ;
 
 ( Once we have the target SP we can read & write the "exception stack
@@ -228,9 +247,94 @@ B -: ( a - byte)  dup beerRun? if  beerRun refillFridge ^ then   drop fridge   c
 04 reg PCH
 05 reg PCL
 
-: .b  ( a)  |c@ .h8_ ;
-: .w  ( a)  |@  .hcell_ ;
-: .regs  tgReadSp tsp !  ." CC  A  H  X   SP   PC" cr
-    CC .b  A .b  H .b  X .b  tsp @ .hcell_  PC .w ;
+: .bits8  radix @ push  binary  <# # # # # # # # # #> type  pop radix ! ;
+: .b  ( a)  t908c@ .h8_ ;
+: .w  ( a)  t908@  .hcell_ ;
+: .regs  tgReadSp tsp !  cr  ." V--HINZC  A  H  X   SP   PC"
+    cr  CC t908c@ .bits8 space  \f A .b  H .b  X .b  tsp @ .hcell_  PC .w ;
+
+: put  ( from to)  ( copy code to target)
+   over -  ?for  dup |+ c@  over t908c!  1+  next  then ;
+
+( Find out how fast the target is running.)
+hex
+assembler
+00 constant PA    -- port A data
+01 constant PB    -- port B data
+04 constant PAD    -- port A direction; 0 = in, 1 = out
+05 constant PBD    -- port B direction
+20 constant TSC
+28 constant TSC1
+29 constant TCH1H
+2a constant TCH1L
+40 constant timerh
+41 constant timerl
+: --   \ -- ;
+: (    \ ( ;
+: [if]  \ [if] ;
+: [then]  \ [then] ;
+forth
+
+( Create a macro word in current chain. Used for macro: and inline.)
+: _macro   new <:> forth   macro-loop ;
+: macro    assembler _macro ;
+compiler
+: ;m   \ ;  ;  ( returns to host forth)
+assembler
+: label   |here  assembler constant forth ;
+forth
+: code   \a label  asm ;
+: \a  .assembler. chain' execute ;
+
+50 constant start
+0 0 start org
+
+ld target/HC08/bdm.mu4
+hex  ( XXX #]file resets radix)
+
+code boot
+   0140 # ldhx
+   txs
+   .h clr  ( data stack in zero page! H is always clear)
+   -2 # ldx  ( data stack at top of zero page; 2 bytes of scratch space)
+
+   InitBdm bsr
+   0e4 ( read status) # lda   tx8 bsr   rx8 bsr
+   0c4 ( write control) # lda  tx8 bsr
+   88  ( ENBDM, CLKSW)  # lda  tx8 bsr  ( try to set clk to bus/2 = 4MHz)
+
+0 [if]
+   TSC ) clr  -- start timer
+   10 # PB ) mov  -- set BKGD_L (PB7) to 0, BKGD_H (PB4) to 1
+   80 # PBD ) mov   -- drive BKGD_L
+   .a clr   begin  .a decz?  until
+   10 # PBD ) mov   -- drive BKGD_H  Speedup pulse!
+   08 # TSC1 ) mov   -- capture falling edge on BKGD in CH1
+   PBD ) clr  -- tri-state BKGD
+   begin  TSC1 7 bclr?  while
+      .a dec  0= until  swi  ( timeout)  then
+   TSC1 ) clr   -- reset ch 1
+   TCH1H ) timerh ) mov
+   TCH1L ) timerl ) mov
+   04 # TSC1 ) mov   -- capture rising edge on BKGD in CH1
+   .a clr
+   begin  TSC1 7 bclr?  while
+      .a dec  0= until  swi  ( timeout)  then
+   TSC1 ) clr   -- reset ch 1
+   TCH1H ) lda   .a psh  ( reading H first latches)
+   TCH1L ) lda   timerl ) sub   timerl ) sta
+        .a pul   timerh ) sbc   timerh ) sta
+   swi
+[then]
+;c
+
+: pc!  >lohi  PCH t908c!  PCL t908c! ;
+: tgt  ( connect mem read to target memory)  ['] t908c@ is |c@ ;
+: hi   flush  start |here put   tgt ( so du works) 
+   \a boot pc!  .regs ;
+
+: call  pc!  tgRun  .regs ;
+: run   \a boot   call ;
+
 
 #]file

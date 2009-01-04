@@ -10,7 +10,7 @@ cr " HC08 assembler " file[#
 forth
 -:  ."  (assembling)"  ;
 -:  .assembler. find  if  execute ^  then
-        .forth. find  if  execute ^  then  ( XXX broken!! only for test)
+     --   .forth. find  if  execute ^  then  ( XXX broken!! only for test)
        .target. find  if  execute ^  then  number ;
 mode asm
 
@@ -23,6 +23,9 @@ mode outside-loop
     .assembler. find  if  compile, ^  then  number literal ;
 mode macro-loop
 
+assembler
+: ;c   \ [  ;
+forth
 hex  ( it rules!)
 
 forth
@@ -163,7 +166,7 @@ forth
 assembler
 00 1op neg
 forth
-01 1op cmpne?  ( was _cbeq ) ( special)
+01 1op cmpne?  ( was _cbeq ) ( sorta special: ix means ix+)
 assembler
 ( 02 - mul, div, nsa, daa)
   42 inh mul
@@ -178,9 +181,7 @@ assembler
 08 1op lsl
 09 1op rol
 0a 1op dec
-forth
 0b 1op decz?  ( renamed from dbnz; works better with if/while/until)
-assembler
 0c 1op inc
 0d 1op tst
 ( 0e - mov) 
@@ -190,6 +191,8 @@ assembler
 
 ( 1ops with special cases.)
 : clr  dup \a .h = if  drop _clrh ^ then  _clr ;
+: ldhx   dup imm = if  drop  45 b, w, ^ then
+             dir = if  drop  55 b, b, ^ then  ill ;
 
 forth
 : 2op  constant does> ( 2col row)  or  dup op,  ea, ;
@@ -213,6 +216,19 @@ assembler
 
 : ais  ( n imm )  \a sta ;
 : aix  ( n imm )  \a stx ;
+
+( Instructions that break the nice patterns in the opcode map.)
+: mov  ( n src m dest)  swap push ( n src dest; R: m)
+   over dir = if  ( src is dir)
+      dup dir = if  ( dest is dir)
+         2drop ( src dest)  4e b,  b, ( src)  pop b, ( dest) ^ then
+      ix = if  ( dest is ix+)
+         drop ( src)  5e b,  b, ( src)  pop drop  ^ then  ill then
+   dir = if ( dest is dir)
+      dup imm = if  ( src is imm)
+         drop ( src)  6e b,  b, ( imm)  pop b,  ( dest) ^ then
+      ix = if  ( src is ix+)
+         drop ( n)  7e b,  pop b, ( dest)  ^ then  then  ill ;
 
 forth
 ( XXX - these take a dir address, but don't expect the dir col on the
@@ -312,7 +328,7 @@ instruction on the stack wouldn't work.
 assembler 
 22 2cond u>  u<=  ( bhi bls  - unsigned higher - C or Z clear/set)
 25 2cond u<  u>=  ( blo bhs  - unsigned lower)
-                  ( bcs bcc  - C set/clear)
+25 2cond CS  CC   ( bcs bcc  - C set/clear)
 27 2cond 0=  0!=  ( beq bne  - Z set/clear)
 2b 2cond 0<  0>=  ( bmi bpl  - S set/clear)
 91 2cond <   >=   ( blt bge  - N xor V set/clear)
@@ -331,7 +347,7 @@ assembler
 
 forth
 : resolve>  ( src dest)
-   over -  s8? not if error" relative branch out of range" then
+   over -  s8? not if . error" relative branch out of range" then
    swap 1-  |c! ;
 
 : <resolve  ( dest src)  swap resolve> ;
@@ -346,6 +362,10 @@ assembler
 : again   (s dest)         20 b, ( bra)  \a until ;
 : while   (s bit dest - src dest)     \a if  swap ;
 : repeat  (s src dest)                \a again  \a then ;
+
+( Special case: short branch to subroutine; looks just like a short branch.)
+: bsr  ( dest)  0ad b, ( bsr)  \a until ;
+
 forth
 
 ( What's left?
