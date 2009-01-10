@@ -13,6 +13,9 @@ cr " Meta compiler common "  file[#
 forth  decimal
 
 ( Metacompiler vocabs)
+chain .utility.   ( useful words shared by several modes - comments,
+                    radix changes, printing numbers, conditional
+                    evaluation, debug stack dumps, etc)
 chain .machine.   ( words specific to a target machine)
 chain .outside.   ( used outside of target definitions - the `meta' forth)
 chain .inside.    ( used inside target definitions - the `meta' compiler)
@@ -20,6 +23,7 @@ chain .definer.   ( used inside definer definitions - the `meta' definer)
 chain .assembler. ( the host-resident target assembler)
 chain .target.    ( the target words - like `forth' on the host)
 
+: utility      .utility. definitions ;
 : machine      .machine. definitions ;
 : outside      .outside. definitions ;
 : inside        .inside. definitions ;
@@ -28,6 +32,7 @@ chain .target.    ( the target words - like `forth' on the host)
 : target        .target. definitions ;
 
 compiler
+: \u   ( compile from utility)      .utility. \chain ;
 : \m   ( compile from machine)      .machine. \chain ;
 : \o   ( compile from outside)      .outside. \chain ;
 : \i   ( compile from inside)        .inside. \chain ;
@@ -35,31 +40,104 @@ compiler
 : \d   ( compile from definer)      .definer. \chain ;
 : \t   ( compile from target)        .target. \chain ;
 
+( We need to defer a few words to we can define the interpret modes before
+  we load the target-specific meta-compiler.)
+outside  ( XXX should be machine?)
+defer compile,   ( compile a call to a word)
+defer number     ( convert a number in a target-specific way)
+defer literal    ( compile a literal on the target)
+defer remote     ( call a word on the target - tethered mode only)
+defer here       ( current dict location)
+
+forth
+( The various token consumers for each mode.)
+-:  ."  (assembling)"  ;
+-:  .assembler. find  if  execute ^  then
+      .outside. find  if  execute ^  then  ( equates are in .outside.)
+      .utility. find  if  execute ^  then  number ;
+mode __asm
+
+-:  ."  (assembling a macro)"  ;
+-:   .compiler. find  if  execute ^ then
+    .assembler. find  if  compile, ^  then
+      .outside. find  if  compile, ^  then  ( equates are in .outside.)
+                                            number literal ;
+mode __macro
+
+-:  ."  (outside)"  ;
+-:    .outside. find  if  execute ^  then
+      .utility. find  if  execute ^  then  number ;
+mode __outside
+
+-:  ."  (inside)"  ;
+-:     .inside. find  if  execute ^  then
+       .target. find  if  execute  \o compile, ^  then  \o number \o literal ;
+mode __inside
+
+-:  ."  (interacting)"  ;
+-:     .target. find  if  execute  \o remote ^  then
+      .outside. find  if  execute ^  then
+      .utility. find  if  execute ^  then  number ;
+mode __interact
+
 forth
 : \   .outside. chain' execute ;  ( escape to meta - find and execute a word)
 
 outside
 : \     .forth. chain' execute ;  ( escape to forth - find and execute a word)
 
+( XXX: I'd love for this code to work, but the order is wrong to get it to
+  compile. I've got work to do still.)
+0 [if]
+outside
+: equ  ( make a constant in .outside.)
+  current @ push  outside constant  pop definitions ;
 
+assembler
+: label   \o here  \o equ ;
+: ;c   __outside ;
+
+outside
+: org  org ;
+: code   \a label  __asm ;
+[then]
+
+utility
 ( Random useful goodies.)
-: hex      hex  ;
-: decimal  decimal  ;
-: octal    octal  ;
-: .     .  ;
-: u.    u.  ;
-: .s    .s  ;
+: hex      hex ;
+: decimal  decimal ;
+: octal    octal ;
+: binary   binary ;
+: .     . ;
+: u.    u. ;
+: .s    .s ;
 
 : comment  comment ;
-: (     \f (  ;
-: char  \f char  ;
-: ."    \f ."  ;
+: (     \f ( ;
+: --    \f -- ;
+: char  \f char ;
+: ."    \f ." ;
 : "     \f "  ;
 
-: cr    cr  ;
-: file[   file[  ;
-: ]file   ]file  ;
-: ld     ld  ;
+: cr       cr ;
+: file[    file[ ;
+: ]file    ]file ;
+: file[#   file[# ;
+: #]file   #]file ;
+: ld       ld ;
+
+: [if]      \ [if]   ;
+: [else]    \ [else] ;
+: [then]    \ [then] ;
+: [with]    \ [with] ;
+
+( Common things we'll always want inside a colon def.)
+inside
+: (     \f ( ;
+: --    \f -- ;
+: [if]      \ [if]   ;
+: [else]    \ [else] ;
+: [then]    \ [then] ;
 
 forth
 

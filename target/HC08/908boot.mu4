@@ -232,6 +232,8 @@ forth
 : t908c!  ( byte a)  fridgeFull off ( invalidate cache)
    doWrite 1 +wrap taddr ! ;
 
+: t908!  ( word a)  push >lohi  r@ t908c! ( hi)  pop 1+ t908c! ( lo) ;
+
 ( Once we have the target SP we can read & write the "exception stack
   frame" which contains all the 08 registers.
 
@@ -250,47 +252,222 @@ forth
 : .bits8  radix @ push  binary  <# # # # # # # # # #> type  pop radix ! ;
 : .b  ( a)  t908c@ .h8_ ;
 : .w  ( a)  t908@  .hcell_ ;
+outside
 : .regs  tgReadSp tsp !  cr  ." V--HINZC  A  H  X   SP   PC"
     cr  CC t908c@ .bits8 space  \f A .b  H .b  X .b  tsp @ .hcell_  PC .w ;
+forth
 
 : put  ( from to)  ( copy code to target)
    over -  ?for  dup |+ c@  over t908c!  1+  next  then ;
 
 ( Find out how fast the target is running.)
 hex
-assembler
-00 constant PA    -- port A data
-01 constant PB    -- port B data
-04 constant PAD    -- port A direction; 0 = in, 1 = out
-05 constant PBD    -- port B direction
-20 constant TSC
-28 constant TSC1
-29 constant TCH1H
-2a constant TCH1L
-40 constant timerh
-41 constant timerl
-: --   \ -- ;
-: (    \ ( ;
-: [if]  \ [if] ;
-: [then]  \ [then] ;
 forth
 
-( Create a macro word in current chain. Used for macro: and inline.)
-: _macro   new <:> forth   macro-loop ;
-: macro    assembler _macro ;
+outside
+: equ  ( make a constant in .outside.)
+  current @ push  outside constant  pop definitions ;
+
+assembler
+: label   |here  \o equ ;
+: ;c   __outside ;
+
 compiler
-: ;m   \ ;  ;  ( returns to host forth)
-assembler
-: label   |here  assembler constant forth ;
-forth
-: code   \a label  asm ;
-: \a  .assembler. chain' execute ;
+: ;m   \ ^  __outside ;  ( to exit from macro compilation)
 
-50 constant start
+outside
+: org  org ;
+: code   \a label  __asm ;
+: macro  current @ push  assembler : pop definitions  __macro ;
+: __forth   \ [ ;
+: du   du ;
+: [or]   or ;
+: c!  t908c! ;
+: !   t908! ;
+: c@  t908c@ ;
+: @   t908@ ;
+: .x  ( like .s)  X \o c@ du ;
+
+forth
+__outside
+00 equ PA    -- port A data
+01 equ PB    -- port B data
+04 equ PAD    -- port A direction; 0 = in, 1 = out
+05 equ PBD    -- port B direction
+PB equ PortB
+PBD equ PortBdir
+PA equ PortA
+PAD equ PortAdir
+20 equ TSC
+21 equ TCNTH
+22 equ TCNTL
+28 equ TSC1
+29 equ TCH1H
+2a equ TCH1L
+30 equ TSC2
+31 equ TCH2H
+32 equ TCH2L
+33 equ TSC3
+34 equ TCH3H
+35 equ TCH3L
+36 equ OSC
+
+50 equ start
+
+( Now we're reading BKGD on PB7 thru an HCT244 gate. We drive BKGD _low_ by
+  driving 0 on PB3, and drive it _high_ by driving PB4 low and PB5 high.
+  The BKGD_foo defines are for PortB data direction bits - we never change
+  the values driven.)
+
+20 equ PortBinit  ( PB5 high, PB4 low, PB3 low)
+08 equ BKGD_L    ( drive PB3)
+30 equ BKGD_H    ( drive PB5, PB4)
+
 0 0 start org
 
+
+[with] Bdm [if]
 ld target/HC08/bdm.mu4
-hex  ( XXX #]file resets radix)
+[then]
+
+[with] Xtal [if]
+code XtalClock
+  PortA 4 bset
+  PortAdir 4 bset  ( configure OSC2 as output, drive high several cycles)
+  nsa nsa nsa
+  PortAdir 4 bclr
+   0c0 # OSC ) mov  ( set external osc going - 8-32MHz xtal)
+  -- 0c4 # OSC ) mov  ( set external osc going - 1-8MHz xtal)
+  -- 10 # lda  0 ,x sta
+   0 ,x clr
+  begin  1 ,x clr  begin  1 ,x decz? until  0 ,x decz? until
+  OSC 1 bset ( set ECGON)   rts  ;c
+[then]
+
+code ExtClock
+  42 # OSC ) mov  ( set Ext Osc and ECGON)
+   .a clr   begin  nsa nsa  .a decz?  until  ( takes 0905 cycles)
+   rts  ;c
+
+code IntClock
+  20 # OSC ) mov   rts  ;c
+
+[with] Sync1 [with] Sync2 [or] [if]
+macro SaveTimer
+   ( have to read capture H bytes first)
+   TCH3H ) lda   0 ,x sta
+   TCH3L ) lda   1 ,x sta   ;m
+
+macro DiffTimer
+   ( have to read capture H bytes first)
+   TCH3H ) lda   .a psh
+   TCH3L ) lda   1 ,x sub   1 ,x sta
+        .a pul   0 ,x sbc   0 ,x sta   ;m
+
+macro CaptureFallingEdge
+   08 # TSC3 ) mov   -- capture falling edge on BKGD in CH3 (PB7)
+   TSC3 7 bclr  ( CHF)   ;m
+
+macro CaptureRisingEdge
+   04 # TSC3 ) mov   -- capture rising edge on BKGD in CH3 (PB7)
+   TSC3 7 bclr  ( CHF)   ;m
+[then]
+
+code SyncPulse
+[with] Sync1 [if]
+   TSC ) clr  -- start timer
+   CaptureFallingEdge
+   BKGD_L # PBD ) mov   -- drive BKGD_L
+   .a clr   begin  .a decz?  until
+   TSC3 7 bclr? if -1 # lda  rts  then
+   SaveTimer
+   CaptureRisingEdge
+   BKGD_H # PBD ) mov   -- drive BKGD_H  Speedup pulse!
+   .a clr   begin  .a decz?  until
+   TSC3 7 bclr? if -2 # lda  rts  then
+   DiffTimer
+   PBD ) clr  -- tri-state BKGD
+[then]
+
+[with] Sync2 [if]
+   TSC ) clr  -- start timer
+   BKGD_L # PBD ) mov   -- drive BKGD_L
+   .a clr   begin  .a decz?  until
+   ( while still low, setup to capture falling edge from target)
+   CaptureFallingEdge
+   BKGD_H # PBD ) mov   -- drive BKGD_H  Speedup pulse!
+   PBD ) clr  -- tri-state BKGD
+   begin  TSC3 7 bclr?  while
+      .a dec  0= until  -1 # lda  rts  ( timeout)  then
+   CaptureRisingEdge
+   SaveTimer
+   .a clr
+   begin  TSC3 7 bclr?  while
+      .a dec  0= until  -2 # lda  rts  ( timeout)  then
+   DiffTimer
+[then]
+
+( Try _not_ using capture, since I can't seem to get it to work reliably.)
+[with] Sync3 [if]
+   TSC ) clr  -- start timer
+   TSC3 ) clr  -- make sure capture is off
+   BKGD_L # PBD ) mov   -- drive BKGD_L
+   .a clr   begin  .a decz?  until
+   BKGD_H # PBD ) mov   -- drive BKGD_H  Speedup pulse!
+   PBD ) clr  -- tri-state BKGD
+   begin  PortB 7 bset?  while  ( wait for target to drive BKGD low)
+      .a dec  0= until  -1 # lda  rts  ( timeout)  then
+   TSC 4 bset  ( set TRST - reset timer to 0)
+   .a clr
+   begin  PortB 7 bclr?  while  ( loop while BKGD low)
+      .a dec  0= until  -2 # lda  rts  ( timeout)  then
+   TCNTH ) lda  ( reading H latches L)  0 ,x sta
+   TCNTL ) lda  1 ,x sta
+[then]
+
+( Using two channels for capture, again.)
+[with] Sync4 [if]
+   TSC ) clr  -- start timer
+   08 # TSC3 ) mov   -- capture falling edge on BKGD in CH3 (PB7)
+   04 # TSC2 ) mov   -- capture rising edge on BKGD in CH2 (PB6)
+   BKGD_L # PBD ) mov   -- drive BKGD_L
+   .a clr   begin  nsa nsa  .a decz?  until
+   BKGD_H # PBD ) mov   -- drive BKGD_H  Speedup pulse!
+   PBD ) clr  -- tri-state BKGD
+   begin  nsa nsa  .a decz?  until
+comment fubar
+   begin  PortB 7 bset?  while  ( wait for falling edge from target)
+      .a dec  0= until  -1 # lda  rts  ( timeout)  then
+   .a clr
+   begin  PortB 7 bclr?  while  ( wait for rising edge from target)
+      .a dec  0= until  -2 # lda  rts  ( timeout)  then
+fubar
+   ( have to read capture H bytes first)
+   TCH2H ) lda   .a psh
+   TCH3H ) lda   0 ,x sta
+   TCH2L ) lda   TCH3L ) sub   1 ,x sta
+        .a pul      0 ,x sbc   0 ,x sta
+[then]
+
+[with] MeasureExtal [if]
+   07 # TSC ) mov  ( use TCLK as timer clock)
+   TCNTH ) lda  ( reading H latches L)  0 ,x sta
+   TCNTL ) lda  1 ,x sta
+   .a clr   begin  nsa nsa  .a decz?  until  ( takes 0905 cycles)
+   TCNTH ) lda  ( reading H latches L)  .a psh
+   TCNTL ) lda  1 ,x sub   1 ,x sta
+        .a pul  0 ,x sbc   0 ,x sta
+[then]
+
+   rts  ;c
+
+0 [if]  ( junkyard)
+   TSC3 ) clr   -- reset ch 3
+   TCH3H ) timerh ) mov
+   TCH3L ) timerl ) mov
+   04 # TSC3 ) mov   -- capture rising edge on BKGD in CH3
+   TSC3 ) clr   -- reset ch 3
+[then]
 
 code boot
    0140 # ldhx
@@ -298,43 +475,43 @@ code boot
    .h clr  ( data stack in zero page! H is always clear)
    -2 # ldx  ( data stack at top of zero page; 2 bytes of scratch space)
 
-   InitBdm bsr
-   0e4 ( read status) # lda   tx8 bsr   rx8 bsr
-   0c4 ( write control) # lda  tx8 bsr
-   88  ( ENBDM, CLKSW)  # lda  tx8 bsr  ( try to set clk to bus/2 = 4MHz)
+   PortBinit # PB ) mov
+   PortBdir ) clr
 
-0 [if]
-   TSC ) clr  -- start timer
-   10 # PB ) mov  -- set BKGD_L (PB7) to 0, BKGD_H (PB4) to 1
-   80 # PBD ) mov   -- drive BKGD_L
-   .a clr   begin  .a decz?  until
-   10 # PBD ) mov   -- drive BKGD_H  Speedup pulse!
-   08 # TSC1 ) mov   -- capture falling edge on BKGD in CH1
-   PBD ) clr  -- tri-state BKGD
-   begin  TSC1 7 bclr?  while
-      .a dec  0= until  swi  ( timeout)  then
-   TSC1 ) clr   -- reset ch 1
-   TCH1H ) timerh ) mov
-   TCH1L ) timerl ) mov
-   04 # TSC1 ) mov   -- capture rising edge on BKGD in CH1
-   .a clr
-   begin  TSC1 7 bclr?  while
-      .a dec  0= until  swi  ( timeout)  then
-   TSC1 ) clr   -- reset ch 1
-   TCH1H ) lda   .a psh  ( reading H first latches)
-   TCH1L ) lda   timerl ) sub   timerl ) sta
-        .a pul   timerh ) sbc   timerh ) sta
-   swi
+[with] ExtClock [if]
+   ExtClock bsr
 [then]
+[with] Xtal [if]
+   XtalClock bsr
+[then]
+[with] Bdm [if]
+--   InitBdm bsr
+   TSC3 ) clr  ( steal PB7 back from the timer)
+   0c4 ( write control) # lda  tx8 bsr
+   80  ( ENBDM)  # lda  tx8 bsr
+   0e4 ( read status) # lda   tx8 bsr   rx8 bsr
+--   0c4 ( write control) # lda  tx8 bsr
+--   88  ( ENBDM, CLKSW)  # lda  tx8 bsr  ( try to set clk to bus/2 = 4MHz)
+[then]
+   SyncPulse bsr
+   -- TSC3 ) clr  -- claim port pins back from timer
+
+   IntClock ) jsr
+   swi
 ;c
 
-: pc!  >lohi  PCH t908c!  PCL t908c! ;
+__forth
+outside
+: pc!  >lohi  PCH \o c!  PCL \o c! ;
 : tgt  ( connect mem read to target memory)  ['] t908c@ is |c@ ;
-: hi   flush  start |here put   tgt ( so du works) 
-   \a boot pc!  .regs ;
+: hi   \o start |here put   \o tgt ( so du works)
+   \o boot \o pc!  \o .regs ;
+: chat  flush  security  \o hi ;
 
-: call  pc!  tgRun  .regs ;
-: run   \a boot   call ;
-
+: go  tgRun  \o .regs ;
+: call  \o pc!  \o go ;
+: run   \o boot   \o call ;
+__outside
 
 #]file
+
