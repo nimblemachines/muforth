@@ -21,18 +21,68 @@ cr " HCS08 BDM support " file[#
 
   Of course, now I have to rewrite my bit rx and tx routines. ;-)
 
-( Compressing three transitions into one byte:
-   Hxx  10
-   xHx  08
-   xxH  04
-   Lxx  80
-   xLx  40
-   xxL  20
-                    L  H
-   tx1 = LHH = 8c = 1000_1100
-   tx0 = LLH = c4 = 1100_0100  )
+( Another update. I've decided to try using an 18.432MHz crystal on the
+  908QB. This way I get a nice even divisor for a 57600 bps serial clock,
+  and it seems to be fast enough to talk to an S08 part running at either
+  4MHz or 8MHz.
 
-( Code to switch clocks)
+  It turns out that because the 9S08QG8, when mostly blank, is hard to get
+  into Active BDM mode. On POR - power on reset - it starts running random
+  code and either gets a COP - watchdog - reset, or an illegal instruction,
+  or illegal address. So it resets and starts all over again. Trying to get
+  into Active BDM via the BKGD pin is basically impossible. There is a
+  forum posting about this here:
+
+  http://forums.freescale.com/freescale/board/message?message.uid=11435#U11435
+
+  So, given that, we have to hold BKGD/MS low during POR in order to force
+  the chip into Active BDM mode. A side-effect of this is that it selects
+  the bus clock - rather than the "alternate" BDM clock - ICSLCLK - so the
+  BDM will be running at 4MHz instead of 8. This makes life simpler in some
+  ways, but it turns out that it's pretty easy to meet the timing specs for
+  both 4M and 8M BDM with the 908QB8 running at 18.432M.)
+
+( BDM code for host running at 4.608M, and target at 4M.)
+
+( Send one bit via BDM.)
+macro tx1  ( tx bit in A)
+  BKGD_L # PortBdir ) mov   ( ppwp   - drive start bit)
+  0 ,x tst                  ( pr     - delay 2 cycles)
+  PortBdir ) sta            ( pwp    - drive data bit)
+  nsa nsa                   ( ppdppd - pause 6 cycles)
+  BKGD_H # PortBdir ) mov   ( ppwp   - drive stop bit)
+  ;m
+
+( Recv one bit via BDM.)
+macro rx1  ( recvd bit in A1)
+  BKGD_L # PortBdir ) mov   ( ppwp   - drive start bit)
+  0 ,x tst                  ( pr     - delay 2 cycles)
+  PortBdir ) clr            ( pwp    - undrive PortB)
+  nsa nop                   ( ppdp   - wait for target to drive its bit)
+  PortB ) lda               ( prp    - sample bit)
+  ;m
+
+comment *4.608M--8M*
+( BDM code for host running at 4.608M, and target at 8M.)
+
+( Send one bit via BDM.)
+macro tx1  ( tx bit in A)
+  BKGD_L # PortBdir ) mov   ( ppwp   - drive start bit)
+  PortBdir ) sta            ( pwp    - drive data bit)
+  nop                       ( p      - pause 1 cycle)
+  BKGD_H # PortBdir ) mov   ( ppwp   - drive stop bit)
+  ;m
+
+( Recv one bit via BDM.)
+macro rx1  ( recvd bit in A1)
+  BKGD_L # PortBdir ) mov   ( ppwp   - drive start bit)
+  PortBdir ) clr            ( pwp    - undrive PortB)
+  PortB ) lda               ( prp    - sample bit)
+  ;m
+*4.608M--8M*
+
+comment *6.25M*
+( BDM code for host running at 6.25M, and target at 8M.)
 
 ( Send one bit via BDM.)
 macro tx1  ( tx bit in A)
@@ -49,6 +99,8 @@ macro rx1  ( recvd bit in A1)
   nop                       ( wait for target to drive its bit)
   PortB ) lda               ( sample bit)
   ;m
+
+*6.25M*
 
 ( Send one byte via BDM.)
 code tx8  ( tx byte in A)
@@ -69,6 +121,17 @@ code rx8  ( recvd byte in A)
   rts  ;c
 
 comment *3.2M*
+( Compressing three transitions into one byte:
+   Hxx  10
+   xHx  08
+   xxH  04
+   Lxx  80
+   xLx  40
+   xxL  20
+                    L  H
+   tx1 = LHH = 8c = 1000_1100
+   tx0 = LLH = c4 = 1100_0100  )
+
 ( Send one bit via BDM.)
 code tx1  ( tx bit in A)
   savex  PortBdir # ldx
