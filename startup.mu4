@@ -385,6 +385,41 @@ compiler
 forth
 
 
+( Fluid, or dynamic, binding of global variables.)
+
+( A common pattern in muFORTH is code like this:
+ 
+  radix @ push   do-something   pop radix !
+
+  This is clumsy, and also bad style. What if do-something throws an
+  exception after setting the radix? radix will remain set to its new
+  value. Much better is the idiom:
+
+  radix @ push   ['] do-something  catch  pop radix !  [ re-] throw
+
+  This code resets radix in the event of an exception, but it's still
+  clumsy. What I really want to be able to do is to save the old value of
+  radix, set it for the duration of the executing word, and reset it to its
+  saved value when the executing word finishes - either through a "normal"
+  exit, or by throwing an exception.
+
+  After puzzling over this for a few days I realised that I could do this
+  with catch and throw. The new word "preserve" shows how.)
+
+( Execute starting from the IP on the stack.)
+: execute-ip  ( ip -)  push ;
+
+( Preserve the value of the variable whose address is on the stack. When
+  the word that called "preserve" exits, or in the case of a call to throw,
+  the value is reset.)
+: preserve  ( a -)
+   pop  ( ip of following word)  swap ( ip a)
+   dup @ 2push ( save addr and value)
+   ['] execute-ip catch  ( execute starting with following word)
+   2pop  swap ! ( reset value)
+   ( re-) throw ;
+ 
+
 ( Number input)
 variable dpl    ( location of , or . )
 variable radix
@@ -476,11 +511,6 @@ decimal
    dup push ( chars left)  >number  pop over - ( count of digits converted)
    0= if  complain  then ;
 
-: fancy-number  (s a u - n)  ( was -: )
-   2push  0  2pop  ?sign push  ?radix  dpl on
-   begin  digits  =while ( still chars)  ?dot  repeat
-   2drop  pop  if negate then  ;
-
 ( Now some help for the colon compiler. Note that the colon compiler now
   calls `number,' to convert-and-compile and calls `number' when interpreting.
   This is so that `number,' or `number' can reset dpl when they're done. We do
@@ -490,8 +520,10 @@ decimal
   so Forth tries to convert it, and BOOM.)
 
 : number  (s a u - n)
-   radix @ push   ['] fancy-number  catch   pop radix !  throw ;
-( always reset the radix, even in case of error)
+   radix preserve ( always reset the radix, even in case of error)
+   2push  0  2pop  ?sign push  ?radix  dpl on
+   begin  digits  =while ( still chars)  ?dot  repeat
+   2drop  pop  if negate then  ;
 
 ( Ok, folks, now that we have number parsing code we can redefine the
   interpreter and compiler, which up till this point have simply complained
@@ -676,8 +708,8 @@ forth
 : being-defined  constant  does> 'new-hook ! ;
 
 ( To warn of re-defining a word.)
--: ( a u)  2dup current @ find if  fd-out @ push >stderr
-     drop  2dup type ."  again.  "  pop writes ^  then  2drop ;
+-: ( a u)  2dup current @ find if  fd-out preserve  >stderr
+     drop  2dup type ."  again.  "  ^  then  2drop ;
 being-defined -redef
  -redef
 
@@ -810,7 +842,7 @@ forth
   No matter what chain we are compiling into, define the word - using
   "trues" - in .forth.)
 
-: with   current @  forth  trues  definitions  ;
+: with   current preserve  forth  trues ;
 
 ( Now, the main reason for doing this is to have `debug' and `eprom'
   versions. The best way is to load the file `debug' or `eprom'!)
@@ -827,7 +859,8 @@ forth
 variable csp  ( what does this stand for? `check stack pointer'?)
 : !csp   depth  csp !  ;
 : ?csp   depth  csp @  -
-         =if  . ." stack depth change: "  hex  .s cr  ^  then  drop  ;
+         =if  . ." stack depth change: "  radix preserve  hex  .s cr  ^  then
+         drop  ;
 
 ( Bracket the contents of a file and check for stack depth change.)
 : file[  (s a u)   >stderr  ." (( "  type  >stdout  !csp  ;
@@ -835,7 +868,8 @@ variable csp  ( what does this stand for? `check stack pointer'?)
 
 ( For counting the size of a loaded file.)
 : file[#   (s a u)  file[  here  ;
-: #]file   here  swap -  decimal  >stderr  .  ." bytes "  ]file  ;
+: #]file   here  swap -  radix preserve  decimal  >stderr  .  ." bytes "
+   ]file  ;
 
 
 ( Time, timestamp.)
@@ -862,19 +896,13 @@ variable csp  ( what does this stand for? `check stack pointer'?)
 : <hh:mm>     (s hms)  drop ( sec)  ## ":  ## ;
 
 : (time")  (s year month mday yday hour min sec 'zone #zone - a #)
-   radix @ push  decimal
-   <#  "hold  ( zone)  ||  <hh:mm:ss>  ||  <date>  #>
-   pop radix !  ;
+   radix preserve  decimal  <#  "hold  ( zone)  ||  <hh:mm:ss>  ||  <date>  #> ;
 
 : (short-time")  ( year month mday yday hour min sec 'zone #zone - a #)
-   radix @ push  decimal
-   <#  2drop ( zone)  <hh:mm>  ||  <date>  #>
-   pop radix !  ;
+   radix preserve  decimal  <#  2drop ( zone)  <hh:mm>  ||  <date>  #> ; 
 
 : (date")  (s year month mday yday hour min sec 'zone #zone - a #)
-   radix @ push  decimal
-   <#  2drop 2drop drop  <date>  #>
-   pop radix !  ;
+   radix preserve  decimal  <#  2drop 2drop drop  <date>  #> ;
 
 : date    (s epoch - y m d yday)  local-time  2drop 2drop drop ;
 
