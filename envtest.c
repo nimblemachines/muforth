@@ -13,6 +13,7 @@
  */
 
 #include <stdio.h>
+#include <setjmp.h>
 
 int main(int argc, char *argv[])
 {
@@ -31,5 +32,9 @@ int main(int argc, char *argv[])
     /* verify that int and void * are the same size: */
     if (sizeof(int) != sizeof(void *))
         printf("#error \"Hmm. Pointer and int types are different sizes.\"\n");
+
+    /* show size of jmpbuf */
+    printf("#define JMPBUF_CELLS %d\n", (int)(sizeof(jmp_buf) / sizeof(int)));
+
     return 0;
 }
