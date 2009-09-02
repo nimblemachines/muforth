@@ -12,8 +12,6 @@
 #include <sys/ioctl.h>
 #include <termios.h>
 
-/* XXX: Use cfsetispeed, cfsetospeed? */
-
 /* stack: ( fd termios - sizeof(termios) ) */
 void mu_get_termios()
 {
@@ -48,9 +46,10 @@ void mu_set_termios()
  * character waiting.
  */
 
-/* TEST */
-static void set_termios_raw_by_hand(struct termios *pti)
+static void set_termios_raw(struct termios *pti)
 {
+#ifdef __CYGWIN__
+    /* Cygwin lacks cfmakeraw, so we do it "by hand". */
     pti->c_iflag &= ~(PARMRK | ISTRIP | INLCR | IGNCR |
                       ICRNL | IXON | IXOFF);
     pti->c_iflag |= IGNBRK;
@@ -61,16 +60,15 @@ static void set_termios_raw_by_hand(struct termios *pti)
 
     pti->c_cflag &= ~(CSIZE | PARENB | CRTSCTS);
     pti->c_cflag |= (CS8 | CLOCAL);
+#else
+    cfmakeraw(pti);
+#endif
 }
 
 void mu_set_termios_user_raw()
 {
     struct termios *pti = (struct termios *) TOP;
-#ifdef __CYGWIN__
-    set_termios_raw_by_hand(pti);
-#else
-    cfmakeraw(pti);
-#endif
+    set_termios_raw(pti);
     pti->c_oflag |= (OPOST);  /* set opost, so newlines become CR/LF */
     //pti->c_lflag |= (ISIG);   /* accept special chars and gen signals */
     pti->c_cc[VMIN] = 1;
@@ -81,14 +79,9 @@ void mu_set_termios_user_raw()
 void mu_set_termios_target_raw()
 {
     struct termios *pti = (struct termios *) TOP;
-#ifdef __CYGWIN__
-    set_termios_raw_by_hand(pti);
-#else
-    cfmakeraw(pti);
-#endif
+    set_termios_raw(pti);
     pti->c_cflag &= ~(CRTSCTS);   /* no handshaking */
-    pti->c_cflag |= (CLOCAL | CSTOPB);     /* no modem signalling */
-                                           /* two stop bits */
+    pti->c_cflag |= (CLOCAL);     /* no modem signalling */
     pti->c_cc[VMIN] = 0;          /* return even if no chars avail */
     pti->c_cc[VTIME] = 5;         /* timeout in decisecs */
     DROP(1);
@@ -114,6 +107,7 @@ void mu_set_termios_speed()
     }
 
 #ifdef __CYGWIN__
+    /* Cygwin lacks cfsetspeed, so do it by hand. */
     pti->c_ospeed = pti->c_ispeed = ST1;
 #else
     cfsetspeed(pti, ST1);
@@ -150,7 +144,4 @@ void mu_raw_termios()
     DROP(-4);
 }
 #endif
-
-
-
 
