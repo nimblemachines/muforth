@@ -47,7 +47,6 @@ struct trapframe
     jmp_buf jb;
     struct trapframe *prev;
     xtk *ip;
-    cell *sp;
     xtk **rp;
 };
 
@@ -62,7 +61,6 @@ void mu_catch()
     tf.prev = last_tf;
     last_tf = &tf;
 
-    tf.sp = SP;
     tf.rp = RP;
     tf.ip = IP;
 
@@ -74,8 +72,7 @@ void mu_catch()
     }
     else
     {
-        SP = tf.sp;  /* we longjmp'ed; restore sp, rp, & ip */
-        RP = tf.rp;
+        RP = tf.rp;     /* we longjmp'ed; restore rp & ip */
         IP = tf.ip;
     }
     /* unlink frame */

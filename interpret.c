@@ -114,8 +114,12 @@ void mu_parse()  /* delim -- start len */
 defer not-defined  now complain is not-defined
 */
 
+/* We're going to assume that in every case that complain is called, that
+ * there is a token ( a u) on the stack. So complain will do a 2drop.
+ */
 void mu_complain()
 {
+    DROP(2);
     throw("isn't defined");
 }
 
@@ -207,7 +211,12 @@ static void mu_qstack()
 {
     if (SP > S0)
     {
-        throw("ate the stack");
+        mu_sp_reset();
+        throw("tried to pop an empty stack");
+    }
+    if (SP < SMAX)
+    {
+        throw("too many items on the stack");
     }
 #ifdef DEBUG_STACK
     /* print stack */
