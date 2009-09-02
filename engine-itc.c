@@ -129,9 +129,16 @@ void mu_next_()
  */
 
 /* R stack functions */
-void mu_push()   { RPUSH(POP); }
-void mu_pop()    { PUSH(RPOP); }
+void mu_to_r()   { RPUSH(POP); }
+void mu_r_from() { PUSH(RPOP); }
 void mu_rfetch() { PUSH(RP[0]); }
+
+#ifdef CHUMOO
+/* These are Chuck's newfangled names for >r and r> */
+void mu_push()  { mu_to_r(); }
+void mu_pop()   { mu_r_from(); }
+#endif
+
 
 void mu_shunt()  {  RP++; }
 

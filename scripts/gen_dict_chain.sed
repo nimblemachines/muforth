@@ -4,10 +4,10 @@
 # reversed. (See the file COPYRIGHT for details.)
 
 #
-# It looks a bit complicated. ;-) The idea is to automagically convert from
-# a list of the C names of functions that implement muforth words to a list
-# #of their muforth names, formatted to initialize a C array. There are a
-# few exceptional cases, but mostly it's pretty straightforward.
+# It looks a bit complicated. ;-) The idea is to automagically convert from a
+# list of the C names of functions that implement muforth words to a list of
+# their muforth names, formatted to initialize a C array. There are a few
+# exceptional cases, but mostly it's pretty straightforward.
 #
 # sed rocks!
 #
@@ -20,6 +20,9 @@ i\
 s/^\//	\//
 p
 }
+
+# keep any #if* #else or #endif lines, so we can include optional sections
+/^#(if|else|endif)/p
 
 # lose lines *not* starting with "void mu_"
 /^void mu_/!d
@@ -60,6 +63,7 @@ s/exit/^/
 s/q/?/
 s/forward/>/
 s/to(_|$)/>/
+s/from(_|$)/>/
 s/(.*)_size/#\1/
 
 # turn foo_ to (foo)
@@ -76,7 +80,4 @@ g
 
 # output final string for array initializer
 s/(.*)\n(.*)/	{ "\2", mu_\1 },/
-
-
-
 
