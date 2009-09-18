@@ -9,22 +9,6 @@
 
 cr " HC08 Bootloader "  file[#
 
-( Open target serial port.)
-z" /dev/ttyS0" r/w  open-file  constant fd-target
-
-( Set to raw?)
-fd-target target-raw
-
-: bps   ( speed)
-   fd-target ram get-termios drop ( returns size of struct)
-    ( speed) ram set-termios-speed
-   fd-target ram set-termios ;
-
-( For HC08 devices, use 9600.)
-9600 bps
--- 1000000000 9600 / constant bit-time ( ns)
--- : pause  0 bit-time 4 *  nanosleep ;
-
 ( Spying on the protocol.)
 variable spy  spy off
 
@@ -33,12 +17,13 @@ variable spy  spy off
 : .hcell_  .hcell space ;
 
 ( Recv from, send to target.)
-: _send  fd-target >emit ;
-: recv   fd-target <key  spy @ if dup .h8_ then ;
+: _send  fd-target @  >emit ;
+: recv   fd-target @  <key  spy @ if dup .h8_ then ;
 
 ( The hardware we're using means that we should recv sent chars _twice_ -
-  once because of hardware loopback, and again because the target is
-  - hopefully - echoing them.)
+  once because of hardware loopback, and again because the target is -
+  hopefully - echoing them.)
+
 : expect  ( ch)  "0ff and  push ( expected)
    spy @ if  cr ." expected " r@ .h8_ r@ .  ." received "  then
    recv recv ( loopback, target)
@@ -562,7 +547,9 @@ outside
 : tgt  ( connect mem read to target memory)  ['] t908c@ is |c@ ;
 : hi   \o start |here put   \o tgt ( so du works)
    \o boot \o pc!  \o .regs ;
-: chat  flush  security  \o hi ;
+: chat
+   tty-target  fd-target @ target-raw  ( disallows signals)
+   #9600 bps  flush  security  \o hi ;
 
 : go  tgRun  \o .regs ;
 : call  \o pc!  \o go ;
