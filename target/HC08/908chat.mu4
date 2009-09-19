@@ -3,41 +3,23 @@
   Copyright 2002-2009 David Frech. All rights reserved, and all wrongs
   reversed. (See the file COPYRIGHT for details.)
 
-( I couldn't take it any more - the slowness and the weird writing of the
-  PC bug, and decided to try out a simple bootloader.)
+( I couldn't take it any more - MON08 was driving me crazy. It's slow, and
+  I still have an odd bug with the PC - the "image" of it on the stack
+  frame - not getting properly initialised... but only when the target is
+  first connected!
 
-cr " HC08 Chat "  file[#
+  I decided to try out some simple ideas. Instead of the Nibble Machines
+  loader, we have this!
 
-decimal
-tty-target  115200 bps
+  This code should _just_ fit into RAM, leaving room for the data
+  structures needed for the ROM flash routines. The idea basically that
+  this is a simple target to write to in order to get the Flash written -
+  ideally with a copy of this code to act as a bootloader!)
+
+cr " HC908 Chat (target) "  file[#
 hex
-
-( Host side)
-: -echo  recv drop ;
-: SetH       01 _send  _send  -echo ;
-: SetX       02 _send  _send  -echo ;
-: GetH       03 _send  recv ;
-: GetX       04 _send  recv ;
-: HXtoSP     05 _send         -echo ;
-: SPtoHX     06 _send         -echo ;
-: WriteByte  07 _send  _send  -echo ;
-: ReadByte   08 _send  recv ;
-: Sync       09 _send         -echo ;  ( echoed byte is 01)
-
-: SetHX  >lohi  SetH  SetX ;
-: GetHX  GetH  GetX  hilo> ;
-: GetSP  SPtoHX  GetHX ;
-: SetSP  SetHX  HXtoSP ;
-
-: fastc@  ( a - byte)  dup useIndexed? not if  dup SetHX  then  
-   ReadByte  ( a byte)  swap 1 +wrap  taddr ! ;
-
-: hi  ['] fastc@ is |c@   GetSP tsp !  0 SetHX  taddr off ( so they match!) ;
 
 __outside
-hex
-
-0 0 start org
 
 macro SciInit
   SCC1 6 ( ENSCI) bset
@@ -97,7 +79,12 @@ code Dispatch
 
    ( Sync or unknown command)   Echo again  ;c
 
+( If compiling to run in RAM, jump forward here to make room for the data
+  structures needed for the Flash routines - from 88 to AC.)
+
+[with] Ram [if]
 0 0 0b0 org
+[then]
 
 ( We need this because MON08 has taken the SWI vector, and getting it back
   means flashing the vectors, which for now I want to avoid...)
@@ -118,14 +105,29 @@ code interact
    begin  __swi  again  ;c
 
 reset vector
-   42 # OSC ) mov  ( set Ext Osc and ECGON)
    0140 # ldhx
    txs
 
+   -- XXX Set up for use with on-chip crystal osc?
+   -- 42 # OSC ) mov  ( set Ext Osc and ECGON)
+
+   -- configure crystal osc
+   PortA 4 bset
+   PortAdir 4 bset  ( configure OSC2 as output, drive high several cycles)
+   nsa nsa nsa
+   PortAdir 4 bclr
+   0c0 # OSC ) mov  ( set external osc going - 8-32MHz xtal)
+
+   -- wait for startup; normally one waits 4096 target cycles; for
+   -- simplicity we wait that many cycles, but based on the internal osc,
+   -- which is slower (12.8M) than the crystal (18.432M).
+
+   #16 # ldx  ( 4096 = 16 * 256)  .a clr
+   begin  begin  .a decz? until  .x decz? until
+   OSC 1 bset ( set ECGON - switch oscillators!)
+
    SciInit
    begin  interact bsr  again  ;c
-
-__forth
 
 #]file
 

@@ -1,0 +1,58 @@
+( This file is part of muFORTH: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2009 David Frech. All rights reserved, and all wrongs
+  reversed. (See the file COPYRIGHT for details.)
+
+( I couldn't take it any more - MON08 was driving me crazy. It's slow, and
+  I still have an odd bug with the PC - the "image" of it on the stack
+  frame - not getting properly initialised... but only when the target is
+  first connected!
+
+  I decided to try out some simple ideas. Instead of the Nibble Machines
+  loader, we have this!)
+
+cr " HC908 Chat (host) "  file[#
+
+decimal
+
+( Spying on the protocol.)
+variable spy  spy off
+
+: send          spy @ if ." >"  dup .h8_ then  _send ;
+: recv   _recv  spy @ if ." <"  dup .h8_ then ;
+
+( Host side)
+: -echo  recv drop ;
+: Run        00 send        -echo ;
+: SetH       01 send  send  -echo ;
+: SetX       02 send  send  -echo ;
+: GetH       03 send  recv ;
+: GetX       04 send  recv ;
+: HXtoSP     05 send        -echo ;
+: SPtoHX     06 send        -echo ;
+: WriteByte  07 send  send  -echo ;
+: ReadByte   08 send  recv ;
+: Sync       09 send        -echo ;  ( echoed byte is 01)
+
+: SetHX  >lohi  SetH  SetX ;
+: GetHX  GetH  GetX  hilo> ;
+: GetSP  SPtoHX  GetHX ;
+: SetSP  SetHX  HXtoSP ;
+
+: setup-hx  ( a)  dup match-hx?  over 1 update-hx  if drop ^ then  SetHX ;
+: _chat-c@  ( a - byte)  setup-hx  ReadByte ;     ' _chat-c@ is chat-c@
+: _chat-c!  ( byte a)    setup-hx  WriteByte ;    ' _chat-c! is chat-c!
+
+( Wire our versions into the interact code.)
+' Run is chat-run     
+' GetSP is chat-get-sp  
+
+: chat
+   tty-target-init  115200 bps
+   ['] _chat-c@ is |c@
+   Sync  GetSP chat-sp !  0 SetHX  chat-hx off ( so they match!) ;
+   ( XXX - call hi?)
+
+
+#]file
+

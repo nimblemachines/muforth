@@ -1,0 +1,115 @@
+( This file is part of muFORTH: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2009 David Frech. All rights reserved, and all wrongs
+  reversed. (See the file COPYRIGHT for details.)
+
+( Support common to all 908 and S08 interactions. Things like SWI stack
+  frames, reading and writing memory using "indexed" reads and writes.)
+
+cr " HC08 Interaction (common) "  file[#
+
+hex
+
+( Hex output, from lib/see.mu4)
+: .h8_   .h8 space ;
+: .hcell_  .hcell space ;
+
+: >lohi  ( w - lo hi)  dup 0ff and  swap 8 u>> ;
+: hilo>  ( hi lo - w)  swap  8 << or ;
+
+( Recv from, send to target.)
+: _send  fd-target @  >emit ;
+: _recv  fd-target @  <key ;
+
+variable chat-sp   ( points to SWI stack frame)
+variable chat-hx   ( current HX pointer for indexed reads and writes)
+chat-hx off
+
+: +wrap  ( a n - a+n; fitting in 16 bits)  + "0ffff and ;
+: match-hx?  ( a - f)  chat-hx @ = ; 
+: update-hx  ( a +a)  +wrap chat-hx ! ;
+
+( Use names separate from |c@ |c! |@ |! so we have more flexibility.
+  Initially the asm will want to write into the target memory _image_.
+  Later, after connecting to a target, we can write to the memory image,
+  and to the target, by careful patching of |<whatever.)
+
+( There are going to be at least three - !! - versions of the underlying c@
+  and c! words defined: one to work with MON08, one with my chat code for
+  the 908, and one to talk to the S08 via BDM.)
+
+defer chat-c@
+defer chat-c!
+: chat-@  ( a - word)  dup chat-c@ ( hi) 8 <<  swap 1+ chat-c@ ( lo) or ;
+: chat-!  ( word a)  push >lohi  r@ chat-c! ( hi)  pop 1+ chat-c! ( lo) ;
+
+defer chat-get-sp
+defer chat-run
+
+( Once we have the target SP we can read & write the "exception stack
+  frame" which contains all the 08 registers.
+
+  chat-sp points _at_ - not below - the bottommost register. The order, low to
+  high: H CC A X PCH PCL)
+
+: reg  ( offset)  constant does> chat-sp @ + ;  ( self-index)
+00 reg H
+01 reg CC
+02 reg A
+03 reg X
+04 reg PC
+04 reg PCH
+05 reg PCL
+
+: .bits8  radix @ push  binary  <# # # # # # # # # #> type  pop radix ! ;
+: .b  ( a)  chat-c@ .h8_ ;
+: .w  ( a)  chat-@  .hcell_ ;
+outside
+: .regs  chat-get-sp chat-sp !  cr  ." V--HINZC  A  H  X   SP   PC"
+    cr  CC chat-c@ .bits8 space  \f A .b  H .b  X .b  chat-sp @ .hcell_  PC .w ;
+forth
+
+: put  ( from to)  ( copy code to target)
+   over -  ?for  dup |+ c@  over chat-c!  1+  next  then ;
+
+hex
+forth
+
+outside
+: equ  ( make a constant in .outside.)
+  current @ push  outside constant  pop definitions ;
+
+assembler
+: label   |here  \o equ ;
+: ;c   __outside ;
+
+compiler
+: ;m   \ ^  __outside ;  ( to exit from macro compilation)
+
+outside
+: org  org ;
+: code   \a label  __asm ;
+: macro  current @ push  assembler : pop definitions  __macro ;
+: __forth   \ [ ;
+: du   du ;
+: [or]   or ;
+: .x  ( like .s)  X chat-c@ du ;
+
+variable reset
+variable swi
+: vector  ( a)  |here  swap !  __asm ;
+: __swi  ( compile my version instead!)  \o swi @  \a ) \a jsr ;
+: pc!  PC chat-! ;
+: hi   ram-start |here put  \o reset @  \o pc!  \o .regs ;
+
+: go   chat-run  \o .regs ;
+: call  \o pc!  \o go ;
+: run   \o reset @   \o call ;
+
+forth
+: \o  .outside. chain' execute ;
+: tty-target-init
+   tty-target  fd-target @ target-raw  ( disallows signals) ;
+
+#]file
+

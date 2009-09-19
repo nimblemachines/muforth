@@ -18,6 +18,8 @@ MC68HC908QB4/QB8 $80   $2800   $280F   $2803  $2809   $2806   $280C )
   MCU     RAM PRGRNGE ERARNGE RDVRRNG GETBYTE DELNUS
 QB4/8     $88   $2809   $2806   $2803   $2800  $280C )
 
+__forth
+
 hex
 
 2803 constant VerifyRange
@@ -42,18 +44,24 @@ hex
 : CopyChunk  ( 'image len)
    Data SetHX  for  c@+ WriteByte  next  drop ;
 
+: FlashSetup  ( 'target 'len 'code)
+   push
+   ControlBlock SetHX
+       0 WriteByte ( page erase)
+     #18 WriteByte ( running @ 18.432M) 
+     over + 1-  >lohi  WriteByte  WriteByte  ( last addr)
+   ( write HX and PC to stack frame:)
+   ( 'target) >lohi  H SetHX  WriteByte  X SetHX WriteByte
+    pop ( PC) >lohi  PC SetHX  WriteByte WriteByte ;
+
 ( Flash a chunk of 32 bytes or less.)
 : FlashChunk  ( 'image 'target len)
    swap push  ( 'image len)  tuck CopyChunk  ( len)
-   ControlBlock SetHX
-      0 WriteByte ( page erase)
-     #18 WriteByte ( running 18.432M) 
-     r@ ( 'target) + 1-  >lohi  WriteByte  WriteByte  ( last addr)
-   ( write HX and PC to stack frame:)
-   pop >lohi  H SetHX  WriteByte  X SetHX WriteByte
-   ProgramRange >lohi  PC SetHX  WriteByte WriteByte
-   ( go!) ;
+   pop swap  ProgramRange FlashSetup  ( go!) ;
 
+: ErasePage  ( 'target pagelen)
+   EraseRange FlashSetup  ( go!) ;
+   
 : FlashImage
    ( For each chunk of <pagesize> bytes, check if blank, erase if
   necessary, then copy chunks over to buffer and program them!) ;

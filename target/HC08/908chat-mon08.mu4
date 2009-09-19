@@ -7,18 +7,12 @@
   chips. This is support for talking to the ROM monitor/bootloader resident
   on all 908 microcontrollers.)
 
-cr " HC08 Bootloader "  file[#
+cr " HC908 Chat (MON08) "  file[#
 
 ( Spying on the protocol.)
 variable spy  spy off
 
-( Hex output, from lib/see.mu4)
-: .h8_   .h8 space ;
-: .hcell_  .hcell space ;
-
-( Recv from, send to target.)
-: _send  fd-target @  >emit ;
-: recv   fd-target @  <key  spy @ if dup .h8_ then ;
+: recv  _recv  spy @ if dup .h8_ then ;
 
 ( The hardware we're using means that we should recv sent chars _twice_ -
   once because of hardware loopback, and again because the target is -
@@ -32,6 +26,8 @@ variable spy  spy off
 : send  ( byte -)  ( Send a byte, read back echoed and verify)
    dup _send  expect ;
 
+: addr>  ( a)  >lohi send send ;
+
 ( Flush anything that's sitting in our input queue.)
 : _flush  begin  recv .h8_  again ;  ( recv will timeout and throw)
 : flush  ['] _flush carefully ;
@@ -40,10 +36,6 @@ hex
 : breakCheck  recv 0= if ." (break received)" then ;
 : security  ( send 8 security bytes, initally FF)  8 for  0ff send  next
    breakCheck ( target sends break after security bytes recvd) ;
-
-: >lohi  ( w - lo hi)  dup 0ff and  swap 8 u>> ;
-: hilo>  ( hi lo - w)  swap  8 << or ;
-: addr>  ( a)  >lohi send send ;
 
 ( Target monitor commands.)
 comment
@@ -93,16 +85,16 @@ comment
   When we read from the target, always read two bytes, starting from an
   even address. Read the first two using tgRead; then, for sequential
   access after that, use tgIread, which returns two bytes. Keep a buffer
-  two bytes long that contains the last two bytes read; taddr contains the
+  two bytes long that contains the last two bytes read; chat-hx contains the
   address in the target's indexed memory pointer; it thus contains the
   address two byte _past_ the address of the first byte in the cache.
 
   Using A#2 to represent A truncated to a multiple of two (A and -2), if an
-  address A#2 matches (taddr-2), then the byte it points to in the target
+  address A#2 matches (chat-hx-2), then the byte it points to in the target
   memory is already in the cache.
 
   Note again that after the cache is filled the chip's indexed read & write
-  pointer will be pointing just _after_ the cache, and taddr will point
+  pointer will be pointing just _after_ the cache, and chat-hx will point
   there as well.
 
   Variation B
@@ -112,8 +104,8 @@ comment
   Iread - which returns two bytes - and return the first but cache the
   second.
 
-  As in the above method, taddr follows the chip's indexed addr exactly,
-  but in this case the byte cached is always at address taddr-1.
+  As in the above method, chat-hx follows the chip's indexed addr exactly,
+  but in this case the byte cached is always at address chat-hx-1.
 
   Also note: unlike in the above case, when we refill the cache, we're
   really storing a remainder there. Thus we don't always read valid data
@@ -122,7 +114,7 @@ comment
   scenes" stocks the leftovers in the fridge.
 
   This approach is pretty good, but fails to be optimal in one case. If the
-  address requested is taddr+1 - perfectly in the range of _one_ tgIread
+  address requested is chat-hx+1 - perfectly in the range of _one_ tgIread
   operation - it will use tgRead instead. The above approach - with a 2
   byte cache and modulo addressing, can use tgIread instead.
 
@@ -132,9 +124,9 @@ comment
   Variation C?
 
   A third variation is easy to conceive. In this case, you cache the
-  results of the last read. Read caches one byte; Iread caches two. taddr
+  results of the last read. Read caches one byte; Iread caches two. chat-hx
   points just past the cache, as before. A count is kept of valid bytes.
-  Given an address A, if (A u< taddr) and (A u>= taddr-count), then A
+  Given an address A, if (A u< chat-hx) and (A u>= chat-hx-count), then A
   points to valid cached data.
 
   I haven't implemented this, but it might be worth trying.
@@ -150,11 +142,6 @@ comment
   previous read's address, or vice versa.
 ==========================================================================
 
-variable tsp    ( target's SP)
-variable taddr  ( current address for the bootloader's indexed write and
-                  read commands)
-taddr off
-
 ( One of the following words - the empty one - is a no-op, so lines
   starting with it will be parsed. The other - with -- - comments out the
   rest of the line. Move the slashes to choose a Variation that suits you!)
@@ -169,26 +156,23 @@ forth
 variable fridge  ( holds leftovers from tgRead or tgIread)
 variable fridgeFull  ( optimistic)  fridgeFull off
 
-: +wrap  ( a n - a+n; fitting in 16 bits)  + "0ffff and ;
-: useIndexed?   ( a - f)  taddr @ = ; 
-
-A : inFridge?   ( a - f)  -2 and  taddr @  -2 +wrap  = ;
-B : inFridge?   ( a - f)          taddr @  -1 +wrap  = ;
+A : inFridge?   ( a - f)  -2 and  chat-hx @  -2 +wrap  = ;
+B : inFridge?   ( a - f)          chat-hx @  -1 +wrap  = ;
   : beerRun?    ( a - f)  inFridge? not  fridgeFull @ not  or ;
 
 A : beerRun  ( a - a a#2 b0 b1)  dup  -2 and
-A    dup useIndexed? if                tgIread ( b0 b1) ^  then
+A    dup match-hx? if                tgIread ( b0 b1) ^  then
 A            dup tgRead  over 1 +wrap tgRead ( b0 b1) ;
 
 B : beerRun  ( a - a +a b0 b1)
-B    dup useIndexed? if  2 ( +a)       tgIread ( b0 b1) ^  then
+B    dup match-hx? if  2 ( +a)       tgIread ( b0 b1) ^  then
 B                  dup 1 ( +a) swap  tgRead dup ( b0 b0) ;
 
-  : postIt  ( a +a)  +wrap taddr !  fridgeFull on ;
+  : postIt  ( a +a)  update-hx  fridgeFull on ;
 A : refillFridge  ( a a#2 b0 b1 - a)  fridge 1+ c!  fridge c!     2 postIt ;
 B : refillFridge  ( a +a b0 b1 - b0)                fridge c!  -rot postIt ;
 
-  : t908c@  ( a - byte)
+  : mon-c@  ( a - byte)
 A  dup beerRun? if  beerRun refillFridge   then  1 and fridge + c@ ;
 B  dup beerRun? if  beerRun refillFridge ^ then   drop fridge   c@ ;
 
@@ -200,153 +184,23 @@ forth
 : A  \ A ;
 : B  \ B ;
 
-( Use names separate from |c@ |c! |@ |! so we have more flexibility.
-  Initially the asm will want to write into the target memory _image_.
-  Later, after connecting to a target, we can write to the memory image,
-  and to the target, by careful patching of |<whatever.)
-
-( I'm using long funny names. t908xx means "target 908 xx" because later,
-  when I've fired up the S08 that this 908 is going to talk to, I'll need
-  yet another word, so I don't want to use, eg, t@.)
-
-: t908@ ( a - word)  dup t908c@ ( hi) 8 <<  swap 1+ t908c@ ( lo) or ;
-
 : doWrite  ( byte a - a)
-   dup useIndexed? if  swap tgIwrite ^  then  tuck tgWrite ;
+   dup match-hx? if  swap tgIwrite ^  then  tuck tgWrite ;
 
-: t908c!  ( byte a)  fridgeFull off ( invalidate cache)
-   doWrite 1 +wrap taddr ! ;
+: mon-c!  ( byte a)  fridgeFull off ( invalidate cache)
+   doWrite 1 update-hx ;
 
-: t908!  ( word a)  push >lohi  r@ t908c! ( hi)  pop 1+ t908c! ( lo) ;
+( Wire our versions into the interact code.)
+' mon-c@ is chat-c@
+' mon-c! is chat-c!
+' tgRun is chat-run     
+' tgReadSp is chat-get-sp  
 
-( Once we have the target SP we can read & write the "exception stack
-  frame" which contains all the 08 registers.
-
-  readsp returns SP+1, which points _at_ - not below - the bottommost
-  register. The order, low to high: H CC A X PCH PCL)
-
-: reg  ( offset)  constant does> tsp @ + ;  ( self-index)
-00 reg H
-01 reg CC
-02 reg A
-03 reg X
-04 reg PC
-04 reg PCH
-05 reg PCL
-
-: .bits8  radix @ push  binary  <# # # # # # # # # #> type  pop radix ! ;
-: .b  ( a)  t908c@ .h8_ ;
-: .w  ( a)  t908@  .hcell_ ;
-outside
-: .regs  tgReadSp tsp !  cr  ." V--HINZC  A  H  X   SP   PC"
-    cr  CC t908c@ .bits8 space  \f A .b  H .b  X .b  tsp @ .hcell_  PC .w ;
-forth
-
-: put  ( from to)  ( copy code to target)
-   over -  ?for  dup |+ c@  over t908c!  1+  next  then ;
-
-( Find out how fast the target is running.)
-hex
-forth
-
-outside
-: equ  ( make a constant in .outside.)
-  current @ push  outside constant  pop definitions ;
-
-assembler
-: label   |here  \o equ ;
-: ;c   __outside ;
-
-compiler
-: ;m   \ ^  __outside ;  ( to exit from macro compilation)
-
-outside
-: here  |here ;
-: org  org ;
-: code   \a label  __asm ;
-: macro  current @ push  assembler : pop definitions  __macro ;
-: __forth   \ [ ;
-: du   du ;
-: [or]   or ;
-: c!  t908c! ;
-: !   t908! ;
-: c@  t908c@ ;
-: @   t908@ ;
-: .x  ( like .s)  X \o c@ du ;
-
-( XXX Quick and dirty.)
-: var  ( #bytes)  \a label  |h +! ( allot!) ;
-
-forth
-__outside
-00 equ PA    -- port A data
-01 equ PB    -- port B data
-04 equ PAD    -- port A direction; 0 = in, 1 = out
-05 equ PBD    -- port B direction
-PB equ PortB
-PBD equ PortBdir
-PA equ PortA
-PAD equ PortAdir
-
-( SCI registers)
-10 equ SCC1  ( control 1)
-11 equ SCC2  ( control 2)
-12 equ SCC3  ( control 3)
-13 equ SCS1  ( status 1)
-15 equ SCDR  ( data reg)
-16 equ SCBR  ( baud rate)
-17 equ SCPSC ( prescaler)
-
-( Timer registers)
-20 equ TSC
-21 equ TCNTH
-22 equ TCNTL
-28 equ TSC1
-29 equ TCH1H
-2a equ TCH1L
-30 equ TSC2
-31 equ TCH2H
-32 equ TCH2L
-33 equ TSC3
-34 equ TCH3H
-35 equ TCH3L
-36 equ OSC
-
-40 equ start
-
-( Now we're reading BKGD on PB7 thru an HCT244 gate. We drive BKGD _low_ by
-  driving 0 on PB3, and drive it _high_ by driving PB0 low and PB1 high.
-  The BKGD_foo defines are for PortB data direction bits - we never change
-  the values driven.)
-
-02 equ PortBinit  ( PB3 low, PB1 high, PB0 low)
-08 equ BKGD_L     ( drive PB3)
-03 equ BKGD_H     ( drive PB1, PB0)
-
-__forth
-outside
-
-variable reset
-variable swi
-: vector  ( a)  \o here  swap !  __asm ;
-: __swi  ( compile my version instead!)  \o swi @  \a ) \a jsr ;
-
-: pc!  >lohi  PCH \o c!  PCL \o c! ;
-: tgt  ( connect mem read to target memory)  ['] t908c@ is |c@ ;
-: hi   \o start |here put   \o tgt ( so du works)
-   \o reset @  \o pc!  \o .regs ;
+( Specific to MON08 interaction.)
 : chat
-   tty-target  fd-target @ target-raw  ( disallows signals)
+   tty-target-init
+   ['] mon-c@ is |c@
    #9600 bps  flush  security  \o hi ;
-
-: go  tgRun  \o .regs ;
-: call  \o pc!  \o go ;
-: run   \o reset @   \o call ;
-
-forth
-: \o  .outside. chain' execute ;
-
-( Load some code here!)
 
 #]file
 
