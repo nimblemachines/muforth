@@ -1,0 +1,315 @@
+( This file is part of muFORTH: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2009 David Frech. All rights reserved, and all wrongs
+  reversed. (See the file COPYRIGHT for details.)
+
+[with] Sci [if]
+macro SciInit
+  SCC1 6 ( ENSCI) bset
+  0c # SCC2 ) mov  ( enable rcvr, xmitter)
+  30 # SCPSC ) mov  ( prescaler divisor of 2 + 16/32)
+                    ( yields 115200 from 18.432M clock)  ;m
+code SciRx
+  begin  SCS1 ( status 1) 5 ( recvr full)  bset? until
+  -- SCDR ( data) ) lda  rts  ;c
+  SCDR ( data) )  0 ,x mov  rts  ;c
+
+code SciTx
+  begin  SCS1 ( status 1) 7 ( xmit empty)  bset? until
+  -- SCDR ( data) ) sta  rts  ;c
+  0 ,x  SCDR ( data) ) mov  rts  ;c
+[then]
+
+[with] Bdm [if]
+ld target/HC08/bdm.mu4
+hex
+[then]
+
+-- [with] Sci  [with] Bdm  [and]  [if]
+
+00 [if]
+-- Read from SCI: read count, write count, followed by bytes to write;
+-- read from BDM read count bytes, echo them to SCI.
+code DoCommand  ( read command from SCI and do it!)
+  -- We can't simply echo bytes as they come and go. The BDM interface
+  -- times out after 512 (target) cycles). So we have to buffer the bytes
+  -- coming and going.
+  SciRx bsr  ( read count)
+  SciRx bsr  ( write count)
+  -4 # aix  ( room for four bytes of buffer)
+    2 ,x lda  .a psh  .a psh  ( read count, twice: offset 3 & 4)
+    3 ,x lda  .a psh  .a psh  ( write count, twice: offset 1 & 2)
+
+  .x psh
+  begin   SciRx bsr   2 ,s decz? until
+  .x pul  .x psh
+  begin   BdmTx bsr   1 ,s decz? until
+  .x pul  .x psh
+  begin   BdmRx bsr   4 ,s decz? until
+  .x pul  .x psh
+  begin   SciTx bsr   3 ,s decz? until
+  .x pul
+  2 # aix  4 # ais
+  rts  ;c
+[then]
+
+00 [if]
+code DoCommandBroken
+  SciRx bsr  ( char in A; Z is set/clr)  0= if
+    ( read)  BdmRx bsr  SciTx again  then
+    ( write)  SciRx bsr  BdmTx again  ;c
+[then]
+
+[with] Sci  [with] Bdm [not] [and]  [if]
+code DoEcho  ( read and echo char from SCI)
+  SciRx bsr  -1 # aix  SciTx bsr  -1 # aix  rts  ;c
+[then]
+
+[with] Xtal [if]
+code XtalClock
+  PortA 4 bset
+  PortAdir 4 bset  ( configure OSC2 as output, drive high several cycles)
+  nsa nsa nsa
+  PortAdir 4 bclr
+   0c0 # OSC ) mov  ( set external osc going - 8-32MHz xtal)
+  -- 0c4 # OSC ) mov  ( set external osc going - 1-8MHz xtal)
+  -- 10 # lda  0 ,x sta
+   0 ,x clr
+  begin  1 ,x clr  begin  1 ,x decz? until  0 ,x decz? until
+  OSC 1 bset ( set ECGON)   rts  ;c
+[then]
+
+[with] ExtClock [if]
+code ExtClock
+  42 # OSC ) mov  ( set Ext Osc and ECGON)
+   .a clr   begin  nsa nsa  .a decz?  until  ( takes 0905 cycles)
+   rts  ;c
+[then]
+
+code IntClock
+  20 # OSC ) mov   rts  ;c
+
+[with] Sync1 [with] Sync2 [or] [if]
+macro SaveTimer
+   ( have to read capture H bytes first)
+   TCH3H ) lda   0 ,x sta
+   TCH3L ) lda   1 ,x sta   ;m
+
+macro DiffTimer
+   ( have to read capture H bytes first)
+   TCH3H ) lda   .a psh
+   TCH3L ) lda   1 ,x sub   1 ,x sta
+        .a pul   0 ,x sbc   0 ,x sta   ;m
+
+macro CaptureFallingEdge
+   08 # TSC3 ) mov   -- capture falling edge on BKGD in CH3 (PB7)
+   TSC3 7 bclr  ( CHF)   ;m
+
+macro CaptureRisingEdge
+   04 # TSC3 ) mov   -- capture rising edge on BKGD in CH3 (PB7)
+   TSC3 7 bclr  ( CHF)   ;m
+[then]
+
+code SyncPulse
+[with] Sync1 [if]
+   TSC ) clr  -- start timer
+   CaptureFallingEdge
+   BKGD_L # PBD ) mov   -- drive BKGD_L
+   .a clr   begin  .a decz?  until
+   TSC3 7 bclr? if -1 # lda  rts  then
+   SaveTimer
+   CaptureRisingEdge
+   BKGD_H # PBD ) mov   -- drive BKGD_H  Speedup pulse!
+   .a clr   begin  .a decz?  until
+   TSC3 7 bclr? if -2 # lda  rts  then
+   DiffTimer
+   PBD ) clr  -- tri-state BKGD
+[then]
+
+[with] Sync2 [if]
+   TSC ) clr  -- start timer
+   BKGD_L # PBD ) mov   -- drive BKGD_L
+   .a clr   begin  .a decz?  until
+   ( while still low, setup to capture falling edge from target)
+   CaptureFallingEdge
+   BKGD_H # PBD ) mov   -- drive BKGD_H  Speedup pulse!
+   PBD ) clr  -- tri-state BKGD
+   begin  TSC3 7 bclr?  while
+      .a dec  0= until  -1 # lda  rts  ( timeout)  then
+   CaptureRisingEdge
+   SaveTimer
+   .a clr
+   begin  TSC3 7 bclr?  while
+      .a dec  0= until  -2 # lda  rts  ( timeout)  then
+   DiffTimer
+[then]
+
+( Try _not_ using capture, since I can't seem to get it to work reliably.)
+[with] Sync3 [if]
+   TSC ) clr  -- start timer
+   TSC3 ) clr  -- make sure capture is off
+   BKGD_L # PBD ) mov   -- drive BKGD_L
+   .a clr   begin  .a decz?  until
+   BKGD_H # PBD ) mov   -- drive BKGD_H  Speedup pulse!
+   PBD ) clr  -- tri-state BKGD
+   begin  PortB 7 bset?  while  ( wait for target to drive BKGD low)
+      .a dec  0= until  -1 # lda  rts  ( timeout)  then
+   TSC 4 bset  ( set TRST - reset timer to 0)
+   .a clr
+   begin  PortB 7 bclr?  while  ( loop while BKGD low)
+      .a dec  0= until  -2 # lda  rts  ( timeout)  then
+   TCNTH ) lda  ( reading H latches L)  0 ,x sta
+   TCNTL ) lda  1 ,x sta
+[then]
+
+( Using two channels for capture, again.)
+[with] Sync4 [if]
+   TSC ) clr  -- start timer
+   08 # TSC3 ) mov   -- capture falling edge on BKGD in CH3 (PB7)
+   04 # TSC2 ) mov   -- capture rising edge on BKGD in CH2 (PB6)
+   BKGD_L # PBD ) mov   -- drive BKGD_L
+   .a clr   begin  nsa nsa  .a decz?  until
+   BKGD_H # PBD ) mov   -- drive BKGD_H  Speedup pulse!
+   PBD ) clr  -- tri-state BKGD
+   begin  nsa nsa  .a decz?  until
+comment fubar
+   begin  PortB 7 bset?  while  ( wait for falling edge from target)
+      .a dec  0= until  -1 # lda  rts  ( timeout)  then
+   .a clr
+   begin  PortB 7 bclr?  while  ( wait for rising edge from target)
+      .a dec  0= until  -2 # lda  rts  ( timeout)  then
+fubar
+   ( have to read capture H bytes first)
+   TCH2H ) lda   .a psh
+   TCH3H ) lda   0 ,x sta
+   TCH2L ) lda   TCH3L ) sub   1 ,x sta
+        .a pul      0 ,x sbc   0 ,x sta
+[then]
+
+[with] MeasureExtal [if]
+   07 # TSC ) mov  ( use TCLK as timer clock)
+   TCNTH ) lda  ( reading H latches L)  0 ,x sta
+   TCNTL ) lda  1 ,x sta
+   .a clr   begin  nsa nsa  .a decz?  until  ( takes 0905 cycles)
+   TCNTH ) lda  ( reading H latches L)  .a psh
+   TCNTL ) lda  1 ,x sub   1 ,x sta
+        .a pul  0 ,x sbc   0 ,x sta
+[then]
+
+   rts  ;c
+
+0 [if]  ( junkyard)
+   TSC3 ) clr   -- reset ch 3
+   TCH3H ) timerh ) mov
+   TCH3L ) timerl ) mov
+   04 # TSC3 ) mov   -- capture rising edge on BKGD in CH3
+   TSC3 ) clr   -- reset ch 3
+[then]
+
+[with] Bdm [if]
+code BdmDelayBackup
+  nsa nsa  -1 # aix  rts  ;c
+
+code WriteCmd
+  ( in A)
+  0 ,x sta  ( command)  BdmTx again  ;c  
+
+code ReadBdm8
+  -- send 8 bit command, expect one byte back
+  WriteCmd bsr  BdmDelayBackup bsr  BdmRx again  ;c
+
+code ReadBdm16
+  -- send 8 bit command, expect two bytes back
+  ReadBdm8 bsr  BdmRx again  ;c
+
+code ReadHX
+  6c # lda  ReadBdm16 again  ;c
+
+code WriteHX
+  ( H @ 0,x; X in A)
+  -1 # aix
+  2 ,x sta
+  4c # lda  ( WRITE_HX command)  WriteCmd bsr
+  BdmTx bsr  BdmTx bsr  -1 # aix  BdmDelayBackup again  ;c
+
+code ReadNext
+  70 # lda   ReadBdm8  again  ;c
+[then]
+
+[with] Sci  [with] Bdm  [and] [if]
+code DoCommand
+   ( wait for key; then send back current HX, then 16 bytes of memory contents)
+   -#11 # aix
+   SciRx jsr  ( wait for key)
+   ReadHX bsr
+   8 # lda  .a psh  ( count)
+   begin  ReadNext bsr  0 ,s decz?  until  .a pul
+   -- echo recv'd key, HX, and 8 bytes of data
+   -#11 # aix
+   #11 # lda  .a psh  ( count)
+   begin  SciTx jsr  0 ,s decz?  until  .a pul
+   rts  ;c
+[then]
+
+code boot
+   0140 # ldhx
+   txs
+   -- .h clr  ( data stack in zero page! H is always clear)
+   -- -2 # ldx  ( data stack at top of zero page; 2 bytes of scratch space)
+   20 # ldx  ( HX stack @ 120)
+
+[with] Sci [if]
+   SciInit
+[then]
+
+   PortBinit # PB ) mov
+   BKGD_L # PortBdir ) mov   -- drive BKGD/MS low
+   08 # lda  -- remind user to power cycle the S08
+   swi
+   PortBdir ) clr
+
+[with] ExtClock [if]
+   ExtClock bsr
+[then]
+
+[with] Sci [if]
+  [with] Bdm [if]
+   ( go into a loop reading commands from SCI and "piping" them to BDM.)
+   begin  DoCommand bsr  again
+  [else]
+   begin  DoEcho bsr  again
+  [then]
+[then]
+
+[with] Xtal [if]
+   XtalClock bsr
+[then]
+[with] Bdm  [with] Sci [not]  [and]  [if]
+--   InitBdm bsr
+   TSC3 ) clr  ( steal PB7 back from the timer)
+--   0c4 ( write control) # lda  BdmTx bsr
+--   80  ( ENBDM)  # lda  BdmTx bsr
+   -- 0e4 ( read status) # lda   0 ,x sta  BdmTx bsr   BdmRx bsr
+00 [if]
+  -6 # aix
+   6b ( read PC) # lda  ReadBdm16 bsr
+   ReadHX bsr
+   6f ( read SP) # lda  ReadBdm16 bsr
+[else]
+   -0a # aix  ( ready to read 8 bytes and HX!)
+   0ff # lda ( hi)  0 ,x sta   0b7 # lda ( lo)  WriteHX bsr
+   8 # lda  .a psh  ( count)
+   begin  ReadNext bsr  0 ,s decz?  until  .a pul
+   ReadHX bsr
+[then]
+
+--   0c4 ( write control) # lda  BdmTx bsr
+--   88  ( ENBDM, CLKSW)  # lda  BdmTx bsr  ( try to set clk to bus/2 = 4MHz)
+[then]
+   SyncPulse bsr
+   -- TSC3 ) clr  -- claim port pins back from timer
+
+   IntClock ) jsr
+   swi
+;c
+

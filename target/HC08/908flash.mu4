@@ -10,31 +10,53 @@ cr " HC08 Flash programming " file[#
 
 ( Read AN2635 and AN2874 for details.)
 
-( from AN2635:)
+( from AN2635:
 MCU Name         RAM GetByte PutByte RDVRRNG PRGRNGE ERARNGE DELNUS
-MC68HC908QB4/QB8 $80   $2800   $280F   $2803  $2809   $2806   $280C
+MC68HC908QB4/QB8 $80   $2800   $280F   $2803  $2809   $2806   $280C )
 
-( from AN2874:)
+( from AN2874:
   MCU     RAM PRGRNGE ERARNGE RDVRRNG GETBYTE DELNUS
-QB4/8     $88   $2809   $2806   $2803   $2800  $280C
+QB4/8     $88   $2809   $2806   $2803   $2800  $280C )
 
+hex
+
+2803 constant VerifyRange
 2806 constant EraseRange
-2809 constant ProgRange
+2809 constant ProgramRange
 
 ( HX points to first byte of data to Flash.)
-88 Control     ( Used only by FlEraseRange)
+88 constant ControlBlock
    1 << 6 constant MassErase
         0 constant PageErase
-89 CpuSpeed    ( 4*bus_speed_in_mhz, rounded up to nearest int)
-8a AddrLastH   ( Last address to Flash)
-8b AddrLastL
-8c Data        ( 1-32 bytes of data to write to Flash)
+-- 89 constant CpuSpeed    ( 4*bus_speed_in_mhz, rounded up to nearest int)
+-- 8a constant AddrLastH   ( Last address to Flash)
+-- 8b constant AddrLastL
+8c constant Data        ( 1-32 bytes of data to write to Flash)
 
+( QB have 64 byte pages, I think...)
+: BlankCheck  ( addr pagesize - flag)
+   dup push  negate and SetHX  0ff  pop for  ReadByte and  next  0ff = ;
 
-QB4/8 $2809 $2806 $2803 $2800 $280C $88 
+: c@+  ( a - a+1 b)  dup 1+  swap c@ ;
 
+: CopyChunk  ( 'image len)
+   Data SetHX  for  c@+ WriteByte  next  drop ;
+
+( Flash a chunk of 32 bytes or less.)
+: FlashChunk  ( 'image 'target len)
+   swap push  ( 'image len)  tuck CopyChunk  ( len)
+   ControlBlock SetHX
+      0 WriteByte ( page erase)
+     #18 WriteByte ( running 18.432M) 
+     r@ ( 'target) + 1-  >lohi  WriteByte  WriteByte  ( last addr)
+   ( write HX and PC to stack frame:)
+   pop >lohi  H SetHX  WriteByte  X SetHX WriteByte
+   ProgramRange >lohi  PC SetHX  WriteByte WriteByte
+   ( go!) ;
+
+: FlashImage
+   ( For each chunk of <pagesize> bytes, check if blank, erase if
+  necessary, then copy chunks over to buffer and program them!) ;
 
 #]file
-
-
 

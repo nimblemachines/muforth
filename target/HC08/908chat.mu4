@@ -1,0 +1,131 @@
+( This file is part of muFORTH: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2009 David Frech. All rights reserved, and all wrongs
+  reversed. (See the file COPYRIGHT for details.)
+
+( I couldn't take it any more - the slowness and the weird writing of the
+  PC bug, and decided to try out a simple bootloader.)
+
+cr " HC08 Chat "  file[#
+
+decimal
+tty-target  115200 bps
+hex
+
+( Host side)
+: -echo  recv drop ;
+: SetH       01 _send  _send  -echo ;
+: SetX       02 _send  _send  -echo ;
+: GetH       03 _send  recv ;
+: GetX       04 _send  recv ;
+: HXtoSP     05 _send         -echo ;
+: SPtoHX     06 _send         -echo ;
+: WriteByte  07 _send  _send  -echo ;
+: ReadByte   08 _send  recv ;
+: Sync       09 _send         -echo ;  ( echoed byte is 01)
+
+: SetHX  >lohi  SetH  SetX ;
+: GetHX  GetH  GetX  hilo> ;
+: GetSP  SPtoHX  GetHX ;
+: SetSP  SetHX  HXtoSP ;
+
+: fastc@  ( a - byte)  dup useIndexed? not if  dup SetHX  then  
+   ReadByte  ( a byte)  swap 1 +wrap  taddr ! ;
+
+: hi  ['] fastc@ is |c@   GetSP tsp !  0 SetHX  taddr off ( so they match!) ;
+
+__outside
+hex
+
+0 0 start org
+
+macro SciInit
+  SCC1 6 ( ENSCI) bset
+  0c # SCC2 ) mov  ( enable rcvr, xmitter)
+  30 # SCPSC ) mov  ( prescaler divisor of 2 + 16/32)
+                    ( yields 115200 from 18.432M clock)  ;m
+
+code SciRx  ( returns char in A)
+  begin  SCS1 ( status 1) 5 ( recvr full)  bset? until
+  SCDR ( data) ) lda  rts  ;c
+
+macro SciTx  ( sends char in A - synchronous!)
+  -- begin  SCS1 ( status 1) 7 ( xmit empty)  bset? until
+  SCDR ( data) ) sta  ;m
+
+( Commands:
+  0  Run        - does an RTI - pops stack frame and runs
+  1  SetH       - reads a byte from SCI, writes into H register
+  2  SetX       - reads a byte from SCI, writes into X register
+  3  GetH       - writes H register to SCI
+  4  GetX       - writes X register to SCI
+  5  HXtoSP     - sets SP from HX
+  6  SPtoHX     - sets HX from SP
+  7  WriteByte  - reads a byte from SCI, writes into memory @ HX
+  8  ReadByte   - reads a byte from memory @ HX, writes it to SCI
+  9+ Sync       - nop, echoes
+)
+
+code Echo
+   SciTx ( fall through)  ;c
+
+code Dispatch
+   SciRx bsr  ( command)
+
+   0= if ( Run)   .h pul  rti  then
+
+   .a decz? if ( SetH)
+   SciRx bsr  .a psh  .h pul  ( set H)  Echo again  then
+
+   .a decz? if ( SetX)
+   SciRx bsr  tax ( set X)  Echo again  then
+
+   .a decz? if ( GetH)
+   .h psh  .a pul  Echo again  then
+
+   .a decz? if ( GetX)
+   txa  Echo again  then
+
+   .a decz? if ( HXtoSP)  txs  Echo again  then
+   .a decz? if ( SPtoHX)  tsx  Echo again  then
+
+   .a decz? if ( WriteByte)
+   SciRx bsr   0 ,x sta   1 # aix  Echo again  then
+
+   .a decz? if ( ReadByte)
+   0 ,x lda  1 # aix  then  ( fall through)
+
+   ( Sync or unknown command)   Echo again  ;c
+
+0 0 0b0 org
+
+( We need this because MON08 has taken the SWI vector, and getting it back
+  means flashing the vectors, which for now I want to avoid...)
+swi vector
+   ( jsr/bsr has already pushed PC)
+   .x psh  .a psh  tpa ( flags to A)  .a psh  .h psh  sei
+   Echo again  ;c
+
+( If the chat interaction changes the PC on this stack frame to point
+  somewhere other than _after_ the __swi, not all is lost - since we got
+  here via a _call_ from reset, we'll return to _that_ loop, and re-enter
+  the SWI.
+
+  On the other hand, if the PC remains unaltered, an RTI from the SWI's
+  stack frame wil simply return here, and we'll take the "exception" again.)
+
+code interact
+   begin  __swi  again  ;c
+
+reset vector
+   42 # OSC ) mov  ( set Ext Osc and ECGON)
+   0140 # ldhx
+   txs
+
+   SciInit
+   begin  interact bsr  again  ;c
+
+__forth
+
+#]file
+
