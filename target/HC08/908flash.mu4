@@ -3,7 +3,7 @@
   Copyright 2002-2009 David Frech. All rights reserved, and all wrongs
   reversed. (See the file COPYRIGHT for details.)
 
-cr " HC08 Flash programming " file[#
+cr " HC908 Flash programming " file[#
 
 ( Code to utilise the on-chip ROM-resident Flash programming routines in
   Freescale's HC908 microcontroller.)
@@ -22,49 +22,71 @@ __forth
 
 hex
 
-2803 constant VerifyRange
-2806 constant EraseRange
-2809 constant ProgramRange
+#64 constant /page    ( QB have 64 byte pages, I think...)
+#32 constant /chunk   ( decreed by existing Flash routines)
+
+( ROM addresses of the Flash programming routines.)
+2803 constant 'verify-range
+2806 constant 'erase-range
+2809 constant 'program-range
 
 ( HX points to first byte of data to Flash.)
-88 constant ControlBlock
-   1 << 6 constant MassErase
-        0 constant PageErase
--- 89 constant CpuSpeed    ( 4*bus_speed_in_mhz, rounded up to nearest int)
--- 8a constant AddrLastH   ( Last address to Flash)
--- 8b constant AddrLastL
-8c constant Data        ( 1-32 bytes of data to write to Flash)
+88 constant control-block
+   1 << 6 constant mass-erase
+        0 constant page-erase
+-- 89 constant cpu-speed    ( 4*bus_speed_in_mhz, rounded up to nearest int)
+-- 8a constant lastH   ( Last address - 1)
+-- 8b constant lastL
+8c constant write-buffer  ( 1-32 bytes of data to write to Flash)
 
-( QB have 64 byte pages, I think...)
-: BlankCheck  ( addr pagesize - flag)
-   dup push  negate and SetHX  0ff  pop for  ReadByte and  next  0ff = ;
-
-: c@+  ( a - a+1 b)  dup 1+  swap c@ ;
-
-: CopyChunk  ( 'image len)
-   Data SetHX  for  c@+ WriteByte  next  drop ;
-
-: FlashSetup  ( 'target 'len 'code)
+: flash-setup  ( 'target 'len 'code)
    push
-   ControlBlock SetHX
+   control-block SetHX
        0 WriteByte ( page erase)
      #18 WriteByte ( running @ 18.432M) 
      over + 1-  >lohi  WriteByte  WriteByte  ( last addr)
    ( write HX and PC to stack frame:)
-   ( 'target) >lohi  H SetHX  WriteByte  X SetHX WriteByte
-    pop ( PC) >lohi  PC SetHX  WriteByte WriteByte ;
+   ( 'target) hx!  pop ( PC) pc! ;
 
 ( Flash a chunk of 32 bytes or less.)
-: FlashChunk  ( 'image 'target len)
-   swap push  ( 'image len)  tuck CopyChunk  ( len)
-   pop swap  ProgramRange FlashSetup  ( go!) ;
+: program-chunk  ( 'target len)
+   cr ." program-chunk "  2dup swap u. u.
+   'program-range flash-setup  chat-run ;
 
-: ErasePage  ( 'target pagelen)
-   EraseRange FlashSetup  ( go!) ;
-   
-: FlashImage
-   ( For each chunk of <pagesize> bytes, check if blank, erase if
-  necessary, then copy chunks over to buffer and program them!) ;
+( The length - from which we calc last-addr for the control block - doesn't
+  matter for erase-range. The ROM routine always erases an entire page;
+  also HX can point anywhere in the page.)
+
+: erase-chunk  ( 'target)
+   cr ." erase-chunk " dup u.
+   1 'erase-range flash-setup  chat-run ;
+
+: blank-check  ( addr pagesize - flag)
+   cr ." blank-check "  2dup swap u. u.
+   dup push  negate and SetHX  0ff  pop for  ReadByte and  next  0ff = ;
+
+: c@+  ( a - a+1 b)  dup 1+  swap c@ ;
+
+: copy-chunk  ( 'image len)
+   cr ." copy-chunk "  2dup swap u. u.
+   write-buffer SetHX  for  c@+ WriteByte  next  drop ;
+
+: erased  ( 'target len - 'target len)
+   2dup blank-check  if ^ then  over erase-chunk ;
+
+( For each chunk check if blank, erase if necessary, then copy chunks over
+  to buffer and program them!)
+
+: chunk  ( 'target len - 'target+len)
+   2dup + push  erased
+   over |+ ( 'target to 'image)  over  ( 'image len)  copy-chunk
+   program-chunk  pop ;
+
+: flash  ( a len)
+   /chunk /mod  ( r q)  swap push  ?for  /chunk chunk  next  then
+                              pop  =if   ( rem) chunk  drop ^  then  2drop ;
+
+: flash-image   |origin @  |#  flash ;
 
 #]file
 
