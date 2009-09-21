@@ -32,7 +32,6 @@ code SciRx  ( returns char in A)
   SCDR ( data) ) lda  rts  ;c
 
 macro SciTx  ( sends char in A - synchronous!)
-  -- begin  SCS1 ( status 1) 7 ( xmit empty)  bset? until
   SCDR ( data) ) sta  ;m
 
 ( Commands:
@@ -43,13 +42,13 @@ macro SciTx  ( sends char in A - synchronous!)
   4  GetX       - writes X register to SCI
   5  HXtoSP     - sets SP from HX
   6  SPtoHX     - sets HX from SP
-  7  WriteByte  - reads a byte from SCI, writes into memory @ HX
-  8  ReadByte   - reads a byte from memory @ HX, writes it to SCI
-  9+ Sync       - nop, echoes
+  7  ReadByte   - reads a byte from memory @ HX, writes it to SCI
+  8  WriteByte  - reads a byte from SCI, writes into memory @ HX
+  9+ Sync       - nop
 )
 
-code Echo
-   SciTx ( fall through)  ;c
+code SendByte
+   SciTx  ( fall through)  ;c
 
 code Dispatch
    SciRx bsr  ( command)
@@ -57,27 +56,27 @@ code Dispatch
    0= if ( Run)   .h pul  rti  then
 
    .a decz? if ( SetH)
-   SciRx bsr  .a psh  .h pul  ( set H)  Echo again  then
+   SciRx bsr  .a psh  .h pul  ( set H)  Dispatch again  then
 
    .a decz? if ( SetX)
-   SciRx bsr  tax ( set X)  Echo again  then
+   SciRx bsr  tax ( set X)  Dispatch again  then
 
    .a decz? if ( GetH)
-   .h psh  .a pul  Echo again  then
+   .h psh  .a pul  SendByte again  then
 
    .a decz? if ( GetX)
-   txa  Echo again  then
+   txa  SendByte again  then
 
-   .a decz? if ( HXtoSP)  txs  Echo again  then
-   .a decz? if ( SPtoHX)  tsx  Echo again  then
-
-   .a decz? if ( WriteByte)
-   SciRx bsr   0 ,x sta   1 # aix  Echo again  then
+   .a decz? if ( HXtoSP)  txs  Dispatch again  then
+   .a decz? if ( SPtoHX)  tsx  Dispatch again  then
 
    .a decz? if ( ReadByte)
-   0 ,x lda  1 # aix  then  ( fall through)
+   0 ,x lda  1 # aix  SendByte again  then
 
-   ( Sync or unknown command)   Echo again  ;c
+   .a decz? if ( WriteByte)
+   SciRx bsr   0 ,x sta   1 # aix  then  ( fall through)
+
+   ( Sync or unknown command)   Dispatch again  ;c
 
 ( If compiling to run in RAM, jump forward here to make room for the data
   structures needed for the Flash routines - from 88 to AC.)
@@ -94,7 +93,7 @@ swi vector
    .x psh  .a psh  tpa ( flags to A)  .a psh  sei
 [then]
    .h psh
-   Echo again  ;c
+   SendByte again  ;c
 
 ( If the chat interaction changes the PC on this stack frame to point
   somewhere other than _after_ the __swi, not all is lost - since we got
