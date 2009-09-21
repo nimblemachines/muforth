@@ -47,50 +47,82 @@ cr " HCS08 BDM support " file[#
   The BKGD_foo defines are for PortB data direction bits - we never change
   the values driven.)
 
+ram-start image
+
+__outside
+
 02 equ PortBinit  ( PB3 low, PB1 high, PB0 low)
 08 equ BKGD_L     ( drive PB3)
 03 equ BKGD_H     ( drive PB1, PB0)
-( BDM code for host running at 4.608M, and target at 4M.)
 
-( Send one bit via BDM.)
-macro tx1  ( tx bit in A)
+( We are now calling the BDM bit send/recv commands _indirectly_, so we can
+  wire them to the correct ones for a given target clock rate. For now we
+  have targets of 4M and 8M only.)
+3 var BdmRx1  ( jmp extended to actual routine)
+3 var BdmTx1
+
+code SetRx1
+   0cc # lda  ( jmp extended)  BdmRx1 ) sta
+   .a pul  ( hi)  BdmRx1 1 + ) sta
+   .a pul  ( lo)  BdmRx1 2 + ) sta  rts  ;c
+
+code SetTx1
+   0cc # lda  ( jmp extended)  BdmTx1 ) sta
+   .a pul  ( hi)  BdmTx1 1 + ) sta
+   .a pul  ( lo)  BdmTx1 2 + ) sta  rts  ;c
+
+( BDM code for host running at 4.608M, and target at 4M or 8M.)
+
+code SetTx1_4M
+   SetTx1 bsr  ;c   -- pushes address of following routine on stack!
+
+( Send one bit via BDM - target @ 4M.)
+code tx1_4m  ( tx bit in A)
   BKGD_L # PortBdir ) mov   ( ppwp   - drive start bit)
   0 ,x tst                  ( pr     - delay 2 cycles)
   PortBdir ) sta            ( pwp    - drive data bit)
   nsa nsa                   ( ppdppd - pause 6 cycles)
   BKGD_H # PortBdir ) mov   ( ppwp   - drive stop bit)
-  ;m
+  rts  ;c
 
-( Recv one bit via BDM.)
-macro rx1  ( recvd bit in A1)
+code SetRx1_4M
+   SetRx1 bsr  ;c   -- pushes address of following routine on stack!
+
+( Recv one bit via BDM - target @ 4M.)
+code rx1_4m  ( recvd bit in A1)
   BKGD_L # PortBdir ) mov   ( ppwp   - drive start bit)
   0 ,x tst                  ( pr     - delay 2 cycles)
   PortBdir ) clr            ( pwp    - undrive PortB)
   nsa nop                   ( ppdp   - wait for target to drive its bit)
   PortB ) lda               ( prp    - sample bit)
-  ;m
+  rts  ;c
 
-comment *4.608M--8M*
 ( BDM code for host running at 4.608M, and target at 8M.)
 
-( Send one bit via BDM.)
-macro tx1  ( tx bit in A)
+code SetTx1_8M
+   SetTx1 bsr  ;c   -- pushes address of following routine on stack!
+
+( Send one bit via BDM - target @ 8M.)
+code tx1_8m  ( tx bit in A)
   BKGD_L # PortBdir ) mov   ( ppwp   - drive start bit)
   PortBdir ) sta            ( pwp    - drive data bit)
   nop                       ( p      - pause 1 cycle)
   BKGD_H # PortBdir ) mov   ( ppwp   - drive stop bit)
-  ;m
+  rts  ;c
 
-( Recv one bit via BDM.)
-macro rx1  ( recvd bit in A1)
+code SetRx1_8M
+   SetRx1 bsr  ;c   -- pushes address of following routine on stack!
+
+( Recv one bit via BDM - target @ 8M.)
+code rx1_8m  ( recvd bit in A1)
   BKGD_L # PortBdir ) mov   ( ppwp   - drive start bit)
   PortBdir ) clr            ( pwp    - undrive PortB)
   PortB ) lda               ( prp    - sample bit)
-  ;m
-*4.608M--8M*
+  rts  ;c
 
 comment *6.25M*
 ( BDM code for host running at 6.25M, and target at 8M.)
+( These are currently UNUSED; from when I was using a 25M crystal.)
 
 ( Send one bit via BDM.)
 macro tx1  ( tx bit in A)
@@ -116,18 +148,108 @@ code BdmTx  ( tx byte at 0,x)
    ( loop 8; generate bits MSB first)
    8 # lda   .a psh
    begin  0 ,x rol  CS if  BKGD_H # lda  else  BKGD_L # lda  then
-      tx1 ( bsr)   0 ,s decz?  until   .a pul
+      BdmTx1 ) jsr   0 ,s decz?  until
    PortBdir ) clr   -- tristate when done xmitting
+   .a pul
    1 # aix   rts  ;c
 
 ( Recv one byte via BDM.)
 ( NOT the usual X stack discipline with two slots free!)
 code BdmRx  ( recvd byte to 0,x)
-  ( loop 8; recv bits MSB first; bit is 02)
+  ( loop 8; recv bits MSB first; bit is 80)
    8 # lda   .a psh   0 ,x clr
-   begin   rx1 ( bsr)   .a rol  ( PortB7 -> C)  0 ,x rol
-           0 ,s decz?  until   .a pul
+   begin   BdmRx1 ) jsr  .a rol  ( PortB7 -> C)  0 ,x rol
+           0 ,s decz?  until
+   .a pul
    1 # aix   rts  ;c
+
+comment Commands
+d = delay 16 BDM cycles
+r = read one byte
+w = write one byte
+
+Non-intrusive
+=============
+Background   90 d
+ReadStatus   e4 r
+WriteControl c4 w
+ReadByte     e0 w w d r    -- write addr, read byte
+ReadByteS    e1 w w d r r  -- write addr, read status, read byte
+ReadLast     e8 r r        -- read status, read last byte read
+WriteByte    c0 w w w d
+WriteByteS   c1 w w w d r  -- write addr, write byte, read status
+ReadBkpt     e2 r r
+WriteBkpt    c2 w w
+
+Active mode
+===========
+Go           08 d
+Trace        10 d
+ReadA        68 d r
+ReadCC       69 d r
+ReadPC       6b d r r
+ReadHX       6c d r r
+ReadSP       6f d r r
+ReadNext     70 d r         -- inc HX, then read byte
+ReadNextS    71 d r r       -- inc HX, read status, read byte
+WriteA       48 w d
+WriteCC      49 w d
+WritePC      4b w w d
+WriteHX      4c w w d
+WriteSP      4f w w d
+WriteNext    50 w d         -- inc HX, write byte
+WriteNextS   51 w d r       -- inc HX, write byte, read status
+
+w1r0
+w1r1
+w1r2
+w2r0
+w2r1
+w3r0
+w3r1
+w3r2
+w4r0
+w4r1
+
+comment Commands
+
+code BdmDelayBackup
+   nsa nsa  -1 # aix  rts  ;c
+
+code WriteCmd
+   ( in A)
+   0 ,x sta  ( command)  BdmTx again  ;c  
+
+code ReadBdm8
+   -- send 8 bit command, expect one byte back
+   WriteCmd bsr  BdmDelayBackup bsr  BdmRx again  ;c
+
+code ReadBdm16
+   -- send 8 bit command, expect two bytes back
+   ReadBdm8 bsr  BdmRx again  ;c
+
+code ReadHX
+   6c # lda  ReadBdm16 again  ;c
+
+code WriteHX
+   ( H @ 0,x; X in A)
+   -1 # aix
+   2 ,x sta
+   4c # lda  ( WRITE_HX command)  WriteCmd bsr
+   BdmTx bsr  BdmTx bsr  -1 # aix  BdmDelayBackup again  ;c
+
+code ReadNext
+   70 # lda   ReadBdm8  again  ;c
+
+code BdmSetup
+   SetTx1_4M ) jsr
+   SetRx1_4M ) jsr
+   PortBinit # PB ) mov
+   BKGD_L # PortBdir ) mov   -- drive BKGD/MS low
+   08 # lda  -- remind user to power cycle the S08
+   __swi
+   PortBdir ) clr
+   0e4 # lda   ReadBdm8  again  ;c
 
 comment *3.2M*
 ( Compressing three transitions into one byte:
