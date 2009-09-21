@@ -33,10 +33,23 @@ variable spy  spy off
 : WriteByte  08 send  send  ;
 : Sync       09 send  ;
 
-: SetHX  >lohi  SetH  SetX ;
-: GetHX  GetH  GetX  hilo> ;
-: GetSP  SPtoHX  GetHX ;
-: SetSP  SetHX  HXtoSP ;
+( Resynchronise the protocol - just to make sure. We throw away any unread
+  input, and then send one Sync, just in case we were in the middle of
+  a SetH/SetX/WriteByte. This puts us back into a known state.)
+
+: resync  flush  Sync ;
+
+( We resync right before reading from a new memory address, and when
+  getting the SP. We don't do these all the time, but when we do, we'd like
+  to get the right addresses! By "sprinkling" these protocol resets
+  throughtout the interaction, it's difficult for the two machines to stay
+  out of whack for very long. Doing a "du" or ".regs" usually resets
+  things.)
+
+: SetHX  resync  >lohi  SetH  SetX ;
+: GetHX                 GetH  GetX  hilo> ;
+: GetSP  resync  SPtoHX  GetHX ;
+: SetSP   SetHX  HXtoSP ;
 
 : setup-hx  ( a)  dup match-hx?  over 1 update-hx  if drop ^ then  SetHX ;
 : _chat-c@  ( a - byte)  setup-hx  ReadByte ;     ' _chat-c@ is chat-c@
@@ -49,8 +62,10 @@ variable spy  spy off
 : chat
    tty-target-init  115200 bps
    ['] _chat-c@ is |c@
-   Sync  GetSP chat-sp !  0 SetHX  chat-hx off ( so they match!) ;
-   ( XXX - call hi?)
+   GetSP chat-sp !  0 SetHX  chat-hx off ( so they match!) ;
+
+   ( XXX - call hi? Only if it's modified to _not_ copy code over when it's
+     compiled for flash!)
 
 #]file
 

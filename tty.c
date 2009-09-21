@@ -133,6 +133,12 @@ void mu_tty_send_break()
     DROP(1);
 }
 
+void mu_tty_iflush()
+{
+    tcflush(TOP, TCIFLUSH);          /* drain output, discard input */
+    DROP(1);
+}
+
 #if 0
 /* This is for testing - to see what libc considers raw mode. */
 void mu_raw_termios()
