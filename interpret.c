@@ -27,8 +27,23 @@ struct imode        /* interpreter mode */
 
 static struct text source;
 static char *first;         /* goes from source.start to source.end */
+
+static char *zloading;      /* the file we're currently loading; C string */
+static int lineno = 1;      /* line number - incremented for each newline */
+static int parsed_lineno;   /* captured with first character of token */
 struct string parsed;       /* for errors */
 
+/* Push name of file we are loading. */
+void mu_zloading()
+{
+    PUSH(zloading);
+}
+
+/* Push captured line number */
+void mu_line()
+{
+    PUSH(parsed_lineno);
+}
 /*
  * This isn't exactly ANS-kosher, since traditionally >IN contained an
  * offset within the input text that went from 0 to length-1; here it goes
@@ -67,8 +82,14 @@ void mu_token()  /* -- start len */
     DUP;   /* we'll be setting TOP when we're done */
 
     /* Skip leading whitespace */
-    for (; first < source.end && isspace(*first); first++)
-        ;
+    while (first < source.end && isspace(*first))
+    {
+        if (*first == '\n') lineno++;
+        first++;
+    }
+
+    /* capture lineno that token begins on */
+    parsed_lineno = lineno;
 
     /*
      * Scan for trailing whitespace and consume it, unless we run out of
@@ -77,6 +98,8 @@ void mu_token()  /* -- start len */
     for (last = first; last < source.end; last++)
         if (isspace(*last))
         {
+            if (*last == '\n') lineno++;
+
             /* found trailing whitespace; consume it */
             mu_return_token(last, 1);
             return;
@@ -92,17 +115,23 @@ void mu_parse()  /* delim -- start len */
 
     /* The first character of unseen input is the first character of token. */
 
+    /* capture lineno that token begins on */
+    parsed_lineno = lineno;
+
     /*
      * Scan for trailing delimiter and consume it, unless we run out of
      * input text first.
      */
     for (last = first; last < source.end; last++)
+    {
+        if (*last == '\n') lineno++;
         if (TOP == *last)
         {
             /* found trailing delimiter; consume it */
             mu_return_token(last, 1);
             return;
         }
+    }
 
     /* ran out of text; don't consume trailing */
     mu_return_token(last, 0);
@@ -260,6 +289,11 @@ void mu_evaluate()
 void mu_load_file()    /* c-string-name */
 {
     int fd;
+    int saved_lineno = lineno;
+    char *saved_zloading = zloading;
+        
+    lineno = 1;
+    zloading = (char *)TOP;
 
     mu_push_r_slash_o();
     mu_open_file();
@@ -267,6 +301,8 @@ void mu_load_file()    /* c-string-name */
     mu_mmap_file();
     PUSH(XTK(mu_evaluate));
     mu_catch();
+    lineno = saved_lineno;
+    zloading = saved_zloading;
     close(fd);
     mu_throw();
 }
