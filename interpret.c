@@ -286,14 +286,17 @@ void mu_load_file()    /* c-string-name */
     int fd;
     int saved_lineno = lineno;
     char *saved_zloading = zloading;
-
-    lineno = 1;
-    zloading = (char *)TOP;
+    char *newfile = (char *)TOP;
 
     mu_push_r_slash_o();
     mu_open_file();
     fd = TOP;
     mu_mmap_file();
+
+    /* wait to reset these until just before we evaluate the new file */
+    lineno = 1;
+    zloading = newfile;
+
     PUSH(XTK(mu_evaluate));
     mu_catch();
     lineno = saved_lineno;

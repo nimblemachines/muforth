@@ -118,7 +118,16 @@ void mu_throw()
         else
             zmsg = (char *)TOP;
 
-        /* set capture values, but only if they are unset */
+        /* Capture values, but only if we haven't already. Remember that in
+         * the case of nested catch'es we'll be re-throwing as we unwind
+         * the call stack; we don't want to overwrite details of the error
+         * site with irrelevant details from higher up.
+         *
+         * Also note: We don't have to capture lineno here, as it is
+         * essentially "captured" for every token parsed, and available to
+         * the error code as parsed_lineno.
+         */
+
         if (captured == 0)
         {
             captured = -1;
