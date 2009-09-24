@@ -85,17 +85,50 @@ void mu_catch()
     TOP = thrown;
 }
 
+static int captured;            /* whether we've set thrown_* */
+static char *thrown_zfile;      /* zloading at time of throw */
+static char *thrown_zmsg;
+
+/* Push captured file name */
+void mu_zfile()
+{
+    PUSH(thrown_zfile);
+}
+
+/* Push captured message */
+void mu_zmsg()
+{
+    PUSH(thrown_zmsg);
+}
+
+/* Push address of captured */
+void mu_captured()
+{
+    PUSH(&captured);
+}
+
 void mu_throw()
 {
+    char *zmsg;
+
     if (TOP != 0)
     {
         if (TOP == -1)        /* generic error value */
-            TOP = (cell)"Unspecified fatal error";
-
-        if (last_tf)
-            LONGJMP(last_tf->jb, TOP);
+            zmsg = "Unspecified fatal error";
         else
-            die((char *)TOP);
+            zmsg = (char *)TOP;
+
+        /* set capture values, but only if they are unset */
+        if (captured == 0)
+        {
+            captured = -1;
+            thrown_zfile = zloading;
+            thrown_zmsg = zmsg;
+        }
+        if (last_tf)
+            LONGJMP(last_tf->jb, -1);
+        else
+            die((char *)zmsg);
     }
     DROP(1);
 }

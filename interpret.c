@@ -28,22 +28,17 @@ struct imode        /* interpreter mode */
 static struct text source;
 static char *first;         /* goes from source.start to source.end */
 
-static char *zloading;      /* the file we're currently loading; C string */
+char *zloading;             /* the file we're currently loading; C string */
 static int lineno = 1;      /* line number - incremented for each newline */
 static int parsed_lineno;   /* captured with first character of token */
 struct string parsed;       /* for errors */
-
-/* Push name of file we are loading. */
-void mu_zloading()
-{
-    PUSH(zloading);
-}
 
 /* Push captured line number */
 void mu_line()
 {
     PUSH(parsed_lineno);
 }
+
 /*
  * This isn't exactly ANS-kosher, since traditionally >IN contained an
  * offset within the input text that went from 0 to length-1; here it goes
@@ -291,7 +286,7 @@ void mu_load_file()    /* c-string-name */
     int fd;
     int saved_lineno = lineno;
     char *saved_zloading = zloading;
-        
+
     lineno = 1;
     zloading = (char *)TOP;
 
