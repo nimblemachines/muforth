@@ -160,13 +160,21 @@ void mu_scrabble()  /* ( a u - z") */
 }
 
 /*
- * 2004-apr-01. After giving a talk on muforth to SVFIG, and in particular
- * after Randy asked me some pointed questions, I decided that find should
- * have positive logic after all. I have renamed -"find to find to indicate
- * this change.
+ * (find) returns _both_ the name - the address of the first character, to
+ * be precise - and the code pointer. Most code will want to use find
+ * instead, which only returns the code field when a word is found in the
+ * dictionary.
+ *
+ * I added this capability when I realised I wanted a cheap & cheerful way
+ * to undefine (delete) words in the dictionary without mucking about with
+ * link pointers. By blanking out the first byte of the name we can easily
+ * achieve this.
+ *
+ * But in order to do that we have to have access to the name. Hence this
+ * change.
  */
-/* find  ( a u chain - a u 0 | code -1) */
-void mu_find()
+/* (find)  ( a u chain - a u 0 | code name -1) */
+void mu_find_()
 {
     char *token = (char *) ST2;
     cell length = ST1;
@@ -176,15 +184,28 @@ void mu_find()
     {
         if (pde->length != length) continue;
         if (memcmp(pde->name, token, length) != 0) continue;
+        if (pde->name[0] == ' ') continue;      /* deleted */
 
-        /* found: drop token, push code address and true flag */
-        NIP(1);
-        ST1 = (cell) ALIGNED(pde->name + length);
+        /* found: drop token, push code address, name, and true flag */
+        ST2 = (cell) ALIGNED(pde->name + length);
+        ST1 = (cell) pde->name;
         TOP = -1;
         return;
     }
     /* not found: leave token, push false */
     TOP = 0;
+}
+
+/*
+ * This is the "normal" find, and what most code will want to use. But by
+ * using (find) instead it's possible to get access to the name as well as
+ * the code field.
+ */
+/* find  ( a u chain - a u 0 | code -1) */
+void mu_find()
+{
+    mu_find_();
+    if (TOP) NIP(1);
 }
 
 static void compile_dict_entry(
