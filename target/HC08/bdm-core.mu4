@@ -5,7 +5,7 @@
 
 cr " HCS08 BDM support (core) " file[#
 
-( Support for Freescale's Background Debug Mode - or BDM.)
+( Support for Freescale's S08 Background Debug Mode - or BDM.)
 
 ( I've split out the bit routines into two other files - one for the 908,
   and one for the S08. Look at bdm-bit-908.mu4 and bdm-bit-S08.mu4.)
@@ -27,11 +27,12 @@ cr " HCS08 BDM support (core) " file[#
   both 4M and 8M BDM with a "host" running at less than 6M.)
 
 code SciRxBuf
-   SciRx ) jsr  0 ,x sta  1 # aix  rts  ;c
+   begin  SCS1 ( status 1) 5 ( recvr full)  bset? until
+   SCDR ( data) )  0 ,x  mov  rts  ;c  ( the mov does post-incr of HX)
 
 code SciTxBuf
    begin  SCS1 ( status 1) 7 ( xmit empty)  bset? until
-   0 ,x  SCDR ( data) ) mov  rts  ;c  ( the mov does post-incr of HX)
+   0 ,x  SCDR ( data) )  mov  rts  ;c  ( the mov does post-incr of HX)
 
 ( BdmChat uses the following stack frame:
   0,s to 3,s   read and write buffer
@@ -52,8 +53,8 @@ label BdmLoop
       begin  SciRxBuf bsr  6 ,s decz? until  ( get write count bytes from SCI)
       ( __swi)  BdmLoop again  then
 
-   08 # cmp  u< if  ( Execute BDM, Read 0..1)
-      05 # sub
+   05 # sub
+   03 # cmp  u< if  ( Execute BDM, Read 0..2)
       5 ,s sta  ( read count)
 
       4 ,s lda  ( get write count)
@@ -76,8 +77,16 @@ label BdmLoop
          6 ,s sta  ( count)
          begin  SciTxBuf bsr  6 ,s decz? until  ( send response back via SCI)
       then
-      ( __swi)  then
+      ( __swi)  BdmLoop again  then
 
+   03 # sub
+   0= if  ( SyncPulse)
+      tsx  ( point HX at start of buffer)
+      SyncPulse ) jsr
+      SciTxBuf bsr
+      SciTxBuf bsr
+   then  ( fall through)
+      
    ( Sync)  ( do nothing at all!)  BdmLoop again  ;c
 
 code BdmSetup
@@ -93,16 +102,17 @@ comment dispatch-ideas
 
 How about the following commands:
 0 Bye - escape back to byteloader
-1 Write 1 from SCI -> buffer
+1 Write 1 byte from SCI -> buffer
 2 ditto, 2 bytes
 3 ditto, 3
 4 ditto, 4
 5 write to BDM, read nothing
 6 ditto, read 1, write to SCI
-7 ditto, read 2 write to SCI
-8+ Sync/No-op
+7 ditto, read 2, write to SCI
+8 send sync pulse, return two byte count
+9+ Sync/No-op
 
-Nine commands!
+Ten commands!
 
 Read Status: 01 E4 05
 Read A: 01 68 06

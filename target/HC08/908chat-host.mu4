@@ -22,22 +22,22 @@ variable spy  spy off
 : recv   _recv  spy @ if ." <"  dup .h8_ then ;
 
 ( Host side)
-: Run        00 send  recv ( flags)  drop ;
-: SetH       01 send  send  ;
-: SetX       02 send  send  ;
-: GetH       03 send  recv ;
-: GetX       04 send  recv ;
-: HXtoSP     05 send  ;
-: SPtoHX     06 send  ;
-: ReadByte   07 send  recv ;
-: WriteByte  08 send  send  ;
-: Sync       09 send  ;
+: c.Run        00 send  recv ( flags)  drop ;
+: c.SetH       01 send  send  ;
+: c.SetX       02 send  send  ;
+: c.GetH       03 send  recv ;
+: c.GetX       04 send  recv ;
+: c.HXtoSP     05 send  ;
+: c.SPtoHX     06 send  ;
+: c.ReadByte   07 send  recv ;
+: c.WriteByte  08 send  send  ;
+: c.Idle       09 send  ;
 
 ( Resynchronise the protocol - just to make sure. We throw away any unread
-  input, and then send one Sync, just in case we were in the middle of
+  input, and then send one ChatIdle, just in case we were in the middle of
   a SetH/SetX/WriteByte. This puts us back into a known state.)
 
-: resync  flush  Sync ;
+: resync  flush  c.Idle ;
 
 ( We resync right before reading from a new memory address, and when
   getting the SP. We don't do these all the time, but when we do, we'd like
@@ -46,24 +46,24 @@ variable spy  spy off
   out of whack for very long. Doing a "du" or ".regs" usually resets
   things.)
 
-: SetHX  resync  >lohi  SetH  SetX ;
-: GetHX                 GetH  GetX  hilo> ;
-: GetSP  resync  SPtoHX  GetHX ;
-: SetSP   SetHX  HXtoSP ;
+: c.SetHX  resync  >lohi  c.SetH  c.SetX ;
+: c.GetHX                 c.GetH  c.GetX  hilo> ;
+: c.GetSP  resync  c.SPtoHX  c.GetHX ;
+: c.SetSP                    c.SetHX  c.HXtoSP ;
 
-: setup-hx  ( a)  dup match-hx?  over 1 update-hx  if drop ^ then  SetHX ;
-: _chat-c@  ( a - byte)  setup-hx  ReadByte ;
-: _chat-c!  ( byte a)    setup-hx  WriteByte ;
+: setup-hx  ( a)  dup match-hx?  over 1 update-hx  if drop ^ then  c.SetHX ;
+: _chat-c@  ( a - byte)  setup-hx  c.ReadByte ;
+: _chat-c!  ( byte a)    setup-hx  c.WriteByte ;
 
 : chat
    tty-target-init  115200 bps
    ( Wire our versions into the interact code.)
-   ['] Run is chat-run     
-   ['] GetSP is chat-get-sp  
+   ['] c.Run is chat-run     
+   ['] c.GetSP is chat-get-sp  
    ['] _chat-c@ is chat-c@
    ['] _chat-c! is chat-c!
    ['] _chat-c@ is |c@
-   GetSP chat-sp !  0 SetHX  chat-hx off ( so they match!) ;
+   c.GetSP chat-sp !  0 c.SetHX  chat-hx off ( so they match!) ;
 
    ( XXX - call hi? Only if it's modified to _not_ copy code over when it's
      compiled for flash!)

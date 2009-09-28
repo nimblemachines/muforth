@@ -19,9 +19,10 @@ hex
   5 Write buffered bytes to BDM, read nothing
   6 ditto, read 1 byte, write to SCI
   7 ditto, read 2 bytes, write to SCI
-  8+ Sync/No-op)
+  8 run Sync pulse, write two byte count to SCI
+  9+ Idle)
 
-: Bye      00 send ;
+: b.Bye    00 send ;
 : Send1    01 send  send ;
 : Send2    02 send  send send ;
 : Send3    03 send  send send send ;
@@ -29,30 +30,36 @@ hex
 : Expect0  05 send  recv drop ;
 : Expect1  06 send  recv ;
 : Expect2  07 send  recv recv ;
+: b.Sync   08 send  recv recv ;
+: b.Idle   09 send ;
 
 ( Non-intrusive)
-: Background              90 Send1  Expect0 ;
-: ReadStatus             0e4 Send1  Expect1 ;
-: WriteControl  ( byte)  0c4 Send2  Expect0 ;
+: b.Background                                90 Send1  Expect0 ;
+: b.WriteByte     ( byte a)           >lohi  0c0 Send4  Expect0 ;
+: b.WriteByteS    ( byte a - status)  >lohi  0c1 Send4  Expect1 ;
+: b.WriteControl  ( status)                  0c4 Send2  Expect0 ;
+: b.ReadByte      ( a - byte)         >lohi  0e0 Send3  Expect1 ;
+: b.ReadByteS     ( a - status byte)  >lohi  0e1 Send3  Expect2 ;
+: b.ReadStatus    ( - status)                0e4 Send1  Expect1 ;
 
 ( Active - must be in "active BDM" mode to use.)
-: Go           08 Send1  Expect0 ;
-: Trace        10 Send1  Expect0 ;
-: ReadA        68 Send1  Expect1 ;
-: ReadCC       69 Send1  Expect1 ;
-: ReadPC       6b Send1  Expect2  hilo> ;
-: ReadHX       6c Send1  Expect2  hilo> ;
-: ReadSP       6f Send1  Expect2  hilo> ;
-: ReadNext     70 Send1  Expect1 ;   -- inc HX, then read byte
-: ReadNextS    71 Send1  Expect2 ;   -- inc HX, read status, read byte
+: b.Go           08 Send1  Expect0 ;
+: b.Trace        10 Send1  Expect0 ;
+: b.ReadA        68 Send1  Expect1 ;
+: b.ReadCC       69 Send1  Expect1 ;
+: b.ReadPC       6b Send1  Expect2  hilo> ;
+: b.ReadHX       6c Send1  Expect2  hilo> ;
+: b.ReadSP       6f Send1  Expect2  hilo> ;
+: b.ReadNext     70 Send1  Expect1 ;   -- inc HX, then read byte
+: b.ReadNextS    71 Send1  Expect2 ;   -- inc HX, read status, read byte
 
-: WriteA       48 Send2  Expect0 ;
-: WriteCC      49 Send2  Expect0 ;
-: WritePC      >lohi  4b Send3  Expect0 ;
-: WriteHX      >lohi  4c Send3  Expect0 ;
-: WriteSP      >lohi  4f Send3  Expect0 ;
-: WriteNext    50 Send2  Expect0 ;   -- inc HX, write byte
-: WriteNextS   51 Send2  Expect1 ;   -- inc HX, write byte, read status
+: b.WriteA           48 Send2  Expect0 ;
+: b.WriteCC          49 Send2  Expect0 ;
+: b.WritePC   >lohi  4b Send3  Expect0 ;
+: b.WriteHX   >lohi  4c Send3  Expect0 ;
+: b.WriteSP   >lohi  4f Send3  Expect0 ;
+: b.WriteNext        50 Send2  Expect0 ;   -- inc HX, write byte
+: b.WriteNextS       51 Send2  Expect1 ;   -- inc HX, write byte, read status
 
 comment Commands
 d = delay 16 BDM cycles
@@ -94,19 +101,26 @@ WriteNextS   51 w d r       -- inc HX, write byte, read status
 comment Commands
 
 variable bdm-hx  ( contains HX + 1, since memory ops pre-increment)
-: setup-hx  ( a)  dup bdm-hx @ =  over 1 +wrap bdm-hx !  if drop ^ then
-   -1 +wrap WriteHX ;
-: bdm-c@  ( a - byte)  setup-hx  ReadNext ;
-: bdm-c!  ( byte a)    setup-hx  WriteNext ;
+
+( Update our idea of the BDM's hx; if address matches bdm-hx, return.
+  Otherwise actually set HX over BDM.)
+
+: setup-bdm-hx  ( a)
+   dup bdm-hx @ =  ( test this _before_ we update bdm-hx)
+   over 1 +wrap bdm-hx !  if drop ^ then
+   -1 +wrap b.WriteHX ;
+
+: bdm-c@  ( a - byte)  setup-bdm-hx  b.ReadNext ;
+: bdm-c!  ( byte a)    setup-bdm-hx  b.WriteNext ;
 
 : bdm
    ( Wire our versions into the interact code.)
-   ['] Go is chat-run     
-   ['] ReadSP is chat-get-sp  
+   ['] b.Go is chat-run     
+   ['] b.ReadSP is chat-get-sp  
    ['] bdm-c@ is chat-c@
    ['] bdm-c! is chat-c!
    ['] bdm-c@ is |c@
-   ReadSP chat-sp !  0ffff WriteHX  chat-hx off ( so they match!) ;
+   b.ReadSP chat-sp !  0ffff b.WriteHX  bdm-hx off ( so they match!) ;
 
 #]file
 
