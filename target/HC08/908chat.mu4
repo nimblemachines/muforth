@@ -16,38 +16,50 @@
   this is a simple target to write to in order to get the Flash written -
   ideally with a copy of this code to act as a bootloader!)
 
-cr " HC908 Chat (target) "  file[#
+cr " HC08 Chat (target) "  file[#
 hex
 
 __outside
 
-macro SciInit
-   SCC1 6 ( ENSCI) bset
-   0c # SCC2 ) mov   ( enable rcvr, xmitter)
-   30 # SCPSC ) mov  ( prescaler divisor of 2 + 16/32)
-                     ( yields 115200 from 18.432M clock)  ;m
+( This is the same code! Only the register names have changed... It's a bit
+  silly. I should just call them one thing, and define them correctly for
+  the 908 or S08 part I'm using.)
+
+[with] S08 [if]
+
+code SciRx  ( returns char in A)
+   begin  SCIS1 ( status 1) 5 ( recvr full)  bset? until
+   SCID ( data) ) lda  rts  ;c
+
+code SciTx
+   begin  SCIS1 ( status 1) 7 ( xmit empty)  bset? until
+   SCID ( data) ) sta  rts  ;c
+
+[else]   -- 908
 
 code SciRx  ( returns char in A)
    begin  SCS1 ( status 1) 5 ( recvr full)  bset? until
    SCDR ( data) ) lda  rts  ;c
 
-
-( Commands:
-  0  Run        - does an RTI - pops stack frame and runs
-  1  SetH       - reads a byte from SCI, writes into H register
-  2  SetX       - reads a byte from SCI, writes into X register
-  3  GetH       - writes H register to SCI
-  4  GetX       - writes X register to SCI
-  5  HXtoSP     - sets SP from HX
-  6  SPtoHX     - sets HX from SP
-  7  ReadByte   - reads a byte from memory @ HX, writes it to SCI
-  8  WriteByte  - reads a byte from SCI, writes into memory @ HX
-  9+ Sync       - nop
-)
-
 code SciTx
    begin  SCS1 ( status 1) 7 ( xmit empty)  bset? until
    SCDR ( data) ) sta  rts  ;c
+
+[then]
+
+( Commands:
+  0  Run        - does an RTI - pops stack frame and runs
+  1  Id         - read low byte of S08 Id register SDIDL @1807
+  2  SetH       - reads a byte from SCI, writes into H register
+  3  SetX       - reads a byte from SCI, writes into X register
+  4  GetH       - writes H register to SCI
+  5  GetX       - writes X register to SCI
+  6  HXtoSP     - sets SP from HX
+  7  SPtoHX     - sets HX from SP
+  8  ReadByte   - reads a byte from memory @ HX, writes it to SCI
+  9  WriteByte  - reads a byte from SCI, writes into memory @ HX
+ 10+ Idle       - nop
+)
 
 code SendByte  ( send char in A)
    SciTx bsr
@@ -56,6 +68,14 @@ label Dispatch
    SciRx bsr  ( command)
 
    0= if ( Run)   .h pul  rti  then
+
+   .a decz? if ( Id)
+[with] S08 [if]
+      SDIDL ) lda
+[else]
+      0ff # lda  -- pretend that 908 parts have Id 0ff
+[then]
+      SendByte again  then
 
    .a decz? if ( SetH)
    SciRx bsr  .a psh  .h pul  ( set H)  Dispatch again  then
@@ -73,18 +93,14 @@ label Dispatch
    .a decz? if ( SPtoHX)  tsx  Dispatch again  then
 
    .a decz? if ( ReadByte)
-   0 ,x lda  1 # aix  SendByte again  then
+   0 ,x lda  1 # aix  SendByte again  then  ;c
 
-   .a decz? if ( WriteByte)
-   SciRx bsr   0 ,x sta   1 # aix  then  ( fall through)
-
-   ( Sync or unknown command)   Dispatch again  ;c
+   ( fall through to continued...)
 
 ( If compiling to run in RAM, jump forward here to make room for the data
   structures needed for the Flash routines - from 88 to AC.)
 
-[with] run-in-ram [if]
-[with] control-block [if]
+[with] run-in-ram [with] control-block [and] [if]
 __forth
 : ?fits
    control-block  |ram @  u< if
@@ -92,9 +108,17 @@ __forth
    then ;
 ?fits
 __outside
+code skip_flash
+   09c again  ;c  -- branch forward over control block
+09c org           -- continue compiling there
 [then]
-0b0 org
-[then]
+
+code continued...
+   .a decz? if ( WriteByte)
+   SciRx bsr   0 ,x sta   1 # aix  then  ( fall through)
+
+   ( Sync or unknown command)   Dispatch again  ;c
+
 
 ( We need this because the monitor ROM has taken the SWI vector, and getting
   it back means flashing the vectors, which for now I want to avoid...)
@@ -118,6 +142,26 @@ code interact
    begin  __swi  again  ;c
 
 reset vector
+   \ @ram \ #ram + # ldhx
+   txs
+
+[with] S08 [if]
+
+   -- Configure ICS (internal clock source)
+   -- We're staying in FEI mode, but we're going to trim the internal
+   -- reference so that our bus clock is 9.216M - a nice multiplier for
+   -- 115200.
+   6c # ICSTRM ) mov  ( hardwired for this chip)
+   00 # ICSC2 ) mov   ( switch BDIV to /1 from /2)
+
+   -- Configure SCI
+   0c # SCIC2 ) mov  ( enable rcvr, xmitter)
+   0 # SCIBDH ) mov  ( baud rate divisor, high)
+   5 # SCIBDL ) mov  ( baud rate divisor, low)
+                     ( yields 115200 from 9.216M bus clock)
+
+[else]  -- 908
+
    -- Setting COPD works, but is unnecessary in monitor mode; however,
    -- setting RSTEN causes the chip to fly away. Noise on nRST pin?
    -- Since I'm avoiding setting the Reset vector, setting these or not is
@@ -127,9 +171,6 @@ reset vector
    -- I'm going to, after all, attempt to burn a chip with a programmed
    -- Reset vector. So I need this:
    CONFIG1 0 bset  ( set COPD: disable watchdog!)
-
-   0140 # ldhx
-   txs
 
    -- XXX Set up for use with on-chip crystal osc?
    -- 42 # OSC ) mov  ( set Ext Osc and ECGON)
@@ -149,7 +190,14 @@ reset vector
    begin  begin  .a decz? until  .x decz? until
    OSC 1 bset ( set ECGON - switch oscillators!)
 
-   SciInit
+   -- Configure SCI
+   SCC1 6 ( ENSCI) bset
+   0c # SCC2 ) mov   ( enable rcvr, xmitter)
+   30 # SCPSC ) mov  ( prescaler divisor of 2 + 16/32)
+                     ( yields 115200 from 18.432M clock)
+
+[then]
+
    begin  interact bsr  again  ;c
 
 #]file
