@@ -103,6 +103,7 @@ void mu_set_termios_speed()
 
     switch(ST1)
     {
+        BPS(  4800);
         BPS(  9600);
         BPS( 19200);
         BPS( 38400);
