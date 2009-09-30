@@ -34,19 +34,55 @@ code SciTxBuf
    begin  SCS1 ( status 1) 7 ( xmit empty)  bset? until
    0 ,x  SCDR ( data) )  mov  rts  ;c  ( the mov does post-incr of HX)
 
+code BdmMisc
+   0= if  ( 08 SyncPulse)
+      tsx  ( point HX at start of buffer)
+      2 # aix  ( skip our return address!)
+      SyncPulse ) jsr
+      SciTxBuf bsr
+      SciTxBuf again
+   then
+
+   .a decz? if  ( 09 BkgdLow)
+      BdmDriveLow ) jmp  -- drive BKGD/MS low
+   then
+
+   .a decz? if  ( 0a BkgdHigh)
+      BdmDriveHigh ) jmp  -- drive BKGD/MS high
+   then
+
+   .a decz? if  ( 0b BkgdOff)
+      BdmHiZ ) jmp
+   then
+
+   .a decz? if  ( 0c Set4M)
+      SetTx1_4M ) jsr
+      SetRx1_4M ) jmp
+   then
+
+   .a decz? if  ( 0d Set8M)
+      SetTx1_8M ) jsr
+      SetRx1_8M ) jmp
+   then
+      
+   ( Idle)  ( do nothing at all!)  rts  ;c
+
 ( BdmChat uses the following stack frame:
   0,s to 3,s   read and write buffer
   4,s          write count
   5,s          read count
   6,s          current count)
 
+jmp-bdm-chat resolve>>  ( jump at start of Flash points here)
+
 code BdmChat
    -7 # ais   ( room for read and write counts, cur count, and buffer)
+   BdmHiZ ) jsr  ( make sure BKGD high and tri-stated)
 label BdmLoop
    SciRx ) jsr
-   0= if ( Bye)  ( return to byteloader)  7 # ais  rts  then
+   0= if  ( 00 Bye)  ( return to byteloader)  7 # ais  rts  then
 
-   05 # cmp  u< if  ( Write1..4)
+   05 # cmp  u< if  ( 01..04 Write1..4)
       4 ,s sta  ( write count)
       6 ,s sta  ( count)
       tsx  ( point HX at start of buffer)
@@ -54,7 +90,7 @@ label BdmLoop
       ( __swi)  BdmLoop again  then
 
    05 # sub
-   03 # cmp  u< if  ( Execute BDM, Read 0..2)
+   03 # cmp  u< if  ( 05..07 Execute BDM, Read 0..2)
       5 ,s sta  ( read count)
 
       4 ,s lda  ( get write count)
@@ -75,28 +111,13 @@ label BdmLoop
          tsx  ( point HX at start of buffer)
          5 ,s lda  ( get read count)
          6 ,s sta  ( count)
-         begin  SciTxBuf bsr  6 ,s decz? until  ( send response back via SCI)
+         begin  SciTxBuf ) jsr  6 ,s decz? until  ( send response back via SCI)
       then
       ( __swi)  BdmLoop again  then
 
    03 # sub
-   0= if  ( SyncPulse)
-      tsx  ( point HX at start of buffer)
-      SyncPulse ) jsr
-      SciTxBuf bsr
-      SciTxBuf bsr
-   then  ( fall through)
-      
-   ( Sync)  ( do nothing at all!)  BdmLoop again  ;c
-
-code BdmSetup
-   SetTx1_4M ) jsr
-   SetRx1_4M ) jsr
-   BdmInit ) jsr
-   BdmDriveLow ) jsr  -- drive BKGD/MS low
-   08 # lda  -- remind user to power cycle the S08
-   __swi
-   BdmHiZ ) jmp  ;c
+   BdmMisc ) jsr
+   BdmLoop again  ;c
 
 comment dispatch-ideas
 
