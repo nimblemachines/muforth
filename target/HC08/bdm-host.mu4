@@ -21,8 +21,10 @@ hex
   8 run Sync pulse, write two byte count to SCI
   9+ Idle)
 
+( End session, return to chat command loop)
+: b.Bye    00 send  recv drop ( should recv flags from SWI entry) ;
+
 ( Core commands that generate BDM traffic)
-: b.Bye    00 send ;
 : Send1    01 send  send ;
 : Send2    02 send  send send ;
 : Send3    03 send  send send send ;
@@ -32,7 +34,7 @@ hex
 : Expect2  07 send  recv recv ;
 
 ( Misc commands)
-: b.Sync      08 send  recv recv ;
+: b.Sync      08 send  recv recv  hilo> ;
 : b.BkgdLow   09 send ;
 : b.BkgdHigh  0a send ;
 : b.BkgdOff   0b send ;
@@ -120,7 +122,15 @@ variable bdm-hx  ( contains HX + 1, since memory ops pre-increment)
 : bdm-c@  ( a - byte)  setup-bdm-hx  b.ReadNext ;
 : bdm-c!  ( byte a)    setup-bdm-hx  b.WriteNext ;
 
+: pwrcycle  b.BkgdLow  ." power cycle S08, then press a key..."  key drop
+            b.BkgdHigh  b.BkgdOff ;
+
 : bdm
+   0de00 pc! c.Go  ( start bdm chat loop)
+   b.Clock4M   ( assume bus clock of 4M, forced active mode)
+   pwrcycle
+   b.Sync u.  b.ReadStatus u.
+
    ( Wire our versions into the interact code.)
    ['] b.Go is chat-run     
    ['] b.ReadSP is chat-get-sp  
