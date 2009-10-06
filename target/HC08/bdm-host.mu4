@@ -7,8 +7,6 @@
 
 cr " HCS08 BDM support (host) "  file[#
 
-hex
-
 ( BDM code on the 908 supports the following commands:
   0 Bye - escape back to byteloader
   1 Copy one byte from SCI to buffer
@@ -19,7 +17,14 @@ hex
   6 ditto, read 1 byte, write to SCI
   7 ditto, read 2 bytes, write to SCI
   8 run Sync pulse, write two byte count to SCI
-  9+ Idle)
+  9 Hold BKGD pin low
+ 10 Hold BKGD pin high
+ 11 Tri-state BKGD pin
+ 12 Set BDM rate to 4M
+ 13 Set BDM rate to 8M
+ 14+ Idle)
+
+decimal
 
 ( End session, return to chat command loop)
 : b.Bye    00 send  recv drop ( should recv flags from SWI entry) ;
@@ -36,11 +41,13 @@ hex
 ( Misc commands)
 : b.Sync      08 send  recv recv  hilo> ;
 : b.BkgdLow   09 send ;
-: b.BkgdHigh  0a send ;
-: b.BkgdOff   0b send ;
-: b.Clock4M   0c send ;
-: b.Clock8M   0d send ;
-: b.Idle      0e send ;
+: b.BkgdHigh  10 send ;
+: b.BkgdOff   11 send ;
+: b.Clock4M   12 send ;
+: b.Clock8M   13 send ;
+: b.Idle      14 send ;
+
+hex
 
 ( Non-intrusive)
 : b.Background                                90 Send1  Expect0 ;
@@ -123,13 +130,12 @@ variable bdm-hx  ( contains HX + 1, since memory ops pre-increment)
 : bdm-c!  ( byte a)    setup-bdm-hx  b.WriteNext ;
 
 : pwrcycle  b.BkgdLow  ." power cycle S08, then press a key..."  key drop
-            b.BkgdHigh  b.BkgdOff ;
-
+            b.BkgdHigh  b.BkgdOff
+            b.Sync u.  b.ReadStatus u. ;
 : bdm
    0de00 pc! c.Go  ( start bdm chat loop)
    b.Clock4M   ( assume bus clock of 4M, forced active mode)
    pwrcycle
-   b.Sync u.  b.ReadStatus u.
 
    ( Wire our versions into the interact code.)
    ['] b.Go is chat-run     
