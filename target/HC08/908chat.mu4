@@ -48,17 +48,18 @@ code SciTx
 [then]
 
 ( Commands:
-  0  Run        - does an RTI - pops stack frame and runs
-  1  Id         - read low byte of S08 Id register SDIDL @1807
-  2  SetH       - reads a byte from SCI, writes into H register
-  3  SetX       - reads a byte from SCI, writes into X register
-  4  GetH       - writes H register to SCI
-  5  GetX       - writes X register to SCI
-  6  HXtoSP     - sets SP from HX
-  7  SPtoHX     - sets HX from SP
-  8  ReadByte   - reads a byte from memory @ HX, writes it to SCI
-  9  WriteByte  - reads a byte from SCI, writes into memory @ HX
- 10+ Idle       - nop
+  0  Bye        - return to chat; this is a no-op in chat; matches BDM cmd
+  1  Idle       - no-op - so we can re-sync the protocol
+  2  Run        - does an RTI - pops stack frame and runs
+  3  Id         - read low byte of S08 Id register SDIDL @1807
+  4  SetH       - reads a byte from SCI, writes into H register
+  5  SetX       - reads a byte from SCI, writes into X register
+  6  GetH       - writes H register to SCI
+  7  GetX       - writes X register to SCI
+  8  HXtoSP     - sets SP from HX
+  9  SPtoHX     - sets HX from SP
+ 10  ReadByte   - reads a byte from memory @ HX, writes it to SCI
+ 11  WriteByte  - reads a byte from SCI, writes into memory @ HX
 )
 
 code SendByte  ( send char in A)
@@ -66,6 +67,9 @@ code SendByte  ( send char in A)
 
 label Dispatch
    SciRx bsr  ( command)
+
+   02 # sub
+   u< if ( Bye or Idle)  Dispatch again  then
 
    0= if ( Run)   .h pul  rti  then
 
@@ -92,10 +96,7 @@ label Dispatch
    .a decz? if ( HXtoSP)  txs  Dispatch again  then
    .a decz? if ( SPtoHX)  tsx  Dispatch again  then
 
-   .a decz? if ( ReadByte)
-   0 ,x lda  1 # aix  SendByte again  then  ;c
-
-   ( fall through to continued...)
+   ( fall through to continued...)  ;c
 
 ( If compiling to run in RAM, jump forward here to make room for the data
   structures needed for the Flash routines - from 88 to AC.)
@@ -114,10 +115,13 @@ code skip_flash
 [then]
 
 code continued...
+   .a decz? if ( ReadByte)
+   0 ,x lda  1 # aix  SendByte again  then
+
    .a decz? if ( WriteByte)
    SciRx bsr   0 ,x sta   1 # aix  then  ( fall through)
 
-   ( Sync or unknown command)   Dispatch again  ;c
+   ( unknown command)   Dispatch again  ;c
 
 
 ( We need this because the monitor ROM has taken the SWI vector, and getting

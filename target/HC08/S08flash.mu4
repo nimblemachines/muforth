@@ -73,8 +73,14 @@ forth
       b.Clock4M ^ then
    b.Clock8M ;
 
+: ResetSP
+   @ram #ram +  b.WriteSP ;
+
 : DisableWatchdog
    \o SOPT1 b.ReadByte  7f and ( clear COPE)  \o SOPT1 b.WriteByte ;
+
+: SetICSTrim
+   0ffad ( my trim) b.ReadByte  \o ICSTRM b.WriteByte ;
 
 ( Set FCDIV for 9.216M bus clock)
 : SetFCDIV
@@ -87,7 +93,11 @@ forth
    MatchBDMClock
    \o ICSC2 b.ReadByte  3f and ( clear BDIV)  \o ICSC2 b.WriteByte
    b.Clock8M ;
-   
+
+: b.hi
+   MatchBDMClock  SetICSTrim  FastBusClock  SetFCDIV  DisableWatchdog
+   ResetSP ;
+
 : b.FlashByte  ( byte a)
    SetFCDIV  FastBusClock
    30 \o FSTAT b.WriteByte  ( clear any errors)
@@ -99,8 +109,10 @@ forth
 __outside
 ram
 
-( Target code to write to Flash, using burst commands.)
-code RunFlashCommand  ( burst program single byte; value in A, address in HX)
+( Target code to write to and erase the Flash. By "pasting in" different
+  values for flash-command and flash-status, it's possible to do regular
+  byte programming, burst programming, or page/mass erase.)
+code RunFlashCommand  ( value in A, address in HX)
    ( This routine must preserve HX.)
    0 ,x sta   ( store byte into Flash array)
 label flash-command
@@ -111,12 +123,12 @@ label flash-status
    begin  FSTAT ) bit  ( prpp)  0!= until  ( until flash-status matches)
    rts  ;c
 
-1 var burstCount
+1 var flashCount
 
 ( XXX - turn off watchdog?)
-code BurstRow  ( program up to 64 bytes; Flash address in HX; bytes on stack)
+code FlashRow  ( program up to 64 bytes; Flash address in HX; bytes on stack)
    begin  .a pul  RunFlashCommand bsr  1 # aix
-   0< while  ( FCBEF)  burstCount ) decz? until  then  bgnd  ;c
+   0< while  ( FCBEF)  flashCount ) decz? until  then  bgnd  ;c
 
 __forth
 forth
@@ -124,7 +136,9 @@ forth
 ( XXX doesn't belong here - bdm-host?)
 ( When we first reset and connect to the target, we should trim the
   oscillator, set FCDIV, fast bus clock, turn off watchdog, and set SP to
-  top of RAM.)
+  top of RAM. If the chip is running the chat byteloader it will have
+  already done all of these things, so doing them here - where we talk to
+  both chat and BDM - is wrong.)
 
 ( A complication with the S08 is that, unlike with the 908, where we do
   everything thru our friendly byteloader "chat" protocol, we want to be
@@ -155,34 +169,37 @@ forth
 #512 constant /page    ( S08 has 512 byte Flash pages - this is erase size)
  #64 constant /chunk   ( max size of row to program)
 
-: _chat-run  b.Go  begin  b.ReadStatus 40 and  until ;
-: chat-run ;  ( XXX test)
+: chat-run  b.Go  begin  b.ReadStatus 40 and  until ;
 : chat-hx!  b.WriteHX ;
 : chat-sp@  b.ReadSP ;
 : chat-sp!  b.WriteSP ;
 : chat-pc!  b.WritePC ;
 
-: chat-addr  ( set memory address for "burst" commands)  1- b.WriteHX ;
+: chat-addr  ( set memory address for flash commands)  1- b.WriteHX ;
 : chat-readnext  b.ReadNext ;
 : chat-writenext  b.WriteNext ;
 
-: flash-setup  ( 'target PC flash-status flash-command)
+( Allocate room for len bytes on stack; set up write pointer to first byte)
+: write-buffer  ( len)
+   chat-sp@ swap -  dup chat-sp!  ( allocate write-buffer on stack)
+   chat-addr ;
+
+: flash-setup  ( 'target len flash-status flash-command)
    \o flash-command 1+ chat-c!  ( paste into lda #)
    \o flash-status 1+ chat-c!  ( paste into lda #)
-   ( PC) chat-pc!  ( 'target) chat-hx! ;
+   ( len) \o flashCount chat-c!  ( 'target) chat-hx!
+   \o FlashRow ( PC) chat-pc! ;
 
 ( Flash a chunk of 64 bytes or less.)
 : program-chunk  ( 'target len)
    cr ." program-chunk "  2dup swap u. u.
-   ( len) \o burstCount chat-c!  \o BurstRow ( PC)
    %1011_0000 ( FCBEF | FPVIOL | FACCERR)
    mBurstProgram  flash-setup  chat-run ;
 
-: erase-chunk  ( 'target)
-   cr ." erase-chunk " dup u.
-   \o RunFlashCommand  ( XXX should call something that calls this and then
-   does bgnd/swi!!)
-   %0111_0000 ( FCCF | FPVIOL | FACCERR)
+: erase-page  ( 'target)
+   cr ." erase-page " dup u.
+   1 write-buffer  ( so we can pop a byte in FlashRow)
+   1 ( len)  %0111_0000 ( FCCF | FPVIOL | FACCERR)
    mPageErase  flash-setup  chat-run ;
 
 : blank-check  ( addr len - flag)
@@ -191,17 +208,12 @@ forth
 
 : c@+  ( a - a+1 b)  dup 1+  swap c@ ;
 
-( Allocate room for len bytes on stack; set up write pointer to first byte)
-: write-buffer  ( len)
-   chat-sp@ swap -  dup chat-sp!  ( allocate write-buffer on stack)
-   chat-addr ;
-
 : copy-chunk  ( 'image len)
    cr ." copy-chunk "  2dup swap u. u.
    dup write-buffer  for  c@+ chat-writenext  next  drop ;
 
 : erased  ( 'target len - 'target len)
-   2dup blank-check  if ^ then  over erase-chunk ;
+   2dup blank-check  if ^ then  over erase-page ;
 
 ( For each chunk check if blank, erase if necessary, then copy chunks over
   to buffer and program them!)
