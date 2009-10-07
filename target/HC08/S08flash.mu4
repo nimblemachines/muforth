@@ -1,0 +1,231 @@
+( This file is part of muFORTH: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2009 David Frech. All rights reserved, and all wrongs
+  reversed. (See the file COPYRIGHT for details.)
+
+cr  " HCS08 Flash programming "  file[#
+
+hex
+
+( Posts from the 8-bit forum about programming S08 flash:
+  http://forums.freescale.com/freescale/board/message?board.id=8BITCOMM&thread.id=14410
+  http://forums.freescale.com/freescale/board/message?board.id=8BITCOMM&message.id=9610
+  http://forums.freescale.com/freescale/board/message?board.id=8BITCOMM&message.id=627)
+
+comment tonyp  Bomb-proof working code from tonyp:
+
+;*******************************************************************************
+; Purpose: RAM routine to do the job we can't do from Flash
+; Input  : A = value to program
+; Output : None
+; Note(s): This routine is modified in RAM by its loader at @2,3 and @5
+;        : Stack needed: 20 bytes + 2 for JSR/BSR
+
+?RAM_Execute       sta       EEPROM              ;Step 1 - Latch data/address
+                                                 ;EEPROM (@2,@3) replaced
+                   lda       #mByteProg          ;mByteProg (@5) replaced
+                   sta       FCMD                ;Step 2 - Write command to FCMD
+
+                   lda       #FCBEF_
+                   sta       FSTAT               ;Step 3 - Write FCBEF_ in FSTAT
+                   lsra                          ;min delay before checking FSTAT
+                                                 ;(FCBEF -> FCCF for later BIT)
+?RAM_Execute.Loop  bit       FSTAT               ;Step 4 - Wait for completion
+                   beq       ?RAM_Execute.Loop   ;check FCCF_ for completion
+                   rts
+
+;after exit, check FSTAT for FPVIOL and FACCERR
+
+?RAM_Needed        equ       *-?RAM_Execute
+
+XXX: add the short - sometimes-it-works code as well.
+
+comment tonyp
+
+( S08 Flash memory layout.
+  
+  ffac  my FTRIM - trims to 9.216M
+  ffad  my TRIM  - ditto
+  ffae  FTRIM bit - factory trim for 8M
+  ffaf  TRIM byte - ditto
+
+  ffb0 - ffbf    is all about _security_
+  ffb0 - b7   comparison key
+  ffb8 - bc   available
+  ffbd        NVPROT
+  ffbe        available
+  ffbf        NVOPT
+
+  ffc0 - ffff  Interrupt and reset vectors)
+
+( What does it take to program a single byte - like my TRIM byte - entirely
+  via BDM?)
+
+20 constant mByteProgram
+25 constant mBurstProgram
+40 constant mPageErase
+
+forth
+
+( Based on what we get back from b.Sync, match BDM clock)
+: MatchBDMClock
+   b.Sync 70 - 21 u< if  ( within +-"10 of 80 - running at 4M)
+      b.Clock4M ^ then
+   b.Clock8M ;
+
+: DisableWatchdog
+   \o SOPT1 b.ReadByte  7f and ( clear COPE)  \o SOPT1 b.WriteByte ;
+
+( Set FCDIV for 9.216M bus clock)
+: SetFCDIV
+   \o FCDIV b.ReadByte  80 and if ^ then  ( already set)
+   [ #9216 #100 / 1+ 2/ ]  ( divide 9.216M by 200k, rounding up)
+   1- \o FCDIV b.WriteByte ;
+
+: FastBusClock
+   ( assume osc trimmed)
+   MatchBDMClock
+   \o ICSC2 b.ReadByte  3f and ( clear BDIV)  \o ICSC2 b.WriteByte
+   b.Clock8M ;
+   
+: b.FlashByte  ( byte a)
+   SetFCDIV  FastBusClock
+   30 \o FSTAT b.WriteByte  ( clear any errors)
+   b.WriteByte  ( store byte into Flash memory)
+   mByteProgram \o FCMD b.WriteByte  ( command - program single byte)
+   80 \o FSTAT b.WriteByte  ( start command)
+   begin  \o FSTAT b.ReadByte  40 and until  ( FCCF set) ;   
+
+__outside
+ram
+
+( Target code to write to Flash, using burst commands.)
+code RunFlashCommand  ( burst program single byte; value in A, address in HX)
+   ( This routine must preserve HX.)
+   0 ,x sta   ( store byte into Flash array)
+label flash-command
+   00 # lda   FCMD ) sta
+   80 # lda   FSTAT ) sta  ( pwpp - clear FCBEF - start command)
+label flash-status
+   00 # lda
+   begin  FSTAT ) bit  ( prpp)  0!= until  ( until flash-status matches)
+   rts  ;c
+
+1 var burstCount
+
+( XXX - turn off watchdog?)
+code BurstRow  ( program up to 64 bytes; Flash address in HX; bytes on stack)
+   begin  .a pul  RunFlashCommand bsr  1 # aix
+   0< while  ( FCBEF)  burstCount ) decz? until  then  bgnd  ;c
+
+__forth
+forth
+
+( XXX doesn't belong here - bdm-host?)
+( When we first reset and connect to the target, we should trim the
+  oscillator, set FCDIV, fast bus clock, turn off watchdog, and set SP to
+  top of RAM.)
+
+( A complication with the S08 is that, unlike with the 908, where we do
+  everything thru our friendly byteloader "chat" protocol, we want to be
+  able to write to Flash via BDM _or_ via the chat interface. So we need to
+  abstract the commands that write to memory and so on. Hmm.. we've already
+  done that - use chat-c@ and chat-c! and all should be fine. But what
+  about reading and writing registers? It seems the time has arrived for me
+  to fix this. ;-)
+
+( XXX Actually, this brings up an interesting question: Do I even want to
+  run the chat protocol on the S08, or should I only run my BDM proxy?
+  Since we have BDM, we don't _need_ a byteloader - it's redundant on the
+  S08. On the 908 it was the only way not to go crazy. But it's much
+  simpler _not_ to have it on the S08, for at least two reasons:
+
+  * Flash code doesn't have to know how to talk to both chat and BDM
+
+  * Interactive code can only be in one state - talking to BDM - rather
+    than one of two states - chat or BDM - which is frankly a bit confusing!
+
+  On the negative side, not having chat means that a chip can't look at its
+  own bellybutton; it can instead only look at _another_ chip's
+  bellybutton. Is this a big deal?)
+
+( XXX quick and dirty shim layer - to look like we can do this via either
+  chat or BDM.)
+
+#512 constant /page    ( S08 has 512 byte Flash pages - this is erase size)
+ #64 constant /chunk   ( max size of row to program)
+
+: _chat-run  b.Go  begin  b.ReadStatus 40 and  until ;
+: chat-run ;  ( XXX test)
+: chat-hx!  b.WriteHX ;
+: chat-sp@  b.ReadSP ;
+: chat-sp!  b.WriteSP ;
+: chat-pc!  b.WritePC ;
+
+: chat-addr  ( set memory address for "burst" commands)  1- b.WriteHX ;
+: chat-readnext  b.ReadNext ;
+: chat-writenext  b.WriteNext ;
+
+: flash-setup  ( 'target PC flash-status flash-command)
+   \o flash-command 1+ chat-c!  ( paste into lda #)
+   \o flash-status 1+ chat-c!  ( paste into lda #)
+   ( PC) chat-pc!  ( 'target) chat-hx! ;
+
+( Flash a chunk of 64 bytes or less.)
+: program-chunk  ( 'target len)
+   cr ." program-chunk "  2dup swap u. u.
+   ( len) \o burstCount chat-c!  \o BurstRow ( PC)
+   %1011_0000 ( FCBEF | FPVIOL | FACCERR)
+   mBurstProgram  flash-setup  chat-run ;
+
+: erase-chunk  ( 'target)
+   cr ." erase-chunk " dup u.
+   \o RunFlashCommand  ( XXX should call something that calls this and then
+   does bgnd/swi!!)
+   %0111_0000 ( FCCF | FPVIOL | FACCERR)
+   mPageErase  flash-setup  chat-run ;
+
+: blank-check  ( addr len - flag)
+   cr ." blank-check "  2dup swap u. u.
+   swap chat-addr  0ff swap  for  chat-readnext and  next  0ff = ;
+
+: c@+  ( a - a+1 b)  dup 1+  swap c@ ;
+
+( Allocate room for len bytes on stack; set up write pointer to first byte)
+: write-buffer  ( len)
+   chat-sp@ swap -  dup chat-sp!  ( allocate write-buffer on stack)
+   chat-addr ;
+
+: copy-chunk  ( 'image len)
+   cr ." copy-chunk "  2dup swap u. u.
+   dup write-buffer  for  c@+ chat-writenext  next  drop ;
+
+: erased  ( 'target len - 'target len)
+   2dup blank-check  if ^ then  over erase-chunk ;
+
+( For each chunk check if blank, erase if necessary, then copy chunks over
+  to buffer and program them!)
+
+: chunk  ( 'target len - 'target+len)
+   2dup + push  erased
+   over |+ ( 'target -> 'image)  over  ( 'image len)  copy-chunk
+   program-chunk  pop ;
+
+: flash-region  ( a len)
+   /chunk /mod  ( r q)  swap push  ?for  /chunk chunk  next  then
+                              pop  =if   ( rem) chunk  drop ^  then  2drop ;
+
+: flash-image   |origin @  |#  flash-region ;
+
+( XXX On S08, erasing the vectors means erasing the TRIM bytes, the secure
+  bits, and the bootloader. So be careful about re-programming things, esp
+  the TRIMs and the secure bits.)
+
+: flash-vectors
+   4 write-buffer
+   \o swi   @ >lohi  chat-writenext  chat-writenext
+   \o reset @ >lohi  chat-writenext  chat-writenext
+   0fffc 4 program-chunk ;
+
+#]file
+
