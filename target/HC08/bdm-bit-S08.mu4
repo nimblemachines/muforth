@@ -8,15 +8,14 @@ cr " HCS08 BDM support (bit routines for S08) " file[#
 ( Support for Freescale's Background Debug Mode - or BDM.)
 
 ( These are bit send and receive commands for an S08 processor running at
-  11.0592M - bus speed of 5.5296M - and talking to S08 targets running at
+  18.432M - bus speed of 9.216M - and talking to S08 targets running at
   4M and 8M.
 
   These routines are a bit different from their cousins for the 908 for
   several reasons:
 
-  * the clock speeds are different - I can't run the S08 from the same
-    18.432M crystal, but I want a good speed for baud rates; I was able to
-    dig out a few 11.0592M crystals, so I'm using these;
+  * the clock speeds are different - the S08 is running twice as fast as
+    its 908 counterpart;
 
   * the instruction timings are different - not only how many cycles an
     instruction takes, but the positioning and read and write cycles is
@@ -25,78 +24,126 @@ cr " HCS08 BDM support (bit routines for S08) " file[#
   * I don't have the same 5v-to-3v translation issues, so driving the BKGD
     pin on another S08 _from_ an S08 - both at 3v - is easy.)
 
-__outside
+PTAD  equ PortA
+PTADD equ DirA
+PTBD  equ PortB
+PTBDD equ DirB
 
-( We are using PortA0 to talk to the target's BKGD pin. PA0 is also TPMCH0,
-  so we use the timer for measuring pulses or doing PWM.
+( We are using PortA0 [TPMCH0] and PortB5 [TPMCH1] to measure the sync
+  pulses, and rather than figure out how to share them with the "normal"
+  port pin functions - this is harder to get right than you might think - I
+  leave those pins dedicated to timer functions, and use PortA1 as the
+  connection to BKGD.
 
-  To transmit, we set DirA0 high for the duration of the _byte_, and simply
-  toggle the data value on PA0.
+  To transmit, we set DirA1 high for the duration of the _byte_, and simply
+  toggle the data value on PA1.
 
-  To receive, we set PA0 low for the duration of the byte, and toggle the
-  DirA0 to either drive a start bit, or listen for the target's response.)
+  To receive, we set PA1 low for the duration of the byte, and toggle the
+  DirA1 to either drive a start bit, or listen for the target's response.)
 
 code BdmDriveLow
-   0 PortA bclr
-   0 DirA bset
+   PortA 1 bclr
+   DirA 1 bset
+   rts  ;c
+
+code BdmDriveHigh
+   PortA 1 bset
+   DirA 1 bset
    rts  ;c
 
 code BdmHiZ
-label BdmInit
-   0 DirA bclr  ( make sure A0 tri-stated)
+   DirA 1 bclr  ( make sure A1 tri-stated)
    rts  ;c
 
 
-( BDM code for host S08 running at 5.5296M, and target at 4M.)
+( The magic numbers for bit-banging BDM are as follows:
+
+  * Start bit should be 4 target cycles long.
+
+  * Received bits should be sampled on the 10th target cycle, counting from
+    the falling edge of the start bit.
+
+  * Transmitted bits should be held for 13 target cycles, counting from
+    the falling edge of the start bit.
+)
+
+
+( BDM code for host S08 running at 9.216M, and target at 4M.
+
+  4M target       9.216 host
+  =========       ==========
+     4               9.2
+    10              23
+    13              30
+)
 
 code SetTx1_4M
    SetTx1 bsr  ;c   -- pushes address of following routine on stack!
 
 ( Send one bit via BDM)
-code tx1_4m  ( tx bit in A0)
-   0 PortA bclr              ( rfwpp  - drive start bit)
-   0 ,x tst                  ( rfp    - delay 2 cycles)
+code tx1_4m  ( tx bit in A1)
+   ( 9~ start bit; hold for 30~)
+   PortA 1 bclr              ( rfwpp  - drive start bit)
+   0 ,x tst                  ( rfp    - delay 6 cycles)
+   0 ,x tst                  ( rfp    )
    PortA ) sta               ( wpp    - drive data bit)
-   0 ,x tst                  ( rfp    - delay 3 cycles)
-   0 ,x tst                  ( rfp    - delay 3 cycles)
-   nop                       ( p      - delay 1 cycle)
-   0 PortA bset              ( rfwpp  - drive stop bit)
+   0 ,x tst                  ( rfp    - delay 16 cycles)
+   0 ,x tst                  ( rfp    )
+   0 ,x tst                  ( rfp    )
+   0 ,x tst                  ( rfp    )
+   0 ,x tst                  ( rfp    )
+   nop                       ( p      )
+   PortA 1 bset              ( rfwpp  - drive stop bit)
    rts  ;c
 
 code SetRx1_4M
    SetRx1 bsr  ;c   -- pushes address of following routine on stack!
 
 ( Recv one bit via BDM)
-code rx1_4m  ( recvd bit in A0)
-   0 DirA bset               ( rfwpp  - drive start bit)
-   nop                       ( p      - delay 1 cycle)
-   0 DirA bclr               ( rfwpp  - tri-state BKGD)
-   0 ,x tst  nop  nop        ( rfppp  - wait for target to drive its bit)
+code rx1_4m  ( recvd bit in A1)
+   ( 9~ start bit; sample at 23~)
+   DirA 1 bset               ( rfwpp  - drive start bit)
+   0 ,x tst  nop             ( rfp.p  - delay 4 cycles)
+   DirA 1 bclr               ( rfwpp  - tri-state BKGD)
+   0 ,x tst                  ( rfw    - delay 11 cycles)
+   0 ,x tst                  ( rfw    )
+   .a psh  .a pul            ( sp.ufp )
    PortA ) lda               ( rpp    - sample bit)
    rts  ;c
 
-( BDM code for host S08 running at 5.5296M, and target at 8M.)
+
+( BDM code for host S08 running at 9.216M, and target at 8M.
+
+  8M target       9.216 host
+  =========       ==========
+     4               4.6
+    10              11.5
+    13              15
+)
 
 code SetTx1_8M
    SetTx1 bsr  ;c   -- pushes address of following routine on stack!
 
 ( Send one bit via BDM)
-code tx1_8m  ( tx bit in A0)
-   0 PortA bclr              ( rfwpp  - drive start bit)
-   PortA ) sta               ( wpp    - drive data bit)
+code tx1_8m  ( tx bit in A1)
+   ( 4~ start bit; hold for 15~)
+   PortA 1 bclr              ( rfwpp  - drive start bit)
    nop                       ( p      - delay 1 cycle)
-   0 PortA bset              ( rfwpp  - drive stop bit)
+   PortA ) sta               ( wpp    - drive data bit)
+   0 ,x tst                  ( rfw    - delay 6 cycles)
+   0 ,x tst                  ( rfw    )
+   PortA 1 bset              ( rfwpp  - drive stop bit)
    rts  ;c
 
 code SetRx1_8M
    SetRx1 bsr  ;c   -- pushes address of following routine on stack!
 
 ( Recv one bit via BDM)
-code rx1_8m  ( recvd bit in A0)
-   .a clr   ( sta is two cycles faster than bclr)
-   0 DirA bset               ( rfwpp  - drive start bit)
-   DirA ) sta                ( wpp    - tri-state BKGD)
-   nop                       ( p      - delay 1 cycle)
+code rx1_8m  ( recvd bit in A1)
+   ( 5~ start bit; sample at 12~)
+   DirA 1 bset               ( rfwpp  - drive start bit)
+   DirA 1 bclr               ( rfwpp  - tri-state BKGD)
+   0 ,x tst  nop             ( rfp.p  - delay 4 cycles)
    PortA ) lda               ( rpp    - sample bit)
    rts  ;c
 
@@ -105,13 +152,13 @@ code rx1_8m  ( recvd bit in A0)
 code BdmTx  ( tx byte at 0,x)
    ( loop 8; generate bits MSB first)
    8 # lda   .a psh
-   0 PortA bset ( idle A0 high)
-   0 DirA bset  ( drive A0 for the duration of the byte)
+   PortA 1 bset ( idle A1 high)
+   DirA 1 bset  ( drive A1 for the duration of the byte)
    begin
-      0 ,x rol  .a rol  ( bit into A0)
+      0 ,x rol  .a rol  .a rol  ( bit into A1)
       BdmTx1 ) jsr
    0 ,s decz?  until
-   0 DirA bclr  ( done xmitting; tri-state A0)
+   DirA 1 bclr  ( done xmitting; tri-state A1)
    .a pul
    1 # aix   rts  ;c
 
@@ -121,13 +168,39 @@ code BdmTx  ( tx byte at 0,x)
 code BdmRx  ( recvd byte to 0,x)
    ( loop 8; recv bits MSB first; bit is 80)
    8 # lda   .a psh   0 ,x clr
-   0 PortA bclr ( start bit is zero)
-   0 DirA bclr  ( make sure A0 tri-stated)
+   PortA 1 bclr ( start bit is zero)
+   DirA 1 bclr  ( make sure A1 tri-stated)
    begin
-      BdmRx1 ) jsr  .a ror ( A0 -> C)  0 ,x rol
+      BdmRx1 ) jsr  .a ror  .a ror ( A1 -> C)  0 ,x rol
    0 ,s decz?  until
    .a pul
    1 # aix   rts  ;c
+
+code SyncWait
+   .a clr  begin
+      .a psh  .x psh  mul  .x pul  .a pul  ( 15~)
+   .a decz?  until  rts  ;c
+
+code SyncPulse
+   08 # TPMSC ) mov     -- start timer; clock from bus clock
+   08 # TPMC0SC ) mov   -- capture falling edge on BKGD in CH0 (PA0)
+   04 # TPMC1SC ) mov   -- capture rising edge on BKGD in CH1 (PB5)
+   BdmDriveLow ) jsr
+   SyncWait bsr
+   BdmDriveHigh ) jsr     -- Speedup pulse!
+   BdmHiZ ) jsr
+   SyncWait bsr
+
+   ( If both falling and rising triggered, calculate difference; otherwise
+     return 0.)
+   TPMC0SC ) lda  TPMC1SC ) and  0< if  ( both triggered)
+      ( on S08 can read capture registers in either order)
+      TPMC1VL ) lda   TPMC0VL ) sub   1 ,x sta
+      TPMC1VH ) lda   TPMC0VH ) sbc   0 ,x sta
+      rts
+   then
+   ( return 0)
+   1 ,x clr  0 ,x clr  rts  ;c
 
 #]file
 
