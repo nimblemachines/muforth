@@ -30,27 +30,35 @@ cr " HCS08 BDM support v2 (core) " file[#
   ways, but it turns out that it's pretty easy to meet the timing specs for
   both 4M and 8M BDM with a "host" running at less than 6M.)
 
+( The SCI code is identical between 908 and S08 except for the names - and
+  offsets - of the SCI status and data regs ... so let's abstract them.)
+
 [with] S08 [if]
 
-code SciRxBuf
-   begin  SCIS1 ( status 1) 5 ( recvr full)  bset? until
-   SCID ( data) )  0 ,x  mov  rts  ;c  ( the mov does post-incr of HX)
-
-code SciTxBuf
-   begin  SCIS1 ( status 1) 7 ( xmit empty)  bset? until
-   0 ,x  SCID ( data) )  mov  rts  ;c  ( the mov does post-incr of HX)
+SCIS1 equ SciStatus
+SCID  equ SciData
 
 [else]   -- 908
 
-code SciRxBuf
-   begin  SCS1 ( status 1) 5 ( recvr full)  bset? until
-   SCDR ( data) )  0 ,x  mov  rts  ;c  ( the mov does post-incr of HX)
-
-code SciTxBuf
-   begin  SCS1 ( status 1) 7 ( xmit empty)  bset? until
-   0 ,x  SCDR ( data) )  mov  rts  ;c  ( the mov does post-incr of HX)
+SCS1 equ SciStatus
+SCDR equ SciData
 
 [then]
+
+macro SciRx?
+   begin  SciStatus  5 ( recvr full)  bset? until  ;m
+
+macro SciRx
+   SciRx?
+   SciData )  lda  ;m
+
+macro SciRxBuf
+   SciRx?
+   SciData )  0 ,x  mov  ;m  ( the mov does post-incr of HX)
+
+macro SciTxBuf
+   begin  SciStatus  7 ( xmit empty)  bset? until
+   0 ,x  SciData )  mov  ;m  ( the mov does post-incr of HX)
 
 code BdmMisc
    .a decz? if  ( 09 BkgdLow)
@@ -89,7 +97,7 @@ code BdmChat
    -7 # ais   ( room for read and write counts, cur count, and buffer)
    BdmHiZ ) jsr  ( make sure BKGD high and tri-stated)
 label BdmLoop
-   SciRx ) jsr
+   SciRx
    0= if  ( 00 Bye)  ( return to byteloader)  7 # ais  rts  then
 
    .a decz? if  ( 01 Idle)
@@ -105,12 +113,12 @@ label BdmLoop
 
    .a decz? if  ( 03 WriteNext)
       4 ,s inc  ( incr write count)
-      SciRxBuf bsr  BdmLoop again
+      SciRxBuf  BdmLoop again
    then
 
    .a decz? if  ( 04 ReadNext)
 label ReadNext
-      SciTxBuf bsr  BdmLoop again
+      SciTxBuf  BdmLoop again
    then
 
    .a dec
@@ -121,9 +129,15 @@ label ReadNext
       6 ,s sta  ( count)
       tsx  ( point HX at start of buffer)
       begin  BdmTx ) jsr  6 ,s decz? until  ( write bytes via BDM)
-      nsa nsa  ( delay a bit - we're supposed to wait 16 BDM cycles)
-               ( instruction overhead between here and driving BKGD)
-               ( is at least 16 host cycles)
+
+      ( Delay a bit - we're supposed to wait 16 target BDM cycles after)
+      ( writing and before reading. Instruction overhead between here and)
+      ( driving BKGD is at least 16 host cycles.)
+[with] S08 [if]
+      0 ,x tst  0 ,x tst
+[else]
+      nsa  nsa
+[then]
 
       5 ,s lda  0!= if  ( read count non-zero)
          6 ,s sta  ( count)
