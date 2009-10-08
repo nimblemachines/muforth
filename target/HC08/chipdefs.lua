@@ -370,24 +370,33 @@ end
 --print (name_max)
 
 for _,vec in ipairs(vt) do
-   print(string.format("#%02d  %x  vec  %s  ( %s)",
+   print(string.format("#%02d  %05x  vec  %s  ( %s)",
    0x10000-vec.addr, vec.addr, vec.name..(" "):rep(name_max-#vec.name), vec.desc))
 end
+print()
 end
 
 function show_sfrs(s)
    pat = "(0x%x+) (%w+)" .. (" ([%w<-]+)"):rep(8)
    for addr, reg, b7, b6, b5, b4, b3, b2, b1, b0 in s:gmatch(pat) do
-      print (string.format("%04x r| %-8s | "..("%-7s "):rep(8),
+      print (string.format("%04x reg  %-8s | "..("%-7s "):rep(8),
                            addr, reg, b7, b6, b5, b4, b3, b2, b1, b0))
    end
+   print()
 end
 
-show_vectors(s08qg_vec)
-show_vectors(s08jm16)
-show_vectors(s08jm60_vec)
+function show_heading(s)
+   print (string.format(
+      "( Equates for S08%s. Extracted from the datasheet using Lua!)", s))
+   print()
+end
 
+-- show_vectors(s08jm16)
+-- show_vectors(s08jm60_vec)
+-- show_sfrs(s08jm60_sfr)
+
+show_heading "QG"
+show_vectors(s08qg_vec)
 show_sfrs(s08qg_sfr)
-show_sfrs(s08jm60_sfr)
 
 
