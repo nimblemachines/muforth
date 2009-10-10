@@ -41,16 +41,14 @@ cr " HCS08 BDM support (bit routines for 908) " file[#
 03 equ BKGD_H     ( drive PB1, PB0)
 
 code BdmDriveLow
-   BKGD_L # PortBdir ) mov
+   BKGD_L # DirB ) mov
    rts  ;c
 
-code BdmDriveHigh
-   BKGD_H # PortBdir ) mov
-   rts  ;c
-
+( Called when BDM loop starts up; return to canonical state.)
 code BdmHiZ
-   PortBinit # PB ) mov
-   PortBdir ) clr  rts  ;c
+   PortBinit # PortB ) mov    -- setup known state
+   BKGD_H # DirB ) mov        -- before tri-stating, drive high briefly
+   DirB ) clr  rts  ;c
 
 
 ( BDM code for host 908 running at 4.608M, and target at 4M)
@@ -60,23 +58,23 @@ code SetTx1_4M
 
 ( Send one bit via BDM)
 code tx1_4m  ( tx bit in A)
-   BKGD_L # PortBdir ) mov   ( ppwp   - drive start bit)
-   0 ,x tst                  ( pr     - delay 2 cycles)
-   PortBdir ) sta            ( pwp    - drive data bit)
-   nsa nsa                   ( ppdppd - pause 6 cycles)
-   BKGD_H # PortBdir ) mov   ( ppwp   - drive stop bit)
+   BKGD_L # DirB ) mov   ( ppwp   - drive start bit)
+   0 ,x tst              ( pr     - delay 2 cycles)
+   DirB ) sta            ( pwp    - drive data bit)
+   nsa nsa               ( ppdppd - pause 6 cycles)
+   BKGD_H # DirB ) mov   ( ppwp   - drive stop bit)
    rts  ;c
 
 code SetRx1_4M
    SetRx1 bsr  ;c   -- pushes address of following routine on stack!
 
 ( Recv one bit via BDM)
-code rx1_4m  ( recvd bit in A1)
-   BKGD_L # PortBdir ) mov   ( ppwp   - drive start bit)
-   0 ,x tst                  ( pr     - delay 2 cycles)
-   PortBdir ) clr            ( pwp    - undrive PortB)
-   nsa nop                   ( ppdp   - wait for target to drive its bit)
-   PortB ) lda               ( prp    - sample bit)
+code rx1_4m  ( recvd bit in A7)
+   BKGD_L # DirB ) mov   ( ppwp   - drive start bit)
+   0 ,x tst              ( pr     - delay 2 cycles)
+   DirB ) clr            ( pwp    - undrive PortB)
+   nsa nop               ( ppdp   - wait for target to drive its bit)
+   PortB ) lda           ( prp    - sample bit)
    rts  ;c
 
 ( BDM code for host 908 running at 4.608M, and target at 8M)
@@ -86,10 +84,10 @@ code SetTx1_8M
 
 ( Send one bit via BDM)
 code tx1_8m  ( tx bit in A)
-   BKGD_L # PortBdir ) mov   ( ppwp   - drive start bit)
-   PortBdir ) sta            ( pwp    - drive data bit)
-   nop                       ( p      - pause 1 cycle)
-   BKGD_H # PortBdir ) mov   ( ppwp   - drive stop bit)
+   BKGD_L # DirB ) mov   ( ppwp   - drive start bit)
+   DirB ) sta            ( pwp    - drive data bit)
+   nop                   ( p      - pause 1 cycle)
+   BKGD_H # DirB ) mov   ( ppwp   - drive stop bit)
    rts  ;c
 
 code SetRx1_8M
@@ -97,9 +95,9 @@ code SetRx1_8M
 
 ( Recv one bit via BDM)
 code rx1_8m  ( recvd bit in A7)
-   BKGD_L # PortBdir ) mov   ( ppwp   - drive start bit)
-   PortBdir ) clr            ( pwp    - undrive PortB)
-   PortB ) lda               ( prp    - sample bit)
+   BKGD_L # DirB ) mov   ( ppwp   - drive start bit)
+   DirB ) clr            ( pwp    - undrive PortB)
+   PortB ) lda           ( prp    - sample bit)
    rts  ;c
 
 ( Send one byte via BDM.)
@@ -111,13 +109,12 @@ code BdmTx  ( tx byte at 0,x)
       0 ,x rol  CS if  BKGD_H # lda  else  BKGD_L # lda  then
       BdmTx1 ) jsr
    0 ,s decz?  until
-   PortBdir ) clr   -- tristate when done xmitting  XXX
+   DirB ) clr   -- tristate when done xmitting  XXX
    .a pul
    1 # aix   rts  ;c
 
 ( Recv one byte via BDM.)
 ( NOT the usual X stack discipline with two slots free!)
-( BdmRx1 leaves received bit in C.)
 code BdmRx  ( recvd byte to 0,x)
   ( loop 8; recv bits MSB first; bit is 80)
    8 # lda   .a psh   0 ,x clr
@@ -134,10 +131,10 @@ code SyncPulse
    TSC ) clr  -- start timer
    08 # TSC3 ) mov   -- capture falling edge on BKGD in CH3 (PB7)
    04 # TSC2 ) mov   -- capture rising edge on BKGD in CH2 (PB6)
-   BKGD_L # PBD ) mov   -- drive BKGD_L
+   BKGD_L # DirB ) mov   -- drive BKGD_L
    SyncWait bsr
-   BKGD_H # PBD ) mov   -- drive BKGD_H  Speedup pulse!
-   PBD ) clr  -- tri-state BKGD
+   BKGD_H # DirB ) mov   -- drive BKGD_H  Speedup pulse!
+   DirB ) clr            -- tri-state BKGD
    SyncWait bsr
 
    ( have to read capture H bytes first)
@@ -159,18 +156,18 @@ comment *6.25M*
 
 ( Send one bit via BDM.)
 macro tx1  ( tx bit in A)
-  BKGD_L # PortBdir ) mov   ( drive start bit)
-  PortBdir ) sta            ( drive data bit)
-  nsa                       ( pause)
-  BKGD_H # PortBdir ) mov   ( drive stop bit)
+  BKGD_L # DirB ) mov   ( drive start bit)
+  DirB ) sta            ( drive data bit)
+  nsa                   ( pause)
+  BKGD_H # DirB ) mov   ( drive stop bit)
   ;m
 
 ( Recv one bit via BDM.)
 macro rx1  ( recvd bit in A7)
-  BKGD_L # PortBdir ) mov   ( drive start bit)
-  PortBdir ) clr            ( undrive PortB)
-  nop                       ( wait for target to drive its bit)
-  PortB ) lda               ( sample bit)
+  BKGD_L # DirB ) mov   ( drive start bit)
+  DirB ) clr            ( undrive PortB)
+  nop                   ( wait for target to drive its bit)
+  PortB ) lda           ( sample bit)
   ;m
 
 *6.25M*
@@ -191,13 +188,13 @@ Mostly of historic interest, but archived here anyway.
 
 ( Send one bit via BDM.)
 code tx1  ( tx bit in A)
-  savex  PortBdir # ldx
+  savex  DirB # ldx
   0 ,x sta   .a lsl   0 ,x sta  .a lsl  0 ,x sta
   restx  rts  ;c
 
 ( Recv one bit via BDM.)
 code rx1  ( recvd bit in A1)
-  savex  PortBdir # ldx
+  savex  DirB # ldx
   80 # lda ( BKGD_L)   0 ,x sta   .a lsl   0 ,x sta   PortA ) lda
   restx  rts  ;c
 
@@ -222,7 +219,7 @@ code rx8  ( recvd byte in A)
 0 [if]
 code InitBdm
   BKGD_H # PortB ) mov   -- BKGD_L 0, BKGD_H 1
-  PortBdir ) clr
+  DirB ) clr
   rts  ;c
 
 -- macro savex   xSaved ) stx  ;m
@@ -249,7 +246,7 @@ code tx8
    begin  2 ,x ror  CS if  8c # lda  else  0c4 # lda  then
           .a psh  0 ,x decz?  until
    savex  ( XXX if I moved this above the pushes, it could psh onto stack...)
-   PortBdir # ldx
+   DirB # ldx
    tx1  tx1  tx1  tx1
    tx1  tx1  tx1  tx1
    restx   2 # aix  ( pop xmitted byte)
@@ -257,7 +254,7 @@ code tx8
 
 code rx8
    savex
-   PortBdir # ldx
+   DirB # ldx
    rx1  rx1  rx1  rx1
    rx1  rx1  rx1  rx1
    restx
