@@ -12,6 +12,10 @@ cr " HCS08 BDM support v2 (host) "  file[#
   byteloader protocol, where the target is never waiting for more than one
   byte.)
 
+( NOTE: Before loading this file, load an S08 variant device file. This
+  code requires several of the register defines, and needs to know where to
+  find the clock trim register.)
+
 ( BDM code on the 908 supports the following commands:
   0 Bye - escape back to byteloader
   1 Idle - do nothing; re-sync
@@ -27,6 +31,9 @@ cr " HCS08 BDM support v2 (host) "  file[#
  11 Tri-state BKGD pin
  12 Set BDM rate to 4M
  13 Set BDM rate to 8M)
+
+__forth
+forth
 
 decimal
 
@@ -135,12 +142,90 @@ variable bdm-hx  ( contains HX + 1, since memory ops pre-increment)
 : bdm-c@  ( a - byte)  setup-bdm-hx  b.ReadNext ;
 : bdm-c!  ( byte a)    setup-bdm-hx  b.WriteNext ;
 
+: ResetSP
+   @ram #ram +  b.WriteSP ;
+
+( Bollocks! Even this is different between variants. The JS/JM/SH uses two bits
+  to select which kind of watchdog; setting both to zero is required to
+  disable it. It looks like it's safe to write both bits 7 and 6 to zero to
+  disable the dog on the parts I've looked at...
+
+  It looks like newer parts are using this more sophisticated watchdog.
+  Rather than just write to a memory location, you have to write 55 then
+  AA.)
+
+: NoWatchdog
+   \o SOPT1 b.ReadByte  3f and  \o SOPT1 b.WriteByte ;
+
+( I've decided we shouldn't do this. It's too complicated. Not only do
+  different parts use different clocks - ICG, ICS, MCG - but even the parts
+  that have ICS put the registers in different places! So ICSTRM is _not_
+  always at 003a.
+
+  How about instead we simply leave the part untrimmed, in its BDIV=2 state
+  - running at half speed - and set FCDIV so that no matter what, its value
+  makes sense.
+
+  Using a divisor of 25 seems safe. The untrimmed speed of the DCO should
+  fall between 16M and 20M, putting the bus clock between 4M and 5M. A
+  divisor of 25 puts the flash clock into the range of 160k to 200k, which
+  is perfect.
+
+  But this is specific to the QG! I need a table of values somewhere...
+
+  Another approach is to have the device file set TRIM to ICSTRM, ICGTRM,
+  MCGTRM. I still need to know what each part's POR bus clock speed and BDM
+  clock are... put these into the device file!)
+
+( Trim internal oscillator to factory setting; on QG parts this is 31.25k,
+  which results in 16M FLL frequency; this is divided by two to give a
+  default BDM freq of 8M, and divided by two again - because of reset BDIV
+  setting - to give a reset bus clock of 4M.)
+
+: TrimOsc
+   0ffaf ( factory trim) b.ReadByte  \o TRIM b.WriteByte ;
+
+( Set FCDIV to correspond to bus clock at power-on-reset. As an added
+  bonus, we don't subtract one from the divisor, so it's a bit bigger than
+  it needs to be; this gives us a bit of cushion in case the factory trim
+  has the clock running a bit fast. In the case of QG parts - 4M bus clock
+  out of POR - this puts the Flash clock at 190k instead of 200k.)
+
+: SetFCDIV
+   \o FCDIV b.ReadByte  80 and if ^ then  ( already set)
+   [ \o POR-bus-clock #199 + #200 / ]  ( divide freq by 200k, rounding up)
+   \o FCDIV b.WriteByte ;
+
+comment misguided
+( Based on what we get back from b.Sync, match BDM clock)
+( XXX - this is currently based on 908's 4.608M clock)
+: MatchBDMClock
+   b.Sync 70 - 21 u< if  ( within +-"10 of 80 - running at 4M)
+      b.Clock4M ^ then
+   b.Clock8M ;
+
+: FastBusClock
+   ( assume osc trimmed)
+   MatchBDMClock
+   \o ICSC2 b.ReadByte  3f and ( clear BDIV)  \o ICSC2 b.WriteByte
+   b.Clock8M ;
+
+comment misguided
+
+( Get target into a known, safe state. Chat code will have done this for
+  itself at reset, so this is only necessary for BDM targets.)
+
+: b.Hi
+   TrimOsc  SetFCDIV  NoWatchdog  ResetSP ;
+
 : pwrcycle  b.BkgdLow  ." power cycle S08, then press a key..."  key drop
             b.BkgdHiZ   b.Sync u.  b.ReadStatus u. ;
 : bdm
-   0066 ( 0de00) pc! c.Go  ( start bdm chat loop)
-   b.Clock4M   ( assume bus clock of 4M, forced active mode)
-   pwrcycle
+   0066   -- S08, ram
+   -- 0de00  -- 908, flash
+   pc! c.Go   ( start bdm chat loop)
+   b.Clock4M  ( assume bus clock of 4M, forced active mode)
+   pwrcycle  b.Hi
 
    ( Wire our versions into the interact code.)
    ['] b.Go is chat-run     

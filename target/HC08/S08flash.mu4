@@ -43,7 +43,7 @@ XXX: add the short - sometimes-it-works code as well.
 comment tonyp
 
 ( S08 Flash memory layout.
-  
+
   ffac  my FTRIM - trims to 9.216M
   ffad  my TRIM  - ditto
   ffae  FTRIM bit - factory trim for 8M
@@ -67,39 +67,8 @@ comment tonyp
 
 forth
 
-( Based on what we get back from b.Sync, match BDM clock)
-: MatchBDMClock
-   b.Sync 70 - 21 u< if  ( within +-"10 of 80 - running at 4M)
-      b.Clock4M ^ then
-   b.Clock8M ;
-
-: ResetSP
-   @ram #ram +  b.WriteSP ;
-
-: DisableWatchdog
-   \o SOPT1 b.ReadByte  7f and ( clear COPE)  \o SOPT1 b.WriteByte ;
-
-: SetICSTrim
-   0ffad ( my trim) b.ReadByte  \o ICSTRM b.WriteByte ;
-
-( Set FCDIV for 9.216M bus clock)
-: SetFCDIV
-   \o FCDIV b.ReadByte  80 and if ^ then  ( already set)
-   [ #9216 #100 / 1+ 2/ ]  ( divide 9.216M by 200k, rounding up)
-   1- \o FCDIV b.WriteByte ;
-
-: FastBusClock
-   ( assume osc trimmed)
-   MatchBDMClock
-   \o ICSC2 b.ReadByte  3f and ( clear BDIV)  \o ICSC2 b.WriteByte
-   b.Clock8M ;
-
-: b.hi
-   MatchBDMClock  SetICSTrim  FastBusClock  SetFCDIV  DisableWatchdog
-   ResetSP ;
-
 : b.FlashByte  ( byte a)
-   SetFCDIV  FastBusClock
+   SetFCDIV
    30 \o FSTAT b.WriteByte  ( clear any errors)
    b.WriteByte  ( store byte into Flash memory)
    mByteProgram \o FCMD b.WriteByte  ( command - program single byte)
@@ -185,6 +154,11 @@ forth
    chat-sp@ swap -  dup chat-sp!  ( allocate write-buffer on stack)
    chat-addr ;
 
+( If target address is in the last page of flash, return true)
+: last-page?  ( 'target - f)
+   /page negate and  ( round down to start of page)
+   @flash #flash +  /page -  = ;
+
 : flash-setup  ( 'target len flash-status flash-command)
    \o flash-command 1+ chat-c!  ( paste into lda #)
    \o flash-status 1+ chat-c!  ( paste into lda #)
@@ -197,8 +171,14 @@ forth
    %1011_0000 ( FCBEF | FPVIOL | FACCERR)
    mBurstProgram  flash-setup  chat-run ;
 
+: copy-trims  ( save them from the wrecking ball)
+   cr ." copy-trims"
+   0ffac dup chat-addr  |+ ( 'image)  4 for
+      chat-readnext  over c! ( save in image)  1+  next  drop ;
+
 : erase-page  ( 'target)
    cr ." erase-page " dup u.
+   dup last-page? if ( if erasing last page)  copy-trims  then
    1 write-buffer  ( so we can pop a byte in FlashRow)
    1 ( len)  %0111_0000 ( FCCF | FPVIOL | FACCERR)
    mPageErase  flash-setup  chat-run ;
@@ -209,6 +189,7 @@ forth
 
 : c@+  ( a - a+1 b)  dup 1+  swap c@ ;
 
+( XXX why not send this a 'target addr and have it convert to 'image?)
 : copy-chunk  ( 'image len)
    cr ." copy-chunk "  2dup swap u. u.
    dup write-buffer  for  c@+ chat-writenext  next  drop ;
@@ -233,6 +214,10 @@ forth
 ( XXX On S08, erasing the vectors means erasing the TRIM bytes, the secure
   bits, and the bootloader. So be careful about re-programming things, esp
   the TRIMs and the secure bits.)
+
+: flash-trims  ( re-flash saved trims, and set secure bits to "insecure")
+   0ffac dup |+ 4 copy-chunk  4 program-chunk ( trims)
+   1 write-buffer  0fe chat-writenext  0ffbf 1 program-chunk ( secure bits) ;
 
 : flash-vectors
    4 write-buffer
