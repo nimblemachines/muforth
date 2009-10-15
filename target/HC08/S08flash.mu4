@@ -67,6 +67,7 @@ comment tonyp
 
 forth
 
+( XXX this still needs to be genericised...)
 : b.FlashByte  ( byte a)
    SetFCDIV
    30 \o FSTAT b.WriteByte  ( clear any errors)
@@ -95,7 +96,11 @@ label flash-status
 
 1 var flashCount
 
-( XXX - turn off watchdog?)
+( XXX Ending this with "bgnd" works, but only because we get lucky. In chat
+  mode bgnd causes a reset, but since that simply re-starts the chat
+  protocol it "seems" to work. Doing this more correctly and elegantly
+  would be nice.)
+
 code FlashRow  ( program up to 64 bytes; Flash address in HX; bytes on stack)
    begin  .a pul  RunFlashCommand bsr  1 # aix
    0< while  ( FCBEF)  flashCount ) decz? until  then  bgnd  ;c
@@ -103,56 +108,23 @@ code FlashRow  ( program up to 64 bytes; Flash address in HX; bytes on stack)
 __forth
 forth
 
-( XXX doesn't belong here - bdm-host?)
-( When we first reset and connect to the target, we should trim the
-  oscillator, set FCDIV, fast bus clock, turn off watchdog, and set SP to
-  top of RAM. If the chip is running the chat byteloader it will have
-  already done all of these things, so doing them here - where we talk to
-  both chat and BDM - is wrong.)
-
-( A complication with the S08 is that, unlike with the 908, where we do
-  everything thru our friendly byteloader "chat" protocol, we want to be
-  able to write to Flash via BDM _or_ via the chat interface. So we need to
-  abstract the commands that write to memory and so on. Hmm.. we've already
-  done that - use chat-c@ and chat-c! and all should be fine. But what
-  about reading and writing registers? It seems the time has arrived for me
-  to fix this. ;-)
-
-( XXX Actually, this brings up an interesting question: Do I even want to
-  run the chat protocol on the S08, or should I only run my BDM proxy?
-  Since we have BDM, we don't _need_ a byteloader - it's redundant on the
-  S08. On the 908 it was the only way not to go crazy. But it's much
-  simpler _not_ to have it on the S08, for at least two reasons:
-
-  * Flash code doesn't have to know how to talk to both chat and BDM
-
-  * Interactive code can only be in one state - talking to BDM - rather
-    than one of two states - chat or BDM - which is frankly a bit confusing!
-
-  On the negative side, not having chat means that a chip can't look at its
-  own bellybutton; it can instead only look at _another_ chip's
-  bellybutton. Is this a big deal?)
-
-( XXX quick and dirty shim layer - to look like we can do this via either
-  chat or BDM.)
-
 #512 constant /page    ( S08 has 512 byte Flash pages - this is erase size)
  #64 constant /chunk   ( max size of row to program)
 
-: chat-run  b.Go  begin  b.ReadStatus 40 and  until ;
-: chat-hx!  b.WriteHX ;
-: chat-sp@  b.ReadSP ;
-: chat-sp!  b.WriteSP ;
-: chat-pc!  b.WritePC ;
-
-: chat-addr  ( set memory address for flash commands)  1- b.WriteHX ;
-: chat-readnext  b.ReadNext ;
-: chat-writenext  b.WriteNext ;
 
 ( Allocate room for len bytes on stack; set up write pointer to first byte)
+
+( When doing this over chat, we need to _actually_ set the target's SP, not
+  just our local idea of it; the chat target is executing code and making
+  subroutine calls; these _will_ mess up our buffer unless the return
+  addresses get pushed _below_ it.
+
+  XXX right now I'm using SetRegs to set SP. Do I need a SetSP command? It
+  exists in the two places I want to use it - BDM and chat.)
+
 : write-buffer  ( len)
-   chat-sp@ swap -  dup chat-sp!  ( allocate write-buffer on stack)
-   chat-addr ;
+   chat-sp @ swap -  dup chat-sp !  ( allocate write-buffer on stack)
+   t.SetRegs ( XXX misusing this to set target's SP)  t.SetAddr ;
 
 ( If target address is in the last page of flash, return true)
 : last-page?  ( 'target - f)
@@ -162,8 +134,8 @@ forth
 : flash-setup  ( 'target len flash-status flash-command)
    \o flash-command 1+ chat-c!  ( paste into lda #)
    \o flash-status 1+ chat-c!  ( paste into lda #)
-   ( len) \o flashCount chat-c!  ( 'target) chat-hx!
-   \o FlashRow ( PC) chat-pc! ;
+   ( len) \o flashCount chat-c!  ( 'target) hx!
+   \o FlashRow ( PC) pc! ;
 
 ( Flash a chunk of 64 bytes or less.)
 : program-chunk  ( 'target len)
@@ -171,28 +143,30 @@ forth
    %1011_0000 ( FCBEF | FPVIOL | FACCERR)
    mBurstProgram  flash-setup  chat-run ;
 
+( On S08, erasing the vectors means erasing the TRIM bytes, the secure
+  bits, and the bootloader. So be careful about re-programming things, esp
+  the TRIMs and the secure bits.)
+
 : copy-trims  ( save them from the wrecking ball)
    cr ." copy-trims"
-   0ffac dup chat-addr  |+ ( 'image)  4 for
-      chat-readnext  over c! ( save in image)  1+  next  drop ;
+   0ffac dup t.SetAddr  |+ ( 'image)  4 for
+      t.Read  over c! ( save in image)  1+  next  drop ;
 
 : erase-page  ( 'target)
    cr ." erase-page " dup u.
-   dup last-page? if ( if erasing last page)  copy-trims  then
+   dup last-page? if  ( erasing last page)  copy-trims  then
    1 write-buffer  ( so we can pop a byte in FlashRow)
    1 ( len)  %0111_0000 ( FCCF | FPVIOL | FACCERR)
    mPageErase  flash-setup  chat-run ;
 
 : blank-check  ( addr len - flag)
    cr ." blank-check "  2dup swap u. u.
-   swap chat-addr  0ff swap  for  chat-readnext and  next  0ff = ;
+   swap t.SetAddr  0ff swap  for  t.Read and  next  0ff = ;
 
-: c@+  ( a - a+1 b)  dup 1+  swap c@ ;
-
-( XXX why not send this a 'target addr and have it convert to 'image?)
-: copy-chunk  ( 'image len)
+: copy-chunk  ( 'target len)
    cr ." copy-chunk "  2dup swap u. u.
-   dup write-buffer  for  c@+ chat-writenext  next  drop ;
+   swap  |+ ( target -> 'image)  swap
+   dup write-buffer  for  c@+ t.Write  next  drop ;
 
 : erased  ( 'target len - 'target len)
    2dup blank-check  if ^ then  over erase-page ;
@@ -202,8 +176,7 @@ forth
 
 : chunk  ( 'target len - 'target+len)
    2dup + push  erased
-   over |+ ( 'target -> 'image)  over  ( 'image len)  copy-chunk
-   program-chunk  pop ;
+   2dup copy-chunk  program-chunk  pop ;
 
 : flash-region  ( a len)
    /chunk /mod  ( r q)  swap push  ?for  /chunk chunk  next  then
@@ -211,19 +184,19 @@ forth
 
 : flash-image   |origin @  |#  flash-region ;
 
-( XXX On S08, erasing the vectors means erasing the TRIM bytes, the secure
-  bits, and the bootloader. So be careful about re-programming things, esp
-  the TRIMs and the secure bits.)
-
 : flash-trims  ( re-flash saved trims, and set secure bits to "insecure")
-   0ffac dup |+ 4 copy-chunk  4 program-chunk ( trims)
-   1 write-buffer  0fe chat-writenext  0ffbf 1 program-chunk ( secure bits) ;
+   0ffac 4  2dup  copy-chunk  program-chunk ( trims)
+   1 write-buffer  0fe t.Write  0ffbf 1 program-chunk ( secure bits) ;
 
 : flash-vectors
    4 write-buffer
-   \o swi   @ >lohi  chat-writenext  chat-writenext
-   \o reset @ >lohi  chat-writenext  chat-writenext
+   \o swi   @ >lohi  t.Write  t.Write
+   \o reset @ >lohi  t.Write  t.Write
    0fffc 4 program-chunk ;
+
+( XXX This is a bit of a hack, but seems to work.)
+: verify   |origin @  dup t.SetAddr  |+
+    |# for  c@+ t.Read xor if  dup 'image - u.  then  next  drop ;
 
 #]file
 

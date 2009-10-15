@@ -28,10 +28,6 @@ variable spy  spy off
 
 : addr>  ( a)  >lohi send send ;
 
-( Flush anything that's sitting in our input queue.)
-: _flush  begin  recv .h8_  again ;  ( recv will timeout and throw)
-: flush  ['] _flush carefully ;
-
 hex
 : breakCheck  recv 0= if ." (break received)" then ;
 : security  ( send 8 security bytes, initally FF)  8 for  0ff send  next
@@ -52,10 +48,43 @@ RUN:    Send 28
 : tgIread   ( - b0 b1)   1a send  recv recv ;
 : tgIwrite  ( byte -)    19 send  send ;
 : tgReadSp  ( - sp)      0c send  recv recv  hilo> ;
-: tgRun                  28 send  breakCheck ;
+: tgRun                  28 send  ;
   ( target _seems_ to send a 00 or break when code that has been run
   returns to the ROM monitor. This is undocumented behaviour.)
 decimal
+
+variable leftover  ( single byte, since tgIread returns two)
+variable #leftover
+
+( Let's try a simpler way.)
+: m.SetAddr
+   -1 +wrap  tgRead drop  ( simple, brutal, and inefficient!)
+   #leftover off ;
+
+: m.GetRegs
+   tgReadSp dup  m.SetAddr  6 +wrap chat-sp !  ( SP shown is _above_ SWI frame)
+   tgIread  tgIread  tgIread
+   chat-frame  6 + ( 'frametop)  6 for  1-  tuck c!  next  drop ;
+
+: m.SetRegs
+   ( We can't set SP using the ROM monitor!)
+   ( Instead, get current SP - which points to SWI frame - and put regs there)
+   tgReadSp  m.SetAddr
+   chat-frame  6 for  c@+ tgIwrite  next  drop ;
+
+: m.Read  ( - byte)
+   #leftover @ if  leftover @  ( return cached byte)  #leftover off  ^  then
+   tgIread  ( b0 b1)  leftover !  1 #leftover ! ;
+
+( m.Write  tgIwrite ; )
+
+( XXX I need better names for these... esp since they already called their
+  command "run")
+
+( m.Go  tgRun ; )
+: m.Run  ( wait for target)  tgRun  breakCheck ;
+
+comment radical-simplification!!
 
 comment
 ==========================================================================
@@ -190,17 +219,21 @@ undef B
 : mon-c!  ( byte a)  fridgeFull off ( invalidate cache)
    doWrite 1 update-hx ;
 
-( Wire our versions into the interact code.)
-' mon-c@ is chat-c@
-' mon-c! is chat-c!
-' tgRun is chat-run     
-' tgReadSp is chat-get-sp  
+comment radical-simplification!!
 
-( Specific to 908 ROM monitor interaction.)
+decimal
+
 : chat
-   tty-target-init
-   ['] mon-c@ is |c@
-   #9600 bps  flush  security  hi ;
+   ( Wire our versions into the interact code.)
+   ['] m.Run is t.Run
+   ['] tgRun is t.Go
+   ['] m.GetRegs is t.GetRegs
+   ['] m.SetRegs is t.SetRegs
+   ['] m.SetAddr is t.SetAddr
+   ['] m.Read is t.Read
+   ['] tgIwrite is t.Write
+   tty-target-init  9600 bps  flush  security  -- hi
+   _chat ;
 
 #]file
 
