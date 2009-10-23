@@ -56,7 +56,6 @@ decimal
 variable leftover  ( single byte, since tgIread returns two)
 variable #leftover
 
-( Let's try a simpler way.)
 : m.SetAddr
    -1 +wrap  tgRead drop  ( simple, brutal, and inefficient!)
    #leftover off ;
@@ -84,143 +83,6 @@ variable #leftover
 ( m.Go  tgRun ; )
 : m.Run  ( wait for target)  tgRun  breakCheck ;
 
-comment radical-simplification!!
-
-comment
-==========================================================================
-  The operations available in the 908 bootloader are a bit odd. It is not
-  possible, easily, to read two bytes from an arbitrary location. Instead,
-  one sends the Read command, which sets the address, and returns one byte.
-  It also increments the on-chip indexing pointer.
-
-  If you now execute the Iread command, you'll read two more bytes. What do
-  you do with the third? You could just chuck it out, but you might need it
-  later, and you've got it already. So why not cache it somehow?
-
-  I thought of several ways of doing this, and considered two of them worth
-  trying out. I coded them both up, in completely different styles - first
-  Variation A, then B - then I realised that they were quite similar, and
-  refactored them to be in every way parallels. Then, using a simple
-  textual method - one of the words A and B is the line comment character,
-  and the other is a no-op - you choose which - I interleaved the
-  implementations to make both the similarities and differences more
-  apparent. Some subtle differences show up clearly, such as the fact that
-  Var A always executes its "fetch from cache" code, and sometimes refills
-  the cache first; whereas Var B either returns the _single_ byte in the
-  cache, _or_ does a refill that also yields the byte requested.
-
-  Variation A
-
-  When we read from the target, always read two bytes, starting from an
-  even address. Read the first two using tgRead; then, for sequential
-  access after that, use tgIread, which returns two bytes. Keep a buffer
-  two bytes long that contains the last two bytes read; chat-hx contains the
-  address in the target's indexed memory pointer; it thus contains the
-  address two byte _past_ the address of the first byte in the cache.
-
-  Using A#2 to represent A truncated to a multiple of two (A and -2), if an
-  address A#2 matches (chat-hx-2), then the byte it points to in the target
-  memory is already in the cache.
-
-  Note again that after the cache is filled the chip's indexed read & write
-  pointer will be pointing just _after_ the cache, and chat-hx will point
-  there as well.
-
-  Variation B
-
-  This time, just cache _one_ byte. If reading an arbitrary location, do a
-  Read, and also cache that byte. If doing a sequential (indexed) read, do
-  Iread - which returns two bytes - and return the first but cache the
-  second.
-
-  As in the above method, chat-hx follows the chip's indexed addr exactly,
-  but in this case the byte cached is always at address chat-hx-1.
-
-  Also note: unlike in the above case, when we refill the cache, we're
-  really storing a remainder there. Thus we don't always read valid data
-  out of the cache, refilling beforehand as necessary. Instead the
-  read-and-refill routine returns the valid read value, and "behind the
-  scenes" stocks the leftovers in the fridge.
-
-  This approach is pretty good, but fails to be optimal in one case. If the
-  address requested is chat-hx+1 - perfectly in the range of _one_ tgIread
-  operation - it will use tgRead instead. The above approach - with a 2
-  byte cache and modulo addressing, can use tgIread instead.
-
-  For the hell of it, I'm using a metaphor of beer, beer runs, and fridges.
-  Beers are bytes, fridge is the cache, a beer run is a "cache line" fetch.
-
-  Variation C?
-
-  A third variation is easy to conceive. In this case, you cache the
-  results of the last read. Read caches one byte; Iread caches two. chat-hx
-  points just past the cache, as before. A count is kept of valid bytes.
-  Given an address A, if (A u< chat-hx) and (A u>= chat-hx-count), then A
-  points to valid cached data.
-
-  I haven't implemented this, but it might be worth trying.
-
-  Cache invalidation
-
-  Note that the chip's bootloader also implements both Write and Iwrite
-  (indexed write) commands. Iread and Iwrite share the same pointer, and
-  we'd like to take advantage of this. Also, since my focus here is
-  simplicity and not performance, I'm not doing any exciting write-back or
-  write-through stuff. Instead, any write to memory invalidates the cache.
-  However, this does not affect the possibility the Iwrite could use a
-  previous read's address, or vice versa.
-==========================================================================
-
-( One of the following words - the empty one - is a no-op, so lines
-  starting with it will be parsed. The other - with -- - comments out the
-  rest of the line. Move the slashes to choose a Variation that suits you!)
-
-compiler
-: A       ;
-: B  \ -- ;
-forth
-: A  \ A ;
-: B  \ B ;
-
-variable fridge  ( holds leftovers from tgRead or tgIread)
-variable fridgeFull  ( optimistic)  fridgeFull off
-
-A : inFridge?   ( a - f)  -2 and  chat-hx @  -2 +wrap  = ;
-B : inFridge?   ( a - f)          chat-hx @  -1 +wrap  = ;
-  : beerRun?    ( a - f)  inFridge? not  fridgeFull @ not  or ;
-
-A : beerRun  ( a - a a#2 b0 b1)  dup  -2 and
-A    dup match-hx? if                tgIread ( b0 b1) ^  then
-A            dup tgRead  over 1 +wrap tgRead ( b0 b1) ;
-
-B : beerRun  ( a - a +a b0 b1)
-B    dup match-hx? if  2 ( +a)       tgIread ( b0 b1) ^  then
-B                  dup 1 ( +a) swap  tgRead dup ( b0 b0) ;
-
-  : postIt  ( a +a)  update-hx  fridgeFull on ;
-A : refillFridge  ( a a#2 b0 b1 - a)  fridge 1+ c!  fridge c!     2 postIt ;
-B : refillFridge  ( a +a b0 b1 - b0)                fridge c!  -rot postIt ;
-
-  : mon-c@  ( a - byte)
-A  dup beerRun? if  beerRun refillFridge   then  1 and fridge + c@ ;
-B  dup beerRun? if  beerRun refillFridge ^ then   drop fridge   c@ ;
-
-( Now that we're done with them, undefine A and B so they don't cause trouble!)
-compiler
-undef A
-undef B
-forth
-undef A
-undef B
-
-: doWrite  ( byte a - a)
-   dup match-hx? if  swap tgIwrite ^  then  tuck tgWrite ;
-
-: mon-c!  ( byte a)  fridgeFull off ( invalidate cache)
-   doWrite 1 update-hx ;
-
-comment radical-simplification!!
-
 decimal
 
 : chat
@@ -232,7 +94,7 @@ decimal
    ['] m.SetAddr is t.SetAddr
    ['] m.Read is t.Read
    ['] tgIwrite is t.Write
-   tty-target-init  9600 bps  flush  security  -- hi
+   tty-target-init  9600 bps  flush  security
    _chat ;
 
 #]file
