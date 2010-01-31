@@ -37,11 +37,6 @@ static struct dict_entry *compiler_chain = NULL;
 /* current chain to compile into */
 static struct dict_entry **current_chain = &forth_chain;
 
-/* pointer to latest word defined; doesn't depend on current *still*
- * pointing to the chain it *was* pointing to when the word was
- * defined... */
-static struct dict_entry *latest = NULL;
-
 /* hook called when a new name is created */
 static xtk xtk_new_hook = XTK(mu_nope);
 
@@ -124,15 +119,6 @@ void mu_push_compiler_chain()
     PUSH(&compiler_chain);
 }
 
-/*
- * NOTE: Though "latest" is a variable, we never want to store into it,
- * so push its _value_ rather than its _address_.
- */
-void mu_push_latest()
-{
-    PUSH(latest);
-}
-
 /* the char *string param here does _not_ need to be zero-terminated!! */
 static char *compile_counted_string(char *string, size_t length)
 {
@@ -210,20 +196,13 @@ static void compile_dict_entry(
 #endif
 }
 
-/* Called (indirectly, thru the mu_new* words) from Forth. Only creates a
+/*
+ * Called (indirectly, thru the mu_new* words) from Forth. Only creates a
  * name; does NOT set the code field!
- *
- * Note also: the old way of recalling the last word defined by doing
- * "current @ @" to get "latest" doesn't work if between defining and
- * querying you switch what current points to (which you do ALL THE TIME
- * while meta-compiling!). So this is fragile. Better to explicitly capture
- * the address of the last word defined - pointed to indirectly by
- * "current_chain".
  */
 static void mu_compile_name()
 {
     compile_dict_entry(current_chain, (char *)ST1, TOP);
-    latest = *current_chain;  /* remember the last defined */
     DROP(2);
 }
 
