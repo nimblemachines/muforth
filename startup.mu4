@@ -854,55 +854,58 @@ z" <key timed out" ztimeout !
   .arbitrary. chain .new-is-chained-to-arbitrary. )
 
 
-( Conditional compilation)
-
-( 30-aug-1998. Created.)
-( 28-apr-1999. Added compiler word to create conditionals.)
-( 27-apr-2000. Changed names to more standard [if] [else] [then] and added
-               the capability of nesting them.)
-( 4-aug-2000. Added [with] and moved all conditional constants into
-          `conditional' vocab.)
+( Conditional compilation.)
 
 sealed .conditional.
 : conditional   .conditional. definitions ;
 
--:  ."  (inside a conditional)"  ;
--:  .conditional. find  if  execute ^  then  2drop ;
-mode eat
+( eat consumes tokens until it either consumes all the input - in which
+  case the while loop will exit - or an execute'd word shunt's to exit the
+  containing loop. ?toss processes each token. If it exists in
+  .conditional. , it executes it; otherwise, it throws it away.)
 
-variable cond-nest
-variable cond-save-state
-: cond[   state @  cond-save-state !  cond-nest off  ;
-: ]cond   cond-save-state @  state !  ;
+: ?toss   .conditional. find  if  execute ^  then  2drop  0 ;
+: eat   0 ( nesting)  begin  token  =while  ?toss  until  drop ( nesting) ^
+                                    then  2drop ( token)  drop ( nesting) ;
 
 compiler
-: [else]   cond[  eat  ;
-: [if]   (s f)  0= if  \ [else]  then  ;
-: [then]  ;
-: [with]   .forth. token' if  drop -1 ^  then  2drop 0 ;
+: .if     0= if  eat  then ;
+: .else   eat ;
+: .then   ;
+
+( Consume a token, search .forth., and return only the "found or not" flag.)
+: .def  .forth. token' nip  =if ^ then  nip ;
+
+: .ifdef   \ .def      \ .if ;
+: .ifndef  \ .def  0=  \ .if ;
 
 conditional
-: [if]     1 cond-nest +!  ;
-: [else]                   cond-nest @  0=  if  ]cond  then  ;
-: [then]  -1 cond-nest +!  cond-nest @  0<  if  ]cond  then  ;
+( nesting - nesting exitflag)
+: .if       1+       0 ;  ( .if nests, never exits)
+: .else         dup 0= ;  ( .else doesn't nest, exits if nesting at 0)
+: .then     1-  dup 0< ;  ( .then unnests, exits if nesting -was- at 0)
+
+: .ifdef    1+       0 ;  ( these are like .if)
+: .ifndef   1+       0 ;
 
 forth
-: [if]      \ [if]  ;
-: [else]    \ [else]  ;
-: [then]   ;
-: [with]    \ [with]  ;
+: .if     \ .if ;
+: .else   \ .else ;
+: .then   ;
+
+: .def     \ .def ;
+: .ifdef   \ .ifdef ;
+: .ifndef  \ .ifndef ;
+
 
 ( A defining word that makes words that return -1)
 : trues   -1 constant ;
 
-( The defining word `with' for creating conditional compilation words.
-  No matter what chain we are compiling into, define the word - using
-  "trues" - in .forth.)
+( Define words for use with the conditional compilation words.  No matter
+  what chain we are compiling into, define the word - using "trues" - in
+  .forth.)
 
-: with   current preserve  forth  trues ;
-
-( Now, the main reason for doing this is to have `debug' and `eprom'
-  versions. The best way is to load the file `debug' or `eprom'!)
+: define   current preserve  forth  trues ;
 
 
 ( Two useful sets of units; these adhere to SI and IEC guidelines. ;-)
@@ -985,7 +988,7 @@ variable csp  ( what does this stand for? `check stack pointer'?)
 : ld  token _string  load-file ;
 : -f  ( load file)  ld ;
 : --file  -f  ;
-: -d  ( define)  with  ;
+: -d  ( define)  define  ;
 : --define  -d  ;
 
 
