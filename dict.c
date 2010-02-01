@@ -23,19 +23,103 @@ uint8 *pdt0;   /* ... data space */
 cell  *pcd;    /* ptrs to next free byte in code & names space */
 uint8 *pdt;    /* ... data space */
 
-struct dict_entry
+/*
+ * A struct dict_name represents what Forth folks often call a "head" - a
+ * name, its length, and a link to the previous head (in the same
+ * vocabulary).
+ *
+ * Note that this definition does -not- include the code field. All of the
+ * dictionary code - except for mu_find - deals only with these "pure"
+ * names.
+ *
+ * The way that names are stored is a bit odd, but has -huge- advantages.
+ * Many Forths store the link, then a byte-count-prefixed name, then
+ * padding, then the code field and the rest of the body of the word. This
+ * works fine when mapping from names to code fields (or bodies) - which is
+ * what one does 97% of the time.
+ *
+ * But the other 3% of the time you're holding a code field address, or the
+ * address of the body of a word, and you wonder, "What word does this
+ * belong to? What's its name?" (Doing decompilation is a great example of
+ * this, but not the only one.) This kind of "reverse mapping" is
+ * impossible with the above "naive" dictionary layout. The problem: it's
+ * impossible to reliably skip -backwards- over the name. The length byte
+ * is at the -beginning- of the name, but the code field follows it.
+ *
+ * There are a couple of hacks that have been used. One (adopted by
+ * fig-Forth) is to set the high bit of both the length byte and the last
+ * byte of the name. This way one can skip backwards over the name, but
+ * it's a slow scanning process, rather than an arithmetic one (subtracting
+ * the length from a pointer).
+ *
+ * Another (ugly) hack is to put the length at -both- ends of the name.
+ * This obviously makes it easy to skip over the name, forwards or
+ * backwards.
+ *
+ * A much nicer solution is the move the link field -after- the name, and
+ * forgo the prefix length entirely.  This is the solution that muFORTH
+ * adopts (as dforth did before it).  Instead of -following- the link
+ * field, the name -precedes- it, starting with padding, then the
+ * characters of the name, then its length (one byte), followed directly by
+ * the link. (The padding puts the link on a cell boundary.)
+ *
+ * Experienced C programmers will immediately notice a problem: structs
+ * (such as the one we want to use to define the structure of dictionary
+ * entries) cannot begin with a variable-length field. (In standard C they
+ * cannot even -end- with variable-length fields - or that's my understand.
+ * There are evil GCC-only workarounds, however.) So, what do we do? We'd
+ * like to profitably use C's structs to help write readable and bug-free
+ * code, but how?
+ *
+ * My solution is a bit weird, but it works rather well. Since I know that
+ * there will be at least -one- cell (3 bytes and a length) of name (but
+ * likely more), I will define a struct that represents only the last three
+ * characters of the name, the length, and the link; the previous
+ * characters are "off the map" as far as C is concerned, but there is an
+ * easy way to address them. (To get to the beginning of a name, take the
+ * address of the last three characters - suffix - add three and subtract
+ * the length.)
+ *
+ * The only part of the code that seems a bit hackish is the calculation of
+ * how many bytes to allocate for the name to put the link on a cell
+ * boundary.
+ *
+ * One quirk of this method is that links no longer point to links, and
+ * this forced me to restructure some code. In particular, .forth.  and
+ * .compiler. (and all other vocab chains) are no longer simply
+ * single-celled organisms (variables); they are now fully-fledged struct
+ * name's. (One neat advantage to this is that it works well when chaining
+ * vocabs together.)
+ */
+struct dict_name
 {
-    struct dict_entry *link;
-    unsigned char length;
-    char name[0];
+    char suffix[3];              /* last 3 characters of name */
+    unsigned char length;        /* true length of name */
+    struct dict_name *link;      /* to preceding dict_name */
 };
 
-/* the forth and compiler "vocabulary" chains */
-static struct dict_entry *forth_chain = NULL;
-static struct dict_entry *compiler_chain = NULL;
+/*
+ * A struct dict_entry is the -whole- thing: a name plus a code field.
+ * Having the two together makes writing mu_find much cleaner.
+ */
+struct dict_entry
+{
+    struct dict_name n;
+    pw code;
+};
+
+/*
+ * The forth and compiler "vocabulary" chains - VH means vocab head.
+ * Because the name field contains the three-character name " VH", these
+ * will show up in a word list, if another vocab chains to one of these;
+ * however, the names cannot easily be matched because they contain a
+ * space.
+ */
+static struct dict_name forth_chain    = { " VH", 3, NULL };
+static struct dict_name compiler_chain = { " VH", 3, NULL };
 
 /* current chain to compile into */
-static struct dict_entry **current_chain = &forth_chain;
+static struct dict_name *current_chain = &forth_chain;
 
 /* hook called when a new name is created */
 static xtk xtk_new_hook = XTK(mu_nope);
@@ -88,10 +172,9 @@ void mu_push_data_size()
 }
 
 /*
- * NOTE: The value of current_chain is a pointer to a variable (like
- * forth_chain) that itself points to a struct dict_entry. Here we are
- * pushing its address since we're expecting to fetch or store its value in
- * Forth.
+ * NOTE: The value of current_chain is a pointer to a struct dict_name.
+ * Here we are pushing its address since we're expecting to fetch or store
+ * its value in Forth.
  */
 void mu_push_current()
 {
@@ -99,15 +182,8 @@ void mu_push_current()
 }
 
 /*
- * .forth. and .compiler. push the address of the respective variable,
- * since the first thing the dictionary search code does is dereference
- * the pointer to get the first struct dict_entry.
- *
- * Actually the truth is more disgusting than that. mu_find expects a
- * (struct dict_entry *) on the stack. When we start looking down a
- * chain, we initially push a pointer to a pointer, which looks like
- * the struct, which - conveniently - has its link pointer as the first
- * entry, so "p->link" is essentially "*p". It's ugly but it works.
+ * .forth. and .compiler. push the address of the respective struct
+ * dict_name.
  */
 void mu_push_forth_chain()
 {
@@ -146,10 +222,10 @@ void mu_scrabble()  /* ( a u - z") */
 }
 
 /*
- * 2004-apr-01. After giving a talk on muforth to SVFIG, and in particular
- * after Randy asked me some pointed questions, I decided that find should
- * have positive logic after all. I have renamed -"find to find to indicate
- * this change.
+ * find takes a token (a u) and a chain (the head of a vocab word list) and
+ * searches for the token on that chain. If found, it returns the address
+ * of the code field of the word; if -not- found, it leaves the token (a u)
+ * on the stack, and returns false (0).
  */
 /* find  ( a u chain - a u 0 | code -1) */
 void mu_find()
@@ -158,14 +234,14 @@ void mu_find()
     cell length = ST1;
     struct dict_entry *pde = (struct dict_entry *) TOP;
 
-    while ((pde = pde->link) != NULL)
+    while ((pde = (struct dict_entry *)pde->n.link) != NULL)
     {
-        if (pde->length != length) continue;
-        if (memcmp(pde->name, token, length) != 0) continue;
+        if (pde->n.length != length) continue;
+        if (memcmp(pde->n.suffix + 3 - length, token, length) != 0) continue;
 
         /* found: drop token, push code address and true flag */
         NIP(1);
-        ST1 = (cell) ALIGNED(pde->name + length);
+        ST1 = (cell)&pde->code;
         TOP = -1;
         return;
     }
@@ -173,23 +249,36 @@ void mu_find()
     TOP = 0;
 }
 
-static void compile_dict_entry(
-    struct dict_entry **ppde, char *name, int length)
+/*
+ * make_new_name creates a new dictionary (name) entry, and links it onto
+ * the chain represented by pnmHead.
+ */
+static void make_new_name(
+    struct dict_name *pnmHead, char *name, int length)
 {
-    struct dict_entry *pde;
+    struct dict_name *pnm;              /* the new name */
+    char *pch = (char *)ALIGNED(pcd);   /* start out nicely aligned */
 
-    pde = (struct dict_entry *)ALIGNED(pcd);
+    /* Allocate extra cells for name, if longer than 3 characters */
+    if (length > 3)
+    {
+        int cchExtra = ALIGNED(length - 3);
+        pch += cchExtra;
+        names_size += cchExtra;         /* count extra bytes alloc'ed */
+    }
 
-    pde->link = *ppde;      /* compile link to last */
-    *ppde = pde;        /* link onto front of chain */
-    pde->length = length;
-    bcopy(name, pde->name, length);          /* copy name string */
+    pnm = (struct dict_name *)pch;
+
+    pnm->link = pnmHead->link;          /* compile link to last */
+    pnmHead->link = pnm;                /* link onto front of chain */
+    pnm->length = length;
+    bcopy(name, pnm->suffix + 3 - length, length);        /* copy name string */
 
     /* Allot entry */
-    pcd = (cell *)ALIGNED(pde->name + length);
+    pcd = (cell *)(pnm + 1);
 
     /* Account for its size */
-    names_size += (caddr_t)pcd - (caddr_t)pde;
+    names_size += (caddr_t)pcd - (caddr_t)pnm;
 
 #if defined(BEING_DEFINED)
     fprintf(stderr, "%p %.*s\n", pcd, length, name);
@@ -200,16 +289,16 @@ static void compile_dict_entry(
  * Called (indirectly, thru the mu_new* words) from Forth. Only creates a
  * name; does NOT set the code field!
  */
-static void mu_compile_name()
+static void mu_make_new_name()
 {
-    compile_dict_entry(current_chain, (char *)ST1, TOP);
+    make_new_name(current_chain, (char *)ST1, TOP);
     DROP(2);
 }
 
 void mu_new_()
 {
     execute_xtk(xtk_new_hook);
-    mu_compile_name();
+    mu_make_new_name();
 }
 
 void mu_new()
@@ -228,11 +317,11 @@ void mu_push_tick_new_hook()
  * defined in C; this routine compiles a code pointer into the dict entry
  * that points to the C function.
  */
-static void init_chain(struct dict_entry **pchain, struct inm *pinm)
+static void init_chain(struct dict_name *pchain, struct inm *pinm)
 {
     for (; pinm->name != NULL; pinm++)
     {
-        compile_dict_entry(pchain, pinm->name, strlen(pinm->name));
+        make_new_name(pchain, pinm->name, strlen(pinm->name));
         *pcd++ = (cell)pinm->code;  /* set code pointer */
     }
 }

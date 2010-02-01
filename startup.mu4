@@ -316,11 +316,24 @@ forth
 ( For comparison, the regular : compiler is defined thus:
 :  :   new <:> -] ; )
 
-( Quick dictionary structure words.)
-: link>name   cell+  dup 1+ swap c@ ;
-: link>code   link>name +  aligned ;
-: code>does  ( 'code - 'does)      cell+ ;
-: code>body  ( 'code - 'body)  [ 2 cells ] + ;
+
+( Dictionary structure words. Remember that link fields point to the last
+  cell - suffix - of a name, which precedes the link field. Roughly, a
+  dictionary entry is the following cell-sized things: suffix, link, code;
+  where suffix is the last 3 characters of the name, followed by its
+  byte-sized length.)
+
+: link>name    ( 'link - a u)  1- dup  c@  tuck -  swap ;
+: suffix>link  ( 'suffix - 'link)  cell+ ;
+
+( These words all assume we're calculating to or from a code field
+  address.)
+
+: >link   ( 'code - 'link)  cell- ;
+: link>   ( 'link - 'code)  cell+ ;
+: >name   ( 'code - a u)   >link  link>name  ;
+: >does   ( 'code - 'does)  cell+ ;  ( cell containing does> ip pointer)
+: >body   ( 'code - 'body)  >does  cell+ ;
 
 ( last contains the address of the does ip of the last <does> word defined)
 : last  [ ram  0 , ] ;  ( make the variable by hand!)
@@ -378,7 +391,7 @@ forth
 variable undeferred  ' nope undeferred !
 : defer  create  undeferred @ ,  does> @execute ;
 
-: >data  code>body @ ;  ( given code addr of does word, fetch its constant)
+: >data  >body @ ;  ( given code addr of does word, fetch its constant)
 : 'data  ' >data ;
 
 ( test!!)
@@ -748,9 +761,9 @@ z" <key timed out" ztimeout !
 ( !!!!-------------------- Add changes below this line -------------------!!!!)
 
 ( Word listing. Putting this in as soon as possible. Needs `space'.)
-: words   0  current @  ( count link)
-  begin  @  =while  1 u+
-            dup link>name type space space  repeat
+: words   0  current @  ( count 'suffix)
+  begin  suffix>link @  =while  1 u+
+            dup suffix>link  link>name type space space  repeat
   drop  cr  ." ("  . ." words)" ;
 
 
@@ -817,7 +830,11 @@ z" <key timed out" ztimeout !
   independent of each other; now they are simply variables that point to the
   last-defined word on the chain.)
 
-: chain  variable ;
+( XXX this needs to be fixed to be more like the C code for .forth. and
+  .compiler.)
+
+: chain  2variable ;  ( first cell is last 3 chars of name, length;
+                        second is link pointer)
 
 chain .conditional.
 : conditional   .conditional. definitions ;
