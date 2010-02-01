@@ -1,7 +1,7 @@
 /*
  * This file is part of muFORTH: http://muforth.nimblemachines.com/
  *
- * Copyright (c) 2002-2009 David Frech. All rights reserved, and all wrongs
+ * Copyright (c) 2002-2010 David Frech. All rights reserved, and all wrongs
  * reversed. (See the file COPYRIGHT for details.)
  */
 
@@ -17,9 +17,10 @@ typedef unsigned char uint8;
 
 /* data stack */
 #define STACK_SIZE 4096
-#define STACK_SAFETY 256
+#define STACK_SAFETY 32
 extern cell stack[];
-#define S0  &stack[STACK_SIZE - STACK_SAFETY]
+#define S0    &stack[STACK_SIZE - STACK_SAFETY]
+#define SMAX  &stack[STACK_SAFETY]
 
 /* TOP is a synonym for ST0 */
 #define ST0      TOP

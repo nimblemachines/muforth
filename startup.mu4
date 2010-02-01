@@ -20,7 +20,7 @@ forth
 
 ( This file is part of muFORTH: http://muforth.nimblemachines.com/
 
-  Copyright 2002-2009 David Frech. All rights reserved, and all wrongs
+  Copyright 2002-2010 David Frech. All rights reserved, and all wrongs
   reversed. (See the file COPYRIGHT for details.)
 
 ( This file is muforth/startup.mu4. It contains high-level Forth code
@@ -222,7 +222,7 @@ forth
 : resolve>  ( src dest)  swap <resolve ;
 
 ( Going back to fig-FORTH!)
-: compile   pop dup cell+ push  @ compile, ;
+: compile   pop @+ push  compile, ;
 
 compiler
 : =if   (s - src)        compile (=0branch)  mark> ;
@@ -316,16 +316,39 @@ forth
 ( For comparison, the regular : compiler is defined thus:
 :  :   new <:> -] ; )
 
-( Quick dictionary structure words.)
-: link>name   cell+  dup 1+ swap c@ ;
-: link>code   link>name +  aligned ;
-: code>does  ( 'code - 'does)      cell+ ;
-: code>body  ( 'code - 'body)  [ 2 cells ] + ;
 
-: does>  pop  latest link>code code>does  ! ;
+( Dictionary structure words. Remember that link fields point to the last
+  cell - suffix - of a name, which precedes the link field. Roughly, a
+  dictionary entry is the following cell-sized things: suffix, link, code;
+  where suffix is the last 3 characters of the name, followed by its
+  byte-sized length.)
 
-( Nameless versions? Don't speculate!)
-: constant   new <does>  0 code, ( does ip)  code, ( constant)  does> ;
+: link>name    ( 'link - a u)  1- dup  c@  tuck -  swap ;
+: suffix>link  ( 'suffix - 'link)  cell+ ;
+
+( These words all assume we're calculating to or from a code field
+  address.)
+
+: >link   ( 'code - 'link)  cell- ;
+: link>   ( 'link - 'code)  cell+ ;
+: >name   ( 'code - a u)   >link  link>name  ;
+: >does   ( 'code - 'does)  cell+ ;  ( cell containing does> ip pointer)
+: >body   ( 'code - 'body)  >does  cell+ ;
+
+( last contains the address of the does ip of the last <does> word defined)
+: last  [ ram  0 , ] ;  ( make the variable by hand!)
+
+( does> fixes up the does ip of the last <does> word to point to the code
+  after "does>" in the caller.)
+
+: does>  pop  last @  ! ;
+
+( Everything is defined in terms of `constant'.)
+: constant   new <does>
+             here last !  0 code, ( placeholder for does ip)
+             code, ( constant)
+             does> ;
+
 : create   ram constant ;
 
 : _buffer  (s default cells)  ?for dup , next then  drop ;
@@ -368,7 +391,7 @@ forth
 variable undeferred  ' nope undeferred !
 : defer  create  undeferred @ ,  does> @execute ;
 
-: >data  code>body @ ;  ( given code addr of does word, fetch its constant)
+: >data  >body @ ;  ( given code addr of does word, fetch its constant)
 : 'data  ' >data ;
 
 ( test!!)
@@ -384,6 +407,41 @@ compiler
 : is   \ ['data]  \ ! ;
 forth
 
+
+( Fluid, or dynamic, binding of global variables.)
+
+( A common pattern in muFORTH is code like this:
+ 
+  radix @ push   do-something   pop radix !
+
+  This is clumsy, and also bad style. What if do-something throws an
+  exception after setting the radix? radix will remain set to its new
+  value. Much better is the idiom:
+
+  radix @ push   ['] do-something  catch  pop radix !  [ re-] throw
+
+  This code resets radix in the event of an exception, but it's still
+  clumsy. What I really want to be able to do is to save the old value of
+  radix, set it for the duration of the executing word, and reset it to its
+  saved value when the executing word finishes - either through a "normal"
+  exit, or by throwing an exception.
+
+  After puzzling over this for a few days I realised that I could do this
+  with catch and throw. The new word "preserve" shows how.)
+
+( Execute starting from the IP on the stack.)
+: execute-ip  ( ip -)  push ;
+
+( Preserve the value of the variable whose address is on the stack. When
+  the word that called "preserve" exits, or in the case of a call to throw,
+  the value is reset.)
+: preserve  ( a -)
+   pop  ( ip of following word)  swap ( ip a)
+   dup @ 2push ( save addr and value)
+   ['] execute-ip catch  ( execute starting with following word)
+   2pop  swap ! ( reset value)
+   ( re-) throw ;
+ 
 
 ( Number input)
 variable dpl    ( location of , or . )
@@ -408,19 +466,19 @@ decimal
   for instance, with no digits to keep it company, is happily parsed as a
   number. The number? 0. Urgh.)
 
-: punct  (s a u ch - a' u' matched)
+: punct  (s a1 u1 ch - a2 u2 matched)
    over if ( still chars to process)  swap push  over c@  xor if
    ( no match)  pop 0 ^ then
    ( match)  pop 1 -1 v+  -1 ^  then
    ( end of input)  drop 0 ;
 
-: ?sign  char - punct  if  -1 ^  then  0 ;
+: ?sign  (s a1 u1 - a2 u2 neg) char - punct  if  -1 ^  then  0 ;
 
 ( I wanted to add Michael Pruemm's '0' as a hex specifier, but it's not as
   simple as adding it to this list. It will match a bare 0, which won't be
   matched as a number.)
 
-: ?radix
+: ?radix  (s a1 u1 - a2 u2)
 (   char 0 punct  if  hex ^  then )
    char " punct  if  hex ^  then
    char # punct  if  decimal ^  then
@@ -430,13 +488,13 @@ decimal
 ( . resets dpl; others leave it unchanged; this means that embedding . in a
   number causes a double number to be pushed, and dpl set to the count of
   digits _after_ the _last_ . in the number.)
-: ?dot
+: ?dot  (s a1 u1 - a2 u2)
    char . punct  if  dpl off ^  then
    char , punct  if   ^  then
    char - punct  if   ^  then
    char / punct  if   ^  then
    char : punct  if   ^  then
-   char _ punct  if   ^  then   complain ;
+   char _ punct  if   ^  then   drop complain ;
 
 ( This is scary.  We need a bunch of literals for `digit?'.)
 
@@ -474,14 +532,12 @@ decimal
 ( If >number can't convert any digits, complain.)
 : digits   (s u1 a1 c1 - u2 a2 c2 u3)
    dup push ( chars left)  >number  pop over - ( count of digits converted)
-   0= if  complain  then ;
+   0= if  drop complain  then ;
 
-: fancy-number  (s a u - n)  ( was -: )
-   2push  0  2pop  ?sign push  ?radix  dpl on
-   begin  digits  =while ( still chars)  ?dot  repeat
-   2drop  pop  if negate then  ;
-
-( Now some help for the colon compiler. Note that the colon compiler now
+( XXX 2009-sep-01. The following doesn't make sense, and it's a lie as
+  well, since 'number,' doesn't exist any more:
+ 
+  Now some help for the colon compiler. Note that the colon compiler now
   calls `number,' to convert-and-compile and calls `number' when interpreting.
   This is so that `number,' or `number' can reset dpl when they're done. We do
   this so that constants don't screw up fixed-point arithmetic conversion.
@@ -490,8 +546,10 @@ decimal
   so Forth tries to convert it, and BOOM.)
 
 : number  (s a u - n)
-   radix @ push   ['] fancy-number  catch   pop radix !  throw ;
-( always reset the radix, even in case of error)
+   radix preserve ( always reset the radix, even in case of error)
+   2push  0  2pop  ?sign push  ?radix  dpl on
+   begin  digits  =while ( still chars)  ?dot  repeat
+   2drop  pop  if negate then  ;
 
 ( Ok, folks, now that we have number parsing code we can redefine the
   interpreter and compiler, which up till this point have simply complained
@@ -509,7 +567,7 @@ decimal
   prompt.)
 
 compiler
-: 'compiler-consume  state @ ;
+: 'compiler-mode  state @ ;
 forth
 
 ( Redefine, and then set the forth "consume".)
@@ -522,7 +580,7 @@ forth
 -:   ( compile one token)
    .compiler. find  if  execute ^  then
       .forth. find  if  compile, ^  then  number literal ;
-                                      -]  'compiler-consume [  !
+                                      -]  'compiler-mode [  !
 
 
 ( Basic character i/o.)
@@ -676,8 +734,8 @@ forth
 : being-defined  constant  does> 'new-hook ! ;
 
 ( To warn of re-defining a word.)
--: ( a u)  2dup current @ find if  fd-out @ push >stderr
-     drop  2dup type ."  again.  "  pop writes ^  then  2drop ;
+-: ( a u)  2dup current @ find if  fd-out preserve  >stderr
+     drop  2dup type ."  again.  "  ^  then  2drop ;
 being-defined -redef
  -redef
 
@@ -702,18 +760,19 @@ z" <key timed out" ztimeout !
 
 ( !!!!-------------------- Add changes below this line -------------------!!!!)
 
-( Undefine a word by replacing the first character of its name with a blank.)
-: undef   token  current @  (find) huh?  bl swap c!  drop ( code) ;
+( Undefine a word by replacing the first character of its name with a DEL.)
+: undef   current @  chain'  >name  ( a u)  drop  127 swap c! ;
 
 ( Print word name, but skip deleted words, whose names start with a blank.)
 
 : ?deleted  ( link)
-   link>name  ( a u)  over c@ bl = if  ( deleted)  2drop ^ then
+   link>name  ( a u)  over c@ 127 = if  ( deleted)  2drop ^ then
    type space space ;
 
 ( Word listing. Putting this in as soon as possible. Needs `space'.)
-: words   0  current @  ( count link)
-  begin  @  =while  1 u+  dup ?deleted  repeat
+: words   0  current @  ( count 'suffix)
+  begin  suffix>link @  =while  1 u+
+            dup suffix>link  ?deleted  repeat
   drop  cr  ." ("  . ." words)" ;
 
 ( XXX: should be primitive?)
@@ -763,6 +822,38 @@ z" <key timed out" ztimeout !
    depth  s0 cell- swap  ?for  cell- dup @ .  next then  drop  ;
 
 
+( Compiler/interpreter modes.)
+: mode   create  (s prompt interpret)  ,  ,  does>  state ! ;
+
+
+( Defining new dictionary chains.)
+
+( These used to be in an array but are now independent of each other. They
+  are structures that look just like a name entry in the dictionary - a
+  name "suffix" followed by a link field.
+
+  By convention, the name "suffix" fully defines a name - " VH" - that's
+  "space victor hotel" - that contains a space so it's hard to accidentally
+  match. "VH" suggests "vocab head".
+
+  The link field points to the name entry - suffix - of the last word
+  defined on the chain.
+
+  I think I was careful to make the following code generate a name suffix
+  that is -not- endianness-dependent.)
+
+: chain   create  [ char ) parse  VH )  ( a u)  drop @ ] ,
+   ( now put in length)  3 ram 1- c!
+   ( link) , ;  ( fake name field before link)
+
+: sealed           0  chain ;  ( create an independent vocab chain)
+: chained  current @  chain ;  ( chain to the current vocab)
+
+( It's also possible to chain to an -arbitrary- vocab by simply doing this:
+  
+  .arbitrary. chain .new-is-chained-to-arbitrary. )
+
+
 ( Conditional compilation)
 
 ( 30-aug-1998. Created.)
@@ -772,16 +863,7 @@ z" <key timed out" ztimeout !
 ( 4-aug-2000. Added [with] and moved all conditional constants into
           `conditional' vocab.)
 
-( Compiler/interpreter modes.)
-: mode   create  (s prompt interpret)  ,  ,  does>  state ! ;
-
-( Defining new dictionary chains. These used to be in an array but are now
-  independent of each other; now they are simply variables that point to the
-  last-defined word on the chain.)
-
-: chain  variable ;
-
-chain .conditional.
+sealed .conditional.
 : conditional   .conditional. definitions ;
 
 -:  ."  (inside a conditional)"  ;
@@ -817,7 +899,7 @@ forth
   No matter what chain we are compiling into, define the word - using
   "trues" - in .forth.)
 
-: with   current @  forth  trues  definitions  ;
+: with   current preserve  forth  trues ;
 
 ( Now, the main reason for doing this is to have `debug' and `eprom'
   versions. The best way is to load the file `debug' or `eprom'!)
@@ -834,7 +916,8 @@ forth
 variable csp  ( what does this stand for? `check stack pointer'?)
 : !csp   depth  csp !  ;
 : ?csp   depth  csp @  -
-         =if  . ." stack depth change: "  hex  .s cr  ^  then  drop  ;
+         =if  . ." stack depth change: "  radix preserve  hex  .s cr  ^  then
+         drop  ;
 
 ( Bracket the contents of a file and check for stack depth change.)
 : file[  (s a u)   >stderr  ." (( "  type  >stdout  !csp  ;
@@ -842,7 +925,8 @@ variable csp  ( what does this stand for? `check stack pointer'?)
 
 ( For counting the size of a loaded file.)
 : file[#   (s a u)  file[  here  ;
-: #]file   here  swap -  decimal  >stderr  .  ." bytes "  ]file  ;
+: #]file   here  swap -  radix preserve  decimal  >stderr  .  ." bytes "
+   ]file  ;
 
 
 ( Time, timestamp.)
@@ -869,19 +953,13 @@ variable csp  ( what does this stand for? `check stack pointer'?)
 : <hh:mm>     (s hms)  drop ( sec)  ## ":  ## ;
 
 : (time")  (s year month mday yday hour min sec 'zone #zone - a #)
-   radix @ push  decimal
-   <#  "hold  ( zone)  ||  <hh:mm:ss>  ||  <date>  #>
-   pop radix !  ;
+   radix preserve  decimal  <#  "hold  ( zone)  ||  <hh:mm:ss>  ||  <date>  #> ;
 
 : (short-time")  ( year month mday yday hour min sec 'zone #zone - a #)
-   radix @ push  decimal
-   <#  2drop ( zone)  <hh:mm>  ||  <date>  #>
-   pop radix !  ;
+   radix preserve  decimal  <#  2drop ( zone)  <hh:mm>  ||  <date>  #> ; 
 
 : (date")  (s year month mday yday hour min sec 'zone #zone - a #)
-   radix @ push  decimal
-   <#  2drop 2drop drop  <date>  #>
-   pop radix !  ;
+   radix preserve  decimal  <#  2drop 2drop drop  <date>  #> ;
 
 : date    (s epoch - y m d yday)  local-time  2drop 2drop drop ;
 
@@ -907,7 +985,7 @@ variable csp  ( what does this stand for? `check stack pointer'?)
 : ld  token _string  load-file ;
 : -f  ( load file)  ld ;
 : --file  -f  ;
-: -d  ( define)  trues  ;
+: -d  ( define)  with  ;
 : --define  -d  ;
 
 
@@ -920,18 +998,11 @@ variable csp  ( what does this stand for? `check stack pointer'?)
 
 
 ( Prompt, quit, and warm.)
-compiler
-: 'compiler-prompt  state @  cell+ ;
-forth
--: ."  (compiling)"  'compiler-prompt  ;  !  ( bwa ha ha!)
+-: ."  (compiling)"  'compiler-mode  ;  cell+ !  ( bwa ha ha!)
 
 : .mode-prompt   state @  cell+  @execute ;  ( secondary prompt)
 : .Ok   ."  Ok"  ;
 : prompt   .Ok  .mode-prompt  ;  ( ` Ok' then sub-prompt)
-
-
-defer canonical  ( XXX: is this obsolete?)
--:  forth  \ [ ;  is canonical
 
 : quit
    begin  cr  <stdin  >stdout  typing interpret  >stderr  prompt  again  [
@@ -947,16 +1018,13 @@ defer canonical  ( XXX: is this obsolete?)
 : error   cr  .lineno  parsed type space  zmsg zcount type  ( cr)
    captured off ;
 
-: carefully  catch  if  error  sp!  ^  then ;
-
-( XXX: difference betw error and warning, so that, eg, "isn't defined"
-  doesn't clear the stack.)
+: carefully  catch  if  error ^  then ;
 
 : banner
 ( Print banner.)
  ." muFORTH/ITC "
  build-time ( seconds since epoch)  time"  type  cr
- ." Copyright (c) 2002-2009 David Frech. All rights reserved."  cr cr
+ ." Copyright (c) 2002-2010 David Frech. All rights reserved."  cr cr
  ." muFORTH is free software; see the file COPYRIGHT for details." cr
  ." To read more about muFORTH, type "
        char " emit  ." info" char " emit ." ." cr ;
@@ -964,7 +1032,7 @@ defer canonical  ( XXX: is this obsolete?)
 : warm
    >stderr banner
    >stdout command-line count  ['] interpret carefully
-   begin  canonical  ['] quit carefully  again  [
+   begin  ['] quit carefully  again  [
 
 ( Identify ourselves.)
 trues muFORTH

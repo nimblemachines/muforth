@@ -1,7 +1,7 @@
 /*
  * This file is part of muFORTH: http://muforth.nimblemachines.com/
  *
- * Copyright (c) 2002-2009 David Frech. All rights reserved, and all wrongs
+ * Copyright (c) 2002-2010 David Frech. All rights reserved, and all wrongs
  * reversed. (See the file COPYRIGHT for details.)
  */
 
@@ -40,6 +40,7 @@ void mu_dup()    { DUP; }
 void mu_nip()    { NIP(1); }
 void mu_drop()   { DROP(1); }
 void mu_2drop()  { DROP(2); }
+void mu_drops()  { NIP(TOP); DROP(1); }
 void mu_swap()   { cell t = TOP; TOP = ST1; ST1 = t; }
 void mu_over()   { DUP; TOP = ST2; }          /* a b -> a b a */
 

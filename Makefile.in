@@ -1,6 +1,6 @@
 # This file is part of muFORTH: http://muforth.nimblemachines.com/
 #
-# Copyright (c) 2002-2009 David Frech. All rights reserved, and all wrongs
+# Copyright (c) 2002-2010 David Frech. All rights reserved, and all wrongs
 # reversed. (See the file COPYRIGHT for details.)
 
 ###
@@ -10,9 +10,10 @@
 # Set by configure
 SEDEXT=		%sedext%
 
-CFLAGS=		-O2 -Wall -fomit-frame-pointer
-#CFLAGS=	-g -Wall -fomit-frame-pointer -DDEBUG -DBEING_DEFINED
+CFLAGS=		-O2 -Wall -fomit-frame-pointer ${DEFS} ${DEBUG}
 LDFLAGS=
+DEFS=		-DCHUMOO
+#DEBUG=		-g -DDEBUG -DBEING_DEFINED
 
 # Core objects
 COREOBJS=	kernel.o interpret.o dict.o file.o \
@@ -30,11 +31,13 @@ all : public.h muforth
 
 ${ALLOBJS} : ${DEPFILES}
 
+${ALLOBJS:.o=.ph} : Makefile
+
 muforth.o : version.h
 
 public.h : ${ALLOBJS:.o=.ph}
 	@echo Making ${.TARGET}
-	(echo "/* This file is automagically generated. Do not edit! */"; \
+	@(echo "/* This file is automagically generated. Do not edit! */"; \
 	cat ${.ALLSRC}) > ${.TARGET}
 
 forth_chain.h : public.h scripts/gen_dict_chain.sed
@@ -57,14 +60,14 @@ compiler_chain.h : public.h scripts/gen_dict_chain.sed
 
 dict.o : forth_chain.h compiler_chain.h
 
-.SUFFIXES : .ph
+.SUFFIXES : .ph .asm
 
 .c.ph : Makefile
 	@echo Making ${.TARGET}
 	@(echo "/* ${.IMPSRC} */"; \
 	sed ${SEDEXT} -n \
-		-e '/^#if/,/^#endif/d' \
 		-e '/^static /d' \
+		-e '/^#(if|else|endif)/p' \
 		-e 's/^([a-z]+ \**[a-z_0-9]+)\((void)?\).*$$/\1(void);/p' \
 		-e 's/^(pw [a-z_0-9]+).*;$$/extern \1;/p' \
 		${.IMPSRC}; \
@@ -73,7 +76,7 @@ dict.o : forth_chain.h compiler_chain.h
 env.h : envtest
 	./envtest > ${.TARGET}
 
-version.h : Makefile ${VERSOBJS:.o=.c}
+version.h : Makefile ${VERSOBJS}
 	@echo Making ${.TARGET}
 	@echo "time_t build_time = `date \"+%s\"`;" > version.h
 
