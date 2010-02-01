@@ -1,6 +1,6 @@
 # This file is part of muFORTH: http://muforth.nimblemachines.com/
 #
-# Copyright (c) 2002-2009 David Frech. All rights reserved, and all wrongs
+# Copyright (c) 2002-2010 David Frech. All rights reserved, and all wrongs
 # reversed. (See the file COPYRIGHT for details.)
 
 #
