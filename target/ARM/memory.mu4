@@ -9,6 +9,11 @@ cr " ARM memory allocation "  file[#
 256 Ki constant #image
 #image buffer image
 
+forth
+: image+  image  +  ;
+: image!  image  +  ! ;  ( NOTE: ! in this context assumes host cell size == target cell size + endianness! )
+: imagec! image  +  c! ;
+
 meta
 : cells  2 << ;  ( target cells are 32 bits)
 : cell/  2 >> ;  ( signed)
@@ -18,32 +23,30 @@ meta
 forth
 
 ( We keep of bitmap of which cells need relocation.)
-#image \m cell/ ( num of target cells in image)
-   3 >> ( num of bytes in bitmap)
+#image \m cell/ ( num of bits in bitmap)
+   5 >> ( num of cells in bitmap)
    constant #reloc-bitmap
 
-#reloc-bitmap buffer reloc-bitmap
+#reloc-bitmap array reloc-bitmap
 
 ( Mark a target address as needing relocation.)
-: index>bit  ( index - byte bit)  dup 3 >>  swap 7 and ;
+: index>bit  ( index - cell-offset mask)  dup 5 >>  swap 31 and 1 swap << ;
 
 : 'reloc  ( target-addr - mask a)
    \m cell/  ( convert to cell index)
-   index>bit  1 swap << ( mask)  swap  reloc-bitmap + ( mask a) ;
+   index>bit  swap  reloc-bitmap ( mask a) ;
 
 : reloc  ( a)
-   dup 7 and  1 swap << ( mask)  swap 3 >> reloc-bitmap +
-   dup c@  rot or  swap c! ;
+   'reloc  dup  @  rot  or  swap  ! ;
 
 ( Basic dictionary words.)
 meta
 variable h  ( dictionary pointer)
 : here  \m h  @ ;
-: aligned  [ \m cell negate ] and ;
+: aligned  [ \m cell 1 - ] + [ \m cell negate ] and ;
 : align   \m here  \m aligned  \m h ! ;
 : allot   \m h +! ;
-: ,    \m align  \m here  !  \m cell \m allot ;
-: r,   ( relocated)  \m here  reloc  \m , ;
+: ,    \m here  image!  \m cell \m allot ;
+: a,   ( adresses that needs relocation)  \m here  reloc  \m , ;
+: c,   \m here  imagec!  1  \m allot ;
 forth
-
-
