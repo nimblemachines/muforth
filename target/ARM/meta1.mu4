@@ -3,26 +3,30 @@
   Copyright 2002-2010 David Frech. All rights reserved, and all wrongs
   reversed. (See the file COPYRIGHT for details.)
 
-cr " Meta compiler (one) "  file[#
+cr " ARM meta compiler (one) "  file[#
 
 forth  decimal
 
 ( Metacompiler vocabs)
-sealed .meta.      ( used outside of target definitions - the `meta' forth)
-sealed .meta-compiler.  ( used inside target definitions - the `meta' compiler)
-sealed .assembler. ( the host-resident target assembler)
-sealed .target.    ( the target words - like `forth' on the host)
+sealed .meta.             ( used outside of target definitions - the `meta' forth)
+sealed .meta-compiler.    ( used inside target definitions - the `meta' compiler)
+sealed .assembler.        ( the host-resident target assembler)
+sealed .target.           ( the target words - like `forth' on the host)
+sealed .target-compiler.  ( the target-resident compiler words - like `compiler' on the host)
 
-: meta                    .meta. definitions ;
-: meta-compiler  .meta-compiler. definitions ;
-: assembler          .assembler. definitions ;
-: target                .target. definitions ;
+: meta                        .meta. definitions ;
+: meta-compiler      .meta-compiler. definitions ;
+: assembler              .assembler. definitions ;
+: target                    .target. definitions ;
+: target-compiler  .target-compiler. definitions ;
 
 compiler
-: \m   ( compile from meta)                    .meta. \chain ;
-: \mc  ( compile from meta-compiler)  .meta-compiler. \chain ;
-: \a   ( compile from assembler)          .assembler. \chain ;
-: \t   ( compile from target)                .target. \chain ;
+: \m   ( compile from meta)                        .meta. \chain ;
+: \mc  ( compile from meta-compiler)      .meta-compiler. \chain ;
+: \a   ( compile from assembler)              .assembler. \chain ;
+: \t   ( compile from target)                    .target. \chain ;
+meta-compiler
+: \tc  ( compile from target-compiler)  .target-compiler. \chain ;
 
 forth
 ( The various token consumers for each mode.)
@@ -41,38 +45,23 @@ mode __asm
                                             number literal ;
 mode __macro
 
--:  ."  (meta-interpreting)"  ;
+-:  ."  (meta)"  ;
 -:     .meta. find  if  execute ^  then
       .forth. find  if  execute ^  then  number ;
 mode __meta
 
 meta
-defer literal
-defer number
+variable 'number   ( convert token to a number, specific to target)
+variable 'literal  ( compile a target literal)
+: {   \ [ ;  ( escape back to the host forth)
 forth
 
-( only one that we can't define until we know what it means to make target
-  literals!)
+( Execution behaviour of .target. words is to compile themselves!)
 -:  ."  (meta-compiling)"  ;
 -:  .meta-compiler. find  if  execute ^  then
-           .target. find  if  execute ^  then  \m number \m literal ;
-mode __meta-colon
-
-
-: equ  ( make a constant in .meta.)
-  current preserve  meta constant ;
-
-( XXX: I'd love for this code to work, but the order is wrong to get it to
-  compile. I've got work to do still.)
-0 .if
-assembler
-: label   \o here  \o equ ;
-: ;c   __outside ;
-
-outside
-: org  org ;
-: code   \a label  __asm ;
-.then
+           .target. find  if  execute ^  then
+           \m 'number @execute  \m 'literal @execute ;
+mode __meta-compile
 
 ( Common things we'll always want when meta-colon compiling.)
 meta-compiler
@@ -88,5 +77,6 @@ meta-compiler
 
 forth
 : \m  ( execute a meta word from forth)  .meta. chain' execute ;
+: }   __meta ;  ( return to meta)
 
 #]file

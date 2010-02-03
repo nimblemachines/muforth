@@ -1,0 +1,112 @@
+( This file is part of muFORTH: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2010 David Frech. All rights reserved, and all wrongs
+  reversed. (See the file COPYRIGHT for details.)
+
+
+cr " ARM meta compiler (two) "  file[#
+
+forth
+
+( XXX TODO Build a target head.)
+: head,  ;
+: link,  ;
+: code,  ( make a code field)  \a bl ;
+
+: assemble     pair off  __asm ;
+
+( Create an assembler macro.)
+: macro:   current preserve  assembler new <:>  __macro ;
+
+( Forward references for fundamental words.)
+meta
+( These are pointers to target CODE words.)
+variable (branch)
+variable (0branch)
+variable (=0branch)
+variable (for)
+variable (?for)
+variable (next)
+variable lit
+variable ^
+
+( These are simply pointers to pieces of target code.)
+variable docolon
+variable dodoes
+variable dovar
+variable doconst
+
+: literal   \m lit @  \m a,  \m , ;
+.meta. chain' literal  \m 'literal !  ( patch colon compiler)
+             ' number  \m 'number  !  ( ditto - use host's number)
+
+: -]   __meta-compile  ( run colon meta-compiler) ;
+: ]    \m literal  \m -]  ( make literal and run compiler) ;
+: equ   current preserve  meta constant ;
+
+: name   \m here  constant
+         does> ( compile itself!)  \m a, ;
+
+: label     \m here  \m equ  assemble ;
+: code      \m name  assemble ;
+: create    \m name  \m dovar @ code, ;
+: variable  \m create  \m cell  \m allot ;
+: constant  \m name  \m doconst @ code,  \m , ;
+
+: :         \m name  \m docolon @ code,  \m -]  ;
+
+( looks up a forward-reference variable, executes it to push its address,
+  and stores the target's current dictionary location.)
+
+: implements  \m here  .meta. chain' execute ( get addr)  ! ;
+
+( Exiting the meta-compiler.)
+meta-compiler
+: [    __meta ;
+: ^    \m ^ @  \m a, ;
+: ;    \mc ^  \mc [  ;
+
+assembler
+: '   .target. chain' >body @ ;  ( can't execute them; they are self-compiling)
+: ;c   \mc [  ;  ( return to meta)
+
+
+( Control structures.)
+
+( Resolve a forward or backward jump, from src to dest.)
+( When using absolute branch addresses, this is easy: just store dest at src.)
+
+( NOTE: when using absolute addresses for branches, we must mark them as
+  needing relocation, so we use a, . If instead we used relative branch
+  addresses we should use , .)
+
+meta
+: <resolve  ( dest src)  ! ;
+: resolve>  ( src dest)  swap <resolve ;
+: mark>   \m here  0 \m a, ;  ( mark addresss as relocating!!)
+
+meta-compiler
+: =if   ( - src)        \m (=0branch) @  \m a,  \m mark> ;
+: if    ( - src)        \m  (0branch) @  \m a,  \m mark> ;
+: then  ( src)          \m here \m resolve> ;
+: else  ( src0 - src1)  \m   (branch) @  \m a,  \m mark>
+                        swap  \mc then ;
+
+: begin   ( - dest)  \m here ;
+: =until  ( dest -)  \mc =if  \m <resolve ;
+: until   ( dest -)   \mc if  \m <resolve ;
+: again   ( dest -)  \m (branch) @  \m a,  \m mark>  \m <resolve ;
+: =while  ( dest - src dest)  \mc =if  swap ;
+: while   ( dest - src dest)   \mc if  swap ;
+: repeat  ( src dest -)   \mc again  \mc then ;
+
+( n for .. next         goes n times; 4 billion+ if n=0 )
+( n ?for .. next then   goes n times; 0 if n=0 )
+
+: for     ( - dest)      \m  (for) @  \m a,            \mc begin ;
+: ?for    ( - src dest)  \m (?for) @  \m a,  \m mark>  \mc begin ;
+: next    ( dest -)      \m (next) @  \m a,  \m mark>  \m <resolve ;
+
+forth
+
+#]file

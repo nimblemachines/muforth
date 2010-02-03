@@ -10,11 +10,21 @@ cr " ARM memory allocation "  file[#
 #image buffer image
 
 forth
-: image+  image  +  ;
-: image!  image  +  ! ;  ( NOTE: ! in this context assumes host cell size == target cell size + endianness! )
-: imagec! image  +  c! ;
+( NOTE: @ and ! assume host & target have same cell size & endianness!)
+: image+  image  +  ;  ( convert relative target address to address inside image)
+
+( Read and write image memory.)
+: image-@   image+  @ ;
+: image-c@  image+  c@ ;
+: image-!   image+  ! ;
+: image-c!  image+  c! ;
 
 meta
+: @   image-@ ;
+: c@  image-c@ ;
+: !   cr 2dup u. u.  image-! ;
+: c!  image-c! ;
+
 : cells  2 << ;  ( target cells are 32 bits)
 : cell/  2 >> ;  ( signed)
 1 \m cells constant cell
@@ -23,14 +33,15 @@ meta
 forth
 
 ( We keep of bitmap of which cells need relocation.)
-#image \m cell/ ( num of bits in bitmap)
-   5 >> ( num of cells in bitmap)
+#image       ( num of bytes in image)
+   \m cell/  ( num of bits in bitmap - one per target cell)
+   5 >>      ( num of cells in bitmap - 32 bits per host cell)
    constant #reloc-bitmap
 
 #reloc-bitmap array reloc-bitmap
 
 ( Mark a target address as needing relocation.)
-: index>bit  ( index - cell-offset mask)  dup 5 >>  swap 31 and 1 swap << ;
+: index>bit  ( index - cell-offset mask)  dup 5 >>  swap 31 and  1 swap << ;
 
 : 'reloc  ( target-addr - mask a)
    \m cell/  ( convert to cell index)
@@ -43,10 +54,12 @@ forth
 meta
 variable h  ( dictionary pointer)
 : here  \m h  @ ;
-: aligned  [ \m cell 1 - ] + [ \m cell negate ] and ;
+: aligned  [ \m cell 1- ] + [ \m cell negate ] and ;
 : align   \m here  \m aligned  \m h ! ;
 : allot   \m h +! ;
-: ,    \m here  image!  \m cell \m allot ;
-: a,   ( adresses that needs relocation)  \m here  reloc  \m , ;
-: c,   \m here  imagec!  1  \m allot ;
+: ,    \m here  \m !  \m cell \m allot ;
+: a,   ( addresses that needs relocation)  \m here  reloc  \m , ;
+: c,   \m here  \m c!  1  \m allot ;
 forth
+
+#]file

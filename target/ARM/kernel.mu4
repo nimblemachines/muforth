@@ -5,301 +5,232 @@
 
 cr " ARM kernel "  file[#
 
+( 2010-feb-03 - Heavily modified! and changed to DTC.)
 ( 2006-apr-01.)
 
-( Can't stand the pain of fiddling with the assembler, so I'm going to
-  launch into writing a simple kernel, of sorts.)
-
-( Few words we need to try this out.)
-
--:  ."  (assembling)"  ;
--:  .assembler. find  if  execute ^  then  number ;
-mode asm-loop
-
--:  ."  (assembling a macro)"  ;
--:   .compiler. find  if  execute ^ then
-    .assembler. find  if  compile, ^  then  number literal ;
-mode macro-loop
-
--:  ."  (outside)"  ;
--:    .outside. find  if  execute ^  then  number ;
-mode outside-loop
-
-compiler
-: <asm   macro-loop ;
-: asm>   -] ;
-forth
-
-machine
-variable branch
-variable zbranch
-variable eqzbranch
-variable for
-variable ?for
-variable next
-variable lit
-variable lit_noreturn
-
-forth
-( Support for tail-recursion.)
-variable last-call   ( points *just past* last compiled bl)
-
-outside
-: compile,  ( targetxt)  \a bl  |here last-call ! ;  ( that's it!)
-: literal   \m lit @  \o compile,  |, ;
-: comment   comment ;
-: --        \f -- ;
-: {  \ [ ;  ( escape to host forth)
-: '   .target. chain' execute ;
-( So we can calculate stuff inside of colon def'ns.)
-: +  + ;
-: -  - ;
-: and  and ;
-: or   and ;
-: xor  xor ;
-
-"ffff0400 constant uart1
-forth
-
--:  ."  (inside)"  ;
--:     .inside. find  if  execute ^  then
-       .target. find  if  execute  \o compile, ^  then  number \o literal ;
-mode inside-loop
-
-( For loading, to see if we've left anything lying about.)
-( This repeats code in startup, but it won't collide with that variable.)
-variable csp  ( what does this stand for? `check stack pointer'?)
-: !csp   depth  csp !  ;
-: ?csp   depth  csp @  -
-         =if  . ." (meta) stack depth change: "  radix preserve  hex
-              .s cr  ^  then  drop  ;
-
-( Create a macro word in current chain. Used for macro: and inline.)
-: _macro   new <:> forth   macro-loop  !csp ;
-: macro:   assembler _macro ;
-compiler
-: ;macro   \ ^  \ [  ?csp ;  ( returns to host forth)
-forth
-
-macro: push  ( r)  4 sp -) !  \f swap  str  ;macro
-macro: pop   ( r)  4 sp )+    \f swap  ldr  ;macro
-
-macro: nest    ( r)  4 rp -) !  \f swap  str  ;macro
-macro: unnest  ( r)  4 rp )+    \f swap  ldr  ;macro
-
-macro: ret   lr pc mov  ;macro
-macro: st1   0 sp +)  ;macro
-macro: st2   4 sp +)  ;macro
-macro: st3   8 sp +)  ;macro
-
-( Support for tail-recursion.)
-
-( If |here matches last-call, we decompile the last bl,
-  compile "unnest lr", convert the bl to b by clearing the link bit,
-  modifying the offset - the insn has moved forward one word - by -1, and
-  recompiling the insn.)
-
-: -tail   last-call off ;  ( spoil conversion - used by 'then')
-: tail^
-   |here last-call @ = if  [ cell negate ] |h +!  ( uncompile)
-      |here |+ @  [ 1 #24 << ] bic  ( bl insn -> b)
-      1- ( because we're compiling an insn before the b, its offset changes)
-      <asm  lr unnest  asm>  |,  ^  then
-   <asm  pc unnest  asm> ;
-
-inside
-: (    \f ( ;
-: [    outside-loop ;
--- : ^    <asm  pc unnest  asm> ;  ( no tail-recursion - yet!)
- : ^    tail^ ;
-: ;    \i ^  \i [  ?csp ;
-
-outside
-: create   |here  target constant forth ;
-: assemble     pair off  asm-loop ;
-( code & ;c should use ?csp to make sure nothing bad has happened...)
-: code   \o create  !csp  \o assemble ;
-
-( Using [new], we can make a .target. entry too.)
-: implement  |here  .machine. chain' execute ( get addr)  !
-        !csp  \o assemble ;
-
-: :     \o create   !csp  <asm  lr nest  asm>
-        inside-loop ( target compiler) ;
-
-  ( change to deferred - compile, then later execute?)
-
-( Turning inlining on and off isn't as easy as I had hoped; the inlined
-  versions need to have the trailing "ret" stripped off...
-
-  But now I have ;inline, which can compile ret if not inlining...)
-
-( makes a "macro" that compiles code when this word is executed)
--- : inline   inside  _macro ;
-: inline   \o code ;   ( non-inlined)
-
--- compiler
-( To terminate inline words. Returns to outside)
--- : ;inline           \ ^  \i [  ?csp ;
- assembler
- : ;inline   \a ret  \ ^  \i [  ?csp ;  ( non-inlined)
-outside
-
-: -]   inside-loop ( re-start colon compiler) ;
-: ]    \o literal  \o -]  ( make literal and restart :)  ;
-
-comment b0rken
-( and so we can make more defining words while we're in the middle of the
-  kernel code...)
-: definer:   outside : forth   definer-loop ;
-
-( Now the whole point of the above:)
-definer
-: does>   ;
-: ;code   ;   b0rken
-
-forth
-: }  \i [ ;   ( return to meta)
-
 assembler
-: '   .target. chain' execute ;
-: (    \f ( ;
-: --   \f -- ;
-: comment   comment ;
-: ;c   \i [  ?csp ;
-: label   |here  assembler constant forth ;
 
-outside
-( Basic conditionals)
-: resolve>  (s src dest)
-   over -  swap cell- |+ ! ( 32-bit displacement) ;
+( Register usage.)
+comment moved-from-assembler
+ 09 constant top ( t)  ( data stack top)
+ 0a constant ct  ( c)  ( for loop count reg)
+ 0b constant up  ( u)  ( user pointer; for multitasking!)
+ 0c constant sp  ( s)  ( data stack pointer)
+ 0d constant rp  ( r)  ( return stack pointer)
+moved-from-assembler
 
-: <resolve  (s dest src)  swap \o resolve> ;
-: mark>   0 |,  |here ;
-
-inside
-: =if   (s - src)   \m eqzbranch @  \o compile,  \o mark> ;
-: if    (s - src)     \m zbranch @  \o compile,  \o mark> ;
-: then  (s src)  |here \o resolve>  -tail ;
-
--- : else      (s src0 - src1)  \ (branch) mark>  swap  \ then ;
-
-: begin   (s - dest)  |here ;
-: =until  (s dest -)  \i =if  <resolve ;
-: until   (s dest -)   \i if  <resolve ;
-: again   (s dest -)  \m branch @  \o compile,  \o mark>  \o <resolve ;
-: =while  (s dest - src dest)  \i =if  swap ;
-: while   (s dest - src dest)   \i if  swap ;
-: repeat  (s src dest -)   \i again  \i then ;
-
-( n for .. next         goes n times; 4 billion+ if n=0 )
-( n ?for .. next then   goes n times; 0 if n=0 )
-
-: for     (s - dest)      \m  for @  \o compile,  \i begin ;
-: ?for    (s - src dest)  \m ?for @  \o compile,  \o mark>  \i begin ;
-: next    (s dest -)      \m next @  \o compile,  \o mark>  \o <resolve ;
-
-( XXX)
-outside
-: remote   drop ;
+14 constant lr  ( l?) ( link register; top of return stack!)
+13 constant sp  ( XXX what register does this relate to in Thumb mode?)
+7 constant count  ( for for/next loops)
+6 constant top
+5 constant rp
+4 constant ip
 forth
 
--:  ."  (interacting)"  ;
--:     .target. find  if  execute  \o remote ^  then
-      .outside. find  if  execute ^  then  number ;
-mode interact-loop
+macro: push  ( r)  4 sp -) !  \f swap  str  ;
+macro: pop   ( r)  4 sp )+    \f swap  ldr  ;
+
+macro: nest    ( r)  4 rp -) !  \f swap  str  ;
+macro: unnest  ( r)  4 rp )+    \f swap  ldr  ;
+
+( top is considered st0)
+macro: st1   0 sp +)  ;  ( address the second item on the stack)
+macro: st2   4 sp +)  ;  ( address the third item on the stack)
+macro: st3   8 sp +)  ;  ( address the fourth item on the stack)
+
+macro: next  4 ip )+ pc ldr  ;
 
 comment =====================================================================
         The real kernel starts here!!
         =====================================================================
 
-outside-loop
+__meta
 
-code +     0 pop   top 0 top add   ret  ;c
-code -     0 pop   top 0 top sub   ret  ;c
-code *     0 pop   0 top top mul   ret  ;c
-code and   0 pop   top 0 top and   ret  ;c
-code bic   0 pop   top 0 top bic   ret  ;c
-code or    0 pop   top 0 top or    ret  ;c
-code xor   0 pop   top 0 top eor   ret  ;c
+target  ( compile into target vocab)
 
-( By moving 1-insn words into compiler/inside and making them macros, we
-  get inlining... ;-)
+assemble
 
-inline negate   0 # top top rsb   ;inline
-inline invert       top top mvn   ;inline
+implements docolon
+   ip nest   lr ip mov   next
 
-inline dup   top push  ;inline
-inline nip   0 pop     ;inline
-inline drop  top pop   ;inline
+implements dodoes  ( XXX b0rken)
+   ip nest   lr ip mov
+   top push   0 top mov   next
 
--- code swap  top 0 mov   st1 top ldr   st1 0 str  ret  ;c
-inline swap   top sp top swp  ( swap top with TOS)  ;inline
+implements dovar
+   top push   lr top mov   next
 
-code over   top push   st2 top ldr   ret  ;c
+implements doconst
+   top push   0 lr +) top ldr   next  ;c
+
+
+code ^ implements ^
+   ip unnest   next  ;c
+
+code +     0 pop   top 0 top add   next  ;c
+code -     0 pop   top 0 top sub   next  ;c
+code *     0 pop   0 top top mul   next  ;c
+code and   0 pop   top 0 top and   next  ;c
+code bic   0 pop   top 0 top bic   next  ;c
+code or    0 pop   top 0 top or    next  ;c
+code xor   0 pop   top 0 top eor   next  ;c
+
+code negate   0 # top top rsb   next  ;c
+code invert       top top mvn   next  ;c
+
+code dup   top push  next  ;c
+code nip   0 pop     next  ;c
+code drop  top pop   next  ;c
+
+code swap  top 0 mov   st1 top ldr   st1 0 str  next  ;c
+
+code over  top push   st2 top ldr   next  ;c
 
 code rot
    { 0 1 } sp ldm
    top 2 mov   0 top mov   1 0 mov   2 1 mov
-   { 0 1 } sp stm  ret  ;c
+   { 0 1 } sp stm  next  ;c
 
 code -rot
    { 0 1 } sp ldm
    top 2 mov   1 top mov   0 1 mov   2 0 mov
-   { 0 1 } sp stm  ret  ;c
+   { 0 1 } sp stm  next  ;c
 
-code <<       0 pop   0 top lsl top mov   ret  ;c
-code >>       0 pop   0 top asr top mov   ret  ;c
-code u>>      0 pop   0 top lsr top mov   ret  ;c
-code rotate   0 pop   0 top ror top mov   ret  ;c
+code <<       0 pop   0 top lsl top mov   next  ;c
+code >>       0 pop   0 top asr top mov   next  ;c
+code u>>      0 pop   0 top lsr top mov   next  ;c
+code rotate   0 pop   0 top ror top mov   next  ;c
 
-inline 2/    top 1 #asr top mov  ;inline
-inline u2/   top 1 #lsr top mov  ;inline
-inline 2*    top 1 #lsl top mov  ;inline
+code 2/    top 1 #asr top mov  next  ;c
+code u2/   top 1 #lsr top mov  next  ;c
+code 2*    top 1 #lsl top mov  next  ;c
 
-code u<    0 pop   top 0 cmp   -1 # top mov u<   0 # top mov u>=  ret  ;c
-code <     0 pop   top 0 cmp   -1 # top mov  <   0 # top mov  >=  ret  ;c
-code 0<          top top tst   -1 # top mov 0<   0 # top mov 0>=  ret  ;c
-code 0=          top top tst   -1 # top mov 0=   0 # top mov ne   ret  ;c
+code u<    0 pop   top 0 cmp   -1 # top mov u<   0 # top mov u>=  next  ;c
+code <     0 pop   top 0 cmp   -1 # top mov  <   0 # top mov  >=  next  ;c
+code 0<          top top tst   -1 # top mov 0<   0 # top mov 0>=  next  ;c
+code 0=          top top tst   -1 # top mov 0=   0 # top mov ne   next  ;c
 
-( "implement" fixes up forward references.)
-implement branch
-    4 lr )+ 0 ldr   0 lr pc add   ;c
+code lit implements lit
+   top push   4 lr )+ top ldr   next  ;c
 
-implement zbranch
-    top top tst   top pop
+code (branch) implements (branch)
+.ifdef relbranch
+   4 ip )+ 0 ldr   0 ip ip add   next  ;c
+.else
+   0 ip +) ip ldr   next  ;c
+.then
+
+code (0branch) implements (0branch)
+   top top tst   top pop
 label zbr1
-    4 lr )+ 0 ldr 0=   0 lr pc add 0=   4 # lr pc add   ;c
+.ifdef relbranch
+   4 ip )+ 0 ldr 0=   0 ip ip add 0= ( jump)
+.else
+   0 ip +) ip ldr 0= ( jump)
+.then
+   4 # ip ip add ne ( skip)   next  ;c 
 
-implement eqzbranch
-    top top tst   zbr1 b  ;c
+code (=0branch) implements (=0branch)
+   top top tst   zbr1 b  ;c
 
-implement for
-    ct nest   top ct mov
-label popret
-    top pop   ret  ;c
+code (for) implements (for)
+   count nest   top count mov   top pop   next  ;c
 
-implement ?for
-    top top tst   top 0 mov   top pop
-    4 lr )+ 0 ldr 0=   0 lr pc add 0=
-    ct nest   0 ct mov   4 # lr pc add   ;c
+code (?for) implements (?for)
+   top top tst   top 0 mov   top pop
+.ifdef relbranch
+   4 ip )+ 0 ldr 0=   0 ip ip add 0= ( jump)
+.else
+   0 ip +) ip ldr 0= ( jump)
+.then
+   next 0= ( !!)
+   count nest   0 count mov   4 # ip ip add   next  ;c
 
-implement next
-    1 # ct ct sub s   ct unnest 0=   4 # lr pc add 0=
-    4 lr )+ 0 ldr   0 lr pc add   ;c
+code (next) implements (next)
+   1 # count count sub s   count unnest 0=   4 # ip ip add 0=   next 0=
+.ifdef relbranch
+   4 ip )+ 0 ldr   0 ip ip add   next  ;c
+.else
+   0 ip +) ip ldr   next  ;c
+.then
 
-implement lit            top push   4 lr )+ top ldr   ret  ;c
-implement lit_noreturn   top push   0 lr )+ top ldr   pc unnest  ;c
+code >r   top nest   top pop      next  ;c
+code r>   top push   top unnest   next  ;c
+code r@   top push   0 rp +) top ldr   next  ;c
 
-code push   top nest   popret b  ( one word shorter, but slower!)  ;c
-code pop    top push   top unnest   ret  ;c
+code @    0 top +) top ldr   next  ;c
+code c@   0 top +) top ldrb  next  ;c
 
-inline @    0 top +) top ldr   ;inline
-inline c@   0 top +) top ldrb  ;inline
+code !    { 0 1 } ! sp ldm   0 top +) 0 str    1 top mov   next  ;c
+code c!   { 0 1 } ! sp ldm   0 top +) 0 strb   1 top mov   next  ;c
 
-code !    { 0 1 } ! sp ldm   0 top +) 0 str    1 top mov   ret  ;c
-code c!   { 0 1 } ! sp ldm   0 top +) 0 strb   1 top mov   ret  ;c
+code +!   { 0 1 } ! sp ldm   0 top +) 2 ldr ( @ -> r2)    0 2 0 add
+          0 top +) 0 str   1 top mov   next  ;c
 
+0 constant 0
+1 constant 1
+-1 constant -1
+2 constant 2
+
+4 constant cell
+: cell+   cell + ;
+: 1+  1 + ;
+: 1-  1 - ;
+
+variable h  ( dictionary pointer)
+: here    h @ ;
+: allot   h +! ;
+: c,  here c!    1 allot ;
+: ,   here !  cell allot ;
+
+( Alignment.)
+: aligned  [ cell 1- ] +  [ cell negate ] and ;
+
+( Going back to fig-FORTH!)
+: @+  ( a - cel a+)  dup @  swap cell+ ;
+: compile   r>  @+  >r  , ;
+: literal  compile lit  , ;
+
+( Words for compiled strings.)
+
+( Assume that compiled strings are:
+    * zero-terminated
+    * prefixed with a length byte
+    * padded at the end to a cell boundary)
+
+: count  ( z" - a u)  dup 1+  swap c@ ;
+: (")  r@  count  r> over + aligned >r ;
+
+( Mark a branch source for later fixup.)
+: mark>  ( - src)  here  0 , ;
+
+( Resolve a forward or backward jump, from src to dest.)
+( When using absolute branch addresses, this is easy: just store dest at src.)
+: <resolve  ( dest src)  ! ;
+: resolve>  ( src dest)  swap <resolve ;
+
+target-compiler
+: =if   ( - src)        compile (=0branch)  mark> ;
+: if    ( - src)        compile  (0branch)  mark> ;
+: then  ( src)          here resolve> ;
+: else  ( src0 - src1)  compile   (branch)  mark>  swap  \tc then ;
+
+: begin   ( - dest)  here ;
+: =until  ( dest -)       \tc =if  <resolve ;
+: until   ( dest -)        \tc if  <resolve ;
+: again   ( dest -)     compile   (branch)  mark>  <resolve ;
+: =while  ( dest - src dest)  \tc =if  swap ;
+: while   ( dest - src dest)   \tc if  swap ;
+: repeat  ( src dest -)   \tc again  \tc then ;
+
+( n for .. next         goes n times; 2^wordsize if n=0 )
+( n ?for .. next then   goes n times; 0 if n=0 )
+
+: for     ( - dest)      compile (for)          \tc begin ;
+: ?for    ( - src dest)  compile (?for)  mark>  \tc begin ;
+: next    ( dest -)      compile (next)  mark>  <resolve ;
+
+comment **multitasker**
 
 ( How about a multitasker? First we need user variables...)
 
@@ -346,7 +277,6 @@ code c!   { 0 1 } ! sp ldm   0 top +) 0 strb   1 top mov   ret  ;c
   `depend' pointer.  ISR.owner->task.depend->counter.  These details are a
   bit fuzzy still.)
 
-comment %%
 definer: +user  ( size)
    create  #user \f @ ,  #user \f +!
    ;code   ??
@@ -354,7 +284,7 @@ definer: +user  ( size)
    0 +user me          ( synonym)
 cell +user link        ( link to next task in list)
 cell +user bottom      ( bottom of D stack)
-cell +user top         ( pointer to saved stack)  %%
+cell +user top         ( pointer to saved stack)
 
 {
 target
@@ -393,10 +323,14 @@ label run
    ' top ( offset in user area) up +) sp ldr     ( setup sp)
    { top ct rp pc } ! sp ldm         ( load context and go!)  ;c
 
+**multitasker**
+
 decimal
 {
-." Kernel size "  |# .  ." bytes." cr
+cr ." Kernel size is "  \m here .  ." bytes." cr
 }
+
+comment **console**
 
 : pause ;  ( not yet!)
 : emit   ( ch)
@@ -423,70 +357,26 @@ decimal
 : dump  ( a n - a+n)   for  ?a  @+ .  next ;
 : 1+  1 + ;
 
-( dump the memory segment map)
-hex
-: fixmem   800 ffffa008 !  ( low end of sram just above chip sram)
-         40000 ffffa028 !  ( hi end of sram just above chip sram) ;
-
-( try mem access before it's fixed)
-: fill  ( a n)  for  dup dup !  4 +  next  drop ;
-: trymem       800 @ .    28000 @ . ;
-: trymem2  4000800 @ .  4028000 @ . ; ( same, but up in flash)
-: try2
-   trymem cr  trymem2 cr
-   800 40 fill  [ 40000 100 - ] 40 fill
-   800 40 dump  cr   [ 40000 100 - ] 40 dump cr ;
-
-: setbits  ( u a)  dup c@  rot or   swap c! ;
-: clrbits  ( u a)  dup c@  rot bic  swap c! ;
-
-: dump-uart1
-   80 [ uart1 0c + ] setbits  ( set DLAB so we can read baud rate divisors)
-   [ uart1 ] c@ ( div low)  [ uart1 4 + ] c@ ( div high)
-   80 [ uart1 0c + ] setbits  ( clr DLAB so we can use the uart!)
-   . .  ( high low)  cr
-   [ uart1 ] 8 dump  cr ;
-
-: showmap
-   ffffa000 64 2/ 2/ dump  cr  ffffa100 2c 2 >> dump  cr ;
-
-: showit
-   showmap
-   try2  fixmem  try2
-   showmap
-   dump-uart1 ;
-
 : echo  begin  key  dup #13 xor while  1+ emit  repeat  drop  cr ;
 
 decimal
 
 : count2  "13579bdf 8 for 16/mod >digit emit  next drop  cr ;
 
-: clock   "ffffac28 c@ . cr ;
-
-: ppi!   "80 "ffff1c0c c! ;
-: delay   60_000 for next ;
-: leds    15 and 4 << "ffff1c08 ( port C) c! ;
-: count  0 16 for  dup leds 5 +  delay  next drop ;
-
-: 2dup  over over ;
-: bounce  1 4 for   dup leds  2*  delay  next
-            4 for  u2/  dup leds  delay  next  drop ;
-
 : chars  32  [ 128 32 - ] for  dup emit  1+  next  drop  cr ;
 
 : times  6789 123456 * .   -1029484 485 * .  cr ;
 
-: doit   showit  clock  echo  times  count2   ppi!
-   begin  bounce  chars  count  chars  again  [
+: delay  100_000 for next ;
 
-{
-"8000 8 Ki + dup  4 Ki +
+: doit   echo  times  count2
+   begin  chars  delay  again  [
 
-}
+**console**
+
+0 .if
 code _boot   # rp mov  # sp mov   ' doit b  ;c
 ' _boot { 'boot !
-
-4 |cell !  ( set the target cell size for memory dumping etc)
+.then
 
 #]file
