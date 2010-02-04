@@ -195,32 +195,6 @@ void mu_push_compiler_chain()
     PUSH(&compiler_chain);
 }
 
-/* the char *string param here does _not_ need to be zero-terminated!! */
-static char *compile_counted_string(char *string, size_t length)
-{
-    struct counted_string *cs;
-    struct string s;
-
-    cs = (struct counted_string *)pdt;
-    s.data = string;
-    s.length = length;
-    cs->length = s.length;  /* prefix count cell */
-    bcopy(s.data, &cs->data[0], s.length);
-    cs->data[s.length] = 0; /* zero terminate */
-    return &cs->data[0];
-}
-
-/*
- * copy string; return a counted string (addr of first character;
- * prefix count cell _precedes_ first character of string).
- * This does _not_ allot space in the dictionary!
- */
-void mu_scrabble()  /* ( a u - z") */
-{
-    TOP = (cell)compile_counted_string((char *)ST1, TOP);
-    NIP(1);
-}
-
 /*
  * find takes a token (a u) and a chain (the head of a vocab word list) and
  * searches for the token on that chain. If found, it returns the address

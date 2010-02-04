@@ -185,6 +185,17 @@ void mu_cmove()  /* src dest count */
     DROP(3);
 }
 
+/*
+ * Since we're now re-allowing throw()ing of C-strings, we have to
+ * calculate the length of a string when we want to print it out (in case
+ * of error).
+ */
+/* stack: z" - z" count */
+void mu_zcount()
+{
+    PUSH(strlen((char *)TOP));
+}
+
 #ifdef THIS_IS_SILLY
 /*
  * I thought I wanted to be able to sort string, but I have more
