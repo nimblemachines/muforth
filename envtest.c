@@ -31,9 +31,9 @@ int main(int argc, char *argv[])
 
     /* verify that int and void * are the same size: */
     if (sizeof(int) != sizeof(void *))
-      printf("#error \"Hmm. Pointer and int types are different sizes: "
-	     "sizeof(int) = %d, sizeof(void *) = %d\"\n",
-	     (int) sizeof(int), (int) sizeof(void *));
+        printf("#error \"Hmm. Pointer and int types are different sizes: "
+            "sizeof(int) = %d, sizeof(void *) = %d\"\n",
+            (int) sizeof(int), (int) sizeof(void *));
 
     /* show size of jmpbuf */
     printf("#define JMPBUF_CELLS %d\n", (int)(sizeof(jmp_buf) / sizeof(int)));
