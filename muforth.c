@@ -104,17 +104,6 @@ void mu_push_build_time()
     PUSH(build_time);
 }
 
-/*
- * This doesn't belong anywhere else. Since we're now re-allowing
- * throw()ing of C-strings, we have to calculate the length of a string
- * when we want to print it out (in case of error).
- */
-/* stack: z" - z" count */
-void mu_zcount()
-{
-    PUSH(strlen((char *)TOP));
-}
-
 static void mu_start_up()
 {
     PUSH("warm");       /* push the token "warm" */
