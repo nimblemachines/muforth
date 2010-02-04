@@ -29,7 +29,6 @@ moved-from-assembler
 2 constant r2
 1 constant r1
 0 constant r0
-forth
 
 macro: push  ( r)  4 sp -) !  \f swap  str  ;
 macro: pop   ( r)  4 sp )+    \f swap  ldr  ;
@@ -44,7 +43,20 @@ macro: st3   8 sp +)  ;  ( address the fourth item on the stack)
 
 macro: next  4 ip )+ pc ldr  ;
 
-macro: env-addr  here 8 \f + bl a, 0 lr +) r3 ldr ; ( label-address of callback) 
+( capture compiles a branch-and-link -over- the following cell; it captures
+  the address of the following cell in lr)
+macro: capture   here 8 \f +  bl  ;
+
+( lr@ loads the cell at lr into a reg)
+macro: lr@  ( reg)   0 lr +)  \f swap ( reg)  ldr  ;
+
+macro: load-relocated  ( lit reg)   capture   \f swap a, ( lit)   lr@  ;
+macro: load-literal    ( lit reg)   capture   \f swap ,  ( lit)   lr@  ;
+
+macro: blr ( reg)  ( bl thru a register)
+     pc lr mov  ( capture return address - beyond following instruction)
+     ( reg) pc mov  ( jump via reg)  ;
+
 
 comment =====================================================================
         The real kernel starts here!!
@@ -60,38 +72,54 @@ target  ( compile into target vocab)
 
 0 a, ( ip0)
 0 a, ( rp0)
-0 a, ( top -- Will be h0)
+0 a, ( h0    - will be loaded into top)
 0 a, ( sp0)
 
 label callers-set-jmp-context
 0 ,   ( r0 -- caller's set jmp context address)
 0 ,   ( pc -- caller's long jmp routine address)
 
-label callers-type
+label 'type  -- pointer to C function: void type(char *s, int n)
+0 ,
+label '?key       -- ptr to C: cell_t qkey(void)
+0 ,
+label 'key        -- ptr to C: cell_t key(void)
+0 ,
+label 'readline   -- ptr to C: ??? readline(???)
+0 ,
+label 'getfile    -- ptr to C: ??? getfile(???)
 0 ,
 
-assemble
-
-
 code bye
-     callers-set-jmp-context env-addr
-     { r0 pc } r3 ldm
-
+     callers-set-jmp-context r3 load-relocated
+     { r0 pc } r3 ldm  ;c
 
 code type ( a u -- )
-     callers-type  env-addr
-     r1 top mov
-     r0 pop
-     pc lr mov
-     r3 pc mov
-     next
-     
+     'type r3 load-relocated   top r1 mov   r0 pop   r3 blr
+     top pop   next  ;c
 
+code ?key ( - f)
+     '?key r3 load-relocated
+label key-call
+     r3 blr   top push   r0 top mov   next  ;c
+
+code key ( - ch)
+     'key r3 load-relocated   key-call b  ;c
+
+code readline  ( ???)  ;c
+code getfile  ( ???)  ;c
+
+
+assemble
 
 implements docolon
    ip nest   lr ip mov   next
 
-implements dodoes  ( XXX b0rken)
+( Explanation of dodoes: child word executes bl to parent; lr points to
+  child's data; parent saves lr in r0; executes bl to dodoes; lr points to
+  list of forth words to execute.)
+
+implements dodoes
    ip nest   lr ip mov
    top push  r0 top mov   next
 
