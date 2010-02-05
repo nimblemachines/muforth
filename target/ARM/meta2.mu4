@@ -8,29 +8,32 @@
 
 forth
 
-( XXX TODO Build a target head.)
-comment from-an-earlier-day
-: token,  ( - 'link)  token  ?unique  here  scrabble>  allot  ;
-: link,   ( here)  current @  dup @ ,  last-link 2!  ;
-: head,   token,  link,  ;
+( Compile a linked name field into the target image.)
 
-: name        head,  code,  ;
-: noname   0 align,  code,  ;
-comment from-an-earlier-day
+( The distinction between last and last-code is a bit subtle. last captures
+  the cfa of the last word defined, no matter what kind of word it was.
+  last-code captures the cfa of code fields that have a "bl" instruction
+  compiled there, and that can be possibly "repointed" by a later ;code or
+  does>. Keeping them separate makes me feel better.)
 
+variable last      ( cfa of last word defined)
 variable last-code ( for ;code and does> to fix up)
+2variable last-link ( address of vocab, link to newest word)
+
+-- : show   last-link 2@ ! ( finally link in last word) ;
+
+( code, doesn't bother to compile a bl since we're doing to patch the code
+  field later. We just need to make room and to set last-code so patch can
+  find us.)
+
+: code,   \m here last-code !  ( make a code field)  0 \m , ;
 : token,  ( a u)  dup 1+ \m aligned  \m allot  ( room for name+len+padding)
           dup \m here 1- \m c! ( len)  \m here over 1+ -  image+ swap cmove ;
 
 : 'link   current @  suffix>link cell+  ( parallel link field) ;
-: l,  ( link)  =if  \m a,  ^  then  \m , ;  ( if 0, use , otherwise a, )
-: link,  \m here  'link  dup  @  l,  ! ;
+: link,   \m here  'link  dup  @  \m z,  !  ( last-link 2! ) ;
 
-: head,  ( a u)  token,  link, ;
-
-: code,  \m here last-code !  ( make a code field)  \a bl ;
-
-: assemble     pair off  __asm ;
+: name,  ( a u)  token,  link,  \m here last ! ;
 
 ( Create an assembler macro.)
 : macro:   new <:>  __macro ;
@@ -46,36 +49,35 @@ variable (?for)
 variable (next)
 variable lit
 variable ^
+variable (")
+variable type
 
 ( These are simply pointers to pieces of target code.)
-variable docolon
 variable dodoes
-variable dovar
-variable doconst
+
+: '   .target. chain' >body @ ;  ( can't execute them; they are self-compiling)
 
 : literal   \m lit @  \m a,  \m , ;
 .meta. chain' literal  \m 'literal !  ( patch colon compiler)
              ' number  \m 'number  !  ( ditto - use host's number)
 
-: -]   __meta-compile  ( run colon meta-compiler) ;
-: ]    \m literal  \m -]  ( make literal and run compiler) ;
+: assemble     pair off  __asm ;  ( init and run assembler)
+: -]   __meta-compile ;  ( run colon meta-compiler)
+: ]    \m literal  \m -] ;  ( make literal and run compiler)
 : equ   current preserve  meta constant ;
 
-: name   token  2dup head,  ( make image head)
+: name   token  2dup name,  ( compile name into image)
          \m here  -rot (constant)  ( NOTE: uses current unchanged)
          does> ( compile itself!)  \m a, ;
 
-: label     \m here  \m equ  assemble ;
-: code      \m name  assemble ;
-: create    \m name  \m dovar @ code, ;
-: variable  \m create  \m cell  \m allot ;
-: constant  \m name  \m doconst @ code,  \m , ;
-: :         \m name  \m docolon @ code,  \m -]  ;
+: label     \m here  \m equ  \m assemble ;
+: code      \m name  \m assemble ;
+: new       \m name  code, ;  ( for words with code fields)
 
 ( looks up a forward-reference variable, executes it to push its address,
-  and stores the target's current dictionary location.)
+  and stores the address of the last cfa there.)
 
-: implements  \m here  .meta. chain' execute ( get addr)  ! ;
+: implements  last @  .meta. chain' execute ( get addr)  ! ;
 
 ( Exiting the meta-compiler.)
 meta-compiler
@@ -83,9 +85,63 @@ meta-compiler
 : ^    \m ^ @  \m a, ;
 : ;    \mc ^  \mc [  ;
 
+( Support for making new defining words.)
+forth
+( patch rewrites the bl instruction at cfa to call to 'code.)
+: patch     ( 'code cfa)  tuck >branch-offset  "eb000000 or ( op)
+            swap \m ! ;
+
+( This word, which is followed inline by a target cfa constant, patches the
+  last code word compiled with a bl to the inline target cfa. It
+  essentially "repoints" previously defined words - defined by create,
+  variable, constant, etc - to point to new code. It gets called indirectly
+  by both ;code and does>.)
+
+: (;code)   pop @  last-code @  patch ;
+
+( <;code> is used to switch from compiling -host- code [that will later run
+  on the host, and build the target word] to compiling -target- code, that
+  will run when words defined by this defining word later execute. In order
+  to connect the two worlds, and to be able to patch up code fields to
+  point to this newly-defined behaviour, <;code> captures the target's
+  "here" value.  Remember, we are about to start compiling target code at
+  "here".
+
+  Even though the host's colon compiler - really the __definer compiler -
+  is running when <;code> executes - it is called from does> and ;code,
+  which are both .compiler. words - it doesn't bother to "stop" the host's
+  colon, since both does> and ;code immmediately switch to another compiler
+  - or assembler! - loop.)
+
+: <;code>  compile (;code)  \m here  h, ;
+
+macro: save-lr  lr r0 mov  ;
+
+definer
+: does>   <;code>  save-lr  \m dodoes @ \a bl  \m -] ( start meta-colon) ;
+: ;code   <;code>  \m assemble ( start assembler) ;
+: ;       \ ^  \mc [  ( exit back to __meta, not to host forth) ;
+
+meta
+( Now we've got all the mechanics defined. We can define a word that
+  defines new target defining words!)
+: definer:  current preserve  meta  new <:>  __definer ;
+
 assembler
-: '   .target. chain' >body @ ;  ( can't execute them; they are self-compiling)
-: ;c   \mc [  ;  ( return to meta)
+: ;c   \mc [  ;  ( return to __meta)
+
+
+( Compiling strings.)
+meta
+( Compile a counted string, without a zero terminator.)
+: string,  ( a u)  dup \m c, ( len)
+           \m here  over \m allot  \m align
+           image+ swap cmove ;
+
+meta-compiler
+: ."   \m (") @  \m a,                   ( compile (")
+       char " parse  ( a u)  \m string,  ( compile the counted string)
+       \m type @  \m a, ;                ( compile type)
 
 
 ( Control structures.)
