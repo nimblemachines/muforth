@@ -31,8 +31,6 @@ variable last-code ( for ;code and does> to fix up)
 
 : name,  ( a u)  token,  link,  \m here last ! ;
 
-: assemble     pair off  __asm ;
-
 ( Create an assembler macro.)
 : macro:   new <:>  __macro ;
 
@@ -62,16 +60,17 @@ variable doconst
 .meta. chain' literal  \m 'literal !  ( patch colon compiler)
              ' number  \m 'number  !  ( ditto - use host's number)
 
-: -]   __meta-compile  ( run colon meta-compiler) ;
-: ]    \m literal  \m -]  ( make literal and run compiler) ;
+: assemble     pair off  __asm ;  ( init and run assembler)
+: -]   __meta-compile ;  ( run colon meta-compiler)
+: ]    \m literal  \m -] ;  ( make literal and run compiler)
 : equ   current preserve  meta constant ;
 
 : name   token  2dup name,  ( compile name into image)
          \m here  -rot (constant)  ( NOTE: uses current unchanged)
          does> ( compile itself!)  \m a, ;
 
-: label     \m here  \m equ  assemble ;
-: code      \m name  assemble ;
+: label     \m here  \m equ  \m assemble ;
+: code      \m name  \m assemble ;
 : create    \m name  \m dovar @ code, ;
 : variable  \m create  \m cell  \m allot ;
 : constant  \m name  \m doconst @ code,  \m , ;
@@ -88,8 +87,50 @@ meta-compiler
 : ^    \m ^ @  \m a, ;
 : ;    \mc ^  \mc [  ;
 
+( Support for making new defining words.)
+forth
+( patch rewrites the bl instruction at cfa to call to 'code.)
+: patch     ( 'code cfa)  tuck >branch-offset  "eb000000 or ( op)
+            swap \m ! ;
+
+( This word, which is followed inline by a target cfa constant, patches the
+  last code word compiled with a bl to the inline target cfa. It
+  essentially "repoints" previously defined words - defined by create,
+  variable, constant, etc - to point to new code. It gets called indirectly
+  by both ;code and does>.)
+
+: (;code)   pop @  last-code @  patch ;
+
+( <;code> is used to switch from compiling -host- code [that will later run
+  on the host, and build the target word] to compiling -target- code, that
+  will run when words defined by this defining word later execute. In order
+  to connect the two worlds, and to be able to patch up code fields to
+  point to this newly-defined behaviour, <;code> captures the target's
+  "here" value.  Remember, we are about to start compiling target code at
+  "here".
+
+  Even though the host's colon compiler - really the __definer compiler -
+  is running when <;code> executes - it is called from does> and ;code,
+  which are both .compiler. words - it doesn't bother to "stop" the host's
+  colon, since both does> and ;code immmediately switch to another compiler
+  - or assembler! - loop.)
+
+: <;code>  compile (;code)  \m here , ;
+
+macro: save-lr  lr r0 mov  ;
+
+definer
+: does>   <;code>  save-lr  \m dodoes code,  \m -] ( start meta-colon) ;
+: ;code   <;code>  \m assemble ( start assembler) ;
+: ;       \ ^  \mc [  ( exit back to __meta, not to host forth) ;
+
+meta
+( Now we've got all the mechanics defined. We can define a word that
+  defines new target defining words!)
+: definer:  current preserve  meta  new <:>  __definer ;
+
 assembler
-: ;c   \mc [  ;  ( return to meta)
+: ;c   \mc [  ;  ( return to __meta)
 
 
 ( Compiling strings.)
