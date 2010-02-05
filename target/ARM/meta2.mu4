@@ -22,7 +22,11 @@ variable last-code ( for ;code and does> to fix up)
 
 -- : show   last-link 2@ ! ( finally link in last word) ;
 
-: code,   \m here last-code !  ( make a code field)  \a bl ;
+( code, doesn't bother to compile a bl since we're doing to patch the code
+  field later. We just need to make room and to set last-code so patch can
+  find us.)
+
+: code,   \m here last-code !  ( make a code field)  0 \m , ;
 : token,  ( a u)  dup 1+ \m aligned  \m allot  ( room for name+len+padding)
           dup \m here 1- \m c! ( len)  \m here over 1+ -  image+ swap cmove ;
 
@@ -49,10 +53,7 @@ variable (")
 variable type
 
 ( These are simply pointers to pieces of target code.)
-variable docolon
 variable dodoes
-variable dovar
-variable doconst
 
 : '   .target. chain' >body @ ;  ( can't execute them; they are self-compiling)
 
@@ -71,10 +72,7 @@ variable doconst
 
 : label     \m here  \m equ  \m assemble ;
 : code      \m name  \m assemble ;
-: create    \m name  \m dovar @ code, ;
-: variable  \m create  \m cell  \m allot ;
-: constant  \m name  \m doconst @ code,  \m , ;
-: :         \m name  \m docolon @ code,  \m -]  ;
+: new       \m name  code, ;  ( for words with code fields)
 
 ( looks up a forward-reference variable, executes it to push its address,
   and stores the address of the last cfa there.)
@@ -115,12 +113,12 @@ forth
   colon, since both does> and ;code immmediately switch to another compiler
   - or assembler! - loop.)
 
-: <;code>  compile (;code)  \m here , ;
+: <;code>  compile (;code)  \m here  h, ;
 
 macro: save-lr  lr r0 mov  ;
 
 definer
-: does>   <;code>  save-lr  \m dodoes code,  \m -] ( start meta-colon) ;
+: does>   <;code>  save-lr  \m dodoes @ \a bl  \m -] ( start meta-colon) ;
 : ;code   <;code>  \m assemble ( start assembler) ;
 : ;       \ ^  \mc [  ( exit back to __meta, not to host forth) ;
 

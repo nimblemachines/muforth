@@ -20,7 +20,7 @@ pw p_mu_evaluate = &mu_evaluate;
 pw p__mu__lbracket = &_mu__lbracket;
 pw p__mu__rbracket = &_mu__rbracket;
 
-void mu_compile_comma()  { *pcd++ = POP; }      /* currently same as code, */
+void mu_compile_comma()  { *pcd++ = POP; }
 void mu_set_colon_code() { *pcd++ = (cell)&mu_do_colon; }
 void mu_set_does_code()  { *pcd++ = (cell)&mu_do_does; }
 
