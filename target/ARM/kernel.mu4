@@ -8,6 +8,8 @@
 ( 2010-feb-03 - Heavily modified! and changed to DTC.)
 ( 2006-apr-01.)
 
+__meta  ( fire up the metacompiler!!)
+
 assembler hex
 
 ( Register usage.)
@@ -24,39 +26,46 @@ moved-from-assembler
 5 constant rp
 4 constant ip
 
-macro: push  ( r)  4 sp -) !  \f swap  str  ;
-macro: pop   ( r)  4 sp )+    \f swap  ldr  ;
+( Compile macros into the meta chain.)
+meta
 
-macro: nest    ( r)  4 rp -) !  \f swap  str  ;
-macro: unnest  ( r)  4 rp )+    \f swap  ldr  ;
+macro: push  ( r)  4 sp -) !  \f swap  str  ;m
+macro: pop   ( r)  4 sp )+    \f swap  ldr  ;m
+
+macro: nest    ( r)  4 rp -) !  \f swap  str  ;m
+macro: unnest  ( r)  4 rp )+    \f swap  ldr  ;m
 
 ( top is considered st0)
-macro: st1   0 sp +)  ;  ( address the second item on the stack)
-macro: st2   4 sp +)  ;  ( address the third item on the stack)
-macro: st3   8 sp +)  ;  ( address the fourth item on the stack)
+macro: st1   0 sp +)  ;m  ( address the second item on the stack)
+macro: st2   4 sp +)  ;m  ( address the third item on the stack)
+macro: st3   8 sp +)  ;m  ( address the fourth item on the stack)
 
-macro: next  4 ip )+ pc ldr  ;
+macro: next  4 ip )+ pc ldr  ;m
 
 ( capture compiles a branch-and-link -over- the following cell; it captures
   the address of the following cell in lr)
-macro: capture   here 8 \f +  bl  ;
+macro: capture   here 8 \f +  bl  ;m
 
 ( lr@ loads the cell at lr into a reg)
-macro: lr@  ( reg)   0 lr +)  \f swap ( reg)  ldr  ;
+macro: lr@  ( reg)   0 lr +)  \f swap ( reg)  ldr  ;m
 
-macro: load-relocated  ( lit reg)   capture   \f swap a, ( lit)   lr@  ;
-macro: load-literal    ( lit reg)   capture   \f swap ,  ( lit)   lr@  ;
+macro: load-relocated  ( lit reg)   capture   \f swap a, ( lit)   lr@  ;m
+macro: load-literal    ( lit reg)   capture   \f swap ,  ( lit)   lr@  ;m
 
 macro: blr ( reg)  ( bl thru a register)
      pc lr mov  ( capture return address - beyond following instruction)
-     ( reg) pc mov  ( jump via reg)  ;
+     ( reg) pc mov  ( jump via reg)  ;m
 
+( Useful macro for the "prologue" of parent does> words: saves the lr to a
+  register, since the child will be doing a bl to the parent, and we don't
+  want to clobber the value in lr, which is a pointer to the child's data.)
+
+macro: save-lr  lr r0 mov  ;m
 
 comment =====================================================================
         The real kernel starts here!!
         =====================================================================
 
-__meta
 
 target  ( compile into target vocab)
 
@@ -124,12 +133,22 @@ code readline  ( ???)  next  ;c
 code getfile  ( ???)  next  ;c
 
 
+meta
+
 definer: create    new     ;code   top push   lr top mov        next  ;c
 definer: constant  new  ,  ;code   top push   0 lr +) top ldr   next  ;c
 
 definer: variable  create  cell allot ;
 
 definer: :         new  -]  ;code   ip nest   lr ip mov   next  ;c
+
+definer: <dodoes>  save-lr  code,
+                            ;code   ip nest   lr ip mov
+                                    top push  r0 top mov   next  ;c
+
+definer
+definer: does>   <;code>  <dodoes>  -] ;
+target
 
 ( Explanation of dodoes: child word executes bl to parent; lr points to
   child's data; parent saves lr in r0; executes bl to dodoes; lr points to
@@ -300,6 +319,12 @@ variable h  ( dictionary pointer)
 
 ( Let's try it!)
 : hi  ." Hello world!" ;
+
+( Big test of my nifty dodoes magic.)
+meta
+definer: konst   create ,  does> @ ;
+target
+"5600 konst yippee
 
 
 ( Support words for compiling control structures.)
