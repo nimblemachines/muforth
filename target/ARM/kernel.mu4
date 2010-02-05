@@ -68,14 +68,20 @@ target  ( compile into target vocab)
 
 1 , ( Kernel/C API interface structure version) 
 
+label fp-entry ( FORTH parameters entry field)
 0 a, ( start address of FORTH Kernel will be patched later)
 
-0 a, ( ip0)
-0 a, ( rp0)
-0 a, ( h0    - will be loaded into top)
-0 a, ( sp0)
+( The following addresses will be patched later.
+  And, ip0 is the first FORTH instruction to execution.
+  entry point above points to code which begins the inner interpreter.
+  rp0 and sp0 are the start address for rp and sp, respectively.
+  h0 == sp0, as it turns out. Does that mean we can rid ourselves of h0? )
+label ip0  0 a,
+label rp0  0 a,
+label  h0  0 a, ( will be loaded into top and then stored into h )
+label sp0  0 a,
 
-label callers-set-jmp-context
+label exit-context
 0 ,   ( r0 -- caller's set jmp context address)
 0 ,   ( pc -- caller's long jmp routine address)
 
@@ -90,8 +96,23 @@ label 'readline   -- ptr to C: ??? readline(???)
 label 'getfile    -- ptr to C: ??? getfile(???)
 0 ,
 
+code entry
+label entry-point
+     { r1 r2 ( throw-away registers)
+       ip rp top sp } r0 ldm
+--     next
+       0 # top mov
+
 code bye
-     callers-set-jmp-context r3 load-relocated
+   ( 0   if        1         then   >r1       )
+     0 # top cmp   1 # top mov 0=   top r1 mov
+
+   ( exit-context dup       @ >r0
+                      cell+ @ >pc
+     But we do this all in assembler using r3 as a base
+     and then load multiple into r0 pc )
+
+     exit-context r3 load-relocated
      { r0 pc } r3 ldm  ;c
 
 code type ( a u -- )
@@ -451,6 +472,15 @@ decimal
    begin  chars  delay  again  [
 
 **console**
+
+comment =========================
+               Warm
+        =========================
+
+label warm-start
+: warm
+  h !  0 0 type  0 bye ;
+
 
 0 .if
 code _boot   # rp mov  # sp mov   ' doit b  ;c
