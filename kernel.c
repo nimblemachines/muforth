@@ -44,9 +44,6 @@ void mu_drops()  { NIP(TOP); DROP(1); }
 void mu_swap()   { cell t = TOP; TOP = ST1; ST1 = t; }
 void mu_over()   { DUP; TOP = ST2; }          /* a b -> a b a */
 
-void mu_rot()        { cell t = TOP; TOP = ST2; ST2 = ST1; ST1 = t; }
-void mu_minus_rot()  { cell t = TOP; TOP = ST1; ST1 = ST2; ST2 = t; }
-
 void mu_uless()  { TOP = (ST1 < (unsigned)TOP) ? -1 : 0; NIP(1); }
 void mu_less()   { TOP = (ST1 < TOP)           ? -1 : 0; NIP(1); }
 
