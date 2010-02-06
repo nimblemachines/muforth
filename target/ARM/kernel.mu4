@@ -136,7 +136,7 @@ Words to talk to the C environment.
 code entry
      { r1 r2 ( throw-away registers)
        ip rp top sp } r0 ldm
-     deadbeef r3 load-literal  r3 push
+     "0decafbad r3 load-literal  r3 push
      next
 
 code bye
@@ -225,7 +225,7 @@ code 0<            top top tst   -1 # top mov 0<   0 # top mov 0>=  next  ;c
 code 0=            top top tst   -1 # top mov 0=   0 # top mov ne   next  ;c
 
 comment =========================
-               Stack Wordsw
+               Stack Words
 
   sp@   pushes the current stack pointer onto the stack.
         If one writes  5 sp@ @ .  one will get 5 printed.
@@ -243,7 +243,7 @@ code sp@     ( -- a )
 
 code sp!     ( -- )
      'sp0 r3 load-relocated   0 r3 +) sp ldr
-     deadbeef top load-literal   next ;c
+     "0decafbad top load-literal   next ;c
 
 
 
@@ -354,27 +354,6 @@ variable h  ( dictionary pointer)
 ( It all depends on how you want to use your string literals.)
 
 
-( Let's try some console output.)
-: cr  13 emit  10 emit ;
-: space  32 emit ;
-
-( Printing hex.)
-: >digit   ( n - ch)  ( convert 1 binary digit to char; hex to uppercase)
-   9 over u<  7 and +  [ char 0 ] +  ;
-
-: 16/mod   ( n - q r)  dup 4 u>>   swap 15 and ;
-
-: u.   8 for  16/mod >digit swap  next  drop
-       8 for  emit  next  space ;
-
-: ?a   dup 15 and 0= if  cr  dup u.  space  then ;
-: @+   ( a - a+ n)  dup cell+  swap @ ;
-: dump  ( a n - a+n)   for  ?a  @+ u.  next ;
-
-
-( Let's try it!)
-: hi  ." Hello world!" cr ;
-
 
 ( Support words for compiling control structures.)
 
@@ -408,6 +387,14 @@ target-compiler
 : next    ( dest -)      compile (next)  mark>  <resolve ;
 
 target
+
+comment ===================
+        More Stack routines
+        ===================
+
+: 2drop   drop  drop  ;
+: not     0= ;
+: u+  ( a b c - a+c b)  rot +  swap ;  ( "under-plus")
 
 comment **multitasker**
 
@@ -505,7 +492,38 @@ label run
 **multitasker**
 
 
-comment **console**
+comment =============
+        console
+        =============
+
+: pause ;  ( not yet!)
+: emit   ( ch)
+   sp@  1  type  drop ;
+
+0 .if
+: key?   [ uart1 "14 + ] c@  1 and ;
+: key   begin  key? 0= while  pause  repeat  [ uart1 ] c@ ;
+.then
+
+( Let's try some console output.)
+: cr  13 emit  10 emit ;
+: space  32 emit ;
+
+( Say hello!)
+: hi  ." Hello, world." ;
+
+( Printing hex.)
+: >digit   ( n - ch)  ( convert 1 binary digit to char; hex to uppercase)
+   9 over u<  7 and +  [ char 0 ] +  ;
+
+: 16/mod   ( n - q r)  dup 4 u>>   swap 15 and ;
+
+: .   8 for  16/mod >digit swap  next  drop
+       8 for  emit  next  space ;
+
+: ?a   dup 15 and 0= if  cr  dup .  space  then ;
+: @+   ( a - a+ n)  dup cell+  swap @ ;
+: dump  ( a n - a+n)   for  ?a  @+ .  next ;
 
 : echo  begin  key  dup #13 xor while  1+ emit  repeat  drop  cr ;
 
@@ -522,8 +540,6 @@ decimal
 : doit   echo  times  count2
    begin  chars  delay  again  [
 
-**console**
-
 comment =========================
                Warm
         =========================
@@ -532,7 +548,7 @@ decimal
 
 ( Keeping sieve, but not compiling it. ;-)
 
-0 .if
+1 .if
 
 1 Ki Ki constant nprimes
 
@@ -554,8 +570,6 @@ value nprimes 31 + 5 >> cells buffer seen-bits
    dup seen? not if  dup  dup i>prime  ( print) sieve  1 u+  then  1+ ;
 : erat      ." Start"   0  0  nprimes for  prime?  next drop ." Done!" ;
 
-." You can run erat to compute lots of prime numbers."
-
 .then
 
 comment ===================
@@ -567,10 +581,15 @@ comment ===================
   depth . sp@ depth . drop depth . cr 
   depth . sp@ . depth . cr
   1 2 3 . . . depth . cr
-  depth . 1 2 3 depth . sp@ @ . drop sp@ @ . drop sp@ @ . drop depth . cr   ;
+  depth . 1 2 3 depth . sp@ @ . drop sp@ @ . drop sp@ @ . drop depth . cr 
+  ." rotate tests" cr
+  1 2 3 . . . cr
+  1 2 3 rot . . . ." <- should be 1 3 2" cr
+  1 2 3 -rot . . . ." <- should be 2 1 3" cr
+;
 
 : warm
-  h !   hi   0 bye ;
+  h !   hi  stack-test   0 bye ;
 
 0 .if
 code _boot   # rp mov  # sp mov   ' doit b  ;c
