@@ -56,13 +56,20 @@ macro: blr ( reg)  ( bl thru a register)
      ( reg) pc mov  ( jump via reg)  ;
 
 
-comment =====================================================================
-        The real kernel starts here!!
-        =====================================================================
+==========================================================================
+Start of meta-compiled kernel
+==========================================================================
 
 __meta
 
 target  ( compile into target vocab)
+
+==========================================================================
+Kernel header
+
+These fields are at fixed offsets and shall not be moved or mucked with, on
+pain of death!
+==========================================================================
 
 1 , ( Kernel/C API interface structure version) 
 
@@ -84,10 +91,6 @@ label exit-context
 0 ,   ( pc -- caller's long jmp routine address)
 
 label 'type     0 ,  -- pointer to C function: void type(char *s, int n)
-label 'emit     0 ,  -- pointer to C function: void emit(char ch)
-label 'dot      0 ,  -- pointer to C function: void dot(int n)
-label 'hex-dot  0 ,  -- pointer to C function: void hex_dot(uint n)
-label 'ptr-dot  0 ,  -- pointer to C function: void ptr_dot(void *n)
 
 ( Not implemented yet)
 label '?key     0 ,  -- ptr to C: cell_t qkey(void)
@@ -95,6 +98,40 @@ label 'key      0 ,  -- ptr to C: cell_t key(void)
 label 'readline 0 ,  -- ptr to C: ??? readline(???)
 label 'getfile  0 ,  -- ptr to C: ??? getfile(???)
 
+
+==========================================================================
+End of kernel header, start of real kernel
+
+It makes sense to start with the meta-defining words so we can build
+interesting things other than just code words.
+==========================================================================
+
+definer: create    new     ;code   top push   lr top mov        next  ;c
+definer: constant  new  ,  ;code   top push   0 lr +) top ldr   next  ;c
+
+definer: variable  create  cell allot ;
+
+definer: :         new  -]  ;code   ip nest   lr ip mov   next  ;c
+
+( Explanation of dodoes: child word executes bl to parent; lr points to
+  child's data; parent saves lr in r0; executes bl to dodoes; lr points to
+  list of forth words to execute.)
+
+( XXX This is subject to change, when I figure out a better way. Right now
+  the deep subtlety of the problem is making my head spin. ;-)
+
+( Note that this isn't -really- a CODE word. If this were an ITC forth,
+  we'd have to define this differently. We're using code here because it
+  does what we want: creates a new name, and turns on the assembler -
+  without compiling a code field.)
+
+code dodoes implements dodoes
+   ip nest   lr ip mov
+   top push  r0 top mov   next  ;c
+
+==========================================================================
+Words to talk to the C environment.
+==========================================================================
 
 code entry
      { r1 r2 ( throw-away registers)
@@ -134,29 +171,10 @@ code readline  ( ???)  next  ;c
 code getfile  ( ???)  next  ;c
 
 
-definer: create    new     ;code   top push   lr top mov        next  ;c
-definer: constant  new  ,  ;code   top push   0 lr +) top ldr   next  ;c
 
-definer: variable  create  cell allot ;
-
-definer: :         new  -]  ;code   ip nest   lr ip mov   next  ;c
-
-( Explanation of dodoes: child word executes bl to parent; lr points to
-  child's data; parent saves lr in r0; executes bl to dodoes; lr points to
-  list of forth words to execute.)
-
-( XXX This is subject to change, when I figure out a better way. Right now
-  the deep subtlety of the problem is making my head spin. ;-)
-
-( Note that this isn't -really- a CODE word. If this were an ITC forth,
-  we'd have to define this differently. We're using code here because it
-  does what we want: creates a new name, and turns on the assembler -
-  without compiling a code field.)
-
-code dodoes implements dodoes
-   ip nest   lr ip mov
-   top push  r0 top mov   next  ;c
-
+==========================================================================
+Definition of the low-level words - the Forth virtual machine.
+==========================================================================
 
 code ^ implements ^
    ip unnest   next  ;c
@@ -309,6 +327,7 @@ variable h  ( dictionary pointer)
 
 
 ( Let's try some console output.)
+: emit ;
 : cr  13 emit  10 emit ;
 : space  32 emit ;
 
