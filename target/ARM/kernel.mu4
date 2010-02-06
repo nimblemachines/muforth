@@ -70,10 +70,10 @@ label fp-entry ( FORTH parameters entry field)
   entry point above points to code which begins the inner interpreter.
   rp0 and sp0 are the start address for rp and sp, respectively.
   h0 == sp0, as it turns out. Does that mean we can rid ourselves of h0? )
-label ip0  0 a,
-label rp0  4 Ki a,
-label  h0  8 Ki a, ( will be loaded into top and then stored into h )
-label sp0  8 Ki a,
+label 'ip0  0 a,
+label 'rp0  4 Ki a,
+label  'h0  8 Ki a, ( will be loaded into top and then stored into h )
+label 'sp0  8 Ki a,
 
 label exit-context
 0 ,   ( r0 -- caller's set jmp context address)
@@ -95,6 +95,7 @@ label 'getfile  0 ,  -- ptr to C: ??? getfile(???)
 code entry
      { r1 r2 ( throw-away registers)
        ip rp top sp } r0 ldm
+     deadbeef r3 load-literal  r3 push
      next
 
 code bye
@@ -126,7 +127,7 @@ code emit ( ch -- )   implements emit
      top pop                  ( load top)
      next  ;c
      
-code dot ( n -- )   implements dot
+code . ( n -- )   implements dot
      'dot r3 load-relocated  ( r3 points the address of dot)
      0 r3 +) r2 ldr           ( r2 now contains the address of dot)
      top r0 mov               ( r0 == n)
@@ -233,6 +234,33 @@ code u<    r0 pop  top r0  cmp   -1 # top mov u<   0 # top mov u>=  next  ;c
 code <     r0 pop  top r0  cmp   -1 # top mov  <   0 # top mov  >=  next  ;c
 code 0<            top top tst   -1 # top mov 0<   0 # top mov 0>=  next  ;c
 code 0=            top top tst   -1 # top mov 0=   0 # top mov ne   next  ;c
+
+comment =========================
+               Stack Wordsw
+
+  sp@   pushes the current stack pointer onto the stack.
+        If one writes  5 sp@ @ .  one will get 5 printed.
+  sp!   resets the stack pointer to its initial value.
+  depth pushes the number of stack elements on the stack
+        before depth was invoked.
+        =========================
+
+code depth   ( -- # )
+     'sp0 r3 load-relocated   0 r3 +) r3 ldr
+     sp r3 r3 sub   top push   r3 2 #lsr top mov   next ;c
+
+code sp@     ( -- a )
+     top push  sp top mov next ;c
+
+code sp!     ( -- )
+     'sp0 r3 load-relocated   0 r3 +) sp ldr
+     deadbeef top load-literal   next ;c
+
+
+
+comment =========================
+               Intrinsics
+        =========================
 
 code lit implements lit
    top push   4 ip )+ top ldr   next  ;c
@@ -550,12 +578,22 @@ value nprimes 31 + 5 >> cells buffer seen-bits
 .then
 
 ( Test case that breaks the metacompiler:)
-: ok  begin  dup  until ;
+: ok  begin  swap  until ;
 : fuck  if swap then ;
 
+comment ===================
+        Stack Test Routines
+        ===================
+
+: stack-test
+  sp@ . sp! sp@ . cr
+  depth . sp@ depth . drop depth . cr 
+  depth . sp@ . depth . cr
+  1 2 3 . . . depth . cr
+  depth . 1 2 3 depth . sp@ @ . drop sp@ @ . drop sp@ @ . drop depth . cr   ;
 
 : warm
-  h ! hi 0 bye ;
+  h !   hi   0 bye ;
 
 0 .if
 code _boot   # rp mov  # sp mov   ' doit b  ;c
