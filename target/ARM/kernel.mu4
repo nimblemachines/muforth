@@ -8,7 +8,9 @@
 ( 2010-feb-03 - Heavily modified! and changed to DTC.)
 ( 2006-apr-01.)
 
-assembler hex
+assembler
+
+ hex
 
 ( Register usage.)
 comment moved-from-assembler
@@ -23,6 +25,8 @@ moved-from-assembler
 6 constant top
 5 constant rp
 4 constant ip
+
+decimal
 
 macro: push  ( r)  4 sp -) !  \f swap  str  ;
 macro: pop   ( r)  4 sp )+    \f swap  ldr  ;
@@ -284,7 +288,6 @@ variable h  ( dictionary pointer)
 ( Words for compiled strings.)
 
 ( Assume that compiled strings are:
-    * zero-terminated
     * prefixed with a length byte
     * padded at the end to a cell boundary)
 
@@ -294,20 +297,38 @@ variable h  ( dictionary pointer)
   and type'ing it out all into one word.)
 -- : (.")  r@ count  dup 1+ r> + >r  type ; ( fig)
 
-( We could define a similar word, but ours has to skip over the zero
-  terminator and any trailing padding:)
--- : (.")  r@ count  dup 2 +  r> + aligned >r  type ; ( fig)
+( We could define a similar word, but ours has to skip over the length and
+  the trailing padding:)
+-- : (.")  r@ count  dup 1+  r> + aligned >r  type ; ( fig)
 
 ( Or we could factor differently, and have ." compile (")
 ( followed by type, in which case we have:)
-: (")  ( - a u)  r@ count  dup 2 +  r> + aligned >r ;   implements (")
+: (")  ( - a u)  r@ count  dup 1+  r> + aligned >r ;   implements (")
 
 ( It all depends on how you want to use your string literals.)
 
-: cr  d emit a emit ;
+
+( Let's try some console output.)
+: cr  13 emit  10 emit ;
+: space  32 emit ;
+
+( Printing hex.)
+: >digit   ( n - ch)  ( convert 1 binary digit to char; hex to uppercase)
+   9 over u<  7 and +  [ char 0 ] +  ;
+
+: 16/mod   ( n - q r)  dup 4 u>>   swap 15 and ;
+
+: u.   8 for  16/mod >digit swap  next  drop
+       8 for  emit  next  space ;
+
+: ?a   dup 15 and 0= if  cr  dup u.  space  then ;
+: @+   ( a - a+ n)  dup cell+  swap @ ;
+: dump  ( a n - a+n)   for  ?a  @+ u.  next ;
+
 
 ( Let's try it!)
 : hi  ." Hello world!" cr ;
+
 
 ( Support words for compiling control structures.)
 
@@ -439,31 +460,6 @@ label run
 
 
 comment **console**
-
-: pause ;  ( not yet!)
-: emit   ( ch)
-   begin  [ uart1 "14 + ] c@ "20 and  0= while  pause  repeat
-   [ uart1 ] c! ;
-
-: key?   [ uart1 "14 + ] c@  1 and ;
-: key   begin  key? 0= while  pause  repeat  [ uart1 ] c@ ;
-
-: cr  13 emit  10 emit ;
-: space  32 emit ;
-
-( Printing hex.)
-: >digit   ( n - ch)  ( convert 1 binary digit to char; hex to uppercase)
-   9 over u<  7 and +  [ char 0 ] +  ;
-
-: 16/mod   dup 4 u>>   swap 15 and ;
-
-: .   8 for  16/mod >digit swap  next  drop
-      8 for  emit  next  space ;
-
-: ?a   dup 15 and 0= if  cr  dup .  space  then ;
-: @+  dup 4 +  swap @ ;
-: dump  ( a n - a+n)   for  ?a  @+ .  next ;
-: 1+  1 + ;
 
 : echo  begin  key  dup #13 xor while  1+ emit  repeat  drop  cr ;
 
