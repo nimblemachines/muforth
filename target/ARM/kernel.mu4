@@ -8,7 +8,9 @@
 ( 2010-feb-03 - Heavily modified! and changed to DTC.)
 ( 2006-apr-01.)
 
-assembler hex
+assembler
+
+ hex
 
 ( Register usage.)
 comment moved-from-assembler
@@ -23,6 +25,8 @@ moved-from-assembler
 6 constant top
 5 constant rp
 4 constant ip
+
+decimal
 
 macro: push  ( r)  4 sp -) !  \f swap  str  ;
 macro: pop   ( r)  4 sp )+    \f swap  ldr  ;
@@ -52,13 +56,20 @@ macro: blr ( reg)  ( bl thru a register)
      ( reg) pc mov  ( jump via reg)  ;
 
 
-comment =====================================================================
-        The real kernel starts here!!
-        =====================================================================
+==========================================================================
+Start of meta-compiled kernel
+==========================================================================
 
 __meta
 
 target  ( compile into target vocab)
+
+==========================================================================
+Kernel header
+
+These fields are at fixed offsets and shall not be moved or mucked with, on
+pain of death!
+==========================================================================
 
 1 , ( Kernel/C API interface structure version) 
 
@@ -80,10 +91,6 @@ label exit-context
 0 ,   ( pc -- caller's long jmp routine address)
 
 label 'type     0 ,  -- pointer to C function: void type(char *s, int n)
-label 'emit     0 ,  -- pointer to C function: void emit(char ch)
-label 'dot      0 ,  -- pointer to C function: void dot(int n)
-label 'hex-dot  0 ,  -- pointer to C function: void hex_dot(uint n)
-label 'ptr-dot  0 ,  -- pointer to C function: void ptr_dot(void *n)
 
 ( Not implemented yet)
 label '?key     0 ,  -- ptr to C: cell_t qkey(void)
@@ -92,77 +99,12 @@ label 'readline 0 ,  -- ptr to C: ??? readline(???)
 label 'getfile  0 ,  -- ptr to C: ??? getfile(???)
 
 
-code entry
-     { r1 r2 ( throw-away registers)
-       ip rp top sp } r0 ldm
-     deadbeef r3 load-literal  r3 push
-     next
+==========================================================================
+End of kernel header, start of real kernel
 
-code bye
-   ( 0   if        1         then   >r1       )
-     0 # top cmp   1 # top mov 0=   top r1 mov
-
-   ( exit-context dup       @ >r0
-                      cell+ @ >pc
-     But we do this all in assembler using r3 as a base
-     and then load multiple into r0 pc )
-
-     exit-context r3 load-relocated
-     { r0 pc } r3 ldm  ;c
-
-code type ( a u -- )   implements type
-     'type r3 load-relocated  ( r3 points the address of type)
-     0 r3 +) r2 ldr           ( r2 now contains the address of type)
-     top r1 mov               ( r1 == u)
-     r0 pop                   ( r0 == a)
-     r2 blx                   ( call type)
-     top pop                  ( load top)
-     next  ;c
-
-code emit ( ch -- )   implements emit
-     'emit r3 load-relocated  ( r3 points the address of emit)
-     0 r3 +) r2 ldr           ( r2 now contains the address of emit)
-     top r0 mov               ( r0 == ch)
-     r2 blx                   ( call emit)
-     top pop                  ( load top)
-     next  ;c
-     
-code .. ( n -- )   implements dot
-     'dot r3 load-relocated  ( r3 points the address of dot)
-     0 r3 +) r2 ldr           ( r2 now contains the address of dot)
-     top r0 mov               ( r0 == n)
-     r2 blx                   ( call dot)
-     top pop                  ( load top)
-     next  ;c
-     
-code hex-dot ( n -- )   implements hex-dot
-     'hex-dot r3 load-relocated  ( r3 points the address of hex-dot)
-     0 r3 +) r2 ldr           ( r2 now contains the address of hex-dot)
-     top r0 mov               ( r0 == n)
-     r2 blx                   ( call hex-dot)
-     top pop                  ( load top)
-     next  ;c
-     
-code ptr-dot ( n -- )   implements ptr-dot
-     'ptr-dot r3 load-relocated  ( r3 points the address of ptr-dot)
-     0 r3 +) r2 ldr           ( r2 now contains the address of ptr-dot)
-     top r0 mov               ( r0 == n)
-     r2 blx                   ( call ptr-dot)
-     top pop                  ( load top)
-     next  ;c
-     
-
-code ?key ( - f)
-     '?key r3 load-relocated
-label key-call
-     r3 blr   top push   r0 top mov   next  ;c
-
-code key ( - ch)
-     'key r3 load-relocated   key-call b  ;c
-
-code readline  ( ???)  next  ;c
-code getfile  ( ???)  next  ;c
-
+It makes sense to start with the meta-defining words so we can build
+interesting things other than just code words.
+==========================================================================
 
 definer: create    new     ;code   top push   lr top mov        next  ;c
 definer: constant  new  ,  ;code   top push   0 lr +) top ldr   next  ;c
@@ -187,6 +129,53 @@ code dodoes implements dodoes
    ip nest   lr ip mov
    top push  r0 top mov   next  ;c
 
+==========================================================================
+Words to talk to the C environment.
+==========================================================================
+
+code entry
+     { r1 r2 ( throw-away registers)
+       ip rp top sp } r0 ldm
+     "0decafbad r3 load-literal  r3 push
+     next
+
+code bye
+   ( 0   if        1         then   >r1       )
+     0 # top cmp   1 # top mov 0=   top r1 mov
+
+   ( exit-context dup       @ >r0
+                      cell+ @ >pc
+     But we do this all in assembler using r3 as a base
+     and then load multiple into r0 pc )
+
+     exit-context r3 load-relocated
+     { r0 pc } r3 ldm  ;c
+
+code type ( a u -- )   implements type
+     'type r3 load-relocated  ( r3 points the address of type)
+     0 r3 +) r2 ldr           ( r2 now contains the address of type)
+     top r1 mov               ( r1 == u)
+     r0 pop                   ( r0 == a)
+     r2 blx                   ( call type)
+     top pop                  ( load top)
+     next  ;c
+
+code ?key ( - f)
+     '?key r3 load-relocated
+label key-call
+     r3 blr   top push   r0 top mov   next  ;c
+
+code key ( - ch)
+     'key r3 load-relocated   key-call b  ;c
+
+code readline  ( ???)  next  ;c
+code getfile  ( ???)  next  ;c
+
+
+
+==========================================================================
+Definition of the low-level words - the Forth virtual machine.
+==========================================================================
 
 code ^ implements ^
    ip unnest   next  ;c
@@ -212,14 +201,14 @@ code over  top push     st2 top ldr   next  ;c
 0 .if
 ( XXX Is this right? -- No, but David has ideas)
 code rot  ( r1 r0 top - r0 top r1)
-   { r1 r0  } sp ldm   r0 lr mov
-   { lr top } sp stm
+   { r1 r0  } sp ldm ia   r0 lr mov
+   { lr top } sp stm ia
    r1 top mov next  ;c
 
 ( XXX Is this right?)
 code -rot  ( r1 r0 top - top r1 r0)
-   { r1 r0  } sp ldm
-   { top r1 } sp stm
+   { r1 r0  } sp ldm ia
+   { top r1 } sp stm ia
    r0 top mov next ;c
 .then
 
@@ -238,7 +227,7 @@ code 0<            top top tst   -1 # top mov 0<   0 # top mov 0>=  next  ;c
 code 0=            top top tst   -1 # top mov 0=   0 # top mov ne   next  ;c
 
 comment =========================
-               Stack Wordsw
+               Stack Words
 
   sp@   pushes the current stack pointer onto the stack.
         If one writes  5 sp@ @ .  one will get 5 printed.
@@ -256,7 +245,7 @@ code sp@     ( -- a )
 
 code sp!     ( -- )
      'sp0 r3 load-relocated   0 r3 +) sp ldr
-     deadbeef top load-literal   next ;c
+     "0decafbad top load-literal   next ;c
 
 
 
@@ -347,7 +336,6 @@ variable h  ( dictionary pointer)
 ( Words for compiled strings.)
 
 ( Assume that compiled strings are:
-    * zero-terminated
     * prefixed with a length byte
     * padded at the end to a cell boundary)
 
@@ -357,20 +345,17 @@ variable h  ( dictionary pointer)
   and type'ing it out all into one word.)
 -- : (.")  r@ count  dup 1+ r> + >r  type ; ( fig)
 
-( We could define a similar word, but ours has to skip over the zero
-  terminator and any trailing padding:)
--- : (.")  r@ count  dup 2 +  r> + aligned >r  type ; ( fig)
+( We could define a similar word, but ours has to skip over the length and
+  the trailing padding:)
+-- : (.")  r@ count  dup 1+  r> + aligned >r  type ; ( fig)
 
 ( Or we could factor differently, and have ." compile (")
 ( followed by type, in which case we have:)
-: (")  ( - a u)  r@ count  dup 2 +  r> + aligned >r ;   implements (")
+: (")  ( - a u)  r@ count  dup 1+  r> + aligned >r ;   implements (")
 
 ( It all depends on how you want to use your string literals.)
 
-: cr  d emit a emit ;
 
-( Let's try it!)
-: hi  ." Hello world!" cr ;
 
 ( Support words for compiling control structures.)
 
@@ -525,22 +510,25 @@ decimal
 : key   begin  key? 0= while  pause  repeat  [ uart1 ] c@ ;
 .then
 
+( Let's try some console output.)
 : cr  13 emit  10 emit ;
 : space  32 emit ;
+
+( Say hello!)
+: hi  ." Hello, world." ;
 
 ( Printing hex.)
 : >digit   ( n - ch)  ( convert 1 binary digit to char; hex to uppercase)
    9 over u<  7 and +  [ char 0 ] +  ;
 
-: 16/mod   dup 4 u>>   swap 15 and ;
+: 16/mod   ( n - q r)  dup 4 u>>   swap 15 and ;
 
 : .   8 for  16/mod >digit swap  next  drop
-      8 for  emit  next  space ;
+       8 for  emit  next  space ;
 
 : ?a   dup 15 and 0= if  cr  dup .  space  then ;
-: @+  dup 4 +  swap @ ;
+: @+   ( a - a+ n)  dup cell+  swap @ ;
 : dump  ( a n - a+n)   for  ?a  @+ .  next ;
-: 1+  1 + ;
 
 : echo  begin  key  dup #13 xor while  1+ emit  repeat  drop  cr ;
 
@@ -588,10 +576,6 @@ value nprimes 31 + 5 >> cells buffer seen-bits
 : erat      ." Start"   0  0  nprimes for  prime?  next drop ." Done!" ;
 
 .then
-
-( Test case that breaks the metacompiler:)
-: ok  begin  swap  until ;
-: fuck  if swap then ;
 
 comment ===================
         Stack Test Routines
