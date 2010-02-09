@@ -20,6 +20,8 @@ variable last      ( cfa of last word defined)
 variable last-code ( for ;code and does> to fix up)
 2variable last-link ( address of vocab, link to newest word)
 
+meta
+
 -- : show   last-link 2@ ! ( finally link in last word) ;
 
 ( code, doesn't bother to compile a bl since we're doing to patch the code
@@ -27,19 +29,18 @@ variable last-code ( for ;code and does> to fix up)
   find us.)
 
 : code,   \m here last-code !  ( make a code field)  0 \m , ;
+
 : token,  ( a u)  dup 1+ \m aligned  \m allot  ( room for name+len+padding)
           dup \m here 1- \m c! ( len)  \m here over 1+ -  image+ swap cmove ;
 
 : 'link   current @  suffix>link cell+  ( parallel link field) ;
-: link,   \m here  'link  dup  @  \m z,  !  ( last-link 2! ) ;
+: link,   \m here  \m 'link  dup  @  \m z,  !  ( last-link 2! ) ;
 
-: name,  ( a u)  token,  link,  \m here last ! ;
+: name,  ( a u)  \m token,  \m link,  \m here last ! ;
 
-( Create an assembler macro.)
-: macro:   new <:>  __macro ;
 
 ( Forward references for fundamental words.)
-meta
+
 ( These are pointers to target CODE words.)
 variable (branch)
 variable (0branch)
@@ -74,13 +75,13 @@ variable dodoes
 : ]    \m literal  \m -] ;  ( make literal and run compiler)
 : equ   current preserve  meta constant ;
 
-: name   token  2dup name,  ( compile name into image)
+: name   token  2dup \m name,  ( compile name into image)
          \m here  -rot (constant)  ( NOTE: uses current unchanged)
          does> ( target-cfa)  ( compile itself!)  \m a, ;
 
 : label     \m here  \m equ  \m assemble ;
 : code      \m name  \m assemble ;
-: new       \m name  code, ;  ( for words with code fields)
+: new       \m name  \m code, ;  ( for words with code fields)
 
 ( looks up a forward-reference variable, executes it to push its address,
   and stores the address of the last cfa there.)
@@ -95,6 +96,14 @@ meta-compiler
 : [    __meta ;
 : ^    \m ^ @  \m a, ;
 : ;    \mc ^  \mc [  ;
+
+
+( Creating assembler macros.)
+meta
+: macro:   new <:>  __macro ;
+compiler
+: ;m  \ ^  \mc [ ;  ( end macro; return to __meta)
+
 
 ( Support for making new defining words.)
 forth
@@ -124,13 +133,12 @@ forth
   colon, since both does> and ;code immmediately switch to another compiler
   - or assembler! - loop.)
 
+meta
 : <;code>  compile (;code)  \m here  h, ;
 
-macro: save-lr  lr r0 mov  ;
-
 definer
-: does>   <;code>  save-lr  \m dodoes @ \a bl  \m -] ( start meta-colon) ;
-: ;code   <;code>  \m assemble ( start assembler) ;
+-- : does>   <;code>  save-lr  \m dodoes @ \a bl  \m -] ( start meta-colon) ;
+: ;code   \m <;code>  \m assemble ( start assembler) ;
 : ;       \ ^  \mc [  ( exit back to __meta, not to host forth) ;
 
 meta-compiler
@@ -146,7 +154,8 @@ meta-compiler
 meta
 ( Now we've got all the mechanics defined. We can define a word that
   defines new target defining words!)
-: definer:  current preserve  meta  new <:>  __definer ;
+-- : definer:  current preserve  meta  new <:>  __definer ;
+: definer:  new <:>  __definer ;
 
 ( It's nice to where a code field is pointing. Actually this takes the
   address of any b or bl instruction and shows its destination - with some
