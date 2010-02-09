@@ -197,6 +197,7 @@ code ^ implements ^
    ip unnest   next  ;c
 
 code +     r0 pop   top r0 top add   next  ;c
+code d+  ;c  ( UNDEF)
 code -     r0 pop   top r0 top sub   next  ;c
 code *     r0 pop   r0 top top mul   next  ;c
 code and   r0 pop   top r0 top and   next  ;c
@@ -205,6 +206,7 @@ code or    r0 pop   top r0 top or    next  ;c
 code xor   r0 pop   top r0 top eor   next  ;c
 
 code negate   0 # top top rsb   next  ;c
+code dnegate  ;c  ( UNDEF)
 code invert       top top mvn   next  ;c
 
 code dup   top push  next  ;c
@@ -215,19 +217,24 @@ code swap  top r0 mov   st1 top ldr   st1 r0 str  next  ;c
 code over  top push     st2 top ldr   next  ;c
 : tuck  ( a b - b a b)  swap over ;
 
-0 .if
-( XXX Is this right? -- No, but David has ideas)
-code rot  ( r1 r0 top - r0 top r1)
+code >r   top nest   top pop      next  ;c
+code r>   top push   top unnest   next  ;c
+code r@   top push   0 rp +) top ldr   next  ;c
+
+( XXX Is this right?)
+code rot.asm  ( r1 r0 top - r0 top r1)
    { r1 r0  } sp ldm ia   r0 lr mov
    { lr top } sp stm ia
    r1 top mov next  ;c
 
 ( XXX Is this right?)
-code -rot  ( r1 r0 top - top r1 r0)
+code -rot.asm  ( r1 r0 top - top r1 r0)
    { r1 r0  } sp ldm ia
    { top r1 } sp stm ia
    r0 top mov next ;c
-.then
+
+:  rot   >r swap  r> swap ;
+: -rot   swap >r  swap r> ;
 
 code <<       r0 pop   r0 top lsl top mov   next  ;c
 code >>       r0 pop   r0 top asr top mov   next  ;c
@@ -314,10 +321,6 @@ code (next) implements (next)
    0 ip +) ip ldr   next  ;c
 .then
 
-code >r   top nest   top pop      next  ;c
-code r>   top push   top unnest   next  ;c
-code r@   top push   0 rp +) top ldr   next  ;c
-
 code @    0 top +) top ldr   next  ;c
 code c@   0 top +) top ldrb  next  ;c
 
@@ -342,9 +345,15 @@ code cell/  ( n - n/4)   top 2 #asr top mov  next  ;c
 code cells  ( n - n*4)   top 2 #lsl top mov  next  ;c
 
 : >     swap <  ;
-: 2dup  over over ;
+: 2dup   over  over ;
+: 2drop  drop  drop ;
 : min   2dup >  if swap then  drop  ;
 : max   2dup <  if swap then  drop  ;
+: s->d  ( n - d)  ( sign-extend)  dup 0< ;  ( high word on top)
+: abs   ( n - |n|)   s->d  if   negate  then ;
+: dabs  ( d - |d|)   s->d  if  dnegate  then ;
+
+
 
 ==========================================================================
 Basic dictionary words.
@@ -494,28 +503,40 @@ code scan  ( end a ch - a+ trailing)  ;c  ( UNDEF)
    first @  swap scan  (token) ;
 
 ==========================================================================
-Multiply and divide support.
+  Go forth and multiply ... and divide.
 
-  Our new primitives are:
-    um* : n1 n2 - d3 [double-length product]
-      * : n1 n2 - n3 [single-length product]
-   /mod : n1 n2 - mod quot
-  u/mod : u1 u2 - umod uquot
+  These routines are all based on a handful of low-level primitives:
+     um* : u1 u2 - ud  ( all unsigned)
+      m* : n1 n2 -  d  ( all signed)
+  um/mod : ud  u - urem uquot  ( all unsigned)
+  fm/mod :  d  n - mod quot  [signed floored division]
 
   Any word whose name starts with 'u' is unsigned, both in its arguments
   and its results; the others are signed.
 
-  */ and */mod no longer calculate a double-length intermediate product,
-  so beware!)
+  All of the */ variants calculate a double-length intermediate product.
+
+  To calculate a single-length signed product, calculate a double-length
+  _unsigned_ product and drop the high-order word. Weird but true. And an
+  extra-credit challenge: is "m* drop" always equal to "um* drop"? Why or
+  why not? ;-)
+
 ==========================================================================
-code um*  ( n1 n2 - d3 )    st1 r0 ldr   top r0 top r0 umull   st1 r0 str  next ;c
+code um*     ( n1 n2 - ud)   st1 r0 ldr   top r0 top r0 umull   st1 r0 str  next ;c
+code  m*     ( n1 n2 - d)    st1 r0 ldr   top r0 top r0 smull   st1 r0 str  next ;c
+code um/mod  ( ud  u - urem uquot)  ;c  ( UNDEF)
+code fm/mod  (  d  n - mod quot)  ;c  ( UNDEF)
 
-code  m*  ( n1 n2 - d3 )    st1 r0 ldr   top r0 top r0 smull   st1 r0 str  next ;c
+: *       ( n1 n2 - n1*n2)   um*  drop  ;  ( This is what fig does!)
 
-: *       ( n1 n2 - n1 )    um*  nip ;
+:  */mod  ( n1 n2 n3 - r q)  >r   m*   r>           fm/mod ;
+: u*/mod  ( u1 u2 u3 - r q)  >r  um*   r>           um/mod ;
 
-code /mod  ( n1 n2 - n1 mod)  next ;c  ( UNDEF)
-code u/mod ( n1 n2 - n1 mod)  next ;c  ( UNDEF)
+:  /mod   ( n1    n2 - r q)  >r  s->d  r>  (  d1 n2)  fm/mod ;
+: u/mod   ( u1    u2 - r q)         0 swap ( ud1 u2)  um/mod ;
+
+:  */     ( n1 n2 n3 - n1*n2/n3)   */mod  nip ;
+: u*/     ( u1 u2 u3 - u1*u2/u3)  u*/mod  nip ;
 
 :  /      ( n1 n2 - quot)    /mod  nip ;
 : u/      ( u1 u2 - uquot)  u/mod  nip ;
@@ -523,13 +544,16 @@ code u/mod ( n1 n2 - n1 mod)  next ;c  ( UNDEF)
 :  mod    ( n1 n2 - mod)     /mod  drop ;
 : umod    ( u1 u2 - umod)   u/mod  drop ;
 
-: */mod   ( n1 n2 n3 - mod quot)   >r  *  r>  /mod ;
-: */      ( n1 n2 n3 - n1*n2/n3)   */mod  nip ;
 
 ==========================================================================
 Numeric conversion - input.
 ==========================================================================
 variable radix   ( the current input & output number base)
+variable dpl     ( decimal point location)
+
+: *digit  ( ud a digit - ud*base+digit a)
+   swap >r ( a)  swap ( lo dig hi)  radix @ um* drop  rot ( dig hi*radix lo)
+   radix @ um*  d+  r>  dpl @ 0< 1+  dpl +!  ;
 
 ==========================================================================
 Numeric conversion - output.
@@ -537,35 +561,42 @@ Numeric conversion - output.
 : >digit   ( n - ch)  ( convert 1 binary digit to char; hex to uppercase)
    9 over u<  7 and +  [ char 0 ] +  ;
 
-: /digit   ( u - uquot umod)  radix @  u/mod swap ;
-
-: abs   ( n - |n|)   dup 0<  if  negate then ;
+: /digit   ( ud - udquot urem)
+   0 radix @ um/mod  ( 0:hi / radix -> urhi uqhi)  >r
+   ( urhi:lo)  radix @ um/mod  ( urlo uqlo)  r> rot  ;
 
 ( XXX Should we convert numbers by pushing digits onto the stack
   instead?)
 
-33 aligned allot ram constant pad  ( 32 digits + sign + alignment)
+( Longest number we can convert is a negative base-2 double-number.)
+65 aligned allot ram constant pad  ( 64 digits + sign + alignment)
 
 variable hld
 : hold   -1 hld +!  hld @ c! ;
 : <#     pad hld !  ;
-: #>     ( u - a #)  drop  hld @  pad over - ;
+: #>     ( ud - a #)  2drop  hld @  pad over - ;
 : sign   ( n -)   0< if  [ char - ] hold  then  ;
 
-: #     ( u - u')   /digit  >digit  hold  ;
-: #s    ( u - 0)  begin  #  dup 0=  until  ;
+: #     ( ud - ud')   /digit  >digit  hold  ;
+: #s    ( ud - 0 0)   begin  #  2dup or 0=  until  ;
 
-: (u.)    ( u - a #)   <# #s #> ;
+: (ud.)   ( ud - a #)  <#  #s  #>  ;
+: ud.     ( ud -)      (ud.)  type  space  ;
+
+: (u.)    ( u - a #)   0  (ud.)  ;
 : u.      ( u -)       (u.)  type  space  ;
 
-: (.)     ( n - a #)   dup >r ( sign)  abs  <# #s  r> sign  #> ;
-: .       ( n -)       (.)  type  space ;
+: (d.)    ( d - a #)   dup >r ( sign)  dabs  <#  #s  r> sign  #>  ;
+: d.      ( d -)       (d.)  type  space  ;
+
+: (.)     ( n - a #)   s->d  (d.)  ;
+: .       ( n -)       (.)  type  space  ;
 
 0 .if
 ( This should truncate to field length. Actually, it shouldn't. Does it?)
 ( UNUSED)
 : truncating-field   ( a c field - a' field)   tuck swap -  ( a field field-c)
-   dup 0< if  drop ^  then  ?for  bl hold  next then  #>  ;
+   s->d if  drop ^  then  ?for  bl hold  next then  #>  ;
 .then
 
 ( Non-truncating field.)
@@ -619,11 +650,8 @@ comment ===================
         More Stack routines
         ===================
 
-: 2drop   drop  drop  ;
 : not     0= ;
 : u+  ( a b c - a+c b)  swap >r + r> ;  ( "under-plus")
-:  rot >r swap r> swap ;
-: -rot swap >r swap r> ;
 
 comment **multitasker**
 
@@ -778,8 +806,10 @@ comment ===================
   depth . 1 2 3 depth . sp@ @ . drop sp@ @ . drop sp@ @ . drop depth . cr 
   ." rotate tests" cr
   1 2 3 . . . cr
-  1 2 3 rot . . . ." <- should be 1 3 2" cr
-  1 2 3 -rot . . . ." <- should be 2 1 3" cr
+  1 2 3 rot       . . .  ." <- should be 1 3 2" cr
+  1 2 3 -rot      . . .  ." <- should be 2 1 3" cr
+  1 2 3 rot.asm   . . .  ." <- should be 1 3 2 (rot in asm)" cr
+  1 2 3 -rot.asm  . . .  ." <- should be 2 1 3 (-rot in asm)" cr
 ;
 
 : print-eq    ( d -- )
