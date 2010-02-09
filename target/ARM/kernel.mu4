@@ -106,12 +106,16 @@ It makes sense to start with the meta-defining words so we can build
 interesting things other than just code words.
 ==========================================================================
 
-definer: create    new     ;code   top push   lr top mov        next  ;c
-definer: constant  new  ,  ;code   top push   0 lr +) top ldr   next  ;c
+definer: create    new     ;code   label dovar
+                                   top push   lr top mov        next  ;c
+definer: constant  new  ,  ;code   label doconst
+                                   top push   0 lr +) top ldr   next  ;c
 
-definer: variable  create  cell allot ;
+definer: variable   create         cell allot ;
+definer: 2variable  create      2 cells allot ;  ( XXX fix when [ & ] work)
 
-definer: :         new  -]  ;code   ip nest   lr ip mov   next  ;c
+definer: :         new  -]  ;code  label docolon
+                                   ip nest   lr ip mov   next  ;c
 
 ( Explanation of dodoes: child word executes bl to parent; lr points to
   child's data; parent saves lr in r0; executes bl to dodoes; lr points to
@@ -197,6 +201,7 @@ code drop  top pop   next  ;c
 
 code swap  top r0 mov   st1 top ldr   st1 r0 str  next  ;c
 code over  top push     st2 top ldr   next  ;c
+: tuck  ( a b - b a b)  swap over ;
 
 ( XXX Is this right?)
 code rot  ( r1 r0 top - r0 top r1)
@@ -319,6 +324,17 @@ code 1-      1 # top top sub   next  ;c
 
 4 constant cell
 
+code cell/  ( n - n/4)   top 2 #asr top mov  next  ;c
+code cells  ( n - n*4)   top 2 #lsl top mov  next  ;c
+
+: >     swap <  ;
+: 2dup  over over ;
+: min   2dup >  if swap then  drop  ;
+: max   2dup <  if swap then  drop  ;
+
+==========================================================================
+Basic dictionary words.
+==========================================================================
 variable h  ( dictionary pointer)
 : here    h @ ;
 : allot   h +! ;
@@ -331,8 +347,22 @@ variable h  ( dictionary pointer)
 : compile  r>  dup cell+  >r  @ , ;  ( fig)
 : literal  compile lit  , ;
 
-( Words for compiled strings.)
+==========================================================================
+Basic console output.
+==========================================================================
+32 constant bl  ( ASCII code for blank - that is, space)
+13 constant #CR
+10 constant #LF
 
+: emit   ( ch)  sp@  1  type  drop ;
+: space   bl emit ;
+: spaces  ( n)  0 max  ?for  space  next  then  ;
+: cr  #CR emit  #LF emit ;
+
+
+==========================================================================
+Support for compiled strings.
+==========================================================================
 ( Assume that compiled strings are:
     * prefixed with a length byte
     * padded at the end to a cell boundary)
@@ -353,9 +383,182 @@ variable h  ( dictionary pointer)
 
 ( It all depends on how you want to use your string literals.)
 
+==========================================================================
+Making new names in the dictionary.
+==========================================================================
+variable current
+variable .forth.      ( XXX fixed up by metac)
+variable .compiler.   ( XXX fixed up by metac)
+variable last         ( cfa of last word defined)
 
+code cmove  ( source dest count)  ( UNDEF)  ;c
 
-( Support words for compiling control structures.)
+: code,   here last !  ( make a code field)  0 , ;
+: token,  ( a u)  dup 1+ aligned  allot  ( room for name+len+padding)
+          dup here 1- c! ( len)  here over 1+ -  swap cmove ;
+
+: link,   here  current @  dup  @  ,  !  ( last-link 2! ) ;
+
+: name,  ( a u)  token,  link,  code, ;
+
+( patch rewrites the bl instruction at cfa to call to 'code.)
+: |pc-  ( to from - offset)   8 + ( compensate for prefetch)  - ;
+: >branch-offset  ( to from - bits)  |pc-  cell/  "00ffffff and ;
+: patch     ( 'code cfa)  tuck >branch-offset  "eb000000 or ( op)
+            swap ! ;
+
+comment super-botched
+( XXX It's a botch that there are two kinds of (;code) - one that points
+  the last word to the code that follows it - currently used by the
+  target-resident does> - and one that fetches a literal from the cell that
+  follows it - currently used by the meta-compiler to patch the
+  target-resident defining words with the code sequences that were defined
+  earlier ... when the meta-compiler versions of the defining words were
+  defined.
+
+  Got all that? ;-)
+super-botched
+
+( (;code@) ( is followed by a literal - a pointer to code - that is used to
+  patch the last word. Used by the meta-compiler to point the following
+  versions of create, constant, and : to code that was already laid down.)
+
+: (;code@)   r> @  last @  patch ;  implements (;code)
+
+( (;code)  ( patches last to point to the code that directly follows it.
+  Compiled by does> , below.)
+
+: (;code)   r>  last @  patch ;
+
+==========================================================================
+Target-resident defining words.
+==========================================================================
+: -]  ;  ( UNDEF)  ( XXX how are we doing compilation state?)
+
+: create    name,      ;code   dovar
+: constant  name,  ,   ;code   doconst
+
+: variable  create  cell allot ;
+
+: :         name,  -]  ;code   docolon
+
+target-compiler
+: does>   compile (;code)
+          [ here  assemble  lr r0 mov  ;c  cell negate allot  @ ] ,
+          code,  [ dodoes ] last @ patch ;
+
+target
+
+==========================================================================
+Token parsing.
+==========================================================================
+( XXX two variables, start and end?)
+2variable source  ( start, end)
+variable first
+
+( XXX should skip and scan simply read and write first and end?)
+( Skip while char at a equals ch and not at end of input.)
+code skip  ( end a ch - a+)  ;c  ( UNDEF)
+
+( Scan while char at a doesn't equal ch and not at end of input.)
+code scan  ( end a ch - a+ trailing)  ;c  ( UNDEF)
+
+( XXX this code assumes skip and scan do -not- take end as a param)
+: (token)   ( last trailing - a u)
+   over  first @  - ( count)  >r
+   + ( last+trailing)  first @  swap first !  ( consume input)  r> ;
+
+: token  ( - a u)
+   first @ bl skip ( leading whitespace)  dup first !
+   ( first)   bl scan  (token) ;
+
+: parse  ( ch - a u)
+   first @  swap scan  (token) ;
+
+==========================================================================
+Multiply and divide support.
+
+  Our new primitives are:
+      * : n1 n2 - n3 [single-length product]
+   /mod : n1 n2 - mod quot
+  u/mod : u1 u2 - umod uquot
+
+  Any word whose name starts with 'u' is unsigned, both in its arguments
+  and its results; the others are signed.
+
+  */ and */mod no longer calculate a double-length intermediate product,
+  so beware!)
+==========================================================================
+code * ;c  ( UNDEF)
+code /mod ;c  ( UNDEF)
+code u/mod ;c  ( UNDEF)
+
+:  /      ( n1 n2 - quot)    /mod  nip ;
+: u/      ( u1 u2 - uquot)  u/mod  nip ;
+
+:  mod    ( n1 n2 - mod)     /mod  drop ;
+: umod    ( u1 u2 - umod)   u/mod  drop ;
+
+: */mod   ( n1 n2 n3 - mod quot)   >r  *  r>  /mod ;
+: */      ( n1 n2 n3 - n1*n2/n3)   */mod  nip ;
+
+==========================================================================
+Numeric conversion - input.
+==========================================================================
+variable radix   ( the current input & output number base)
+
+==========================================================================
+Numeric conversion - output.
+==========================================================================
+: >digit   ( n - ch)  ( convert 1 binary digit to char; hex to uppercase)
+   9 over u<  7 and +  [ char 0 ] +  ;
+
+: /digit   ( u - uquot umod)  radix @  u/mod swap ;
+
+: abs   ( n - |n|)   dup 0<  if  negate then ;
+
+( XXX Should we convert numbers by pushing digits onto the stack
+  instead?)
+
+33 aligned allot ram constant pad  ( 32 digits + sign + alignment)
+
+variable hld
+: hold   -1 hld +!  hld @ c! ;
+: <#     pad hld !  ;
+: #>     ( u - a #)  drop  hld @  pad over - ;
+: sign   ( n -)   0< if  [ char - ] hold  then  ;
+
+: #     ( u - u')   /digit  >digit  hold  ;
+: #s    ( u - 0)  begin  #  dup 0=  until  ;
+
+: (u.)    ( u - a #)   <# #s #> ;
+: u.      ( u -)       (u.)  type  space  ;
+
+: (.)     ( n - a #)   dup >r ( sign)  abs  <# #s  r> sign  #> ;
+: .       ( n -)       (.)  type  space ;
+
+0 .if
+( This should truncate to field length. Actually, it shouldn't. Does it?)
+( UNUSED)
+: truncating-field   ( a c field - a' field)   tuck swap -  ( a field field-c)
+   dup 0< if  drop ^  then  ?for  bl hold  next then  #>  ;
+.then
+
+( Non-truncating field.)
+: field   ( a c field - a c)  over - spaces  ;
+
+:  (.r)   ( n field - a #)   >r  (.)   r>  field  ;
+:   .r    (.r)  type  ;
+
+: (u.r)   ( u field - a #)   >r  (u.)  r>  field  ;
+:  u.r    (u.r)  type  ;
+
+( Useful shortcut.)
+: ?  @ .  ;
+
+==========================================================================
+Support words for compiling control structures.
+==========================================================================
 
 ( Mark a branch source for later fixup.)
 : mark>  ( - src)  here  0 , ;
@@ -497,29 +700,19 @@ comment =============
         =============
 
 : pause ;  ( not yet!)
-: emit   ( ch)
-   sp@  1  type  drop ;
-
 0 .if
 : key?   [ uart1 "14 + ] c@  1 and ;
 : key   begin  key? 0= while  pause  repeat  [ uart1 ] c@ ;
 .then
 
-( Let's try some console output.)
-: cr  13 emit  10 emit ;
-: space  32 emit ;
-
 ( Say hello!)
 : hi  ." Hello, world." ;
 
 ( Printing hex.)
-: >digit   ( n - ch)  ( convert 1 binary digit to char; hex to uppercase)
-   9 over u<  7 and +  [ char 0 ] +  ;
-
 : 16/mod   ( n - q r)  dup 4 u>>   swap 15 and ;
 
 : .   8 for  16/mod >digit swap  next  drop
-       8 for  emit  next  space ;
+      8 for  emit  next  space ;
 
 : ?a   dup 15 and 0= if  cr  dup .  space  then ;
 : @+   ( a - a+ n)  dup cell+  swap @ ;
