@@ -190,6 +190,8 @@ Definition of the low-level words - the Forth virtual machine.
 code ^ implements ^
    ip unnest   next  ;c
 
+code execute  ;c  ( UNDEF)
+code @execute  ;c  ( UNDEF)
 code +     r0 pop   top r0 top add   next  ;c
 code d+  ;c  ( UNDEF)
 code -     r0 pop   top r0 top sub   next  ;c
@@ -476,8 +478,10 @@ meta: konst   create ,  does> @ ;
 Token parsing.
 ==========================================================================
 ( XXX two variables, start and end?)
-2variable source  ( start, end)
-variable first
+-- 2variable source  ( start, end)
+variable start   ( points to first character of input stream)
+variable end     ( points past last character of input stream)
+variable first   ( points to first unconsumed character)
 
 ( XXX should skip and scan simply read and write first and end?)
 ( Skip while char at a equals ch and not at end of input.)
@@ -497,6 +501,30 @@ code scan  ( end a ch - a+ trailing)  ;c  ( UNDEF)
 
 : parse  ( ch - a u)
    first @  swap scan  (token) ;
+
+==========================================================================
+Dictionary search.
+==========================================================================
+( find takes a token [a u] and a chain [the head of a vocab word list] and
+  searches for the token on that chain. If found, it returns the address
+  of the code field of the word; if -not- found, it leaves the token [a u]
+  on the stack, and returns false [0].)
+
+: find  ( a u chain - a u 0 | cfa -1) ;  ( UNDEF)
+
+( Roll tokenizing and searching into one.)
+: token'  ( chain - a u 0 | cfa -1)   token  rot  find ;
+
+: abort ;  ( UNDEF ERROR)  ( see comments near the end of the file)
+: huh?  ( flag)  ( aborts if false)  if ^ then  abort ;  ( ERROR)
+
+: chain'  token'  huh?  ;
+-- : \chain  chain'  , ;  ( compile a word from a particular chain)
+
+: '  ( .forth. or current?)  current @ chain' ;
+target-compiler
+: [']  '  literal ;
+target
 
 ==========================================================================
   Go forth and multiply ... and divide.
@@ -554,6 +582,8 @@ variable dpl     ( decimal point location)
 : *digit  ( ud a digit - ud*base+digit a)
    swap >r ( a)  swap ( lo dig hi)  radix @ um* drop  rot ( dig hi*radix lo)
    radix @ um*  d+  r>  dpl @ 0< 1+  dpl +!  ;
+
+: number ;  ( UNDEF)
 
 ==========================================================================
 Numeric conversion - output.
@@ -616,23 +646,23 @@ Support words for compiling control structures.
 ==========================================================================
 
 ( Mark a branch source for later fixup.)
-: mark>  ( - src)  here  0 , ;
+: >mark  ( - src)  here  0 , ;
 
 ( Resolve a forward or backward jump, from src to dest.)
 ( When using absolute branch addresses, this is easy: just store dest at src.)
 : <resolve  ( dest src)  ! ;
-: resolve>  ( src dest)  swap <resolve ;
+: >resolve  ( src dest)  swap <resolve ;
 
 target-compiler
-: =if   ( - src)        compile (=0branch)  mark> ;
-: if    ( - src)        compile  (0branch)  mark> ;
-: then  ( src)          here resolve> ;
-: else  ( src0 - src1)  compile   (branch)  mark>  swap  \tc then ;
+: =if   ( - src)        compile (=0branch)  >mark ;
+: if    ( - src)        compile  (0branch)  >mark ;
+: then  ( src)          here >resolve ;
+: else  ( src0 - src1)  compile   (branch)  >mark  swap  \tc then ;
 
 : begin   ( - dest)  here ;
 : =until  ( dest -)       \tc =if  <resolve ;
 : until   ( dest -)        \tc if  <resolve ;
-: again   ( dest -)     compile   (branch)  mark>  <resolve ;
+: again   ( dest -)     compile   (branch)  >mark  <resolve ;
 : =while  ( dest - src dest)  \tc =if  swap ;
 : while   ( dest - src dest)   \tc if  swap ;
 : repeat  ( src dest -)   \tc again  \tc then ;
@@ -641,10 +671,117 @@ target-compiler
 ( n ?for .. next then   goes n times; 0 if n=0 )
 
 : for     ( - dest)      compile (for)          \tc begin ;
-: ?for    ( - src dest)  compile (?for)  mark>  \tc begin ;
-: next    ( dest -)      compile (next)  mark>  <resolve ;
+: ?for    ( - src dest)  compile (?for)  >mark  \tc begin ;
+: next    ( dest -)      compile (next)  >mark  <resolve ;
 
 target
+
+==========================================================================
+Interpreter and compiler.
+==========================================================================
+variable 'eat    ( how to consume a token)
+
+: ?stack ;  ( UNDEF)
+
+: interpret
+   begin  token  =while  'eat @execute  ?stack  repeat  [
+
+: evaluate  ( a u)
+   start @ >r  end @ >r  ( save source)
+   first @ >r            ( save our place in the input)
+   over +  ( start end)  end !  dup start !  ( source)  first !
+   interpret
+   r> first !  r> end !  r> start ! ;
+
+: interpret-token
+      .forth. find  if  execute  ^  then  number ;
+
+: compile-token
+   .compiler. find  if  execute  ^  then
+      .forth. find  if  ,        ^  then  number  literal ;
+
+: -]  ( start compiler)  [']   compile-token  'eat ! ;
+: ]   literal  -] ;
+
+target-compiler
+: [   ( exit compiler)   ['] interpret-token  'eat ! ;
+target
+
+==========================================================================
+Error handling, abort, and quit.
+==========================================================================
+
+.ifdef choose-your-poison
+
+-- -----------------------------------------------------------------------
+( fig)
+-- rp!  loads rp from r0 (a user variable)
+-- sp!  loads sp from s0 (ditto)
+
+: quit
+   \ [
+   begin  rp!  cr  query  interpret
+      state @  0= if  ."  Ok"  then   again  [
+
+: abort
+   sp!  decimal
+   cr  ." fig-FORTH circa 1980"
+   forth  quit  [
+
+( Cold start vector IP points to the beginning of abort.)
+
+-- -----------------------------------------------------------------------
+( Zen Forth)
+: ok?  state @ 0= if  ." Ok"  then ;
+
+( Assuming s0 and r0 are variables containing the bottom of sp and rp
+  stacks, resp. The idea here is that preset totally empties both stacks,
+  but reset only touches the r stack, and resets it leaving the topmost
+  entry alone. When abort calls quit, the topmost stack entry holds a
+  return address pointing at the call to gripe, so any after any call to
+  reset a word will return into abort, call gripe, and loop. It's pretty
+  clever. (Hack courtesy of Wil Baden)
+
+: reset             r>  r0 @ cell-  rp!  >r ;
+: preset  s0 @ sp!  r>  r0 @        rp!  >r ;
+
+: err  reset ;  ( returns to abort after the call to quit!)
+
+: quit
+   reset  begin  cr  query  space interpret  ok?  again  [
+
+( gripe assumes that token has been moved into ram - @ there - as a counted
+  string before processing. I don't do this - it's a lot of wasted work.)
+
+: gripe  ( a u)  ( default error handler)
+   there count type space ( token)  type ( msg) ;
+
+: abort   begin  preset  quit  gripe  again  [
+
+target-compiler
+( Target-resident compiling word)
+: abort"  \tc if  \tc "  compile err  \tc then ;
+target
+
+-- -----------------------------------------------------------------------
+( muFORTH)
+
+: .mode-prompt   state @  cell+  @execute ;  ( secondary prompt)
+: .Ok   ."  Ok"  ;
+: prompt   .Ok  .mode-prompt  ;  ( ` Ok' then sub-prompt)
+
+: quit
+   begin  cr  <stdin  >stdout  typing interpret  >stderr  prompt  again  [
+   ( infinite loop, until error... )
+
+: error  ( print error)  ;
+: carefully  catch  if  error ^  then ;
+
+: warm
+   >stdout command-line count  ['] interpret carefully
+   begin  ['] quit carefully  again  [
+
+.then
 
 comment ===================
         More Stack routines
