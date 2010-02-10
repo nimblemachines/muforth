@@ -8,9 +8,9 @@
 ( 2010-feb-03 - Heavily modified! and changed to DTC.)
 ( 2006-apr-01.)
 
-assembler
+__meta  ( fire up the metacompiler!!)
 
- hex
+assembler hex
 
 ( Register usage.)
 comment moved-from-assembler
@@ -43,7 +43,7 @@ macro: next  4 ip )+ pc ldr  ;
 
 ( capture compiles a branch-and-link -over- the following cell; it captures
   the address of the following cell in lr)
-macro: capture   here 8 \f +  bl  ;
+macro: capture   here [ 2 cells ] +  bl  ;
 
 ( lr@ loads the cell at lr into a reg)
 macro: lr@  ( reg)   0 lr +)  \f swap ( reg)  ldr  ;
@@ -55,12 +55,15 @@ macro: blr ( reg)  ( bl thru a register)
      pc lr mov  ( capture return address - beyond following instruction)
      ( reg) pc mov  ( jump via reg)  ;
 
+( Useful macro for the "prologue" of parent does> words: saves the lr to a
+  register, since the child will be doing a bl to the parent, and we don't
+  want to clobber the value in lr, which is a pointer to the child's data.)
+
+macro: save-lr  lr r0 mov  ;
 
 ==========================================================================
 Start of meta-compiled kernel
 ==========================================================================
-
-__meta
 
 target  ( compile into target vocab)
 
@@ -110,44 +113,36 @@ It makes sense to start with the meta-defining words so we can build
 interesting things other than just code words.
 
 We'll be defining the target-resident versions later in the kernel, which
-is why we define labels here for dovar, doconst, and docolon. We patch
-their values into the target-resident defining words when we define them.
+is why we define labels here for dovar, doconst, docolon, and dodoes. We
+patch their values into the target-resident defining words when we define
+them.
 ==========================================================================
 
-definer: create    new     ;code   label dovar
-                                   top push   lr top mov        next  ;c
-definer: constant  new  ,  ;code   label doconst
-                                   top push   0 lr +) top ldr   next  ;c
+meta: create    new
+                ;code  dovar    top push   lr top mov        next  ;c
 
-definer: variable   create         cell allot ;
-definer: 2variable  create      2 cells allot ;  ( XXX fix when [ & ] work)
+meta: constant  new  ,
+                ;code  doconst  top push   0 lr +) top ldr   next  ;c
 
-definer: :         new  -]  ;code  label docolon
-                                   ip nest   lr ip mov   next  ;c
+meta: variable   create          cell  allot ;
+meta: 2variable  create   [ 2 cells ]  allot ;
+
+meta: :   new   __meta-colon
+                ;code  docolon  ip nest   lr ip mov   next  ;c
+
+meta: <dodoes>  save-lr  code,
+                ;code   dodoes  ip nest   lr ip mov
+                                top push  r0 top mov   next  ;c
+
+definer: does>   <;code>  <dodoes>  __meta-colon ;
 
 ( Explanation of dodoes: child word executes bl to parent; lr points to
   child's data; parent saves lr in r0; executes bl to dodoes; lr points to
   list of forth words to execute.)
 
-( XXX This is subject to change, when I figure out a better way. Right now
-  the deep subtlety of the problem is making my head spin. ;-)
-
-( Note that this isn't -really- a CODE word. If this were an ITC forth,
-  we'd have to define this differently. We're using code here because it
-  does what we want: creates a new name, and turns on the assembler -
-  without compiling a code field.)
-
-code dodoes implements dodoes
-   ip nest   lr ip mov
-   top push  r0 top mov   next  ;c
-
 ==========================================================================
 Words to talk to the C environment.
 ==========================================================================
-
-code um*  ( n1 n2 - d3 )    st1 r0 ldr   r0 r1 r2 r3 umull   st1 r0 str  next ;c
-
-code  m*  ( n1 n2 - d3 )    st1 r0 ldr   top r0 top r0 smull   st1 r0 str  next ;c
 
 code entry
      { r1 r2 ( throw-away registers)
@@ -188,7 +183,6 @@ code readline  ( ???)  next  ;c
 code getfile  ( ???)  next  ;c
 
 
-
 ==========================================================================
 Definition of the low-level words - the Forth virtual machine.
 ==========================================================================
@@ -221,20 +215,22 @@ code >r   top nest   top pop      next  ;c
 code r>   top push   top unnest   next  ;c
 code r@   top push   0 rp +) top ldr   next  ;c
 
-( XXX Is this right?)
-code rot.asm  ( r1 r0 top - r0 top r1)
+.ifndef rot-in-forth
+
+code rot  ( r1 r0 top - r0 top r1)
    { r1 r0  } sp ldm ia   r0 lr mov
    { lr top } sp stm ia
    r1 top mov next  ;c
 
-( XXX Is this right?)
-code -rot.asm  ( r1 r0 top - top r1 r0)
+code -rot  ( r1 r0 top - top r1 r0)
    { r1 r0  } sp ldm ia
    { top r1 } sp stm ia
    r0 top mov next ;c
 
+.else
 :  rot   >r swap  r> swap ;
 : -rot   swap >r  swap r> ;
+.then
 
 code <<       r0 pop   r0 top lsl top mov   next  ;c
 code >>       r0 pop   r0 top asr top mov   next  ;c
@@ -468,13 +464,13 @@ Target-resident defining words.
 target-compiler
 : does>   compile (;code)
           [ here  assemble  lr r0 mov  ;c  cell negate allot  @ ] ,
-          code,  [ dodoes \f @ ] last @ patch ;
+          code,  [ dodoes ] last @ patch ;
 
 target
 
-( Let's test the meta-compiler does>.)
-definer: konst   create ,  does> @ ;
-"5600 konst foobar
+( Test of nifty dodoes magic.)
+meta: konst   create ,  does> @ ;
+"5600 konst yippee
 
 ==========================================================================
 Token parsing.
@@ -522,8 +518,12 @@ code scan  ( end a ch - a+ trailing)  ;c  ( UNDEF)
   why not? ;-)
 
 ==========================================================================
-code um*     ( n1 n2 - ud)   st1 r0 ldr   top r0 top r0 umull   st1 r0 str  next ;c
-code  m*     ( n1 n2 - d)    st1 r0 ldr   top r0 top r0 smull   st1 r0 str  next ;c
+code um*     ( n1 n2 - ud)
+   st1 r0 ldr   top r0 top r0 umull   st1 r0 str  next ;c
+
+code  m*     ( n1 n2 - d)
+   st1 r0 ldr   top r0 top r0 smull   st1 r0 str  next ;c
+
 code um/mod  ( ud  u - urem uquot)  ;c  ( UNDEF)
 code fm/mod  (  d  n - mod quot)  ;c  ( UNDEF)
 
@@ -569,7 +569,7 @@ Numeric conversion - output.
   instead?)
 
 ( Longest number we can convert is a negative base-2 double-number.)
-65 aligned allot ram constant pad  ( 64 digits + sign + alignment)
+65 aligned allot here constant pad  ( 64 digits + sign + alignment)
 
 variable hld
 : hold   -1 hld +!  hld @ c! ;
@@ -808,8 +808,6 @@ comment ===================
   1 2 3 . . . cr
   1 2 3 rot       . . .  ." <- should be 1 3 2" cr
   1 2 3 -rot      . . .  ." <- should be 2 1 3" cr
-  1 2 3 rot.asm   . . .  ." <- should be 1 3 2 (rot in asm)" cr
-  1 2 3 -rot.asm  . . .  ." <- should be 2 1 3 (-rot in asm)" cr
 ;
 
 : print-eq    ( d -- )

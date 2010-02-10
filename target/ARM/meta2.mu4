@@ -6,40 +6,10 @@
 
 " ARM meta compiler (two) "  file[#
 
-forth
-
-( Compile a linked name field into the target image.)
-
-( The distinction between last and last-code is a bit subtle. last captures
-  the cfa of the last word defined, no matter what kind of word it was.
-  last-code captures the cfa of code fields that have a "bl" instruction
-  compiled there, and that can be possibly "repointed" by a later ;code or
-  does>. Keeping them separate makes me feel better.)
-
-variable last      ( cfa of last word defined)
-variable last-code ( for ;code and does> to fix up)
-2variable last-link ( address of vocab, link to newest word)
-
--- : show   last-link 2@ ! ( finally link in last word) ;
-
-( code, doesn't bother to compile a bl since we're doing to patch the code
-  field later. We just need to make room and to set last-code so patch can
-  find us.)
-
-: code,   \m here last-code !  ( make a code field)  0 \m , ;
-: token,  ( a u)  dup 1+ \m aligned  \m allot  ( room for name+len+padding)
-          dup \m here 1- \m c! ( len)  \m here over 1+ -  image+ swap cmove ;
-
-: 'link   current @  suffix>link cell+  ( parallel link field) ;
-: link,   \m here  'link  dup  @  \m z,  !  ( last-link 2! ) ;
-
-: name,  ( a u)  token,  link,  \m here last ! ;
-
-( Create an assembler macro.)
-: macro:   new <:>  __macro ;
+meta decimal
 
 ( Forward references for fundamental words.)
-meta
+
 ( These are pointers to target CODE words.)
 variable (branch)
 variable (0branch)
@@ -53,162 +23,52 @@ variable (")
 variable type
 variable (;code)   ( the target-resident version!)
 
-( These are simply pointers to pieces of target code.)
-variable dodoes
-
-( At metacompile time, do something with target words. We can't -execute-
-  them, because they are self-compiling. However, we can ' them and pull
-  out their guts, if we know what we're doing...)
-
-: '   ( - target-cfa)
-      .target. chain' >body @ ;  ( can't execute them; they are self-compiling)
-: addr   \m '  \m cell+ ;  ( find word, skip cfa, return pfa)
-: value  \m addr  \m @ ;   ( find word, skip cfa, read out value)
-
-: literal   \m lit @  \m a,  \m , ;
-.meta. chain' literal  \m 'literal !  ( patch colon compiler)
-             ' number  \m 'number  !  ( ditto - use host's number)
-
-: assemble     pair off  __asm ;  ( init and run assembler)
-: -]   __meta-compile ;  ( run colon meta-compiler)
-: ]    \m literal  \m -] ;  ( make literal and run compiler)
-: equ   current preserve  meta constant ;
-
-: name   token  2dup name,  ( compile name into image)
-         \m here  -rot (constant)  ( NOTE: uses current unchanged)
-         does> ( target-cfa)  ( compile itself!)  \m a, ;
-
-: label     \m here  \m equ  \m assemble ;
-: code      \m name  \m assemble ;
-: new       \m name  code, ;  ( for words with code fields)
-
-( looks up a forward-reference variable, executes it to push its address,
-  and stores the address of the last cfa there.)
-
-: lookup  ( look up next token as forward-ref variable or label)
-   .meta. chain' execute ( get addr) ;
-
-: implements  last @  \m lookup  ! ;
-
-( Exiting the meta-compiler.)
-meta-compiler
-: [    __meta ;
-: ^    \m ^ @  \m a, ;
-: ;    \mc ^  \mc [  ;
-
-( Support for making new defining words.)
 forth
-( patch rewrites the bl instruction at cfa to call to 'code.)
-: patch     ( 'code cfa)  tuck >branch-offset  "eb000000 or ( op)
-            swap \m ! ;
 
-( This word, which is followed inline by a target cfa constant, patches the
-  last code word compiled with a bl to the inline target cfa. It
-  essentially "repoints" previously defined words - defined by create,
-  variable, constant, etc - to point to new code. It gets called indirectly
-  by both ;code and does>.)
+( Define useful colon compilers:
+      meta:  for defining new target defining words!
+     macro:  for defining assembler macros
+  compiler:  for defining meta-compiler words
 
-: (;code)   pop @  last-code @  patch ;
+  We define the another colon compiler - the actual target colon - in the
+  kernel, using our meta-defining words!)
 
-( <;code> is used to switch from compiling -host- code [that will later run
-  on the host, and build the target word] to compiling -target- code, that
-  will run when words defined by this defining word later execute. In order
-  to connect the two worlds, and to be able to patch up code fields to
-  point to this newly-defined behaviour, <;code> captures the target's
-  "here" value.  Remember, we are about to start compiling target code at
-  "here".
+meta
 
-  Even though the host's colon compiler - really the __definer compiler -
-  is running when <;code> executes - it is called from does> and ;code,
-  which are both .compiler. words - it doesn't bother to "stop" the host's
-  colon, since both does> and ;code immmediately switch to another compiler
-  - or assembler! - loop.)
+: meta:      current preserve  meta     :  __definer ;
+: definer:   current preserve  definer  :  __definer ;
 
-: <;code>  compile (;code)  \m here  h, ;
+forth
 
-macro: save-lr  lr r0 mov  ;
+: macro:     current preserve  meta     :  __macro ;
 
+( Making [ and ] work, finally.)
+variable saved-state      ( interpreter mode we came from)
+variable which-literal    ( the kind of literal to make when ] executes)
+
+meta
+
+: -]   saved-state @  state ! ;  ( return to saved state)
+:  ]   \m -]  which-literal @execute ;
+
+forth
+
+: _[   ( 'literal)
+        state @  saved-state !    ( so we know how to get back)
+        which-literal !           ( so ] knows how to make a literal)
+        __meta ;                  ( switch to __meta, not to host forth)
+
+( Now define the different ways of leaving a colon compiler.)
 definer
-: does>   <;code>  save-lr  \m dodoes @ \a bl  \m -] ( start meta-colon) ;
-: ;code   <;code>  \m assemble ( start assembler) ;
-: ;       \ ^  \mc [  ( exit back to __meta, not to host forth) ;
+: [          ['] literal  _[ ;   ( when we return, make a host literal)
+: ;    \ ^   __meta ;
 
 meta-compiler
-( This version of ;code compiles code an the target, for target-resident
-  defining words. Since we've already defined the basic code sequences for
-  variables, constants, and colon words, this ;code fetches the value from
-  a label, and compiles code to fix up the last cfa, followed by the
-  variable. Very much like what we do above for the host, but this time it
-  all lives on the target.)
-
-: ;code   \m (;code) @  \m a,  \m lookup  \m a,  __meta ;
-
-meta
-( Now we've got all the mechanics defined. We can define a word that
-  defines new target defining words!)
-: definer:  current preserve  meta  new <:>  __definer ;
-
-( It's nice to where a code field is pointing. Actually this takes the
-  address of any b or bl instruction and shows its destination - with some
-  junk in the high-order bits that can be ignored.)
-: .code  ( a)  dup \m @  2 +  2 <<  +  u. ;
-
-assembler
-: ;c   \mc [  ;  ( return to __meta)
-
-
-( Compiling strings.)
-meta
-( Compile a counted string, without a zero terminator.)
-: string,  ( a u)  dup \m c, ( len)
-           \m here  over \m allot  \m align
-           image+ swap cmove ;
-
-meta-compiler
-: ."   \m (") @  \m a,                   ( compile (")
-       char " parse  ( a u)  \m string,  ( compile the counted string)
-       \m type @  \m a, ;                ( compile type)
-
-: "    \m (") @  \m a,                    ( compile (")
-       char " parse  ( a u)  \m string, ; ( compile the counted string)
-
-
-( Control structures.)
-
-( Resolve a forward or backward jump, from src to dest.)
-( When using absolute branch addresses, this is easy: just store dest at src.)
-
-( NOTE: when using absolute addresses for branches, we must mark them as
-  needing relocation, so we use a, . If instead we used relative branch
-  addresses we should use , .)
-
-meta
-: <resolve  ( dest src)  \m ! ;
-: resolve>  ( src dest)  swap  \m <resolve ;
-: mark>   \m here  0 \m a, ;  ( mark addresss as relocating!!)
-
-meta-compiler
-: =if   ( - src)        \m (=0branch) @  \m a,  \m mark> ;
-: if    ( - src)        \m  (0branch) @  \m a,  \m mark> ;
-: then  ( src)          \m here \m resolve> ;
-: else  ( src0 - src1)  \m   (branch) @  \m a,  \m mark>
-                        swap  \mc then ;
-
-: begin   ( - dest)  \m here ;
-: =until  ( dest -)  \mc =if  \m <resolve ;
-: until   ( dest -)   \mc if  \m <resolve ;
-: again   ( dest -)  \m (branch) @  \m a,  \m mark>  \m <resolve ;
-: =while  ( dest - src dest)  \mc =if  swap ;
-: while   ( dest - src dest)   \mc if  swap ;
-: repeat  ( src dest -)   \mc again  \mc then ;
-
-( n for .. next         goes n times; 4 billion+ if n=0 )
-( n ?for .. next then   goes n times; 0 if n=0 )
-
-: for     ( - dest)      \m  (for) @  \m a,            \mc begin ;
-: ?for    ( - src dest)  \m (?for) @  \m a,  \m mark>  \mc begin ;
-: next    ( dest -)      \m (next) @  \m a,  \m mark>  \m <resolve ;
+: [    'target-literal @  _[ ;   ( when we return, make a target literal)
+: ^    \m ^ @  \m a, ;   ( compile target's ^ - EXIT)
+: ;    \mc ^  __meta ;
 
 forth
 
 #]file
+
