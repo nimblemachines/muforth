@@ -67,7 +67,13 @@ forth hex
 : op^  (s n)  (w twiddle some bits in op)  op \m @       xor  op \m ! ;
 
 : >cond   #28 << ;
-: icond   >cond constant   does>  [ 0f >cond ] op0 op1 ;
+
+( We only clear the top three bits; the lowest bit is positive/negative
+  logic. By setting it - with "ne" below - and then xoring in a condition,
+  we can negate the logic of the condition. "if" and "while" in the control
+  structure code do precisely this.)
+
+: icond   >cond constant   does>  [ 0e >cond ] op0 op^ ;
 
 assembler
  00 icond eq   00 icond 0=
@@ -295,6 +301,41 @@ assembler
 012fff30 brr blx
 forth
 
+
+( Okay, now that we've got conditions and branches sorted, let's create
+  some control structure words! Remember that all conditions are
+  -postfix-.)
+
+( "again" and "then" will generate b - branch - instructions with condition
+  0e - always. "if" and "while" will set the condition to 01 [ne], which
+  will negate the sense of the [postfix] condition later applied to the if
+  or while.)
+
+( Create an unconditional - always - branch with empty offset, and leave
+  a pointer to it on stack)
+
+: >mark-asm  ( - src)  \m here  [ 2 cells ] +  b ;
+
+: <resolve-asm  ( dest src)  tuck swap  >branch-offset  ( src bits)
+                             over \m @  or  swap \m ! ;
+
+: >resolve-asm  ( src dest)  swap <resolve-asm ;
+
+assembler
+: then  ( src)     \m here  >resolve-asm ;
+: if    ( - src)   >mark-asm  \a ne ( invert cond) ;
+
+: else  ( src0 - src1)  >mark-asm  swap  \a then ;
+
+: while   ( dest - src dest)   \a if  swap ;
+
+: begin   ( - dest)   \m here ;
+: again   ( dest)     >mark-asm  <resolve-asm ;
+: until   ( dest)      \a again  \a ne ;  ( invert cond)
+: repeat  ( src dest)  \a again  \a then ;
+forth
+
+
 comment load-address
 
   Before we head into ldr & str let's define adr, which loads a pc-relative
@@ -317,6 +358,7 @@ assembler
    dup 0<  if  negate  \a #  \a pc  rot  \a sub  ^  then
                        \a #  \a pc  rot  \a add ;
 forth
+
 
 comment %%
   Load, Store. LDR, STR. More than a little bit icky. The instruction formats
