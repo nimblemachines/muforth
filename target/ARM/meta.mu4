@@ -4,9 +4,101 @@
   reversed. (See the file COPYRIGHT for details.)
 
 
-" ARM meta compiler (two) "  file[#
+" ARM meta compiler (main) "  file[#
 
 forth decimal
+
+( The various token consumers for each mode.)
+
+( Note: There is a subtle difference between the search orders for
+  assembling and making assembler macros. When compiling macros we need the
+  special ; from .definer. that exits back to __meta, so we search .definer.
+  first. We also need comment words and such, so we have to put .compiler.
+  on the menu. But we search it -after- we search .assembler.
+
+  We do this because .assembler. contains words to build control structures
+  - if/then, begin/while/repeat - in assembler. We want these versions to
+  "trump" the ones that the host colon would normally find.
+
+  __asm mode will find the assembler versions just fine; it doesn't look in
+  .compiler. at all, so there is no confusion. But when making a macro, since
+  .compiler. is searched -after- .assembler. , to get to the host colon
+  compiler's if/then and friends you have to use \ .)
+
+-:  ."  (assembling)"  ;
+-:
+    .assembler. find  if  execute  ^  then
+       .labels. find  if  execute  ^  then  ( equates are in .labels.)
+         .meta. find  if  execute  ^  then
+        .forth. find  if  execute  ^  then  ( utility words in .forth.)
+                                            number ;
+mode __asm
+
+
+-:  ."  (compiling an assembler macro)"  ;
+-:
+    .assembler. find  if  compile, ^  then  ( the assembler's if/then/begin ...)
+     .compiler. find  if  execute  ^  then  ( ... trump the compiler's)
+         .meta. find  if  compile, ^  then
+        .forth. find  if  compile, ^  then  ( utility words in .forth.)
+                                            number literal ;
+mode __macro
+
+
+( The meta-interpreter. We're in this mode when we're building the target
+  image, and when in between [ and ] when running the target colon
+  compiler.)
+
+-:  ."  (meta)"  ;
+-:
+         .meta. find  if  execute  ^  then
+        .forth. find  if  execute  ^  then
+                                            number ;
+mode __meta
+
+
+( __definer is for compiling new words that are part of the meta-compiler.
+  __definer is to __meta as __macro is to __asm.)
+
+-:  ."  (compiling a meta defining word)" ;
+-:
+      .definer. find  if  execute  ^  then  ( special compiler words ...)
+     .compiler. find  if  execute  ^  then  ( ... trump the host compiler's)
+         .meta. find  if  compile, ^  then
+        .forth. find  if  compile, ^  then  ( utility words in .forth.)
+                                            number literal ;
+mode __definer
+
+
+variable 'target-number   ( convert token to a number, specific to target)
+variable 'target-literal  ( compile a target literal)
+
+( Finally, we have the definition of the meta-compiler's colon compiler.)
+
+( Execution behaviour of .target. words is to compile themselves!)
+-:  ."  (compiling a target colon word)"  ;
+-:  .meta-compiler. find  if  execute  ^  then
+           .target. find  if  execute  ^  then
+           'target-number @execute  'target-literal @execute ;
+mode __meta-colon
+
+
+( Common things we'll always want when meta-colon compiling.)
+meta-compiler
+: (     \f ( ;   ( comments are nice!)
+: --    \f -- ;  ( ditto!)
+
+: .if      \ .if   ;  ( and conditional compilation is nice too)
+: .else    \ .else ;
+: .then    \ .then ;
+: .ifdef   \ .ifdef ;
+: .ifndef  \ .ifndef ;
+: .def     \ .def ;
+
+meta
+: {    \ [ ;  ( escape back to the host forth)
+forth
+: }    __meta ;  ( return to meta)
 
 ( Forward references for fundamental words.)
 
