@@ -1,0 +1,75 @@
+( This file is part of muFORTH: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2010 David Frech. All rights reserved, and all wrongs
+  reversed. (See the file COPYRIGHT for details.)
+
+" ARM meta compiler (chains) "  file[#
+
+forth  decimal
+
+( Metacompiler vocabs)
+
+( .meta. is where meta-compiler specific words go - esp if they would
+  otherwise shadow a host word of the same name. @ is a good example - the
+  meta version write into the target image, using a local, image-relative
+  address. .meta. contains special versions of : to compile macros [though
+  I'm thinking of deprecating or removing this] and to define new defining
+  words during target compilation. It will also, once the kernel starts
+  loading, contain a : that compiles target colon words!
+
+  .assembler. contains definitions of instructions, registers, addressing
+  modes, and words to build control structures. It is searched when
+  building code words, and also when compiling macros.
+
+  .labels. contains any labels defined during assembly - these are
+  constants - and also a handful of variables that refer to key pieces of
+  target infrastructure that won't get defined until the kernel is loaded.
+  Having these as forward-reference variables allows us to write the
+  metacompiler using variable references; compilation of the kernel will
+  patch these with actual addresses of target code.
+
+  Labels used to be in .meta. but having them separate is cleaner and
+  safer.
+
+  .meta-compiler. is like .compiler. but for the -target- colon compiler.
+  This will contain target versions of [ ; if then begin while etc. It is
+  sealed since we don't want to get any host words by accident.)
+
+sealed .meta.             ( the `meta' version of .forth.)
+sealed .meta-compiler.    ( the `meta' version of .compiler.)
+sealed .assembler.        ( the host-resident target assembler)
+sealed .labels.           ( labels & forward referenc variables for target)
+
+( Chains created with parallel have an extra field, which points directly
+  into the meta-compiled at the heads compiled there, rather than linking
+  to the heads in muFORTH's dictionary.)
+
+: parallel  sealed  0 , ( parallel link field) ;
+
+parallel .target.           ( the target words - like `forth' on the host)
+parallel .target-compiler.  ( the target-resident compiler words -
+                              .target-compiler. is to .target.
+                                 as  .compiler. is to .forth. )
+
+: meta                        .meta. definitions ;
+: meta-compiler      .meta-compiler. definitions ;
+: assembler              .assembler. definitions ;
+: labels                    .labels. definitions ;
+: target                    .target. definitions ;
+: target-compiler  .target-compiler. definitions ;
+
+compiler
+: \m   ( compile from meta)                        .meta. \chain ;
+: \mc  ( compile from meta-compiler)      .meta-compiler. \chain ;
+: \a   ( compile from assembler)              .assembler. \chain ;
+-- : \t   ( compile from target)                    .target. \chain ;
+meta-compiler
+: \tc  ( compile from target-compiler)  .target-compiler. \chain ;
+forth
+
+meta
+: \f               ' execute ;  ( execute a forth word from meta)
+forth
+: \m   .meta. chain' execute ;  ( execute a meta word from forth)
+
+#]file

@@ -28,11 +28,11 @@ moved-from-assembler
 
 decimal
 
-macro: push  ( r)  4 sp -) !  \f swap  str  ;
-macro: pop   ( r)  4 sp )+    \f swap  ldr  ;
+macro: push  ( r)  4 sp -) !  swap  str  ;
+macro: pop   ( r)  4 sp )+    swap  ldr  ;
 
-macro: nest    ( r)  4 rp -) !  \f swap  str  ;
-macro: unnest  ( r)  4 rp )+    \f swap  ldr  ;
+macro: nest    ( r)  4 rp -) !  swap  str  ;
+macro: unnest  ( r)  4 rp )+    swap  ldr  ;
 
 ( top is considered st0)
 macro: st1   0 sp +)  ;  ( address the second item on the stack)
@@ -46,10 +46,10 @@ macro: next  4 ip )+ pc ldr  ;
 macro: capture   here [ 2 cells ] +  bl  ;
 
 ( lr@ loads the cell at lr into a reg)
-macro: lr@  ( reg)   0 lr +)  \f swap ( reg)  ldr  ;
+macro: lr@  ( reg)   0 lr +)  swap ( reg)  ldr  ;
 
-macro: load-relocated  ( lit reg)   capture   \f swap a, ( lit)   lr@  ;
-macro: load-literal    ( lit reg)   capture   \f swap ,  ( lit)   lr@  ;
+macro: load-relocated  ( lit reg)   capture   swap  a, ( lit)   lr@  ;
+macro: load-literal    ( lit reg)   capture   swap  ,  ( lit)   lr@  ;
 
 macro: blr ( reg)  ( bl thru a register)
      pc lr mov  ( capture return address - beyond following instruction)
@@ -59,7 +59,31 @@ macro: blr ( reg)  ( bl thru a register)
   register, since the child will be doing a bl to the parent, and we don't
   want to clobber the value in lr, which is a pointer to the child's data.)
 
+meta
+
 macro: save-lr  lr r0 mov  ;
+
+( Macros for C calling convention. call does all the work. We have to \
+  prefix the if/then's to get the host .compiler. versions, and \f prefix
+  several words to make sure we're getting the Forth word, and not the
+  assembler one.)
+
+assembler
+
+macro: pops  =if  \f 0<  if  top push   ^  then
+                             top pop    ^  then  \f drop ;
+
+macro: takes  ( #input - #pops-performed)
+   =if  1- =if  ( 2 params)  top r1 mov   r0 pop  ( 1)  ^  then
+                ( 1 param)   top r0 mov           ( 0)  ^  then
+  ( 0) ;
+
+macro: leaves  ( #output)   if  r0 top mov  then ;
+
+macro: call ( in out)  2dup - \f push ( #pops needed)
+   swap takes  ( popped)  r3 blr  \f pop  swap - ( #pops left to do)
+   pops  leaves ;
+
 
 ==========================================================================
 Start of meta-compiled kernel
@@ -127,14 +151,14 @@ meta: constant  new  ,
 meta: variable   create          cell  allot ;
 meta: 2variable  create   [ 2 cells ]  allot ;
 
-meta: :   new   __meta-colon
+meta: :   new   __target-colon
                 ;code  docolon  ip nest   lr ip mov   next  ;c
 
 meta: <dodoes>  save-lr  code,
                 ;code   dodoes  ip nest   lr ip mov
                                 top push  r0 top mov   next  ;c
 
-definer: does>   <;code>  <dodoes>  __meta-colon ;
+compiler: does>   <;code>  <dodoes>  __target-colon ;
 
 ( Explanation of dodoes: child word executes bl to parent; lr points to
   child's data; parent saves lr in r0; executes bl to dodoes; lr points to
@@ -144,11 +168,12 @@ definer: does>   <;code>  <dodoes>  __meta-colon ;
 Words to talk to the C environment.
 ==========================================================================
 
+here "0decafbad ,
+
 code entry
      { r1 r2 ( throw-away registers)
        ip rp top sp } r0 ldm
-     "0decafbad r3 load-literal  r3 push
-     next
+     ( const) pc) r3 ldr   r3 push   next  ;c
 
 code bye
    ( 0   if        1         then   >r1       )
@@ -159,25 +184,20 @@ code bye
      But we do this all in assembler using r3 as a base
      and then load multiple into r0 pc )
 
-     exit-context r3 load-relocated
+     exit-context r3 adr  ( load address of exit-context)
      { r0 pc } r3 ldm  ;c
 
 code type ( a u -- )   implements type
-     'type r3 load-relocated  ( r3 points the address of type)
-     0 r3 +) r2 ldr           ( r2 now contains the address of type)
-     top r1 mov               ( r1 == u)
-     r0 pop                   ( r0 == a)
-     r2 blx                   ( call type)
-     top pop                  ( load top)
-     next  ;c
+     'type pc) r3 ldr   ( fetch address of routine from 'type)
+     2 0 call   next  ;c
 
 code ?key ( - f)
-     '?key r3 load-relocated
+     '?key pc) r3 ldr  ( fetch address of routine from '?key)
 label key-call
-     r3 blr   top push   r0 top mov   next  ;c
+     0 1 call   next  ;c
 
 code key ( - ch)
-     'key r3 load-relocated   key-call b  ;c
+     'key pc) r3 ldr   key-call b  ;c
 
 code readline  ( ???)  next  ;c
 code getfile  ( ???)  next  ;c
@@ -190,6 +210,8 @@ Definition of the low-level words - the Forth virtual machine.
 code ^ implements ^
    ip unnest   next  ;c
 
+code execute  ;c  ( UNDEF)
+code @execute  ;c  ( UNDEF)
 code +     r0 pop   top r0 top add   next  ;c
 code d+  ;c  ( UNDEF)
 code -     r0 pop   top r0 top sub   next  ;c
@@ -464,7 +486,7 @@ Target-resident defining words.
 target-compiler
 : does>   compile (;code)
           [ here  assemble  lr r0 mov  ;c  cell negate allot  @ ] ,
-          code,  [ dodoes ] last @ patch ;
+          code,  [ lookup dodoes ] last @ patch ;
 
 target
 
@@ -476,8 +498,10 @@ meta: konst   create ,  does> @ ;
 Token parsing.
 ==========================================================================
 ( XXX two variables, start and end?)
-2variable source  ( start, end)
-variable first
+-- 2variable source  ( start, end)
+variable start   ( points to first character of input stream)
+variable end     ( points past last character of input stream)
+variable first   ( points to first unconsumed character)
 
 ( XXX should skip and scan simply read and write first and end?)
 ( Skip while char at a equals ch and not at end of input.)
@@ -497,6 +521,30 @@ code scan  ( end a ch - a+ trailing)  ;c  ( UNDEF)
 
 : parse  ( ch - a u)
    first @  swap scan  (token) ;
+
+==========================================================================
+Dictionary search.
+==========================================================================
+( find takes a token [a u] and a chain [the head of a vocab word list] and
+  searches for the token on that chain. If found, it returns the address
+  of the code field of the word; if -not- found, it leaves the token [a u]
+  on the stack, and returns false [0].)
+
+: find  ( a u chain - a u 0 | cfa -1) ;  ( UNDEF)
+
+( Roll tokenizing and searching into one.)
+: token'  ( chain - a u 0 | cfa -1)   token  rot  find ;
+
+: abort ;  ( UNDEF ERROR)  ( see comments near the end of the file)
+: huh?  ( flag)  ( aborts if false)  if ^ then  abort ;  ( ERROR)
+
+: chain'  token'  huh?  ;
+-- : \chain  chain'  , ;  ( compile a word from a particular chain)
+
+: '  ( .forth. or current?)  current @ chain' ;
+target-compiler
+: [']  '  literal ;
+target
 
 ==========================================================================
   Go forth and multiply ... and divide.
@@ -600,6 +648,8 @@ variable dpl     ( decimal point location)
    swap >r ( a)  swap ( lo dig hi)  radix @ um* drop  rot ( dig hi*radix lo)
    radix @ um*  d+  r>  dpl @ 0< 1+  dpl +!  ;
 
+: number ;  ( UNDEF)
+
 ==========================================================================
 Numeric conversion - output.
 ==========================================================================
@@ -661,23 +711,23 @@ Support words for compiling control structures.
 ==========================================================================
 
 ( Mark a branch source for later fixup.)
-: mark>  ( - src)  here  0 , ;
+: >mark  ( - src)  here  0 , ;
 
 ( Resolve a forward or backward jump, from src to dest.)
 ( When using absolute branch addresses, this is easy: just store dest at src.)
 : <resolve  ( dest src)  ! ;
-: resolve>  ( src dest)  swap <resolve ;
+: >resolve  ( src dest)  swap <resolve ;
 
 target-compiler
-: =if   ( - src)        compile (=0branch)  mark> ;
-: if    ( - src)        compile  (0branch)  mark> ;
-: then  ( src)          here resolve> ;
-: else  ( src0 - src1)  compile   (branch)  mark>  swap  \tc then ;
+: =if   ( - src)        compile (=0branch)  >mark ;
+: if    ( - src)        compile  (0branch)  >mark ;
+: then  ( src)          here >resolve ;
+: else  ( src0 - src1)  compile   (branch)  >mark  swap  \tc then ;
 
 : begin   ( - dest)  here ;
 : =until  ( dest -)       \tc =if  <resolve ;
 : until   ( dest -)        \tc if  <resolve ;
-: again   ( dest -)     compile   (branch)  mark>  <resolve ;
+: again   ( dest -)     compile   (branch)  >mark  <resolve ;
 : =while  ( dest - src dest)  \tc =if  swap ;
 : while   ( dest - src dest)   \tc if  swap ;
 : repeat  ( src dest -)   \tc again  \tc then ;
@@ -686,10 +736,117 @@ target-compiler
 ( n ?for .. next then   goes n times; 0 if n=0 )
 
 : for     ( - dest)      compile (for)          \tc begin ;
-: ?for    ( - src dest)  compile (?for)  mark>  \tc begin ;
-: next    ( dest -)      compile (next)  mark>  <resolve ;
+: ?for    ( - src dest)  compile (?for)  >mark  \tc begin ;
+: next    ( dest -)      compile (next)  >mark  <resolve ;
 
 target
+
+==========================================================================
+Interpreter and compiler.
+==========================================================================
+variable 'eat    ( how to consume a token)
+
+: ?stack ;  ( UNDEF)
+
+: interpret
+   begin  token  =while  'eat @execute  ?stack  repeat  [
+
+: evaluate  ( a u)
+   start @ >r  end @ >r  ( save source)
+   first @ >r            ( save our place in the input)
+   over +  ( start end)  end !  dup start !  ( source)  first !
+   interpret
+   r> first !  r> end !  r> start ! ;
+
+: interpret-token
+      .forth. find  if  execute  ^  then  number ;
+
+: compile-token
+   .compiler. find  if  execute  ^  then
+      .forth. find  if  ,        ^  then  number  literal ;
+
+: -]  ( start compiler)  [']   compile-token  'eat ! ;
+: ]   literal  -] ;
+
+target-compiler
+: [   ( exit compiler)   ['] interpret-token  'eat ! ;
+target
+
+==========================================================================
+Error handling, abort, and quit.
+==========================================================================
+
+.ifdef choose-your-poison
+
+-- -----------------------------------------------------------------------
+( fig)
+-- rp!  loads rp from r0 (a user variable)
+-- sp!  loads sp from s0 (ditto)
+
+: quit
+   \ [
+   begin  rp!  cr  query  interpret
+      state @  0= if  ."  Ok"  then   again  [
+
+: abort
+   sp!  decimal
+   cr  ." fig-FORTH circa 1980"
+   forth  quit  [
+
+( Cold start vector IP points to the beginning of abort.)
+
+-- -----------------------------------------------------------------------
+( Zen Forth)
+: ok?  state @ 0= if  ." Ok"  then ;
+
+( Assuming s0 and r0 are variables containing the bottom of sp and rp
+  stacks, resp. The idea here is that preset totally empties both stacks,
+  but reset only touches the r stack, and resets it leaving the topmost
+  entry alone. When abort calls quit, the topmost stack entry holds a
+  return address pointing at the call to gripe, so any after any call to
+  reset a word will return into abort, call gripe, and loop. It's pretty
+  clever. (Hack courtesy of Wil Baden)
+
+: reset             r>  r0 @ cell-  rp!  >r ;
+: preset  s0 @ sp!  r>  r0 @        rp!  >r ;
+
+: err  reset ;  ( returns to abort after the call to quit!)
+
+: quit
+   reset  begin  cr  query  space interpret  ok?  again  [
+
+( gripe assumes that token has been moved into ram - @ there - as a counted
+  string before processing. I don't do this - it's a lot of wasted work.)
+
+: gripe  ( a u)  ( default error handler)
+   there count type space ( token)  type ( msg) ;
+
+: abort   begin  preset  quit  gripe  again  [
+
+target-compiler
+( Target-resident compiling word)
+: abort"  \tc if  \tc "  compile err  \tc then ;
+target
+
+-- -----------------------------------------------------------------------
+( muFORTH)
+
+: .mode-prompt   state @  cell+  @execute ;  ( secondary prompt)
+: .Ok   ."  Ok"  ;
+: prompt   .Ok  .mode-prompt  ;  ( ` Ok' then sub-prompt)
+
+: quit
+   begin  cr  <stdin  >stdout  typing interpret  >stderr  prompt  again  [
+   ( infinite loop, until error... )
+
+: error  ( print error)  ;
+: carefully  catch  if  error ^  then ;
+
+: warm
+   >stdout command-line count  ['] interpret carefully
+   begin  ['] quit carefully  again  [
+
+.then
 
 comment ===================
         More Stack routines
@@ -745,7 +902,7 @@ comment **multitasker**
   `depend' pointer.  ISR.owner->task.depend->counter.  These details are a
   bit fuzzy still.)
 
-definer: +user  ( size)
+meta: +user  ( size)
    create  #user \f @ ,  #user \f +!
    ;code   ??
    0 +user status      ( code pointer; determines the wakefulness of the task)

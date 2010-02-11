@@ -1,0 +1,331 @@
+( This file is part of muFORTH: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2010 David Frech. All rights reserved, and all wrongs
+  reversed. (See the file COPYRIGHT for details.)
+
+( disasm - ARM disassembler. 22-apr-1999.)
+
+( daf 6-sep-2000. Trying a different way of decoding - more hierarchical.)
+( daf 8-nov-2000. Actually making some of those changes. ;-)
+( daf 10-nov-2000. Adding long multiplies and halfword/signed load/store)
+( daf 2001-jan-26. Removing `else's, cleanup, nifty `choose' word.)
+( daf 2002-mar-29. Converted to muForth.)
+
+" ARM disassembler "  file[#
+
+forth decimal
+
+( Printing numbers without trailing space.)
+( Can also do this with `0 .r')
+: |.   (.) type  ;
+: |u.  (u.) type  ;
+: #.    char # emit  |.  ;  ( ??)
+: #u.   char # emit  |u.  ; ( ??)
+
+( Extracting fields.)
+: extract  ( i sh mask - n)  push  rshift  pop and  ;
+
+( Extracting registers.)
+: reg-extract  ( i shift - i reg)  ( i shift)  over swap  "f extract  ;
+: R.  ( reg char)   emit   decimal  |u.  ;
+: Rname.  ( reg)
+   dup 9 u< if  char R  R.  ^  then
+   9 -  2*  z" TSCTUPSPRPLRPC" +  2 type  ;
+( ?? toggle between apcs names and reg numbers?)
+: reg   constant ( shift)  does>  ( i shift - i)  reg-extract  Rname.  ;
+: creg  constant ( shift)  does>  ( i shift - i)  reg-extract  char c  R.  ;
+
+ 0 reg Rm    0 creg CRm
+ 8 reg Rs    8 creg CRs
+12 reg Rd   12 creg CRd
+16 reg Rn   16 creg CRn
+
+( Various syntactic bits.)
+: tab   9 emit  ;  ( XXX: do this internally, keeping count of output col?)
+: ",    ." , "  ;
+: ",[   ." , ["  ;
+: "]    char ] emit  ;
+
+
+( Exotic string chooser. We'll be doing a lot of `this or that' - choosing
+  one string if a test is true, another if false. Let's make it easy.)
+
+( 2002-mar-25. Changed slightly for muforth and improved string structure.)
+
+: (choose")  ( f a1 a2)  rot if  ( a1)  swap  then  nip  (.")  ;
+compiler
+: choose  ( <d cccd d cccd>; f)
+   \f char  string, literal  \f char  string, literal  \ (choose")  ;
+ ( true chooses first string; false, the second.)
+forth
+
+
+( Warnings.)
+variable 'warning
+: (warn")   ( z")  'warning !  ;
+compiler
+: warn"  \ z"  \ (warn")  ;
+forth
+
+
+( Masked match.)
+: -match  ( i mask match - i f)  push  over and  pop xor  ;
+
+( A defining word for decoding.)
+: decode  ( op mask match)  -match if shunt ^ then ;
+: decode:  :  ( mask match)  swap literal literal  \ decode ;
+
+( Helpers: Generic.)
+: .icond   dup 28 "f extract  dup 14 u< if
+   ( 14=always, 15=never - print nothing)
+   2*  z" EQNECSCCMIPLVSVCHILSGELTGTLE"  +  2 type  ^  then  drop  ;
+
+"00100000 "00100000 decode: S   char S emit  ;
+"00400000 "00400000 decode: B   char B emit  ;
+"00400000 "00400000 decode: }^  char ^ emit  ;
+"00400000 "00400000 decode: L   char L emit  ;
+"00200000 "00200000 decode: Write-back  char ! emit  ;
+"01200000 "00200000 decode: T   char T emit  ;  ( Pre=0, Writeback=1)
+
+
+: imm   ( insn - imm)
+   dup "ff and ( value)  swap 8 "f extract 2*  ( n rot) rotate  ;
+
+: .imm   dup imm  #u.  ;
+
+: |pc+  ( a offset - a ea)   over  8 + ( compensate for prefetch) +  ;
+
+
+( Helpers: MUL/MLA.)
+: mul-regs   ( Rn, Rd are swapped!)  Rn ( Rd!)  ",  Rm  ",  Rs  ;
+
+
+( Helpers: MSR/MRS.)
+: psr   dup "00400000 and  choose " SPSR" " CPSR"  ;  ( true,false)
+: psr_flg   psr  ." _flg"  ;
+
+
+( Helpers: ALU.)
+( ALU ops. Remember: TST, TEQ, CMP, CMN ignore Rd; MOV, MVN ignore Rn.)
+: alu-op   dup 21 "f extract  3 *
+   z" ANDEORSUBRSBADDADCSBCRSCTSTTEQCMPCMNORRMOVBICMVN" +   3 type  ;
+
+: alu-Rd,Rn,   alu-op  .icond S tab
+   "01800000 "01000000 -match if  ( not TST--CMN)  Rd ",  then
+   "01a00000 "01a00000 -match if  ( not MOV, MVN)  Rn ",  then  ;
+
+( Needs to handle the special cases.
+                  LSR #0 encodes LSR #32.
+                  ASR #0 encodes ASR #32.
+                  ROR #0 encodes RRX.
+  So only LSL #0 means what it sez.)
+
+: shift-op   ",  dup 5 3 extract  3 *  z" LSLLSRASRROR" +  3 type  space  ;
+: shift-reg   shift-op  Rs  ;
+"ff0 "000 decode: lsl0     shunt ;  ( print nothing)
+"ff0 "020 decode: lsr0     ." , LSR #"  32 |u.  shunt  ;
+"ff0 "040 decode: asr0     ." , ASR #"  32 |u.  shunt  ;
+"ff0 "060 decode: ror0     ." , RRX"      shunt  ;
+: shift-imm   lsl0  lsr0  asr0  ror0  ( not special, do normal)
+   shift-op  dup 7 "1f extract  #u.  ;
+
+
+( Effective addresses.)
+
+( For instructions that don't calculate one, return the -contents- of the
+  address given to it.)
+: -ea   ( a i - a [a])  drop  dup |@  ;  ( "no ea")
+: [contents]  ( a)  tab  ." = "  |@  |u.  ;
+
+
+( Helpers: Indexing.)
+: pre?   ( i - f)   "01000000 and  ;  ( 1=pre, 0=post)
+: down?  ( i - f)   "00800000 and 0=  ;
+
+: >offset12  ( i - offset i)
+   dup "fff and  over down? if  negate  then  swap  ;
+
+: >offset8   ( i - offset i)
+   dup "0ff and  over down? if  negate  then  cells  swap  ;
+
+"f0000 "f0000 decode: ?pc]  ( a offset i - a ea)
+   push  |pc+  dup |u.  pop  "]  drop   dup [contents]  shunt  ;
+
+: ,reg-offset   ",  dup down? if  char - emit  then  Rm shift-imm  ;
+
+: reg-offset]
+   dup pre? if  Rn      ,reg-offset  "]  Write-back  ^  then
+                Rn  "]  ,reg-offset  ;
+
+
+: ,off  ( a off i - a i)  ( only print if off<>0)
+   over if  ",  swap |.  ^  then  nip  ;
+
+: .offset]
+   ?pc]   dup pre? if  Rn      ,off  "]  Write-back  -ea  ^  then
+                       Rn  "]  ,off                  -ea  ;
+
+: #offset8]    ( a i - a ea)  >offset8   .offset]  ;
+: #offset12]   ( a i - a ea)  >offset12  .offset]  ;
+
+( start of LDR/STR)
+: ldr-str-Rd,[
+   dup "00100000 and  choose " LDR" " STR"  .icond  B T tab  Rd  ",[  ;
+
+( for ADRs)
+: adr-Rd,   ." ADR"  .icond tab  Rd ",  imm  ;
+: adr-ea   |pc+  dup  #u.  ;
+
+
+( Helpers: B/BL.)
+: >branch-dest  ( a i - a ea)
+   "ffffff and  dup "00800000 and if
+   ( negative offset)    "ff000000 or ( sign ext)  then  cells  |pc+  ;
+
+
+( Helpers: LDM/STM.)
+: PU   dup 23 3 extract  2*  z" DAIADBIB" +  2 type  ;
+
+: first1   ( bits cur - cur' bits')
+   begin  swap  dup 1 and 0= while  u2/ swap  1+  repeat  ;
+
+( A little ugly, but it works.)
+: reg-list
+   char { push   dup "ffff and  0   begin   over while  ( bits cur)
+      pop emit space  first1 1+  over Rm  first1 1-  -rot  ( bits ix1 ix0)
+      1- tuck  xor  if  char - emit  Rm  then  1+  char , push
+   repeat   pop drop  2drop  ."  }"  ;
+
+
+( Helpers: LDC/STC.)
+: CP#   dup 8 "f extract  char p  R.  ;
+
+( Helpers: CDP, MRC/MCR.)
+: CPinfo   dup 5 7 extract  dup if  ", |u. ^  then drop  ;
+
+
+( The instructions!)
+"0fc000f0 "00000090 decode: mul
+   dup "00200000 and if
+   ." MLA"  .icond S tab  mul-regs  ",  Rd ( Rn!)  -ea  shunt ^ then
+   ." MUL"  .icond S tab  mul-regs                 -ea  shunt  ;
+
+"0fb00ff0 "01000090 decode: swp
+   ." SWP"  .icond B tab   Rd ", Rm ",[ Rn "]  -ea  shunt  ;
+
+"0fbf0fff "010f0000 decode: mrs
+   ." MRS"  .icond tab  Rd ",  psr  -ea  shunt  ;
+
+"0fbffff0 "0129f000 decode: msr-reg
+   ." MSR"  .icond tab  psr ",  Rm  -ea  shunt  ;
+
+"0fbffff0 "0128f000 decode: msr-flag-reg
+   ." MSR"  .icond tab  psr_flg ",  Rm  -ea  shunt  ;
+
+"0e000010 "00000000 decode: alu-reg-imm-shift
+   alu-Rd,Rn,  Rm  shift-imm   -ea  shunt  ;
+
+"0e000090 "00000010 decode: alu-reg-reg-shift
+   alu-Rd,Rn,  Rm  shift-reg   -ea  shunt  ;
+
+( TDMI insns)
+: mull-regs   Rd ( RdLo) ",  Rn ( RdHi) ",  Rm ",  Rs  ;
+
+"0f8000f0 "00800090 decode: mull
+   dup "00400000 and  choose " S" " U"  ( un/signed)
+   dup "00200000 and  choose " MLAL" " MULL"
+  .icond S tab  mull-regs  -ea  shunt  ;
+
+( ??ldrh/sb/sh still unfinished)
+"0e400ff0 "000000b0 decode: ldrh-strh-reg  ( unsigned halfword)   ;
+"0e400ff0 "000000d0 decode: ldrsb-strsb-reg  ( signed byte)       ;
+"0e400ff0 "000000f0 decode: ldrsh-strsh-reg  ( signed halfword)   ;
+
+"0e4000f0 "004000b0 decode: ldrh-strh-imm  ( unsigned halfword)   ;
+"0e4000f0 "004000d0 decode: ldrsb-strsb-imm  ( signed byte)       ;
+"0e4000f0 "004000f0 decode: ldrsh-strsh-imm  ( signed halfword)   ;
+
+: reserved  ." RESERVED"  -ea  ;
+
+: 000_alu  ( a i - a ea)
+   mrs  msr-reg  msr-flag-reg
+   alu-reg-imm-shift  alu-reg-reg-shift
+   mul  swp
+   ( TDMI)
+   mull
+   ldrh-strh-reg  ldrsb-strsb-reg  ldrsh-strsh-reg
+   ldrh-strh-imm  ldrsb-strsb-imm  ldrsh-strsh-imm
+   ( and if none matched:)  reserved  ;
+
+( Check for ADD/SUB relative to PC; these are ADRs.)
+"0fef0000 "028f0000 decode: add-imm-pc   adr-Rd,          adr-ea  shunt  ;
+"0fef0000 "024f0000 decode: sub-imm-pc   adr-Rd,  negate  adr-ea  shunt  ;
+
+"0fbff000 "0328f000 decode: msr-flag-imm
+   ." MSR"  .icond tab  psr_flg ",  .imm  -ea  shunt  ;
+
+: alu-imm
+   alu-Rd,Rn,  .imm  -ea  ;
+
+: 001_alu-imm  ( a i - a ea)
+   add-imm-pc  sub-imm-pc  ( ADRs)  msr-flag-imm  alu-imm  ;
+
+: 010_ldr-str-imm
+   ldr-str-Rd,[  #offset12]  ;
+
+: undef   ." UNDEFINED"  -ea  ;
+: ldr-str-reg   ldr-str-Rd,[  reg-offset]  -ea  ;
+
+: 011_ldr-str-reg-undef
+   dup "00000010 and if  undef  ^  then   ldr-str-reg  ;
+
+: 100_ldm-stm
+   dup "00100000 and  choose " LDM" " STM"  .icond  PU  tab
+   Rn  Write-back  ",  reg-list  }^  -ea  ;
+
+: 101_b-bl
+   dup "01000000 and  choose " BL" " B"  .icond tab   >branch-dest  dup |u.  ;
+
+: 110_ldc-stc
+   dup "00100000 and  choose " LDC" " STC"  .icond L tab
+   CP# ",  CRd  ",[  #offset8]  ;
+
+: swi   ." SWI"  .icond tab  dup "ffffff and |u.  -ea  ;
+: mrc-mcr
+   dup "00100000 and  choose " MRC" " MCR"  .icond tab
+   CP# ",  dup 21 7 extract  |u. ", ( CPopc)
+   Rd ",  CRn ",  CRm  CPinfo  -ea  ;
+
+: cdp
+   ." CDP"  .icond tab  CP# ",  dup 20 "f extract |u.  ", ( CPopc)
+   CRd ",  CRn ",  CRm  CPinfo  -ea  ;
+
+: 111_swi-mrc-mcr-cdp
+   dup "01000000 and if  swi  ^  then
+   dup "00000010 and if  mrc-mcr  ^  then  cdp  ;
+
+: shred  ( a i - a ea)
+   dup 25 7 extract  jump
+   000_alu      001_alu-imm  010_ldr-str-imm  011_ldr-str-reg-undef
+   100_ldm-stm  101_b-bl     110_ldc-stc      111_swi-mrc-mcr-cdp   [
+
+( The workhorse.)
+: 1dis  ( a - a ea)
+   radix preserve
+   0 'warning !
+   dup .addr  .nesting  dup |@ ( a i)  dup .hcell tab  shred  ( - a ea)
+   'warning @  dup if  cr  (.") ^  then drop  ;
+
+' 1dis '1dis !  ( for mode switching)
+' -1   '1see !  ( quits)
+
+( Interactive)
+: dis  ( |a - |a+)  ['] 1dis  cell  inspect  ;
+
+( Batch mode)
+: disses   ( start limit)
+   inspect-sp off
+   swap  begin  1dis drop  cell+  2dup u<  until  2drop  ;
+
+
+#]file

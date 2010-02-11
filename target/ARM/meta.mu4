@@ -4,9 +4,116 @@
   reversed. (See the file COPYRIGHT for details.)
 
 
-" ARM meta compiler (three) "  file[#
+" ARM meta compiler (main) "  file[#
 
 forth decimal
+
+( The various token consumers for each mode.)
+
+-:  ."  (assembling)"  ;
+-:
+    .assembler. find  if  execute  ^  then
+       .labels. find  if  execute  ^  then  ( equates are in .labels.)
+         .meta. find  if  execute  ^  then
+        .forth. find  if  execute  ^  then  ( utility words in .forth.)
+                                            number ;
+mode __asm
+
+
+-:  ."  (compiling an assembler macro)"  ;
+-:
+     .compiler. find  if  execute  ^  then  ( compiler's if/then/begin ...)
+    .assembler. find  if  compile, ^  then  ( ... trump the the assembler's)
+         .meta. find  if  compile, ^  then
+        .forth. find  if  compile, ^  then  ( utility words in .forth.)
+                                            number literal ;
+mode __macro
+
+
+( The meta-interpreter. We're in this mode when we're building the target
+  image, and when in between [ and ] when running the target colon
+  compiler.)
+
+-:  ."  (meta)"  ;
+-:
+         .meta. find  if  execute  ^  then
+        .forth. find  if  execute  ^  then
+                                            number ;
+mode __meta
+
+
+( __meta-colon is for compiling new words that are part of the meta-compiler.
+  __meta-colon is to __meta as __macro is to __asm.)
+
+-:  ."  (compiling a meta colon word)" ;
+-:
+     .compiler. find  if  execute  ^  then
+         .meta. find  if  compile, ^  then
+        .forth. find  if  compile, ^  then  ( utility words in .forth.)
+                                            number literal ;
+mode __meta-colon
+
+
+variable 'target-number   ( convert token to a number, specific to target)
+variable 'target-literal  ( compile a target literal)
+
+( Finally, we have the definition of the meta-compiler's colon compiler.)
+
+( Execution behaviour of .target. words is to compile themselves!)
+-:  ."  (compiling a target colon word)"  ;
+-:  .meta-compiler. find  if  execute  ^  then
+           .target. find  if  execute  ^  then
+           'target-number @execute  'target-literal @execute ;
+mode __target-colon
+
+
+( Common things we'll always want when meta-colon compiling.)
+meta-compiler
+: (     \f ( ;   ( comments are nice!)
+: --    \f -- ;  ( ditto!)
+
+: .if      \ .if   ;  ( and conditional compilation is nice too)
+: .else    \ .else ;
+: .then    \ .then ;
+: .ifdef   \ .ifdef ;
+: .ifndef  \ .ifndef ;
+: .def     \ .def ;
+
+meta
+: {    \ [ ;  ( escape back to the host forth)
+forth
+: }    __meta ;  ( return to meta)
+
+( Forward references for fundamental words.)
+
+labels
+
+( These are pointers to target CODE words.)
+variable (branch)
+variable (0branch)
+variable (=0branch)
+variable (for)
+variable (?for)
+variable (next)
+variable lit
+variable ^
+variable (")
+variable type
+variable (;code)   ( the target-resident version!)
+
+forth
+
+( looks up a label or forward-reference variable, and executes it to push its value or address)
+
+: lookup  ( look up next token as forward-ref variable or label)
+   .labels. chain' execute ( get addr) ;
+
+compiler
+
+: lookup  ( compile a reference to a .label. word)   .labels. \chain ;
+
+forth
+
 
 ( Compile a linked name field into the target image.)
 
@@ -49,30 +156,31 @@ meta
 : addr   \m '  \m cell+ ;  ( find word, skip cfa, return pfa)
 : value  \m addr  \m @ ;   ( find word, skip cfa, read out value)
 
-: literal   \m lit @  \m a,  \m , ;  ( make a target literal)
+: literal   lookup lit @  \m a,  \m , ;  ( make a target literal)
+
+meta-compiler
+: [']  \m '  \m literal ;
+meta
 
 .meta. chain' literal  'target-literal !  ( patch colon compiler)
             ' number   'target-number  !  ( ditto - use host's number)
 
 : assemble     pair off  __asm ;  ( init and run assembler)
 
-: equ   current preserve  meta  constant ;
+: equ   current preserve  labels  constant ;
 
 : name   token  2dup \m name,  ( compile name into image)
          \m here  -rot (constant)  ( NOTE: uses current unchanged)
          does> ( target-cfa)  ( compile itself!)  \m a, ;
 
-: label     \m here  \m equ  \m assemble ;
+: label     \m here  \m equ ;
 : code      \m name  \m assemble ;
 : new       \m name  \m code, ;  ( for words with code fields)
 
-( looks up a forward-reference variable, executes it to push its address,
-  and stores the address of the last cfa there.)
+( implements looks up a forward-reference variable and stores the address
+  of the last cfa there.)
 
-: lookup  ( look up next token as forward-ref variable or label)
-   .meta. chain' execute ( get addr) ;
-
-: implements  last @  \m lookup  ! ;
+: implements  last @  \f lookup  ! ;
 
 
 ( Support for making new defining words.)
@@ -97,7 +205,7 @@ forth
   "here" value.  Remember, we are about to start compiling target code at
   "here".
 
-  Even though the host's colon compiler - really the __definer compiler -
+  Even though the host's colon compiler - really the __meta-colon compiler -
   is running when <;code> executes - it is called from does> and ;code,
   which are both .compiler. words - it doesn't bother to "stop" the host's
   colon, since both does> and ;code immmediately switch to another compiler
@@ -106,7 +214,7 @@ forth
 : <;code>  compile (;code)  \m here  h, ;
 
 
-definer
+compiler
 -- : does>   <;code>  save-lr  \m dodoes @ \a bl  \m -] ( start meta-colon) ;
 : ;code   <;code>  \m label  \m assemble ( start assembler) ;
 
@@ -118,7 +226,7 @@ meta-compiler
   variable. Very much like what we do above for the host, but this time it
   all lives on the target.)
 
-: ;code   \m (;code) @  \m a,  \m lookup  \m a,  __meta ;
+: ;code   lookup (;code) @  \m a,  \f lookup  \m a,  __meta ;
 
 forth
 
@@ -171,12 +279,11 @@ meta
            image+ swap cmove ;
 
 meta-compiler
-: ."   \m (") @  \m a,                   ( compile (")
-       char " parse  ( a u)  \m string,  ( compile the counted string)
-       \m type @  \m a, ;                ( compile type)
+: "    lookup (") @  \m a,               ( compile (")
+       char " parse  ( a u)  \m string,  ( compile the counted string) ;
 
-: "    \m (") @  \m a,                    ( compile (")
-       char " parse  ( a u)  \m string, ; ( compile the counted string)
+: ."   \mc "                 ( compile string)
+       lookup type @  \m a,  ( compile type) ;
 
 
 ( Control structures.)
@@ -190,20 +297,20 @@ meta-compiler
 
 meta
 : <resolve  ( dest src)  \m ! ;
-: resolve>  ( src dest)  swap  \m <resolve ;
-: mark>   \m here  0 \m a, ;  ( mark addresss as relocating!!)
+: >resolve  ( src dest)  swap  \m <resolve ;
+: >mark   \m here  0 \m a, ;  ( mark addresss as relocating!!)
 
 meta-compiler
-: =if   ( - src)        \m (=0branch) @  \m a,  \m mark> ;
-: if    ( - src)        \m  (0branch) @  \m a,  \m mark> ;
-: then  ( src)          \m here \m resolve> ;
-: else  ( src0 - src1)  \m   (branch) @  \m a,  \m mark>
+: =if   ( - src)        lookup (=0branch) @  \m a,  \m >mark ;
+: if    ( - src)        lookup  (0branch) @  \m a,  \m >mark ;
+: then  ( src)          \m here \m >resolve ;
+: else  ( src0 - src1)  lookup   (branch) @  \m a,  \m >mark
                         swap  \mc then ;
 
 : begin   ( - dest)  \m here ;
 : =until  ( dest -)  \mc =if  \m <resolve ;
 : until   ( dest -)   \mc if  \m <resolve ;
-: again   ( dest -)  \m (branch) @  \m a,  \m mark>  \m <resolve ;
+: again   ( dest -)  lookup (branch) @  \m a,  \m >mark  \m <resolve ;
 : =while  ( dest - src dest)  \mc =if  swap ;
 : while   ( dest - src dest)   \mc if  swap ;
 : repeat  ( src dest -)   \mc again  \mc then ;
@@ -211,10 +318,57 @@ meta-compiler
 ( n for .. next         goes n times; 4 billion+ if n=0 )
 ( n ?for .. next then   goes n times; 0 if n=0 )
 
-: for     ( - dest)      \m  (for) @  \m a,            \mc begin ;
-: ?for    ( - src dest)  \m (?for) @  \m a,  \m mark>  \mc begin ;
-: next    ( dest -)      \m (next) @  \m a,  \m mark>  \m <resolve ;
+: for     ( - dest)      lookup  (for) @  \m a,            \mc begin ;
+: ?for    ( - src dest)  lookup (?for) @  \m a,  \m >mark  \mc begin ;
+: next    ( dest -)      lookup (next) @  \m a,  \m >mark  \m <resolve ;
+
+forth
+
+( Define useful colon compilers:
+      meta:  for defining new target defining words!
+     macro:  for defining assembler macros
+  compiler:  for defining meta-compiler words
+
+  We define the another colon compiler - the actual target colon - in the
+  kernel, using our meta-defining words!)
+
+meta
+
+: meta:      current preserve  meta       :  __meta-colon ;
+: compiler:  current preserve  compiler   :  __meta-colon ;  ( XXX better name?)
+: macro:                                  :  __macro ;
+
+forth
+
+( Making [ and ] work, finally.)
+variable saved-state      ( interpreter mode we came from)
+variable which-literal    ( the kind of literal to make when ] executes)
+
+meta
+
+: -]   saved-state @  state ! ;  ( return to saved state)
+:  ]   \m -]  which-literal @execute ;
+
+forth
+
+: _[   ( 'literal)
+        state @  saved-state !    ( so we know how to get back)
+        which-literal !           ( so ] knows how to make a literal)
+        __meta ;                  ( switch to __meta, not to host forth)
+
+( Now define the different ways of leaving a colon compiler.)
+
+( "Fix" host forth's [ and ; so they return to __meta)
+compiler
+: [          ['] literal  _[ ;   ( when we return, make a host literal)
+: ;    \ ^   __meta ;
+
+meta-compiler
+: [    'target-literal @  _[ ;   ( when we return, make a target literal)
+: ^    lookup ^ @  \m a, ;   ( compile target's ^ - EXIT)
+: ;    \mc ^  __meta ;
 
 forth
 
 #]file
+
