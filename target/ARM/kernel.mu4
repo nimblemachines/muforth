@@ -437,83 +437,6 @@ Support for compiled strings.
 ( It all depends on how you want to use your string literals.)
 
 ==========================================================================
-Making new names in the dictionary.
-==========================================================================
-variable current
-variable .forth.      ( PATCH fixed up by metac)
-variable .compiler.   ( PATCH fixed up by metac)
-variable last         ( cfa of last word defined)
-
-code cmove  ( source dest count)  ( UNDEF)  ;c
-
-: code,   here last !  ( make a code field)  0 , ;
-: token,  ( a u)  dup 1+ aligned  allot  ( room for name+len+padding)
-          dup here 1- c! ( len)  here over 1+ -  swap cmove ;
-
-: link,   here  current @  dup  @  ,  !  ( last-link 2! ) ;
-
-: name,  ( a u)  token,  link,  code, ;
-
-( patch rewrites the bl instruction at cfa to call to 'code.)
-: |pc-  ( to from - offset)   8 + ( compensate for prefetch)  - ;
-: >branch-offset  ( to from - bits)  |pc-  cell/  "00ffffff and ;
-: patch     ( 'code cfa)  tuck >branch-offset  "eb000000 or ( op)
-            swap ! ;
-
-comment super-botched
-( XXX It's a botch that there are two kinds of (;code) - one that points
-  the last word to the code that follows it - currently used by the
-  target-resident does> - and one that fetches a literal from the cell that
-  follows it - currently used by the meta-compiler to patch the
-  target-resident defining words with the code sequences that were defined
-  earlier ... when the meta-compiler versions of the defining words were
-  defined.
-
-  Got all that? ;-)
-super-botched
-
-( (;code@) ( is followed by a literal - a pointer to code - that is used to
-  patch the last word. Used by the meta-compiler to point the following
-  versions of create, constant, and : to code that was already laid down.)
-
-: (;code@)   r> @  last @  patch ;  implements (;code)
-
-( (;code)  ( patches last to point to the code that directly follows it.
-  Compiled by does> , below.)
-
-( XXX Since this is only used by does> , and since we can only define does>
-  words using the target-resident definers [no assembler!], maybe we should
-  rename this? The thing that is -always- going to follow (;code) ( is a
-  does> prologue - "lr r0 mov" - followed by a bl to dodoes. So maybe there
-  is a name that better represents this? Then I wouldn't feel so bad about
-  there being two versions of the "same" thing.)
-
-: (;code)   r>  last @  patch ;
-
-==========================================================================
-Target-resident defining words.
-==========================================================================
-: -]  ;  ( UNDEF)  ( XXX how are we doing compilation state?)
-
-: create    name,      ;code   dovar
-: constant  name,  ,   ;code   doconst
-
-: variable  create  cell allot ;
-
-: :         name,  -]  ;code   docolon
-
-target-compiler
-: does>   compile (;code)
-          [ here  assemble  lr r0 mov  ;c  cell negate allot  @ ] ,
-          code,  [ lookup dodoes ] last @ patch ;
-
-target
-
-( Test of nifty dodoes magic.)
-meta: konst   create ,  does> @ ;
-"5600 konst yippee
-
-==========================================================================
 Token parsing.
 ==========================================================================
 ( XXX two variables, start and end?)
@@ -544,6 +467,10 @@ code scan  ( end a ch - a+ trailing)  ;c  ( UNDEF)
 ==========================================================================
 Dictionary search.
 ==========================================================================
+variable current
+variable .forth.      ( PATCH fixed up by metac)
+variable .compiler.   ( PATCH fixed up by metac)
+
 ( find takes a token [a u] and a chain [the head of a vocab word list] and
   searches for the token on that chain. If found, it returns the address
   of the code field of the word; if -not- found, it leaves the token [a u]
@@ -560,7 +487,9 @@ Dictionary search.
 : chain'  token'  huh?  ;
 -- : \chain  chain'  , ;  ( compile a word from a particular chain)
 
-: '  ( .forth. or current?)  current @ chain' ;
+( XXX .forth. or current?)  
+: '   .forth. chain' ;
+-- : '   current @ chain' ;
 target-compiler
 : [']  '  literal ;
 target
@@ -681,6 +610,109 @@ variable hld
 : ?  @ .  ;
 
 ==========================================================================
+Interpreter and compiler.
+==========================================================================
+variable 'eat    ( how to consume a token)
+
+: ?stack ;  ( UNDEF)
+
+: interpret
+   begin  token  =while  'eat @execute  ?stack  repeat  [
+
+: evaluate  ( a u)
+   start @ >r  end @ >r  ( save source)
+   first @ >r            ( save our place in the input)
+   over +  ( start end)  end !  dup start !  ( source)  first !
+   interpret
+   r> first !  r> end !  r> start ! ;
+
+: interpret-token
+      .forth. find  if  execute  ^  then  number ;
+
+: compile-token
+   .compiler. find  if  execute  ^  then
+      .forth. find  if  ,        ^  then  number  literal ;
+
+: -]  ( start compiler)  [']   compile-token  'eat ! ;
+: ]   literal  -] ;
+
+target-compiler
+: [   ( exit compiler)   ['] interpret-token  'eat ! ;
+target
+
+==========================================================================
+Making new names in the dictionary.
+==========================================================================
+variable last         ( cfa of last word defined)
+
+code cmove  ( source dest count)  ( UNDEF)  ;c
+
+: code,   here last !  ( make a code field)  0 , ;
+: token,  ( a u)  dup 1+ aligned  allot  ( room for name+len+padding)
+          dup here 1- c! ( len)  here over 1+ -  swap cmove ;
+
+: link,   here  current @  dup  @  ,  !  ( last-link 2! ) ;
+
+: name,  ( a u)  token,  link,  code, ;
+
+( patch rewrites the bl instruction at cfa to call to 'code.)
+: |pc-  ( to from - offset)   8 + ( compensate for prefetch)  - ;
+: >branch-offset  ( to from - bits)  |pc-  cell/  "00ffffff and ;
+: patch     ( 'code cfa)  tuck >branch-offset  "eb000000 or ( op)
+            swap ! ;
+
+comment super-botched
+( XXX It's a botch that there are two kinds of (;code) - one that points
+  the last word to the code that follows it - currently used by the
+  target-resident does> - and one that fetches a literal from the cell that
+  follows it - currently used by the meta-compiler to patch the
+  target-resident defining words with the code sequences that were defined
+  earlier ... when the meta-compiler versions of the defining words were
+  defined.
+
+  Got all that? ;-)
+super-botched
+
+( (;code@) ( is followed by a literal - a pointer to code - that is used to
+  patch the last word. Used by the meta-compiler to point the following
+  versions of create, constant, and : to code that was already laid down.)
+
+: (;code@)   r> @  last @  patch ;  implements (;code)
+
+( (;code)  ( patches last to point to the code that directly follows it.
+  Compiled by does> , below.)
+
+( XXX Since this is only used by does> , and since we can only define does>
+  words using the target-resident definers [no assembler!], maybe we should
+  rename this? The thing that is -always- going to follow (;code) ( is a
+  does> prologue - "lr r0 mov" - followed by a bl to dodoes. So maybe there
+  is a name that better represents this? Then I wouldn't feel so bad about
+  there being two versions of the "same" thing.)
+
+: (;code)   r>  last @  patch ;
+
+==========================================================================
+Target-resident defining words.
+==========================================================================
+: create    name,      ;code   dovar
+: constant  name,  ,   ;code   doconst
+
+: variable  create  cell allot ;
+
+: :         name,  -]  ;code   docolon
+
+target-compiler
+: does>   compile (;code)
+          [ here  assemble  lr r0 mov  ;c  cell negate allot  @ ] ,
+          code,  [ lookup dodoes ] last @ patch ;
+
+target
+
+( Test of nifty dodoes magic.)
+meta: konst   create ,  does> @ ;
+"5600 konst yippee
+
+==========================================================================
 Support words for compiling control structures.
 ==========================================================================
 
@@ -713,37 +745,6 @@ target-compiler
 : ?for    ( - src dest)  compile (?for)  >mark  \tc begin ;
 : next    ( dest -)      compile (next)  >mark  <resolve ;
 
-target
-
-==========================================================================
-Interpreter and compiler.
-==========================================================================
-variable 'eat    ( how to consume a token)
-
-: ?stack ;  ( UNDEF)
-
-: interpret
-   begin  token  =while  'eat @execute  ?stack  repeat  [
-
-: evaluate  ( a u)
-   start @ >r  end @ >r  ( save source)
-   first @ >r            ( save our place in the input)
-   over +  ( start end)  end !  dup start !  ( source)  first !
-   interpret
-   r> first !  r> end !  r> start ! ;
-
-: interpret-token
-      .forth. find  if  execute  ^  then  number ;
-
-: compile-token
-   .compiler. find  if  execute  ^  then
-      .forth. find  if  ,        ^  then  number  literal ;
-
-: -]  ( start compiler)  [']   compile-token  'eat ! ;
-: ]   literal  -] ;
-
-target-compiler
-: [   ( exit compiler)   ['] interpret-token  'eat ! ;
 target
 
 ==========================================================================
