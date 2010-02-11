@@ -8,6 +8,10 @@
 ( 2010-feb-03 - Heavily modified! and changed to DTC.)
 ( 2006-apr-01.)
 
+( NOTE: Search for UNDEF to find as-yet undefined words;
+                   PATCH to find words that need patching by metacompiler;
+                   XXX   to find notes or questions as-yet unresolved)
+
 __meta  ( fire up the metacompiler!!)
 
 assembler hex
@@ -21,6 +25,7 @@ comment moved-from-assembler
  0d constant rp  ( r)  ( return stack pointer)
 moved-from-assembler
 
+( XXX how to tell the disassembler about our register choices?)
 7 constant count  ( for for/next loops)
 6 constant top
 5 constant rp
@@ -76,7 +81,7 @@ macro: pops  =if  \f 0<  if  top push   ^  then
 macro: takes  ( #input - #pops-performed)
    =if  1- =if  ( 2 params)  top r1 mov   r0 pop  ( 1)  ^  then
                 ( 1 param)   top r0 mov           ( 0)  ^  then
-  ( 0) ;
+   ( 0) ;
 
 macro: leaves  ( #output)   if  r0 top mov  then ;
 
@@ -151,7 +156,7 @@ meta: constant  new  ,
 meta: variable   create          cell  allot ;
 meta: 2variable  create   [ 2 cells ]  allot ;
 
-meta: :   new   __target-colon
+meta: :         new   __target-colon
                 ;code  docolon  ip nest   lr ip mov   next  ;c
 
 meta: <dodoes>  save-lr  code,
@@ -216,8 +221,8 @@ code @execute   0 top +) r0 ldr   top pop   r0 pc mov   ;c
 code +     r0 pop   top r0 top add   next  ;c
 
 code d+    ( alo ahi blo bhi - sumlo sumhi)
-           {  r2  r1  r0 } ! sp ldm   r2 r0 r0 add s   r1 top top adc
-           r0 push ( sumlo)   next  ;c
+           {  r2  r1  r0 } ! sp ldm   r2  r0  r0 add s   r0 push ( sumlo)
+                                      r1 top top adc     next  ;c
 
 code -     r0 pop   top r0 top sub   next  ;c
 code *     r0 pop   r0 top top mul   next  ;c
@@ -227,6 +232,7 @@ code or    r0 pop   top r0 top or    next  ;c
 code xor   r0 pop   top r0 top eor   next  ;c
 
 code negate     0 # top top rsb   next  ;c
+
 code dnegate    ( lo hi - negated)
                 st1 r0 ldr   0 #  r0  r0 rsb s   st1 r0 str
                              0 # top top rsc     next  ;c
@@ -249,13 +255,11 @@ code r@   top push   0 rp +) top ldr   next  ;c
 
 code rot  ( r1 r0 top - r0 top r1)
    { r1 r0  } sp ldm ia   r0 lr mov
-   { lr top } sp stm ia
-   r1 top mov next  ;c
+   { lr top } sp stm ia   r1 top mov next  ;c
 
 code -rot  ( r1 r0 top - top r1 r0)
    { r1 r0  } sp ldm ia
-   { top r1 } sp stm ia
-   r0 top mov next ;c
+   { top r1 } sp stm ia   r0 top mov next ;c
 
 .else
 :  rot   >r swap  r> swap ;
@@ -315,7 +319,7 @@ code (branch) implements (branch)
 
 code (0branch) implements (0branch)
    top top tst   top pop
-label zbr1
+label zbranch
 .ifdef relbranch
    4 ip )+ 0 ldr 0=   0 ip ip add 0= ( jump)
 .else
@@ -324,7 +328,7 @@ label zbr1
    4 # ip ip add ne ( skip)   next  ;c 
 
 code (=0branch) implements (=0branch)
-   top top tst   zbr1 b  ;c
+   top top tst   zbranch b  ;c
 
 code (for) implements (for)
    count nest   top count mov   top pop   next  ;c
@@ -350,11 +354,11 @@ code (next) implements (next)
 code @    0 top +) top ldr   next  ;c
 code c@   0 top +) top ldrb  next  ;c
 
-code !    { r0 r1 } ! sp ldm   0 top +) r0 str    r1 top mov   next  ;c
-code c!   { r0 r1 } ! sp ldm   0 top +) r0 strb   r1 top mov   next  ;c
+code !    { r1 r0 } ! sp ldm   0 top +) r0 str    r1 top mov   next  ;c
+code c!   { r1 r0 } ! sp ldm   0 top +) r0 strb   r1 top mov   next  ;c
 
-code +!   { r0 r1 } ! sp ldm   0 top +) r2 ldr ( @ -> r2)    r0 r2 r0 add
-          0 top +) r0 str   r1 top mov   next  ;c
+code +!   { r1 r0 } ! sp ldm   0 top +) r2 ldr
+                r0 r2 r2 add   0 top +) r2 str    r1 top mov   next  ;c
 
 code cell+   4 # top top add   next  ;c
 code 1+      1 # top top add   next  ;c
@@ -367,8 +371,8 @@ code 1-      1 # top top sub   next  ;c
 
 4 constant cell
 
-code cell/  ( n - n/4)   top 2 #asr top mov  next  ;c
-code cells  ( n - n*4)   top 2 #lsl top mov  next  ;c
+code cell/  ( n - n/4)   top 2 #asr top mov   next  ;c
+code cells  ( n - n*4)   top 2 #lsl top mov   next  ;c
 
 : >     swap <  ;
 : 2dup   over  over ;
@@ -436,8 +440,8 @@ Support for compiled strings.
 Making new names in the dictionary.
 ==========================================================================
 variable current
-variable .forth.      ( XXX fixed up by metac)
-variable .compiler.   ( XXX fixed up by metac)
+variable .forth.      ( PATCH fixed up by metac)
+variable .compiler.   ( PATCH fixed up by metac)
 variable last         ( cfa of last word defined)
 
 code cmove  ( source dest count)  ( UNDEF)  ;c
@@ -476,6 +480,13 @@ super-botched
 
 ( (;code)  ( patches last to point to the code that directly follows it.
   Compiled by does> , below.)
+
+( XXX Since this is only used by does> , and since we can only define does>
+  words using the target-resident definers [no assembler!], maybe we should
+  rename this? The thing that is -always- going to follow (;code) ( is a
+  does> prologue - "lr r0 mov" - followed by a bl to dodoes. So maybe there
+  is a name that better represents this? Then I wouldn't feel so bad about
+  there being two versions of the "same" thing.)
 
 : (;code)   r>  last @  patch ;
 
@@ -583,10 +594,10 @@ code  m*     ( n1 n2 - d)
 code um/mod  ( ud  u - urem uquot)  ;c  ( UNDEF)
 code fm/mod  (  d  n - mod quot)  ;c  ( UNDEF)
 
-: *       ( n1 n2 - n1*n2)   um*  drop  ;  ( This is what fig does!)
+-- : *       ( n1 n2 - n1*n2)   um*  drop  ;  ( This is what fig does!)
 
-:  */mod  ( n1 n2 n3 - r q)  >r   m*   r>           fm/mod ;
-: u*/mod  ( u1 u2 u3 - r q)  >r  um*   r>           um/mod ;
+:  */mod  ( n1 n2 n3 - r q)  >r   m*   r>             fm/mod ;
+: u*/mod  ( u1 u2 u3 - r q)  >r  um*   r>             um/mod ;
 
 :  /mod   ( n1    n2 - r q)  >r  s->d  r>  (  d1 n2)  fm/mod ;
 : u/mod   ( u1    u2 - r q)         0 swap ( ud1 u2)  um/mod ;
