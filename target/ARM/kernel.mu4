@@ -63,6 +63,28 @@ meta
 
 macro: save-lr  lr r0 mov  ;
 
+( Macros for C calling convention. call does all the work. We have to \
+  prefix the if/then's to get the host .compiler. versions, and \f prefix
+  several words to make sure we're getting the Forth word, and not the
+  assembler one.)
+
+assembler
+
+macro: pops  =if  \f 0<  if  top push   ^  then
+                             top pop    ^  then  \f drop ;
+
+macro: takes  ( #input - #pops-performed)
+   =if  1- =if  ( 2 params)  top r1 mov   r0 pop  ( 1)  ^  then
+                ( 1 param)   top r0 mov           ( 0)  ^  then
+  ( 0) ;
+
+macro: leaves  ( #output)   if  r0 top mov  then ;
+
+macro: call ( in out)  2dup - \f push ( #pops needed)
+   swap takes  ( popped)  r3 blr  \f pop  swap - ( #pops left to do)
+   pops  leaves ;
+
+
 ==========================================================================
 Start of meta-compiled kernel
 ==========================================================================
@@ -161,25 +183,24 @@ code bye
      But we do this all in assembler using r3 as a base
      and then load multiple into r0 pc )
 
+1 .if
      exit-context r3 load-relocated
+.else
+     exit-context r3 adr  ( load address of exit-context)
+.then
      { r0 pc } r3 ldm  ;c
 
 code type ( a u -- )   implements type
-     'type r3 load-relocated  ( r3 points the address of type)
-     0 r3 +) r2 ldr           ( r2 now contains the address of type)
-     top r1 mov               ( r1 == u)
-     r0 pop                   ( r0 == a)
-     r2 blx                   ( call type)
-     top pop                  ( load top)
-     next  ;c
+     'type pc) r3 ldr   ( fetch address of routine from 'type)
+     2 0 call   next  ;c
 
 code ?key ( - f)
-     '?key r3 load-relocated
+     '?key pc) r3 ldr  ( fetch address of routine from '?key)
 label key-call
-     r3 blr   top push   r0 top mov   next  ;c
+     0 1 call   next  ;c
 
 code key ( - ch)
-     'key r3 load-relocated   key-call b  ;c
+     'key pc) r3 ldr   key-call b  ;c
 
 code readline  ( ???)  next  ;c
 code getfile  ( ???)  next  ;c
