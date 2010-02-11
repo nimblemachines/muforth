@@ -49,7 +49,7 @@ meta
 : addr   \m '  \m cell+ ;  ( find word, skip cfa, return pfa)
 : value  \m addr  \m @ ;   ( find word, skip cfa, read out value)
 
-: literal   \m lit @  \m a,  \m , ;  ( make a target literal)
+: literal   lookup lit @  \m a,  \m , ;  ( make a target literal)
 
 meta-compiler
 : [']  \m '  \m literal ;
@@ -60,23 +60,31 @@ meta
 
 : assemble     pair off  __asm ;  ( init and run assembler)
 
-: equ   current preserve  meta  constant ;
+: equ   current preserve  labels  constant ;
 
 : name   token  2dup \m name,  ( compile name into image)
          \m here  -rot (constant)  ( NOTE: uses current unchanged)
          does> ( target-cfa)  ( compile itself!)  \m a, ;
 
-: label     \m here  \m equ  \m assemble ;
+: label     \m here  \m equ ;
 : code      \m name  \m assemble ;
 : new       \m name  \m code, ;  ( for words with code fields)
 
-( looks up a forward-reference variable, executes it to push its address,
-  and stores the address of the last cfa there.)
+( implements looks up a forward-reference variable and stores the address
+  of the last cfa there.)
 
-: lookup  ( look up next token as forward-ref variable or label)
-   .meta. chain' execute ( get addr) ;
+: implements  last @  \f lookup  ! ;
 
-: implements  last @  \m lookup  ! ;
+assembler
+
+( Since __asm no longer searches .meta. let's put a synonym here.)
+( XXX - we could put implements in .forth. too - then both __meta and __asm
+  will see it.)
+
+: implements  \m implements ;
+: label       \m label ;  ( we need label too ;-)
+
+meta
 
 
 ( Support for making new defining words.)
@@ -122,7 +130,7 @@ meta-compiler
   variable. Very much like what we do above for the host, but this time it
   all lives on the target.)
 
-: ;code   \m (;code) @  \m a,  \m lookup  \m a,  __meta ;
+: ;code   lookup (;code) @  \m a,  \f lookup  \m a,  __meta ;
 
 forth
 
@@ -175,11 +183,11 @@ meta
            image+ swap cmove ;
 
 meta-compiler
-: ."   \m (") @  \m a,                   ( compile (")
+: ."   lookup (") @  \m a,               ( compile (")
        char " parse  ( a u)  \m string,  ( compile the counted string)
-       \m type @  \m a, ;                ( compile type)
+       lookup type @  \m a, ;            ( compile type)
 
-: "    \m (") @  \m a,                    ( compile (")
+: "    lookup (") @  \m a,                ( compile (")
        char " parse  ( a u)  \m string, ; ( compile the counted string)
 
 
@@ -198,16 +206,16 @@ meta
 : >mark   \m here  0 \m a, ;  ( mark addresss as relocating!!)
 
 meta-compiler
-: =if   ( - src)        \m (=0branch) @  \m a,  \m >mark ;
-: if    ( - src)        \m  (0branch) @  \m a,  \m >mark ;
+: =if   ( - src)        lookup (=0branch) @  \m a,  \m >mark ;
+: if    ( - src)        lookup  (0branch) @  \m a,  \m >mark ;
 : then  ( src)          \m here \m >resolve ;
-: else  ( src0 - src1)  \m   (branch) @  \m a,  \m >mark
+: else  ( src0 - src1)  lookup   (branch) @  \m a,  \m >mark
                         swap  \mc then ;
 
 : begin   ( - dest)  \m here ;
 : =until  ( dest -)  \mc =if  \m <resolve ;
 : until   ( dest -)   \mc if  \m <resolve ;
-: again   ( dest -)  \m (branch) @  \m a,  \m >mark  \m <resolve ;
+: again   ( dest -)  lookup (branch) @  \m a,  \m >mark  \m <resolve ;
 : =while  ( dest - src dest)  \mc =if  swap ;
 : while   ( dest - src dest)   \mc if  swap ;
 : repeat  ( src dest -)   \mc again  \mc then ;
@@ -215,9 +223,9 @@ meta-compiler
 ( n for .. next         goes n times; 4 billion+ if n=0 )
 ( n ?for .. next then   goes n times; 0 if n=0 )
 
-: for     ( - dest)      \m  (for) @  \m a,            \mc begin ;
-: ?for    ( - src dest)  \m (?for) @  \m a,  \m >mark  \mc begin ;
-: next    ( dest -)      \m (next) @  \m a,  \m >mark  \m <resolve ;
+: for     ( - dest)      lookup  (for) @  \m a,            \mc begin ;
+: ?for    ( - src dest)  lookup (?for) @  \m a,  \m >mark  \mc begin ;
+: next    ( dest -)      lookup (next) @  \m a,  \m >mark  \m <resolve ;
 
 forth
 
