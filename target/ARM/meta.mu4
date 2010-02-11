@@ -10,21 +10,6 @@ forth decimal
 
 ( The various token consumers for each mode.)
 
-( Note: There is a subtle difference between the search orders for
-  assembling and making assembler macros. When compiling macros we need the
-  special ; from .definer. that exits back to __meta, so we search .definer.
-  first. We also need comment words and such, so we have to put .compiler.
-  on the menu. But we search it -after- we search .assembler.
-
-  We do this because .assembler. contains words to build control structures
-  - if/then, begin/while/repeat - in assembler. We want these versions to
-  "trump" the ones that the host colon would normally find.
-
-  __asm mode will find the assembler versions just fine; it doesn't look in
-  .compiler. at all, so there is no confusion. But when making a macro, since
-  .compiler. is searched -after- .assembler. , to get to the host colon
-  compiler's if/then and friends you have to use \ .)
-
 -:  ."  (assembling)"  ;
 -:
     .assembler. find  if  execute  ^  then
@@ -57,17 +42,16 @@ mode __macro
 mode __meta
 
 
-( __definer is for compiling new words that are part of the meta-compiler.
-  __definer is to __meta as __macro is to __asm.)
+( __meta-colon is for compiling new words that are part of the meta-compiler.
+  __meta-colon is to __meta as __macro is to __asm.)
 
--:  ."  (compiling a meta defining word)" ;
+-:  ."  (compiling a meta colon word)" ;
 -:
-      .definer. find  if  execute  ^  then  ( special compiler words ...)
-     .compiler. find  if  execute  ^  then  ( ... trump the host compiler's)
+     .compiler. find  if  execute  ^  then
          .meta. find  if  compile, ^  then
         .forth. find  if  compile, ^  then  ( utility words in .forth.)
                                             number literal ;
-mode __definer
+mode __meta-colon
 
 
 variable 'target-number   ( convert token to a number, specific to target)
@@ -80,7 +64,7 @@ variable 'target-literal  ( compile a target literal)
 -:  .meta-compiler. find  if  execute  ^  then
            .target. find  if  execute  ^  then
            'target-number @execute  'target-literal @execute ;
-mode __meta-colon
+mode __target-colon
 
 
 ( Common things we'll always want when meta-colon compiling.)
@@ -221,7 +205,7 @@ forth
   "here" value.  Remember, we are about to start compiling target code at
   "here".
 
-  Even though the host's colon compiler - really the __definer compiler -
+  Even though the host's colon compiler - really the __meta-colon compiler -
   is running when <;code> executes - it is called from does> and ;code,
   which are both .compiler. words - it doesn't bother to "stop" the host's
   colon, since both does> and ;code immmediately switch to another compiler
@@ -230,7 +214,7 @@ forth
 : <;code>  compile (;code)  \m here  h, ;
 
 
-definer
+compiler
 -- : does>   <;code>  save-lr  \m dodoes @ \a bl  \m -] ( start meta-colon) ;
 : ;code   <;code>  \m label  \m assemble ( start assembler) ;
 
@@ -350,8 +334,8 @@ forth
 
 meta
 
-: meta:      current preserve  meta       :  __definer ;
-: definer:   current preserve  definer    :  __definer ;
+: meta:      current preserve  meta       :  __meta-colon ;
+: compiler:  current preserve  compiler   :  __meta-colon ;  ( XXX better name?)
 : macro:                                  :  __macro ;
 
 forth
