@@ -114,9 +114,9 @@ label fp-entry ( FORTH parameters entry field)
   rp0 and sp0 are the start address for rp and sp, respectively.
   h0 == sp0, as it turns out. Does that mean we can rid ourselves of h0? )
 label 'ip0  0 a,
+label 'rp0  4 Ki ,
 label  'h0  8 Ki a, ( will be loaded into top and then stored into h )
 label 'sp0  0 ,
-label 'rp0  4 Ki ,
 
 label exit-context
 0 ,   ( r0 -- caller's set jmp context address)
@@ -127,7 +127,7 @@ label 'type     0 ,  -- pointer to C function: void type(char *s, int n)
 ( Not implemented yet)
 label '?key     0 ,  -- ptr to C: cell_t qkey(void)
 label 'key      0 ,  -- ptr to C: cell_t key(void)
-label 'readline 0 ,  -- ptr to C: ??? readline(???)
+label 'readline 0 ,  -- ptr to C: cell_t readline(buffer, len)
 label 'getfile  0 ,  -- ptr to C: ??? getfile(???)
 
 
@@ -215,6 +215,8 @@ Definition of the low-level words - the Forth virtual machine.
 code ^ implements ^
    ip unnest   next  ;c
 
+   here 0 a,
+code +origin    ( origin) pc) r0 ldr  r0 top top add   next ;c
 code execute         top r0 mov   top pop   r0 pc mov   ;c
 code @execute   0 top +) r0 ldr   top pop   r0 pc mov   ;c
 
@@ -311,6 +313,12 @@ code ?stack  ( -- )
      r3 sp cmp   r3 sp mov u<   r1 top mov u<
      sp r2 cmp   r3 sp mov u>=  r1 top mov u>=
      next ;c
+
+code sp0   top push  'sp0 pc) top ldr  next ;c
+code rp0   top push  'rp0 pc) top ldr  next ;c
+
+: s0   0 ;
+: r0   0 ;
 
 
 comment =========================
@@ -721,8 +729,6 @@ Interpreter and compiler.
 ==========================================================================
 variable 'eat    ( how to consume a token)
 
-: ?stack ;  ( UNDEF)
-
 : interpret
    begin  token  =while  'eat @execute  ?stack  repeat  [
 
@@ -1112,8 +1118,21 @@ comment ===================
   -1  0          mul
 ;
 
-: warm
-  h !   hi  mul-test   stack-test   0 bye ;
+: banner
+( Print banner.)
+ ." FORTH/DTC "
+ ." Copyright (c) 2002-2010 David Frech. All rights reserved."  cr cr
+ ." muFORTH is free software; see the file COPYRIGHT for details." cr
+;
+
+: print-memory
+  ." Kernel base address: " 0 +origin . cr
+  ." Kernel here value:   " here      . cr
+  ." Kernel data sp:      " s0        . cr
+  ." Kernel return sp:    " r0        . cr
+;
+
+: warm   h  !  banner  print-memory  0 bye ;
 
 
 ( Patch .forth. and .compiler. in .target. to reflect the reality on the
