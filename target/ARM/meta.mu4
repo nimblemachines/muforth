@@ -115,6 +115,22 @@ compiler
 forth
 
 
+( Looking up and changing values of target words.)
+
+( At metacompile time, do something with target words. We can't -execute-
+  them, because they are self-compiling. However, we can ' them and pull
+  out their guts, if we know what we're doing...)
+
+meta
+
+( We can't execute target words to get their address; they are
+  self-compiling! So we "cheat" and look into their bodies instead.)
+
+: '   ( - target-cfa)  .target. chain'  >body @ ;
+: addr   \m '  \m cell+ ;  ( find word, skip cfa, return pfa)
+: value  \m addr  \m @ ;   ( find word, skip cfa, read out value)
+
+
 ( Compile a linked name field into the target image.)
 
 ( The distinction between last and last-code is a bit subtle. last captures
@@ -122,6 +138,8 @@ forth
   last-code captures the cfa of code fields that have a "bl" instruction
   compiled there, and that can be possibly "repointed" by a later ;code or
   does>. Keeping them separate makes me feel better.)
+
+forth
 
 variable last        ( cfa of last word defined)
 variable last-code   ( for ;code and does> to fix up)
@@ -140,21 +158,23 @@ meta
 : token,  ( a u)  dup 1+ \m aligned  \m allot  ( room for name+len+padding)
           dup \m here 1- \m c! ( len)  \m here over 1+ -  image+ swap cmove ;
 
-: 'link   current @  suffix>link cell+  ( parallel link field) ;
+: >parallel   suffix>link cell+  ( parallel link field) ;
+
+( called from metac to fix up the target image variables .forth. and
+  .compiler. to point to the most recent names in the parallel host
+  dictionaries, .target. and .target-compiler. resp.
+
+  It looks up the following target chain name and stores the link field from
+  the host.)
+
+: parallels  ( host-chain)  \m >parallel @  \m addr  \m ! ;
+
+: 'link   current @  \m >parallel ;
 : link,   \m here  \m 'link  dup  @  \m z,  !  ( last-link 2! ) ;
 
 : name,  ( a u)  \m token,  \m link,  \m here last ! ;
 
 
-
-( At metacompile time, do something with target words. We can't -execute-
-  them, because they are self-compiling. However, we can ' them and pull
-  out their guts, if we know what we're doing...)
-
-: '   ( - target-cfa)
-      .target. chain' >body @ ;  ( can't execute them; they are self-compiling)
-: addr   \m '  \m cell+ ;  ( find word, skip cfa, return pfa)
-: value  \m addr  \m @ ;   ( find word, skip cfa, read out value)
 
 : literal   lookup lit @  \m a,  \m , ;  ( make a target literal)
 

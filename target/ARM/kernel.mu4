@@ -281,6 +281,7 @@ code u<    r0 pop  top r0  cmp   -1 # top mov u<   0 # top mov u>=  next  ;c
 code <     r0 pop  top r0  cmp   -1 # top mov  <   0 # top mov  >=  next  ;c
 code 0<            top top tst   -1 # top mov 0<   0 # top mov 0>=  next  ;c
 code 0=            top top tst   -1 # top mov 0=   0 # top mov ne   next  ;c
+: =  xor 0= ;
 
 comment =========================
                Stack Words
@@ -463,24 +464,60 @@ variable start   ( points to first character of input stream)
 variable end     ( points past last character of input stream)
 variable first   ( points to first unconsumed character)
 
-( XXX should skip and scan simply read and write first and end?)
+.ifdef skip-scan-in-asm
+
 ( Skip while char at a equals ch and not at end of input.)
-code skip  ( end a ch - a+)  ;c  ( UNDEF)
+code skip  ( end a ch - end a+)
+   { r1 r0 } sp ldm  ( r1=end, r0=a, top=ch)
+   begin
+      r1 r0 cmp
+   while u<
+      1 r0 )+ r2 ldrb
+      r0 top cmp
+   until ne
+   then
+   4 # sp sp add   r0 top mov   next  ;c
 
 ( Scan while char at a doesn't equal ch and not at end of input.)
-code scan  ( end a ch - a+ trailing)  ;c  ( UNDEF)
+code scan  ( end a ch - a+ trailing)
+   { r1 r0 } ! sp ldm  ( r1=end, r0=a, top=ch)
+   begin
+      r1 r0 cmp
+   while u<
+      1 r0 )+ r2 ldrb
+      r0 top cmp
+   until 0=
+   ( matched)   r0 push ( a+)  1 # top mov ( trailing)   next
+   then
+   ( eot)       r0 push ( a+)  0 # top mov ( trailing)   next  ;c
 
-( XXX this code assumes skip and scan do -not- take end as a param)
+.else
+
+( Skip while char at a equals ch AND not at end of input.)
+: skip  ( end a ch - end a+)
+   >r ( ch)
+   begin  2dup swap u< while  dup c@ r@ = while  1+  repeat  then
+   r> drop ;
+   
+( Scan while char at a doesn't equal ch AND not at end of input.)
+: scan  ( end a ch - a+ trailing)
+   >r ( ch)
+   begin  2dup swap u< while  dup c@ r@ xor while  1+  repeat
+   ( matched, consumed trailing)  ( end a+)  nip  1  r> drop  ^  then
+   ( ran out of input)            ( end a+)  nip  0  r> drop  ;
+
+.then
+
 : (token)   ( last trailing - a u)
    over  first @  - ( count)  >r
    + ( last+trailing)  first @  swap first !  ( consume input)  r> ;
 
 : token  ( - a u)
-   first @ bl skip ( leading whitespace)  dup first !
+   end @  first @  bl skip ( leading whitespace)  dup first !
    ( first)   bl scan  (token) ;
 
 : parse  ( ch - a u)
-   first @  swap scan  (token) ;
+   end @  first @  rot scan  (token) ;
 
 ==========================================================================
 Dictionary search.
@@ -489,12 +526,26 @@ variable current
 variable .forth.      ( PATCH fixed up by metac)
 variable .compiler.   ( PATCH fixed up by metac)
 
+( Names precede the link field and are compiled in an interesting way. The
+  count byte immediately precedes the link. If you then back up that many
+  -more- bytes you'll find the first character of the name. So names are
+  "right justified" - or padded on the left - so that the link field falls
+  on a cell boundary.)
+
+: link>name    ( 'link - a u)  1- dup  c@  tuck -  swap ;
+
 ( find takes a token [a u] and a chain [the head of a vocab word list] and
   searches for the token on that chain. If found, it returns the address
   of the code field of the word; if -not- found, it leaves the token [a u]
   on the stack, and returns false [0].)
 
-: find  ( a u chain - a u 0 | cfa -1) ;  ( UNDEF)
+: find  ( a u chain - a u 0 | cfa -1)
+   ( link) >r
+   begin  begin
+      r>  @ ( follow link)  =while  ( link non-zero)
+      >r  r@ 1- c@ ( len)  over =  until ( lengths match)  [ swap -]
+      over ( a)  r@ link>name  string=  until ( strings match)
+      2drop ( token)  r> cell+ ( cfa)  -1 ^  then  ( 0) ;
 
 ( Roll tokenizing and searching into one.)
 : token'  ( chain - a u 0 | cfa -1)   token  rot  find ;
@@ -1079,6 +1130,13 @@ comment ===================
 ;
 
 : warm   h  !  banner  print-memory  0 bye ;
+
+
+( Patch .forth. and .compiler. in .target. to reflect the reality on the
+  host.)
+
+.target.          parallels .forth.
+.target-compiler. parallels .compiler.
 
 0 .if
 code _boot   # rp mov  # sp mov   ' doit b  ;c
