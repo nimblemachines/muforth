@@ -111,9 +111,15 @@ forth
 : lookup  ( look up next token as forward-ref variable or label)
    .labels. chain' execute ( get addr) ;
 
+( Fetch value of variable on stack - a primitive - and compile it if
+  defined, and complain if not yet defined.)
+
+: (p,)  ( var)  @  =if  \m a,  ^  then  error" primitive not yet defined" ;
+
 compiler
 
-: lookup  ( compile a reference to a .label. word)   .labels. \chain ;
+( lookup and compile a forward-referenced primitive; complain if it hasn't been defined yet.)
+: p,   .labels. \chain  compile (p,) ;
 
 forth
 
@@ -175,9 +181,7 @@ meta
 
 : name,  ( a u)  \m token,  \m link,  \m here last ! ;
 
-
-
-: literal   lookup lit @  \m a,  \m , ;  ( make a target literal)
+: literal   p, lit  \m , ;  ( make a target literal)
 
 meta-compiler
 : [']  \m '  \m literal ;
@@ -247,7 +251,7 @@ meta-compiler
   variable. Very much like what we do above for the host, but this time it
   all lives on the target.)
 
-: ;code   lookup (;code) @  \m a,  \f lookup  \m a,  __meta ;
+: ;code   p, (;code)  \f lookup  \m a,  __meta ;
 
 forth
 
@@ -300,11 +304,11 @@ meta
            image+ swap cmove ;
 
 meta-compiler
-: "    lookup (") @  \m a,               ( compile (")
+: "    p, (")   ( compile (")
        char " parse  ( a u)  \m string,  ( compile the counted string) ;
 
-: ."   \mc "                 ( compile string)
-       lookup type @  \m a,  ( compile type) ;
+: ."   \mc "    ( compile string)
+       p, type  ( compile type) ;
 
 
 ( Control structures.)
@@ -322,16 +326,16 @@ meta
 : >mark   \m here  0 \m a, ;  ( mark addresss as relocating!!)
 
 meta-compiler
-: =if   ( - src)        lookup (=0branch) @  \m a,  \m >mark ;
-: if    ( - src)        lookup  (0branch) @  \m a,  \m >mark ;
+: =if   ( - src)        p, (=0branch)  \m >mark ;
+: if    ( - src)        p,  (0branch)  \m >mark ;
 : then  ( src)          \m here \m >resolve ;
-: else  ( src0 - src1)  lookup   (branch) @  \m a,  \m >mark
+: else  ( src0 - src1)  p,   (branch)  \m >mark
                         swap  \mc then ;
 
 : begin   ( - dest)  \m here ;
 : =until  ( dest -)  \mc =if  \m <resolve ;
 : until   ( dest -)   \mc if  \m <resolve ;
-: again   ( dest -)  lookup (branch) @  \m a,  \m >mark  \m <resolve ;
+: again   ( dest -)  p, (branch)  \m >mark  \m <resolve ;
 : =while  ( dest - src dest)  \mc =if  swap ;
 : while   ( dest - src dest)   \mc if  swap ;
 : repeat  ( src dest -)   \mc again  \mc then ;
@@ -339,9 +343,9 @@ meta-compiler
 ( n for .. next         goes n times; 4 billion+ if n=0 )
 ( n ?for .. next then   goes n times; 0 if n=0 )
 
-: for     ( - dest)      lookup  (for) @  \m a,            \mc begin ;
-: ?for    ( - src dest)  lookup (?for) @  \m a,  \m >mark  \mc begin ;
-: next    ( dest -)      lookup (next) @  \m a,  \m >mark  \m <resolve ;
+: for     ( - dest)      p,  (for)            \mc begin ;
+: ?for    ( - src dest)  p, (?for)  \m >mark  \mc begin ;
+: next    ( dest -)      p, (next)  \m >mark  \m <resolve ;
 
 forth
 
@@ -386,7 +390,7 @@ compiler
 
 meta-compiler
 : [    'target-literal @  _[ ;   ( when we return, make a target literal)
-: ^    lookup ^ @  \m a, ;   ( compile target's ^ - EXIT)
+: ^    p, ^  ;   ( compile target's ^ - EXIT)
 : ;    \mc ^  __meta ;
 
 forth

@@ -169,6 +169,7 @@ compiler: does>   <;code>  <dodoes>  __target-colon ;
   child's data; parent saves lr in r0; executes bl to dodoes; lr points to
   list of forth words to execute.)
 
+
 ==========================================================================
 Words to talk to the C environment.
 ==========================================================================
@@ -209,118 +210,16 @@ code getfile  ( ???)  next  ;c
 
 
 ==========================================================================
-Definition of the low-level words - the Forth virtual machine.
+Definition of the low-level words - the Forth virtual machine primitives
+needed for the meta-compiler.
 ==========================================================================
+
+( Implement the "forward referenced" primitives required -before- defining
+  anything else. Once these primitives are defined it will be safe to make
+  colon definitions.)
 
 code ^ implements ^
    ip unnest   next  ;c
-
-   here 0 a,
-code +origin    ( origin) pc) r0 ldr  r0 top top add   next ;c
-code execute         top r0 mov   top pop   r0 pc mov   ;c
-code @execute   0 top +) r0 ldr   top pop   r0 pc mov   ;c
-
-code +     r0 pop   top r0 top add   next  ;c
-
-code d+    ( alo ahi blo bhi - sumlo sumhi)
-           {  r2  r1  r0 } ! sp ldm   r2  r0  r0 add s   r0 push ( sumlo)
-                                      r1 top top adc     next  ;c
-
-code -     r0 pop   top r0 top sub   next  ;c
-code *     r0 pop   r0 top top mul   next  ;c
-code and   r0 pop   top r0 top and   next  ;c
-code bic   r0 pop   top r0 top bic   next  ;c
-code or    r0 pop   top r0 top or    next  ;c
-code xor   r0 pop   top r0 top eor   next  ;c
-
-code negate     0 # top top rsb   next  ;c
-
-code dnegate    ( lo hi - negated)
-                st1 r0 ldr   0 #  r0  r0 rsb s   st1 r0 str
-                             0 # top top rsc     next  ;c
-
-code invert   top top mvn   next  ;c
-
-code dup   top push  next  ;c
-code nip   r0  pop   next  ;c
-code drop  top pop   next  ;c
-
-code swap  top r0 mov   st1 top ldr   st1 r0 str  next  ;c
-code over  top push     st2 top ldr   next  ;c
-: tuck  ( a b - b a b)  swap over ;
-
-code >r   top nest   top pop      next  ;c
-code r>   top push   top unnest   next  ;c
-code r@   top push   0 rp +) top ldr   next  ;c
-
-.ifndef rot-in-forth
-
-code rot  ( r1 r0 top - r0 top r1)
-   { r1 r0  } sp ldm ia   r0 lr mov
-   { lr top } sp stm ia   r1 top mov next  ;c
-
-code -rot  ( r1 r0 top - top r1 r0)
-   { r1 r0  } sp ldm ia
-   { top r1 } sp stm ia   r0 top mov next ;c
-
-.else
-:  rot   >r swap  r> swap ;
-: -rot   swap >r  swap r> ;
-.then
-
-code <<       r0 pop   r0 top lsl top mov   next  ;c
-code >>       r0 pop   r0 top asr top mov   next  ;c
-code u>>      r0 pop   r0 top lsr top mov   next  ;c
-code rotate   r0 pop   r0 top ror top mov   next  ;c
-
-code 2/    top 1 #asr top mov  next  ;c
-code u2/   top 1 #lsr top mov  next  ;c
-code 2*    top 1 #lsl top mov  next  ;c
-
-code u<    r0 pop  top r0  cmp   -1 # top mov u<   0 # top mov u>=  next  ;c
-code <     r0 pop  top r0  cmp   -1 # top mov  <   0 # top mov  >=  next  ;c
-code 0<            top top tst   -1 # top mov 0<   0 # top mov 0>=  next  ;c
-code 0=            top top tst   -1 # top mov 0=   0 # top mov ne   next  ;c
-: =  xor 0= ;
-
-comment =========================
-               Stack Words
-
-  sp@   pushes the current stack pointer onto the stack.
-        If one writes  5 sp@ @ .  one will get 5 printed.
-  sp!   resets the stack pointer to its initial value.
-  depth pushes the number of stack elements on the stack
-        before depth was invoked.
-        =========================
-
-code depth   ( -- # )
-     'sp0 pc) r3 ldr
-     sp r3 r3 sub   top push   r3 2 #lsr top mov   next ;c
-
-code sp@     ( -- a )
-     top push  sp top mov  next ;c
-
-code sp!     ( -- )
-     'sp0 pc) r3 ldr
-     "0decafbad top load-literal   next ;c
-
-     here "0decafbad ,  ( see r1 ldr below)
-code ?stack  ( -- )
-     'sp0 pc) r3 ldr
-     'h0  pc) r2 ldr
-     1 Ki # r2 r2 add
-     ( lit) pc) r1 ldr
-     r3 sp cmp   r3 sp mov u<   r1 top mov u<
-     sp r2 cmp   r3 sp mov u>=  r1 top mov u>=
-     next ;c
-
-code s0   top push  'sp0 pc) top ldr  next ;c
-code r0   top push  'rp0 pc) top ldr  next ;c
-
-
-comment =========================
-               Intrinsics
-        =========================
 
 code lit implements lit
    top push   4 ip )+ top ldr   next  ;c
@@ -366,6 +265,126 @@ code (next) implements (next)
    0 ip +) ip ldr   next  ;c
 .then
 
+( NOTE: the only primitive still undefined is (")
+( But we let it be, since it depends on lots of other words... Our
+  compile-time checking that primitive are defined will catch any errors
+  like this.)
+
+
+==========================================================================
+Definition of the low-level words - the rest of the Forth virtual machine.
+==========================================================================
+
+                here  0 a,
+code +origin    ( origin) pc) r0 ldr  r0 top top add   next ;c
+
+code execute         top r0 mov   top pop   r0 pc mov   ;c
+code @execute   0 top +) r0 ldr   top pop   r0 pc mov   ;c
+
+code +     r0 pop   top r0 top add   next  ;c
+
+code d+    ( alo ahi blo bhi - sumlo sumhi)
+           {  r2  r1  r0 } ! sp ldm   r2  r0  r0 add s   r0 push ( sumlo)
+                                      r1 top top adc     next  ;c
+
+code -     r0 pop   top r0 top sub   next  ;c
+code *     r0 pop   r0 top top mul   next  ;c
+code and   r0 pop   top r0 top and   next  ;c
+code bic   r0 pop   top r0 top bic   next  ;c
+code or    r0 pop   top r0 top or    next  ;c
+code xor   r0 pop   top r0 top eor   next  ;c
+
+code negate     0 # top top rsb   next  ;c
+
+code dnegate    ( lo hi - negated)
+                st1 r0 ldr   0 #  r0  r0 rsb s   st1 r0 str
+                             0 # top top rsc     next  ;c
+
+code invert   top top mvn   next  ;c
+
+code dup   top push  next  ;c
+code nip   r0  pop   next  ;c
+code drop  top pop   next  ;c
+
+code swap  top r0 mov   st1 top ldr   st1 r0 str  next  ;c
+code over  top push     st2 top ldr   next  ;c
+: tuck  ( a b - b a b)  swap over ;
+
+code >r   top nest   top pop      next  ;c
+code r>   top push   top unnest   next  ;c
+code r@   top push   0 rp +) top ldr   next  ;c
+code rdrop           4 # rp rp add     next  ;c
+
+.ifndef rot-in-forth
+
+code rot  ( r1 r0 top - r0 top r1)
+   { r1 r0  } sp ldm ia   r0 lr mov
+   { lr top } sp stm ia   r1 top mov next  ;c
+
+code -rot  ( r1 r0 top - top r1 r0)
+   { r1 r0  } sp ldm ia
+   { top r1 } sp stm ia   r0 top mov next ;c
+
+.else
+:  rot   >r swap  r> swap ;
+: -rot   swap >r  swap r> ;
+.then
+
+code <<       r0 pop   r0 top lsl top mov   next  ;c
+code >>       r0 pop   r0 top asr top mov   next  ;c
+code u>>      r0 pop   r0 top lsr top mov   next  ;c
+code rotate   r0 pop   r0 top ror top mov   next  ;c
+
+code 2/    top 1 #asr top mov  next  ;c
+code u2/   top 1 #lsr top mov  next  ;c
+code 2*    top 1 #lsl top mov  next  ;c
+
+code u<    r0 pop  top r0  cmp   -1 # top mov u<   0 # top mov u>=  next  ;c
+code <     r0 pop  top r0  cmp   -1 # top mov  <   0 # top mov  >=  next  ;c
+code 0<            top top tst   -1 # top mov 0<   0 # top mov 0>=  next  ;c
+code 0=            top top tst   -1 # top mov 0=   0 # top mov ne   next  ;c
+: not      0= ;
+: =    xor 0= ;
+
+comment =========================
+               Stack Words
+
+  sp@   pushes the current stack pointer onto the stack.
+        If one writes  5 sp@ @ .  one will get 5 printed.
+  sp!   resets the stack pointer to its initial value.
+  depth pushes the number of stack elements on the stack
+        before depth was invoked.
+        =========================
+
+code depth   ( -- # )
+     'sp0 pc) r3 ldr
+     sp r3 r3 sub   top push   r3 2 #lsr top mov   next ;c
+
+code sp@     ( -- a )
+     top push  sp top mov  next ;c
+
+code sp!     ( -- )
+     'sp0 pc) r3 ldr
+     "0decafbad top load-literal   next ;c
+
+     here "0decafbad ,  ( see r1 ldr below)
+code ?stack  ( -- )
+     'sp0 pc) r3 ldr
+     'h0  pc) r2 ldr
+     1 Ki # r2 r2 add
+     ( lit) pc) r1 ldr
+     r3 sp cmp   r3 sp mov u<   r1 top mov u<
+     sp r2 cmp   r3 sp mov u>=  r1 top mov u>=
+     next ;c
+
+code s0   top push  'sp0 pc) top ldr  next ;c
+code r0   top push  'rp0 pc) top ldr  next ;c
+
+
+comment =========================
+               Intrinsics
+        =========================
+
 code @    0 top +) top ldr   next  ;c
 code c@   0 top +) top ldrb  next  ;c
 
@@ -388,7 +407,6 @@ code 1-      1 # top top sub   next  ;c
 
 code cell/  ( n - n/4)   top 2 #asr top mov   next  ;c
 code cells  ( n - n*4)   top 2 #lsl top mov   next  ;c
-code rdrop               cell rp rp add       next ;c
 
 : >     swap <  ;
 : 2dup   over  over ;
@@ -402,6 +420,7 @@ code rdrop               cell rp rp add       next ;c
 : string=   ( s1 s2 count)
    ?for  2dup  c@ swap c@  - if ( mismatch)   r> drop  2drop   0  ^  then
                1+ swap 1+  next  then  ( all matched)  2drop  -1 ;
+
 
 ==========================================================================
 Basic dictionary words.
@@ -420,6 +439,7 @@ variable h  ( dictionary pointer)
 
 : compile   r>  dup cell+  >r  @ , ;  ( fig)
 : literal   compile lit  , ;
+
 
 ==========================================================================
 Basic console output.
@@ -443,19 +463,11 @@ Support for compiled strings.
 
 : count  ( z" - a u)  dup 1+  swap c@ ;  ( fig)
 
-( fig combines pulling out the count, skipping over the string and count,
-  and type'ing it out all into one word.)
--- : (.")  r@ count  dup 1+ r> + >r  type ; ( fig)
+( This word pushes the address and length of an inline compiled string. It
+  is used by ." and " .)
 
-( We could define a similar word, but ours has to skip over the length and
-  the trailing padding:)
--- : (.")  r@ count  dup 1+  r> + aligned >r  type ; ( fig)
-
-( Or we could factor differently, and have ." compile (")
-( followed by type, in which case we have:)
 : (")  ( - a u)  r@ count  dup 1+  r> + aligned >r ;   implements (")
 
-( It all depends on how you want to use your string literals.)
 
 ==========================================================================
 Token parsing.
