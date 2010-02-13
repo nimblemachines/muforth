@@ -425,7 +425,9 @@ code cells  ( n - n*4)   top 2 #lsl top mov   next  ;c
 
 ( Grab bag - some random words that don't really belong anywhere.)
 
-: u+  ( a b c - a+c b)  swap >r + r> ;  ( "under-plus")
+: u+  ( a b c - a+c b)       swap >r  + r> ;  ( "under-plus")
+: v+  ( a b c d - a+c b+d)  rot + >r  + r> ;  ( "vector-plus")
+
 : >     swap <  ;
 : 2dup   over  over ;
 : 2drop  drop  drop ;
@@ -434,10 +436,6 @@ code cells  ( n - n*4)   top 2 #lsl top mov   next  ;c
 : s->d  ( n - d)  ( sign-extend)  dup 0< ;  ( high word on top)
 : abs   ( n - |n|)   s->d  if   negate  then ;
 : dabs  ( d - |d|)   s->d  if  dnegate  then ;
-
-: string=   ( s1 s2 count)
-   ?for  2dup  c@ swap c@  - if ( mismatch)   r> drop  2drop   0  ^  then
-               1+ swap 1+  next  then  ( all matched)  2drop  -1 ;
 
 
 ==========================================================================
@@ -473,8 +471,27 @@ Basic console output.
 
 
 ==========================================================================
-Support for compiled strings.
+String support.
 ==========================================================================
+
+( "March" two pointers in lock step.)
+: march  ( a1 a2 increment - a1+ a2+)   dup v+ ;
+
+( Compare two strings; assumes they are of equal length.)
+: string=   ( s1 s2 count)
+   ?for
+      over c@  over c@  - ( compare one char)
+                          if ( mismatch)  r> drop  2drop  0  ^  then
+      1 march  ( incr both pointers)  next  then   2drop  -1 ;
+
+( Note: This only works for non-overlapping strings!)
+: cmove     ( src dest count)
+   ?for
+      over c@  over c!  ( move one char)
+      1 march  ( incr both pointers)  next  then   2drop ;
+
+
+( XXX should we change this to halfword or cell-sized count?)
 ( Assume that compiled strings are:
     * prefixed with a length byte
     * padded at the end to a cell boundary)
@@ -800,8 +817,6 @@ target
 Making new names in the dictionary.
 ==========================================================================
 variable last         ( cfa of last word defined)
-
-code cmove  ( source dest count)  ( UNDEF)  ;c
 
 : code,   here last !  ( make a code field)  0 , ;
 : token,  ( a u)  dup 1+ aligned  allot  ( room for name+len+padding)
