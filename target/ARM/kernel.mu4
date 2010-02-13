@@ -105,17 +105,20 @@ pain of death!
 
 1 , ( Kernel/C API interface structure version) 
 
-label fp-entry ( FORTH parameters entry field)
-0 a, ( start address of FORTH Kernel will be patched later)
+( The following addresses will be patched after the kernel is loaded.
 
-( The following addresses will be patched later.
-  And, ip0 is the first FORTH instruction to execution.
-  entry point above points to code which begins the inner interpreter.
-  rp0 and sp0 are the start address for rp and sp, respectively.
-  h0 == sp0, as it turns out. Does that mean we can rid ourselves of h0? )
+  ip0      is the address of the first FORTH word to execute.
+  cold     points to code which fires up the inner interpreter - the Forth
+           VM execution machinery.
+  rp0      is the initial value for rp - the return stack pointer
+  sp0      is the initial value for sp - the data stack pointer
+  h0       is the initial heap - "here" - pointer. It is patched to point
+           just after the body of the last word defined in the kernel.)
+
+label 'cold  0 a,
 label 'ip0  0 a,
 label 'rp0  4 Ki ,
-label  'h0  0 a, ( will be loaded into top and then stored into h )
+label 'h0  0 a,
 label 'sp0  0 ,
 
 label exit-context
@@ -174,11 +177,18 @@ compiler: does>   <;code>  <dodoes>  __target-colon ;
 Words to talk to the C environment.
 ==========================================================================
 
-here "0decafbad ,
+( cold puts h0 into top; warm will later store it into h. The C caller puts
+  the address of the kernel header into r0. An ldm loads the header into
+  several registers as follows:
 
-code entry
-     { r1 r2 ( throw-away registers)
-       ip rp top sp } r0 ldm
+  version  cold  ip0   rp0   h0   sp0     -- defined in header in order
+       r0   r1   ip    rp    top  sp      -- loaded by ldm in order
+)
+
+here "0decafbad ,  ( "sentinel" top - empty stack - value)
+
+code cold
+     { r1 r2 ( throw-away ) ip rp top sp } r0 ldm
      ( const) pc) r3 ldr   r3 push   next  ;c
 
 code bye
@@ -205,8 +215,8 @@ label key-call
 code key ( - ch)
      'key pc) r3 ldr   key-call b  ;c
 
-code readline  ( ???)  next  ;c
-code getfile  ( ???)  next  ;c
+code readline  ( ???)  next  ;c  ( UNDEF)
+code getfile  ( ???)  next  ;c  ( UNDEF)
 
 
 ==========================================================================
@@ -214,9 +224,9 @@ Definition of the low-level words - the Forth virtual machine primitives
 needed for the meta-compiler.
 ==========================================================================
 
-( Implement the "forward referenced" primitives required -before- defining
-  anything else. Once these primitives are defined it will be safe to make
-  colon definitions.)
+( Implement the "forward referenced" primitives -before- defining anything
+  else. Once these primitives are defined it will be safe to make colon
+  definitions.)
 
 code ^ implements ^
    ip unnest   next  ;c
@@ -266,9 +276,11 @@ code (next) implements (next)
 .then
 
 ( NOTE: the only primitive still undefined is (")
-( But we let it be, since it depends on lots of other words... Our
-  compile-time checking that primitive are defined will catch any errors
-  like this.)
+
+( But we let it be, since it depends on lots of other words... Since we now
+  check to make sure that forward-referenced primitives are defined before
+  compiling references to them into target colon words, there is no
+  danger.)
 
 
 ==========================================================================
@@ -408,6 +420,9 @@ code 1-      1 # top top sub   next  ;c
 code cell/  ( n - n/4)   top 2 #asr top mov   next  ;c
 code cells  ( n - n*4)   top 2 #lsl top mov   next  ;c
 
+( Grab bag - some random words that don't really belong anywhere.)
+
+: u+  ( a b c - a+c b)  swap >r + r> ;  ( "under-plus")
 : >     swap <  ;
 : 2dup   over  over ;
 : 2drop  drop  drop ;
@@ -965,8 +980,6 @@ comment ===================
         More Stack routines
         ===================
 
-: not     0= ;
-: u+  ( a b c - a+c b)  swap >r + r> ;  ( "under-plus")
 
 comment **multitasker**
 
@@ -1168,9 +1181,11 @@ comment ===================
 .target.          parallels .forth.
 .target-compiler. parallels .compiler.
 
-0 .if
-code _boot   # rp mov  # sp mov   ' doit b  ;c
-' _boot { 'boot !
-.then
+
+( Patch pointers in header.)
+
+' cold        lookup 'cold !
+' warm cell+  lookup 'ip0 !
+here          lookup 'h0 !
 
 #]file
