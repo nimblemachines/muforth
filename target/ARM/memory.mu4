@@ -37,12 +37,6 @@ meta
 forth
 
 
-( Hook our image into the muFORTH memory dumper.)
-\m cell  |cell !
-.meta. chain' c@  is  |c@
-.meta. chain'  @  is  |@
-
-
 ( We keep a bitmap of which cells need relocation.)
 #image       ( num of bytes in image)
    \m cell/  ( num of bits in bitmap - one per target cell)
@@ -52,14 +46,33 @@ forth
 #reloc-bitmap array reloc-bitmap
 
 ( Mark a target address as needing relocation.)
-: index>bit  ( index - cell-offset mask)  dup 5 >>  swap 31 and  1 swap << ;
+: index>bit  ( index - mask cell-offset)
+   dup 31 and  1 swap <<  ( mask)
+   swap 5 >>  ( offset) ;
 
 : 'reloc  ( target-addr - mask a)
    \m cell/  ( convert to cell index)
-   index>bit  swap  reloc-bitmap ( mask a) ;
+   index>bit  reloc-bitmap ( mask a) ;
 
-: reloc  ( a)
-   'reloc  dup  @  rot  or  swap  ! ;
+( Mark an address - a cell - as relocated.)
+: reloc  ( a)   'reloc  dup  @  rot  or  swap  ! ;
+
+( Is an address relocated?)
+: reloc?  ( a)  'reloc       @      and ;
+
+
+( Hook our image into the muFORTH memory dumper, and decorate relocated
+  cells with a prefix `+'.)
+
+\m cell  |cell !
+.meta. chain' c@  is  |c@
+.meta. chain'  @  is  |@
+
+: decorator  ( reloc? - char)  if  char +  ^  then  bl ;
+: decorate  ( a+ n #spaces - a+ n)
+            1- spaces  over cell- reloc? decorator  emit ;
+' decorate is decorate-cell
+
 
 ( Basic dictionary words.)
 meta
