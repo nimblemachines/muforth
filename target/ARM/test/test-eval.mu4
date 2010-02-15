@@ -1,0 +1,157 @@
+( This file is part of muFORTH: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2010 David Frech. All rights reserved, and all wrongs
+  reversed. (See the file COPYRIGHT for details.)
+
+
+( I'm going to dump the tokeniser, dictionary find, and interpret code here
+  to try to test it out under muforth.)
+
+forth
+
+==========================================================================
+Token parsing.
+==========================================================================
+( XXX two variables, start and end?)
+-- 2variable source  ( start, end)
+variable start   ( points to first character of input stream)
+variable end     ( points past last character of input stream)
+variable first   ( points to first unconsumed character)
+
+( white= implements a special kind of equality. If the second char is a
+  space, the first character is considered "equal" to it if it is any kind
+  of whitespace. If the second char is a non-space, the two chars must be
+  equal.
+
+  For simplicity, I'm going to consider any control char - ASCII value < 32
+  - to be whitespace!)
+
+: white=  ( c1 c2)
+   dup bl = if  drop  33 u<  ^  then  = ;
+
+( Skip while char at a equals ch AND not at end of input.)
+: skip  ( end a ch - end a+)
+   >r ( ch)
+   begin  2dup swap u< while  dup c@ r@ white=  while  1+  repeat  then
+   r> drop ;
+   
+( Scan while char at a doesn't equal ch AND not at end of input.)
+: scan  ( end a ch - a+ trailing)
+   >r ( ch)
+   begin  2dup swap u< while  dup c@ r@ white= not  while  1+  repeat
+   ( matched, consumed trailing)  ( end a+)  nip  1  r> drop  ^  then
+   ( ran out of input)            ( end a+)  nip  0  r> drop  ;
+
+
+: (token)   ( last trailing - a u)
+   over  first @  - ( count)  >r
+   + ( last+trailing)  first @  swap first !  ( consume input)  r> ;
+
+: token  ( - a u)
+   end @  first @  bl skip ( leading whitespace)  dup first !
+   ( first)   bl scan  (token) ;
+
+: parse  ( ch - a u)
+   end @  first @  rot scan  (token) ;
+
+==========================================================================
+Dictionary search.
+==========================================================================
+: .forth.      .target.  >parallel  ( target lfa)  image - ;
+: .compiler.   .target-compiler.  >parallel  ( target lfa)  image - ;
+
+( Names precede the link field and are compiled in an interesting way. The
+  count byte immediately precedes the link. If you then back up that many
+  -more- bytes you'll find the first character of the name. So names are
+  "right justified" - or padded on the left - so that the link field falls
+  on a cell boundary.)
+
+: link>name    ( 'link - a u)  image+  1- dup  c@  tuck -  swap ;
+
+: string=   ( s1 s2 u - tf )  
+.ifdef debug
+   ( debug)  >r
+   cr ." =1 "  over r@  u. u.
+   cr ." =2 "  dup r@ u. u.
+   r>
+.then
+
+   ( count) ?for  2dup  c@ swap c@  - if ( mismatch)   r> drop  2drop   0  ^  then
+                        1+ swap 1+  next  then  ( all matched)  2drop  -1 ;
+
+( find takes a token [a u] and a chain [the head of a vocab word list] and
+  searches for the token on that chain. If found, it returns the address
+  of the code field of the word; if -not- found, it leaves the token [a u]
+  on the stack, and returns false [0].)
+
+: find  ( a u chain - a u 0 | cfa -1)
+   ( link) >r
+--   ( debug)  cr cr ." looking for "  2dup type  ."  -- "
+   begin  begin
+      r>  \m @ ( follow link)  =while  ( link non-zero)
+      -- ( debug)  dup  link>name type space
+      >r  r@ 1- \m c@ ( len)  over =  until ( lengths match)  [ swap -]
+      over ( a)  ( debug)  r@ link>name  string=  until ( strings match)
+      2drop ( token)  r> \m cell+ ( cfa)  -1 ^  then  ( 0) ;
+
+
+==========================================================================
+Interpreter and compiler.
+==========================================================================
+variable 'eat    ( how to consume a token)
+
+: ?stack ;  ( XXX remove when ?stack fixed!!)
+
+: interpret
+   begin  token  =while  'eat @execute  ?stack  repeat  2drop ;
+
+: evaluate  ( a u)
+   start @ >r  end @ >r  ( save source)
+   first @ >r            ( save our place in the input)
+   over +  ( start end)  end !  dup start !  ( source)  first !
+   interpret
+   r> first !  r> end !  r> start ! ;
+
+( redefine for following two words...)
+: .cfa-as-name   ( cfa)  \m cell-  link>name  type ;
+: execute   ( target-cfa)  cr ." execute "  .cfa-as-name ;
+: ,         ( target-cfa)  cr ." compile "  .cfa-as-name ;
+: number    ( a u)         cr ." not def "  type ;
+
+: interpret-token
+      .forth. find  if  execute  ^  then  number ;
+
+: compile-token
+   .compiler. find  if  execute  ^  then
+      .forth. find  if  ,        ^  then  number  ; -- literal ;
+
+: -]  ( start compiler)  [']   compile-token  'eat ! ;
+: ]   literal  -] ;
+
+: target-[   ( exit compiler)   ['] interpret-token  'eat ! ;
+
+
+: eval  ( a u)
+   over +  ( start end)  end !  dup start !  first ! ;
+
+-: ( print)  ( a u)  type ;  'eat \f !
+target-[
+\f -]
+
+: ev
+( Now the test)
+"
+   ( link) >r
+   begin  begin
+      r>  \m @ ( follow link)  =while  ( link non-zero)
+      -- ( debug)  dup  link>name type space
+      >r  r@ 1- \m c@ ( len)  over =  until ( lengths match)  [ swap -]
+      over ( a)  ( debug)  r@ link>name  string=  until ( strings match)
+      2drop ( token)  r> \m cell+ ( cfa)  -1 ^  then  ( 0) ;
+" 
+
+evaluate
+-- eval
+;
+
+
