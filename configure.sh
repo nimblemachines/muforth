@@ -20,13 +20,11 @@ done
 if sed --version 2> /dev/null | grep -q "GNU"; then
   cat <<EOF
 Found GNU sed; using "-r" for extended regular expressions.
-
 EOF
   sedext="-r"
 else
   cat <<EOF
 Found BSD sed; using "-E" for extended regular expressions.
-
 EOF
   sedext="-E"
 fi
@@ -40,7 +38,7 @@ chmod 755 scripts/do_sed.sh
 if [ "${gnu}" = "yes" ] || 
     make --version 2> /dev/null | grep -q "GNU Make"; then
   cat <<EOF
-Found GNU make. I'm going to create a compatible makefile for you.
+Found GNU make; creating a GNU-compatible Makefile.
 
 EOF
   sed ${sedext} \
@@ -50,9 +48,8 @@ EOF
     -e 's/^### Makefile/### GNU Makefile/' Makefile.in > Makefile
 else
   cat <<EOF
-Found non-GNU (perhaps BSD?) make. I'm going to assume it's a BSD make and
-create a makefile for you. If the build fails, try re-running configure
-like this:
+Found non-GNU (perhaps BSD?) make; creating a BSD-compatible Makefile.
+If the build fails, try re-running configure like this:
 
   ./configure gnu
 
