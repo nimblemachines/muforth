@@ -1,0 +1,64 @@
+( This file is part of muFORTH: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2010 David Frech. All rights reserved, and all wrongs
+  reversed. (See the file COPYRIGHT for details.)
+
+
+: *digit  ( ud a digit - ud*base+digit a)
+   swap >r ( a)  swap ( lo digit hi)
+   radix @ um*  drop  rot ( digit hi*radix lo)
+   radix @ um*            ( digit hi*radix lo*radix_lo lo*radix_hi)
+   d+
+   r>  dpl @ 0< 1+  dpl +!  ;
+
+: /digit   (s ud - udquot urem)
+   0 radix @ um/mod     ( 0:hi / radix -> urhi uqhi)  push
+     radix @ um/mod  ( urhi:lo / radix -> urlo uqlo)  pop rot  ;
+
+( ANS compatible!)
+: >number  ( ud1 a1 c1 - ud2 a2 c2)  ( a2 is first unconvertible char)
+   =if  for  @digit?  while  *digit 1+ next  0 ^  then
+                                drop  pop  then  ;
+
+: fancy-number  ( a u - d)  ( was -: )
+   2push  0 0  2pop  ?radix  ?sign push  dpl on
+   begin  >number  =while ( still chars)  ?dot  repeat
+   2drop  pop  if dnegate then  ;
+
+: (number)  ( a u - d)
+   radix @ push   ['] fancy-number  catch   pop radix !  throw  ;
+( always reset the radix, even in case of error)
+
+-: (number)  dpl @  0< if  drop literal ^  then  swap  literal literal ;
+'number, !
+
+-: (number)  dpl @  0< if  drop  then  ;
+'number !
+
+( Make it easy to call "number" and "number," from interpreter mode words.)
+: number   'number  @execute ;
+: number,  'number, @execute ;
+
+==========================================================================
+existing code in current startup with 32-bit numbers
+==========================================================================
+
+: *digit  (s u a digit - u*base+digit a)
+   swap push ( a)  swap ( dig u)  radix @ * +  pop  dpl @ 0< 1+  dpl +!  ;
+
+( ANS compatible! - or at least it was when it converting with double numbers.)
+: >number  (s u1 a1 c1 - u2 a2 c2)  ( a2 is first unconvertible char)
+   =if  for  @digit?  while  *digit 1+ next  0 ^  then
+                                drop  pop  then  ;
+
+( If >number can't convert any digits, complain.)
+: digits   (s u1 a1 c1 - u2 a2 c2 u3)
+   dup push ( chars left)  >number  pop over - ( count of digits converted)
+   0= if  drop complain  then ;
+
+: number  (s a u - n)
+   radix preserve ( always reset the radix, even in case of error)
+   2push  0  2pop  ?sign push  ?radix  dpl on
+   begin  digits  =while ( still chars)  ?dot  repeat
+   2drop  pop  if negate then  ;
+
