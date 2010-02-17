@@ -358,43 +358,6 @@ code 0=            top top tst   -1 # top mov 0=   0 # top mov ne   next  ;c
 : not      0= ;
 : =    xor 0= ;
 
-comment =========================
-               Stack Words
-
-  sp@   pushes the current stack pointer onto the stack.
-        If one writes  5 sp@ @ .  one will get 5 printed.
-  sp!   resets the stack pointer to its initial value.
-  depth pushes the number of stack elements on the stack
-        before depth was invoked.
-        =========================
-
-code depth   ( -- # )
-     'sp0 pc) r3 ldr
-     sp r3 r3 sub   top push   r3 2 #lsr top mov   next ;c
-
-code sp@     ( -- a )
-     top push  sp top mov  next ;c
-
-
-here dup "0decafbad ,  ( needed twice below)
-
-code sp!     ( -- )
-     'sp0 pc) sp ldr          ( reset sp to s0)
-     ( decafbad) pc) top ldr  ( load sentinel)
-     next  ;c
-
-code ?stack  ( -- )
-     'sp0 pc) r3 ldr
-     'h0  pc) r2 ldr
-     1 Ki # r2 r2 add
-     ( decafbad) pc) r1 ldr
-     r3 sp cmp   r3 sp mov u<   r1 top mov u<
-     sp r2 cmp   r3 sp mov u>=  r1 top mov u>=
-     next ;c
-
-code s0   top push  'sp0 pc) top ldr  next ;c
-code r0   top push  'rp0 pc) top ldr  next ;c
-
 
 comment =========================
                Intrinsics
@@ -423,20 +386,6 @@ code 1-      1 # top top sub   next  ;c
 code cell/  ( n - n/4)   top 2 #asr top mov   next  ;c
 code cells  ( n - n*4)   top 2 #lsl top mov   next  ;c
 
-( Grab bag - some random words that don't really belong anywhere.)
-
-: u+  ( a b c - a+c b)       swap >r  + r> ;  ( "under-plus")
-: v+  ( a b c d - a+c b+d)  rot + >r  + r> ;  ( "vector-plus")
-
-: >     swap <  ;
-: 2dup   over  over ;
-: 2drop  drop  drop ;
-: min   2dup >  if swap then  drop  ;
-: max   2dup <  if swap then  drop  ;
-: s->d  ( n - d)  ( sign-extend)  dup 0< ;  ( high word on top)
-: abs   ( n - |n|)   s->d  if   negate  then ;
-: dabs  ( d - |d|)   s->d  if  dnegate  then ;
-
 
 ==========================================================================
 Basic dictionary words.
@@ -455,6 +404,77 @@ variable h  ( dictionary pointer)
 
 : compile   r>  dup cell+  >r  @ , ;  ( fig)
 : literal   compile lit  , ;
+
+
+==========================================================================
+Checking and resetting the data stack.
+==========================================================================
+
+code s0   top push  'sp0 pc) top ldr  next ;c  ( bottom of sp stack)
+code r0   top push  'rp0 pc) top ldr  next ;c  ( bottom of rp stack)
+
+( sp@ pushes the current stack pointer onto the stack. If the stack is
+  empty, sp@ returns a pointer to the decafbad sentinel. "5 sp@ @ . " will
+  print 5.)
+
+code sp@     ( -- a )
+     top push  sp top mov  next ;c
+
+here "0decafbad ,  ( needed below)
+
+code sp!     ( -- )
+     'sp0 pc) sp ldr          ( reset sp to s0)
+     ( decafbad) pc) top ldr  ( load sentinel)
+     next  ;c
+
+( depth looks a little weird, but it makes sense if you think about it.
+
+  Assume the stack is empty. sp == s0, and top == decafbad.
+
+  Now we push s0. sp == s0 - 4, and top = s0.
+
+  Now execute sp@, which will push the address of s0 on the stack.  sp ==
+  s0 - 8, and top == sp. Subtract. top = s0 - [s0 - 8] = 8. cell/ yields 2.
+  So we have to subtract 2 to get the right answer - 0 - for an empty
+  stack.)
+
+: depth  ( - #cells)  s0 sp@ -  cell/  2 - ;
+
+( We allow the sp stack to come within a 1 KiB "buffer zone" of here.
+  Closer than that and we reset it. In reality this calculation is off by
+  two cells, but we don't care. We're much more careful about the underflow
+  case - we'd like to know -exactly- when we underflow the stack. In this
+  case we carefully adjust s0 so that when the stack is empty will be equal
+  to sp@, and if the stack has underflowed, then adjusted[s0] u< sp@.)
+
+( XXX do we want to be so draconian as to throw away all the stack state on
+  overflow? Or just drop a few cells?)
+
+( XXX we really want to abort here with a nice message in each case.)
+
+: ?stack   ( check stack for over- and under-flow; reset if necessary)
+     here [ 1 Ki ] +  sp@  u< not if  sp!  then  ( overflow - ran into here)
+   s0  [ 2 cells ] -  sp@  u<     if  sp!  then  ( underflow) ;
+
+
+==========================================================================
+Grab bag - some random words that don't really belong anywhere.
+==========================================================================
+: u+  ( a b c - a+c b)      rot +  swap ;  ( "under-plus")
+: v+  ( a b c d - a+c b+d)  >r u+  r> + ;  ( "vector-plus")
+
+: >     swap <  ;
+: 2dup   over  over ;
+: 2drop  drop  drop ;
+: min   2dup >  if swap then  drop  ;
+: max   2dup <  if swap then  drop  ;
+: s->d  ( n - d)  ( sign-extend)  dup 0< ;  ( high word on top)
+: abs   ( n - |n|)   s->d  if   negate  then ;
+: dabs  ( d - |d|)   s->d  if  dnegate  then ;
+
+: string=   ( s1 s2 count)
+   ?for  2dup  c@ swap c@  - if ( mismatch)   r> drop  2drop   0  ^  then
+               1+ swap 1+  next  then  ( all matched)  2drop  -1 ;
 
 
 ==========================================================================
