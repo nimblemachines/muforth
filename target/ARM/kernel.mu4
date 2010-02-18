@@ -697,27 +697,27 @@ Sample output:
 
 ==========================================================================
 code um/mod  ( ud  u - urem uquot)  
-     top r2 mov   -- Divisor
-     st1 r1 ldr   -- Dividend, hi
-     st2 r0 ldr   -- Dividend, lo
-     32 # r3 mov  -- Loop count
+     top r2 mov    -- Divisor
+     r1 pop        -- Dividend, hi
+     r0 pop        -- Dividend, lo
+     #32 # r3 mov  -- Loop count
 
      here
 
      r0 1 #lsl r0 mov s -- Shift the low bits up
      r1 r1 r1 adc       -- Shift the carry in
 
-     r1 r2 cmp          -- Can the dividend subtract the divisor?
-     1 # r8 mov cs      -- Yes, note it later
-     r1 r2 r1 sub cs    -- And perform the subtraction
-     0 # r8 mov cc      -- No.
+     r2 r1 cmp          -- Can the dividend subtract the divisor?
+     1 # r8 mov u>=     -- Yes, note it later
+     r2 r1 r1 sub u>=   -- And perform the subtraction
+     0 # r8 mov u<      -- No.
 
      r0 r8 r0 or        -- Set (or not) the quotient bit
 
      1 # r3 r3 sub s -- Decrement counter
      b ne         -- Branch until done
 
-     st1 r1 str   -- Remainder
+     r1 push      -- Remainder
      r0 top mov   -- Quotient
      next  ;c
 
@@ -764,8 +764,6 @@ Numeric conversion - output.
 : >digit   ( n - ch)  ( convert 1 binary digit to char; hex to uppercase)
    9 over u<  7 and +  [ char 0 ] +  ;
 
-.ifdef number-output
-
 : /digit   ( ud - udquot urem)
    0 radix @ um/mod  ( 0:hi / radix -> urhi uqhi)  >r
    ( urhi:lo)  radix @ um/mod  ( urlo uqlo)  r> rot  ;
@@ -793,6 +791,8 @@ variable hld
 
 : (d.)    ( d - a #)   dup >r ( sign)  dabs  <#  #s  r> sign  #>  ;
 : d.      ( d -)       (d.)  type  space  ;
+
+.ifdef number-output
 
 : (.)     ( n - a #)   s->d  (d.)  ;
 : .       ( n -)       (.)  type  space  ;
@@ -1150,8 +1150,10 @@ decimal
 ( Printing hex.)
 : 16/mod   ( n - q r)  dup 4 u>>   swap 15 and ;
 
+.ifndef number-output
 : .   8 for  16/mod >digit swap  next  drop
       8 for  emit  next  space ;
+.then
 
 : ?a   dup 15 and 0= if  cr  dup .  space  then ;
 : @+   ( a - a+ n)  dup cell+  swap @ ;
@@ -1236,12 +1238,21 @@ comment ===================
 hex
 : div-test  100 1000 div 
             1000 100 div 
-            10000 10 div ;
+            10000 10 div 
+            3333 aaaa um* 6666 um/mod . . ;
 decimal
 
 : stat-bye  cr ." depth = " depth . cr bye ;
 
-: warm   h  !  \ [  banner  print-memory  div-test  stat-bye ;
+: warm   h  !  16 radix ! \ [
+         banner  print-memory
+         "12345678 "ffff_ffff dabs d. cr
+         "00000000 "0000_0000 dabs d. cr
+         "00000001 "0000_0000 dabs d. cr
+         "00000000 "8000_0000 dabs d. cr
+         "FFFFFFFF "FFFF_FFFF dabs d. cr
+         "FFFFFFFF "7FFF_FFFF dabs d. cr
+         stat-bye ;
 
 
 ( Patch .forth. and .compiler. in .target. to reflect the reality on the
