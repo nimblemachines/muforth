@@ -57,6 +57,11 @@ void mu_depth()     { cell d = S0 - SP; PUSH(d); }
 void mu_sp_reset()  { SP = S0; TOP = 0xdecafbad; }
 void mu_push_s0()   { PUSH(S0); }   /* address of stack bottom */
 
+/* So we can do return-stack magic. */
+void mu_rp_store()       { RP  = (xtk **)TOP; DROP(1); }
+void mu_rp_plus_store()  { RP += TOP; DROP(1); }    /* TOP is cell count! */
+void mu_rp_fetch()       { PUSH(RP); }
+
 /*
  * Single-length math routines.
  *
