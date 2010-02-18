@@ -41,7 +41,7 @@ s/_carefully//
 s/less/</
 s/equal/=/
 s/zero/0/
-s/reset/!/
+#s/reset/!/
 s/star(_|$)/*/
 s/backslash/\\\\/
 s/slash/\//
