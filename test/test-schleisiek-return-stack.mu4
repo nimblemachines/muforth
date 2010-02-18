@@ -28,7 +28,7 @@
   |   +--------------------+
   +---+     prev frame     |<--- fp
       +--------------------+
-      |   ip of restore    |<--- rp      restore just calls unlink
+      |    ip of remove    |<--- rp      remove just calls unlink
       +--------------------+                                          )
 
 variable fp    ( the "top" - most recently pushed - frame)
@@ -64,11 +64,13 @@ variable fp    ( the "top" - most recently pushed - frame)
 
 
 .ifdef muFORTH
+( Creates a word that points to itself.)
+: self   0 constant  here  dup cell- ! ;
 
 ( colon creates a colon word that when executed pushes the address of the
   first word in its body.)
 
-: colon  0 constant  here  dup cell- !  -]  does> ;
+: colon  self  -]  does> ;
 colon  remove      unlink ;   ( remove pushes IP)
 .else ( target)
 create remove  -]  unlink ;   ( remove pushes IP)
@@ -77,6 +79,9 @@ create remove  -]  unlink ;   ( remove pushes IP)
 
 ( Now some interesting applications.)
 
+-- -----------------------------------------------------------------------
+-- Dynamic binding
+-- -----------------------------------------------------------------------
 ( Restore saved value of a variable.)
 : restore
    r>  ( ra)
@@ -93,6 +98,9 @@ create remove  -]  unlink ;   ( remove pushes IP)
    >r  ( ra) ;
 
 
+-- -----------------------------------------------------------------------
+-- Local variable frames
+-- -----------------------------------------------------------------------
 ( Deallocate local variables.)
 : unroom
    r>  ( ra)
@@ -109,7 +117,8 @@ create remove  -]  unlink ;   ( remove pushes IP)
 : room  ( #cells)
    r>  ( ra)
 .ifdef zeroed-locals
-   swap dup  begin  "55aa55aa >r  1-  dup 0= until  drop
+   -- swap dup  begin  "55aa55aa >r  1-  dup 0= until  drop
+   swap dup  begin  0 >r  1-  dup 0= until  drop
 .else
    swap dup  negate rp+!  ( allocate)
 .then
@@ -119,17 +128,86 @@ create remove  -]  unlink ;   ( remove pushes IP)
 .then
    >r  ( ra) ;
 
+-- -----------------------------------------------------------------------
+-- Trap handlers
+-- -----------------------------------------------------------------------
 
+( Here is a picture of the return stack, with high memory towards to top of
+  the page, and low memory further down:
+
+  ^   |                    |
+  |   +--------------------+
+  |   |  prev return addr  |    ... trap <trap-type> <handler>  ...
+  |   +--------------------+         |
+  |   | ip of call to trap |---------+
+  |   +--------------------+
+  |   |     saved sp       |
+  |   +--------------------+
+  |   |  trap type <pfa>   |     
+  |   +--------------------+
+  |   |    cfa of nope     |   cleanup operation is to do nothing
+  |   +--------------------+
+  +---+     prev frame     |<--- fp
+      +--------------------+
+      |    ip of untrap    |<--- rp 
+      +--------------------+                                          )
+
+( pop trap type, sp, and ip)
+.ifdef muFORTH
+colon  untrap      unlink  r> drop  r> drop  r> drop ;
+.else
+create untrap  -]  unlink  r> drop  r> drop  r> drop ;
+.then
+
+( trap: creates a new trap type, uniquely defined because the value it
+  compiles is its own dictionary address. At runtime it "raises" this trap
+  type, and unwinds the stack to find a matching handler, printing an error
+  message if nothing matched. If it finds a handler, it calls it, but
+  leaves the IP on the return stack that points to the code that -set- the
+  trap, so the whole thing is re-executed until it exits successfully - ie,
+  returns normally without trapping.)
+
+: trap:  self  does>
+         begin  fp @  0= if error" trapped" then
+                unlink  dup r> =  until  ( matches trap type)
+         drop  r> sp!  r@ cell+ cell+  ( skip to handler)  @execute ;
+
+( trap is followed in the definition by a trap type word, and a handler.)
+: trap   r> ( ra)
+         dup cell- >r  ( resume address: call ourselves again!)
+         sp@ cell+ >r  ( sp at time trap set; cell+ to ignore ra)
+.ifdef muFORTH
+         dup @ >data >r  ( fetch and push trap type)
+.else
+         dup @ >body >r  ( fetch and push trap type)
+.then
+         link nope       ( null cleanup action; untrap cleans up)
+         untrap >r       ( does the unlink and cleanup on normal return)
+         ( ra)  cell+ cell+ >r  ( skip trap type and handler and return)
+         ;
+
+
+-- -----------------------------------------------------------------------
+-- Goofy test code
+-- -----------------------------------------------------------------------
 ( Jump to the outermost frame and "return" to it.)
 : undo  r>  fp @  cell- rp!  >r ;
 
 ( Let's talk to the user while these stack frames are set up, so we can
   dump and debug them.)
 
+trap: undefined-token
+trap: overflow
+trap: ate-the-stack
+trap: abort
+
 : test-frames
    ( allocate a bunch of stuff)
    radix preserve  binary
    radix preserve  hex
+    5  6  7  trap undefined-token  0
+   10 11 12  trap ate-the-stack   -1
+   30 40 50  trap overflow         1
    4 room
    -- token number
    quit

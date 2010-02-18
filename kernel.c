@@ -56,6 +56,8 @@ void mu_zero_equal()  { TOP = (TOP == 0) ? -1 : 0; }
 void mu_depth()     { cell d = S0 - SP; PUSH(d); }
 void mu_sp_reset()  { SP = S0; TOP = 0xdecafbad; }
 void mu_push_s0()   { PUSH(S0); }   /* address of stack bottom */
+void mu_sp_fetch()  { PUSH(SP); }   /* push value of stack pointer */
+void mu_sp_store()  { SP = (cell *)TOP; DROP(1); }   /* set stack pointer */
 
 /* So we can do return-stack magic. */
 void mu_rp_store()       { RP  = (xtk **)TOP; DROP(1); }
