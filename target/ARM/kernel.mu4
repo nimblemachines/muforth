@@ -191,7 +191,7 @@ code cold
      { r1 r2 ( throw-away ) ip rp top sp } r0 ldm
      ( const) pc) r3 ldr   r3 push   next  ;c
 
-code bye
+code die
    ( 0   if        1         then   >r1       )
      0 # top cmp   1 # top mov 0=   top r1 mov
 
@@ -690,24 +690,27 @@ whatever remains in the r1 (the high portion of the dividend) is
 necessarily the remainder.
 ==========================================================================
 code um/mod  ( ud  u - urem uquot)  
-0 .if
      top r2 mov   -- Divisor
      st1 r1 ldr   -- Dividend, hi
      st2 r0 ldr   -- Dividend, lo
-     32 # r3 mov  -- Loop count
+     1 # r3 mov  -- Loop count
+
      here
 
-     r2 r1 r1 sub s  1 # r8 mov cs  0 # r8 mov cc
-     r0 1 #lsl r0 mov s
-     r1 31 #ror r1 mov
-     r0 r8 r0 or
+     r1 r2 cmp          -- Can the dividend subtract the divisor?
+     1 # r8 mov cs      -- Yes, note it later
+     r1 r2 r1 sub cs    -- And perform the subtraction
+     0 # r8 mov cc      -- No.
 
-     1 # r3 sub s -- Decrement counter
+     r0 1 #lsl r0 mov s -- Shift the low bits up
+     r1 r1 r1 adc       -- Shift the carry in
+     r0 r8 r0 or        -- Note that we subtracted (if we did)
+
+     1 # r3 r3 sub s -- Decrement counter
      b ne         -- Branch until done
 
      st1 r1 str   -- Remainder
      r0 top mov   -- Quotient
-.then
      next  ;c
 
 code fm/mod  (  d  n - mod quot)  ;c  ( UNDEF)
@@ -947,6 +950,8 @@ target
 Error handling, abort, and quit.
 ==========================================================================
 
+: bye   0  die ;
+
 .ifdef choose-your-poison
 
 -- -----------------------------------------------------------------------
@@ -1181,13 +1186,15 @@ comment ===================
   1 2 3 -rot      . . .  ." <- should be 2 1 3" cr
 ;
 
-: print-eq    ( d -- )
-  ." = "  . . cr ;
+: ..  .  . ;
+: 2.  over . dup . ;
+: .d  dup . over . ;
 
 : mul  ( a b --)
-  2dup  over . dup .  ." um* "  um*  print-eq
-  2dup  over . dup .  ."  m* "  um*  print-eq
-        over . dup .  ."   * "    *  ." = " . cr ;
+  2dup  2.  ." um* "  um*  ." = " .. cr
+  2dup  2.  ."  m* "   m*  ." = " .. cr
+  2dup  2.  ."   * "    *  ." = " .  cr 
+  2drop ;
 
 : mul-test
   1 2            mul
@@ -1215,7 +1222,18 @@ comment ===================
 
 : eval-test  " 0 . cr" evaluate ;
 
-: warm   h  !  \ [  banner  print-memory  eval-test 0 bye ;
+: div  ( a b - )
+  2.  ." um* " swap over um* ." = " .d rot dup . um/mod ." = " . ." rem " . cr ;
+
+hex
+: div-test  100 1000 div 
+            1000 100 div 
+            10000 10 div ;
+decimal
+
+: stat-bye  cr ." depth = " depth . cr bye ;
+
+: warm   h  !  \ [  banner  print-memory  div-test  stat-bye ;
 
 
 ( Patch .forth. and .compiler. in .target. to reflect the reality on the
