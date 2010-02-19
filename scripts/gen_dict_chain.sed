@@ -50,6 +50,7 @@ s/minus/-/
 s/shift_left/<</
 s/shift_right/>>/
 s/fetch/@/
+s/^at_/@_/
 s/store/!/
 s/(.*)_chain/\.\1\./
 s/set_(.*)_code/<\1>/

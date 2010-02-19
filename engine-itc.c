@@ -15,10 +15,8 @@
  * and still store them somewhere. This is easier.
  */
 pw p_mu_nope = &mu_nope;
-pw p_mu_interpret = &mu_interpret;
-pw p_mu_evaluate = &mu_evaluate;
-pw p__mu__lbracket = &_mu__lbracket;
-pw p__mu__rbracket = &_mu__rbracket;
+
+void mu_execute() { EXECUTE; }
 
 /*
  * This is where all the magic happens. Any time we have the address of a

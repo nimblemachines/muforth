@@ -9,31 +9,17 @@
 
 #include "muforth.h"
 
-#include <setjmp.h>
-#include <stdlib.h>
+#include <stdlib.h>     /* for exit() */
 #include <errno.h>
-
-#ifndef XXX
-#include <sys/uio.h>
-#include <unistd.h>
-#endif
-
-#define write_string(f,s)  write(f,s,strlen(s))
-
-/* XXX just use printf! */
-/* XXX print out zloading and lineno too */
+#include <stdio.h>
 
 /* A bit of a crock, but only called if we haven't set up a catch frame. */
 void die(const char *msg)
 {
-    write_string(2, "muforth: ");
-    if (parsed.length != 0)
-    {
-        write(2, parsed.data, parsed.length);
-        write(2, " ", 1);
-    }
-    write_string(2, msg);
-    write(2, "\n", 1);
+    int length = first - token_first - 1;
+
+    fprintf(stderr, "startup.m4, line %d: %.*s %s\n",
+            token_lineno, length, token_first, msg);
     exit(1);
 }
 

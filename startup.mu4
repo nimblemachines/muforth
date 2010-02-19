@@ -315,7 +315,7 @@ forth
 ( For comparison, the regular : compiler is defined thus:
 :  :   new <:> -] ; )
 
-
+ 
 ( Dictionary structure words. Remember that link fields point to the last
   cell - suffix - of a name, which precedes the link field. Roughly, a
   dictionary entry is the following cell-sized things: suffix, link, code;
@@ -588,36 +588,11 @@ decimal
    begin  digits  =while ( still chars)  ?dot  repeat
    2drop  pop  if negate then  ;
 
-( Ok, folks, now that we have number parsing code we can redefine the
-  interpreter and compiler, which up till this point have simply complained
-  if they saw something not in the dictionary.)
+: number,  number literal ;
 
-( Ready for our new & improved interpreter and compiler? Here we go!)
-
-( XXX: Is this the right way to do this? Truly, while it's "nice" to have
-  the new interpreters written in - and running in! - true Forth, the only
-  parts that have changed from the C version are the bits after the last
-  "then": number [in interpreter], and "number literal" [in compiler].)
-
-( To set the compiler consumer, we need a sneaky word to get the value of
-  state while compiling - we use the same trick later to set the compiler
-  prompt.)
-
-compiler
-: 'compiler-mode  state @ ;
-forth
-
-( Redefine, and then set the forth "consume".)
--:   ( interpret one token)
-      .forth. find  if  execute ^  then  number ;     state @  !
-
-( Now set the compiler "consumer". To get access to the value of state at
-  compile time, we turn on the compiler, but don't compile anything!)
-
--:   ( compile one token)
-   .compiler. find  if  execute ^  then
-      .forth. find  if  compile, ^  then  number literal ;
-                                      -]  'compiler-mode [  !
+( Patch interpreter and compiler.)
+' number   'number !
+' number,  'number, !
 
 
 ( Basic character i/o.)
@@ -866,10 +841,6 @@ z" <key timed out" ztimeout !
    depth 0< if ^ then  depth s0 cell- swap  ?for  cell- dup @ .  next then  drop  ;
 
 
-( Compiler/interpreter modes.)
-: mode   create  (s prompt interpret)  ,  ,  does>  state ! ;
-
-
 ( Defining new dictionary chains.)
 
 ( These used to be in an array but are now independent of each other. They
@@ -1029,13 +1000,6 @@ variable csp  ( what does this stand for? `check stack pointer'?)
 : smhq->s  6 * +  smh->s ;  ( sec min hr quarter-day)
 : smhdy->s  [ 365 3 * 366 + ] * ( quarter-days/yr)  push 4 * pop +  smhq->s ;
 
-( for command-line args)
-: ld  token _string  load-file ;
-: -f  ( load file)  ld ;
-: --file  -f  ;
-: -d  ( define)  define  ;
-: --define  -d  ;
-
 
 ( Link to project home page.)
 : info
@@ -1045,16 +1009,67 @@ variable csp  ( what does this stand for? `check stack pointer'?)
  ;
 
 
-( Prompt, quit, and warm.)
--: ."  (compiling)"  'compiler-mode  ;  cell+ !  ( bwa ha ha!)
+2variable state  ( first cell is 'token-consumer, second is 'prompt)
 
-: .mode-prompt   state @  cell+  @execute ;  ( secondary prompt)
+( Compiler/interpreter modes.)
+: mode   create  ( prompt interpret)  ,  ,  does>  state ! ;
+
+' nope  ( prompt)
+-: ( interpret-token)
+      .forth. find  if  execute  ^  then  number ;
+
+mode __interpret
+
+-: ."  (compiling)" ;  ( prompt)
+-: ( compile-token)
+   .compiler. find  if  execute  ^  then
+      .forth. find  if  compile, ^  then  number literal ;
+
+mode __compile
+
+
+( Prompt, quit, and warm.)
+
+: consume  ( a u)  state @         @execute ;  ( consume a token)
+: .mode-prompt     state @  cell+  @execute ;  ( secondary prompt)
+
 : .Ok   ."  Ok"  ;
 : prompt   .Ok  .mode-prompt  ;  ( ` Ok' then sub-prompt)
 
+( Our brand new interpret!)
+: ?stack  ( XXX)  ;
+
+( XXX should this set source and first? That's how I originally had it.
+  evaluate would save prev context and interpret would set it. fig has it
+  differently - interpret is like the one below. This way has the advantage
+  that it's impossible to accidentally clobber the input context.)
+
+: interpret
+   begin  token =while  consume  ?stack  repeat  2drop ;
+
+: evaluate  ( a u)  ( XXX)
+   source 2@ 2push     ( save source)
+   first @ push        ( save our place in the input)
+   over first !
+   over +  ( start end)  source 2!
+   interpret
+   pop first !         ( restore prev first)
+   2pop source 2! ;    ( restore prev source)
+
 : quit
-   begin  cr  <stdin  >stdout  typing interpret  >stderr  prompt  again  [
+   begin  cr  <stdin  >stdout  typing evaluate  >stderr  prompt  again  [
    ( infinite loop, until error... )
+
+( for command-line args)
+: load-file  ( z")  ( XXX needs to be wired into error system)
+   r/o open-file ( fd)  push
+   r@ mmap-file ( a u)  1 line !  evaluate  pop close-file ;
+
+: ld  token _string  load-file ;
+: -f  ( load file)  ld ;
+: --file  -f  ;
+: -d  ( define)  define  ;
+: --define  -d  ;
 
 ( 2004-jun-26. error now expects a cell-length-prefixed compiled string.)
 
@@ -1086,10 +1101,23 @@ variable csp  ( what does this stand for? `check stack pointer'?)
        char " emit  ." info" char " emit ." ." cr ;
 
 : warm
+   decimal __interpret
    -- captured off
    >stderr banner
-   >stdout command-line count  ['] interpret carefully
+   >stdout command-line count  ['] evaluate carefully
    begin  ['] quit carefully  again  [
 
 ( Identify ourselves.)
 trues muFORTH
+
+( These have to be dead last!)
+: -]   __compile ;
+:  ]   -]  literal ;
+compiler
+: [    __interpret ;
+: ;;   \ ;  ;  ( so we can finish compiling these words and not break C's interpret)
+: ;    \ ^  \ [  ;;
+forth
+: -:  here <:>  -]  ;;  ( "nameless" colon words.)
+:  :   new <:>  -]  ;;  ( has to be last!!)
+

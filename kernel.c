@@ -13,6 +13,9 @@
 
 cell pop_dstack()  { cell t = TOP; DROP(1); return t; }
 
+void mu_nope() {}    /* very useful NO-OP */
+void mu_zzz()  {}    /* a convenient GDB breakpoint */
+
 void mu_plus()  { TOP += ST1; NIP(1); }
 void mu_and()   { TOP &= ST1; NIP(1); }
 void mu_or()    { TOP |= ST1; NIP(1); }

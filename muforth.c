@@ -108,7 +108,7 @@ static void mu_start_up()
 {
     PUSH("warm");       /* push the token "warm" */
     PUSH(4);
-    _mu__lbracket();    /* ... and execute it! */
+    _mu_interpret_token();    /* ... and execute it! */
 }
 
 void mu_bye()
@@ -122,7 +122,7 @@ int main(int argc, char *argv[])
     convert_command_line(argc, argv);
     init_stacks();
     mu_find_init_file();
-    mu_load_file();
+    _mu_load_file();
     mu_start_up();
     return 0;
 }

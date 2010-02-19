@@ -19,31 +19,31 @@
 #include <stdio.h>
 #endif
 
-struct imode        /* interpreter mode */
-{
-    xtk eat;        /* consume one token */
-    xtk prompt;     /* display a mode-specific prompt */
-};
-
 static struct text source;
-static char *first;         /* goes from source.start to source.end */
+char *first;                /* goes from source.start to source.end */
 
-static char *zloading;      /* the file we're currently loading; C string */
 static int lineno = 1;      /* line number - incremented for each newline */
-static int parsed_lineno;   /* captured with first character of token */
-struct string parsed;       /* for errors */
+int token_lineno;           /* captured with first character of token */
+char *token_first;          /* first char of token - captured for die */
+
+/* We have to be able to run thru all of startup.mu4 using the interpreter
+ * and compiler defined here. Thus, we need to "defer" access to
+ * interpreting and compiling -numbers-. The number input code in startup
+ * will patch into these variables but leave the token consumers alone.
+ * Only after we've loaded startup and returned to Forth do we fire up the
+ * "new" interpret loop.
+ */
+static xtk tick_number          = XTK(mu_nope);
+static xtk tick_number_comma    = XTK(mu_nope);
+
+void mu_push_tick_number()          { PUSH(&tick_number); }
+void mu_push_tick_number_comma()    { PUSH(&tick_number_comma); }
 
 /* Push captured line number */
-void mu_line()
-{
-    PUSH(parsed_lineno);
-}
+void mu_at_line() { PUSH(token_lineno); }
 
-/* Push name of file currently loading */
-void mu_zloading()
-{
-    PUSH(zloading);
-}
+/* Push address of lineno variable */
+void mu_push_line() { PUSH(&lineno); }
 
 /*
  * This isn't exactly ANS-kosher, since traditionally >IN contained an
@@ -53,26 +53,29 @@ void mu_zloading()
  *
  * >in @ <parse> >in ! <re-parse>
  */
-void mu_to_in()
+void mu_first()
 {
     PUSH(&first);
 }
 
+void mu_source()
+{
+    PUSH(&source);
+}
+
 static void mu_return_token(char *last, int trailing)
 {
+    NIP(-1);    /* make room for result */
+
     /* Get address and length of the token */
-    parsed.data = first;
-    parsed.length = last - first;
+    ST1 = (cell) first;
+    TOP = last - first;
 
     /* Account for characters processed, return token */
     first = last + trailing;
 
-    NIP(-1);    /* make room for result */
-    ST1 = (cell) parsed.data;
-    TOP = parsed.length;
-
 #ifdef DEBUG_TOKEN
-    fprintf(stderr, "%.*s\n", parsed.length, parsed.data);
+    fprintf(stderr, "%.*s\n", TOP, ST1);
 #endif
 }
 
@@ -90,7 +93,7 @@ void mu_token()  /* -- start len */
     }
 
     /* capture lineno that token begins on */
-    parsed_lineno = lineno;
+    token_lineno = lineno;
 
     /*
      * Scan for trailing whitespace and consume it, unless we run out of
@@ -117,7 +120,7 @@ void mu_parse()  /* delim -- start len */
     /* The first character of unseen input is the first character of token. */
 
     /* capture lineno that token begins on */
-    parsed_lineno = lineno;
+    token_lineno = lineno;
 
     /*
      * Scan for trailing delimiter and consume it, unless we run out of
@@ -159,29 +162,30 @@ void mu_huh_q()
     mu_complain();
 }
 
-void mu_execute() { EXECUTE; }
-
 /* The interpreter's "consume" function. */
-void _mu__lbracket()
+/* Not "static" because it is needed by muforth.c to fire up warm! */
+void _mu_interpret_token()
 {
     mu_push_forth_chain();
     mu_find();
     if (POP)
     {
-        EXECUTE;
+        mu_execute();
         return;
     }
-    mu_complain();
+    mu_push_tick_number();
+    mu_fetch();
+    mu_execute();
 }
 
 /* The compiler's "consume" function. */
-void _mu__rbracket()
+static void _mu_compile_token()
 {
     mu_push_compiler_chain();
     mu_find();
     if (POP)
     {
-        EXECUTE;
+        mu_execute();
         return;
     }
     mu_push_forth_chain();
@@ -191,50 +195,21 @@ void _mu__rbracket()
         mu_compile_comma();
         return;
     }
-    mu_complain();
+    mu_push_tick_number_comma();
+    mu_fetch();
+    mu_execute();
 }
 
-void mu_nope() {}    /* very useful NO-OP */
-void mu_zzz()  {}    /* a convenient GDB breakpoint */
-
-/*
- * Remember that the second part of a struct imode is a pointer to code to
- * print a mode-specific prompt. The muforth kernel lacks decent I/O
- * facilities. Until these are defined in startup.mu4, the prompts are
- * noops.
- */
-
-static struct imode forth_interpreter  = { XTK(_mu__lbracket), XTK(mu_nope) };
-static struct imode forth_compiler     = { XTK(_mu__rbracket), XTK(mu_nope) };
-
-static struct imode *state = &forth_interpreter;
-
-
-static void consume()
-{
-    execute_xtk(state->eat);      /* call the current consume function */
-}
-
-void mu_push_state()
-{
-    PUSH(&state);
-}
+static void (*eat)() = &_mu_interpret_token;
 
 void mu_compiler_lbracket()
 {
-    state = &forth_interpreter;
+    eat = &_mu_interpret_token;
 }
 
 void mu_minus_rbracket()
 {
-    state = &forth_compiler;
-}
-
-void mu_push_parsed()
-{
-    DUP; NIP(-1);
-    ST1 = (cell) parsed.data;
-    TOP = parsed.length;
+    eat = &_mu_compile_token;
 }
 
 static void mu_qstack()
@@ -263,10 +238,15 @@ static void mu_qstack()
 #endif
 }
 
-void mu_interpret()
+/*
+ * This version of interpret is -not- exported to Forth! We are going to
+ * re-define it in Forth so it executes as "pure" Forth, and we can use
+ * Forth-side, return-stack-based exception handling!
+ */
+static void mu_interpret()
 {
     source.start = (char *)ST1;
-    source.end =   (char *)ST1 + TOP;
+    source.end   = (char *)ST1 + TOP;
     DROP(2);
 
     first = source.start;
@@ -275,49 +255,26 @@ void mu_interpret()
     {
         mu_token();
         if (TOP == 0) break;
-        consume();
+        token_first = (char *)ST1;  /* capture for die() */
+        (*eat)();           /* eat is a C function pointer! */
         mu_qstack();
     }
     DROP(2);
 }
 
-void mu_evaluate()
-{
-    struct text saved_source;
-    char *saved_first;
-
-    saved_source = source;
-    saved_first = first;
-
-    PUSH(XTK(mu_interpret));
-    mu_catch();
-    source = saved_source;
-    first = saved_first;
-    mu_throw();
-}
-
-void mu_load_file()    /* c-string-name */
+void _mu_load_file()    /* c-string-name */
 {
     int fd;
-    int saved_lineno = lineno;
-    char *saved_zloading = zloading;
-    char *newfile = (char *)TOP;
 
     mu_push_r_slash_o();
     mu_open_file();
     fd = TOP;
     mu_mmap_file();
 
-    /* wait to reset these until just before we evaluate the new file */
     lineno = 1;
-    zloading = newfile;
 
-    PUSH(XTK(mu_evaluate));
-    mu_catch();
-    lineno = saved_lineno;
-    zloading = saved_zloading;
+    mu_interpret();
     close(fd);
-    mu_throw();
 }
 
 /*

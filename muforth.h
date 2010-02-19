@@ -95,8 +95,8 @@ struct string
  */
 struct text
 {
-    char *start;
-    char *end;
+    char *end;      /* need them in this order so that "source 2@" will */
+    char *start;    /* put end on top of stack. */
 };
 
 struct counted_string
@@ -105,7 +105,9 @@ struct counted_string
     char data[0];
 };
 
-extern struct string parsed;    /* for errors */
+extern char *first;                /* goes from source.start to source.end */
+extern int token_lineno;           /* captured with first character of token */
+extern char *token_first;          /* first char of token - captured for die */
 
 extern int  cmd_line_argc;
 extern char **cmd_line_argv;
