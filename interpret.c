@@ -28,7 +28,7 @@ struct imode        /* interpreter mode */
 static struct text source;
 static char *first;         /* goes from source.start to source.end */
 
-char *zloading;             /* the file we're currently loading; C string */
+static char *zloading;      /* the file we're currently loading; C string */
 static int lineno = 1;      /* line number - incremented for each newline */
 static int parsed_lineno;   /* captured with first character of token */
 struct string parsed;       /* for errors */
@@ -37,6 +37,12 @@ struct string parsed;       /* for errors */
 void mu_line()
 {
     PUSH(parsed_lineno);
+}
+
+/* Push name of file currently loading */
+void mu_zloading()
+{
+    PUSH(zloading);
 }
 
 /*

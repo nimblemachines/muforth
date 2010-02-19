@@ -106,7 +106,6 @@ struct counted_string
 };
 
 extern struct string parsed;    /* for errors */
-extern char *zloading;          /* the file we're currently loading; C string */
 
 extern int  cmd_line_argc;
 extern char **cmd_line_argv;
