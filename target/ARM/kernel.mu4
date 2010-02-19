@@ -479,6 +479,8 @@ Grab bag - some random words that don't really belong anywhere.
 : 2dup   over  over ;
 : 2drop  drop  drop ;
 
+: within  ( n lo hi - lo <= n < hi)  over - >r  - r>  u<  ;
+
 ==========================================================================
 Basic console output.
 ==========================================================================
@@ -498,18 +500,34 @@ String support.
 ( "March" two pointers in lock step.)
 : march  ( a1 a2 increment - a1+ a2+)   dup v+ ;
 
-( Compare two strings; assumes they are of equal length.)
-: string=   ( s1 s2 count)
+( Compare two names; assumes they are of equal length. By substituting an
+  exact equals function it is possible to change from case-insensitive to
+  case-sensitive compares.)
+
+.ifdef case-sensitive
+: name-char=  ( ch1 ch2 - f)  = ;
+.else
+: >lowercase
+   dup  [ char A ]  [ char Z 1+ ]  within
+   if  [ char a  char A - ] +  then ;
+
+: name-char=  ( ch1 ch2 - f)
+   >lowercase  swap  >lowercase  = ;
+.then
+
+: string=   ( n1 n2 count compare - f)
+   swap ( compare count)
    ?for
-      over c@  over c@  - ( compare one char)
-                          if ( mismatch)  r> drop  2drop  0  ^  then
-      1 march  ( incr both pointers)  next  then   2drop  -1 ;
+      >r
+      over c@  over c@  r@ execute ( compare one char)
+                        0= if ( mismatch)  r> r> 2drop  2drop   0  ^  then
+      1 march  ( incr pointers)  r>  next  then   drop  2drop  -1 ;
 
 ( Note: This only works for non-overlapping strings!)
 : cmove     ( src dest count)
    ?for
       over c@  over c!  ( move one char)
-      1 march  ( incr both pointers)  next  then   2drop ;
+      1 march  ( incr pointers)  next  then   2drop ;
 
 
 ( XXX should we change this to halfword or cell-sized count?)
@@ -623,7 +641,7 @@ variable .compiler.
    begin  begin
       r>  @ ( follow link)  =while  ( link non-zero)
       >r  r@ 1- c@ ( len)  over =  until ( lengths match)  [ swap -]
-      over ( a)  r@ link>name  string=  until ( strings match)
+      over ( a)  r@ link>name  ['] name-char=  string= until ( names match)
       2drop ( token)  r> cell+ ( cfa)  -1 ^  then  ( 0) ;
 
 ==========================================================================
