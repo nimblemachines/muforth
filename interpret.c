@@ -163,8 +163,7 @@ void mu_huh_q()
 }
 
 /* The interpreter's "consume" function. */
-/* Not "static" because it is needed by muforth.c to fire up warm! */
-void _mu_interpret_token()
+void mu_interpret_token()
 {
     mu_push_forth_chain();
     mu_find();
@@ -179,7 +178,7 @@ void _mu_interpret_token()
 }
 
 /* The compiler's "consume" function. */
-static void _mu_compile_token()
+void mu_compile_token()
 {
     mu_push_compiler_chain();
     mu_find();
@@ -200,16 +199,16 @@ static void _mu_compile_token()
     mu_execute();
 }
 
-static void (*eat)() = &_mu_interpret_token;
+static void (*eat)() = &mu_interpret_token;
 
 void mu_compiler_lbracket()
 {
-    eat = &_mu_interpret_token;
+    eat = &mu_interpret_token;
 }
 
 void mu_minus_rbracket()
 {
-    eat = &_mu_compile_token;
+    eat = &mu_compile_token;
 }
 
 static void mu_qstack()
