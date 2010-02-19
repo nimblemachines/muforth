@@ -240,6 +240,8 @@ needed for the meta-compiler.
   else. Once these primitives are defined it will be safe to make colon
   definitions.)
 
+code nope  ( a no-op!)  next  ;c
+
 code ^ implements ^
    ip unnest   next  ;c
 
@@ -312,7 +314,6 @@ code d+    ( alo ahi blo bhi - sumlo sumhi)
                                       r1 top top adc     next  ;c
 
 code -     r0 pop   top r0 top sub   next  ;c
-code *     r0 pop   r0 top top mul   next  ;c
 code and   r0 pop   top r0 top and   next  ;c
 code bic   r0 pop   top r0 top bic   next  ;c
 code or    r0 pop   top r0 top or    next  ;c
@@ -475,15 +476,8 @@ Grab bag - some random words that don't really belong anywhere.
 : u+  ( a b c - a+c b)      rot +  swap ;  ( "under-plus")
 : v+  ( a b c d - a+c b+d)  >r u+  r> + ;  ( "vector-plus")
 
-: >     swap <  ;
 : 2dup   over  over ;
 : 2drop  drop  drop ;
-: min   2dup >  if swap then  drop  ;
-: max   2dup <  if swap then  drop  ;
-: s->d  ( n - d)  ( sign-extend)  dup 0< ;  ( high word on top)
-: abs   ( n - |n|)   s->d  if   negate  then ;
-: dabs  ( d - |d|)   s->d  if  dnegate  then ;
-
 
 ==========================================================================
 Basic console output.
@@ -494,7 +488,6 @@ Basic console output.
 
 : emit   ( ch)  sp@  1  type  drop ;
 : space   bl emit ;
-: spaces  ( n)  0 max  ?for  space  next  then  ;
 : cr  #CR emit  #LF emit ;
 
 
@@ -535,8 +528,6 @@ String support.
 ==========================================================================
 Token parsing.
 ==========================================================================
-( XXX two variables, start and end?)
--- 2variable source  ( start, end)
 variable start   ( points to first character of input stream)
 variable end     ( points past last character of input stream)
 variable first   ( points to first unconsumed character)
@@ -611,8 +602,8 @@ code scan  ( end a ch - a+ trailing)
 Dictionary search.
 ==========================================================================
 variable current
-variable .forth.      ( PATCH fixed up by metac)
-variable .compiler.   ( PATCH fixed up by metac)
+variable .forth.
+variable .compiler.
 
 ( Names precede the link field and are compiled in an interesting way. The
   count byte immediately precedes the link. If you then back up that many
@@ -635,23 +626,6 @@ variable .compiler.   ( PATCH fixed up by metac)
       over ( a)  r@ link>name  string=  until ( strings match)
       2drop ( token)  r> cell+ ( cfa)  -1 ^  then  ( 0) ;
 
-( Roll tokenizing and searching into one.)
-: token'  ( chain - a u 0 | cfa -1)   token  rot  find ;
-
-: abort ;  ( UNDEF ERROR)  ( see comments near the end of the file)
-: huh?  ( flag)  ( aborts if false)  if ^ then  abort ;  ( ERROR)
-
-: chain'   token'  huh?  ;
-: \chain   chain'  , ;  ( compile a word from a particular chain)
-
-( XXX .forth. or current?)  
-: '     .forth. chain' ;
--- : '     current @ chain' ;
-target-compiler
-: [']   '  literal ;
-: \     .compiler. \chain ;
-target
-
 ==========================================================================
   Go forth and multiply ... and divide.
 
@@ -672,10 +646,13 @@ target
   why not? ;-)
 
 ==========================================================================
-code um*     ( n1 n2 - ud)
+code *    ( n1 n2 - n1*n2)
+   r0 pop   r0 top top mul   next  ;c
+
+code um*  ( u1 u2 - ud)
    st1 r0 ldr   top r0 top r0 umull   st1 r0 str  next ;c
 
-code  m*     ( n1 n2 - d)
+code m*   ( n1 n2 - d)
    st1 r0 ldr   top r0 top r0 smull   st1 r0 str  next ;c
 
 
@@ -722,109 +699,16 @@ code um/mod  ( ud  u - urem uquot)
 .then
      next  ;c
 
-code fm/mod  (  d  n - mod quot)  ;c  ( UNDEF)
-
--- : *       ( n1 n2 - n1*n2)   um*  drop  ;  ( This is what fig does!)
-
-.ifdef fancy-math-operators
-
-:  */mod  ( n1 n2 n3 - r q)  >r   m*   r>             fm/mod ;
-: u*/mod  ( u1 u2 u3 - r q)  >r  um*   r>             um/mod ;
-
-:  /mod   ( n1    n2 - r q)  >r  s->d  r>  (  d1 n2)  fm/mod ;
-: u/mod   ( u1    u2 - r q)         0 swap ( ud1 u2)  um/mod ;
-
-:  */     ( n1 n2 n3 - n1*n2/n3)   */mod  nip ;
-: u*/     ( u1 u2 u3 - u1*u2/u3)  u*/mod  nip ;
-
-:  /      ( n1 n2 - quot)    /mod  nip ;
-: u/      ( u1 u2 - uquot)  u/mod  nip ;
-
-:  mod    ( n1 n2 - mod)     /mod  drop ;
-: umod    ( u1 u2 - umod)   u/mod  drop ;
-
-.then
-
-==========================================================================
-Numeric conversion - input.
-==========================================================================
-variable radix   ( the current input & output number base)
-variable dpl     ( decimal point location)
-
-: *digit  ( ud a digit - ud*base+digit a)
-   swap >r ( a)  swap ( lo digit hi)
-   radix @ um*  drop  rot ( digit hi*radix lo)
-   radix @ um*            ( digit hi*radix lo*radix_lo lo*radix_hi)  d+
-   r>  dpl @ 0< 1+  dpl +!  ;
-
-: number ;  ( UNDEF)
-
-==========================================================================
-Numeric conversion - output.
-==========================================================================
-: >digit   ( n - ch)  ( convert 1 binary digit to char; hex to uppercase)
-   9 over u<  7 and +  [ char 0 ] +  ;
-
-.ifdef number-output
-
-: /digit   ( ud - udquot urem)
-   0 radix @ um/mod  ( 0:hi / radix -> urhi uqhi)  >r
-   ( urhi:lo)  radix @ um/mod  ( urlo uqlo)  r> rot  ;
-
-( XXX Should we convert numbers by pushing digits onto the stack
-  instead?)
-
-( Longest number we can convert is a negative base-2 double-number.)
-65 aligned allot here constant pad  ( 64 digits + sign + alignment)
-
-variable hld
-: hold   -1 hld +!  hld @ c! ;
-: <#     pad hld !  ;
-: #>     ( ud - a #)  2drop  hld @  pad over - ;
-: sign   ( n -)   0< if  [ char - ] hold  then  ;
-
-: #     ( ud - ud')   /digit  >digit  hold  ;
-: #s    ( ud - 0 0)   begin  #  2dup or 0=  until  ;
-
-: (ud.)   ( ud - a #)  <#  #s  #>  ;
-: ud.     ( ud -)      (ud.)  type  space  ;
-
-: (u.)    ( u - a #)   0  (ud.)  ;
-: u.      ( u -)       (u.)  type  space  ;
-
-: (d.)    ( d - a #)   dup >r ( sign)  dabs  <#  #s  r> sign  #>  ;
-: d.      ( d -)       (d.)  type  space  ;
-
-: (.)     ( n - a #)   s->d  (d.)  ;
-: .       ( n -)       (.)  type  space  ;
-
-0 .if
-( This should truncate to field length. Actually, it shouldn't. Does it?)
-( UNUSED)
-: truncating-field   ( a c field - a' field)   tuck swap -  ( a field field-c)
-   s->d if  drop ^  then  ?for  bl hold  next then  #>  ;
-.then
-
-( Non-truncating field.)
-: field   ( a c field - a c)  over - spaces  ;
-
-:  (.r)   ( n field - a #)   >r  (.)   r>  field  ;
-:   .r    (.r)  type  ;
-
-: (u.r)   ( u field - a #)   >r  (u.)  r>  field  ;
-:  u.r    (u.r)  type  ;
-
-( Useful shortcut.)
-: ?  @ .  ;
-
-.then
 
 ==========================================================================
 Interpreter and compiler.
 ==========================================================================
 variable 'eat    ( how to consume a token)
+ 
+meta: defer   create  ['] nope a,  does> @execute ;
 
-: ?stack ;  ( XXX remove when ?stack fixed!!)
+defer number     ( try to convert a number)
+defer number,    ( try to convert a number and compile as a literal)
 
 : interpret
    begin  token  =while  'eat @execute  ?stack  repeat  2drop ;
@@ -841,7 +725,7 @@ variable 'eat    ( how to consume a token)
 
 : compile-token
    .compiler. find  if  execute  ^  then
-      .forth. find  if  ,        ^  then  number  literal ;
+      .forth. find  if  ,        ^  then  number, ;
 
 : -]  ( start compiler)  [']   compile-token  'eat ! ;
 : ]   literal  -] ;
@@ -895,7 +779,11 @@ super-botched
   rename this? The thing that is -always- going to follow (;code) ( is a
   does> prologue - "lr r0 mov" - followed by a bl to dodoes. So maybe there
   is a name that better represents this? Then I wouldn't feel so bad about
-  there being two versions of the "same" thing.)
+  there being two versions of the "same" thing.
+
+  XXX should this be called (does>) ( or something like that? We can never
+  define ;code words once we're running the target-based colon compiler; so
+  why not name this word based on which word - in the target - it assists?)
 
 : (;code)   r>  last @  patch ;
 
@@ -914,46 +802,9 @@ target-compiler
           [ here  assemble  lr r0 mov  ;c  cell negate allot  @ ] ,
           code,  [ lookup dodoes ] last @ patch ;
 
+: ;   compile ^  \ [  ;   
 target
 
-( Test of nifty dodoes magic.)
-meta: konst   create ,  does> @ ;
-"5600 konst yippee
-
-==========================================================================
-Support words for compiling control structures.
-==========================================================================
-
-( Mark a branch source for later fixup.)
-: >mark  ( - src)  here  0 , ;
-
-( Resolve a forward or backward jump, from src to dest.)
-( When using absolute branch addresses, this is easy: just store dest at src.)
-: <resolve  ( dest src)  ! ;
-: >resolve  ( src dest)  swap <resolve ;
-
-target-compiler
-: =if   ( - src)        compile (=0branch)  >mark ;
-: if    ( - src)        compile  (0branch)  >mark ;
-: then  ( src)          here >resolve ;
-: else  ( src0 - src1)  compile   (branch)  >mark  swap  \ then ;
-
-: begin   ( - dest)  here ;
-: =until  ( dest -)       \ =if  <resolve ;
-: until   ( dest -)        \ if  <resolve ;
-: again   ( dest -)     compile   (branch)  >mark  <resolve ;
-: =while  ( dest - src dest)  \ =if  swap ;
-: while   ( dest - src dest)   \ if  swap ;
-: repeat  ( src dest -)   \ again  \ then ;
-
-( n for .. next         goes n times; 2^wordsize if n=0 )
-( n ?for .. next then   goes n times; 0 if n=0 )
-
-: for     ( - dest)      compile (for)          \ begin ;
-: ?for    ( - src dest)  compile (?for)  >mark  \ begin ;
-: next    ( dest -)      compile (next)  >mark  <resolve ;
-
-target
 
 ==========================================================================
 Error handling, abort, and quit.
@@ -1031,145 +882,6 @@ target
 
 .then
 
-comment ===================
-        More Stack routines
-        ===================
-
-
-comment **multitasker**
-
-( How about a multitasker? First we need user variables...)
-
-( Multitask!)
-
-( 15-sep-1998.  This is new.  I figured this all out when I couldn't sleep.
-  There is a new [to me] and beautiful way to do multitasking that is in
-  between my old way and the elusive polyFORTH brochure's "one machine
-  instruction per task" way.  My new way is the middle way, and is intimately
-  related to indirect threaded code; the major difference is that it is -not-
-  the `canonical Chuck' way to do ITC.  The `word' pointer -- in this case
-  it points to a -task- -- points -at- rather than -after- the code pointer.
-  It just works out more nicely this way.
-
-  There is a necessary adjustment, however.  In this new way what determines
-  whether a task is awake or asleep is its code pointer.  If it points to
-  `robin' the task is asleep, and `robin' will cycle to the next task [and
-  take only two instructions!].  If the task is awake, its code points to
-  `restore', which sets up the user pointer `u' and pops the task's context
-  and executes `next', as usual.  The adjustment is this:  where do we store
-  the sleep/wakeup count information, which used to be also the awake/asleep
-  flag?  The answer is, `where it matters'.  In the case of an i/o queue,
-  the `right place' for this information is in the queue, -not- in the task
-  that reads from or writes to it.
-
-  In this new world order the tasks or interrupt service routines that used
-  to simply increment or decrement a counter have a little bit more work to
-  do to wake or lull a task.  But it's not too bad, and the task loop is
-  purer, more flexible, and one instruction quicker per task!
-
-  Generally, when a task is using a resource that resource points to the task.
-  This has two purposes:  when this pointer is zero, the resource is -free-.
-  When non-zero, it points to the task that should be woken when the resource
-  is `ready'.  The task points back at some part of the resource, thru the
-  `depend' pointer.  Thus if a task is waiting on serial input from a queue,
-  the queue -resource- would point to the task; the task's `depend' would
-  point to the count of characters available to be read from the queue.  When
-  a character comes in from the serial port, the service routine puts the
-  character in the queue and increments the count.  It then checks if the
-  `depend' pointer has become non-zero, or >0, or whatever the criterion is.
-  If so, it wakes the task by changing its `status' code pointer.
-
-  Alternatively the ISR could increment the counter pointed to by the task's
-  `depend' pointer.  ISR.owner->task.depend->counter.  These details are a
-  bit fuzzy still.)
-
-meta: +user  ( size)
-   create  #user \f @ ,  #user \f +!
-   ;code   ??
-   0 +user status      ( code pointer; determines the wakefulness of the task)
-   0 +user me          ( synonym)
-cell +user link        ( link to next task in list)
-cell +user bottom      ( bottom of D stack)
-cell +user top         ( pointer to saved stack)
-
-{
-target
-0 cells constant status
-1 cells constant link
-2 cells constant bottom
-3 cells constant top
-forth
-}
-
-( 15-sep-1998.  This is now different; see above.  The idea still applies;
-  only the location of the counters has changed.  Well, that and that the
-  counters now run `the right way'.
-
-  If a task has an associated IRQ, use STATUS as a sema-
-  phore -- use AWAIT to sleep and <task> #] dec, [in IRQ
-  routine] to awaken.  Incrementing and decrementing STATUS is
-  an atomic action.  In this case only  ACTIVATE ever sets STATUS.
-  This will happen before the interrupt is enabled so it's OK.
-
-  In other cases it doesn't matter; however, incrementing and
-  decrementing STATUS makes a useful auto-wakeup semaphore.)
-
-( On what other architecture can you write a multitasker loop in 6
-  instructions?)
-
-code pause
-   { top ct rp lr } ! sp stm                   ( save context on stack)
-   ' top ( offset in user area) up +) sp str   ( save stack ptr in user area)
-
-label wait ( robin)
-   ' link ( offset)   up +) up ldr  ( follow task link)
-   ' status ( offset) up +) pc ldr  ( jump thru status)
-
-label run
-   ' top ( offset in user area) up +) sp ldr     ( setup sp)
-   { top ct rp pc } ! sp ldm         ( load context and go!)  ;c
-
-**multitasker**
-
-
-comment =============
-        console
-        =============
-
-decimal
-: pause ;  ( not yet!)
-0 .if
-: key?   [ uart1 "14 + ] c@  1 and ;
-: key   begin  key? 0= while  pause  repeat  [ uart1 ] c@ ;
-.then
-
-( Say hello!)
-: hi  ." Hello, world."  cr ;
-
-( Printing hex.)
-: 16/mod   ( n - q r)  dup 4 u>>   swap 15 and ;
-
-: .   8 for  16/mod >digit swap  next  drop
-      8 for  emit  next  space ;
-
-: ?a   dup 15 and 0= if  cr  dup .  space  then ;
-: @+   ( a - a+ n)  dup cell+  swap @ ;
-: dump  ( a n - a+n)   for  ?a  @+ .  next ;
-
-: echo  begin  key  dup #13 xor while  1+ emit  repeat  drop  cr ;
-
-decimal
-
-: count2  "13579bdf 8 for 16/mod >digit emit  next drop  cr ;
-
-: chars  32  [ 128 32 - ] for  dup emit  1+  next  drop  cr ;
-
-: times  6789 123456 * .   -1029484 485 * .  cr ;
-
-: delay  100_000 for next ;
-
-: doit   echo  times  count2
-   begin  chars  delay  again  [
 
 comment =========================
                Warm
@@ -1180,6 +892,19 @@ decimal
 comment ===================
         Stack Test Routines
         ===================
+
+.ifdef debug-dot
+
+( Printing hex.)
+: 16/mod   ( n - q r)  dup 4 u>>   swap 15 and ;
+
+: >digit   ( n - ch)  ( convert 1 binary digit to char; hex to uppercase)
+   9 over u<  7 and +  [ char 0 ] +  ;
+
+: .   8 for  16/mod >digit swap  next  drop
+      8 for  emit  next  space ;
+
+.then
 
 : stack-test
   sp@ . sp! sp@ . cr
