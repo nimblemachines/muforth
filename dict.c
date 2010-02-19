@@ -255,7 +255,7 @@ static void make_new_name(
     names_size += (caddr_t)pcd - (caddr_t)pnm;
 
 #if defined(BEING_DEFINED)
-    fprintf(stderr, "%p %.*s\n", pcd, length, name);
+    fprintf(stderr, "%p %p %.*s\n", pnmHead, pcd, length, name);
 #endif
 }
 
