@@ -20,10 +20,6 @@ pw p_mu_evaluate = &mu_evaluate;
 pw p__mu__lbracket = &_mu__lbracket;
 pw p__mu__rbracket = &_mu__rbracket;
 
-void mu_compile_comma()  { *pcd++ = POP; }
-void mu_set_colon_code() { *pcd++ = (cell)&mu_do_colon; }
-void mu_set_does_code()  { *pcd++ = (cell)&mu_do_does; }
-
 /*
  * This is where all the magic happens. Any time we have the address of a
  * word to execute (an execution token, or XTK) - either because we looked
@@ -68,19 +64,23 @@ void execute_xtk(xtk x)
 }
 
 /* The most important "word" of all: */
-void mu_do_colon()
+static void mu_do_colon()
 {
     NEST;                   /* entering a new word; push IP */
     IP = (xtk *)&W[1];      /* new IP is address of parameter field */
 }
 
 /* The basis of create/does>. */
-void mu_do_does()
+static void mu_do_does()
 {
     NEST;                   /* entering a new word; push IP */
     IP = (xtk *)W[1];       /* new IP is stored in the parameter field */
     PUSH(W[2]);             /* push the constant stored in 2nd word */
 }
+
+void mu_compile_comma()  { *pcd++ = POP; }
+void mu_set_colon_code() { *pcd++ = (cell)&mu_do_colon; }
+void mu_set_does_code()  { *pcd++ = (cell)&mu_do_does; }
 
 /* Normal exit */
 void mu_exit()      { UNNEST; }
@@ -114,6 +114,7 @@ void mu_qfor_()
     else          { IP++; RPUSH(POP); }  /* skip branch, push count onto R */
 }
 
+#define RTOP    
 void mu_next_()
 {
     cell *prtop;
@@ -122,6 +123,80 @@ void mu_next_()
     if (--*prtop == 0) { IP++; RP++; }  /* skip branch, pop counter */
     else               { BRANCH; }      /* take branch */
 }
+
+/*
+ * I decided it can't hurt to support do/loop/+loop. Lots of people
+ * understand it, and folks might have "legacy" code that they don't want
+ * to rewrite into for/next.
+ *
+ * do/loop isn't a bad construct. I think really the only reason that Chuck
+ * deprecated it - starting in cmForth - was that it didn't map neatly to
+ * his chip! The runtime words (do) (loop) and (+loop) need two - or three!
+ * - items on the stack. His original stack computer could only see the top
+ * slot of the return stack. Hence, for/next, and simple count-down loops.
+ *
+ * We are going to implement a "zero-crossing" version. For some reason
+ * many Forths choose to offset the start and limit values so that the loop
+ * exits when the index "crosses" from the most negative number (8000...
+ * hex) to the most positive (7fff... hex) - ie, when arithmetic overflow
+ * occurs. I can't remember why this seemed like a good idea. I'm going to
+ * implement a version that offsets the index so that the limit is always
+ * 0. We'll see how that works.
+ */
+
+void mu_do_()   /* (do)  ( limit start) */
+{
+    RPUSH(*IP++);       /* push following branch address for (leave) */
+    RPUSH(ST1);         /* limit */
+    RPUSH(TOP - ST1);   /* index = start - limit */
+    DROP(2);
+}
+
+void mu_loop_()
+{
+    cell rtop = (cell)RP[0];
+
+    rtop++;                 /* increment index */
+    if (rtop == 0)
+        { IP++; RP += 3; }                  /* skip branch, pop R stack */
+    else
+        { RP[0] = (xtk *)rtop; BRANCH; }    /* update index, branch back */
+}
+
+void mu_plus_loop_()    /* (+loop)  ( incr) */
+{
+    cell rtop = (cell)RP[0];
+    cell prev = rtop;
+
+    rtop += TOP;                /* increment index */
+    if ((rtop ^ prev) < 0)      /* current & prev index have opposite signs */
+        { IP++; RP += 3; }                  /* skip branch, pop R stack */
+    else
+        { RP[0] = (xtk *)rtop; BRANCH; }    /* update index, branch back */
+    DROP(1);
+}
+
+/* leave the do loop early */
+void mu_leave()
+{
+    IP = RP[2];     /* jump to address saved on R stack */
+    RP += 3;        /* pop "do" context */
+}
+
+/* conditionally leave */
+void mu_qleave()
+{
+    if (POP) mu_leave();
+}
+
+/*
+ * Calculate current loop indices for current (i), enclosing (j), and
+ * third-level (k) do-loops
+ */
+
+void mu_i() { PUSH((cell)RP[0] + (cell)RP[1]); }
+void mu_j() { PUSH((cell)RP[3] + (cell)RP[4]); }
+void mu_k() { PUSH((cell)RP[6] + (cell)RP[7]); }
 
 /*
  * Runtime workhorses for R stack functions. In the x86 native code, "push"
