@@ -8,10 +8,37 @@
 code from earlier (double-number) muforth startup (but edited for
 readability)
 ==========================================================================
+
+( Let's define the token consumers yet -again- so we can patch in this code
+  and test it. Also we'll know if we try to convert a number before we know
+  how, so we can test on the host the bootstrappability of this code on the
+  target.)
+
+defer new-number   now complain is new-number
+defer new-number,  now complain is new-number,
+
+( Redefine, and then set the forth "consume".)
+-:   ( interpret one token)
+      .forth. find  if  execute ^  then  new-number ;     state @  !
+
+( Now set the compiler "consumer". To get access to the value of state at
+  compile time, we turn on the compiler, but don't compile anything!)
+
+-:   ( compile one token)
+   .compiler. find  if  execute ^  then
+      .forth. find  if  compile, ^  then  new-number, ;
+                                      -]  'compiler-mode [  !
+
+
 variable dpl    ( location of , or . )
 variable radix
+: base   radix ;  ( Compatibility)
 
-: radixer  create  does>  radix ! ;
+.ifdef muFORTH
+: radixer  constant  does>  radix ! ;
+.else
+: radixer  constant  does> @  radix ! ;
+.then
 
 ( In order to keep this compilable by the target -before- it knows how to
   parse numbers - which is what we're defining now! - let's keep the
@@ -40,7 +67,8 @@ decimal
 
 : ?sign  char - punct  if  -1 ^  then  0 ;
 
-: ?hex  char " punct  if  hex ^  then
+: ?radix
+        char " punct  if  hex ^  then
         char # punct  if  decimal ^  then
         char ' punct  if  octal ^  then
         char % punct  if  binary ^  then ;
@@ -49,7 +77,8 @@ decimal
   number causes a double number to be pushed, and dpl set to the count of
   digits _after_ the _last_ . in the number.)
 
-: ?dot  char . punct  if  dpl off ^  then
+: ?dot  cr ." ?dot "  .s
+        char . punct  if  dpl off ^  then
         char , punct  if   ^  then
         char - punct  if   ^  then
         char / punct  if   ^  then
@@ -75,36 +104,43 @@ decimal
    d+
    r>  dpl @ 0< 1+  dpl +!  ;
 
+( ANS compatible!)
+: >number  ( ud1 a1 c1 - ud2 a2 c2)  ( a2 is first unconvertible char)
+   cr ." >number "  .s
+   =if  for  @digit?  while  *digit 1+ next  0 ^  then  drop  r>  then  ;
+
+: fancy-number  ( a u - d)
+   radix preserve
+   >r >r  0 0  r> r>  ?radix  ?sign >r  dpl on
+   begin  >number  =while ( still chars)  ?dot  repeat
+   2drop  r>  if dnegate then  ;
+
+( dpl is non-negative if there were one or more "dots" in the number;
+  keep it as a double, or make a double literal.)
+
+-:
+   fancy-number  dpl @  0< if  drop  then  ;  is new-number
+
+-:
+   fancy-number  dpl @  0< if  drop  literal ^  then
+                               swap  literal literal ;  is new-number,
+
+
+.ifdef number-output
+
+( For number -output-)
+
 : /digit   ( ud - udquot urem)
    0 radix @ um/mod     ( 0:hi / radix -> urhi uqhi)  >r
      radix @ um/mod  ( urhi:lo / radix -> urlo uqlo)  r> rot  ;
 
-( ANS compatible!)
-: >number  ( ud1 a1 c1 - ud2 a2 c2)  ( a2 is first unconvertible char)
-   =if  for  @digit?  while  *digit 1+ next  0 ^  then
-                                drop  r>  then  ;
-
-: fancy-number  ( a u - d)
-   2>r  0 0  2r>  ?radix  ?sign >r  dpl on
-   begin  >number  =while ( still chars)  ?dot  repeat
-   2drop  r>  if dnegate then  ;
-
-: (number)  ( a u - d)
-   radix @ >r  fancy-number  r> radix !  throw  ;
-
--: (number)  dpl @  0< if  drop literal ^  then  swap  literal literal ;
-'number, !
-
--: (number)  dpl @  0< if  drop  then  ;
-'number !
-
-( Make it easy to call "number" and "number," from interpreter mode words.)
-: number   'number  @execute ;
-: number,  'number, @execute ;
+.then
 
 ==========================================================================
 existing code in current startup with 32-bit numbers
 ==========================================================================
+
+.ifdef single-numbers
 
 : *digit  ( u a digit - u*base+digit a)
    swap >r ( a)  swap ( dig u)  radix @ * +  r>  dpl @ 0< 1+  dpl +!  ;
@@ -124,4 +160,6 @@ existing code in current startup with 32-bit numbers
    2>r  0  2r>  ?sign >r  ?radix  dpl on
    begin  digits  =while ( still chars)  ?dot  repeat
    2drop  r>  if negate then  ;
+
+.then
 
