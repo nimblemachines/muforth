@@ -31,7 +31,7 @@ s/^void mu_//
 s/(.*)\(void\);/\1/
 
 # don't do do_colon, do_does - they are not real forth words
-/do_/d
+#/do_/d
 
 # now we've got the name, save it in hold space
 h
@@ -41,7 +41,7 @@ s/_carefully//
 s/less/</
 s/equal/=/
 s/zero/0/
-s/reset/!/
+#s/reset/!/
 s/star(_|$)/*/
 s/backslash/\\\\/
 s/slash/\//

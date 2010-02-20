@@ -1,0 +1,165 @@
+( This file is part of muFORTH: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2010 David Frech. All rights reserved, and all wrongs
+  reversed. (See the file COPYRIGHT for details.)
+
+
+( A startup file analogous to muforth's startup file. It expands the
+  capabilities of a bare-bones ARM kernel so that it can be used
+  interactively.)
+
+
+( Roll tokenizing and searching into one.)
+: token'  ( chain - a u 0 | cfa -1)   token  rot  find ;
+
+: abort ;  ( UNDEF ERROR)  ( see comments near the end of the file)
+: huh?  ( flag)  ( aborts if false)  0= ?abort  ;  ( ERROR)
+
+: chain'   token'  huh?  ;
+: \chain   chain'  , ;  ( compile a word from a particular chain)
+
+( XXX .forth. or current?)  
+: '     .forth. chain' ;
+-- : '     current @ chain' ;
+compiler
+: [']   '  literal ;
+: \     .compiler. \chain ;
+forth
+
+==========================================================================
+Support words for compiling control structures.
+==========================================================================
+
+( Mark a branch source for later fixup.)
+: >mark  ( - src)  here  0 , ;
+
+( Resolve a forward or backward jump, from src to dest.)
+( When using absolute branch addresses, this is easy: just store dest at src.)
+: <resolve  ( dest src)  ! ;
+: >resolve  ( src dest)  swap <resolve ;
+
+compiler
+: =if   ( - src)        compile (=0branch)  >mark ;
+: if    ( - src)        compile  (0branch)  >mark ;
+: then  ( src)          here >resolve ;
+: else  ( src0 - src1)  compile   (branch)  >mark  swap  \ then ;
+
+: begin   ( - dest)  here ;
+: =until  ( dest -)       \ =if  <resolve ;
+: until   ( dest -)        \ if  <resolve ;
+: again   ( dest -)     compile   (branch)  >mark  <resolve ;
+: =while  ( dest - src dest)  \ =if  swap ;
+: while   ( dest - src dest)   \ if  swap ;
+: repeat  ( src dest -)   \ again  \ then ;
+
+( n for .. next         goes n times; 2^wordsize if n=0 )
+( n ?for .. next then   goes n times; 0 if n=0 )
+
+: for     ( - dest)      compile (for)          \ begin ;
+: ?for    ( - src dest)  compile (?for)  >mark  \ begin ;
+: next    ( dest -)      compile (next)  >mark  <resolve ;
+
+forth
+
+
+==========================================================================
+Fancy math operators.
+==========================================================================
+:  */mod  ( n1 n2 n3 - r q)  >r   m*   r>             fm/mod ;
+: u*/mod  ( u1 u2 u3 - r q)  >r  um*   r>             um/mod ;
+
+:  /mod   ( n1    n2 - r q)  >r  s->d  r>  (  d1 n2)  fm/mod ;
+: u/mod   ( u1    u2 - r q)         0 swap ( ud1 u2)  um/mod ;
+
+:  */     ( n1 n2 n3 - n1*n2/n3)   */mod  nip ;
+: u*/     ( u1 u2 u3 - u1*u2/u3)  u*/mod  nip ;
+
+:  /      ( n1 n2 - quot)    /mod  nip ;
+: u/      ( u1 u2 - uquot)  u/mod  nip ;
+
+:  mod    ( n1 n2 - mod)     /mod  drop ;
+: umod    ( u1 u2 - umod)   u/mod  drop ;
+
+
+==========================================================================
+Numeric conversion - input.
+==========================================================================
+variable radix   ( the current input & output number base)
+variable dpl     ( decimal point location)
+
+: *digit  ( ud a digit - ud*base+digit a)
+   swap >r ( a)  swap ( lo digit hi)
+   radix @ um*  drop  rot ( digit hi*radix lo)
+   radix @ um*            ( digit hi*radix lo*radix_lo lo*radix_hi)
+   d+   r>  dpl @ 0< 1+  dpl +! ;  ( increment dpl if dpl >= 0)
+
+
+==========================================================================
+Numeric conversion - output.
+==========================================================================
+: >digit   ( n - ch)  ( convert 1 binary digit to char; hex to uppercase)
+   9 over u<  7 and +  [ char 0 ] +  ;
+
+: /digit   ( ud - udquot urem)
+   0 radix @ um/mod     ( 0:hi / radix -> urhi uqhi)  >r
+     radix @ um/mod  ( urhi:lo / radix -> urlo uqlo)  r> rot  ;
+
+: s->d  ( n - d)  ( sign-extend)  dup 0< ;  ( high word on top)
+: dabs  ( d - |d|)   s->d  if  dnegate  then ;
+
+( XXX Should we convert numbers by pushing digits onto the stack
+  instead?)
+
+( Longest number we can convert is a negative base-2 double-number.)
+65 aligned allot here constant pad  ( 64 digits + sign + alignment)
+
+variable hld
+: hold   -1 hld +!  hld @ c! ;
+: <#     pad hld !  ;
+: #>     ( ud - a #)  2drop  hld @  pad over - ;
+: sign   ( n -)   0< if  [ char - ] hold  then  ;
+
+: #     ( ud - ud')   /digit  >digit  hold  ;
+: #s    ( ud - 0 0)   begin  #  2dup or 0=  until  ;
+
+: (ud.)   ( ud - a #)  <#  #s  #>  ;
+: ud.     ( ud -)      (ud.)  type  space  ;
+
+: (u.)    ( u - a #)   0  (ud.)  ;
+: u.      ( u -)       (u.)  type  space  ;
+
+: (d.)    ( d - a #)   dup >r ( sign)  dabs  <#  #s  r> sign  #>  ;
+: d.      ( d -)       (d.)  type  space  ;
+
+: (.)     ( n - a #)   s->d  (d.)  ;
+: .       ( n -)       (.)  type  space  ;
+
+0 .if
+( This should truncate to field length. Actually, it shouldn't. Does it?)
+( UNUSED)
+: truncating-field   ( a c field - a' field)   tuck swap -  ( a field field-c)
+   s->d if  drop ^  then  ?for  bl hold  next then  #>  ;
+.then
+
+( Non-truncating field.)
+: spaces  ( n)  0 max  ?for  space  next  then  ;
+: field   ( a c field - a c)  over - spaces  ;
+
+:  (.r)   ( n field - a #)   >r  (.)   r>  field  ;
+:   .r    (.r)  type  ;
+
+: (u.r)   ( u field - a #)   >r  (u.)  r>  field  ;
+:  u.r    (u.r)  type  ;
+
+( Useful shortcut.)
+: ?  @ .  ;
+
+
+==========================================================================
+Utility.
+==========================================================================
+: >     swap <  ;
+: min   2dup >  if swap then  drop  ;
+: max   2dup <  if swap then  drop  ;
+: abs   ( n - |n|)   s->d  if   negate  then ;
+
