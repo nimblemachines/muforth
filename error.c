@@ -23,9 +23,6 @@ void die(const char *msg)
     exit(1);
 }
 
-/* just calls execute, then pushes 0 */
-void mu_catch() { EXECUTE; PUSH(0); }
-
 /* just calls die */
 void mu_throw()
 {
