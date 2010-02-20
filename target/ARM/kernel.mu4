@@ -189,7 +189,7 @@ here "0decafbad ,  ( "sentinel" top - empty stack - value)
 
 code cold
     { r1 r2 ( throw-away ) ip rp top sp } r0 ldm
-    ( const) pc) r3 ldr   r3 push   next  ;c
+    ( decafbad) pc) r3 ldr   r3 push   next  ;c
 
 code bye
    ( 0   if        1         then   >r1       )
@@ -416,29 +416,36 @@ variable h  ( dictionary pointer)
   is used by compiling words to compile words into other words!)
 
 : compile   r>  dup cell+  >r  @ , ;  ( fig)
+
+( Numeric literal.)
 : literal   compile lit  , ;
 
+( String literal.)
+( XXX should we change this to halfword or cell-sized count?)
+( Assume that compiled strings are:
+    * prefixed with a length byte
+    * padded at the end to a cell boundary)
+
+: count  ( z" - a u)  dup 1+  swap c@ ;  ( fig)
+: (")  ( - a u)  r@ count  dup 1+  r> + aligned >r ;   implements (")
+
 
 ==========================================================================
-Checking and resetting the data stack.
+Checking and resetting the stacks.
 ==========================================================================
-
-code s0   top push  'sp0 pc) top ldr  next ;c  ( bottom of sp stack)
-code r0   top push  'rp0 pc) top ldr  next ;c  ( bottom of rp stack)
 
 ( sp@ pushes the current stack pointer onto the stack. If the stack is
   empty, sp@ returns a pointer to the decafbad sentinel. "5 sp@ @ . " will
   print 5.)
 
-code sp@     ( -- a )
-     top push  sp top mov  next ;c
+code s0   top push  'sp0 pc) top ldr  next ;c  ( bottom of sp stack)
+code r0   top push  'rp0 pc) top ldr  next ;c  ( bottom of rp stack)
 
-here "0decafbad ,  ( needed below)
+code sp@   ( - a)  top push   sp top mov   next ;c
+code rp@   ( - a)  top push   rp top mov   next  ;c
 
-code sp!     ( -- )
-     'sp0 pc) sp ldr          ( reset sp to s0)
-     ( decafbad) pc) top ldr  ( load sentinel)
-     next  ;c
+code sp!   ( a)  top sp mov   top pop   next  ;c
+code rp!   ( a)  top rp mov   top pop   next  ;c
 
 ( depth looks a little weird, but it makes sense if you think about it.
 
@@ -465,9 +472,17 @@ code sp!     ( -- )
 
 ( XXX we really want to abort here with a nice message in each case.)
 
+-- fig has this: ---------------------------------------------------------
+-- : ?stack
+--    09E sp@ <  1 ?error    sp@ 020 <  7 ?error ;
+-- Those error strings:
+--   1  Empty stack
+--   7  Full stack
+-- -----------------------------------------------------------------------
+
 : ?stack   ( check stack for over- and under-flow; reset if necessary)
-     here [ 1 Ki ] +  sp@  u< not if  sp!  then  ( overflow - ran into here)
-   s0  [ 2 cells ] -  sp@  u<     if  sp!  then  ( underflow) ;
+   sp@  here [ 1 Ki ] +    u< if  ." Full stack"           then
+   s0  [ 2 cells ] -  sp@  u< if  ." Empty stack"  s0 sp!  then ;
 
 
 ==========================================================================
@@ -529,18 +544,6 @@ String support.
       over c@  over c!  ( move one char)
       1 march  ( incr pointers)  next  then   2drop ;
 
-
-( XXX should we change this to halfword or cell-sized count?)
-( Assume that compiled strings are:
-    * prefixed with a length byte
-    * padded at the end to a cell boundary)
-
-: count  ( z" - a u)  dup 1+  swap c@ ;  ( fig)
-
-( This word pushes the address and length of an inline compiled string. It
-  is used by ." and " .)
-
-: (")  ( - a u)  r@ count  dup 1+  r> + aligned >r ;   implements (")
 
 
 ==========================================================================
@@ -622,6 +625,10 @@ Dictionary search.
 variable current
 variable .forth.
 variable .compiler.
+
+: definitions   current ! ;
+: forth         .forth. definitions ;
+: compiler   .compiler. definitions ;
 
 ( Names precede the link field and are compiled in an interesting way. The
   count byte immediately precedes the link. If you then back up that many
@@ -732,13 +739,13 @@ meta: defer   create  ['] nope a,  does> @execute ;
 defer number     ( try to convert a number)
 defer number,    ( try to convert a number and compile as a literal)
 
-: interpret
+: interpret  ( a u)
+   over +  ( start end)  end !  dup start !  ( source)  first !
    begin  token  =while  'eat @execute  ?stack  repeat  2drop ;
 
 : evaluate  ( a u)
    start @ >r  end @ >r  ( save source)
    first @ >r            ( save our place in the input)
-   over +  ( start end)  end !  dup start !  ( source)  first !
    interpret
    r> first !  r> end !  r> start ! ;
 
@@ -831,6 +838,17 @@ target
 ==========================================================================
 Error handling, abort, and quit.
 ==========================================================================
+
+: prompt  'eat @  ['] interpret-token = if  ."  Ok"  then ;
+
+: query   ( - a u)  s0 dup  256 readline ;
+
+: quit  ( r0 rp! ???)
+   begin  cr  query interpret  prompt  again  [
+
+: abort
+   s0 sp!  r0 rp!  ( decimal)  forth  \ [  quit  [
+
 
 .ifdef choose-your-poison
 
@@ -929,7 +947,7 @@ comment ===================
 .then
 
 : stack-test
-  sp@ . sp! sp@ . cr
+  sp@ . s0 sp! sp@ . cr
   depth . sp@ depth . drop depth . cr 
   depth . sp@ . depth . cr
   1 2 3 . . . depth . cr
@@ -962,7 +980,7 @@ comment ===================
 
 : banner
 ( Print banner.)
- ." FORTH/DTC "
+ ." muFORTH/ARM-dtc "
  ." Copyright (c) 2002-2010 David Frech. All rights reserved."  cr cr
  ." muFORTH is free software; see the file COPYRIGHT for details." cr
 ;
@@ -974,23 +992,9 @@ comment ===================
   ." Kernel return sp:    " r0        . cr
 ;
 
-: eval-test  " 0 . cr" evaluate ;
+-- : eval-test  " 0 . cr" evaluate ;
 
-: div  ( a b - )
-  2.  ." um* " swap over um* ." = " .d rot dup . um/mod ." = " . ." rem " . cr ;
-
-hex
-: div-test  100 1000 div 
-            1000 100 div 
-            10000 10 div 
-            3333 aaaa um* 6666 um/mod . . ;
-decimal
-
-: stat-bye  cr ." depth = " depth . cr bye ;
-
-: warm   h  !  \ [
-         banner  print-memory
-         stat-bye ;
+: warm   h  !  \ [  banner  print-memory  abort ;
 
 
 ( Patch .forth. and .compiler. in .target. to reflect the reality on the
