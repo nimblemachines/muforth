@@ -904,23 +904,6 @@ forth
 : Ki  10 << ;   ( "Kibi", or "kilobinary": 2^10.)
 : Mi  Ki Ki ;   ( "Mebi", or "megabinary": 2^20.)
 
-( For loading, to see if we've left anything lying about.)
-variable csp  ( what does this stand for? `check stack pointer'?)
-: !csp   depth  csp !  ;
-: ?csp   depth  csp @  -
-         =if  . ." stack depth change: "  radix preserve  hex  .s cr  ^  then
-         drop  ;
-
-( Bracket the contents of a file and check for stack depth change.)
-: file[  ( a u)  fd-out preserve  >stderr  cr  ." (( "  type  !csp ;
-: ]file          fd-out preserve  >stderr      ." )) "        ?csp ;
-
-( For counting the size of a loaded file.)
-: file[#   ( a u)  file[  here  ;
-: #]file   here  swap -  radix preserve  decimal
-           fd-out preserve  >stderr  .  ." bytes "
-   ]file  ;
-
 
 ( Time, timestamp.)
 : "hold  ( a n)  dup negate  hld +!  hld @  swap cmove  ;
@@ -1024,13 +1007,40 @@ variable csp  ( what does this stand for? `check stack pointer'?)
    begin  cr  <stdin  >stdout  typing evaluate  >stderr  prompt  again  [
    ( infinite loop, until error... )
 
-( for command-line args)
+
+( For counting the size of a loaded file.)
+: file[#   ( a u)  type ;
+: #]file   ;
+
+( This is the same as the C version, except calls our new evaluate.)
 : load-file  ( z")  ( XXX needs to be wired into error system)
    r/o open-file ( fd)  push
-   r@ mmap-file ( a u)  1 line !  evaluate  pop close-file ;
+   r@ mmap-file ( a u)  1 line !
+   evaluate
+   pop close-file ;
 
-: ld  token _string  load-file ;
-: -f  ( load file)  ld ;
+: ldq  ( load quietly)
+   token _string ( z")
+   radix preserve  decimal
+   fd-out preserve  >stderr     load-file ;
+
+( Consumes a token - a filename - and loads it. Also brackets any output
+  with double parens, checks that the stack depth stayed the same, and
+  calculates how much dictionary space was consumed.)
+
+: ldv  ( load verbosely)
+   cr ." (( "
+   here push
+   depth push  ldq  depth  pop -
+      =if  cr ." stack depth changed by " dup .  then  drop
+
+   ( how much dictionary space was consumed?)
+   here pop - .  ." bytes ))" ;
+
+: ld  ldv ;
+
+( for command-line args)
+: -f  ( load file)  ldq ;
 : --file  -f  ;
 : -d  ( define)  define  ;
 : --define  -d  ;
