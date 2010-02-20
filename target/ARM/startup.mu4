@@ -8,12 +8,14 @@
   capabilities of a bare-bones ARM kernel so that it can be used
   interactively.)
 
+==========================================================================
+Make searching vocab chains easier.
+==========================================================================
 
 ( Roll tokenizing and searching into one.)
 : token'  ( chain - a u 0 | cfa -1)   token  rot  find ;
 
-: abort ;  ( UNDEF ERROR)  ( see comments near the end of the file)
-: huh?  ( flag)  ( aborts if false)  0= ?abort  ;  ( ERROR)
+: huh?  ( flag)  if ^ then  complain;
 
 : chain'   token'  huh?  ;
 : \chain   chain'  , ;  ( compile a word from a particular chain)
@@ -25,6 +27,17 @@ compiler
 : [']   '  literal ;
 : \     .compiler. \chain ;
 forth
+
+
+==========================================================================
+Setting defer'd words and values.
+==========================================================================
+
+( Fixing up defer'ed words.)
+: now  ' ;
+: is   ' cell+ ( >body) ! ;   ( Usage: now (number) is number )
+: to   is ; ( assigning to values is the same!)
+
 
 ==========================================================================
 Support words for compiling control structures.
@@ -87,12 +100,104 @@ Numeric conversion - input.
 variable radix   ( the current input & output number base)
 variable dpl     ( decimal point location)
 
+: base   radix ;  ( Compatibility)
+
+: radixer  constant  does> @  radix ! ;
+
+( In order to keep this compilable by the target -before- it knows how to
+  parse numbers - which is what we're defining now! - let's keep the
+  calculated constants. I thought of converting - and in fact started to
+  convert - these to numbers that the -metacompiler- could parse and
+  compile, but that limits us to loading this code -only- via the
+  metacompiler. I like the idea that the target is going to bootstrap
+  itself!)
+
+2 2* 2* dup 2* ( 16!)  radixer hex
+dup            (  8!)  radixer octal
+2 +            ( 10!)  radixer decimal
+2                      radixer binary
+
+decimal
+( On and off)
+: on  -1 swap !  ;
+: off  0 swap !  ;
+
+( Punctuation in numbers: sign, radix, decimal point, separators.)
+: punct  ( a u ch - a' u' matched)
+   over if ( still chars to process)  swap >r  over c@  xor if
+   ( no match)  r>            0 ^  then  ( return false)
+   ( match)     r>  1 -1 v+  -1 ^  then  ( a+1 u-1 true)
+   ( end of input)  drop  r> drop ;      ( return to caller's caller!)
+
+: ?sign  char - punct ;
+
+: ?radix
+        char " punct  if  hex ^  then
+        char # punct  if  decimal ^  then
+        char ' punct  if  octal ^  then
+        char % punct  if  binary ^  then ;
+
+( . resets dpl; others leave it unchanged; this means that embedding . in a
+  number causes a double number to be pushed, and dpl set to the count of
+  digits _after_ the _last_ . in the number.)
+
+: punctuation
+.ifdef debug-number-input
+        cr ." punctuation "  .s
+.then
+        char . punct  if  dpl off  ^  then
+        char , punct  if   ^  then
+        char - punct  if   ^  then
+        char / punct  if   ^  then
+        char : punct  if   ^  then
+        char _ punct  if   ^  then  complain ;
+
+: digit?    ( ch - digit -1 | junk 0)
+   char 0 -  [ 2 2* 2* 1+ ]  ( 9)   over u< if  ( !decimal)
+          [ 2 2* 2* 2* 1+ ]  ( 17)  -
+     [ 2 1+  2* 2* 2*  1+ ]  ( 25)  over u< if  ( !hex, UPPERCASE)
+          [ 2 2* 2* 2* 2* ]  ( 32)  -
+     [ 2 1+  2* 2* 2*  1+ ]  ( 25)  over u< if  ( !hex, lowercase)
+      ( junk)  0 ^
+   then  then  ( hex) [ 2 2* 1+ 2* ]  ( 10) +  then  ( decimal)
+   dup radix @  u<  ;
+
+: @digit?   ( a - a digit -1 | a junk 0)   dup c@  digit?  ;
+
 : *digit  ( ud a digit - ud*base+digit a)
    swap >r ( a)  swap ( lo digit hi)
    radix @ um*  drop  rot ( digit hi*radix lo)
    radix @ um*            ( digit hi*radix lo*radix_lo lo*radix_hi)
-   d+   r>  dpl @ 0< 1+  dpl +! ;  ( increment dpl if dpl >= 0)
+   d+
+   r>  dpl @ 0< 1+  dpl +! ;  ( increment dpl if dpl >= 0)
 
+: convert  ( ud a count - ud' a+ count-)
+           ( a+ is first unconvertible char)
+.ifdef debug-number-input
+   cr ." convert "  .s
+.then
+   =if  for  @digit?  while  *digit  1+  next  0 ^
+                      then  drop ( non-digit)  r> ( count-)
+   then  ( 0) ;
+
+: digits   ( ud a count - ud' a+ count- #converted)
+.ifdef debug-number-input
+   cr ." digits " .s
+.then
+   dup >r ( chars left)  convert  r> over - ( count of digits converted) ;
+
+: (number)  ( a u - d)
+   radix preserve
+   >r >r  0 0  r> r>  ?radix  ?sign >r
+   0 >r ( #digits converted)  dpl on
+   begin  digits  r> + >r  =while  punctuation  repeat  2drop ( a u)
+   r> ( #digits)  0= if  r> drop complain  then
+   r> ( sign)  if dnegate then  ( apply saved sign) ;
+
+( Connect to the token consumers.)
+
+ now (number)             is number
+-:   (number) literal ;   is number,
 
 ==========================================================================
 Numeric conversion - output.
