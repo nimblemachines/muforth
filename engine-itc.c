@@ -114,14 +114,14 @@ void mu_qfor_()
     else          { IP++; RPUSH(POP); }  /* skip branch, push count onto R */
 }
 
-#define RTOP    
 void mu_next_()
 {
-    cell *prtop;
-    prtop = (cell *)RP;  /* counter on top of R stack */
+    cell rtop = (cell)RP[0];            /* counter on top of R stack */
 
-    if (--*prtop == 0) { IP++; RP++; }  /* skip branch, pop counter */
-    else               { BRANCH; }      /* take branch */
+    if (--rtop == 0)
+        { IP++; RP++; }                     /* skip branch, pop counter */
+    else
+        { RP[0] = (xtk *)rtop; BRANCH; }    /* update index, branch back */
 }
 
 /*
