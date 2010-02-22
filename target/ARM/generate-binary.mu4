@@ -8,7 +8,9 @@
 
 forth decimal
 
-( Code to generate a binary of the image and relocation bitmap.)
+( Code to generate a binary of the image and relocation bitmap, followed
+  immediately by the text of the file target/ARM/startup.mu4, which is
+  padded with blanks - on output - to a cell boundary.)
 
 : out  ( 'cell)  fd-out @  swap  \m cell  write ;
 
@@ -18,8 +20,17 @@ forth decimal
 variable junk
 : .w  ( u)  junk !  junk out ;
 
-( Image format: little endian. Starts with 4 byte count of image cells;
-  then 4 byte count of relocation bitmap cells; then image; then bitmap.)
+( Image format: little endian.
+   4 byte count of image cells
+   4 byte count of relocation bitmap cells
+   image
+   bitmap
+   4 byte count of -bytes- in startup file - excluding padding
+   startup.mu4.)
+
+: get-startup ( - fd a u)
+   z" target/ARM/startup.mu4" r/o open-file  ( fd)
+   dup mmap-file ;
 
 : gen-binary-image
    >stdout
@@ -30,6 +41,9 @@ variable junk
    ( #reloc-bitmap-cells) .w
             image  swap ( #image-cells) .words
    0 reloc-bitmap  swap ( #reloc-bitmap-cells) .words
+   get-startup  dup ( size in bytes) .w
+   tuck  ( fd u a u) type  negate 3 and spaces ( pad)
+   close-file
 ;
 
 #]file

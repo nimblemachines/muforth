@@ -303,6 +303,62 @@ code (next) implements (next)
    0 ip +) ip ldr   next  ;c
 .then
 
+
+( Do-loop frame looks like this:
+  +--------------------+
+  |  saved count reg   |
+  +--------------------+
+  |  addr of loop end  |   for leave and ?leave
+  +--------------------+
+  |       limit        |<--- rp
+  +--------------------+
+
+   Current index is in count register; current "user-visible" index is
+   calculated as count + limit.)
+
+code (do)   ( limit start)  implements (do)
+             4 ip )+ r1 ldr   -- fetch following branch address for (leave)
+.ifdef relbranch
+               r1 ip r1 add   -- fixup offset
+.then
+                     r0 pop   -- limit
+   { count r1 r0 } ! rp stm   -- push saved count, loop end, limit
+           r0 top count sub   -- count (index) = start - limit
+                    top pop   next  ;c
+
+code (loop)  implements (loop)
+   1 # count count add s
+   { count r1 r0 } ! rp ldm 0=  -- restore count & pop r stack if zero
+              4 # ip ip add 0=  -- skip branch if zero
+.ifdef relbranch
+   4 ip )+ r0 ldr ne   r0 ip ip add ne  -- take branch if non-zero
+.else
+   0 ip +) ip ldr ne                    -- take branch if non-zero
+.then
+   next  ;c
+
+( Testing carry to see if we've crossed the 0 threshold doesn't work on the
+  ARM - carry and borrow are inverses. So approaching the limit from below
+  causes a carry when reaching or surpassing it; but approaching it from
+  above - subtracting - carries -unless- we have crossed the threshold. Is
+  this why people use overflow instead, because it works in both
+  directions? For now I'm going to implement my simple C solution: if the
+  sign of the index has changed, we've crossed the threshold.)
+
+code (+loop)  ( incr)   implements (+loop)
+   count r1 mov  ( save old count value)
+   top count count add   top pop   count r1 teq
+   { count r1 r0 } ! rp ldm 0<  -- restore count & pop r stack
+                                -- if signs differ
+              4 # ip ip add 0<  -- skip branch if signs differ
+.ifdef relbranch
+   4 ip )+ r0 ldr 0>=   r0 ip ip add 0>=  -- take branch if signs match
+.else
+   0 ip +) ip ldr 0>=                     -- take branch if signs match
+.then
+   next  ;c
+
+
 ( NOTE: the only primitive still undefined is (")
 
 ( But we let it be, since it depends on lots of other words... Since we now
@@ -386,6 +442,40 @@ code 0=            top top tst   -1 # top mov 0=   0 # top mov ne   next  ;c
 : =    xor 0= ;
 
 
+( The rest of the do-loop words. These are compiled like any other normal
+  word, so the meta-compiler doesn't need to know about them, and no
+  "implements" call is necessary.)
+
+code leave
+   { count ip r0 } ! rp ldm   -- pop "do" frame and branch
+   -- count = saved count; ip = branch addr; r0 = limit
+   next  ;c
+   
+code ?leave
+   top top tst   top pop         -- if top is true (non-zero) then
+   { count ip r0 } ! rp ldm ne   -- pop "do" frame and branch
+   -- count = saved count; ip = branch addr; r0 = limit
+   next  ;c
+
+( Calculate current loop indices for current [i], enclosing [j], and
+  third-level [k] do-loops.
+
+  The first case - i - is special, since count is already in a register. We
+  fetch the limit off the R stack, and add them to get the index.
+
+  For j & k we reach farther up into the stack. In both cases the entire do
+  frame is on the R stack - the enclosing one starting two cells up; the
+  third one three cells farther.)
+
+code i   top push    0 rp +) r0 ldr ( limit)  r0 count top add   next  ;c
+
+code j   top push   2 cells # rp r2 add  ( address of enclosing do frame)
+                       { r1 r0 } r2 ldm   r0 r1 top add   next  ;c
+
+code k   top push   5 cells # rp r2 add  ( address of third do frame)
+                       { r1 r0 } r2 ldm   r0 r1 top add   next  ;c
+
+
 comment =========================
                Intrinsics
         =========================
@@ -400,6 +490,7 @@ code +!   { r1 r0 } ! sp ldm   0 top +) r2 ldr
                 r0 r2 r2 add   0 top +) r2 str    r1 top mov   next  ;c
 
 code cell+   4 # top top add   next  ;c
+code cell-   4 # top top sub   next  ;c
 code 1+      1 # top top add   next  ;c
 code 1-      1 # top top sub   next  ;c
 
@@ -412,6 +503,18 @@ code 1-      1 # top top sub   next  ;c
 
 code cell/  ( n - n/4)   top 2 #asr top mov   next  ;c
 code cells  ( n - n*4)   top 2 #lsl top mov   next  ;c
+
+
+==========================================================================
+Grab bag - some random words that don't really belong anywhere.
+==========================================================================
+: u+  ( a b c - a+c b)      rot +  swap ;  ( "under-plus")
+: v+  ( a b c d - a+c b+d)  >r u+  r> + ;  ( "vector-plus")
+
+: 2dup   over  over ;
+: 2drop  drop  drop ;
+
+: within  ( n lo hi - lo <= n < hi)  over - >r  - r>  u<  ;
 
 
 ==========================================================================
@@ -435,13 +538,12 @@ variable h  ( dictionary pointer)
 : literal   compile lit  , ;
 
 ( String literal.)
-( XXX should we change this to halfword or cell-sized count?)
 ( Assume that compiled strings are:
-    * prefixed with a length byte
+    * prefixed with a length cell
     * padded at the end to a cell boundary)
 
-: count  ( z" - a u)  dup 1+  swap c@ ;  ( fig)
-: (")  ( - a u)  r@ count  dup 1+  r> + aligned >r ;   implements (")
+: count  ( z" - a u)  dup cell+  swap @ ;
+: (")  ( - a u)  r> count  2dup + aligned  >r ;   implements (")
 
 
 ==========================================================================
@@ -460,6 +562,8 @@ code rp@   ( - a)  top push   rp top mov   next  ;c
 
 code sp!   ( a)  top sp mov   top pop   next  ;c
 code rp!   ( a)  top rp mov   top pop   next  ;c
+
+: sp-reset  s0 cell- sp! ;
 
 ( depth looks a little weird, but it makes sense if you think about it.
 
@@ -495,20 +599,9 @@ code rp!   ( a)  top rp mov   top pop   next  ;c
 -- -----------------------------------------------------------------------
 
 : ?stack   ( check stack for over- and under-flow; reset if necessary)
-   sp@  here [ 1 Ki ] +    u< if  ." Full stack"           then
-   s0  [ 2 cells ] -  sp@  u< if  ." Empty stack"  s0 sp!  then ;
+   sp@  here [ 1 Ki ] +    u< if  ." Full stack"             then
+   s0  [ 2 cells ] -  sp@  u< if  ." Empty stack"  sp-reset  then ;
 
-
-==========================================================================
-Grab bag - some random words that don't really belong anywhere.
-==========================================================================
-: u+  ( a b c - a+c b)      rot +  swap ;  ( "under-plus")
-: v+  ( a b c d - a+c b+d)  >r u+  r> + ;  ( "vector-plus")
-
-: 2dup   over  over ;
-: 2drop  drop  drop ;
-
-: within  ( n lo hi - lo <= n < hi)  over - >r  - r>  u<  ;
 
 ==========================================================================
 Basic console output.
@@ -847,6 +940,8 @@ Target-resident defining words.
 target-compiler
 : does>   compile (;code)
           [ here  assemble  lr r0 mov  ;c  cell negate allot  @ ] ,
+          ( XXX dodoes is compiled with , not a, here!!)
+          ( XXX also, will need cache-sync)
           code,  [ lookup dodoes ] last @ patch ;
 
 : ;   compile ^  \ [  ;   
@@ -869,6 +964,7 @@ Error handling, abort, and quit.
       8 for  emit  next  space ;
 
 .then
+
 : prompt  
    cr ." here " here .
    cr ."   sp " sp@ .
@@ -881,7 +977,7 @@ Error handling, abort, and quit.
    begin  cr  query interpret  prompt  again  [
 
 : abort
-   s0 sp!  r0 rp!  ( decimal)  forth  \ [  quit  [
+   sp-reset  r0 rp!  ( decimal)  forth  \ [  quit  [
 
 
 .ifdef choose-your-poison
@@ -1000,6 +1096,28 @@ comment ===================
   -1  0          mul
 ;
 
+( Test do, loop, and friends.)
+( Just print two bytes)
+: .b   16/mod >digit swap  15 and >digit  emit emit  space ;
+
+: do-test
+   cr  10 0 do  i .b  loop
+   cr  -100 -120 do  i .b loop
+   cr  -10 10 do  i .b  -1 +loop
+   4 0 do   cr   4 0 do   4 0 do
+      i 4 <<  j 2 << +  k +  .b  loop  space space  loop loop ;
+
+( Running do-test under muFORTH on the host yields this:
+  
+00 01 02 03 04 05 06 07 08 09 
+88 89 8A 8B 8C 8D 8E 8F 90 91 92 93 94 95 96 97 98 99 9A 9B 
+0A 09 08 07 06 05 04 03 02 01 00 FF FE FD FC FB FA F9 F8 F7 F6 
+00 10 20 30   04 14 24 34   08 18 28 38   0C 1C 2C 3C   
+01 11 21 31   05 15 25 35   09 19 29 39   0D 1D 2D 3D   
+02 12 22 32   06 16 26 36   0A 1A 2A 3A   0E 1E 2E 3E   
+03 13 23 33   07 17 27 37   0B 1B 2B 3B   0F 1F 2F 3F   )
+
+
 : banner
 ( Print banner.)
  ." muFORTH/ARM-dtc "
@@ -1018,7 +1136,7 @@ comment ===================
 
 : getfile-test  " startup.mu4" getfile if evaluate then ;
 
-: warm   h  !  \ [  banner  print-memory  getfile-test  abort ;
+: warm   h  !  \ [  banner  print-memory  do-test  getfile-test  abort ;
 
 
 ( Patch .forth. and .compiler. in .target. to reflect the reality on the
