@@ -1,3 +1,6 @@
+: char   token  drop  c@ ;
+: (    [ char ) ]  parse  2drop ;
+
 ( This file is part of muFORTH: http://muforth.nimblemachines.com/
 
   Copyright 2002-2010 David Frech. All rights reserved, and all wrongs
@@ -8,6 +11,7 @@
   capabilities of a bare-bones ARM kernel so that it can be used
   interactively.)
 
+
 ==========================================================================
 Make searching vocab chains easier.
 ==========================================================================
@@ -15,7 +19,7 @@ Make searching vocab chains easier.
 ( Roll tokenizing and searching into one.)
 : token'  ( chain - a u 0 | cfa -1)   token  rot  find ;
 
-: huh?  ( flag)  if ^ then  complain;
+: huh?  ( flag)  if ^ then  complain ;
 
 : chain'   token'  huh?  ;
 : \chain   chain'  , ;  ( compile a word from a particular chain)
@@ -26,8 +30,20 @@ Make searching vocab chains easier.
 compiler
 : [']   '  literal ;
 : \     .compiler. \chain ;
+: \f       .forth. \chain ;
 forth
 
+
+-- -----------------------------------------------------------------------
+-- Utility words for making special literals.
+-- -----------------------------------------------------------------------
+
+: ctrl   char  [ bl 2* ( 64) ]  xor ;  ( how you get ^? = 127.)
+
+compiler
+: char   \f char literal ;
+: ctrl   \f ctrl literal ;
+forth
 
 ==========================================================================
 Setting defer'd words and values.
@@ -35,7 +51,7 @@ Setting defer'd words and values.
 
 ( Fixing up defer'ed words.)
 : now  ' ;
-: is   ' cell+ ( >body) ! ;   ( Usage: now (number) is number )
+: is   ' cell+ ( >body) ! ;   ( Usage: now (number) ( is number )
 : to   is ; ( assigning to values is the same!)
 
 
@@ -79,23 +95,8 @@ compiler
 forth
 
 
-==========================================================================
-Fancy math operators.
-==========================================================================
-:  */mod  ( n1 n2 n3 - r q)  >r   m*   r>             fm/mod ;
-: u*/mod  ( u1 u2 u3 - r q)  >r  um*   r>             um/mod ;
-
-:  /mod   ( n1    n2 - r q)  >r  s->d  r>  (  d1 n2)  fm/mod ;
-: u/mod   ( u1    u2 - r q)         0 swap ( ud1 u2)  um/mod ;
-
-:  */     ( n1 n2 n3 - n1*n2/n3)   */mod  nip ;
-: u*/     ( u1 u2 u3 - u1*u2/u3)  u*/mod  nip ;
-
-:  /      ( n1 n2 - quot)    /mod  nip ;
-: u/      ( u1 u2 - uquot)  u/mod  nip ;
-
-:  mod    ( n1 n2 - mod)     /mod  drop ;
-: umod    ( u1 u2 - umod)   u/mod  drop ;
+( does> - currently UNDEF)
+: does> ;
 
 
 ==========================================================================
@@ -146,9 +147,6 @@ decimal
   digits _after_ the _last_ . in the number.)
 
 : punctuation
-.ifdef debug-number-input
-        cr ." punctuation "  .s
-.then
         char . punct  if  dpl off  ^  then
         char , punct  if   ^  then
         char - punct  if   ^  then
@@ -177,17 +175,11 @@ decimal
 
 : convert  ( ud a count - ud' a+ count-)
            ( a+ is first unconvertible char)
-.ifdef debug-number-input
-   cr ." convert "  .s
-.then
    =if  for  @digit?  while  *digit  1+  next  0 ^
                       then  drop ( non-digit)  r> ( count-)
    then  ( 0) ;
 
 : digits   ( ud a count - ud' a+ count- #converted)
-.ifdef debug-number-input
-   cr ." digits " .s
-.then
    dup >r ( chars left)  convert  r> over - ( count of digits converted) ;
 
 : (number)  ( a u - d)
@@ -262,6 +254,27 @@ variable hld
 
 ( Useful shortcut.)
 : ?  @ .  ;
+
+
+==========================================================================
+Fancy math operators.
+==========================================================================
+: fm/mod ;  ( UNDEF)
+
+:  */mod  ( n1 n2 n3 - r q)  >r   m*   r>             fm/mod ;
+: u*/mod  ( u1 u2 u3 - r q)  >r  um*   r>             um/mod ;
+
+:  /mod   ( n1    n2 - r q)  >r  s->d  r>  (  d1 n2)  fm/mod ;
+: u/mod   ( u1    u2 - r q)         0 swap ( ud1 u2)  um/mod ;
+
+:  */     ( n1 n2 n3 - n1*n2/n3)   */mod  nip ;
+: u*/     ( u1 u2 u3 - u1*u2/u3)  u*/mod  nip ;
+
+:  /      ( n1 n2 - quot)    /mod  nip ;
+: u/      ( u1 u2 - uquot)  u/mod  nip ;
+
+:  mod    ( n1 n2 - mod)     /mod  drop ;
+: umod    ( u1 u2 - umod)   u/mod  drop ;
 
 
 ==========================================================================
@@ -379,16 +392,13 @@ create remove  -]  unlink ;   ( remove pushes IP)
 
 : room  ( #cells)
    r>  ( ra)
-.ifdef zeroed-locals
+   ( allocate, and perhaps initialise)
    -- swap dup  begin  "55aa55aa >r  1-  dup 0= until  drop
-   swap dup  begin  0 >r  1-  dup 0= until  drop
-.else
+   -- swap dup  begin  0         >r  1-  dup 0= until  drop
    swap dup  negate rp+!  ( allocate)
-.then
    ( #cells)  >r
    link unroom
    remove >r  ( normal return - unlink and cleanup)
-.then
    >r  ( ra) ;
 
 -- -----------------------------------------------------------------------
