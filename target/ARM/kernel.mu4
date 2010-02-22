@@ -615,6 +615,20 @@ Basic console output.
 : cr  #CR emit  #LF emit ;
 
 
+.ifdef debug-dot
+
+( Printing hex.)
+: 16/mod   ( n - q r)  dup 4 u>>   swap 15 and ;
+
+: >digit   ( n - ch)  ( convert 1 binary digit to char; hex to uppercase)
+   9 over u<  7 and +  [ char 0 ] +  ;
+
+: .   8 for  16/mod >digit swap  next  drop
+      8 for  emit  next  space ;
+
+.then
+
+
 ==========================================================================
 String support.
 ==========================================================================
@@ -841,9 +855,11 @@ Interpreter and compiler.
 ==========================================================================
 variable 'eat    ( how to consume a token)
  
-: complain  ( a u)  type space  ." isn't defined" ;  ( ERROR)
-
 meta: defer   ( default)  create  a,  does> @execute ;
+
+' nope      defer (abort)    ( what to do in case of error)
+
+: complain  ( a u)  type space  ." isn't defined"  (abort) ;  ( ERROR)
 
 ' complain  defer number     ( try to convert a number)
 ' complain  defer number,    ( try to convert a number and compile as a literal)
@@ -877,6 +893,13 @@ Making new names in the dictionary.
 ==========================================================================
 variable last         ( cfa of last word defined)
 
+.ifdef being-defined
+: being-defined  ( a u)
+   cr  current @ .  2dup type ;
+.else
+: being-defined ;
+.then
+
 : code,   here last !  ( make a code field)  0 , ;
 
 : token,  ( a u)  dup 1+ aligned  allot  ( room for name+len+padding)
@@ -884,7 +907,7 @@ variable last         ( cfa of last word defined)
 
 : link,   here  current @  dup  @  ,  !  ( last-link 2! ) ;
 
-: name    token  ( a u)  token,  link,  code, ;
+: name    token  ( a u)  being-defined  token,  link,  code, ;
 
 ( patch rewrites the bl instruction at cfa to call to 'code.)
 : |pc-  ( to from - offset)   8 + ( compensate for prefetch)  - ;
@@ -952,19 +975,6 @@ target
 Error handling, abort, and quit.
 ==========================================================================
 
-.ifdef debug-dot
-
-( Printing hex.)
-: 16/mod   ( n - q r)  dup 4 u>>   swap 15 and ;
-
-: >digit   ( n - ch)  ( convert 1 binary digit to char; hex to uppercase)
-   9 over u<  7 and +  [ char 0 ] +  ;
-
-: .   8 for  16/mod >digit swap  next  drop
-      8 for  emit  next  space ;
-
-.then
-
 : .vm
    cr ."  top " dup .
    cr ."   sp " sp@ .
@@ -980,6 +990,8 @@ Error handling, abort, and quit.
 
 : abort
    sp-reset  r0 rp!  ( decimal)  forth  \ [  quit  [
+
+' abort  is (abort)
 
 
 .ifdef choose-your-poison
