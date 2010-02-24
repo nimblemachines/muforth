@@ -18,7 +18,6 @@ cell *SP;
 xtk *rstack[STACK_SIZE];
 xtk **RP;
 
-cell   TOP;      /* top of stack */
 xtk   *IP;     /* instruction pointer */
 xtk    W;      /* on entry, points to the current Forth word */
 

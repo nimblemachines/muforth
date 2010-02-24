@@ -61,9 +61,8 @@ static void mu_return_token(char *last, int trailing)
     /* Account for characters processed, return token */
     first = last + trailing;
 
-    NIP(-1);    /* make room for result */
-    ST1 = (cell) parsed.data;
-    TOP = parsed.length;
+    PUSH((cell) parsed.data);
+    PUSH(parsed.length);
 
 #ifdef DEBUG_TOKEN
     fprintf(stderr, "%.*s\n", parsed.length, parsed.data);
@@ -73,8 +72,6 @@ static void mu_return_token(char *last, int trailing)
 void mu_token()  /* -- start len */
 {
     char *last;
-
-    DUP;   /* we'll be setting TOP when we're done */
 
     /* Skip leading whitespace */
     while (first < source.end && isspace(*first))
@@ -107,6 +104,7 @@ void mu_token()  /* -- start len */
 void mu_parse()  /* delim -- start len */
 {
     char *last;
+    char delim = POP;
 
     /* The first character of unseen input is the first character of token. */
 
@@ -120,7 +118,7 @@ void mu_parse()  /* delim -- start len */
     for (last = first; last < source.end; last++)
     {
         if (*last == '\n') lineno++;
-        if (TOP == *last)
+        if (delim == *last)
         {
             /* found trailing delimiter; consume it */
             mu_return_token(last, 1);
@@ -226,9 +224,8 @@ void mu_minus_rbracket()
 
 void mu_push_parsed()
 {
-    DUP; NIP(-1);
-    ST1 = (cell) parsed.data;
-    TOP = parsed.length;
+    PUSH((cell) parsed.data);
+    PUSH(parsed.length);
 }
 
 static void mu_qstack()

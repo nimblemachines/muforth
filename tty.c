@@ -17,7 +17,7 @@ void mu_get_termios()
 {
     tcgetattr(ST1, (struct termios *)TOP);
 
-    NIP(1);
+    DROP(1);
     TOP = sizeof(struct termios);
 }
 

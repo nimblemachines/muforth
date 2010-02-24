@@ -214,7 +214,7 @@ void mu_find()
         if (memcmp(pde->n.suffix + 3 - length, token, length) != 0) continue;
 
         /* found: drop token, push code address and true flag */
-        NIP(1);
+        DROP(1);
         ST1 = (cell)&pde->code;
         TOP = -1;
         return;
