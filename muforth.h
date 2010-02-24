@@ -108,13 +108,8 @@ extern char *zloading;          /* the file we're currently loading; C string */
 extern int  cmd_line_argc;
 extern char **cmd_line_argv;
 
-extern int   names_size;   /* count of bytes alloted to names */
-
-extern uint8 *pdt0;   /* ptr to data space */
-extern cell  *pcd0;   /* ptr to code & names space */
-
-extern uint8 *pdt;    /* ptrs to next free byte in each space */
-extern cell  *pcd;
+extern cell  *ph0;     /* pointer to start of heap space */
+extern cell  *ph;      /* ptr to next free byte in heap space */
 
 /* declare common functions */
 

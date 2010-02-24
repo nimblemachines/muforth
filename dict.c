@@ -12,16 +12,11 @@
 #include <sys/mman.h>
 
 /*
- * Names currently live in _code_ space, rather than in their own name space.
+ * Dictionary is one unified space, just like the old days. ;-)
  */
 
-int   names_size;   /* count of bytes alloted to names */
-
-cell  *pcd0;   /* pointer to start of code & names space */
-uint8 *pdt0;   /* ... data space */
-
-cell  *pcd;    /* ptrs to next free byte in code & names space */
-uint8 *pdt;    /* ... data space */
+cell  *ph0;     /* pointer to start of heap space */
+cell  *ph;      /* ptr to next free byte in heap space */
 
 /*
  * A struct dict_name represents what Forth folks often call a "head" - a
@@ -141,34 +136,14 @@ struct inm initial_compiler[] = {
     { NULL, NULL }
 };
 
-void mu_push_h()        /* "here" code space pointer */
+void mu_push_h0()       /* start of head (dictionary) */
 {
-    PUSH(&pcd);
+    PUSH(ph0);
 }
 
-void mu_push_r()        /* "ram" space pointer */
+void mu_push_h()        /* heap pointer */
 {
-    PUSH(&pdt);
-}
-
-/*
- * Compile (that is, *copy*) a cell into the current code space.
- */
-void mu_code_comma()     { *pcd++ = POP; }
-
-void mu_push_code_size()
-{
-    PUSH(((caddr_t)pcd - (caddr_t)pcd0) - names_size);
-}
-
-void mu_push_names_size()
-{
-    PUSH(names_size);
-}
-
-void mu_push_data_size()
-{
-    PUSH(pdt - pdt0);
+    PUSH(&ph);
 }
 
 /*
@@ -231,14 +206,13 @@ static void make_new_name(
     struct dict_name *pnmHead, char *name, int length)
 {
     struct dict_name *pnm;              /* the new name */
-    char *pch = (char *)ALIGNED(pcd);   /* start out nicely aligned */
+    char *pch = (char *)ALIGNED(ph);    /* start out nicely aligned */
 
     /* Allocate extra cells for name, if longer than 3 characters */
     if (length > 3)
     {
         int cchExtra = ALIGNED(length - 3);
         pch += cchExtra;
-        names_size += cchExtra;         /* count extra bytes alloc'ed */
     }
 
     pnm = (struct dict_name *)pch;
@@ -249,13 +223,10 @@ static void make_new_name(
     bcopy(name, pnm->suffix + 3 - length, length);        /* copy name string */
 
     /* Allot entry */
-    pcd = (cell *)(pnm + 1);
-
-    /* Account for its size */
-    names_size += (caddr_t)pcd - (caddr_t)pnm;
+    ph = (cell *)(pnm + 1);
 
 #if defined(BEING_DEFINED)
-    fprintf(stderr, "%p %.*s\n", pcd, length, name);
+    fprintf(stderr, "%p %.*s\n", ph, length, name);
 #endif
 }
 
@@ -296,24 +267,20 @@ static void init_chain(struct dict_name *pchain, struct inm *pinm)
     for (; pinm->name != NULL; pinm++)
     {
         make_new_name(pchain, pinm->name, strlen(pinm->name));
-        *pcd++ = (cell)pinm->code;  /* set code pointer */
+        *ph++ = (cell)pinm->code;   /* set code pointer */
     }
 }
 
 static void allocate()
 {
-    pcd0 = (cell *)  mmap(0, 256 * 4096, PROT_READ | PROT_WRITE,
+    ph0 = (cell *)  mmap(0, 1024 * 4096, PROT_READ | PROT_WRITE,
                             MAP_ANON | MAP_PRIVATE, -1, 0);
 
-    pdt0 = (uint8 *) mmap(0, 1024 * 4096, PROT_READ | PROT_WRITE,
-                            MAP_ANON | MAP_PRIVATE, -1, 0);
-
-    if (pcd0 == MAP_FAILED || pdt0 == MAP_FAILED)
+    if (ph0 == MAP_FAILED)
         die("couldn't allocate memory");
 
-    /* init compiler ptrs */
-    pcd = pcd0;
-    pdt = pdt0;
+    /* init heap pointer */
+    ph = ph0;
 }
 
 void init_dict()
