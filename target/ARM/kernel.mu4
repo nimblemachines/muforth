@@ -150,21 +150,23 @@ patch their values into the target-resident defining words when we define
 them.
 ==========================================================================
 
-meta: create    new
-                ;code  dovar    top push   lr top mov        next  ;c
+meta: create    new     ;code  label dovar
+                               top push   lr top mov        next  ;c
 
-meta: constant  new  ,
-                ;code  doconst  top push   0 lr +) top ldr   next  ;c
+meta: constant  new  ,  ;code  label doconst
+                               top push   0 lr +) top ldr   next  ;c
 
 meta: variable   create          cell  allot ;
 meta: 2variable  create   [ 2 cells ]  allot ;
 
 meta: :         new   __target-colon
-                ;code  docolon  ip nest   lr ip mov   next  ;c
+                        ;code  label docolon
+                               ip nest   lr ip mov   next  ;c
 
 meta: <dodoes>  save-lr  code,
-                ;code   dodoes  ip nest   lr ip mov
-                                top push  r0 top mov   next  ;c
+                        ;code  label dodoes
+                               ip nest   lr ip mov
+                               top push  r0 top mov   next  ;c
 
 compiler: does>   <;code>  <dodoes>  __target-colon ;
 
@@ -229,6 +231,8 @@ code getfile  ( a1 u1 - a2 u2)
     'getfile pc) r3 ldr  ( fetch address of getfile routine)
     2 2 call   next  ;c
 
+( daf)
+code sync-caches   next  ;c  ( XXX UNDEF - placeholder for the real thing)
 
 
 ==========================================================================
@@ -877,7 +881,7 @@ variable last         ( cfa of last word defined)
 
 .ifdef being-defined
 : being-defined  ( a u)
-   cr  current @ .  2dup type ;
+   cr  current @ .  2dup type space ;
 .else
 : being-defined ;
 .then
@@ -891,11 +895,14 @@ variable last         ( cfa of last word defined)
 
 : name    token  ( a u)  being-defined  token,  link,  code, ;
 
-( patch rewrites the bl instruction at cfa to call to 'code.)
+( (patch) ( rewrites the bl instruction at cfa to call to 'code.)
 : |pc-  ( to from - offset)   8 + ( compensate for prefetch)  - ;
 : >branch-offset  ( to from - bits)  |pc-  cell/  "00ffffff and ;
-: patch     ( 'code cfa)  tuck >branch-offset  "eb000000 or ( op)
-            swap ! ;
+: (patch)   ( 'code cfa)  tuck >branch-offset  "eb000000 or ( op)
+            ( cfa op)  over !  sync-caches ;
+
+: patch   last @ (patch) ;
+
 
 comment super-botched
 ( XXX It's a botch that there are two kinds of (;code) - one that points
@@ -913,7 +920,7 @@ super-botched
   patch the last word. Used by the meta-compiler to point the following
   versions of create, constant, and : to code that was already laid down.)
 
-: (;code@)   r> @  last @  patch ;  implements (;code)
+: (;code@)   r> @  patch ;  implements (;code@)
 
 ( (;code)  ( patches last to point to the code that directly follows it.
   Compiled by does> , below.)
@@ -929,25 +936,23 @@ super-botched
   define ;code words once we're running the target-based colon compiler; so
   why not name this word based on which word - in the target - it assists?)
 
-: (;code)   r>  last @  patch ;
+: (;code)   r>  patch ;
 
 ==========================================================================
 Target-resident defining words.
 ==========================================================================
-: create    name      ;code   dovar
-: constant  name  ,   ;code   doconst
+: create    name      ;calls  dovar
+: constant  name  ,   ;calls  doconst
 
 -- : variable  create  cell allot ;
 : variable  create  0 , ;   ( initialise to zero)
 
-: :         name  -]  ;code   docolon
+: :         name  -]  ;calls  docolon
 
 target-compiler
-: does>   compile (;code)
-          [ here  assemble  lr r0 mov  ;c  cell negate allot  @ ] ,
-          ( XXX dodoes is compiled with , not a, here!!)
-          ( XXX also, will need cache-sync)
-          code,  [ lookup dodoes ] last @ patch ;
+: does>   compile (;code)  here  lit  [ assemble  lr r0 mov  ;c  -] ,
+          sync-caches  ( we've just compiled a piece of code!)
+          code,  [ lookup dodoes  aliteral -]  patch ;
 
 : ;   compile ^  \ [  ;   
 target
