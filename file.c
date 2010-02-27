@@ -84,7 +84,7 @@ void mu_open_file()     /* C-string-name flags - fd */
     {
         throw_strerror();
     }
-    NIP(1);
+    DROP(1);
     TOP = fd;
 }
 
@@ -128,7 +128,7 @@ void mu_mmap_file()     /* fd - addr len */
         throw_strerror();
     }
 
-    NIP(-1);
+    DROP(-1);
     ST1 = (cell) p;
     TOP = s.st_size;
 }
