@@ -17,6 +17,11 @@ while [ "$1" ]; do
   shift
 done
 
+# Set archflags based on system. Mostly useful for Darwin (OSX).
+os=$(uname -s)
+archflags=""
+if [ "$os" = "Darwin" ]; then archflags="-m32 -mdynamic-no-pic"; fi
+
 if sed --version 2> /dev/null | grep -q "GNU"; then
   cat <<EOF
 Found GNU sed; using "-r" for extended regular expressions.
@@ -43,6 +48,7 @@ Found GNU make; creating a GNU-compatible Makefile.
 EOF
   sed ${sedext} \
     -e "s/%sedext%/${sedext}/g" \
+    -e "s/%archflags%/${archflags}/g" \
     -f scripts/make.sed \
     -f scripts/gnu-make.sed \
     -e 's/^### Makefile/### GNU Makefile/' Makefile.in > Makefile
