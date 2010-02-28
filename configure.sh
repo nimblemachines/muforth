@@ -17,10 +17,21 @@ while [ "$1" ]; do
   shift
 done
 
-# Set archflags based on system. Mostly useful for Darwin (OSX).
+# Set archcflags and archldflags based on system. Useful for 64-bit Linux
+# and for Darwin (OSX).
+
 os=$(uname -s)
-archflags=""
-if [ "$os" = "Darwin" ]; then archflags="-m32 -mdynamic-no-pic"; fi
+cpu=$(uname -p)
+archcflags=""
+archldflags=""
+if [ "$os" = "Darwin" ]; then
+    archcflags="-m32 -mdynamic-no-pic"
+    archldflags="-m32"
+fi
+if [ "$os" = "Linux" -a "$cpu" = "x86_64" ]; then
+    archcflags="-m32"
+    archldflags="-m32"
+fi
 
 if sed --version 2> /dev/null | grep -q "GNU"; then
   cat <<EOF
@@ -48,7 +59,8 @@ Found GNU make; creating a GNU-compatible Makefile.
 EOF
   sed ${sedext} \
     -e "s/%sedext%/${sedext}/g" \
-    -e "s/%archflags%/${archflags}/g" \
+    -e "s/%archcflags%/${archcflags}/g" \
+    -e "s/%archldflags%/${archldflags}/g" \
     -f scripts/make.sed \
     -f scripts/gnu-make.sed \
     -e 's/^### Makefile/### GNU Makefile/' Makefile.in > Makefile
