@@ -75,12 +75,12 @@ static void mu_do_does()
 {
     NEST;                   /* entering a new word; push IP */
     IP = (xtk *)W[1];       /* new IP is stored in the parameter field */
-    PUSH(W[2]);             /* push the constant stored in 2nd word */
+    PUSH(&W[2]);            /* push the address of the word's body */
 }
 
-void mu_compile_comma()  { *pcd++ = POP; }
-void mu_set_colon_code() { *pcd++ = (cell)&mu_do_colon; }
-void mu_set_does_code()  { *pcd++ = (cell)&mu_do_does; }
+void mu_compile_comma()  { *ph++ = POP; }
+void mu_set_colon_code() { *ph++ = (cell)&mu_do_colon; }
+void mu_set_does_code()  { *ph++ = (cell)&mu_do_does; }
 
 /* Normal exit */
 void mu_exit()      { UNNEST; }

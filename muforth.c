@@ -18,7 +18,6 @@ cell *SP;
 xtk *rstack[STACK_SIZE];
 xtk **RP;
 
-cell   TOP;      /* top of stack */
 xtk   *IP;     /* instruction pointer */
 xtk    W;      /* on entry, points to the current Forth word */
 
@@ -78,7 +77,7 @@ static void convert_command_line(int argc, char *argv[])
     argc--;
     argv++;
 
-    pcmd_line = (struct counted_string *)pdt;
+    pcmd_line = (struct counted_string *)ph;
     pline = pcmd_line->data;
 
     while (argc--)
@@ -89,9 +88,8 @@ static void convert_command_line(int argc, char *argv[])
     pcmd_line->length = pline - pcmd_line->data;
 
     /* null terminate and align */
-    pdt = (uint8 *)pline;
-    *pdt++ = 0;
-    pdt = (uint8 *)ALIGNED(pdt);
+    *pline++ = 0;
+    ph = (cell *)ALIGNED(pline);
 }
 
 void mu_push_command_line()

@@ -52,6 +52,7 @@ struct trapframe
 
 static struct trapframe *last_tf;    /* top of "stack" of trap frames */
 
+/* catch ( xtk - thrown) */
 void mu_catch()
 {
     struct trapframe tf;
@@ -68,7 +69,7 @@ void mu_catch()
     if (thrown == 0)
     {
         EXECUTE;
-        DUP;     /* make room for thrown value */
+        PUSH(0);        /* room for thrown value */
     }
     else
     {

@@ -1,0 +1,73 @@
+( This file is part of muFORTH: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2010 David Frech. All rights reserved, and all wrongs
+  reversed. (See the file COPYRIGHT for details.)
+
+
+( Need tty support.)
+ld lib/tty.mu4
+
+( _string: a u - z")
+( inbuf is 1 KiB buffer)
+inbuf 512 + constant tib
+
+variable last-input-line  ( points to most recent line input)
+variable cur-input-line
+: >history  ( u)
+   ram ( here)  last-input-line @ ,  last-input-line !  ( link)
+   tib swap _string  drop ;
+
+: >prev   cur-input-line @ @ ( follow link)
+   0= if  drop  last-input-line @  then
+   dup cur-input-line !  cell+ cell+ count ;
+
+( XXX need forward pointer too!)
+: >next   cur-input-line @ @ ( follow link)
+   0= if  drop  last-input-line @  then
+   dup cur-input-line !  cell+ cell+ count ;
+
+: march  ( a1 a2 inc)  dup v+ ;
+
+: whiteout ( n)
+   0 do  #BS emit  space  #BS emit  loop ;
+
+: >bol  #CR emit ;  ( no LF)
+: >idx  >bol  dup 0 do  i tib + c@ emit  loop ;
+: >eol  ( len idx)  2dup do  i tib + c@ emit  loop  drop dup ;
+: erase>eol  ( len idx)  2dup do  space  loop  nip dup ;
+
+: >tib  ( len idx a u - u u)  ( put a string into tib; reset len & idx)
+   push ( u)  tib r@ cmove  r@ >idx  ( - len idx u)
+   - spaces  drop  ( if this line shorter, erase end of prev)
+   pop dup ( - len idx) ;
+
+: recall-prev  2drop  " (prev)" >tib ;
+: recall-next  2drop  " (next)" >tib ;
+: move-left   ( len idx)
+   dup 0< not if  #BS emit  1-  then ;
+: move-right  ( len idx)
+   2dup >  if  tib over + c@ emit  1+  then ;
+
+: read-esc-seq   key
+   char [ = if  key
+      dup char A = if  ( cursor up)     drop  recall-prev  ^ then
+      dup char B = if  ( cursor down)   drop  recall-next  ^ then
+      dup char C = if  ( cursor right)  drop  move-right  ^ then
+          char D = if  ( cursor left)         move-left  ^ then
+      then ;
+
+: do-backspace   =if  2 whiteout  -1 march   then ;
+
+: process-key   ( len idx - len' idx')  key
+    dup #ESC =     if  drop  read-esc-seq  0 ^  then
+    dup #BS  =
+   over #DEL = or  if  drop  do-backspace  0 ^  then
+    dup #CR  =     if  drop  space  -1 ^  then
+   31 over u< if  dup emit  push  tib over +  pop swap c!  1 march  then
+   ( default)  0 ;
+
+: editline  ( a u)  0 0  begin  process-key  until   drop ( idx)  tib swap ;
+
+: interact   tty user-raw   editline  tty cooked ;
+: ii  begin  interact  .Ok  =while  cr type cr  repeat ;
+

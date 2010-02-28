@@ -91,18 +91,18 @@ macro: call ( in out)  2dup - \f push ( #pops needed)
    pops  leaves ;
 
 
-==========================================================================
+===========================================================================
 Start of meta-compiled kernel
-==========================================================================
+===========================================================================
 
 target  ( compile into target vocab)
 
-==========================================================================
+===========================================================================
 Kernel header
 
 These fields are at fixed offsets and shall not be moved or mucked with, on
 pain of death!
-==========================================================================
+===========================================================================
 
 1 , ( Kernel/C API interface structure version) 
 
@@ -136,11 +136,11 @@ label 'getfile  0 ,  -- ptr to C: ??? getfile(???)
 label 'sync-caches   0 , -- ptr to C: void sync_caches(ptr)
 
 
-==========================================================================
+===========================================================================
 End of kernel header, start of real kernel
-==========================================================================
+===========================================================================
 
-==========================================================================
+===========================================================================
 Meta-compiler's version of defining words.
 
 It makes sense to start with the meta-defining words so we can build
@@ -150,23 +150,25 @@ We'll be defining the target-resident versions later in the kernel, which
 is why we define labels here for dovar, doconst, docolon, and dodoes. We
 patch their values into the target-resident defining words when we define
 them.
-==========================================================================
+===========================================================================
 
-meta: create    new
-                ;code  dovar    top push   lr top mov        next  ;c
+meta: create    new     ;code  label dovar
+                               top push   lr top mov        next  ;c
 
-meta: constant  new  ,
-                ;code  doconst  top push   0 lr +) top ldr   next  ;c
+meta: constant  new  ,  ;code  label doconst
+                               top push   0 lr +) top ldr   next  ;c
 
 meta: variable   create          cell  allot ;
 meta: 2variable  create   [ 2 cells ]  allot ;
 
 meta: :         new   __target-colon
-                ;code  docolon  ip nest   lr ip mov   next  ;c
+                        ;code  label docolon
+                               ip nest   lr ip mov   next  ;c
 
 meta: <dodoes>  save-lr  code,
-                ;code   dodoes  ip nest   lr ip mov
-                                top push  r0 top mov   next  ;c
+                        ;code  label dodoes
+                               ip nest   lr ip mov
+                               top push  r0 top mov   next  ;c
 
 compiler: does>   <;code>  <dodoes>  __target-colon ;
 
@@ -175,9 +177,9 @@ compiler: does>   <;code>  <dodoes>  __target-colon ;
   list of forth words to execute.)
 
 
-==========================================================================
+===========================================================================
 Words to talk to the C environment.
-==========================================================================
+===========================================================================
 
 ( cold puts h0 into top; warm will later store it into h. The C caller puts
   the address of the kernel header into r0. An ldm loads the header into
@@ -243,12 +245,14 @@ code sync-caches  ( a - )
     'sync-caches pc) r3 ldr  ( flush a cache line routine)
     1 0 call   next  ;c
 
+( daf)
+code sync-caches   next  ;c  ( XXX UNDEF - placeholder for the real thing)
 
 
-==========================================================================
+===========================================================================
 Definition of the low-level words - the Forth virtual machine primitives
 needed for the meta-compiler.
-==========================================================================
+===========================================================================
 
 ( Implement the "forward referenced" primitives -before- defining anything
   else. Once these primitives are defined it will be safe to make colon
@@ -367,9 +371,9 @@ code (+loop)  ( incr)   implements (+loop)
   danger.)
 
 
-==========================================================================
+===========================================================================
 Definition of the low-level words - the rest of the Forth virtual machine.
-==========================================================================
+===========================================================================
 
                 here  0 a,
 code +origin    ( origin) pc) r0 ldr  r0 top top add   next ;c
@@ -505,9 +509,9 @@ code cell/  ( n - n/4)   top 2 #asr top mov   next  ;c
 code cells  ( n - n*4)   top 2 #lsl top mov   next  ;c
 
 
-==========================================================================
+===========================================================================
 Grab bag - some random words that don't really belong anywhere.
-==========================================================================
+===========================================================================
 : u+  ( a b c - a+c b)      rot +  swap ;  ( "under-plus")
 : v+  ( a b c d - a+c b+d)  >r u+  r> + ;  ( "vector-plus")
 
@@ -517,9 +521,9 @@ Grab bag - some random words that don't really belong anywhere.
 : within  ( n lo hi - lo <= n < hi)  over - >r  - r>  u<  ;
 
 
-==========================================================================
+===========================================================================
 Basic dictionary words.
-==========================================================================
+===========================================================================
 variable h  ( dictionary pointer)
 : here    h @ ;
 : allot   h +! ;
@@ -546,9 +550,9 @@ variable h  ( dictionary pointer)
 : (")  ( - a u)  r> count  2dup + aligned  >r ;   implements (")
 
 
-==========================================================================
+===========================================================================
 Checking and resetting the stacks.
-==========================================================================
+===========================================================================
 
 ( sp@ pushes the current stack pointer onto the stack. If the stack is
   empty, sp@ returns a pointer to the decafbad sentinel. "5 sp@ @ . " will
@@ -603,9 +607,9 @@ code rp!   ( a)  top rp mov   top pop   next  ;c
    s0  [ 2 cells ] -  sp@  u< if  ." Empty stack"  sp-reset  then ;
 
 
-==========================================================================
+===========================================================================
 Basic console output.
-==========================================================================
+===========================================================================
 32 constant bl  ( ASCII code for blank - that is, space)
 13 constant #CR
 10 constant #LF
@@ -629,9 +633,9 @@ Basic console output.
 .then
 
 
-==========================================================================
+===========================================================================
 String support.
-==========================================================================
+===========================================================================
 
 ( "March" two pointers in lock step.)
 : march  ( a1 a2 increment - a1+ a2+)   dup v+ ;
@@ -667,9 +671,9 @@ String support.
 
 
 
-==========================================================================
+===========================================================================
 Token parsing.
-==========================================================================
+===========================================================================
 variable start   ( points to first character of input stream)
 variable end     ( points past last character of input stream)
 variable first   ( points to first unconsumed character)
@@ -740,9 +744,9 @@ code scan  ( end a ch - a+ trailing)
 : parse  ( ch - a u)
    end @  first @  rot scan  (token) ;
 
-==========================================================================
+===========================================================================
 Dictionary search.
-==========================================================================
+===========================================================================
 variable current
 variable .forth.
 variable .compiler.
@@ -772,7 +776,7 @@ variable .compiler.
       over ( a)  r@ link>name  ['] name-char=  string= until ( names match)
       2drop ( token)  r> cell+ ( cfa)  -1 ^  then  ( 0) ;
 
-==========================================================================
+===========================================================================
   Go forth and multiply ... and divide.
 
   These routines are all based on a handful of low-level primitives:
@@ -791,7 +795,7 @@ variable .compiler.
   extra-credit challenge: is "m* drop" always equal to "um* drop"? Why or
   why not? ;-)
 
-==========================================================================
+===========================================================================
 code *    ( n1 n2 - n1*n2)
    r0 pop   r0 top top mul   next  ;c
 
@@ -802,7 +806,7 @@ code m*   ( n1 n2 - d)
    st1 r0 ldr   top r0 top r0 smull   st1 r0 str  next ;c
 
 
-==========================================================================
+===========================================================================
 um/mod  ( ud u -- rem quo)
 
 This algorithm uses long division.  It first attempts to subtract the
@@ -823,7 +827,7 @@ successful, the low order bit is set.
 After the divisor has been subtracted through the dividend 32 times,
 whatever remains in the r1 (the high portion of the dividend) is
 necessarily the remainder.
-==========================================================================
+===========================================================================
 code um/mod  ( ud  u - urem uquot)  
      top r2 mov    -- Divisor
      r1 pop        -- Dividend, hi
@@ -850,9 +854,9 @@ code um/mod  ( ud  u - urem uquot)
      next  ;c
 
 
-==========================================================================
+===========================================================================
 Interpreter and compiler.
-==========================================================================
+===========================================================================
 variable 'eat    ( how to consume a token)
  
 meta: defer   ( default)  create  a,  does> @execute ;
@@ -888,14 +892,14 @@ target-compiler
 : [   ( exit compiler)   ['] interpret-token  'eat ! ;
 target
 
-==========================================================================
+===========================================================================
 Making new names in the dictionary.
-==========================================================================
+===========================================================================
 variable last         ( cfa of last word defined)
 
 .ifdef being-defined
 : being-defined  ( a u)
-   cr  current @ .  2dup type ;
+   cr  current @ .  2dup type space ;
 .else
 : being-defined ;
 .then
@@ -909,11 +913,14 @@ variable last         ( cfa of last word defined)
 
 : name    token  ( a u)  being-defined  token,  link,  code, ;
 
-( patch rewrites the bl instruction at cfa to call to 'code.)
+( (patch) ( rewrites the bl instruction at cfa to call to 'code.)
 : |pc-  ( to from - offset)   8 + ( compensate for prefetch)  - ;
 : >branch-offset  ( to from - bits)  |pc-  cell/  "00ffffff and ;
-: patch     ( 'code cfa)  tuck >branch-offset  "eb000000 or ( op)
-            swap tuck ! sync-caches ;
+: (patch)   ( 'code cfa)  tuck >branch-offset  "eb000000 or ( op)
+            ( cfa op)  over !  sync-caches ;
+
+: patch   last @ (patch) ;
+
 
 comment super-botched
 ( XXX It's a botch that there are two kinds of (;code) - one that points
@@ -931,7 +938,7 @@ super-botched
   patch the last word. Used by the meta-compiler to point the following
   versions of create, constant, and : to code that was already laid down.)
 
-: (;code@)   r> @  last @  patch ;  implements (;code)
+: (;code@)   r> @  patch ;  implements (;code@)
 
 ( (;code)  ( patches last to point to the code that directly follows it.
   Compiled by does> , below.)
@@ -947,33 +954,31 @@ super-botched
   define ;code words once we're running the target-based colon compiler; so
   why not name this word based on which word - in the target - it assists?)
 
-: (;code)   r>  last @  patch ;
+: (;code)   r>  patch ;
 
-==========================================================================
+===========================================================================
 Target-resident defining words.
-==========================================================================
-: create    name      ;code   dovar
-: constant  name  ,   ;code   doconst
+===========================================================================
+: create    name      ;calls  dovar
+: constant  name  ,   ;calls  doconst
 
 -- : variable  create  cell allot ;
 : variable  create  0 , ;   ( initialise to zero)
 
-: :         name  -]  ;code   docolon
+: :         name  -]  ;calls  docolon
 
 target-compiler
-: does>   compile (;code)
-          [ here  assemble  lr r0 mov  ;c  cell negate allot  @ ] ,
-          ( XXX dodoes is compiled with , not a, here!!)
-          ( XXX also, will need cache-sync)
-          code,  [ lookup dodoes ] last @ patch ;
+: does>   compile (;code)  here  lit  [ assemble  lr r0 mov  ;c  -] ,
+          sync-caches  ( we've just compiled a piece of code!)
+          code,  [ lookup dodoes  aliteral -]  patch ;
 
 : ;   compile ^  \ [  ;   
 target
 
 
-==========================================================================
+===========================================================================
 Error handling, abort, and quit.
-==========================================================================
+===========================================================================
 
 : .vm
    cr ."  top " dup .
