@@ -154,10 +154,16 @@ meta
 
 ( Compile a linked name field into the target image.)
 
+( The distinction between last and last-code is a bit subtle. last captures
+  the cfa of the last word defined, no matter what kind of word it was.
+  last-code captures the cfa of code fields that have a "bl" instruction
+  compiled there, and that can be possibly "repointed" by a later ;code or
+  does>. Keeping them separate makes me feel better.)
 
 forth
 
 variable last        ( cfa of last word defined)
+variable last-code   ( for ;code and does> to fix up)
 2variable last-link  ( address of vocab, link to newest word)
 
 meta
@@ -165,9 +171,10 @@ meta
 -- : show   last-link 2@ ! ( finally link in last word) ;
 
 ( code, doesn't bother to compile a bl since we're doing to patch the code
-  field later.)
+  field later. We just need to make room and to set last-code so patch can
+  find us.)
 
-: code,   ( make a code field)  0 \m , ;
+: code,   \m here last-code !  ( make a code field)  0 \m , ;
 
 : token,  ( a u)  dup 1+ \m aligned  \m allot  ( room for name+len+padding)
           dup \m here 1- \m c! ( len)  \m here over 1+ -  image+ swap cmove ;
@@ -184,10 +191,9 @@ meta
 : 'link   current @  >parallel ;
 : link,   \m here  \m 'link  dup  @  \m z,  !  ( last-link 2! ) ;
 
-( name, creates a name, compiling the name string and a link field. It also
-  captures the cfa in last.)
+( name, creates a name, compiling the name string and a link field.)
 
-: name,  ( a u)  \m token,  \m link,  \m here last ! ;
+: name,  ( a u)  \m token,  \m link, ;
 
 : literal    p, lit  \m ,  ;  ( make a target literal)
 : aliteral   p, lit  \m a, ;  ( make a target address literal,
@@ -204,8 +210,19 @@ meta
 
 : equ   current preserve  labels  constant ;
 
+
+( name creates a name -both- in the host's .target. chain, and in the
+  actual target memory image.
+
+  On the host, in .target., name creates a word that compiles itself into
+  the target image. At create time, this target word captures \m here - the
+  target cfa - and makes a "constant" out of it. At runtime, it fetches the
+  constant and compiles it, as a relocated value, into the target
+  dictionary [image].)
+
 : name   token  2dup \m name,  ( compile name into image)
-         (create)  \m here  ,  ( NOTE: uses current unchanged)
+         (create)  ( NOTE: uses current unchanged)
+         \m here  dup ,  last !  ( create constant, and set last)
          does> @ ( target-cfa)  ( compile itself!)  \m a, ;
 
 : label     \m here  \m equ ;
@@ -221,10 +238,10 @@ meta
 ( Support for making new defining words.)
 forth
 ( (patch) ( rewrites the bl instruction at cfa to call to 'code.)
-: (patch)     ( 'code cfa)  tuck >branch-offset  "eb000000 or ( op)
+: (patch)   ( 'code cfa)  tuck >branch-offset  "eb000000 or ( op)
             swap \m ! ;
 
-: patch   last @  (patch) ;
+: patch   last-code @  (patch) ;
 
 ( This word, which is followed inline by a target code address, patches the
   code field of the last last word compiled with a bl to the inline target address. It
