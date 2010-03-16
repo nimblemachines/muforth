@@ -21,7 +21,7 @@ done
 # and for Darwin (OSX).
 
 os=$(uname -s)
-cpu=$(uname -p)
+cpu=$(uname -m)
 archcflags=""
 archldflags=""
 if [ "$os" = "Darwin" ]; then
