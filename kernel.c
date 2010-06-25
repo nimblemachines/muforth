@@ -132,7 +132,7 @@ void mu_slash_mod()  /* n1 n2 -- m q */
     quot = ST1 / TOP;
     mod  = ST1 % TOP;
 
-#ifndef HOST_DIVIDE_FLOORS
+#ifdef DIVIDE_IS_SYMMETRIC
     /*
      * We now have the results of a stupid symmetric division, which we
      * must convert to floored. We only do this if the modulus was non-zero

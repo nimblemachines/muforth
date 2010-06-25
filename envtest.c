@@ -13,6 +13,7 @@
  */
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <setjmp.h>
 
 int main(int argc, char *argv[])
@@ -26,8 +27,25 @@ int main(int argc, char *argv[])
         printf("#error \"What kind of machine are you running this on, anyway?\"\n");
 
     /* division type */
-    if ((-7 / 4) == -2)
-        printf("#define HOST_DIVIDE_FLOORS\n");
+    {
+        int quot = -7 / 4;
+        int rem  = -7 % 4;
+        div_t r = div(-7, 4);
+        lldiv_t llr = lldiv(-7LL, 4LL);
+
+        if (quot != r.quot || rem != r.rem)
+            printf("#error \"Weird. div(3) has different semantics than / and %%.\"\n");
+
+        if (llr.quot != r.quot || llr.rem != r.rem)
+            printf("#error \"Weird. div(3) has different semantics than lldiv(3).\"\n");
+
+        if (quot == -2 && rem == 1)
+            printf("#define DIVIDE_FLOORS\n");
+        else if (quot == -1 && rem == -3)
+            printf("#define DIVIDE_IS_SYMMETRIC\n");
+        else
+            printf("#error \"Wow. Divide is broken.\"\n");
+    }
 
     /* verify that int and void * are the same size: */
     if (sizeof(int) != sizeof(void *))
