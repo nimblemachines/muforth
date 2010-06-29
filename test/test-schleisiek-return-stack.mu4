@@ -13,7 +13,7 @@
   variable storage, and "fluid" rebinding of variables - aka dynamic
   scoping.)
 
-( Here is a picture of the return stack, with high memory towards to top of
+( Here is a picture of the return stack, with high memory towards the top of
   the page, and low memory further down:
 
   ^   |                    |
@@ -63,18 +63,7 @@ variable fp    ( the "top" - most recently pushed - frame)
            >r  ( restore return address) ;
 
 
-.ifdef muFORTH
-( Creates a word that points to itself.)
-: self   0 constant  here  dup cell- ! ;
-
-( colon creates a colon word that when executed pushes the address of the
-  first word in its body.)
-
-: colon  self  -]  does> ;
-colon  remove      unlink ;   ( remove pushes IP)
-.else ( target)
-create remove  -]  unlink ;   ( remove pushes IP)
-.then
+create remove  -]  unlink ;   ( remove pushes IP when executed!)
 
 
 ( Now some interesting applications.)
@@ -116,23 +105,22 @@ create remove  -]  unlink ;   ( remove pushes IP)
 
 : room  ( #cells)
    r>  ( ra)
-.ifdef zeroed-locals
-   -- swap dup  begin  "55aa55aa >r  1-  dup 0= until  drop
-   swap dup  begin  0 >r  1-  dup 0= until  drop
-.else
+
+   ( choose one! mark, zero, allocate)
+   -- swap dup  begin  "55aa55aa >r  1-  dup 0= until  drop  ( mark)
+   -- swap dup  begin          0 >r  1-  dup 0= until  drop  ( zero)
    swap dup  negate rp+!  ( allocate)
-.then
+
    ( #cells)  >r
    link unroom
    remove >r  ( normal return - unlink and cleanup)
-.then
    >r  ( ra) ;
 
 -- -----------------------------------------------------------------------
 -- Trap handlers
 -- -----------------------------------------------------------------------
 
-( Here is a picture of the return stack, with high memory towards to top of
+( Here is a picture of the return stack, with high memory towards the top of
   the page, and low memory further down:
 
   ^   |                    |
@@ -153,11 +141,8 @@ create remove  -]  unlink ;   ( remove pushes IP)
       +--------------------+                                          )
 
 ( pop trap type, sp, and ip)
-.ifdef muFORTH
-colon  untrap      unlink  r> drop  r> drop  r> drop ;
-.else
-create untrap  -]  unlink  r> drop  r> drop  r> drop ;
-.then
+( Like remove, untrap pushes its IP when executed.)
+create untrap  -]  unlink  shunt shunt shunt ;
 
 ( trap: creates a new trap type, uniquely defined because the value it
   compiles is its own dictionary address. At runtime it "raises" this trap
@@ -167,7 +152,7 @@ create untrap  -]  unlink  r> drop  r> drop  r> drop ;
   trap, so the whole thing is re-executed until it exits successfully - ie,
   returns normally without trapping.)
 
-: trap:  self  does>
+: trap:  create  does>
          begin  fp @  0= if error" trapped" then
                 unlink  dup r> =  until  ( matches trap type)
          drop  r> sp!  r@ cell+ cell+  ( skip to handler)  @execute ;
@@ -176,11 +161,7 @@ create untrap  -]  unlink  r> drop  r> drop  r> drop ;
 : trap   r> ( ra)
          dup cell- >r  ( resume address: call ourselves again!)
          sp@ cell+ >r  ( sp at time trap set; cell+ to ignore ra)
-.ifdef muFORTH
-         dup @ >data >r  ( fetch and push trap type)
-.else
          dup @ >body >r  ( fetch and push trap type)
-.then
          link nope       ( null cleanup action; untrap cleans up)
          untrap >r       ( does the unlink and cleanup on normal return)
          ( ra)  cell+ cell+ >r  ( skip trap type and handler and return)
