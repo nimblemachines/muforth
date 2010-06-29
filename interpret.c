@@ -151,6 +151,7 @@ void mu_huh_q()
 }
 
 /* The interpreter's "consume" function. */
+/* Not declared "static" because it is needed by muforth.c to fire up warm! */
 void muboot_interpret_token()
 {
     mu_push_forth_chain();
@@ -185,6 +186,7 @@ static void muboot_compile_token()
 
 static void (*eat)() = &muboot_interpret_token;
 
+/* XXX: should these two be deferred? */
 void mu_compiler_lbracket()
 {
     eat = &muboot_interpret_token;
