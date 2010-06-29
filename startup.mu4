@@ -191,19 +191,17 @@ forth
 --  : allot  aligned  dp @ +! ;
 --  : ,      dp @ !  cell allot ;
 
-: here   h @ ;  ( h points to the first free byte in code space)
-: ram    r @ ;  ( r points to the first free byte in data space)
+: here   h @ ;  ( h points to the first free byte in dictionary)
 
 : aligned  [ cell 1- ] +  [ cell negate ] and ;
-: align    ram aligned  r ! ;
-: allot    r +! ;
-: ,      ram !   cell allot ;
-: h,     here !  cell h +! ;
+: align    here aligned  h ! ;
+: allot    h +! ;
+: ,      here !  cell allot ;
 
 ( We'll define words to compile into code space once we have create/does.)
 
 ( Mark a branch source for later fixup.)
-: >mark  ( - src)  here  0 h, ;
+: >mark  ( - src)  here  0 , ;
 
 ( Resolve a forward or backward jump, from src to dest.)
 ( When using absolute branch addresses, this is easy: just store dest at src.)
@@ -324,7 +322,8 @@ forth
 : body>   ( 'body - 'code)       cell- ip> ;
 
 ( last contains the address of the does ip of the last <does> word defined)
-: last  [ ram  0 , ] ;  ( make the variable by hand!)
+: sleazy-variable  pop ;  ( push address of following cell in caller!)
+: last  sleazy-variable  [  0 ,  ( make the variable by hand!)
 
 ( does> fixes up the does ip of the last <does> word to point to the code
   after "does>" in the caller.)
@@ -335,20 +334,19 @@ forth
   example, if we are meta-compiling another Forth and want to compile heads
   into the image. So let's factor constant to make this possible.)
 
-( The underlying engine for all "create/does>" words. This version does not
-  consume a token from the input stream, instead expecting one on the
-  stack. Useful for meta-compilers.)
+( The underlying engine for all "create/does>" words. It allocates no data
+  space in the word. This version does not consume a token from the input
+  stream, instead expecting one on the stack. Useful for meta-compilers.)
 
-: (constant)   ( con a u)
+: (create)   ( a u)
    (new) <does>
-   here last !  0 h, ( placeholder for does ip)
-   h, ( compile the constant)
+   here last !  0 , ( placeholder for does ip)
    does> ;
 
-( Everything is defined in terms of `constant'.)
-: constant   ( con)  token (constant) ;
+( Everything is defined in terms of `create'.)
+: create   token (create) ;
 
-: create   ram constant ;
+: constant  ( con)  create , ( compile the constant)  does> @ ;
 
 : _buffer  ( default cells)  ?for dup , next then  drop ;
 : buffer   create  aligned  cell/  0 swap  _buffer ;
@@ -369,7 +367,8 @@ forth
   bracketed text - the delimiter becomes a noop.)
 
 : (comment)  ( a u)
-   begin  2dup token  =while  string= until  then  2drop ;
+   begin  2dup token  =while  string= until  2drop ^ then
+          2drop 2drop 2drop ;
 : comment  token  (comment) ;
 : uncomment  new <:> \ ^ ;  ( create a noop word)
 
@@ -379,15 +378,13 @@ forth
   to say "comment **foobar** <commented text> **foobar**", you define
   **foobar** to skip tokens until it comes to a matching **foobar**!!)
 
-: make-comment  0 constant  here cell- dup ( 'body 'body)
-   body> swap !  ( points to its code field) 
-   does> >name  (comment) ;
+: make-comment  create  does>  body> >name  (comment) ;
 
 ( Here is one to get you started - good for block comments. It's 75
   characters long:)
 
 make-comment
-==========================================================================
+===========================================================================
 
 ( I guess we can have deferred words, even though they are, in some ways,
   inelegant. The alternative - creating a variable and a colon word that
@@ -415,17 +412,13 @@ make-comment
 variable undeferred  ' nope undeferred !
 : defer  create  undeferred @ ,  does> @execute ;
 
-: >data  >body @ ;  ( given code addr of does word, fetch its constant)
-: 'data  ' >data ;
-
 ( Syntactic sugar - from Rod Crawford's 4ARM.)
 : now   '  ;
-: is    'data !  ;   ( as in `now host-interpret is interpret')
+: is    ' >body !  ;   ( as in `now host-interpret is interpret')
 
 compiler
-: ['data]  'data literal ;
-: now  \f now  literal ;
-: is   \ ['data]  \ ! ;
+: now  '        literal ;
+: is   ' >body  literal  \ ! ;
 forth
 
 
@@ -469,7 +462,7 @@ forth
 variable dpl    ( location of , or . )
 variable radix
 
-: radixer  constant  does>  radix ! ;
+: radixer  constant  does> @  radix ! ;
 
 2 2* 2* dup 2* ( 16!)  radixer hex
 dup            (  8!)  radixer octal
@@ -592,8 +585,8 @@ variable fd-out
 : writes  fd-out ! ;
 : reads   fd-in  ! ;
 : <stdin   0 reads  ;
-: >stdout  1 writes ;  <stdin  >stdout  ( sanity)
-: >stderr  2 writes ;
+: >stdout  1 writes ;
+: >stderr  2 writes ;  <stdin  >stderr  ( sanity)
 
 variable ztimeout  -1 ztimeout !  ( generic error value)
 : ?timeout  ( n)  1 = if ^ then  ( read a character successfully)
@@ -635,7 +628,7 @@ variable ztimeout  -1 ztimeout !  ( generic error value)
   character for the sign. pad returns the address of the _end_ of the
   buffer, since conversion occurs right-to-left.)
 
-65 aligned allot  ram constant pad   ( 64 digits + sign + alignment)
+65 aligned allot  here constant pad   ( 64 digits + sign + alignment)
 
 variable hld
 : hold   -1 hld +!  hld @ c! ;
@@ -675,47 +668,43 @@ variable hld
 
 ( String primitives.)
 
-( 2003-dec-31!! Compiled strings have a cell-sized count and are referenced
-  by pointing to the first character rather than to the count.
+( 2010-feb-27. In converting to a single dictionary space I was forced to
+  "revert" to having strings compiled inline. Now we have to jump over
+  their bodies again.
 
-  I have also got rid of c" and now z" is the only string operator that
-  returns a counted string. The z reminds us that it is also a
-  null-terminated string.
+  The single string literal primitive is called (")
 
-  2002-mar-18. All strings are compiled into data space and referenced by
-  creating a normal literal with the string's address. Strings can then be
-  used in an error or abort routine, or whatever. This is nice and postfix.
+( It jumps over the inline, cell-count-prefixed string, and pushes the
+  address of its first character and its length on the stack. Because all
+  strings are compiled with zero-terminators, it is possible to pass the
+  address of the first character to a C function, and it will work.
 
-  It also means that if we want to, for example, return the address of
-  the first character of the string - rather than of the count cell;
-  eg, for strings used by the C library - we can calculate that
-  address _before_ making a literal.  Again, this works because the
-  string isn't compiled inline, so we don't need to jump over it.
-
-  Things are _much_ simpler this way!)
+  I use z" to identify this kind of address. It suggests a zero-terminated
+  string.)
 
 ( Copy string; return a counted string [addr of first character;
   prefix count cell _precedes_ first character of string].
   This does _not_ allot space in the dictionary!)
 
 : scrabble  ( a u - z")
-   ram cell+ push ( z")
-   dup ram ! ( prefix cell-sized length)
+   here cell+ push ( z")
+   dup here ! ( prefix cell-sized length)
    tuck ( u a u)  r@ swap cmove  ( copy string)
    r@ + 0 swap c! ( zero terminator)  pop ;
 
 ( all compiled strings have a zero terminator.)
-: count  ( z" - a u)  dup  cell- @ ;
-: _string    scrabble  count cell+ 1+  aligned allot ;
-: string,   ( ch - z")  parse  _string ;
-: token,       ( - z")  token  _string ;
-: (.")  count type ;  ( no more jumping over strings at run-time!)
+: count  (s z" - a u)  dup  cell- @ ;
+: (")    ( - a u)  pop  cell+ count ( a u)  2dup + 1+ aligned push ;
+
+: _string       ( - z")  scrabble  count cell+ 1+  aligned allot ;
+: string,   (s ch - z")  parse  _string ;
+: token,       (s - z")  token  _string ;
 
 ( Compiled strings.)
 compiler
-: z"   ( - z")   char " string,  literal ;  ( z means zero-terminated)
-:  "   ( - a c)  \ z"  \ count ;
-: ."              \ z"  \ (.") ;
+:  "   (s - a c)   \ (")  char " string,  drop ;
+: z"   (s - z")    \ "  \ drop ;  ( z means zero-terminated)
+: ."               \ "  \ type ;
 : error"          \ z"  \ throw ;  ( compile a C-style string for throw'ing)
 
 ( Interpreted strings. Strings that return an address always get compiled!)
@@ -725,7 +714,7 @@ forth
 : ."    char " parse ( a #)  type  ;  ( not compiled)
 
 ( Words that do something with each word being defined.)
-: being-defined  constant  does> 'new-hook ! ;
+: being-defined  constant  does> @  'new-hook ! ;
 
 ( To warn of re-defining a word.)
 -: ( a u)  2dup current @ find if  fd-out preserve  >stderr
@@ -813,7 +802,8 @@ z" <key timed out" ztimeout !
 
 ( Useful stack dump.)
 : .s  ( stack)
-   depth 0< if ^ then  depth s0 cell- swap  ?for  cell- dup @ .  next then  drop  ;
+   depth 0<  if ^ then  ( don't print underflowed stack!!)
+   depth  s0 swap  ?for  cell- dup @ .  next then  drop  ;
 
 
 ( Defining new dictionary chains.)
@@ -833,7 +823,7 @@ z" <key timed out" ztimeout !
   that is -not- endianness-dependent.)
 
 : chain   create  [ char ) parse  VH )  ( a u)  drop @ ] ,
-   ( now put in length)  3 ram 1- c!
+   ( now put in length)  3 here 1- c!
    ( link) , ;  ( fake name field before link)
 
 : sealed           0  chain ;  ( create an independent vocab chain)
@@ -899,8 +889,9 @@ forth
 
 
 ( Two useful sets of units; these adhere to SI and IEC guidelines. ;-)
-: k   1000 * ;  ( "kilo": 10^3.)
-: M   k k ;     ( "mega": 10^6.)
+( K is uppercased so as not to conflict with do-loop's k)
+: K   1000 * ;  ( "kilo": 10^3.)
+: M   K K ;     ( "mega": 10^6.)
 
 : Ki  10 << ;   ( "Kibi", or "kilobinary": 2^10.)
 : Mi  Ki Ki ;   ( "Mebi", or "megabinary": 2^20.)
@@ -1057,7 +1048,7 @@ forth
    drop ;
 
 : error
-   fd-out preserve >stderr
+   >stderr
    cr  .lineno  parsed type space  zmsg zcount type  ( cr) captured off ;
 
 : carefully  catch  if  error ^  then ;

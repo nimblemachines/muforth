@@ -73,12 +73,12 @@ static void mu_do_does()
 {
     NEST;                   /* entering a new word; push IP */
     IP = (xtk *)W[1];       /* new IP is stored in the parameter field */
-    PUSH(W[2]);             /* push the constant stored in 2nd word */
+    PUSH(&W[2]);            /* push the address of the word's body */
 }
 
-void mu_compile_comma()  { *pcd++ = POP; }
-void mu_set_colon_code() { *pcd++ = (cell)&mu_do_colon; }
-void mu_set_does_code()  { *pcd++ = (cell)&mu_do_does; }
+void mu_compile_comma()  { *ph++ = POP; }
+void mu_set_colon_code() { *ph++ = (cell)&mu_do_colon; }
+void mu_set_does_code()  { *ph++ = (cell)&mu_do_does; }
 
 /* Normal exit */
 void mu_exit()      { UNNEST; }
@@ -112,14 +112,14 @@ void mu_qfor_()
     else          { IP++; RPUSH(POP); }  /* skip branch, push count onto R */
 }
 
-#define RTOP    
 void mu_next_()
 {
-    cell *prtop;
-    prtop = (cell *)RP;  /* counter on top of R stack */
+    cell rtop = (cell)RP[0];            /* counter on top of R stack */
 
-    if (--*prtop == 0) { IP++; RP++; }  /* skip branch, pop counter */
-    else               { BRANCH; }      /* take branch */
+    if (--rtop == 0)
+        { IP++; RP++; }                     /* skip branch, pop counter */
+    else
+        { RP[0] = (xtk *)rtop; BRANCH; }    /* update index, branch back */
 }
 
 /*

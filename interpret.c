@@ -25,6 +25,7 @@ char *first;                /* goes from source.start to source.end */
 static int lineno = 1;      /* line number - incremented for each newline */
 int token_lineno;           /* captured with first character of token */
 char *token_first;          /* first char of token - captured for die */
+struct string parsed;       /* for errors */
 
 /* We have to be able to run thru all of startup.mu4 using the interpreter
  * and compiler defined here. Thus, we need to "defer" access to
@@ -65,14 +66,15 @@ void mu_source()
 
 static void mu_return_token(char *last, int trailing)
 {
-    NIP(-1);    /* make room for result */
-
     /* Get address and length of the token */
-    ST1 = (cell) first;
-    TOP = last - first;
+    parsed.data = first;
+    parsed.length = last - first;
 
     /* Account for characters processed, return token */
     first = last + trailing;
+
+    PUSH((cell) parsed.data);
+    PUSH(parsed.length);
 
 #ifdef DEBUG_TOKEN
     fprintf(stderr, "%.*s\n", TOP, ST1);
@@ -82,8 +84,6 @@ static void mu_return_token(char *last, int trailing)
 void mu_token()  /* -- start len */
 {
     char *last;
-
-    DUP;   /* we'll be setting TOP when we're done */
 
     /* Skip leading whitespace */
     while (first < source.end && isspace(*first))
@@ -116,6 +116,7 @@ void mu_token()  /* -- start len */
 void mu_parse()  /* delim -- start len */
 {
     char *last;
+    char delim = POP;
 
     /* The first character of unseen input is the first character of token. */
 
@@ -129,7 +130,7 @@ void mu_parse()  /* delim -- start len */
     for (last = first; last < source.end; last++)
     {
         if (*last == '\n') lineno++;
-        if (TOP == *last)
+        if (delim == *last)
         {
             /* found trailing delimiter; consume it */
             mu_return_token(last, 1);
@@ -209,6 +210,12 @@ void mu_compiler_lbracket()
 void mu_minus_rbracket()
 {
     eat = &mu_compile_token;
+}
+
+void mu_push_parsed()
+{
+    PUSH((cell) parsed.data);
+    PUSH(parsed.length);
 }
 
 static void mu_qstack()

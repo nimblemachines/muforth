@@ -45,6 +45,7 @@ macro: st2   4 sp +)  ;  ( address the third item on the stack)
 macro: st3   8 sp +)  ;  ( address the fourth item on the stack)
 
 macro: next  4 ip )+ pc ldr  ;
+macro: panic  1 pc +) pc ldr  ;
 
 ( capture compiles a branch-and-link -over- the following cell; it captures
   the address of the following cell in lr)
@@ -90,18 +91,18 @@ macro: call ( in out)  2dup - \f push ( #pops needed)
    pops  leaves ;
 
 
-==========================================================================
+===========================================================================
 Start of meta-compiled kernel
-==========================================================================
+===========================================================================
 
 target  ( compile into target vocab)
 
-==========================================================================
+===========================================================================
 Kernel header
 
 These fields are at fixed offsets and shall not be moved or mucked with, on
 pain of death!
-==========================================================================
+===========================================================================
 
 1 , ( Kernel/C API interface structure version) 
 
@@ -132,13 +133,14 @@ label '?key     0 ,  -- ptr to C: cell_t qkey(void)
 label 'key      0 ,  -- ptr to C: cell_t key(void)
 label 'readline 0 ,  -- ptr to C: cell_t readline(buffer, len)
 label 'getfile  0 ,  -- ptr to C: ??? getfile(???)
+label 'sync-caches   0 , -- ptr to C: void sync_caches(ptr)
 
 
-==========================================================================
+===========================================================================
 End of kernel header, start of real kernel
-==========================================================================
+===========================================================================
 
-==========================================================================
+===========================================================================
 Meta-compiler's version of defining words.
 
 It makes sense to start with the meta-defining words so we can build
@@ -148,23 +150,25 @@ We'll be defining the target-resident versions later in the kernel, which
 is why we define labels here for dovar, doconst, docolon, and dodoes. We
 patch their values into the target-resident defining words when we define
 them.
-==========================================================================
+===========================================================================
 
-meta: create    new
-                ;code  dovar    top push   lr top mov        next  ;c
+meta: create    new     ;code  label dovar
+                               top push   lr top mov        next  ;c
 
-meta: constant  new  ,
-                ;code  doconst  top push   0 lr +) top ldr   next  ;c
+meta: constant  new  ,  ;code  label doconst
+                               top push   0 lr +) top ldr   next  ;c
 
 meta: variable   create          cell  allot ;
 meta: 2variable  create   [ 2 cells ]  allot ;
 
 meta: :         new   __target-colon
-                ;code  docolon  ip nest   lr ip mov   next  ;c
+                        ;code  label docolon
+                               ip nest   lr ip mov   next  ;c
 
 meta: <dodoes>  save-lr  code,
-                ;code   dodoes  ip nest   lr ip mov
-                                top push  r0 top mov   next  ;c
+                        ;code  label dodoes
+                               ip nest   lr ip mov
+                               top push  r0 top mov   next  ;c
 
 compiler: does>   <;code>  <dodoes>  __target-colon ;
 
@@ -173,9 +177,9 @@ compiler: does>   <;code>  <dodoes>  __target-colon ;
   list of forth words to execute.)
 
 
-==========================================================================
+===========================================================================
 Words to talk to the C environment.
-==========================================================================
+===========================================================================
 
 ( cold puts h0 into top; warm will later store it into h. The C caller puts
   the address of the kernel header into r0. An ldm loads the header into
@@ -189,7 +193,7 @@ here "0decafbad ,  ( "sentinel" top - empty stack - value)
 
 code cold
     { r1 r2 ( throw-away ) ip rp top sp } r0 ldm
-    ( const) pc) r3 ldr   r3 push   next  ;c
+    ( decafbad) pc) r3 ldr   r3 push   next  ;c
 
 code bye
    ( 0   if        1         then   >r1       )
@@ -225,16 +229,27 @@ code readline  ( a u - readcount)
 ( Pass address and count of filename; returns address and count of
   contents.)
 
-code getfile  ( a1 u1 - a2 u2)
+code getfile  ( a1 u1 - a2 u2 -1 | 0)
     'getfile pc) r3 ldr  ( fetch address of getfile routine)
-    2 2 call   next  ;c
+    2 1 call
+    0 # top cmp
+    top r1 mov ne       -- r1 = ptr to {length, string} struct
+    0 r1 +) r1 ldr ne   -- r1 = length
+    4 # top top add ne  -- top = ptr to string
+    top push ne
+    r1  push ne
+    -1 # top mov ne     -- top = -1 to indicate file read
+    next  ;c
+
+code sync-caches  ( a - )
+    'sync-caches pc) r3 ldr  ( flush a cache line routine)
+    1 0 call   next  ;c
 
 
-
-==========================================================================
+===========================================================================
 Definition of the low-level words - the Forth virtual machine primitives
 needed for the meta-compiler.
-==========================================================================
+===========================================================================
 
 ( Implement the "forward referenced" primitives -before- defining anything
   else. Once these primitives are defined it will be safe to make colon
@@ -289,6 +304,62 @@ code (next) implements (next)
    0 ip +) ip ldr   next  ;c
 .then
 
+
+( Do-loop frame looks like this:
+  +--------------------+
+  |  saved count reg   |
+  +--------------------+
+  |  addr of loop end  |   for leave and ?leave
+  +--------------------+
+  |       limit        |<--- rp
+  +--------------------+
+
+   Current index is in count register; current "user-visible" index is
+   calculated as count + limit.)
+
+code (do)   ( limit start)  implements (do)
+             4 ip )+ r1 ldr   -- fetch following branch address for (leave)
+.ifdef relbranch
+               r1 ip r1 add   -- fixup offset
+.then
+                     r0 pop   -- limit
+   { count r1 r0 } ! rp stm   -- push saved count, loop end, limit
+           r0 top count sub   -- count (index) = start - limit
+                    top pop   next  ;c
+
+code (loop)  implements (loop)
+   1 # count count add s
+   { count r1 r0 } ! rp ldm 0=  -- restore count & pop r stack if zero
+              4 # ip ip add 0=  -- skip branch if zero
+.ifdef relbranch
+   4 ip )+ r0 ldr ne   r0 ip ip add ne  -- take branch if non-zero
+.else
+   0 ip +) ip ldr ne                    -- take branch if non-zero
+.then
+   next  ;c
+
+( Testing carry to see if we've crossed the 0 threshold doesn't work on the
+  ARM - carry and borrow are inverses. So approaching the limit from below
+  causes a carry when reaching or surpassing it; but approaching it from
+  above - subtracting - carries -unless- we have crossed the threshold. Is
+  this why people use overflow instead, because it works in both
+  directions? For now I'm going to implement my simple C solution: if the
+  sign of the index has changed, we've crossed the threshold.)
+
+code (+loop)  ( incr)   implements (+loop)
+   count r1 mov  ( save old count value)
+   top count count add   top pop   count r1 teq
+   { count r1 r0 } ! rp ldm 0<  -- restore count & pop r stack
+                                -- if signs differ
+              4 # ip ip add 0<  -- skip branch if signs differ
+.ifdef relbranch
+   4 ip )+ r0 ldr 0>=   r0 ip ip add 0>=  -- take branch if signs match
+.else
+   0 ip +) ip ldr 0>=                     -- take branch if signs match
+.then
+   next  ;c
+
+
 ( NOTE: the only primitive still undefined is (")
 
 ( But we let it be, since it depends on lots of other words... Since we now
@@ -297,9 +368,9 @@ code (next) implements (next)
   danger.)
 
 
-==========================================================================
+===========================================================================
 Definition of the low-level words - the rest of the Forth virtual machine.
-==========================================================================
+===========================================================================
 
                 here  0 a,
 code +origin    ( origin) pc) r0 ldr  r0 top top add   next ;c
@@ -372,6 +443,40 @@ code 0=            top top tst   -1 # top mov 0=   0 # top mov ne   next  ;c
 : =    xor 0= ;
 
 
+( The rest of the do-loop words. These are compiled like any other normal
+  word, so the meta-compiler doesn't need to know about them, and no
+  "implements" call is necessary.)
+
+code leave
+   { count ip r0 } ! rp ldm   -- pop "do" frame and branch
+   -- count = saved count; ip = branch addr; r0 = limit
+   next  ;c
+   
+code ?leave
+   top top tst   top pop         -- if top is true (non-zero) then
+   { count ip r0 } ! rp ldm ne   -- pop "do" frame and branch
+   -- count = saved count; ip = branch addr; r0 = limit
+   next  ;c
+
+( Calculate current loop indices for current [i], enclosing [j], and
+  third-level [k] do-loops.
+
+  The first case - i - is special, since count is already in a register. We
+  fetch the limit off the R stack, and add them to get the index.
+
+  For j & k we reach farther up into the stack. In both cases the entire do
+  frame is on the R stack - the enclosing one starting two cells up; the
+  third one three cells farther.)
+
+code i   top push    0 rp +) r0 ldr ( limit)  r0 count top add   next  ;c
+
+code j   top push   2 cells # rp r2 add  ( address of enclosing do frame)
+                       { r1 r0 } r2 ldm   r0 r1 top add   next  ;c
+
+code k   top push   5 cells # rp r2 add  ( address of third do frame)
+                       { r1 r0 } r2 ldm   r0 r1 top add   next  ;c
+
+
 comment =========================
                Intrinsics
         =========================
@@ -386,6 +491,7 @@ code +!   { r1 r0 } ! sp ldm   0 top +) r2 ldr
                 r0 r2 r2 add   0 top +) r2 str    r1 top mov   next  ;c
 
 code cell+   4 # top top add   next  ;c
+code cell-   4 # top top sub   next  ;c
 code 1+      1 # top top add   next  ;c
 code 1-      1 # top top sub   next  ;c
 
@@ -400,9 +506,21 @@ code cell/  ( n - n/4)   top 2 #asr top mov   next  ;c
 code cells  ( n - n*4)   top 2 #lsl top mov   next  ;c
 
 
-==========================================================================
+===========================================================================
+Grab bag - some random words that don't really belong anywhere.
+===========================================================================
+: u+  ( a b c - a+c b)      rot +  swap ;  ( "under-plus")
+: v+  ( a b c d - a+c b+d)  >r u+  r> + ;  ( "vector-plus")
+
+: 2dup   over  over ;
+: 2drop  drop  drop ;
+
+: within  ( n lo hi - lo <= n < hi)  over - >r  - r>  u<  ;
+
+
+===========================================================================
 Basic dictionary words.
-==========================================================================
+===========================================================================
 variable h  ( dictionary pointer)
 : here    h @ ;
 : allot   h +! ;
@@ -416,29 +534,38 @@ variable h  ( dictionary pointer)
   is used by compiling words to compile words into other words!)
 
 : compile   r>  dup cell+  >r  @ , ;  ( fig)
+
+( Numeric literal.)
 : literal   compile lit  , ;
 
+( String literal.)
+( Assume that compiled strings are:
+    * prefixed with a length cell
+    * padded at the end to a cell boundary)
 
-==========================================================================
-Checking and resetting the data stack.
-==========================================================================
+: count  ( z" - a u)  dup cell+  swap @ ;
+: (")  ( - a u)  r> count  2dup + aligned  >r ;   implements (")
 
-code s0   top push  'sp0 pc) top ldr  next ;c  ( bottom of sp stack)
-code r0   top push  'rp0 pc) top ldr  next ;c  ( bottom of rp stack)
+
+===========================================================================
+Checking and resetting the stacks.
+===========================================================================
 
 ( sp@ pushes the current stack pointer onto the stack. If the stack is
   empty, sp@ returns a pointer to the decafbad sentinel. "5 sp@ @ . " will
   print 5.)
 
-code sp@     ( -- a )
-     top push  sp top mov  next ;c
+code s0   top push  'sp0 pc) top ldr  next ;c  ( bottom of sp stack)
+code r0   top push  'rp0 pc) top ldr  next ;c  ( bottom of rp stack)
 
-here "0decafbad ,  ( needed below)
+code sp@   ( - a)  top push   sp top mov   next ;c
+code rp@   ( - a)  top push   rp top mov   next  ;c
 
-code sp!     ( -- )
-     'sp0 pc) sp ldr          ( reset sp to s0)
-     ( decafbad) pc) top ldr  ( load sentinel)
-     next  ;c
+code sp!   ( a)  top sp mov   top pop   next  ;c
+code rp!   ( a)  top rp mov   top pop   next  ;c
+code rp+!  ( #cells)  top 2 #asl rp rp add   top pop   next  ;c
+
+: sp-reset  s0 cell- sp! ;
 
 ( depth looks a little weird, but it makes sense if you think about it.
 
@@ -465,25 +592,22 @@ code sp!     ( -- )
 
 ( XXX we really want to abort here with a nice message in each case.)
 
+-- fig has this: ---------------------------------------------------------
+-- : ?stack
+--    09E sp@ <  1 ?error    sp@ 020 <  7 ?error ;
+-- Those error strings:
+--   1  Empty stack
+--   7  Full stack
+-- -----------------------------------------------------------------------
+
 : ?stack   ( check stack for over- and under-flow; reset if necessary)
-     here [ 1 Ki ] +  sp@  u< not if  sp!  then  ( overflow - ran into here)
-   s0  [ 2 cells ] -  sp@  u<     if  sp!  then  ( underflow) ;
+   sp@  here [ 1 Ki ] +    u< if  ." Full stack"             then
+   s0  [ 2 cells ] -  sp@  u< if  ." Empty stack"  sp-reset  then ;
 
 
-==========================================================================
-Grab bag - some random words that don't really belong anywhere.
-==========================================================================
-: u+  ( a b c - a+c b)      rot +  swap ;  ( "under-plus")
-: v+  ( a b c d - a+c b+d)  >r u+  r> + ;  ( "vector-plus")
-
-: 2dup   over  over ;
-: 2drop  drop  drop ;
-
-: within  ( n lo hi - lo <= n < hi)  over - >r  - r>  u<  ;
-
-==========================================================================
+===========================================================================
 Basic console output.
-==========================================================================
+===========================================================================
 32 constant bl  ( ASCII code for blank - that is, space)
 13 constant #CR
 10 constant #LF
@@ -493,9 +617,23 @@ Basic console output.
 : cr  #CR emit  #LF emit ;
 
 
-==========================================================================
+.ifdef debug-dot
+
+( Printing hex.)
+: 16/mod   ( n - q r)  dup 4 u>>   swap 15 and ;
+
+: >digit   ( n - ch)  ( convert 1 binary digit to char; hex to uppercase)
+   9 over u<  7 and +  [ char 0 ] +  ;
+
+: .   8 for  16/mod >digit swap  next  drop
+      8 for  emit  next  space ;
+
+.then
+
+
+===========================================================================
 String support.
-==========================================================================
+===========================================================================
 
 ( "March" two pointers in lock step.)
 : march  ( a1 a2 increment - a1+ a2+)   dup v+ ;
@@ -530,22 +668,10 @@ String support.
       1 march  ( incr pointers)  next  then   2drop ;
 
 
-( XXX should we change this to halfword or cell-sized count?)
-( Assume that compiled strings are:
-    * prefixed with a length byte
-    * padded at the end to a cell boundary)
 
-: count  ( z" - a u)  dup 1+  swap c@ ;  ( fig)
-
-( This word pushes the address and length of an inline compiled string. It
-  is used by ." and " .)
-
-: (")  ( - a u)  r@ count  dup 1+  r> + aligned >r ;   implements (")
-
-
-==========================================================================
+===========================================================================
 Token parsing.
-==========================================================================
+===========================================================================
 variable start   ( points to first character of input stream)
 variable end     ( points past last character of input stream)
 variable first   ( points to first unconsumed character)
@@ -616,12 +742,16 @@ code scan  ( end a ch - a+ trailing)
 : parse  ( ch - a u)
    end @  first @  rot scan  (token) ;
 
-==========================================================================
+===========================================================================
 Dictionary search.
-==========================================================================
+===========================================================================
 variable current
 variable .forth.
 variable .compiler.
+
+: definitions   current ! ;
+: forth         .forth. definitions ;
+: compiler   .compiler. definitions ;
 
 ( Names precede the link field and are compiled in an interesting way. The
   count byte immediately precedes the link. If you then back up that many
@@ -629,7 +759,8 @@ variable .compiler.
   "right justified" - or padded on the left - so that the link field falls
   on a cell boundary.)
 
-: link>name    ( 'link - a u)  1- dup  c@  tuck -  swap ;
+: link>name   ( 'link - a u)  1- dup  c@  tuck -  swap ;
+: >body   ( cfa - pfa)  cell+ ;
 
 ( find takes a token [a u] and a chain [the head of a vocab word list] and
   searches for the token on that chain. If found, it returns the address
@@ -644,7 +775,7 @@ variable .compiler.
       over ( a)  r@ link>name  ['] name-char=  string= until ( names match)
       2drop ( token)  r> cell+ ( cfa)  -1 ^  then  ( 0) ;
 
-==========================================================================
+===========================================================================
   Go forth and multiply ... and divide.
 
   These routines are all based on a handful of low-level primitives:
@@ -663,7 +794,7 @@ variable .compiler.
   extra-credit challenge: is "m* drop" always equal to "um* drop"? Why or
   why not? ;-)
 
-==========================================================================
+===========================================================================
 code *    ( n1 n2 - n1*n2)
    r0 pop   r0 top top mul   next  ;c
 
@@ -674,7 +805,7 @@ code m*   ( n1 n2 - d)
    st1 r0 ldr   top r0 top r0 smull   st1 r0 str  next ;c
 
 
-==========================================================================
+===========================================================================
 um/mod  ( ud u -- rem quo)
 
 This algorithm uses long division.  It first attempts to subtract the
@@ -695,46 +826,54 @@ successful, the low order bit is set.
 After the divisor has been subtracted through the dividend 32 times,
 whatever remains in the r1 (the high portion of the dividend) is
 necessarily the remainder.
-==========================================================================
+===========================================================================
 code um/mod  ( ud  u - urem uquot)  
-0 .if
-     top r2 mov   -- Divisor
-     st1 r1 ldr   -- Dividend, hi
-     st2 r0 ldr   -- Dividend, lo
-     32 # r3 mov  -- Loop count
+     top r2 mov    -- Divisor
+     r1 pop        -- Dividend, hi
+     r0 pop        -- Dividend, lo
+     #32 # r3 mov  -- Loop count
+
      here
 
-     r2 r1 r1 sub s  1 # r8 mov cs  0 # r8 mov cc
-     r0 1 #lsl r0 mov s
-     r1 31 #ror r1 mov
-     r0 r8 r0 or
+     r0 1 #lsl r0 mov s -- Shift the low bits up
+     r1 r1 r1 adc       -- Shift the carry in
 
-     1 # r3 sub s -- Decrement counter
+     r2 r1 cmp          -- Can the dividend subtract the divisor?
+     1 # r8 mov u>=     -- Yes, note it later
+     r2 r1 r1 sub u>=   -- And perform the subtraction
+     0 # r8 mov u<      -- No.
+
+     r0 r8 r0 or        -- Set (or not) the quotient bit
+
+     1 # r3 r3 sub s -- Decrement counter
      b ne         -- Branch until done
 
-     st1 r1 str   -- Remainder
+     r1 push      -- Remainder
      r0 top mov   -- Quotient
-.then
      next  ;c
 
 
-==========================================================================
+===========================================================================
 Interpreter and compiler.
-==========================================================================
+===========================================================================
 variable 'eat    ( how to consume a token)
  
-meta: defer   create  ['] nope a,  does> @execute ;
+meta: defer   ( default)  create  a,  does> @execute ;
 
-defer number     ( try to convert a number)
-defer number,    ( try to convert a number and compile as a literal)
+' nope      defer (abort)    ( what to do in case of error)
 
-: interpret
+: complain  ( a u)  type space  ." isn't defined"  (abort) ;  ( ERROR)
+
+' complain  defer number     ( try to convert a number)
+' complain  defer number,    ( try to convert a number and compile as a literal)
+
+: interpret  ( a u)
+   over +  ( start end)  end !  dup start !  ( source)  first !
    begin  token  =while  'eat @execute  ?stack  repeat  2drop ;
 
 : evaluate  ( a u)
    start @ >r  end @ >r  ( save source)
    first @ >r            ( save our place in the input)
-   over +  ( start end)  end !  dup start !  ( source)  first !
    interpret
    r> first !  r> end !  r> start ! ;
 
@@ -752,24 +891,35 @@ target-compiler
 : [   ( exit compiler)   ['] interpret-token  'eat ! ;
 target
 
-==========================================================================
+===========================================================================
 Making new names in the dictionary.
-==========================================================================
+===========================================================================
 variable last         ( cfa of last word defined)
 
+.ifdef being-defined
+: being-defined  ( a u)
+   cr  current @ .  here .  2dup type space ;
+.else
+: being-defined ;
+.then
+
 : code,   here last !  ( make a code field)  0 , ;
+
 : token,  ( a u)  dup 1+ aligned  allot  ( room for name+len+padding)
           dup here 1- c! ( len)  here over 1+ -  swap cmove ;
 
 : link,   here  current @  dup  @  ,  !  ( last-link 2! ) ;
 
-: name,  ( a u)  token,  link,  code, ;
+: name    token  ( a u)  being-defined  token,  link,  code, ;
 
-( patch rewrites the bl instruction at cfa to call to 'code.)
+( (patch) ( rewrites the bl instruction at cfa to call to 'code.)
 : |pc-  ( to from - offset)   8 + ( compensate for prefetch)  - ;
 : >branch-offset  ( to from - bits)  |pc-  cell/  "00ffffff and ;
-: patch     ( 'code cfa)  tuck >branch-offset  "eb000000 or ( op)
-            swap ! ;
+: (patch)   ( 'code cfa)  tuck >branch-offset  "eb000000 or ( op)
+            ( cfa op)  over !  sync-caches ;
+
+: patch   last @ (patch) ;
+
 
 comment super-botched
 ( XXX It's a botch that there are two kinds of (;code) - one that points
@@ -787,7 +937,7 @@ super-botched
   patch the last word. Used by the meta-compiler to point the following
   versions of create, constant, and : to code that was already laid down.)
 
-: (;code@)   r> @  last @  patch ;  implements (;code)
+: (;code@)   r> @  patch ;  implements (;code@)
 
 ( (;code)  ( patches last to point to the code that directly follows it.
   Compiled by does> , below.)
@@ -803,30 +953,50 @@ super-botched
   define ;code words once we're running the target-based colon compiler; so
   why not name this word based on which word - in the target - it assists?)
 
-: (;code)   r>  last @  patch ;
+: (;code)   r>  patch ;
 
-==========================================================================
+===========================================================================
 Target-resident defining words.
-==========================================================================
-: create    name,      ;code   dovar
-: constant  name,  ,   ;code   doconst
+===========================================================================
+: create    name      ;calls  dovar
+: constant  name  ,   ;calls  doconst
 
-: variable  create  cell allot ;
+-- : variable  create  cell allot ;
+: variable  create  0 , ;   ( initialise to zero)
 
-: :         name,  -]  ;code   docolon
+: :         name  -]  ;calls  docolon
 
 target-compiler
-: does>   compile (;code)
-          [ here  assemble  lr r0 mov  ;c  cell negate allot  @ ] ,
-          code,  [ lookup dodoes ] last @ patch ;
+: does>   compile (;code)  here  lit  [ assemble  lr r0 mov  ;c  -] ,
+          sync-caches  ( we've just compiled a piece of code!)
+          code,  [ lookup dodoes  aliteral -]  patch ;
 
 : ;   compile ^  \ [  ;   
 target
 
 
-==========================================================================
+===========================================================================
 Error handling, abort, and quit.
-==========================================================================
+===========================================================================
+
+: .vm
+   cr ."  top " dup .
+   cr ."   sp " sp@ .
+   cr ."   rp " rp@ .
+   cr ." here " here .  ;
+: prompt  
+   'eat @  ['] interpret-token = if  ."  Ok"  then ;
+
+: query   ( - a u)  s0 dup  256 readline ;
+
+: quit  ( r0 rp! ???)
+   begin  .vm  cr  query interpret  prompt  again  [
+
+: abort
+   sp-reset  r0 rp!  ( decimal)  forth  \ [  quit  [
+
+' abort  is (abort)
+
 
 .ifdef choose-your-poison
 
@@ -911,21 +1081,9 @@ comment ===================
         Stack Test Routines
         ===================
 
-.ifdef debug-dot
-
-( Printing hex.)
-: 16/mod   ( n - q r)  dup 4 u>>   swap 15 and ;
-
-: >digit   ( n - ch)  ( convert 1 binary digit to char; hex to uppercase)
-   9 over u<  7 and +  [ char 0 ] +  ;
-
-: .   8 for  16/mod >digit swap  next  drop
-      8 for  emit  next  space ;
-
-.then
 
 : stack-test
-  sp@ . sp! sp@ . cr
+  sp@ . s0 sp! sp@ . cr
   depth . sp@ depth . drop depth . cr 
   depth . sp@ . depth . cr
   1 2 3 . . . depth . cr
@@ -936,13 +1094,15 @@ comment ===================
   1 2 3 -rot      . . .  ." <- should be 2 1 3" cr
 ;
 
-: print-eq    ( d -- )
-  ." = "  . . cr ;
+: ..  .  . ;
+: 2.  over . dup . ;
+: .d  dup . over . ;
 
 : mul  ( a b --)
-  2dup  over . dup .  ." um* "  um*  print-eq
-  2dup  over . dup .  ."  m* "  um*  print-eq
-        over . dup .  ."   * "    *  ." = " . cr ;
+  2dup  2.  ." um* "  um*  ." = " .. cr
+  2dup  2.  ."  m* "   m*  ." = " .. cr
+  2dup  2.  ."   * "    *  ." = " .  cr 
+  2drop ;
 
 : mul-test
   1 2            mul
@@ -954,9 +1114,31 @@ comment ===================
   -1  0          mul
 ;
 
+( Test do, loop, and friends.)
+( Just print two bytes)
+: .b   16/mod >digit swap  15 and >digit  emit emit  space ;
+
+: do-test
+   cr  10 0 do  i .b  loop
+   cr  -100 -120 do  i .b loop
+   cr  -10 10 do  i .b  -1 +loop
+   4 0 do   cr   4 0 do   4 0 do
+      i 4 <<  j 2 << +  k +  .b  loop  space space  loop loop ;
+
+( Running do-test under muFORTH on the host yields this:
+  
+00 01 02 03 04 05 06 07 08 09 
+88 89 8A 8B 8C 8D 8E 8F 90 91 92 93 94 95 96 97 98 99 9A 9B 
+0A 09 08 07 06 05 04 03 02 01 00 FF FE FD FC FB FA F9 F8 F7 F6 
+00 10 20 30   04 14 24 34   08 18 28 38   0C 1C 2C 3C   
+01 11 21 31   05 15 25 35   09 19 29 39   0D 1D 2D 3D   
+02 12 22 32   06 16 26 36   0A 1A 2A 3A   0E 1E 2E 3E   
+03 13 23 33   07 17 27 37   0B 1B 2B 3B   0F 1F 2F 3F   )
+
+
 : banner
 ( Print banner.)
- ." FORTH/DTC "
+ ." muFORTH/ARM-dtc "
  ." Copyright (c) 2002-2010 David Frech. All rights reserved."  cr cr
  ." muFORTH is free software; see the file COPYRIGHT for details." cr
 ;
@@ -968,9 +1150,25 @@ comment ===================
   ." Kernel return sp:    " r0        . cr
 ;
 
-: eval-test  " 0 . cr" evaluate ;
+-- : eval-test  " 0 . cr" evaluate ;
 
-: warm   h  !  \ [  banner  print-memory  eval-test 0 bye ;
+: ld   token  getfile if ." loaded" else ." not found" then ;
+
+code push-regs  top push   { 0 15 to } ! sp stm   sp top mov   next ;c
+code toss-regs  16 cells # top sp add   top pop   next ;c
+: .reg-name   ( n - )   3 * " r00r01r02r03 ip rptop ctr08r09r10r11r12 sp lr pc" drop + 3 type space ;
+: .reg-val    ( reg-ptr n - reg-ptr )  cells over + @ . ;
+: .reg  ( {regs} n - {regs} v)  dup .reg-name  ."  = " .reg-val ."    " ;
+: (regs)  cr  16 0 do  i .reg  i 3 and 3 = if cr then  loop ;
+: .regs   push-regs  (regs)  toss-regs ;
+
+( daf - quick & dirty memory dumper)
+: du  ( last first)  do  cr i dup . @ .  cell +loop ;
+: lower-test
+   cr  128 32 do  i emit  loop
+   cr  128 32 do  i >lowercase emit  loop ;
+
+: warm   h  !  \ [  banner  print-memory    abort ;
 
 
 ( Patch .forth. and .compiler. in .target. to reflect the reality on the

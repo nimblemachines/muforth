@@ -23,17 +23,15 @@ extern cell stack[];
 #define SMAX  &stack[STACK_SAFETY]
 
 /* TOP is a synonym for ST0 */
-#define ST0      TOP
-#define ST1      SP[0]
-#define ST2      SP[1]
-#define ST3      SP[2]
+#define TOP      ST0
+#define ST0      SP[0]
+#define ST1      SP[1]
+#define ST2      SP[2]
+#define ST3      SP[3]
 
-#define DUP      (*--SP = TOP)
-#define NIP(n)   (SP += (n))
-#define DROP(n)  (TOP = SP[(n)-1], NIP(n))
-
-#define PUSH(v)  (DUP, TOP = (cell)(v))
-#define POP      pop_dstack()
+#define DROP(n)  (SP += (n))
+#define PUSH(v)  (*--SP = (cell)(v))
+#define POP      (*SP++)
 
 typedef void (*pw)(void);    /* ptr to word's machine code */
 typedef pw    *ppw;          /* ptr to ptr to word's code */
@@ -41,7 +39,6 @@ typedef ppw    xtk;          /* "execution token" - ptr to ptr to code */
 
 /* from mip, with changes */
 extern cell  *SP;     /* parameter stack pointer */
-extern cell   TOP;    /* top of stack */
 extern xtk   *IP;     /* instruction pointer */
 extern xtk    W;      /* on entry, points to the current Forth word */
 
@@ -59,7 +56,7 @@ extern xtk  **RP;     /* return stack pointer */
 #define XTK(w)   (&p_ ## w)   /* make an execution token from a word's name */
 
 #define EXECUTE   execute_xtk((xtk)POP)
-#define CALL(x)   (W = (xtk)(x), (*W)())
+#define CALL(x)   (W = (xtk)(x), (**W)())
 #define NEXT      CALL(*IP++)
 #define BRANCH    (IP = *(xtk **)IP)
 
@@ -112,13 +109,8 @@ extern char *token_first;          /* first char of token - captured for die */
 extern int  cmd_line_argc;
 extern char **cmd_line_argv;
 
-extern int   names_size;   /* count of bytes alloted to names */
-
-extern uint8 *pdt0;   /* ptr to data space */
-extern cell  *pcd0;   /* ptr to code & names space */
-
-extern uint8 *pdt;    /* ptrs to next free byte in each space */
-extern cell  *pcd;
+extern cell  *ph0;     /* pointer to start of heap space */
+extern cell  *ph;      /* ptr to next free byte in heap space */
 
 /* declare common functions */
 
