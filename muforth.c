@@ -106,7 +106,7 @@ static void mu_start_up()
 {
     PUSH("warm");       /* push the token "warm" */
     PUSH(4);
-    mu_interpret_token();    /* ... and execute it! */
+    muboot_interpret_token();    /* ... and execute it! */
 }
 
 void mu_bye()

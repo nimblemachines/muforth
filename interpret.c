@@ -27,19 +27,6 @@ int token_lineno;           /* captured with first character of token */
 char *token_first;          /* first char of token - captured for die */
 struct string parsed;       /* for errors */
 
-/* We have to be able to run thru all of startup.mu4 using the interpreter
- * and compiler defined here. Thus, we need to "defer" access to
- * interpreting and compiling -numbers-. The number input code in startup
- * will patch into these variables but leave the token consumers alone.
- * Only after we've loaded startup and returned to Forth do we fire up the
- * "new" interpret loop.
- */
-static xtk tick_number          = XTK(mu_nope);
-static xtk tick_number_comma    = XTK(mu_nope);
-
-void mu_push_tick_number()          { PUSH(&tick_number); }
-void mu_push_tick_number_comma()    { PUSH(&tick_number_comma); }
-
 /* Push captured line number */
 void mu_at_line() { PUSH(token_lineno); }
 
@@ -164,28 +151,26 @@ void mu_huh_q()
 }
 
 /* The interpreter's "consume" function. */
-void mu_interpret_token()
+void muboot_interpret_token()
 {
     mu_push_forth_chain();
     mu_find();
     if (POP)
     {
-        mu_execute();
+        EXECUTE;
         return;
     }
-    mu_push_tick_number();
-    mu_fetch();
-    mu_execute();
+    mu_complain();
 }
 
 /* The compiler's "consume" function. */
-void mu_compile_token()
+static void muboot_compile_token()
 {
     mu_push_compiler_chain();
     mu_find();
     if (POP)
     {
-        mu_execute();
+        EXECUTE;
         return;
     }
     mu_push_forth_chain();
@@ -195,21 +180,19 @@ void mu_compile_token()
         mu_compile_comma();
         return;
     }
-    mu_push_tick_number_comma();
-    mu_fetch();
-    mu_execute();
+    mu_complain();
 }
 
-static void (*eat)() = &mu_interpret_token;
+static void (*eat)() = &muboot_interpret_token;
 
 void mu_compiler_lbracket()
 {
-    eat = &mu_interpret_token;
+    eat = &muboot_interpret_token;
 }
 
 void mu_minus_rbracket()
 {
-    eat = &mu_compile_token;
+    eat = &muboot_compile_token;
 }
 
 void mu_push_parsed()
