@@ -14,6 +14,8 @@
 #include <unistd.h>
 #include <errno.h>
 
+#ifdef WITH_TTY
+
 void mu_fd_reset()
 {
     FD_ZERO((fd_set *) TOP);
@@ -65,3 +67,5 @@ void mu_select()
 
   Then, how do you set an fd in an fd-set? The names get a little weird.
 */
+
+#endif /* WITH_TTY */
