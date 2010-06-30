@@ -36,11 +36,11 @@ static void mu_find_init_file()
      * used only by C code hereafter.
      */
     PUSH("startup.mu4");
-    mu_readable_q();
+    mufs_readable_q();
     if (POP) return;
 
     PUSH("/usr/local/share/muforth/startup.mu4");
-    mu_readable_q();
+    mufs_readable_q();
     if (POP) return;
 
     die("couldn't find startup.mu4 init file");

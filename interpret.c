@@ -294,10 +294,10 @@ void mu_load_file()    /* c-string-name */
     char *saved_zloading = zloading;
     char *newfile = (char *)TOP;
 
-    mu_push_r_slash_o();
-    mu_open_file();
+    mufs_push_r_slash_o();
+    mufs_open_file();
     fd = TOP;
-    mu_mmap_file();
+    mufs_mmap_file();
 
     /* wait to reset these until just before we evaluate the new file */
     lineno = 1;

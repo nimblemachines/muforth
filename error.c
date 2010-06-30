@@ -50,7 +50,7 @@ struct trapframe
     xtk **rp;
 };
 
-static struct trapframe *last_tf;    /* top of "stack" of trap frames */
+static struct trapframe *last_tf = NULL;    /* top of "stack" of trap frames */
 
 /* catch ( xtk - thrown) */
 void mu_catch()
@@ -132,10 +132,11 @@ void mu_throw()
             thrown_zfile = zloading;
             thrown_zmsg = zmsg;
         }
+
         if (last_tf)
             LONGJMP(last_tf->jb, -1);
         else
-            die((char *)zmsg);
+            die(thrown_zmsg);
     }
     DROP(1);
 }

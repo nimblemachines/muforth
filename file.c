@@ -21,7 +21,7 @@
 /* if found and readable, leave name and push -1;
  * if not found or not readable, drop name and push 0
  */
-void mu_readable_q()
+void mufs_readable_q()
 {
     struct stat st;
     uid_t euid;
@@ -62,7 +62,7 @@ void mu_readable_q()
     TOP = 0;
 }
 
-void mu_create_file()       /* C-string-name - fd */
+void mufs_create_file()       /* C-string-name - fd */
 {
     int fd;
 
@@ -75,7 +75,7 @@ void mu_create_file()       /* C-string-name - fd */
     TOP = fd;
 }
 
-void mu_open_file()     /* C-string-name flags - fd */
+void mufs_open_file()     /* C-string-name flags - fd */
 {
     int fd;
 
@@ -88,17 +88,17 @@ void mu_open_file()     /* C-string-name flags - fd */
     TOP = fd;
 }
 
-void mu_push_r_slash_o()
+void mufs_push_r_slash_o()
 {
     PUSH(O_RDONLY);
 }
 
-void mu_push_r_slash_w()
+void mufs_push_r_slash_w()
 {
     PUSH(O_RDWR);
 }
 
-void mu_close_file()
+void mufs_close_file()
 {
     while (close(TOP) == -1)
     {
@@ -108,7 +108,7 @@ void mu_close_file()
     DROP(1);
 }
 
-void mu_mmap_file()     /* fd - addr len */
+void mufs_mmap_file()     /* fd - addr len */
 {
     char *p;
     struct stat s;
@@ -133,8 +133,7 @@ void mu_mmap_file()     /* fd - addr len */
     TOP = s.st_size;
 }
 
-/* NOTE: These two routines will be obsoleted by buf_* routines. */
-void mu_read_carefully()
+void mufs_read_carefully()    /* fd buffer len -- #read */
 {
     int fd;
     char *buffer;
@@ -154,7 +153,7 @@ void mu_read_carefully()
     TOP = count;
 }
 
-void mu_write_carefully()
+void mufs_write_carefully()   /* fd buffer len */
 {
     int fd;
     char *buffer;
