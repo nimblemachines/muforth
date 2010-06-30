@@ -12,6 +12,8 @@
 #include <time.h>
 #include <errno.h>
 
+#ifdef WITH_TIME
+
 /* time and date */
 static void push_forth_time_from_libc_time (struct tm *ptm, char *tz)
 {
@@ -74,4 +76,6 @@ void mu_nanosleep()
     }
     DROP(2);
 }
+
+#endif /* WITH_TIME */
 

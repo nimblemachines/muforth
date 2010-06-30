@@ -99,7 +99,12 @@ void mu_push_command_line()
 
 void mu_push_build_time()
 {
+#ifdef WITH_TIME
     PUSH(build_time);
+#else
+    PUSH(build_date);
+    PUSH(strlen(build_date));
+#endif
 }
 
 static void mu_start_up()

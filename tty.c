@@ -12,6 +12,8 @@
 #include <sys/ioctl.h>
 #include <termios.h>
 
+#ifdef WITH_TTY
+
 /* stack: ( fd termios - sizeof(termios) ) */
 void mu_get_termios()
 {
@@ -151,4 +153,6 @@ void mu_raw_termios()
     DROP(-4);
 }
 #endif
+
+#endif /* WITH_TTY */
 
