@@ -198,11 +198,6 @@ void mu_i() { PUSH((cell)RP[0] + (cell)RP[1]); }
 void mu_j() { PUSH((cell)RP[3] + (cell)RP[4]); }
 void mu_k() { PUSH((cell)RP[6] + (cell)RP[7]); }
 
-/*
- * Runtime workhorses for R stack functions. In the x86 native code, "push"
- * and "pop" are compiler words. Here they don't need to be.
- */
-
 /* R stack functions */
 void mu_to_r()   { RPUSH(POP); }
 void mu_r_from() { PUSH(RPOP); }
@@ -214,8 +209,9 @@ void mu_push()  { mu_to_r(); }
 void mu_pop()   { mu_r_from(); }
 #endif
 
-
+/* shunt is shorthand for r> drop */
 void mu_shunt()  {  RP++; }
+
 
 #if 0
 /*
