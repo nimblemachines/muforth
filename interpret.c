@@ -61,64 +61,41 @@ static void mu_return_token(char *last, int trailing)
     /* Account for characters processed, return token */
     first = last + trailing;
 
-    PUSH((cell) parsed.data);
-    PUSH(parsed.length);
+    DROP(-2);
+    ST1 = (cell) parsed.data;
+    TOP = parsed.length;
 
 #ifdef DEBUG_TOKEN
     fprintf(stderr, "%.*s\n", parsed.length, parsed.data);
 #endif
 }
 
-void mu_token()  /* -- start len */
+/* Skip leading whitespace */
+static void skip()
 {
-    char *last;
-
-    /* Skip leading whitespace */
     while (first < source.end && isspace(*first))
     {
         if (*first == '\n') lineno++;
         first++;
     }
-
-    /* capture lineno that token begins on */
-    parsed_lineno = lineno;
-
-    /*
-     * Scan for trailing whitespace and consume it, unless we run out of
-     * input text first.
-     */
-    for (last = first; last < source.end; last++)
-        if (isspace(*last))
-        {
-            if (*last == '\n') lineno++;
-
-            /* found trailing whitespace; consume it */
-            mu_return_token(last, 1);
-            return;
-        }
-
-    /* ran out of text; don't consume trailing */
-    mu_return_token(last, 0);
 }
 
-void mu_parse()  /* delim -- start len */
+/*
+ * Scan for trailing delimiter and consume it, unless we run out of
+ * input text first.
+ */
+static void mu_scan(int delim)
 {
     char *last;
-    char delim = POP;
-
-    /* The first character of unseen input is the first character of token. */
 
     /* capture lineno that token begins on */
     parsed_lineno = lineno;
 
-    /*
-     * Scan for trailing delimiter and consume it, unless we run out of
-     * input text first.
-     */
     for (last = first; last < source.end; last++)
     {
         if (*last == '\n') lineno++;
-        if (delim == *last)
+        if (delim == *last
+            || (delim == ' ' && isspace(*last)))
         {
             /* found trailing delimiter; consume it */
             mu_return_token(last, 1);
@@ -128,6 +105,18 @@ void mu_parse()  /* delim -- start len */
 
     /* ran out of text; don't consume trailing */
     mu_return_token(last, 0);
+}
+
+void mu_token()  /* -- start len */
+{
+    skip();         /* skip leading whitespace */
+    mu_scan(' ');   /* scan for trailing whitespace and collect token */
+}
+
+void mu_parse()  /* delim -- start len */
+{
+    /* The first character of unseen input is the first character of token. */
+    mu_scan(POP);   /* scan for trailing delimiter and collect token */
 }
 
 /*
