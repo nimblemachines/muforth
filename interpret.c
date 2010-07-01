@@ -13,7 +13,6 @@
 
 /* for debug */
 #include <sys/uio.h>
-#include <unistd.h>
 
 #if defined (DEBUG_STACK) || defined(DEBUG_TOKEN)
 #include <stdio.h>
@@ -283,10 +282,9 @@ void mu_load_file()    /* c-string-name */
     char *saved_zloading = zloading;
     char *newfile = (char *)TOP;
 
-    mufs_push_r_slash_o();
-    mufs_open_file();
+    mu_open_file();
     fd = TOP;
-    mufs_mmap_file();
+    mu_read_file();
 
     /* wait to reset these until just before we evaluate the new file */
     lineno = 1;
@@ -296,7 +294,8 @@ void mu_load_file()    /* c-string-name */
     mu_catch();
     lineno = saved_lineno;
     zloading = saved_zloading;
-    close(fd);
+    PUSH(fd);
+    mu_close_file();
     mu_throw();
 }
 

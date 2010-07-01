@@ -612,6 +612,27 @@ forth
                                       -]  'compiler-mode [  !
 
 
+( Basic character i/o.)
+
+variable fd-in
+variable fd-out
+: writes  fd-out ! ;
+: reads   fd-in  ! ;
+: <stdin   0 reads  ;
+: >stdout  1 writes ;
+: >stderr  2 writes ;  <stdin  >stderr  ( sanity)
+
+: type   ( a u)  fd-out @  -rot  write ;
+
+variable charbuf  ( for >emit and <key)
+: >emit  ( ch fd)  swap charbuf c!  charbuf 1 write ;
+: emit   ( ch)  fd-out @  >emit ;
+
+ctrl J  constant #LF   --  10
+ctrl M  constant #CR   --  13
+: space      bl emit ;
+: cr        #LF emit ;  ( emit newline; assumes OPOST)
+
 
 ( WARNING: this is different from what the CPU would do; it ignores
   OVERFLOW, unlike the CPU's signed comparisons. <' is useful for `modulo'
@@ -632,10 +653,6 @@ forth
    9 over u<  7 and +  char 0 +  ;
 
 : abs   (s n - |n|)   dup 0<  if  negate then ;
-
-: emit ( char)  sp@ 1 type  drop ;
-: cr  10 emit ;
-: space   bl emit ;
 
 : spaces  (s n)  0 max  ?for  space  next  then  ;
 
@@ -736,7 +753,7 @@ forth
 : being-defined  constant  does> @  'new-hook ! ;
 
 ( To warn of re-defining a word.)
--: ( a u)  2dup current @ find if  
+-: ( a u)  2dup current @ find if  fd-out preserve  >stderr
      drop  2dup type ."  again.  "  ^  then  2drop ;
 being-defined -redef
  -redef
@@ -924,13 +941,13 @@ variable csp  ( what does this stand for? `check stack pointer'?)
          drop  ;
 
 ( Bracket the contents of a file and check for stack depth change.)
-: file[  ( a u)  cr  ." (( "  type  !csp ;
-: ]file              ." )) "        ?csp ;
+: file[  ( a u)  fd-out preserve  >stderr  cr  ." (( "  type  !csp ;
+: ]file          fd-out preserve  >stderr      ." )) "        ?csp ;
 
 ( For counting the size of a loaded file.)
 : file[#   (s a u)  file[  here  ;
 : #]file   here  swap -  radix preserve  decimal
-           .  ." bytes "
+           fd-out preserve  >stderr  .  ." bytes "
    ]file  ;
 
 
@@ -1014,7 +1031,7 @@ variable csp  ( what does this stand for? `check stack pointer'?)
 : prompt   .Ok  .mode-prompt  ;  ( ` Ok' then sub-prompt)
 
 : quit
-   begin  cr  typing interpret  prompt  again  [
+   begin  cr  <stdin  typing interpret  >stderr  prompt  again  [
    ( infinite loop, until error... )
 
 ( 2004-jun-26. error now expects a cell-length-prefixed compiled string.)
@@ -1026,6 +1043,7 @@ variable csp  ( what does this stand for? `check stack pointer'?)
    drop ;
 
 : error
+   >stderr
    cr  .lineno  parsed type space  zmsg zcount type  ( cr) captured off ;
 
 : carefully  catch  if  error ^  then ;
@@ -1045,7 +1063,7 @@ variable csp  ( what does this stand for? `check stack pointer'?)
 
 : warm
    captured off
-   banner
+   >stderr banner
    command-line count  ['] interpret carefully
    begin  ['] quit carefully  again  [
 

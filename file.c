@@ -98,7 +98,7 @@ void mufs_push_r_slash_w()
     PUSH(O_RDWR);
 }
 
-void mufs_close_file()
+void mu_close_file()
 {
     while (close(TOP) == -1)
     {
@@ -108,7 +108,7 @@ void mufs_close_file()
     DROP(1);
 }
 
-void mufs_mmap_file()     /* fd - addr len */
+void mu_read_file()     /* fd - addr len */
 {
     char *p;
     struct stat s;
@@ -133,7 +133,7 @@ void mufs_mmap_file()     /* fd - addr len */
     TOP = s.st_size;
 }
 
-void mufs_read_carefully()    /* fd buffer len -- #read */
+void mu_read_carefully()    /* fd buffer len -- #read */
 {
     int fd;
     char *buffer;
@@ -153,7 +153,7 @@ void mufs_read_carefully()    /* fd buffer len -- #read */
     TOP = count;
 }
 
-void mufs_write_carefully()   /* fd buffer len */
+void mu_write_carefully()   /* fd buffer len */
 {
     int fd;
     char *buffer;
@@ -177,3 +177,47 @@ void mufs_write_carefully()   /* fd buffer len */
         len -= written;
     }
 }
+
+/* Core io primitives */
+
+/*
+ * Every system must define the following functions, as a minimum for
+ * interactive use:
+ *
+ *   typing     ( - addr len)
+ *              read a line of input from user (console)
+ *
+ *   write      ( fd addr len)
+ *              output a string to "file descriptor" - some platforms can
+ *              ignore fd and simply write to the console
+ *
+ *   open-file  ( path - fd)
+ *              find a copy of file based on path (platform-specific how
+ *              the search happens); return a handle (fd) to refer to the
+ *              file
+ *
+ *   read-file  ( fd - addr len)
+ *              get the contents of the file (somehow) and return it as a
+ *              string
+ *
+ *   close-file ( fd)
+ *              release resources allocated to file
+ */
+
+void mu_typing()   /* -- inbuf #read */
+{
+    static char inbuf[1024];
+    DROP(-4);
+    ST3 = (cell)inbuf;
+    ST2 = 0;                /* stdin */
+    ST1 = (cell)inbuf;
+    TOP = 1024;
+    mu_read_carefully();    /* stdin inbuf size -- #read */
+}
+
+void mu_open_file()         /* c-path -- fd */
+{
+    mufs_push_r_slash_o();
+    mufs_open_file();       /* c-path flags -- fd */
+}
+
