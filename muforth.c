@@ -30,22 +30,6 @@ static void init_stacks()
     RP = R0;
 }
 
-static void mu_find_init_file()
-{
-    /* These don't have to be proper counted strings because they are
-     * used only by C code hereafter.
-     */
-    PUSH("startup.mu4");
-    mufs_readable_q();
-    if (POP) return;
-
-    PUSH("/usr/local/share/muforth/startup.mu4");
-    mufs_readable_q();
-    if (POP) return;
-
-    die("couldn't find startup.mu4 init file");
-}
-
 /*
   ( We need to rebuild the command line - says something about the
   inefficiency of C's way of doing cmd line params - and parse that.)
@@ -124,7 +108,7 @@ int main(int argc, char *argv[])
     init_dict();
     convert_command_line(argc, argv);
     init_stacks();
-    mu_find_init_file();
+    PUSH("startup.mu4");
     mu_load_file();
     mu_start_up();
     return 0;
