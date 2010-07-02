@@ -99,6 +99,9 @@ static char* find_file(char *path)
     /* first, try bare path */
     if (try_path(path)) return path;
 
+    /* If path is absolute, stop trying. */
+    if (*path == '/') return NULL;
+
     /* next, try $MUFORTH/path */
     p = path_prefix(getenv("MUFORTH"), path, '/', catpath);
     if (try_path(p)) return p;
