@@ -1,7 +1,7 @@
 # sed script to convert a BSD makefile (yay!) to a GNU makefile (ewwww).
 
 # elide the leading . for directives
-s/^.(ifdef|else|endif|include)/\1/
+s/^\.(ifdef|ifndef|ifeq|ifneq|else|endif|-?include)/\1/
 
 # use short ugly names for automatic variables
 s/\{\.TARGET\}/@/g
