@@ -19,14 +19,6 @@
 
 int main(int argc, char *argv[])
 {
-    /* cell size */
-    if (sizeof(int) == 4)
-        printf("#define SH_CELL 2\n");
-    else if (sizeof(int) == 8)
-        printf("#define SH_CELL 3\n");
-    else
-        printf("#error \"What kind of machine are you running this on, anyway?\"\n");
-
     /* division type */
     {
         int quot = -7 / 4;
@@ -49,10 +41,10 @@ int main(int argc, char *argv[])
     }
 
     /* verify that int and void * are the same size: */
-    if (sizeof(int) != sizeof(void *))
-        printf("#error \"Hmm. Pointer and int types are different sizes: "
-            "sizeof(int) = %d, sizeof(void *) = %d\"\n",
-            (int) sizeof(int), (int) sizeof(void *));
+    if (sizeof(int32_t) != sizeof(void *))
+        printf("#error \"Hmm. Pointer and int32_t types are different sizes: "
+            "sizeof(int32_t) = %d, sizeof(void *) = %d\"\n",
+            (int) sizeof(int32_t), (int) sizeof(void *));
 
     /* endianness */
     {
@@ -73,7 +65,7 @@ int main(int argc, char *argv[])
     }
 
     /* show size of jmpbuf */
-    printf("#define JMPBUF_CELLS %d\n", (int)(sizeof(jmp_buf) / sizeof(int)));
+    printf("#define JMPBUF_CELLS %d\n", (int)(sizeof(jmp_buf) / sizeof(int32_t)));
 
     return 0;
 }
