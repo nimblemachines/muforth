@@ -781,15 +781,19 @@ being-defined -v  ( be verbose)
 
 ( Print word name, but skip deleted words, whose names start with a blank.)
 
-: ?deleted  ( link)
-   link>name  ( a u)  over c@ 127 = if  ( deleted)  2drop ^ then
-   type space space ;
+( For hashed heads.)
+: ?deleted  ( a u current-hash - count)
+   ( check hash)  push  current @ hash  pop = if ( hash matches)
+   over c@ 127 xor if ( and not deleted)  type space space  1 ^  then
+   then  2drop 0 ;
 
-( Word listing. Putting this in as soon as possible. Needs `space'.)
-: words   0  current @  ( count 'suffix)
-  begin  suffix>link @  =while  1 u+
-            dup suffix>link  ?deleted  repeat
-  drop  cr  ." ("  . ." words)" ;
+: words
+   0  ( count)
+   32 0 do  ( for each head)
+      cr  i 2 .r space space  i head  ( suffix) 
+      begin  suffix>link @  =while
+         dup suffix>link  link>name  i  ?deleted  u+  repeat
+   drop loop  cr  ." ("  . ." words)" ;
 
 ( XXX: should be primitive?)
 : fill        (s a u n)  -rot  ?for  2dup c!    1+  next  then  2drop ;
@@ -845,35 +849,24 @@ being-defined -v  ( be verbose)
 
 ( Defining new dictionary chains.)
 
-( These used to be in an array but are now independent of each other. They
-  are structures that look just like a name entry in the dictionary - a
-  name-suffix followed by a link field.
+( Dictionary search is now hashed. There are 32 heads -- independent lists,
+  or hash buckets -- and the words of *all* chains are intermingled.
+  Because the hashing function considers the chain we want to search, it is
+  still possible to distinguish between, say, words from .forth. and
+  .compiler.
 
-  By convention, the name-suffix fully defines a name - " VH" - that's
-  "space victor hotel" - that contains a space so it's hard to accidentally
-  match. "VH" suggests "vocab head".
+  It used to be that each vocab chain had its own head. Now, because there
+  are only 32 heads, and they are global and shared, a vocab chain is
+  simply an index, from 0 to 31. .forth. is 0, .compiler. is 1, and it goes
+  up from there as further chains are defined.)
 
-  The link field points to the name entry - suffix - of the last word
-  defined on the chain.
-
-  I think I was careful to make the following code generate a name suffix
-  that is -not- endianness-dependent.)
-
-: chain   create  [ char ) parse  VH )  ( a u)  drop @ ] ,
-   ( now put in length)  3 here 1- c!
-   ( link) , ;  ( fake name field before link)
-
-: sealed           0  chain ;  ( create an independent vocab chain)
-: chained  current @  chain ;  ( chain to the current vocab)
-
-( It's also possible to chain to an -arbitrary- vocab by simply doing this:
-  
-  .arbitrary. chain .new-is-chained-to-arbitrary. )
+variable chain#  .compiler. 1+ chain# !
+: chain   chain# @ constant  1 chain# +! ;
 
 
 ( Conditional compilation.)
 
-sealed .conditional.
+chain .conditional.
 : conditional   .conditional. definitions ;
 
 ( eat consumes tokens until it either consumes all the input - in which
