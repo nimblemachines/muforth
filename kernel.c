@@ -191,7 +191,7 @@ void mu_cmove()  /* src dest count */
     void *dest = (void *) ST1;
     size_t count = TOP;
 
-    bcopy(src, dest, count);  /* allows overlapping strings */
+    memmove(dest, src, count);  /* allows overlapping strings */
     DROP(3);
 }
 

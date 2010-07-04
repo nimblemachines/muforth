@@ -11,12 +11,16 @@
 
 static struct counted_string *pcmd_line;
 
-static char *copy_string(char *to, char *from, size_t length)
+/*
+ * Unlike memcpy, which STOOPIDLY returns dest, rather than something
+ * USEFUL, this routine returns dest + length. It also calculates the
+ * length of the string for you - but doesn't copy the trailing null,
+ * unlike strcpy.
+ */
+static char *str_copy(char *dest, char *src)
 {
-    bcopy(from, to, length);
-    to += length;
-    *to++ = ' ';
-    return to;
+    int length = strlen(src);
+    return memcpy(dest, src, length) + length;
 }
 
 static void convert_command_line(int argc, char *argv[])
@@ -32,8 +36,8 @@ static void convert_command_line(int argc, char *argv[])
 
     while (argc--)
     {
-        pline = copy_string(pline, *argv, strlen(*argv));
-        argv++;
+        pline = str_copy(pline, *argv++);
+        *pline++ = ' ';
     }
     pcmd_line->length = pline - pcmd_line->data;
 

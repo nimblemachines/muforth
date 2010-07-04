@@ -265,7 +265,7 @@ static void make_new_name(
     pnm->link = pnmHead->link;          /* compile link to last */
     pnmHead->link = pnm;                /* link onto front of chain */
     pnm->length = length;
-    bcopy(name, pnm->suffix + 3 - length, length);        /* copy name string */
+    memcpy(pnm->suffix + 3 - length, name, length);        /* copy name string */
 
     /* Allot entry */
     ph = (cell *)(pnm + 1);
