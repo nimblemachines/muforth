@@ -9,8 +9,6 @@
 
 #include "muforth.h"
 
-#include <stdlib.h>     /* for division routines */
-
 #define MIN(a,b)    (((a) < (b)) ? (a) : (b))
 
 void mu_plus()  { ST1 += TOP; DROP(1); }
@@ -92,11 +90,6 @@ void mu_rp_fetch()       { PUSH(RP); }
  */
 void mu_star()    { ST1 *= TOP; DROP(1); }
 
-/*
- * Using div(3) it's possible to get, in one operation, both the quotient
- * and remainder of a signed division. Unfortunately there isn't an
- * unsigned version of div(3), so we do them separately.
- */
 void mu_uslash_mod()  /* u1 u2 -- um uq */
 {
     ucell umod;
@@ -133,25 +126,27 @@ void mu_uslash_mod()  /* u1 u2 -- um uq */
  */
 void mu_slash_mod()  /* n1 n2 -- m q */
 {
-    div_t r;        /* resulting quot and rem */
+    cell mod;
+    cell quot;
 
-    r = div(ST1, TOP);
+    quot = ST1 / TOP;
+    mod  = ST1 % TOP;
 
 #ifdef DIVIDE_IS_SYMMETRIC
     /*
      * We now have the results of a stupid symmetric division, which we
-     * must convert to floored. We only do this if the remainder was
-     * non-zero and if the dividend and divisor had opposite signs.
+     * must convert to floored. We only do this if the modulus was non-zero
+     * and if the dividend and divisor had opposite signs.
      */
-    if (r.rem != 0 && (ST1 ^ TOP) < 0)
+    if (mod != 0 && (ST1 ^ TOP) < 0)
     {
-        r.quot -= 1;
-        r.rem  += TOP;
+        quot -= 1;
+        mod  += TOP;
     }
 #endif
 
-    ST1 = r.rem;
-    TOP = r.quot;
+    ST1 = mod;
+    TOP = quot;
 }
 
 void mu_string_equal()   /* a1 len1 a2 len2 -- flag */
