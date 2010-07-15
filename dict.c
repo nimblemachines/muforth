@@ -103,18 +103,12 @@ struct dict_entry
     pw code;
 };
 
-/*
- * The forth and compiler "vocabulary" chains - VH means vocab head.
- * Because the name field contains the three-character name " VH", these
- * will show up in a word list, if another vocab chains to one of these;
- * however, the names cannot easily be matched because they contain a
- * space.
- */
-static struct dict_name forth_chain    = { " VH", 3, NULL };
-static struct dict_name compiler_chain = { " VH", 3, NULL };
+/* The indexes of the .forth. & .compiler chains. */
+#define FORTH_CHAIN     0
+#define COMPILER_CHAIN  1
 
 /* current chain to compile into */
-static struct dict_name *current_chain = &forth_chain;
+static int current_chain = FORTH_CHAIN;
 
 /* hook called when a new name is created */
 static xtk xtk_new_hook = XTK(mu_nope);
@@ -162,12 +156,56 @@ void mu_push_current()
  */
 void mu_push_forth_chain()
 {
-    PUSH(&forth_chain);
+    PUSH(FORTH_CHAIN);    /* index of .forth. */
 }
 
 void mu_push_compiler_chain()
 {
-    PUSH(&compiler_chain);
+    PUSH(COMPILER_CHAIN);    /* index of .compiler. */
+}
+
+/*
+ * We now hash dictionary chains 32 ways. What this means is that there is
+ * an array of 32 "heads", and the chains, instead of being pointers, are
+ * indexes (from 0 to 31). To figure out which list to search, you "hash"
+ * the first character of the name and the index, like this:
+ *    hash = (chain_index + first_char) mod 32
+ */
+struct dict_name dict_heads[32];
+#define HEAD(n)     (&dict_heads[(n)])
+
+void mu_head()  /* index -- head */
+{
+    TOP = (cell)HEAD(TOP);
+}
+
+/*
+ * The real HASH function. Adds the first character, the length, and the
+ * chain index, and returns an index mod 32. This allows at most 32
+ * distinct "vocab chains". Given its simplicity (and speed), the
+ * distribution is surprisingly good.
+ */
+#define HASH(name, len, chain)  ((*(char *)(name) + (len) + (chain)) & 31)
+
+/*
+ * This is the HASH function I tried the first time. It doesn't take into
+ * account the length of the word (just its first letter and the chain
+ * index). It worked, but the distribution isn't nearly as good the above
+ * function - on the core word set, two "buckets" were empty, and one (#3)
+ * had over 40 words on it - the words starting with '#' or 'c' in the
+ * .forth. chain.
+ */
+//#define HASH(name, len, chain)  ((*(char *)(name) + (chain)) & 31)
+
+/*
+ * For testing, here is a "trivial" HASH function that puts the entirety of
+ * a vocab chain onto a single list. The head is simply HEAD(chain-index).
+ */
+//#define HASH(name, len, chain)  ((chain) & 31)
+
+void mu_hash()  /* name length chain -- name length hash-index */
+{   
+    TOP = (cell)HASH(ST2, ST1, TOP);
 }
 
 /*
@@ -179,9 +217,12 @@ void mu_push_compiler_chain()
 /* find  ( a u chain - a u 0 | code -1) */
 void mu_find()
 {
-    char *token = (char *) ST2;
+    char *token = (char *)ST2;
     cell length = ST1;
-    struct dict_entry *pde = (struct dict_entry *) TOP;
+    struct dict_entry *pde;
+
+    /* hash first character of token with chain# */
+    pde = (struct dict_entry *)HEAD(HASH(token, length, TOP));
 
     while ((pde = (struct dict_entry *)pde->n.link) != NULL)
     {
@@ -203,10 +244,14 @@ void mu_find()
  * the chain represented by pnmHead.
  */
 static void make_new_name(
-    struct dict_name *pnmHead, char *name, int length)
+    int chain, char *name, int length)
 {
+    struct dict_name *pnmHead;
     struct dict_name *pnm;              /* the new name */
     char *pch = (char *)ALIGNED(ph);    /* start out nicely aligned */
+
+    /* hash first character of token with chain# */
+    pnmHead = HEAD(HASH(name, length, chain));
 
     /* Allocate extra cells for name, if longer than 3 characters */
     if (length > 3)
@@ -220,13 +265,13 @@ static void make_new_name(
     pnm->link = pnmHead->link;          /* compile link to last */
     pnmHead->link = pnm;                /* link onto front of chain */
     pnm->length = length;
-    bcopy(name, pnm->suffix + 3 - length, length);        /* copy name string */
+    memcpy(pnm->suffix + 3 - length, name, length);        /* copy name string */
 
     /* Allot entry */
     ph = (cell *)(pnm + 1);
 
 #if defined(BEING_DEFINED)
-    fprintf(stderr, "%p %p %.*s\n", pnmHead, ph, length, name);
+    fprintf(stderr, "%2d %p %.*s\n", HASH(name, length, chain), ph, length, name);
 #endif
 }
 
@@ -262,11 +307,11 @@ void mu_push_tick_new_hook()
  * defined in C; this routine compiles a code pointer into the dict entry
  * that points to the C function.
  */
-static void init_chain(struct dict_name *pchain, struct inm *pinm)
+static void init_chain(int chain, struct inm *pinm)
 {
     for (; pinm->name != NULL; pinm++)
     {
-        make_new_name(pchain, pinm->name, strlen(pinm->name));
+        make_new_name(chain, pinm->name, strlen(pinm->name));
         *ph++ = (cell)pinm->code;   /* set code pointer */
     }
 }
@@ -286,8 +331,8 @@ static void allocate()
 void init_dict()
 {
     allocate();
-    init_chain(&forth_chain, initial_forth);
-    init_chain(&compiler_chain, initial_compiler);
+    init_chain(FORTH_CHAIN, initial_forth);
+    init_chain(COMPILER_CHAIN, initial_compiler);
 }
 
 /*

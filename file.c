@@ -12,16 +12,18 @@
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
+#include <stdlib.h>     /* getenv */
+#include <string.h>     /* memcpy */
 
 /* XXX: for read, write; temporary? */
 #include <sys/uio.h>
 #include <unistd.h>
 #include <errno.h>
 
-/* if found and readable, leave name and push -1;
- * if not found or not readable, drop name and push 0
+/* if found and readable, return -1
+ * if not found or not readable, return 0
  */
-void mu_readable_q()
+static int readable(char *path)
 {
     struct stat st;
     uid_t euid;
@@ -31,38 +33,88 @@ void mu_readable_q()
     euid = geteuid();
     egid = getegid();
 
-    if (stat((char *)TOP, &st) == -1)
-    {
-        TOP = 0;    /* failed */;
-        return;
-    }
+    if (stat(path, &st) == -1)
+        return 0;   /* failed */
 
     /* test for user perms */
     if (st.st_uid == euid && (st.st_mode & 0400))
-    {
-        PUSH(-1);   /* success */
-        return;
-    }
+        return -1;  /* success */
 
     /* test for group perms */
     if (st.st_gid == egid && (st.st_mode & 0040))
-    {
-        PUSH(-1);   /* success */
-        return;
-    }
+        return -1;  /* success */
 
     /* test for world (other) perms */
     if (st.st_mode & 0004)
-    {
-        PUSH(-1);   /* success */
-        return;
-    }
+        return -1;  /* success */
 
     /* failed all tests, return false */
-    TOP = 0;
+    return 0;
 }
 
-void mu_create_file()       /* C-string-name - fd */
+static char *path_prefix(char *src, char *dest, char sep, char *begin)
+{
+    int len;
+
+    /*
+     * Checking dest lets us cascade calls without checking for NULL.
+     * Checking src lets us pass results (say, of getenv) that could be
+     * NULL.
+     */
+    if (dest == NULL || src == NULL) return NULL;      
+
+    len = strlen(src);
+    if (dest - len - 1 < begin) return NULL;
+    *--dest = sep;      /* add path separator */
+    dest -= len;        /* back up to make room for string at src */
+    memcpy(dest, src, len);
+    return dest;        /* new beginning */
+}
+
+static int try_path(char *p)
+{
+    if (p && readable(p)) return -1;
+    return 0;
+}
+
+/*
+ * find_file should look for the file (the c-path is a relative path) in
+ * the following places, in order:
+ *   ./path
+ *   $MUFORTH/path
+ *   $HOME/muforth/path
+ * and nowhere else!
+ */
+static char* find_file(char *path)
+{
+    static char catpath[1024];
+    char *end = catpath+1024;
+    char *p;
+
+    /* start with path at end, if it fits! */
+    path = path_prefix(path, end, '\0', catpath);
+    if (path == NULL) return NULL;
+
+    /* now, for each prefix, push it onto front of path and try it */
+    /* first, try bare path */
+    if (try_path(path)) return path;
+
+    /* If path is absolute, stop trying. */
+    if (*path == '/') return NULL;
+
+    /* next, try $MUFORTH/path */
+    p = path_prefix(getenv("MUFORTH"), path, '/', catpath);
+    if (try_path(p)) return p;
+
+    /* last, try $HOME/muforth/path */
+    p = path_prefix("muforth", path, '/', catpath);
+    p = path_prefix(getenv("HOME"), p, '/', catpath);
+    if (try_path(p)) return p;
+
+    return NULL;    /* not found */
+}
+
+void mufs_create_file()       /* C-string-name - fd */
 {
     int fd;
 
@@ -75,11 +127,15 @@ void mu_create_file()       /* C-string-name - fd */
     TOP = fd;
 }
 
-void mu_open_file()     /* C-string-name flags - fd */
+void mufs_open_file()     /* C-string-name flags - fd */
 {
     int fd;
+    char *path = find_file((char *)ST1);
 
-    fd = open((char *)ST1, TOP);
+    if (path == NULL)
+        throw("file not found on search path");
+
+    fd = open(path, TOP);
     if (fd == -1)
     {
         throw_strerror();
@@ -88,12 +144,12 @@ void mu_open_file()     /* C-string-name flags - fd */
     TOP = fd;
 }
 
-void mu_push_r_slash_o()
+void mufs_push_r_slash_o()
 {
     PUSH(O_RDONLY);
 }
 
-void mu_push_r_slash_w()
+void mufs_push_r_slash_w()
 {
     PUSH(O_RDWR);
 }
@@ -108,7 +164,10 @@ void mu_close_file()
     DROP(1);
 }
 
-void mu_mmap_file()     /* fd - addr len */
+/*
+ * mu_read_file mmaps the file and returns its contents as a string
+ */
+void mu_read_file()     /* fd - addr len */
 {
     char *p;
     struct stat s;
@@ -133,8 +192,7 @@ void mu_mmap_file()     /* fd - addr len */
     TOP = s.st_size;
 }
 
-/* NOTE: These two routines will be obsoleted by buf_* routines. */
-void mu_read_carefully()
+void mu_read_carefully()    /* fd buffer len -- #read */
 {
     int fd;
     char *buffer;
@@ -154,7 +212,7 @@ void mu_read_carefully()
     TOP = count;
 }
 
-void mu_write_carefully()
+void mu_write_carefully()   /* fd buffer len */
 {
     int fd;
     char *buffer;
@@ -178,3 +236,47 @@ void mu_write_carefully()
         len -= written;
     }
 }
+
+/* Core io primitives */
+
+/*
+ * Every system must define the following functions, as a minimum for
+ * interactive use:
+ *
+ *   typing     ( - addr len)
+ *              read a line of input from user (console)
+ *
+ *   write      ( fd addr len)
+ *              output a string to "file descriptor" - some platforms can
+ *              ignore fd and simply write to the console
+ *
+ *   open-file  ( path - fd)
+ *              find a copy of file based on path (platform-specific how
+ *              the search happens); return a handle (fd) to refer to the
+ *              file
+ *
+ *   read-file  ( fd - addr len)
+ *              get the contents of the file (somehow) and return it as a
+ *              string
+ *
+ *   close-file ( fd)
+ *              release resources allocated to file
+ */
+
+void mu_typing()   /* -- inbuf #read */
+{
+    static char inbuf[1024];
+    DROP(-4);
+    ST3 = (cell)inbuf;
+    ST2 = 0;                /* stdin */
+    ST1 = (cell)inbuf;
+    TOP = 1024;
+    mu_read_carefully();    /* stdin inbuf size -- #read */
+}
+
+void mu_open_file()         /* c-path -- fd */
+{
+    mufs_push_r_slash_o();
+    mufs_open_file();       /* c-path flags -- fd */
+}
+

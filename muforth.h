@@ -6,28 +6,31 @@
  */
 
 #include <sys/types.h>
+#include <stdint.h>
 #include <string.h>
 
 #include "env.h"
 
-typedef int cell;
-typedef unsigned int ucell;
-
-typedef unsigned char uint8;
+typedef  int32_t  cell;
+typedef uint32_t ucell;
+typedef struct {
+     cell hi;       /* Forth puts high cell at lower address (top of stack) */
+    ucell lo;
+} dcell;
 
 /* data stack */
-#define STACK_SIZE 4096
-#define STACK_SAFETY 32
+#define STACK_SIZE  4096
+#define STACK_SAFETY  32
 extern cell stack[];
 #define S0    &stack[STACK_SIZE - STACK_SAFETY]
 #define SMAX  &stack[STACK_SAFETY]
 
 /* TOP is a synonym for ST0 */
-#define TOP      ST0
-#define ST0      SP[0]
-#define ST1      SP[1]
-#define ST2      SP[2]
-#define ST3      SP[3]
+#define TOP   ST0
+#define ST0   SP[0]
+#define ST1   SP[1]
+#define ST2   SP[2]
+#define ST3   SP[3]
 
 #define DROP(n)  (SP += (n))
 #define PUSH(v)  (*--SP = (cell)(v))
@@ -105,9 +108,6 @@ struct counted_string
 extern char *first;                /* goes from source.start to source.end */
 extern int token_lineno;           /* captured with first character of token */
 extern char *token_first;          /* first char of token - captured for die */
-
-extern int  cmd_line_argc;
-extern char **cmd_line_argv;
 
 extern cell  *ph0;     /* pointer to start of heap space */
 extern cell  *ph;      /* ptr to next free byte in heap space */

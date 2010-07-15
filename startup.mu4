@@ -126,8 +126,8 @@ forth
 : 1+   1 + ;  ( these are common)
 : 1-  -1 + ;
 
-: cells  cell-shift << ;
-: cell/  cell-shift >> ;  ( signed)
+: cells  2 << ;  ( cell is 32 bits!)
+: cell/  2 >> ;  ( signed)
 : cell   [ 1 cells ] ;
 : cell+  [ cell ] + ;
 : cell-  [ cell negate ] + ;
@@ -378,6 +378,7 @@ forth
   to say "comment **foobar** <commented text> **foobar**", you define
   **foobar** to skip tokens until it comes to a matching **foobar**!!)
 
+comment no-self-comments
 : make-comment  create  does>  body> >name  (comment) ;
 
 ( Here is one to get you started - good for block comments. It's 75
@@ -385,6 +386,7 @@ forth
 
 make-comment
 ===========================================================================
+no-self-comments
 
 ( I guess we can have deferred words, even though they are, in some ways,
   inelegant. The alternative - creating a variable and a colon word that
@@ -597,11 +599,6 @@ mode __compile
 
 ( Basic character i/o.)
 
-1024 constant #inbuf
-#inbuf buffer inbuf  ( terminal input)
-variable keybuf
-variable emitbuf
-
 variable fd-in
 variable fd-out
 : writes  fd-out ! ;
@@ -610,25 +607,17 @@ variable fd-out
 : >stdout  1 writes ;
 : >stderr  2 writes ;  <stdin  >stderr  ( sanity)
 
-variable ztimeout  -1 ztimeout !  ( generic error value)
-: ?timeout  ( n)  1 = if ^ then  ( read a character successfully)
-   ztimeout @ throw  ( throw timeout string - which we can't define yet!) [
+: type   ( a u)  fd-out @  -rot  write ;
 
-( XXX use sp@ here instead?)
-: <key   ( fd - ch)                  keybuf 1 read  ?timeout  keybuf c@ ;
-: >emit  ( ch fd)  swap emitbuf c!  emitbuf 1 write ;
+variable charbuf  ( for >emit and <key)
+: >emit  ( ch fd)  swap charbuf c!  charbuf 1 write ;
+: emit   ( ch)  fd-out @  >emit ;
 
-: key   ( - ch)   fd-in @  <key ;
-: emit  ( ch)    fd-out @  >emit ;
+ctrl J  constant #LF   --  10
+ctrl M  constant #CR   --  13
+: space      bl emit ;
+: cr        #LF emit ;  ( emit newline; assumes OPOST)
 
-: space  bl emit ;
-: cr     ctrl J emit ;
-
-: type                   fd-out @  -rot  write ;
-: accept  ( a # - #in)   fd-in @  -rot  read ( 1-)  ;  ( ANS)
-  ( chop trailing newline)
-
-: typing  ( - a #)  inbuf dup [ #inbuf 2 - ] accept  ;  ( get a line of input)
 
 : >     swap <  ;
 : min   2dup >  if swap then  drop  ;
@@ -759,9 +748,6 @@ being-defined -v  ( be verbose)
 
 -:  error" undefined deferred word" ;  undeferred !
 
-( And let's fix key> timeout string, which will currently crash.)
-z" <key timed out" ztimeout !
-
 
 ( !!!!-------------------- Add changes below this line -------------------!!!!)
 
@@ -770,15 +756,19 @@ z" <key timed out" ztimeout !
 
 ( Print word name, but skip deleted words, whose names start with a blank.)
 
-: ?deleted  ( link)
-   link>name  ( a u)  over c@ 127 = if  ( deleted)  2drop ^ then
-   type space space ;
+( For hashed heads.)
+: ?deleted  ( a u current-hash - count)
+   ( check hash)  push  current @ hash  pop = if ( hash matches)
+   over c@ 127 xor if ( and not deleted)  type space space  1 ^  then
+   then  2drop 0 ;
 
-( Word listing. Putting this in as soon as possible. Needs `space'.)
-: words   0  current @  ( count 'suffix)
-  begin  suffix>link @  =while  1 u+
-            dup suffix>link  ?deleted  repeat
-  drop  cr  ." ("  . ." words)" ;
+: words
+   0  ( count)
+   32 0 do  ( for each head)
+      cr  i 2 .r space space  i head  ( suffix) 
+      begin  suffix>link @  =while
+         dup suffix>link  link>name  i  ?deleted  u+  repeat
+   drop loop  cr  ." ("  . ." words)" ;
 
 ( XXX: should be primitive?)
 : fill        ( a u n)  -rot  ?for  2dup c!    1+  next  then  2drop ;
@@ -830,35 +820,24 @@ z" <key timed out" ztimeout !
 
 ( Defining new dictionary chains.)
 
-( These used to be in an array but are now independent of each other. They
-  are structures that look just like a name entry in the dictionary - a
-  name-suffix followed by a link field.
+( Dictionary search is now hashed. There are 32 heads -- independent lists,
+  or hash buckets -- and the words of *all* chains are intermingled.
+  Because the hashing function considers the chain we want to search, it is
+  still possible to distinguish between, say, words from .forth. and
+  .compiler.
 
-  By convention, the name-suffix fully defines a name - " VH" - that's
-  "space victor hotel" - that contains a space so it's hard to accidentally
-  match. "VH" suggests "vocab head".
+  It used to be that each vocab chain had its own head. Now, because there
+  are only 32 heads, and they are global and shared, a vocab chain is
+  simply an index, from 0 to 31. .forth. is 0, .compiler. is 1, and it goes
+  up from there as further chains are defined.)
 
-  The link field points to the name entry - suffix - of the last word
-  defined on the chain.
-
-  I think I was careful to make the following code generate a name suffix
-  that is -not- endianness-dependent.)
-
-: chain   create  [ char ) parse  VH )  ( a u)  drop @ ] ,
-   ( now put in length)  3 here 1- c!
-   ( link) , ;  ( fake name field before link)
-
-: sealed           0  chain ;  ( create an independent vocab chain)
-: chained  current @  chain ;  ( chain to the current vocab)
-
-( It's also possible to chain to an -arbitrary- vocab by simply doing this:
-  
-  .arbitrary. chain .new-is-chained-to-arbitrary. )
+variable chain#  .compiler. 1+ chain# !
+: chain   chain# @ constant  1 chain# +! ;
 
 
 ( Conditional compilation.)
 
-sealed .conditional.
+chain .conditional.
 : conditional   .conditional. definitions ;
 
 ( eat consumes tokens until it either consumes all the input - in which
@@ -919,6 +898,8 @@ forth
 : Mi  Ki Ki ;   ( "Mebi", or "megabinary": 2^20.)
 
 
+.ifdef clock
+
 ( Time, timestamp.)
 : "hold  ( a n)  dup negate  hld +!  hld @  swap cmove  ;
 : ##     ( n)   # #  drop  ;
@@ -970,6 +951,8 @@ forth
 
 : smhq->s  6 * +  smh->s ;  ( sec min hr quarter-day)
 : smhdy->s  [ 365 3 * 366 + ] * ( quarter-days/yr)  push 4 * pop +  smhq->s ;
+
+.then ( time support)
 
 
 ( Link to project home page.)
@@ -1068,7 +1051,11 @@ forth
 : banner
 ( Print banner.)
  ." muFORTH/ITC "
- build-time ( seconds since epoch)  time"  type  cr
+ .ifdef clock
+    build-time ( seconds since epoch)  time"
+ .else
+    build-time ( pushes a string!)
+ .then  type  cr
  ." Copyright (c) 2002-2010 David Frech. All rights reserved."  cr cr
  ." muFORTH is free software; see the file COPYRIGHT for details." cr
  ." To read more about muFORTH, type "

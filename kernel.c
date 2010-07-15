@@ -31,10 +31,10 @@ void mu_shift_right()             { ST1 = ST1 >> TOP; DROP(1); }
 void mu_ushift_right()  { ST1 = (unsigned)ST1 >> TOP; DROP(1); }
 
 void mu_fetch()   { TOP =  *(cell *)TOP; }
-void mu_cfetch()  { TOP = *(uint8 *)TOP; }
+void mu_cfetch()  { TOP = *(uint8_t *)TOP; }
 
 void mu_store()        { *(cell *)TOP = ST1; DROP(2); }
-void mu_cstore()      { *(uint8 *)TOP = ST1; DROP(2); }
+void mu_cstore()      { *(uint8_t *)TOP = ST1; DROP(2); }
 void mu_plus_store()  { *(cell *)TOP += ST1; DROP(2); }
 
 void mu_dup()    { cell t = TOP; PUSH(t); }
@@ -152,26 +152,58 @@ void mu_slash_mod()  /* n1 n2 -- m q */
     TOP = quot;
 }
 
-/*
- * C, or at least gcc, is sooooo fucking retarded! I cannot define "cell/"
- * the way I want, because gcc (on x86 at least) compiles /= by a power of
- * two of a _signed_ integer as an _un_signed_ shift! What gives!
- *
- * So I have to go to extra effort and circumvent my tool, which, instead of
- * helping me get my job done, is in the way. Sigh.
- *
- * Actually, C is even more retarded than I thought. I was going to check
- * the sizeof(cell) and set SH_CELL accordingly...but I can't do
- * "environmental queries" in the preprocessor! So the user gets to do this
- * by hand! Hooray for automation!
- *
- * (Not really. envtest runs and outputs env.h, which contains useful info
- * about the host machine environment. But, really, it should be possible
- * (and easy!) to do this from the preprocessor.)
-*/
+#ifdef GCC_IS_COMPLETELY_FUCKED
+void mu_umstar()
+{
+    uint64_t prod = (unsigned)ST1 * TOP;
+    cell *p = &prod;
+    ST1 = p[0];     /* low half of product */
+    TOP = p[1];     /* high half */
+}
 
-/* By defining cell-shift here, I can define cells and cell/ in startup! */
-void mu_cell_shift(void)  { PUSH(SH_CELL); }
+void mu_mstar()
+{
+    int64_t prod = ST1 * TOP;
+    cell *p = &prod;
+    ST1 = p[0];     /* low half of product */
+    TOP = p[1];     /* high half */
+}
+
+void mu_fm_slash_mod()  /* dn1 n2 -- m q */
+{
+    cell num[2];    /* numerator (dividend) */
+    cell mod;
+    cell quot;
+    int64_t dividend;
+
+    /* Set up 64-bit dividend */
+    num[0] = ST2;   /* low half */
+    num[1] = ST1;   /* high half */
+    quot = (int64_t)num[0] / TOP;
+    mod  = (int64_t)num[0] % TOP;
+
+    /* Set up 64-bit dividend */
+    dividend = ST2 /* low */ + ((int64_t)ST1 << 32) /* high */ ;
+    quot = dividend / TOP;
+    mod  = dividend % TOP;
+#ifdef DIVIDE_IS_SYMMETRIC
+    /*
+     * We now have the results of a stupid symmetric division, which we
+     * must convert to floored. We only do this if the modulus was non-zero
+     * and if the dividend and divisor had opposite signs.
+     */
+    if (mod != 0 && (ST1 ^ TOP) < 0)
+    {
+        quot -= 1;
+        mod  += TOP;
+    }
+#endif
+
+    ST1 = mod;
+    TOP = quot;
+}
+#endif /* GCC_IS_COMPLETELY_FUCKED */
+
 
 void mu_string_equal()   /* a1 len1 a2 len2 -- flag */
 {
@@ -189,7 +221,7 @@ void mu_cmove()  /* src dest count */
     void *dest = (void *) ST1;
     size_t count = TOP;
 
-    bcopy(src, dest, count);  /* allows overlapping strings */
+    memmove(dest, src, count);  /* allows overlapping strings */
     DROP(3);
 }
 

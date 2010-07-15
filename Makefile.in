@@ -12,25 +12,41 @@ SEDEXT=		%sedext%
 
 CFLAGS=		-O2 -Wall -fomit-frame-pointer ${DEFS} ${ARCH_C} ${DEBUG}
 LDFLAGS=	${ARCH_LD}
-DEFS=		-DCHUMOO
+DEFS=		-DCHUMOO ${PLATDEFS}
 ARCH_C=		%archcflags%
 ARCH_LD=	%archldflags%
 #DEBUG=		-g -DDEBUG -DBEING_DEFINED
+#DEBUG=		-DDEBUG_TOKEN
 
 # Core objects
-COREOBJS=	kernel.o interpret.o dict.o file.o \
-		error.o time.o tty.o select.o engine-itc.o \
-		mp-math.o
+COREOBJS=	kernel.o interpret.o dict.o mp-math.o engine-itc.o error.o
+		
+.sinclude "platform.mk"
+
+# Platform objects
+.if ${MUPLAT} == "nix"
+PLATOBJS=	time.o tty.o select.o file.o nix-main.o
+PLATDEFS=	-DWITH_TIME
+.endif
 
 # If any of these files changes, make a new version.h
-VERSOBJS=	${COREOBJS}
+VERSOBJS=	${COREOBJS} ${PLATOBJS}
 
 ALLOBJS=	${VERSOBJS} muforth.o
-DEPFILES=	Makefile muforth.h env.h public.h
+DEPFILES=	Makefile muforth.h env.h
 
 .PHONY: all clean httplink diffsed
 
-all : muforth
+.ifndef MUPLAT
+all:
+	@echo "You need to define MUPLAT to build a specific platform."
+	@echo "Put the line"
+	@echo "   MUPLAT=<platform>"
+	@echo "where <platform> can be nix, embedded, or something else you"
+	@echo "define, into the file \"platform.mk\", and run make again."
+.else
+all : public.h muforth
+.endif
 
 ${ALLOBJS} : ${DEPFILES}
 
@@ -85,6 +101,7 @@ envtest : Makefile envtest.c
 version.h : Makefile ${VERSOBJS}
 	@echo Making ${.TARGET}
 	@echo "time_t build_time = `date \"+%s\"`;" > version.h
+	@echo "char* build_date = \"`date \"+%Y-%b-%d %T %Z\"`\";" >> version.h
 
 muforth : ${ALLOBJS} ${DEPFILES}
 	${CC} ${LDFLAGS} -o ${.TARGET} ${ALLOBJS} ${LIBS}
