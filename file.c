@@ -114,7 +114,7 @@ static char* find_file(char *path)
     return NULL;    /* not found */
 }
 
-void mufs_create_file()       /* C-string-name - fd */
+void mu_create_file()       /* C-string-name - fd */
 {
     int fd;
 
@@ -144,14 +144,16 @@ void mufs_open_file()     /* C-string-name flags - fd */
     TOP = fd;
 }
 
-void mufs_push_r_slash_o()
+void mu_open_file_ro()
 {
     PUSH(O_RDONLY);
+    mufs_open_file();
 }
 
-void mufs_push_r_slash_w()
+void mu_open_file_rw()
 {
     PUSH(O_RDWR);
+    mufs_open_file();
 }
 
 void mu_close_file()
@@ -250,7 +252,8 @@ void mu_write_carefully()   /* fd buffer len */
  *              output a string to "file descriptor" - some platforms can
  *              ignore fd and simply write to the console
  *
- *   open-file  ( path - fd)
+ *   open-file-ro  ( path - fd)  ( open read-only)
+ *   open-file-rw  ( path - fd)  ( open read-write)
  *              find a copy of file based on path (platform-specific how
  *              the search happens); return a handle (fd) to refer to the
  *              file
@@ -273,10 +276,3 @@ void mu_typing()   /* -- inbuf #read */
     TOP = 1024;
     mu_read_carefully();    /* stdin inbuf size -- #read */
 }
-
-void mu_open_file()         /* c-path -- fd */
-{
-    mufs_push_r_slash_o();
-    mufs_open_file();       /* c-path flags -- fd */
-}
-

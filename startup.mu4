@@ -590,12 +590,31 @@ mode __interpret
 
 mode __compile
 
-
-( Prompt, quit, and warm.)
-
 : consume  ( a u)  state @         @execute ;  ( consume a token)
-: .mode-prompt     state @  cell+  @execute ;  ( secondary prompt)
+: .mode-prompt     state @  cell+  @execute ;  ( show secondary prompt)
 
+( New interpret; completely replaces the C version!)
+: interpret
+   begin  token =while  consume  ?stack  repeat  2drop ;
+
+( Now to redefine the basic mode switching words.)
+: -]   __compile ;
+:  ]   -]  literal ;
+compiler
+: [    __interpret ;
+: ;;   \ ;  ;  ( so we can finish compiling these words and not break C's interpret)
+: ;    \ ^  \ [  ;;
+forth
+: -:  here <:>  -]  ;;  ( "nameless" colon words.)
+:  :   new <:>  -]  ;;  ( has to be last!!)
+
+__interpret  ( set to interpret mode)
+interpret    ( run our new interpreter on the rest of this file!)
+
+
+-- -----------------------------------------------------------------------
+-- Running the new interpret
+-- -----------------------------------------------------------------------
 
 ( Basic character i/o.)
 
@@ -963,19 +982,17 @@ forth
  ;
 
 
+( Prompt, quit, and warm.)
+
 : .Ok   ."  Ok"  ;
 : prompt   .Ok  .mode-prompt  ;  ( ` Ok' then sub-prompt)
 
 ( Our brand new interpret!)
-: ?stack  ( XXX)  ;
 
 ( XXX should this set source and first? That's how I originally had it.
   evaluate would save prev context and interpret would set it. fig has it
   differently - interpret is like the one below. This way has the advantage
   that it's impossible to accidentally clobber the input context.)
-
-: interpret
-   begin  token =while  consume  ?stack  repeat  2drop ;
 
 : evaluate  ( a u)  ( XXX)
    source 2@ 2push     ( save source)
@@ -997,8 +1014,8 @@ forth
 
 ( This is the same as the C version, except calls our new evaluate.)
 : load-file  ( z")  ( XXX needs to be wired into error system)
-   r/o open-file ( fd)  push
-   r@ mmap-file ( a u)  1 line !
+   open-file-ro ( fd)  push
+   r@ read-file ( a u)  1 line !
    evaluate
    pop close-file ;
 
@@ -1070,15 +1087,3 @@ forth
 
 ( Identify ourselves.)
 trues muFORTH
-
-( These have to be dead last!)
-: -]   __compile ;
-:  ]   -]  literal ;
-compiler
-: [    __interpret ;
-: ;;   \ ;  ;  ( so we can finish compiling these words and not break C's interpret)
-: ;    \ ^  \ [  ;;
-forth
-: -:  here <:>  -]  ;;  ( "nameless" colon words.)
-:  :   new <:>  -]  ;;  ( has to be last!!)
-

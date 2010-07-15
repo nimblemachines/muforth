@@ -191,7 +191,7 @@ void mu_push_parsed()
     PUSH(parsed.length);
 }
 
-static void mu_qstack()
+void mu_qstack()
 {
     if (SP > S0)
     {
@@ -245,7 +245,7 @@ void muboot_load_file()    /* c-string-name */
 {
     int fd;
 
-    mu_open_file();
+    mu_open_file_ro();
     fd = TOP;
     mu_read_file();
 
