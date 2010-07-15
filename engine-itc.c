@@ -15,6 +15,7 @@
  * and still store them somewhere. This is easier.
  */
 pw p_mu_nope = &mu_nope;
+pw p_muboot_die = &muboot_die;
 
 void mu_execute() { EXECUTE; }
 

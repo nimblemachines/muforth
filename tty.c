@@ -27,7 +27,7 @@ void mu_set_termios()
     /* drain out, flush in, set */
     if (tcsetattr(ST1, TCSAFLUSH, (struct termios *)TOP) == -1)
     {
-        throw_strerror();
+        abort_strerror();
     }
     DROP(2);
 }
@@ -104,7 +104,7 @@ void mu_set_termios_speed()
         BPS(115200);
         BPS(230400);
     default:
-        throw("Unsupported speed");
+        abort_zmsg("Unsupported speed");
     }
 
 #ifdef __CYGWIN__

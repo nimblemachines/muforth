@@ -19,15 +19,11 @@
 #endif
 
 static struct text source;
-char *first;                /* goes from source.start to source.end */
+static char *first;         /* goes from source.start to source.end */
 
 static int lineno = 1;      /* line number - incremented for each newline */
-int token_lineno;           /* captured with first character of token */
-char *token_first;          /* first char of token - captured for die */
+int parsed_lineno;          /* captured from lineno at start of token/parse */
 struct string parsed;       /* for errors */
-
-/* Push captured line number */
-void mu_at_line() { PUSH(token_lineno); }
 
 /* Push address of lineno variable */
 void mu_push_line() { PUSH(&lineno); }
@@ -87,7 +83,7 @@ static void mu_scan(int delim)
     char *last;
 
     /* capture lineno that token begins on */
-    token_lineno = lineno;
+    parsed_lineno = lineno;
 
     for (last = first; last < source.end; last++)
     {
@@ -129,7 +125,7 @@ defer not-defined  now complain is not-defined
 void mu_complain()
 {
     DROP(2);
-    throw("isn't defined");
+    abort_zmsg("isn't defined");
 }
 
 void mu_huh_q()
@@ -196,11 +192,11 @@ void mu_qstack()
     if (SP > S0)
     {
         mu_sp_reset();
-        throw("tried to pop an empty stack");
+        abort_zmsg("tried to pop an empty stack");
     }
     if (SP < SMAX)
     {
-        throw("too many items on the stack");
+        abort_zmsg("too many items on the stack");
     }
 #ifdef DEBUG_STACK
     /* print stack */
@@ -234,7 +230,6 @@ static void muboot_interpret()
     {
         mu_token();
         if (TOP == 0) break;
-        token_first = (char *)ST1;  /* capture for die() */
         (*eat)();           /* eat is a C function pointer! */
         mu_qstack();
     }

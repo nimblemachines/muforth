@@ -70,7 +70,7 @@ void mu_nanosleep()
     while (nanosleep(&ts, &ts) == -1)
     {
         if (errno == EINTR) continue;
-        throw_strerror();
+        abort_strerror();
     }
     DROP(2);
 }

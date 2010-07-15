@@ -52,7 +52,7 @@ void mu_select()
     while((count = select(nfds, readfds, writefds, exceptfds, timeout)) == -1)
     {
         if (errno == EINTR) continue;
-        throw_strerror();
+        abort_strerror();
     }
     TOP = count;
 }

@@ -105,9 +105,8 @@ struct counted_string
     char data[0];
 };
 
-extern char *first;                /* goes from source.start to source.end */
-extern int token_lineno;           /* captured with first character of token */
-extern char *token_first;          /* first char of token - captured for die */
+extern int parsed_lineno;      /* captured from lineno at start of token/parse */
+extern struct string parsed;   /* for errors */
 
 extern cell  *ph0;     /* pointer to start of heap space */
 extern cell  *ph;      /* ptr to next free byte in heap space */
@@ -126,8 +125,8 @@ void execute_xtk(xtk x);
 char *to_counted_string(char *);
 
 /* error.c */
-void die(const char *msg);
-void throw(const char *zstring);
+void die(const char *zmsg);
+void abort_zmsg(const char *zmsg);
 
 /* kernel.c */
 int string_compare(const char *string1, size_t length1,

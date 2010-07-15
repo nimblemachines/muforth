@@ -121,7 +121,7 @@ void mu_create_file()       /* C-string-name - fd */
     fd = open((char *)TOP, O_CREAT | O_TRUNC | O_WRONLY, 0666);
     if (fd == -1)
     {
-        throw_strerror();
+        abort_strerror();
     }
 
     TOP = fd;
@@ -133,12 +133,12 @@ void mufs_open_file()     /* C-string-name flags - fd */
     char *path = find_file((char *)ST1);
 
     if (path == NULL)
-        throw("file not found on search path");
+        abort_zmsg("file not found on search path");
 
     fd = open(path, TOP);
     if (fd == -1)
     {
-        throw_strerror();
+        abort_strerror();
     }
     DROP(1);
     TOP = fd;
@@ -161,7 +161,7 @@ void mu_close_file()
     while (close(TOP) == -1)
     {
         if (errno == EINTR) continue;
-        throw_strerror();
+        abort_strerror();
     }
     DROP(1);
 }
@@ -180,13 +180,13 @@ void mu_read_file()     /* fd - addr len */
     if (fstat(fd, &s) == -1)
     {
         close(fd);
-        throw_strerror();
+        abort_strerror();
     }
     p = (char *) mmap(0, s.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
     if (p == MAP_FAILED)
     {
         close(fd);
-        throw_strerror();
+        abort_strerror();
     }
 
     DROP(-1);
@@ -209,7 +209,7 @@ void mu_read_carefully()    /* fd buffer len -- #read */
     while((count = read(fd, buffer, len)) == -1)
     {
         if (errno == EINTR) continue;
-        throw_strerror();
+        abort_strerror();
     }
     TOP = count;
 }
@@ -232,7 +232,7 @@ void mu_write_carefully()   /* fd buffer len */
         if (written == -1)
         {
             if (errno == EINTR) continue;
-            throw_strerror();
+            abort_strerror();
         }
         buffer += written;
         len -= written;
