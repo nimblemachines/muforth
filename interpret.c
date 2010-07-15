@@ -240,6 +240,7 @@ void muboot_load_file()    /* c-string-name */
 {
     int fd;
 
+    zloading = (char *)TOP;     /* capture file name for errors */
     mu_open_file_ro();
     fd = TOP;
     mu_read_file();

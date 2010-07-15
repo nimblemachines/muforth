@@ -105,8 +105,9 @@ struct counted_string
     char data[0];
 };
 
-extern int parsed_lineno;      /* captured from lineno at start of token/parse */
-extern struct string parsed;   /* for errors */
+extern char *zloading;          /* file being loaded */
+extern int parsed_lineno;       /* captured from lineno at start of token/parse */
+extern struct string parsed;    /* for errors */
 
 extern cell  *ph0;     /* pointer to start of heap space */
 extern cell  *ph;      /* ptr to next free byte in heap space */

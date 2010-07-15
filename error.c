@@ -13,11 +13,18 @@
 #include <errno.h>
 #include <stdio.h>
 
+char *zloading;  /* file being loaded */
+
+void mu_push_zloading()
+{
+    PUSH(&zloading);
+}
+
 /* A bit of a crock, but only called if we haven't set up a catch frame. */
 void die(const char* zmsg)
 {
-    fprintf(stderr, "startup.m4, line %d: %.*s %s\n",
-            parsed_lineno, (int)parsed.length, parsed.data, zmsg);
+    fprintf(stderr, "%s, line %d: %.*s %s\n",
+        zloading, parsed_lineno, (int)parsed.length, parsed.data, zmsg);
     exit(1);
 }
 
