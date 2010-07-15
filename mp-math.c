@@ -120,3 +120,47 @@ void mu_um_star()
 }
 
 
+#ifdef ALTERNATE_MP_MATH
+/*
+ * Let's try using full cells - rather than half cells (bigits) for
+ * addition and negation.
+ */
+void mu_dnegate2()
+{
+    ST1 = -ST1;     /* negate low half */
+    TOP = ~TOP;     /* one's complement high half */
+    if (ST1 == 0) TOP++;    /* propagate carry if low was zero */
+}
+
+void mu_dnegate3()
+{
+    ST1 = -ST1;     /* negate low half */
+    TOP = (ST1 == 0) ? -TOP : ~TOP;
+}
+
+void mu_dplus2()
+{
+    dcell *a = &ST2;    /* point to high half */
+    dcell *b = &TOP;    /* ditto */
+
+    a->lo += b->lo;      /* sum low halves */
+    a->hi += b->hi;      /* ... and high halves */
+    if ((unsigned)a->lo < b->lo)    /* sum u< b, there was a carry! */
+        a->hi++;
+
+    DROP(2);
+}
+
+void mu_dplus3()
+{
+    dcell *a = &ST2;    /* point to high half */
+    dcell *b = &TOP;    /* ditto */
+    int carry;
+
+    a->lo += b->lo;      /* sum low halves */
+    carry = ((unsigned)a->lo < b->lo) ? 1 : 0;    /* sum u< b ==> carry! */
+    a->hi += b->hi + carry;  /* sum high halves and carry */
+
+    DROP(2);
+}
+#endif /* ALTERNATE_MP_MATH */
