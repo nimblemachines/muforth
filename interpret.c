@@ -222,7 +222,7 @@ static void mu_qstack()
  * re-define it in Forth so it executes as "pure" Forth, and we can use
  * Forth-side, return-stack-based exception handling!
  */
-static void mu_interpret()
+static void muboot_interpret()
 {
     source.start = (char *)ST1;
     source.end   = (char *)ST1 + TOP;
@@ -241,7 +241,7 @@ static void mu_interpret()
     DROP(2);
 }
 
-void _mu_load_file()    /* c-string-name */
+void muboot_load_file()    /* c-string-name */
 {
     int fd;
 
@@ -251,7 +251,7 @@ void _mu_load_file()    /* c-string-name */
 
     lineno = 1;
 
-    mu_interpret();
+    muboot_interpret();
     PUSH(fd);
     mu_close_file();
 }

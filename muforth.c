@@ -51,7 +51,7 @@ void muforth_init()
 void muforth_start()
 {
     PUSH("startup.mu4");
-    mu_load_file();
+    muboot_load_file();
     mu_start_up();
 }
 
