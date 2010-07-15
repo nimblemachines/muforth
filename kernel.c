@@ -149,6 +149,59 @@ void mu_slash_mod()  /* n1 n2 -- m q */
     TOP = quot;
 }
 
+#ifdef GCC_IS_COMPLETELY_FUCKED
+void mu_umstar()
+{
+    uint64_t prod = (unsigned)ST1 * TOP;
+    cell *p = &prod;
+    ST1 = p[0];     /* low half of product */
+    TOP = p[1];     /* high half */
+}
+
+void mu_mstar()
+{
+    int64_t prod = ST1 * TOP;
+    cell *p = &prod;
+    ST1 = p[0];     /* low half of product */
+    TOP = p[1];     /* high half */
+}
+
+void mu_fm_slash_mod()  /* dn1 n2 -- m q */
+{
+    cell num[2];    /* numerator (dividend) */
+    cell mod;
+    cell quot;
+    int64_t dividend;
+
+    /* Set up 64-bit dividend */
+    num[0] = ST2;   /* low half */
+    num[1] = ST1;   /* high half */
+    quot = (int64_t)num[0] / TOP;
+    mod  = (int64_t)num[0] % TOP;
+
+    /* Set up 64-bit dividend */
+    dividend = ST2 /* low */ + ((int64_t)ST1 << 32) /* high */ ;
+    quot = dividend / TOP;
+    mod  = dividend % TOP;
+#ifdef DIVIDE_IS_SYMMETRIC
+    /*
+     * We now have the results of a stupid symmetric division, which we
+     * must convert to floored. We only do this if the modulus was non-zero
+     * and if the dividend and divisor had opposite signs.
+     */
+    if (mod != 0 && (ST1 ^ TOP) < 0)
+    {
+        quot -= 1;
+        mod  += TOP;
+    }
+#endif
+
+    ST1 = mod;
+    TOP = quot;
+}
+#endif /* GCC_IS_COMPLETELY_FUCKED */
+
+
 void mu_string_equal()   /* a1 len1 a2 len2 -- flag */
 {
     if (ST2 != TOP)
