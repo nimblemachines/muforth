@@ -1067,48 +1067,48 @@ forth
    over +  ( start end)  source 2!
    interpret ;
 
+: check-depth  ( saved-depth)
+   depth swap -
+   =if  ."  [ depth " .  ." ]" ^  then  drop ;
 
-( XXX These are a crock, and they will go away - but keeping them right now
-  allows me to test nested loading of files, using existing load files,
-  such as target/ARM/load.mu4.)
+: show-depths  ( saved)   .  depth . ;
 
-: file[#  ( a u)  type ;
-: #]file  ;
+( XXX I was hoping to use on-exit to check stack depths, but I can't seem
+  to get them to reconcile. More research is indicated. ;-)
 
-variable zloading ( C-string name of file being loaded)
+variable zloading    ( C-string name of file being loaded)
 : load-file  ( z")
+   -- depth  on-exit check-depth
+   -- depth  on-exit show-depths
    dup open-file-ro ( fd)  dup on-exit close-file
    zloading preserve  swap zloading !
    line preserve  1 line !
-   read-file ( a u)
-   evaluate ;
-
-: ldq  ( load quietly)
-   token _string ( z")
    radix preserve  decimal
-   fd-out preserve  >stderr  load-file ;
+   fd-out preserve  >stderr
+   read-file ( a u)  evaluate ;
 
-( Consumes a token - a filename - and loads it. Also brackets any output
-  with double parens, checks that the stack depth stayed the same, and
-  calculates how much dictionary space was consumed.)
+( Consumes a token - a filename - and loads it.)
+: ld  token _string ( z")  load-file ;
 
-( XXX use on-exit to calculate this; the file loaded opts in)
-: ldv  ( load verbosely)
-   cr ." (( "
-   here push
-   depth push  ldq  depth  pop -
-      =if  cr ." stack depth changed by " dup .  then  drop
+( how much dictionary space was consumed?)
+: show-consumed  ( here)
+   radix preserve  decimal
+   fd-out preserve  >stderr
+   here swap - .  ." bytes ))" ;
 
-   ( how much dictionary space was consumed?)
-   here pop - .  ." bytes ))" ;
+( Print some descriptive text and the amount of dictionary space consumed
+  by loading, bracketed within double parens.)
 
-: ld  ldv ;
+: loading"
+   cr ." (( "  \f ."
+   here   on-exit show-consumed  interpret ;
+
 
 ( Define words for use with the conditional compilation words.  No matter
   what chain we are compiling into, define the word in .forth.)
 
 : -d   current preserve  forth  -1 constant ;
-: -f  ( load file)  ldq ;
+: -f  ( load file)  ld ;
 
 : banner
 ( Print banner.)
@@ -1125,11 +1125,12 @@ variable zloading ( C-string name of file being loaded)
 
 ( Don't print file & lineno if interactive - ie, zloading is zero)
 : .where
-   zloading @  =if  zcount type  ." , line " @line decimal u. ." : "  ^  then
+   zloading @  =if  zcount type  ." , line "
+   @line  radix preserve decimal u.  ." : "  ^  then
    drop ;
 
 -: ( z")
-   >stderr  cr  .where  parsed type space  zcount type  unwind ;  'abort !
+   >stderr  cr  .where  parsed type space  zcount type  cr  unwind ;   'abort !
 
 : quit
    begin  cr  <stdin  typing evaluate  >stderr  prompt  again  [
@@ -1137,10 +1138,9 @@ variable zloading ( C-string name of file being loaded)
 
 : warm
    decimal \ [
-   -- captured off
    >stderr banner
    command-line count  evaluate
-   begin  quit  ( XXX set up fp here!!)  again  [
+   begin  quit  again  [
 
 ( Identify ourselves.)
 -d  muFORTH
