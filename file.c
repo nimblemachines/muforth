@@ -127,7 +127,7 @@ void mu_create_file()       /* C-string-name - fd */
     TOP = fd;
 }
 
-void mufs_open_file()     /* C-string-name flags - fd */
+static void mu_open_file()     /* C-string-name flags - fd */
 {
     int fd;
     char *path = find_file((char *)ST1);
@@ -137,9 +137,8 @@ void mufs_open_file()     /* C-string-name flags - fd */
 
     fd = open(path, TOP);
     if (fd == -1)
-    {
         abort_strerror();
-    }
+
     DROP(1);
     TOP = fd;
 }
@@ -147,13 +146,13 @@ void mufs_open_file()     /* C-string-name flags - fd */
 void mu_open_file_ro()
 {
     PUSH(O_RDONLY);
-    mufs_open_file();
+    mu_open_file();
 }
 
 void mu_open_file_rw()
 {
     PUSH(O_RDWR);
-    mufs_open_file();
+    mu_open_file();
 }
 
 void mu_close_file()
