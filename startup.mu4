@@ -424,41 +424,135 @@ compiler
 forth
 
 
-( Fluid, or dynamic, binding of global variables.)
+( Trying out, after all these years, the techniques that Klaus Schleisiek
+  presented in 1984 [at FORML] and that I read about in 1993.
 
-( A common pattern in muFORTH is code like this:
- 
-  radix @ push   do-something   pop radix !
+  The basic idea is that, in addition to return address pointers [saved
+  IPs], there are stack frames on the return stack. These can be for any
+  purpose, but we're interested here the following: local variable storage,
+  "fluid" rebinding of variables - aka dynamic scoping, and
+  cleanup-on-return - eg, to close a file that we opened.)
 
-  This is clumsy, and also bad style. What if do-something throws an
-  exception after setting the radix? radix will remain set to its new
-  value. Much better is the idiom:
+( Here is a picture of the return stack, with high memory towards the top of
+  the page, and low memory further down:
 
-  radix @ push   ['] do-something  catch  pop radix !  [ re-] throw
+  ^   |                    |
+  |   +--------------------+
+  |   |  prev return addr  |
+  |   +--------------------+
+  |   |        ...         |   several cells could be here; depends on the
+  |   +--------------------+   type of frame
+  |   |        ...         |
+  |   +--------------------+
+  |   |   cfa of cleanup   |
+  |   +--------------------+
+  +---+     prev frame     |<--- fp
+      +--------------------+
+      |    ip of remove    |<--- rp      remove just calls unlink
+      +--------------------+                                          )
 
-  This code resets radix in the event of an exception, but it's still
-  clumsy. What I really want to be able to do is to save the old value of
-  radix, set it for the duration of the executing word, and reset it to its
-  saved value when the executing word finishes - either through a "normal"
-  exit, or by throwing an exception.
+variable fp    ( the "top" - most recently pushed - frame)
+               ( fp points to a frame ptr, which pts to a frame ptr...)
 
-  After puzzling over this for a few days I realised that I could do this
-  with catch and throw. The new word "preserve" shows how.)
+( link creates a new frame. It fetches the cfa of the following word and
+  pushes it onto the return stack. This is the cleanup routine. Then it
+  links this frame into the list rooted at fp, and then returns to its
+  caller, skipping the following cfa. link is called by a word that builds
+  a new stack frame.)
 
-( Execute starting from the IP on the stack.)
-: execute-ip  ( ip -)  push ;
+: link     r> dup @  >r         ( fetch following cfa & push to r)
+           fp @ >r  rp@ fp !    ( link this frame to previous)
+           cell+ >r             ( skip fetched cfa) ;
 
-( Preserve the value of the variable whose address is on the stack. When
-  the word that called "preserve" exits, or in the case of a call to throw,
-  the value is reset.)
+( unlink undoes what link did. It unlinks the frame from the list rooted at
+  fp, and then runs the cleanup routine, which will do whatever is
+  necessary to de-allocate the frame and undo any state changes made by the
+  word that called link.)
 
-( XXX FRAME goes away with new stack frame stuff)
-: preserve  ( a -)
-   pop  ( ip of following word)  swap ( ip a)
-   dup @ 2push ( save addr and value)
-   execute-ip  ( execute starting with following word)
-   2pop  swap ! ( reset value) ;
- 
+: unlink   r>  ( save return address)
+           fp @ rp!  r> fp !    ( unlink frame)
+           r> execute           ( execute cleanup word)
+           >r  ( restore return address) ;
+
+( unwind is useful in the context of exceptions. It starts at fp and
+  unlinks each frame in turn until fp points to a frame with a zero link.)
+
+: unwind   r>  ( save return address)
+           -- begin  fp @ @  while  unlink  repeat
+           begin  fp @  while  unlink  repeat
+           >r  ( restore return address) ;
+
+
+create remove  -]  unlink ;   ( remove pushes IP when executed!)
+
+
+( Now some interesting applications.)
+
+-- -----------------------------------------------------------------------
+-- Fluid binding (dynamically-scoped variables)
+-- -----------------------------------------------------------------------
+( Restore saved value of a variable.)
+: restore
+   r> ( ra)   r> r>  ( value addr) !   >r ( ra) ;
+
+( Preserve the value of a variable for the duration of the execution of the
+  calling word.)
+
+: preserve  ( addr)  ( address of variable)
+   r> ( ra)
+   over ( addr) >r  swap @  ( value)  >r
+   link restore ( push cleanup)
+   remove >r    ( normal return - unlink and cleanup)
+   >r ( ra) ;
+
+
+-- -----------------------------------------------------------------------
+-- Cleanup on return
+-- -----------------------------------------------------------------------
+: cleanup
+   r> ( ra)   r> ( value)  r>  ( cfa) execute   >r ( ra) ;
+
+( Push value and following cfa to R stack; on exit or unwind, execute cfa
+  with value on the stack.)
+
+: on-exit  ( value)
+   r> ( ra)
+   dup @  >r       ( fetch following cfa & push to r)
+   swap >r         ( push value)
+   link cleanup    ( push code to undo whatever needs undoing)
+   remove >r       ( normal return - unlink and cleanup)
+   cell+ >r ( ra)  ( skip fetched cfa) ;
+
+
+-- -----------------------------------------------------------------------
+-- Local variable frames
+-- -----------------------------------------------------------------------
+( Deallocate local variables.)
+: unroom
+   r> ( ra)
+   r> ( #cells)  rp+!  ( rp+! takes cell count!)
+   >r ( ra) ;
+
+( Allocate space for local variables.)
+( NOTE: do -not- try to use a for loop to push cells! It doesn't work! The
+  return stack is being used to store the loop index, but you're busy
+  pushing stuff there! All hell breaks loose! If you absolutely want to
+  zero locals as they are allocated, do a begin/until loop with the count
+  on the data stack.)
+
+: room  ( #cells)
+   r> ( ra)
+
+   ( choose one! mark, zero, allocate)
+   -- swap dup  begin  "55aa55aa >r  1-  dup 0= until  drop  ( mark)
+   -- swap dup  begin          0 >r  1-  dup 0= until  drop  ( zero)
+   swap dup  negate rp+!  ( allocate)
+
+   ( #cells)  >r
+   link unroom
+   remove >r  ( normal return - unlink and cleanup)
+   >r ( ra) ;
+
 
 ( Number input)
 variable dpl    ( location of , or . )
@@ -882,16 +976,6 @@ forth
 : .ifndef  \ .ifndef ;
 
 
-( A defining word that makes words that return -1)
-: trues   -1 constant ;
-
-( Define words for use with the conditional compilation words.  No matter
-  what chain we are compiling into, define the word - using "trues" - in
-  .forth.)
-
-: define   current preserve  forth  trues ;
-
-
 ( Two useful sets of units; these adhere to SI and IEC guidelines. ;-)
 ( K is uppercased so as not to conflict with do-loop's k)
 : K   1000 * ;  ( "kilo": 10^3.)
@@ -976,14 +1060,12 @@ forth
 : interpret
    begin  token =while  consume  ?stack  repeat  2drop ;
 
-: evaluate  ( a u)  ( XXX)
-   source 2@ 2push     ( save source)
-   first @ push        ( save our place in the input)
+: evaluate  ( a u)
+   source preserve  source cell+ preserve  ( save input source)
+   first preserve                ( save our place in the input)
    over first !
    over +  ( start end)  source 2!
-   interpret
-   pop first !         ( restore prev first)
-   2pop source 2! ;    ( restore prev source)
+   interpret ;
 
 : quit
    begin  cr  <stdin  >stdout  typing evaluate  >stderr  prompt  again  [
@@ -999,19 +1081,17 @@ forth
 
 
 ( This is the same as the C version, except calls our new evaluate.)
-: load-file  ( z")  ( XXX needs to be wired into error system)
-   zloading @ push  dup zloading !
-   line @ push  1 line !
-   open-file-ro ( fd)  push
-   r@ read-file ( a u)
-   evaluate
-   pop close-file
-   pop line !  pop zloading ! ;
+: load-file  ( z")
+   dup open-file-ro ( fd)  dup on-exit close-file
+   zloading preserve  swap zloading !
+   line preserve  1 line !
+   read-file ( a u)
+   evaluate ;
 
 : ldq  ( load quietly)
    token _string ( z")
    radix preserve  decimal
-   fd-out preserve  >stderr     load-file ;
+   fd-out preserve  >stderr  load-file ;
 
 ( Consumes a token - a filename - and loads it. Also brackets any output
   with double parens, checks that the stack depth stayed the same, and
@@ -1028,11 +1108,12 @@ forth
 
 : ld  ldv ;
 
-( for command-line args)
+( Define words for use with the conditional compilation words.  No matter
+  what chain we are compiling into, define the word in .forth.)
+
+: -d   current preserve  forth  -1 constant ;
 : -f  ( load file)  ldq ;
-: --file  -f  ;
-: -d  ( define)  define  ;
-: --define  -d  ;
+
 
 ( 2004-jun-26. error now expects a cell-length-prefixed compiled string.)
 
@@ -1075,4 +1156,4 @@ forth
    begin  ['] quit carefully  again  [
 
 ( Identify ourselves.)
-trues muFORTH
+-d  muFORTH
