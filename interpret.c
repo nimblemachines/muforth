@@ -27,7 +27,6 @@ struct imode        /* interpreter mode */
 static struct text source;
 static char *first;         /* goes from source.start to source.end */
 
-char *zloading;             /* the file we're currently loading; C string */
 static int lineno = 1;      /* line number - incremented for each newline */
 int parsed_lineno;          /* captured with first character of token */
 struct string parsed;       /* for errors */
@@ -271,7 +270,6 @@ static void muboot_interpret()
 void muboot_load_file()    /* c-string-name */
 {
     int fd;
-    char *newfile = (char *)TOP;
 
     mu_open_file_ro();
     fd = TOP;
@@ -283,7 +281,6 @@ void muboot_load_file()    /* c-string-name */
 
     /* wait to reset these until just before we evaluate the new file */
     lineno = 1;
-    zloading = newfile;
     first = source.start;
 
     muboot_interpret();

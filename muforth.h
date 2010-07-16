@@ -106,7 +106,6 @@ struct counted_string
     char data[0];
 };
 
-extern char *zloading;          /* the file we're currently loading; C string */
 extern int parsed_lineno;       /* captured with first character of token */
 extern struct string parsed;    /* for errors */
 

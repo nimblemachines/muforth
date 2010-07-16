@@ -1067,10 +1067,6 @@ forth
    over +  ( start end)  source 2!
    interpret ;
 
-: quit
-   begin  cr  <stdin  >stdout  typing evaluate  >stderr  prompt  again  [
-   ( infinite loop, until error... )
-
 
 ( XXX These are a crock, and they will go away - but keeping them right now
   allows me to test nested loading of files, using existing load files,
@@ -1079,8 +1075,7 @@ forth
 : file[#  ( a u)  type ;
 : #]file  ;
 
-
-( This is the same as the C version, except calls our new evaluate.)
+variable zloading ( C-string name of file being loaded)
 : load-file  ( z")
    dup open-file-ro ( fd)  dup on-exit close-file
    zloading preserve  swap zloading !
@@ -1097,6 +1092,7 @@ forth
   with double parens, checks that the stack depth stayed the same, and
   calculates how much dictionary space was consumed.)
 
+( XXX use on-exit to calculate this; the file loaded opts in)
 : ldv  ( load verbosely)
    cr ." (( "
    here push
@@ -1114,27 +1110,6 @@ forth
 : -d   current preserve  forth  -1 constant ;
 : -f  ( load file)  ldq ;
 
-
-( 2004-jun-26. error now expects a cell-length-prefixed compiled string.)
-
-0 .if
-
-( XXX save and restore radix?)
-( Don't print lineno if interactive - zloading is zero)
-: .lineno
-   zloading  =if  zcount type  ." , line " line decimal u. ." : "  ^  then
-   drop ;
-
-: error
-   >stderr
-   cr  .lineno  parsed type space  zmsg zcount type  ( cr) captured off ;
-
-: carefully  catch  if  error ^  then ;
-
-.then
-
-: carefully  execute ;
-
 : banner
 ( Print banner.)
  ." muFORTH/ITC "
@@ -1148,12 +1123,24 @@ forth
  ." To read more about muFORTH, type "
        char " emit  ." info" char " emit ." ." cr ;
 
+( Don't print file & lineno if interactive - ie, zloading is zero)
+: .where
+   zloading @  =if  zcount type  ." , line " @line decimal u. ." : "  ^  then
+   drop ;
+
+-: ( z")
+   >stderr  cr  .where  parsed type space  zcount type  unwind ;  'abort !
+
+: quit
+   begin  cr  <stdin  typing evaluate  >stderr  prompt  again  [
+   ( infinite loop, until error... )
+
 : warm
    decimal \ [
    -- captured off
    >stderr banner
-   >stdout command-line count  ['] evaluate carefully
-   begin  ['] quit carefully  again  [
+   command-line count  evaluate
+   begin  quit  ( XXX set up fp here!!)  again  [
 
 ( Identify ourselves.)
 -d  muFORTH
