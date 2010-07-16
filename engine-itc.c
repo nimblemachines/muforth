@@ -9,14 +9,6 @@
 
 #include "muforth.h"
 
-/*
- * ITC code pointers, so we can create XTKs for these words. Their code
- * pointers also exist in the dictionary, but we'd have to query for them
- * and still store them somewhere. This is easier.
- */
-pw p_mu_nope = &mu_nope;
-pw p_muboot_die = &muboot_die;
-
 void mu_execute() { EXECUTE; }
 
 /*

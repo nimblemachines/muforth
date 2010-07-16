@@ -18,24 +18,32 @@
 #include <stdio.h>
 #endif
 
+struct imode        /* interpreter mode */
+{
+    xtk eat;        /* consume one token */
+    xtk prompt;     /* display a mode-specific prompt */
+};
+
 static struct text source;
 static char *first;         /* goes from source.start to source.end */
 
+char *zloading;             /* the file we're currently loading; C string */
 static int lineno = 1;      /* line number - incremented for each newline */
-int parsed_lineno;          /* captured from lineno at start of token/parse */
+int parsed_lineno;          /* captured with first character of token */
 struct string parsed;       /* for errors */
 
-/* Push address of lineno variable */
-void mu_push_line() { PUSH(&lineno); }
+/* Push lineno variable */
+void mu_push_line()
+{
+    PUSH(&lineno);
+}
 
-/*
- * This isn't exactly ANS-kosher, since traditionally >IN contained an
- * offset within the input text that went from 0 to length-1; here it goes
- * from source.start to source.end-1, but the important effect is that we
- * can do this:
- *
- * >in @ <parse> >in ! <re-parse>
- */
+/* Push captured line number */
+void mu_at_line()
+{
+    PUSH(parsed_lineno);
+}
+
 void mu_first()
 {
     PUSH(&first);
@@ -168,17 +176,39 @@ static void muboot_compile_token()
     mu_complain();
 }
 
-static void (*eat)() = &muboot_interpret_token;
+/*
+ * Remember that the second part of a struct imode is a pointer to code to
+ * print a mode-specific prompt. The muforth kernel lacks decent I/O
+ * facilities. Until these are defined in startup.mu4, the prompts are
+ * noops.
+ */
+CODE(muboot_interpret_token)
+CODE(muboot_compile_token)
 
-/* XXX: should these two be deferred? */
+static struct imode forth_interpreter  = { XTK(muboot_interpret_token), XTK(mu_nope) };
+static struct imode forth_compiler     = { XTK(muboot_compile_token),   XTK(mu_nope) };
+
+static struct imode *state = &forth_interpreter;
+
+
+void mu_consume()
+{
+    execute_xtk(state->eat);      /* call the current consume function */
+}
+
+void mu_push_state()
+{
+    PUSH(&state);
+}
+
 void mu_compiler_lbracket()
 {
-    eat = &muboot_interpret_token;
+    state = &forth_interpreter;
 }
 
 void mu_minus_rbracket()
 {
-    eat = &muboot_compile_token;
+    state = &forth_compiler;
 }
 
 void mu_push_parsed()
@@ -217,37 +247,47 @@ void mu_qstack()
  * This version of interpret is -not- exported to Forth! We are going to
  * re-define it in Forth so it executes as "pure" Forth, and we can use
  * Forth-side, return-stack-based exception handling!
+ *
+ * Oddly enough, the Forth implementation will be be *exactly* the same!
+ * The only difference is that it will be executing in Forth, so we can use
+ * R stack tricks to change its behaviour.
  */
 static void muboot_interpret()
 {
-    source.start = (char *)ST1;
-    source.end   = (char *)ST1 + TOP;
-    DROP(2);
-
-    first = source.start;
-
     for (;;)
     {
         mu_token();
         if (TOP == 0) break;
-        (*eat)();           /* eat is a C function pointer! */
+        mu_consume();
         mu_qstack();
     }
     DROP(2);
 }
 
+/*
+ * This will also be re-implemented in Forth, but with nice nesting of
+ * various context variables: radix, first, source, etc.
+ */
 void muboot_load_file()    /* c-string-name */
 {
     int fd;
+    char *newfile = (char *)TOP;
 
-    zloading = (char *)TOP;     /* capture file name for errors */
     mu_open_file_ro();
     fd = TOP;
     mu_read_file();
 
+    source.start = (char *)ST1;
+    source.end   = (char *)ST1 + TOP;
+    DROP(2);
+
+    /* wait to reset these until just before we evaluate the new file */
     lineno = 1;
+    zloading = newfile;
+    first = source.start;
 
     muboot_interpret();
+
     PUSH(fd);
     mu_close_file();
 }

@@ -56,7 +56,8 @@ extern xtk  **RP;     /* return stack pointer */
  * we have to search for them; so we simply define them. They are
  * conventionally named "p_<mu_name>".
  */
-#define XTK(w)   (&p_ ## w)   /* make an execution token from a word's name */
+#define CODE(w)  pw p_ ## w = &(w);     /* declare a code field for a word */
+#define XTK(w)   (&p_ ## w)  /* make an execution token from a word's name */
 
 #define EXECUTE   execute_xtk((xtk)POP)
 #define CALL(x)   (W = (xtk)(x), (**W)())
@@ -105,8 +106,8 @@ struct counted_string
     char data[0];
 };
 
-extern char *zloading;          /* file being loaded */
-extern int parsed_lineno;       /* captured from lineno at start of token/parse */
+extern char *zloading;          /* the file we're currently loading; C string */
+extern int parsed_lineno;       /* captured with first character of token */
 extern struct string parsed;    /* for errors */
 
 extern cell  *ph0;     /* pointer to start of heap space */

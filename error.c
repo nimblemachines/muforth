@@ -34,6 +34,7 @@ void muboot_die()      /* zmsg */
 }
 
 /* abort() is deferred via this variable */
+CODE(muboot_die)
 static xtk xtk_abort = XTK(muboot_die);
 
 void mu_abort()     /* zmsg */

@@ -111,6 +111,7 @@ struct dict_entry
 static int current_chain = FORTH_CHAIN;
 
 /* hook called when a new name is created */
+CODE(mu_nope)
 static xtk xtk_new_hook = XTK(mu_nope);
 
 /* bogus C-style dictionary init */
