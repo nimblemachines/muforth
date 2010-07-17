@@ -85,30 +85,28 @@ static int try_path(char *p)
  *   $HOME/muforth/path
  * and nowhere else!
  */
-static char* find_file(char *path)
+static char* find_file(char *path, char *pathbuf, int bufsize)
 {
-    static char catpath[1024];
-    char *end = catpath+1024;
     char *p;
 
+    /* If path is absolute, just return it as is. */
+    if (*path == '/') return path;
+
     /* start with path at end, if it fits! */
-    path = path_prefix(path, end, '\0', catpath);
+    path = path_prefix(path, pathbuf+bufsize, '\0', pathbuf);
     if (path == NULL) return NULL;
 
     /* now, for each prefix, push it onto front of path and try it */
     /* first, try bare path */
     if (try_path(path)) return path;
 
-    /* If path is absolute, stop trying. */
-    if (*path == '/') return NULL;
-
     /* next, try $MUFORTH/path */
-    p = path_prefix(getenv("MUFORTH"), path, '/', catpath);
+    p = path_prefix(getenv("MUFORTH"), path, '/', pathbuf);
     if (try_path(p)) return p;
 
     /* last, try $HOME/muforth/path */
-    p = path_prefix("muforth", path, '/', catpath);
-    p = path_prefix(getenv("HOME"), p, '/', catpath);
+    p = path_prefix("muforth", path, '/', pathbuf);
+    p = path_prefix(getenv("HOME"), p, '/', pathbuf);
     if (try_path(p)) return p;
 
     return NULL;    /* not found */
@@ -120,9 +118,7 @@ void mu_create_file()       /* C-string-name - fd */
 
     fd = open((char *)TOP, O_CREAT | O_TRUNC | O_WRONLY, 0666);
     if (fd == -1)
-    {
-        abort_strerror();
-    }
+        return abort_strerror();
 
     TOP = fd;
 }
@@ -130,14 +126,15 @@ void mu_create_file()       /* C-string-name - fd */
 static void mu_open_file()     /* C-string-name flags - fd */
 {
     int fd;
-    char *path = find_file((char *)ST1);
+    char pathbuf[1024];
+    char *path = find_file((char *)ST1, pathbuf, 1024);
 
     if (path == NULL)
-        abort_zmsg("file not found on search path");
+        return abort_zmsg("file not found on search path");
 
     fd = open(path, TOP);
     if (fd == -1)
-        abort_strerror();
+        return abort_strerror();
 
     DROP(1);
     TOP = fd;
@@ -160,7 +157,7 @@ void mu_close_file()
     while (close(TOP) == -1)
     {
         if (errno == EINTR) continue;
-        abort_strerror();
+        return abort_strerror();
     }
     DROP(1);
 }
@@ -179,13 +176,13 @@ void mu_read_file()     /* fd - addr len */
     if (fstat(fd, &s) == -1)
     {
         close(fd);
-        abort_strerror();
+        return abort_strerror();
     }
     p = (char *) mmap(0, s.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
     if (p == MAP_FAILED)
     {
         close(fd);
-        abort_strerror();
+        return abort_strerror();
     }
 
     DROP(-1);
@@ -208,7 +205,7 @@ void mu_read_carefully()    /* fd buffer len -- #read */
     while((count = read(fd, buffer, len)) == -1)
     {
         if (errno == EINTR) continue;
-        abort_strerror();
+        return abort_strerror();
     }
     TOP = count;
 }
@@ -231,7 +228,7 @@ void mu_write_carefully()   /* fd buffer len */
         if (written == -1)
         {
             if (errno == EINTR) continue;
-            abort_strerror();
+            return abort_strerror();
         }
         buffer += written;
         len -= written;
