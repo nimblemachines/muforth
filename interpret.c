@@ -221,11 +221,11 @@ void mu_qstack()
     if (SP > S0)
     {
         mu_sp_reset();
-        abort_zmsg("tried to pop an empty stack");
+        return abort_zmsg("tried to pop an empty stack");
     }
     if (SP < SMAX)
     {
-        abort_zmsg("too many items on the stack");
+        return abort_zmsg("too many items on the stack");
     }
 #ifdef DEBUG_STACK
     /* print stack */
