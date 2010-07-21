@@ -46,6 +46,7 @@ code BdmDriveLow
 
 ( Called when BDM loop starts up; return to canonical state.)
 code BdmHiZ
+   TSC3 ) clr                 -- take pin from timer
    PortBinit # PortB ) mov    -- setup known state
    BKGD_H # DirB ) mov        -- before tri-stating, drive high briefly
    DirB ) clr  rts  ;c
@@ -124,24 +125,44 @@ code BdmRx  ( recvd byte to 0,x)
    .a pul
    1 # aix   rts  ;c
 
-code SyncWait
-   .a clr   begin  nsa nsa  .a decz?  until  rts  ;c
+code SyncWait  -- clobbers A
+   .a clr
+   begin
+      TSC3 7 bclr? while ( edge not triggered)
+      .a psh  .x psh  mul  .x pul  .a pul  ( 14~)
+   .a decz?  until  then  rts  ;c
 
 code SyncPulse
-   TSC ) clr  -- start timer
-   08 # TSC3 ) mov   -- capture falling edge on BKGD in CH3 (PB7)
-   04 # TSC2 ) mov   -- capture rising edge on BKGD in CH2 (PB6)
-   BKGD_L # DirB ) mov   -- drive BKGD_L
-   SyncWait bsr
-   BKGD_H # DirB ) mov   -- drive BKGD_H  Speedup pulse!
-   DirB ) clr            -- tri-state BKGD
-   SyncWait bsr
+   TSC ) clr            -- start timer; clock from bus clock
+   BdmHiZ ) jsr         -- start in a known state
+   BdmDriveLow ) jsr
+   SyncWait bsr         -- drive BKGD low for a long time
+   BdmHiZ ) jsr         -- drive high briefly before tristating
+   08 # TSC3 ) mov      -- capture falling edge on BKGD in CH3 (PB7)
 
-   ( have to read capture H bytes first)
-   TCH2H ) lda   .a psh
-   TCH3H ) lda   0 ,x sta
-   TCH2L ) lda   TCH3L ) sub   1 ,x sta
-        .a pul      0 ,x sbc   0 ,x sta
+   -- now target waits 16 BDM cycles, then drives BKGD low for 128
+   SyncWait bsr
+   TSC3 7 bset? if  ( falling edge triggered)
+      ( On 908 have to read capture H bytes first)
+      TCH3H ) lda   0 ,x sta
+      TCH3L ) lda   1 ,x sta
+      04 # TSC3 ) mov   -- capture rising edge on BKGD in CH3 (PB7)
+      SyncWait bsr
+      TSC3 7 bset? if  ( rising edge triggered)
+         ( If both falling and rising triggered, calculate difference;
+           otherwise return 0.)
+         ( On 908 have to read capture H bytes first)
+         TCH3H ) lda   .a psh
+         TCH3L ) lda   1 ,x sub   1 ,x sta
+              .a pul   0 ,x sbc   0 ,x sta
+         TSC3 ) clr        -- take pin from timer
+         rts
+      then
+    then
+
+   ( return 0)
+   1 ,x clr  0 ,x clr
+   TSC3 ) clr        -- take pin from timer
    rts  ;c
 
 comment
