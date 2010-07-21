@@ -148,10 +148,7 @@ comment
   word32: 1*(8 + 4) = 12
  ====================================================
 
-variable #field ( width of each byte, rendered)
-( XXX This doesn't work if we put spacing before chars. Need to use
-field-1,and put spacing after chars, since the addr it will be 1..16 rather
-than 0..15!)
+variable #field  ( width of each byte, rendered)
 
 : .padding   ( a - a)
    .nesting  dup  15 and  dup  #field @ *  swap 2/ 2/ +  spaces ;
@@ -167,55 +164,55 @@ than 0..15!)
 : >letter   ( ch - ch')  dup letter?   if ^ then  drop bl  ;
 : >graphic  ( ch - ch')  dup graphic?  if ^ then  drop bl  ;
 
-defer .byte
 : .char  >graphic  1 |_field|  emit ;
 : .hex-byte        2 |_field|  .h8 ;
 : .oct-byte        3 |_field|  .o8 ;
 
-defer decorate-cell  ( a+ n #spaces - a+ n)  ' spaces is decorate-cell
-: .hex-cell   ( a+ n - a+)
-   #field @ 2 - |cell @ *  decorate-cell  .hcell ;
-
-defer .name  ( a+ n - a+)  ' drop is .name
-
+defer .byte
 : .bytes  ( a)       .padding  #bytes for
    |c@+  .byte  .spacing  next  drop  ;
 
 defer .cell ( a+ n - a+)
-: .cells  ( a)  dup _addr
+: .cells  ( a)
    |cell @ negate and  .padding  #bytes |cell @ / for
    |@+  .cell  .spacing  next  drop  ;
 
-: .hex-cells  ( a)  ['] .hex-cell is .cell  .cells ;
+.ifdef ARM-see
+defer .name  ( a+ n - a+)  ' drop is .name
 : .names      ( a)  ['] .name     is .cell  .cells ;
+.then
 
-: .chars      ( a)  dup _addr  ['] .char     is .byte  .bytes ;
-: .hex-bytes  ( a)  dup .addr  ['] .hex-byte is .byte  .bytes ;
-: .oct-bytes  ( a)  dup .addr  ['] .oct-byte is .byte  .bytes ;
+defer decorate-cell  ( a+ n #spaces - a+ n)
+' spaces is decorate-cell
 
-defer .other  ( hex-bytes or octal-bytes, depending on arch)
-: .other!  #field !  is .other ;
-: octal-bytes  ['] .oct-bytes   4  .other!  ;
-: hex-bytes    ['] .hex-bytes   3  .other!  ;
--- octal-bytes  ( only for 8080 and pdp-11 !!)
-hex-bytes
+: .hex-cell   ( a+ n - a+)
+   #field @ 2 - |cell @ *  decorate-cell  .hcell ;
 
-: 1dump  ( a - a ea)
-   radix preserve
-   ( a)  dup |@  ( a ea)  push
-   dup .chars
-   dup .other
-   -- dup .hex-bytes  
-   -- dup .oct-bytes
-   dup .hex-cells
-   dup .names
-   pop ;
+: .hex-cells  ( a)  ['] .hex-cell is .cell  .cells ;
+
+: .chars      ( a)  ['] .char     is .byte  .bytes ;
+: .hex-bytes  ( a)  ['] .hex-byte is .byte  .bytes ;
+: .oct-bytes  ( a)  ['] .oct-byte is .byte  .bytes ;
+
+( Set field-width for bytes so everything lines up nicely.)
+: octal-bytes  4  #field ! ;  ( only for 8080 and pdp-11 !!)
+: hex-bytes    3  #field ! ;
+
+defer 1dump  ( a - a ea)
+( Default behaviour for host:)
+-: ( a - a ea)
+   hex-bytes
+   dup _addr  dup .chars
+   dup .addr  dup .hex-bytes
+   dup _addr  dup .hex-cells
+   dup |@  ( a ea) ;  is 1dump
 
 ' 1dump '1dump !
 : du   ( a - a')  ['] 1dump 16 inspect  ;
 
 ( Batch mode)
 : dumps   ( start limit)
+   radix preserve
    inspect-sp off
    swap  begin  1dump drop  16 +  2dup u<  until  2drop  ;
 
