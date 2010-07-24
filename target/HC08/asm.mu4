@@ -18,10 +18,7 @@ hex  ( it rules!)
 : b,  |c, ;
 : w,  |, ;
 
-
-( The bulk of errors are using an illegal operand - H register or
-  addressing mode - for a particular type of instruction. Hence:)
-: ill   error" illegal operand" ;
+: ill   error" illegal addressing mode" ;
 
 comment
 ===========================================================================
@@ -76,7 +73,7 @@ assembler
 
 40 constant .a
 50 constant .x
-60 constant .h  ( fake column)
+60 constant .h  ( fake column - contiguous with .a and .x to make clr easier)
 forth
 
 ( Convert column to index)
@@ -118,34 +115,46 @@ assembler
 9f inh txa
 
 
+comment 1ops-and-2ops
+
+  Addressing modes that actually address memory, rather than specify a
+  register, are represented by the column number in the opcode - the high
+  nybble.
+ 
+  But not all modes that are allowed for 2ops are allowed for 1ops. So we
+  have to check, convert it to the correct 1op column, and also dup it if
+  necessary, so that after compiling the opcode we still have a reference
+  to the address mode, so we can compile the correct bits - immediate or
+  offset value - after it!
+
+  Laying it all out in a jump table makes it more obvious what is going
+  on.)
+
+  The valid 1op memory addressing modes - dir, ix1, and ix - are shifted
+  from their 2op counterparts by 8 columns. Since by default the
+  assembler's "addressing operators" - such as # and ) - generate column
+  values for 2ops, we need to convert those valid modes to 1op modes, but
+  also preserve the 2op mode for ea, so it can compile any immediate data
+  or offset.
+
+1ops-and-2ops
+
 forth
 : op,  u8? if b, ^ then  w, ;  ( output op, including pre-byte)
-: ea,  ( col)  40 - col>  jump
+: ea,  ( ea)  ( immed value or offset, if required, is underneath ea)
+   dup imm u< if  ill  ^  then  imm -  col>  jump
+   (  a0   b0   c0   d0   e0   f0
+     imm  dir  ext  ix2  ix1   ix)
+      b,   b,   w,   w,   b,  drop   [
+
+: cv  ( op - ea op)  dup  80 -  op, ea, ;
+
+: 1op  constant does> @  ( ea op)  or
+   dup \a .a u< if  ill  ^  then  dup  \a .a -  col>  jump
    ( 40   50   60   70   80   90   a0   b0   c0   d0   e0   f0
-     .a   .x   --   --   .h   --  imm  dir  ext  ix2  ix1   ix)
-    nope nope ill  ill  ill  ill   b,   b,   w,   w,   b,  drop   [
+     .a   .x   .h   --   --   --  imm  dir  ext  ix2  ix1   ix)
+    op,  op,  ill  ill  ill  ill  ill   cv  ill  ill   cv   cv   [
 
-( What 1colCheck is a bit subtle. Addressing modes that actually address
-  memory, rather than specify a register, are represented by the column
-  number in the address, including the possible pre-byte - or SP-relative
-  modes - in the high byte. But not all modes that are allowed for 2ops are
-  allowed for 1ops. So we have to check, convert it to the correct 1op
-  column, and also dup it if necessary, so that after compiling the opcode
-  we still have a reference to the address mode, so we can compile the
-  correct bits after it!
-
-  Laying it all out in a jump table makes it really simple to see what is
-  going on.)
-
-: ok  dup ;  ( ok as is; don't convert - this is already a 1col mode)
-: cv  ( col - col2 col1)  dup  80 - ;  ( dup and convert)
-: 1colCheck  ( col - 2col 1col | col)  ( make sure address mode is allowed)
-   dup  40 - col>  jump
-   ( 40   50   60   70   80   90   a0   b0   c0   d0   e0   f0
-     .a   .x   --   --   .h   --  imm  dir  ext  ix2  ix1   ix)
-     ok   ok  ill  ill  ill  ill  ill   cv  ill  ill   cv   cv   [
-
-: 1op  constant does> @  ( col row)  or  1colCheck  op, ea, ;
 assembler
 00 1op neg
 forth
@@ -178,7 +187,7 @@ assembler
              dir = if  drop  55 b, b, ^ then  ill ;
 
 forth
-: 2op  constant does> @ ( 2col row)  or  dup op,  ea, ;
+: 2op  constant does> @  ( ea op)  or  dup op,  ea, ;
 assembler
 00 2op sub
 01 2op cmp
@@ -217,7 +226,7 @@ forth
 ( XXX - these take a dir address, but don't expect the dir col on the
   stack. Is this wrong?)
 
-: bit  constant does> @ ( dir bit op)
+: bit  constant does> @  ( dir bit op)
    swap 2* or  b, ( p)  u8? if  b, ( dir)  ^ then
    error" address not in zero page" ;
 
