@@ -59,17 +59,17 @@ d0 constant ix2  9ed0 constant sp2
 e0 constant ix1  9ee0 constant sp1
 f0 constant ix
 
-: u8?  ( u - u flag)  dup 100 u< ;  ( if unsigned value fits in 8 bits)
-: s8?  ( n - n flag)  dup 80 + 100 u< ;  ( if signed offset fits into 8 bits)
+: u8?  ( u - flag)       100 u< ;  ( if unsigned value fits in 8 bits)
+: s8?  ( n - flag)  80 + 100 u< ;  ( if signed value fits into 8 bits)
 
 assembler
-: )   ( a - a op)  u8? if dir ^ then  ext ;
+: )   ( a - a op)  dup u8? if dir ^ then  ext ;
 : #   ( n - n op)  imm ;
 : ,s  ( offset - offset' op)
    ( adjusts offset by 1 since hardware stack is empty descending)
-               1+  u8? if sp1 ^ then  sp2 ;
+               1+  dup u8? if sp1 ^ then  sp2 ;
 : ,x  ( offset - offset op)
-   =if ( nonzero)  u8? if ix1 ^ then  ix2 ^ then  ( 0) ix ;
+   =if ( nonzero)  dup u8? if ix1 ^ then  ix2 ^ then  ( 0) ix ;
 
 40 constant .a
 50 constant .x
@@ -140,9 +140,9 @@ comment 1ops-and-2ops
 1ops-and-2ops
 
 forth
-: op,  u8? if b, ^ then  w, ;  ( output op, including pre-byte)
+: op,  dup u8? if b, ^ then  w, ;  ( output op, including pre-byte)
 : ea,  ( ea)  ( immed value or offset, if required, is underneath ea)
-   dup imm u< if  ill  ^  then  imm -  col>  jump
+   dup imm u< if  ill  then  imm -  col>  jump
    (  a0   b0   c0   d0   e0   f0
      imm  dir  ext  ix2  ix1   ix)
       b,   b,   w,   w,   b,  drop   [
@@ -150,7 +150,7 @@ forth
 : cv  ( op - ea op)  dup  80 -  op, ea, ;
 
 : 1op  constant does> @  ( ea op)  or
-   dup \a .a u< if  ill  ^  then  dup  \a .a -  col>  jump
+   dup \a .a u< if  ill  then  dup  \a .a -  col>  jump
    ( 40   50   60   70   80   90   a0   b0   c0   d0   e0   f0
      .a   .x   .h   --   --   --  imm  dir  ext  ix2  ix1   ix)
     op,  op,  ill  ill  ill  ill  ill   cv  ill  ill   cv   cv   [
@@ -201,13 +201,17 @@ assembler
 09 2op adc
 0a 2op ora
 0b 2op add
-0c 2op jmp  ( no imm, no off s)
-0d 2op jsr  ( bsr is imm, no off s)
+0c 2op jmp  ( no imm, no sp1 or sp2)  ( XXX check jmp & jsr for illegal ,s)
+0d 2op jsr  ( bsr is imm, no sp1 or sp2)
 0e 2op ldx
 0f 2op stx  ( imm is aix)
 
-: ais  ( n imm )  \a sta ;
-: aix  ( n imm )  \a stx ;
+forth
+: ?imm  ( ea - imm)  dup imm = if ^ then  ill ;
+
+assembler
+: ais  ( n imm )  ?imm  \a sta ;
+: aix  ( n imm )  ?imm  \a stx ;
 
 ( Instructions that break the nice patterns in the opcode map.)
 : mov  ( n src m dest)  swap push ( n src dest; R: m)
@@ -227,7 +231,7 @@ forth
   stack. Is this wrong?)
 
 : bit  constant does> @  ( dir bit op)
-   swap 2* or  b, ( p)  u8? if  b, ( dir)  ^ then
+   swap 2* or  b, ( p)  dup u8? if  b, ( dir)  ^ then
    error" address not in zero page" ;
 
 ( Note: These are _hex_ instruction values! The sets are even;
@@ -344,7 +348,7 @@ assembler
 
 forth
 : resolve>  ( src dest)
-   over -  s8? not if . error" relative branch out of range" then
+   over -  dup s8? not if . error" relative branch out of range" then
    swap 1-  |c! ;
 
 ( XXX should compile a long branch if necessary; in case of conditionals,
@@ -368,6 +372,20 @@ assembler
 ( XXX - should compile jsr if necessary)
 : bsr  ( dest)  0ad b, ( bsr)  \a until ;
 
+( Smart jump and call.)
+forth
+: rel8?  ( dest - offset flag)
+   |here 2 + ( just past 2 byte branch)  -  dup s8? ;
+
+: rel,  ( dest offset op)  b, b, drop ;
+
+assembler
+: j  ( dest)  ( compile a jump as efficiently as possible)
+   dup rel8? if   20 ( bra)  rel, ^  then  drop  \a ) \a jmp ;
+
+: c  ( dest)  ( compile a call as efficiently as possible)
+   dup rel8? if  0ad ( bsr)  rel, ^  then  drop  \a ) \a jsr ;
+
 forth
 
 ( What's left?
@@ -379,4 +397,3 @@ forth
   * cbeq dbnz and brset/brclr are misnamed now, since we're using them with
   if/while/until. What to do about this?
   )
-
