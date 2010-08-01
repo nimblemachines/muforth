@@ -6,15 +6,15 @@
 ( Support common to all 908 and S08 interactions. Things like SWI stack
   frames, reading and writing memory using "indexed" reads and writes.)
 
+
 loading HC08 Interaction (common)
 
-hex
 
 ( Hex output, from lib/see.mu4)
 : .h8_   .h8 space ;
 : .hcell_  .hcell space ;
 
-: >lohi  ( w - lo hi)  dup 0ff and  swap 8 u>> ;
+: >lohi  ( w - lo hi)  dup "0ff and  swap 8 u>> ;
 : hilo>  ( hi lo - w)  swap  8 << or ;
 
 ( Recv from, send to target.)
@@ -70,18 +70,60 @@ chat-hx off
    chatting on
    t.GetRegs  0 t.SetAddr  chat-hx off ( so they match!) ;
 
-: >chat   ['] chat-c@  is  |c@ ;
+: >chat   ['] chat-c@  is  |c@
+          ['] be-w@    is  |@
+          2 |cell !  ( size of cell) ;
+
+( Set |@ and |c@ to _some_ form of target fetch. Prefer to get bytes from
+  target if we're connected. This word is useful so we can set an initial
+  state for target's  du  and  dis  so that inspect won't crash when it
+  runs |@ to get a default ea.)
+
+: >target  chatting @ if  >chat ^  then  >image ;
+
+
+( Define our own key bindings for memory dumping and disassembly. We'll
+  default to host bindings if there isn't one in our array. This way we
+  only have to define the "delta" between host and target behaviours.)
+
+128 array hc08-seekeys
+
+( Default key action is to run host key code)
+host-seekeys hc08-seekeys  128 cells cmove
+
+hc08-seekeys 'seekeys !    ( switch over to our bindings)
 
 ( Support for dumping memory)
--: ( a - a ea)
+: 1dump  ( a)
    hex-bytes  ( set field width)
    >image   dup .addr  dup .hex-bytes
    chatting @ if
       >chat   dup _addr  dup .hex-bytes
    then
-   ( If chatting, use chat-c@ to fetch ea; otherwise, use image-c@)
-   dup |@  ( a ea) ;  is 1dump
+   drop ( a) ;
 
+key: d  ( a - a 0)  ['] skip+  advance!
+                    ['] skip-  retreat!
+                    ['] 1dump  inspect!  0 ;
+
+key: i  ( a - a 0)  ['] i-skip  advance!
+                    ['] 0       retreat!
+                    ['] 1dis    inspect!  0 ;
+
+( Interactive)
+meta
+: du  ( a - a')    hc08-seekeys 'seekeys !    ( switch over to our bindings)
+                   >target
+                   ['] skip+  advance!
+                   ['] skip-  retreat!
+                   ['] 1dump  inspect ;
+
+: dis  ( a - a')   hc08-seekeys 'seekeys !    ( switch over to our bindings)
+                   >target
+                   ['] i-skip  advance!
+                   ['] 0       retreat!
+                   ['] 1dis    inspect ;
+forth
 
 ( We keep a local copy of the target's registers in the same order as they
   appear in an exception frame.
@@ -145,7 +187,6 @@ outside
 : forward    "100 \a ) \a jmp  \a label ;
 : resolve>>  ( src)  |here  swap 2 -  |! ;
 
-: du   du ;
 : .or   or ;
 : .x  ( like .s)  .X c@ du ;
 

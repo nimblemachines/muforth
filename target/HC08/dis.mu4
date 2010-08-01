@@ -20,7 +20,7 @@ If prefix, then we should dispatch on the row (opcode) so we can print it
 first. If postfix, then we should dispatch by column instead.
 
 I'm thinking it would be interesting - since all my other disassemblers
-have been prefix - to be true of Forth and try to make this one postfix
+have been prefix - to be true to Forth and try to make this one postfix
 instead.
 ==========================================================================
 
@@ -34,21 +34,25 @@ instead.
   to index into the string; a 4-char substring is printed.)
 
 ( zero chooses first string; non-zero, the second.)
-: (choose")  ( f a1 a2)  rot if  swap  then  drop  (.") ;
+: (choose")  ( f a1 c1 a2 c2)  2push ( push 2nd string)
+   rot if  2drop  2pop  type  ( drop 1st, type 2nd)  ^  then
+            2pop 2drop  type  ( drop 2nd, type 1st) ;
+
+: ztoken,    \ (")  token, drop ;
 : (4")  ( - index z")  swap 2 << +  4 type space ;
 compiler
-: choose  ( choose string)  token, literal  token, literal   \ (choose") ;
-: 4"  \ z"  \ (4") ;
+: choose  ( choose string)  ztoken,  ztoken,   \ (choose") ;
+: 4"      \ z"  \ (4") ;
 forth
 
-variable in
-: b  ( a offset - a byte)  ( fetch byte of instruction)  over +  |c@ ;
-: w  ( a offset - a word)  ( fetch word of instruction)  over +  |@ ;
+-- variable in
+: pre  ( a - f)  |c@  9e = negate ;  ( 1 if pre; 0 otherwise)
+: b  ( a offset - a byte)  ( fetch byte of instruction)  over  pre +  over +  |c@ ;
+: w  ( a offset - a word)  ( fetch word of instruction)  over  pre +  over +  |@ ;
 
-: op  0 b ;
+: op   ( a - a op)  0 b ;
 : row  ( a - a row)  op       0f and ;
 : col  ( a - a col)  op 4 u>> 0f and ;
-: pre  ( a - a f)    dup if  -1 b  9e =  ^ then  0 ;
 
 ( display machine code)
 ( a000  9ee0 04
@@ -60,10 +64,16 @@ variable in
 : .w  ( hex word and following padding) 1 w  .hcell  3 spaces ;
 : .2b  ( two hex bytes and padding)  1 b .h8 space  2 b .h8  2 spaces ;
 
-: sadjust  ( a off - a off') ( adjust for s)  over pre nip if 1- then ;
-: ireg  space  pre choose ,x ,s  space ;
+: sadjust  ( a off - a off') ( adjust for s)  over pre - ;
+: ireg  space  dup pre  choose ,x ,s  space ;
 : _imm  1 b .h8 ."  # " ;
 : _dir  ( a offset - a)  ( direct addr)  b .h8 ."  ) " ;
+
+( XXX - leave off hex dump of machine code)
+: .p ;
+: .b ;
+: .w ;
+: .2b ;
 
       ( hex   text)
 : imm   .b    _imm  1 ;
@@ -174,15 +184,13 @@ variable in
    .pre .h8 space  dispatch  ( skipped a extra) 1+ ( fwd)  push
    ( skipped a)  swap r@ + negate ( back) swap  ( back a)  pop + ;
 
+variable ilen  ( instruction length)
+: i-skip  ( a - a' 0)  ilen @ +  0 ;  ( skip over current instruction)
+
 ( The workhorse.)
-: 1dis  ( a - a ea)
-   radix preserve
-   dup .addr  .nesting  _1dis ;
+( XXX currently not going backwards!)
+: 1dis  ( a)
+   ( XXX should disasm default to showing contents of _image_ r.t. target?)
+   >image
+   dup .addr  .nesting  dispatch  swap pre +  1+ ilen ! ;
 
-: d  1dis ;
-
-' 1dis '1dis !  ( for mode switching)
-' -1   '1see !  ( quits)
-
-( Interactive)
-: dis  ( |a - |a+)  ['] 1dis  cell  inspect  ;
