@@ -912,6 +912,10 @@ being-defined -v  ( be verbose)
    depth 0<  if ^ then  ( don't print underflowed stack!!)
    depth  s0 swap  ?for  cell- dup @ .  next then  drop  ;
 
+( Sometimes it's nicer to see _unsigned_ stack values.)
+: .us  ( stack)
+   depth 0<  if ^ then  ( don't print underflowed stack!!)
+   depth  s0 swap  ?for  cell- dup @ u.  next then  drop  ;
 
 ( Defining new dictionary chains.)
 
@@ -1076,18 +1080,23 @@ forth
    over +  ( start end)  source 2!
    interpret ;
 
+variable zloading    ( C-string name of file being loaded)
+
+( check-depth only prints anything out if depth has changed since the file
+  started loading _and_ zloading is non-zero - ie, we're loading a file.)
+
 : check-depth  ( saved-depth)
-   depth swap -
-   =if  ."  [ depth " .  ." ]" ^  then  drop ;
+   depth swap -  2 - ( seems to always be 2!)
+      =if  zloading @ =if
+      ."  [ "  zcount type  ." : +depth " .  ." ]" ^  then  drop  then  drop ;
 
 : show-depths  ( saved)   .  depth . ;
 
 ( XXX I was hoping to use on-exit to check stack depths, but I can't seem
   to get them to reconcile. More research is indicated. ;-)
 
-variable zloading    ( C-string name of file being loaded)
 : load-file  ( z")
-   -- depth  on-exit check-depth
+   depth  on-exit check-depth
    -- depth  on-exit show-depths
    dup open-file-ro ( fd)  dup on-exit close-file
    zloading preserve  swap zloading !
@@ -1106,12 +1115,11 @@ variable zloading    ( C-string name of file being loaded)
    here swap - .  ." bytes ))" ;
 
 ( Print some descriptive text and the amount of dictionary space consumed
-  by loading, bracketed within double parens.)
+  by loading. Consumes and prints the rest of the command line.)
 
 : loading
    cr ." (( "  #LF parse type  space
-   here   on-exit show-consumed  interpret ;
-
+   here  on-exit show-consumed  interpret ;
 
 ( Define words for use with the conditional compilation words.  No matter
   what chain we are compiling into, define the word in .forth.)
@@ -1148,6 +1156,7 @@ variable zloading    ( C-string name of file being loaded)
 : warm
    decimal \ [
    >stderr banner
+   1 line !  ( so it's "correct" for interactive!)
    command-line count  evaluate
    begin  quit  again  [
 
