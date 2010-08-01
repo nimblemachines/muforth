@@ -36,79 +36,36 @@ cell |cell !
 : |@+   ( |a - |a+|cell n)    dup |cell @ +  swap |@ ;
 
 
-( Call, return.)
-8 array inspect-stack
-variable inspect-sp  ( stack pointer)  0 inspect-sp !
+-- ------------------------------------------------------------------------
+-- Call, jump, and return
+-- ------------------------------------------------------------------------
 
-: inspect-push  ( old ea - old | ea)  swap  ( ea old)
-   inspect-sp @  dup  8 u<  if
-      dup 1+  inspect-sp !  inspect-stack !  ^  then
-   ( ea old sp)  drop nip  ;
+8 array+ istack  ( up to 8 remembered locations)
+variable isp  ( stack pointer - points to next empty space)
+0 isp !
 
-: inspect-pop   ( old - old | new)
-   inspect-sp @  dup if
-      1- dup  inspect-sp !  inspect-stack @  nip ^  then  drop  ;
+( If there is room on the i-stack, push a and make ea the new a. Otherwise,
+  drop ea and return a.)
 
-: .nesting  inspect-sp @  ?for  char > emit  next  space  then  ;
+: i-push  ( a ea - ea | a)
+   swap ( ea a - preparing to push a)
+   isp @  dup 8 u<  if  ( room)  dup 1+ isp !  istack !  ^  then
+   ( ea a isp)  drop nip ;
 
-( For switching inspection modes.)
-defer 1inspect
-variable skip  ( number of |cell's to skip)
-: inspect!  ( '1inspect default-skip)  skip !  is 1inspect ;
+( If there is something on the i-stack, pop it and return it as the new a.
+  Otherwise, return a.)
 
+: i-pop   ( a - popped | a)
+   isp @      =if  ( not empty)  1- dup isp !  istack @  nip  ^  then
+   ( a isp)  drop ;
 
-( We're going to defer the heck out of these definitions so we can switch
-  between modes, and refine behavior later.)
-
-( Now for the cmd keys.)
-
--: ( a ea - a -1)  drop -1 ;  ( discard & quit)
- 128 defarray seekeys
-
-: key:  -:  \f char  seekeys ! ;
-
-( advance rounds down to nearest `skip'.)
-: advance  ( a ea skip - a')  nip + ( advance)  skip @ negate and ( round)  0 ;
-
--: ( skip+)  skip @         advance ;
-  dup     32 seekeys !  ( these are all synonyms for moving forward)
-  dup char n seekeys !
-  dup    #CR seekeys !
-      char j seekeys !
-
--: ( skip-)  skip @ negate  advance ;
-  dup char p seekeys !  ( these are all synonyms for moving backward)
-  dup   #DEL seekeys !
-  dup char - seekeys !
-  dup char b seekeys !
-      char k seekeys !
-
-( so we can skip by different amounts)
-key: 1  ( a ea - a 0)  drop   4 skip !  0 ;
-key: 4  ( a ea - a 0)  drop  16 skip !  0 ;
-
-variable '1dump  ( memory dump)
-variable '1see   ( decompiler)     ' -1 '1see !  ( safety)
-variable '1dis   ( disassembler)   ' -1 '1dis !  ( safety)
-
-key: d ( >dump) ( a ea - a f)  drop  '1dump @  16  inspect!  0  ;
-key: i ( >dis)  ( a ea - a f)  drop  '1dis @    4  inspect!  0  ;
-key: s ( >see)  ( a ea - a f)  drop  '1see @    4  inspect!  0  ;
-
-key: r ( return)  ( new ea - new|old f)  drop  inspect-pop   0  ;
-key: c ( call)    ( old ea - old|ea f)         inspect-push  0  ;
-key: g ( go)      ( old ea - ea f)       nip                 0  ;
-
-: inspect-key  ( a ea - a')
-   key  dup 128 u< if  seekeys @execute ^  then  2drop  ( ea key)  -1 ;
-
-: inspect   ( a '1inspect skip - a')
-   radix preserve  tty user-raw  tty on-exit cooked
-   inspect!  begin  1inspect  inspect-key  until ;
+: .nesting  isp @  ?for  char > emit  next  space  then  ;
 
 
-( Byte and word conversion to ascii)
-( These should right adjust to a field size.)
+-- ------------------------------------------------------------------------
+-- Printing addresses and memory contents
+-- ------------------------------------------------------------------------
+
 : .h8     hex   <#    # #  #>  type ;
 : .o8    octal  <#  # # #  #>  type ;
 : .hcell  hex   <#  |cell @ 2* for # next  #>  type ;
@@ -198,26 +155,121 @@ defer decorate-cell  ( a+ n #spaces - a+ n)
 : octal-bytes  4  #field ! ;  ( only for 8080 and pdp-11 !!)
 : hex-bytes    3  #field ! ;
 
-defer 1dump  ( a - a ea)
+
+-- ------------------------------------------------------------------------
+-- Binding keys to actions
+-- ------------------------------------------------------------------------
+
+( All keys have the following stack signature: a - a' flag; flag is true to
+  quit, false to continue.)
+
+' -1 128 defarray host-seekeys  ( default key action is to push quit flag: -1)
+
+variable 'seekeys  ( an indirect pointer to seekeys array - so host and
+                     target can have different key bindings and behaviours)
+
+host-seekeys 'seekeys !  ( until further notice, use host's key bindings)
+
+: 'key  ( key# - a)  cells  'seekeys @  + ;
+: key!  ( cfa key#)  'key  ! ;
+
+: key:  -:  \f char  key! ;
+
+( XXX could we check here if first keymap - ie 'key @ - is 0 and if so, try
+  host-seekeys? or is that too hard-wired? It's annoying that we have to
+  save the key value in a variable in order to re-index... But I like it
+  better than having all that stuff on the stack!)
+
+: inspect-key  ( a - a' flag)
+   key  dup 128 u< if  'key @execute ^  then  drop  ( key)  -1 ;
+
+: advance!  ( cfa)
+  dup     32 key!  ( these are all synonyms for moving forward)
+  dup char n key!
+  dup    #CR key!
+      char j key! ;
+
+: retreat!  ( cfa)
+  dup char p key!  ( these are all synonyms for moving backward)
+  dup   #DEL key!
+  dup char - key!
+  dup char b key!
+      char k key! ;
+
+
+variable ea  ( "effective address" - an address to jump or call to)
+
+key: r ( return)  ( a - a' 0)        i-pop   0 ;
+key: c ( call)    ( a - a' 0)  ea @  i-push  0 ;
+key: g ( go)      ( a - ea 0)  drop  ea @    0 ;
+
+( For switching inspection modes.)
+defer 1inspect  ( a - a)
+-- variable inspect-cleanup  ' nope  inspect-cleanup !
+
+: inspect!  ( cfa)  is 1inspect ;
+
+( XXX inspect will crash if |@ isn't defined, or refers to the target's
+  memory rather than the host's.)
+
+: inspect   ( a cfa - a')
+   inspect! ( XXX should preserve?)
+   radix preserve  tty user-raw  tty on-exit cooked
+   -- inspect-cleanup on-exit @execute
+   begin  dup |@  ea ! ( set default ea)  dup 1inspect  inspect-key  until ;
+
+
+-- ------------------------------------------------------------------------
+-- Default bindings for host.
+-- ------------------------------------------------------------------------
+
+variable skip  ( number of bytes to skip)  16 skip !  ( default to 1 line)
+
+( advance rounds down to nearest `skip'.)
+: advance  ( a skip - a')  + ( advance)  skip @ negate and ( round)  0 ;
+
+: skip+  ( a - a')  skip @         advance ;
+: skip-  ( a - a')  skip @ negate  advance ;
+
+' skip+  advance!  ( set up key bindings)
+' skip-  retreat!  ( ditto) 
+
+
+( Pressing 1 toggles between a skip of |cell - current cell size - and 16.)
+: toggle-skip  skip @  16 = if  |cell @  ^  then  16 ;
+
+key: 1  ( a - a 0)  toggle-skip  skip !  0 ;
+
+( Wire memory access to host memory)
+: >host   ['] c@  is  |c@
+          ['] @   is  |@
+          cell |cell !  ( size of cell) ;
+
 ( Default behaviour for host:)
--: ( a - a ea)
+: 1dump  ( a)
    hex-bytes
    dup _addr  dup .chars
    dup .addr  dup .hex-bytes
-   dup _addr  dup .hex-cells
-   dup |@  ( a ea) ;  is 1dump
+   dup _addr      .hex-cells ;
 
-' 1dump '1dump !
-: du   ( a - a')  ['] 1dump 16 inspect  ;
+: du   ( a - a')  
+   host-seekeys 'seekeys !
+   >host
+   ['] 1dump  inspect ;
+
 
 ( Batch mode)
 : dumps   ( start limit)
    radix preserve
-   inspect-sp off
-   swap  begin  1dump drop  16 +  2dup u<  until  2drop  ;
+   isp off
+   swap  begin  1dump drop  16 +  2dup u<  until  2drop ;
 
 
 comment broken_for_native_code
+
+( Below this is very old code, I think inherited from dforth. Here for
+  historio-comic relief only.)
+
 ( See.  a grotty little decompiler)
 
 : >dict<   ( a - f) ( within dict)   [ ' unnest ]  here  within  ;
