@@ -21,36 +21,62 @@ ARCH_LD=	%archldflags%
 # Core objects
 COREOBJS=	kernel.o interpret.o dict.o mp-math.o engine-itc.o error.o
 		
-.sinclude "platform.mk"
+# Platform definitions
 
-# Platform objects
-.if ${MUPLAT} == "nix"
-PLATOBJS=	time.o tty.o select.o file.o nix-main.o
+# Try to include user's platform setting; if file doesn't exist or doesn't set
+# MUPLATFORM, default it to something common and useful.
+
+.sinclude "platform.mk"
+.ifndef MUPLATFORM
+MUPLATFORM=	nixy
+WARNPLATFORM=	yes
+.endif
+
+.if ${MUPLATFORM} == "nixy"
+# This is the "standard" Unix-y platform.
+PLATOBJS=	time.o tty.o select.o file.o main.o
 PLATDEFS=	-DWITH_TIME
+.endif
+
+.if ${MUPLATFORM} == "nixed"
+# Like nixy, but without time, tty, and select support.
+PLATOBJS=	file.o main.o
 .endif
 
 # If any of these files changes, make a new version.h
 VERSOBJS=	${COREOBJS} ${PLATOBJS}
 
 ALLOBJS=	${VERSOBJS} muforth.o
-DEPFILES=	Makefile muforth.h env.h
+makefiles=	Makefile platform.mk
+DEPFILES=	$(makefiles) muforth.h env.h
 
-.PHONY: all clean httplink diffsed
+.PHONY: all clean httplink diffsed show-plat
 
-.ifndef MUPLAT
-all:
-	@echo "You need to define MUPLAT to build a specific platform."
-	@echo "Put the line"
-	@echo "   MUPLAT=<platform>"
-	@echo "where <platform> can be nix, embedded, or something else you"
-	@echo "define, into the file \"platform.mk\", and run make again."
-.else
-all : public.h muforth
+all : show-plat public.h muforth
+
+show-plat :
+	@echo "====================================================================="
+	@echo "Building for platform \"$(MUPLATFORM)\"."
+	@echo "====================================================================="
+.ifdef WARNPLATFORM
+	@echo "If this isn't what you want, edit \"platform.mk\" and add the line"
+	@echo
+	@echo "   MUPLATFORM=<platform>"
+	@echo
+	@echo "where <platform> can be nixy, nixed, or something else you define."
+	@echo "Then run make again."
+	@echo
 .endif
+
+# If platform.mk doesn't exist, create it. Since all the .ph and object files
+# depend on it, if it doesn't exist they will get remade every time!
+
+platform.mk :
+	@touch ${.TARGET}
 
 ${ALLOBJS} : ${DEPFILES}
 
-${ALLOBJS:.o=.ph} : Makefile
+${ALLOBJS:.o=.ph} : $(makefiles)
 
 muforth.o : version.h
 
@@ -81,7 +107,7 @@ dict.o : forth_chain.h compiler_chain.h
 
 .SUFFIXES : .ph .asm
 
-.c.ph : Makefile
+.c.ph : $(makefiles)
 	@echo Making ${.TARGET}
 	@(echo "/* ${.IMPSRC} */"; \
 	sed ${SEDEXT} -n \
@@ -95,10 +121,10 @@ dict.o : forth_chain.h compiler_chain.h
 env.h : envtest
 	./envtest > ${.TARGET}
 
-envtest : Makefile envtest.c
+envtest : $(makefiles) envtest.c
 	${CC} ${CFLAGS} ${LDFLAGS} -o ${.TARGET} envtest.c
 
-version.h : Makefile ${VERSOBJS}
+version.h : $(makefiles) ${VERSOBJS}
 	@echo Making ${.TARGET}
 	@echo "time_t build_time = `date \"+%s\"`;" > version.h
 	@echo "char* build_date = \"`date \"+%Y-%b-%d %T %Z\"`\";" >> version.h
@@ -106,7 +132,10 @@ version.h : Makefile ${VERSOBJS}
 muforth : ${ALLOBJS} ${DEPFILES}
 	${CC} ${LDFLAGS} -o ${.TARGET} ${ALLOBJS} ${LIBS}
 
-.c.asm : Makefile muforth.h
+muforth-bare : ${ALLOBJS} ${DEPFILES}
+	${CC} ${LDFLAGS} -nodefaultlibs -o ${.TARGET} ${ALLOBJS} ${LIBS}
+
+.c.asm : $(makefiles) muforth.h
 	${CC} ${CFLAGS} -S -o ${.TARGET} -c ${.IMPSRC}
 
 clean :
