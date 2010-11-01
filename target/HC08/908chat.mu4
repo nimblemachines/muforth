@@ -1,0 +1,213 @@
+( This file is part of muFORTH: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2010 David Frech. All rights reserved, and all wrongs
+  reversed. (See the file COPYRIGHT for details.)
+
+( I couldn't take it any more - the 908 ROM monitor was driving me crazy.
+  It's slow, and there is still an odd bug with the PC - the "image" of it on
+  the stack frame - not getting properly initialised... but only when the
+  target is first connected!
+
+  I decided to try out some simple ideas. Instead of the Nibble Machines
+  loader, we have this! Rather than a Bootloader, it's a Byteloader?
+
+  This code should _just_ fit into RAM, leaving room for the data
+  structures needed for the ROM flash routines. The idea basically that
+  this is a simple target to write to in order to get the Flash written -
+  ideally with a copy of this code to act as a bootloader!)
+
+loading HC08 Chat (target)
+
+hex
+
+__outside
+
+( The SCI code is identical between 908 and S08 except for the names - and
+  offsets - of the SCI status and data regs ... so let's abstract them.)
+
+.ifdef S08
+
+SCIS1 equ SciStatus
+SCID  equ SciData
+
+.else   -- 908
+
+SCS1 equ SciStatus
+SCDR equ SciData
+
+.then
+
+code SciRx  ( returns char in A)
+   begin  SciStatus 5 ( recvr full)  bset? until
+   SciData ) lda  rts  ;c
+
+code SciTx  ( transmits char in A)
+   begin  SciStatus 7 ( xmit empty)  bset? until
+   SciData ) sta  rts  ;c
+
+
+( Commands:
+  0  Bye        - return to chat; this is a no-op in chat; matches BDM cmd
+  1  Idle       - no-op - so we can re-sync the protocol
+  2  Run        - does an RTI - pops stack frame and runs
+  3  Id         - read low byte of S08 Id register SDIDL @1807
+  4  SetH       - reads a byte from SCI, writes into H register
+  5  SetX       - reads a byte from SCI, writes into X register
+  6  GetH       - writes H register to SCI
+  7  GetX       - writes X register to SCI
+  8  HXtoSP     - sets SP from HX
+  9  SPtoHX     - sets HX from SP
+ 10  ReadByte   - reads a byte from memory @ HX, writes it to SCI
+ 11  WriteByte  - reads a byte from SCI, writes into memory @ HX
+)
+
+code SendByte  ( send char in A)
+   SciTx bsr
+
+label Dispatch
+   SciRx bsr  ( command)
+
+   02 # sub
+   u< if ( Bye or Idle)  Dispatch again  then
+
+   0= if ( Run)   .h pul  rti  then
+
+   .a decz? if ( Id)
+.ifdef S08
+      SDIDL ) lda
+.else
+      0ff # lda  -- pretend that 908 parts have Id 0ff
+.then
+      SendByte again  then
+
+   .a decz? if ( SetH)
+   SciRx bsr  .a psh  .h pul  ( set H)  Dispatch again  then
+
+   .a decz? if ( SetX)
+   SciRx bsr  tax ( set X)  Dispatch again  then
+
+   .a decz? if ( GetH)
+   .h psh  .a pul  SendByte again  then
+
+   .a decz? if ( GetX)
+   txa  SendByte again  then
+
+   .a decz? if ( HXtoSP)  txs  Dispatch again  then
+   .a decz? if ( SPtoHX)  tsx  Dispatch again  then
+
+   ( fall through to continued...)  ;c
+
+( If compiling to run in RAM, jump forward here to make room for the data
+  structures needed for the Flash routines - from 88 to AC.)
+
+.def run-in-ram .def control-block .and .if
+__forth
+: ?fits
+   control-block  |ram @  u< if
+      error" Code too long - ran into Flash control block"
+   then ;
+?fits
+__outside
+code skip_flash
+   09c again  ;c  -- branch forward over control block
+09c org           -- continue compiling there
+.then
+
+code continued...
+   .a decz? if ( ReadByte)
+   0 ,x lda  1 # aix  SendByte again  then
+
+   .a decz? if ( WriteByte)
+   SciRx bsr   0 ,x sta   1 # aix  then  ( fall through)
+
+   ( unknown command)   Dispatch again  ;c
+
+
+( We need this because the monitor ROM has taken the SWI vector, and getting
+  it back means flashing the vectors, which for now I want to avoid...)
+swi vector
+.ifdef emulated-swi
+   ( jsr/bsr has already pushed PC)
+   .x psh  .a psh  tpa ( flags to A)  .a psh  sei
+.then
+   .h psh
+   SendByte again  ;c
+
+( If the chat interaction changes the PC on this stack frame to point
+  somewhere other than _after_ the __swi, not all is lost - since we got
+  here via a _call_ from reset, we'll return to _that_ loop, and re-enter
+  the SWI.
+
+  On the other hand, if the PC remains unaltered, an RTI from the SWI's
+  stack frame wil simply return here, and we'll take the "exception" again.)
+
+code interact
+   begin  __swi  again  ;c
+
+reset vector
+   \ @ram \ #ram + # ldhx
+   txs
+
+.ifdef S08
+
+   -- Turn off watchdog
+   -- Can't use bit ops! SOPT1 not in z-page.
+   SOPT1 ) lda  7f # and  ( clear COPE)  SOPT1 ) sta
+
+   -- Configure ICS (internal clock source)
+   -- We're staying in FEI mode, but we're going to trim the internal
+   -- reference so that our bus clock is 9.216M - a nice multiplier for
+   -- 115200.
+   -- I've put my own trim values into the chips @ FFAD.
+   0ffad ) lda   ICSTRM ) sta
+   ICSC2 ) clr   ( switch BDIV to /1 from /2)
+
+   -- Set FCDIV - flash clock divider - to match our bus clock
+   -- FCDIV = ceil(busclock/200k) - 1
+   #9216 #199 + #200 / 1 -  # lda   FCDIV ) sta
+
+   -- Configure SCI
+   0c # SCIC2 ) mov  ( enable rcvr, xmitter)
+   SCIBDH ) clr      ( baud rate divisor, high)
+   5 # SCIBDL ) mov  ( baud rate divisor, low)
+                     ( yields 115200 from 9.216M bus clock)
+
+.else  -- 908
+
+   -- Setting COPD works, but is unnecessary in monitor mode; however,
+   -- setting RSTEN causes the chip to fly away. Noise on nRST pin?
+   -- Since I'm avoiding setting the Reset vector, setting these or not is
+   -- irrelevant.
+   -- CONFIG2 0 bset  ( set RSTEN: enable nRST pin - pin 8)
+
+   -- I'm going to, after all, attempt to burn a chip with a programmed
+   -- Reset vector. So I need this:
+   CONFIG1 0 bset  ( set COPD: disable watchdog!)
+
+   -- XXX Set up for use with on-chip crystal osc?
+   -- 42 # OSC ) mov  ( set Ext Osc and ECGON)
+
+   -- configure crystal osc
+   PortA 4 bset
+   DirA 4 bset  ( configure OSC2 as output, drive high several cycles)
+   nsa nsa nsa
+   DirA 4 bclr
+   0c0 # OSC ) mov  ( set external osc going - 8-32MHz xtal)
+
+   -- wait for startup; normally one waits 4096 target cycles; for
+   -- simplicity we wait that many cycles, but based on the internal osc,
+   -- which is slower (12.8M) than the crystal (18.432M).
+
+   #16 # ldx  ( 4096 = 16 * 256; we don't bother to clr A the first time)
+   begin  begin  .a decz? until  .x decz? until
+   OSC 1 bset ( set ECGON - switch oscillators!)
+
+   -- Configure SCI
+   SCC1 6 ( ENSCI) bset
+   0c # SCC2 ) mov   ( enable rcvr, xmitter)
+   30 # SCPSC ) mov  ( prescaler divisor of 2 + 16/32)
+                     ( yields 115200 from 18.432M clock)
+
+.then
+
+   begin  interact bsr  again  ;c

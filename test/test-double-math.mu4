@@ -1,0 +1,210 @@
+( This file is part of muFORTH: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2010 David Frech. All rights reserved, and all wrongs
+  reversed. (See the file COPYRIGHT for details.)
+
+
+===========================================================================
+code from earlier (double-number) muforth startup (but edited for
+readability)
+===========================================================================
+
+( Let's define the token consumers yet -again- so we can patch in this code
+  and test it. Also we'll know if we try to convert a number before we know
+  how, so we can test on the host the bootstrappability of this code on the
+  target.)
+
+defer new-number   now complain is new-number
+defer new-number,  now complain is new-number,
+
+( Redefine, and then set the forth "consume".)
+-:   ( interpret one token)
+      .forth. find  if  execute ^  then  new-number ;     state @  !
+
+( Now set the compiler "consumer". To get access to the value of state at
+  compile time, we turn on the compiler, but don't compile anything!)
+
+-:   ( compile one token)
+   .compiler. find  if  execute ^  then
+      .forth. find  if  compile, ^  then  new-number, ;
+                                      -]  'compiler-mode [  !
+
+
+variable dpl    ( location of , or . )
+variable radix
+: base   radix ;  ( Compatibility)
+
+: radixer  constant  does> @  radix ! ;
+
+( In order to keep this compilable by the target -before- it knows how to
+  parse numbers - which is what we're defining now! - let's keep the
+  calculated constants. I thought of converting - and in fact started to
+  convert - these to numbers that the -metacompiler- could parse and
+  compile, but that limits us to loading this code -only- via the
+  metacompiler. I like the idea that the target is going to bootstrap
+  itself!)
+
+2 2* 2* dup 2* ( 16!)  radixer hex
+dup            (  8!)  radixer octal
+2 +            ( 10!)  radixer decimal  
+2                      radixer binary
+
+decimal
+( On and off)
+: on  -1 swap !  ;
+: off  0 swap !  ;
+
+( Punctuation in numbers: sign, radix, decimal point, separators.)
+: punct  ( a u ch - a' u' matched)
+   over if ( still chars to process)  swap >r  over c@  xor if
+   ( no match)  r>            0 ^  then  ( return false)
+   ( match)     r>  1 -1 v+  -1 ^  then  ( a+1 u-1 true)
+   ( end of input)  drop  r> drop ;      ( return to caller's caller!)
+
+: ?sign  char - punct ;
+
+: ?radix
+        char " punct  if  hex ^  then
+        char # punct  if  decimal ^  then
+        char ' punct  if  octal ^  then
+        char % punct  if  binary ^  then ;
+
+( . resets dpl; others leave it unchanged; this means that embedding . in a
+  number causes a double number to be pushed, and dpl set to the count of
+  digits _after_ the _last_ . in the number.)
+
+: punctuation
+.ifdef debug-number-input
+        cr ." punctuation "  .s
+.then
+        char . punct  if  dpl off  ^  then
+        char , punct  if   ^  then
+        char - punct  if   ^  then
+        char / punct  if   ^  then
+        char : punct  if   ^  then
+        char _ punct  if   ^  then  complain ;
+
+: digit?    ( ch - digit -1 | junk 0)
+   char 0 -  [ 2 2* 2* 1+ ]  ( 9)   over u< if  ( !decimal)
+          [ 2 2* 2* 2* 1+ ]  ( 17)  - 
+     [ 2 1+  2* 2* 2*  1+ ]  ( 25)  over u< if  ( !hex, UPPERCASE)
+          [ 2 2* 2* 2* 2* ]  ( 32)  - 
+     [ 2 1+  2* 2* 2*  1+ ]  ( 25)  over u< if  ( !hex, lowercase)
+      ( junk)  0 ^
+   then  then  ( hex) [ 2 2* 1+ 2* ]  ( 10) +  then  ( decimal)
+   dup radix @  u<  ;
+
+: @digit?   ( a - a digit -1 | a junk 0)   dup c@  digit?  ;
+
+: *digit  ( ud a digit - ud*base+digit a)
+   swap >r ( a)  swap ( lo digit hi)
+   radix @ um*  drop  rot ( digit hi*radix lo)
+   radix @ um*            ( digit hi*radix lo*radix_lo lo*radix_hi)
+   d+
+   r>  dpl @ 0< 1+  dpl +! ;  ( increment dpl if dpl >= 0)
+
+: convert  ( ud a count - ud' a+ count-)
+           ( a+ is first unconvertible char)
+.ifdef debug-number-input
+   cr ." convert "  .s
+.then
+   =if  for  @digit?  while  *digit  1+  next  0 ^
+                      then  drop ( non-digit)  r> ( count-)
+   then  ( 0) ;
+
+: digits   ( ud a count - ud' a+ count- #converted)
+.ifdef debug-number-input
+   cr ." digits " .s
+.then
+   dup >r ( chars left)  convert  r> over - ( count of digits converted)
+.ifdef debug-number-input
+   cr ." digits (end) "  .s
+.then
+;
+
+: number  ( a u - d)
+   radix preserve
+   >r >r  0 0  r> r>  ?radix  ?sign >r
+   0 >r ( #digits converted)  dpl on
+   begin  digits  r> + >r  =while  punctuation  repeat  2drop ( a u)
+   r> ( #digits)  0= if  r> drop complain  then
+   r> ( sign)  if dnegate then  ( apply saved sign) ;
+
+
+.ifdef fig
+
+-- fig's version ---------------------------------------------------------
+
+-- Note: fig pre-increments by 1 because the token at HERE starts with a
+-- byte-sized count.
+
+-- digit  ( ch base - n -1 | 0)  ( returns no digit when false!)
+
+: (number)  ( ud1 a - ud2 a+)
+   begin  1+  dup >r  c@ base @ digit
+   while  swap  base @ um*  drop rot  base @ um*  d+
+   dpl @  1+  if  1 dpl +!  then
+   r>  repeat  r> ;
+
+: number  ( a - d)
+   0 0 rot  ( ud a)
+   dup 1+ c@ char - =  dup >r +  ( match sign char; push flag; skip sign)
+   -1 begin  dpl !  (number)
+             dup c@ bl -  ( while not end of token - bl char follows it)
+      while  dup c@ char . -  0 ?error  ( not defined)
+   0 repeat  ( saw a . so set dpl non-negative)
+   drop ( a)  r>  if  dnegate  then ;
+
+.then
+
+-- end fig's version -----------------------------------------------------
+
+
+( dpl is non-negative if there were one or more "dots" in the number;
+  keep it as a double, or make a double literal.)
+
+-:
+   number  dpl @  0< if  drop  then  ;  is new-number
+
+-:
+   number  dpl @  0< if  drop  literal ^  then
+                               swap  literal literal ;  is new-number,
+
+
+.ifdef number-output
+
+( For number -output-)
+
+: /digit   ( ud - udquot urem)
+   0 radix @ um/mod     ( 0:hi / radix -> urhi uqhi)  >r
+     radix @ um/mod  ( urhi:lo / radix -> urlo uqlo)  r> rot  ;
+
+.then
+
+===========================================================================
+existing code in current startup with 32-bit numbers
+===========================================================================
+
+.ifdef single-numbers
+
+: *digit  ( u a digit - u*base+digit a)
+   swap >r ( a)  swap ( dig u)  radix @ * +  r>  dpl @ 0< 1+  dpl +!  ;
+
+( ANS compatible! - or at least it was when it converting with double numbers.)
+: >number  ( u1 a1 c1 - u2 a2 c2)  ( a2 is first unconvertible char)
+   =if  for  @digit?  while  *digit 1+ next  0 ^  then
+                                drop  r>  then  ;
+
+( If >number can't convert any digits, complain.)
+: digits   ( u1 a1 c1 - u2 a2 c2 u3)
+   dup >r ( chars left)  >number  r> over - ( count of digits converted)
+   0= if  drop complain  then ;
+
+: number  ( a u - n)
+   radix preserve ( always reset the radix, even in case of error)
+   2>r  0  2r>  ?sign >r  ?radix  dpl on
+   begin  digits  =while ( still chars)  ?dot  repeat
+   2drop  r>  if negate then  ;
+
+.then
+

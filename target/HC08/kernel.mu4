@@ -1,0 +1,156 @@
+( This file is part of muFORTH: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2010 David Frech. All rights reserved, and all wrongs
+  reversed. (See the file COPYRIGHT for details.)
+
+loading HC08 Forth kernel
+
+__meta
+
+target
+
+-- ------------------------------------------------------------------------
+-- Stack layout
+-- ------------------------------------------------------------------------
+
+( To make use of literals easier, we keep one "scratch" byte allocated on
+  the D stack, at 0,x. Below this is top, and below that, second. Like
+  this:
+
+     |      |      |
+     +------+------+
+  3  |  sl  |  sh  |  4   second
+     +------+------+
+  1  |  tl  |  th  |  2   top
+     +------+------+
+            |  xh  |  0   scratch high
+            +------+                          
+
+  An odd feature of this arrangement is that the data stack is
+  little-endian, so we cannot use 16-bit instructions - like ldhx - to
+  access it.)
+
+macro sh  4 ,x  ;m
+macro sl  3 ,x  ;m
+macro th  2 ,x  ;m
+macro tl  1 ,x  ;m
+macro xh  0 ,x  ;m
+
+
+-- ------------------------------------------------------------------------
+-- Literal loading.
+--
+-- The low half is put into A, the high half into xh - 0,x, on the data
+-- stack.
+--
+-- If high half and low half are equal and non-zero,
+--    half # lda  xh sta  ( 3 bytes)
+-- Otherwise:
+--
+-- High half:
+-- If hi =  0, xh clr          ( 1 byte)
+-- If hi =  1, xh clr  xh inc  ( 2 bytes)
+-- If hi = -1, xh clr  xh dec  ( 2 bytes)
+-- Otherwise, #hi lda  xh sta  ( 3 bytes)
+--
+-- Low half:
+-- If lo = 0,  .a clr   ( 1 byte)
+-- Otherwise,  #lo lda  ( 2 bytes)
+-- ------------------------------------------------------------------------
+
+macro dpop  ( puts tl into A, th into xh)
+   tl lda  2 # aix  ( th -> xh)  ;m
+
+( XXX inline? It's four bytes, so it's longer than a call..)
+code invert
+   tl com  th com  rts  ;c
+
+code negate
+   tl neg  .a clr  th sbc  th sta  rts  ;c
+
+( Binary ops.)
+code -
+   negate c  ( fall thru)
+
+label +   dpop
+label +_imm     tl add  tl sta
+        xh lda  th adc  th sta  rts  ;c
+
+code  and   dpop
+label and_imm     tl and  tl sta
+          xh lda  th and  th sta  rts  ;c
+
+code  or   dpop
+label or_imm     tl ora  tl sta
+         xh lda  th ora  th sta  rts  ;c
+
+code  xor   dpop
+label xor_imm     tl eor  tl sta
+          xh lda  th eor  th sta  rts  ;c
+
+( Flags and tests.)
+code 0=
+   tl lda  th ora  1 # sub ( Z -> C)  ( fall thru)
+
+label makeflag  ( C -> -1, NC -> 0)
+   .a clr  0 # sbc  tl sta  th sta  rts  ;c
+
+code 0<
+   th lda  .a rol ( N -> C)  makeflag j  ;c
+
+
+( XXX u< and < have to use u> and > to get the correct results...)
+
+code  u<   dpop
+label u<_imm    tl sub
+        xh lda  th sbc
+   ( order of subtract backwards, so use u> )
+   u> if  sec makeflag j  then
+          clc makeflag j  ;c
+
+code  <    dpop
+label <_imm     tl sub
+        xh lda  th sbc
+   ( order of subtract backwards, so use > )
+   > if  sec makeflag j  then
+         clc makeflag j  ;c
+
+code dpush  ( assumes lo in A, hi in xh)
+   -2 # aix ( xh -> th)  tl sta  rts  ;c
+
+( Stack ops.)
+code dup  ( a - a a)
+   th lda  xh sta  tl lda  dpush j  ;c
+
+code over  ( a b - a b a)
+   sh lda  xh sta  sl lda  dpush j  ;c
+
+macro drop  2 # aix  ;m
+
+code nip  ( a b - b)
+   tl lda  sl sta  th lda  sh sta  ( top -> sec)
+   drop  rts  ;c
+
+code swap  ( a b - b a)
+   th lda  xh sta  sh lda  th sta  xh lda  sh sta
+   tl lda  xh sta  sl lda  tl sta  xh lda  sl sta  rts  ;c
+
+( Return stack ops.)
+code _r  ( move to R; needs to be room above return address)
+   th lda  2 ,s sta  tl lda  3 ,s sta  drop  rts  ;c
+
+code r_  ( move from R; needs to be value above return address)
+   2 ,s lda  xh sta  3 ,s lda  dpush j  ;c
+
+( >r aka push will _compile_ -2 # ais, then call to _r )
+( r> aka pop will _compile_ call to r_, then 2 # ais )
+
+-- code -rot  ( a b c - c a b)  rot c  ( fall thru)
+-- : rot   ( a b c - b c a)  push  swap  pop  swap ;
+
+code -rot  |here 2 +a c  ( call rot, then fall thru)
+label rot
+   -2 # ais  _r c  swap c  r_ c  2 # ais  swap j  ;c
+
+( Memory access.)
+

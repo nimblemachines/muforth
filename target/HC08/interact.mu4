@@ -1,0 +1,216 @@
+( This file is part of muFORTH: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2010 David Frech. All rights reserved, and all wrongs
+  reversed. (See the file COPYRIGHT for details.)
+
+( Support common to all 908 and S08 interactions. Things like SWI stack
+  frames, reading and writing memory using "indexed" reads and writes.)
+
+
+loading HC08 Interaction (common)
+
+
+( Hex output, from lib/see.mu4)
+: .h8_   .h8 space ;
+: .hcell_  .hcell space ;
+
+: >lohi  ( w - lo hi)  dup "0ff and  swap 8 u>> ;
+: hilo>  ( hi lo - w)  swap  8 << or ;
+
+( Recv from, send to target.)
+: _send  tty-target  >emit ;
+: _recv  tty-target  <key ;
+: flush  tty-target  tty-iflush ;
+
+comment chat-commands
+
+  Simple and unified interaction layer.
+  
+  The interaction "plumbing" - whether chat-monitor, chat, or BDM - will
+  implement the following commands:
+
+  GetRegs  - get all registers
+  SetRegs  - set all registers
+  SetAddr  - set memory address for subsequent Read and Write commands
+  Read     - read a single byte from memory, increment pointer
+  Write    - write a single byte to memory, increment pointer
+  Go       - start executing
+  Run      - same as Go, but also wait for target to finish
+             and resume chatting
+
+comment chat-commands
+
+defer t.GetRegs
+defer t.SetRegs
+defer t.SetAddr  ( a)
+defer t.Read     ( - byte)
+defer t.Write    ( byte)
+defer t.Go
+defer t.Run
+
+variable chatting
+
+6 buffer chat-frame  ( local copy of SWI stack frame)
+variable chat-sp   ( current value of target's SP)
+variable chat-hx   ( current HX pointer for indexed reads and writes)
+chat-hx off
+
+: +wrap  ( a n - a+n fitting in 16 bits)  +  "0ffff and ;
+: match-hx?  ( a - f)  chat-hx @ = ; 
+: update-hx  ( a +a)  +wrap chat-hx ! ;
+: setup-hx  ( a)  dup match-hx?  over 1 update-hx  if drop ^ then  t.SetAddr ;
+
+: chat-c@  ( a - byte)  setup-hx  t.Read ;
+: chat-c!  ( byte a)    setup-hx  t.Write ;
+
+: chat-@  ( a - word)  chat-c@ ( hi)  t.Read ( lo)  hilo> ;
+: chat-!  ( word a)    >lohi  rot chat-c! ( hi)  t.Write ( lo) ;
+
+: _chat  ( initialise)
+   chatting on
+   t.GetRegs  0 t.SetAddr  chat-hx off ( so they match!) ;
+
+: >chat   ['] chat-c@  is  |c@
+          ['] be-w@    is  |@
+          2 |cell !  ( size of cell) ;
+
+( Set |@ and |c@ to _some_ form of target fetch. Prefer to get bytes from
+  target if we're connected. This word is useful so we can set an initial
+  state for target's  du  and  dis  so that inspect won't crash when it
+  runs |@ to get a default ea.)
+
+: >target  chatting @ if  >chat ^  then  >image ;
+
+
+( Define our own key bindings for memory dumping and disassembly. We'll
+  default to host bindings if there isn't one in our array. This way we
+  only have to define the "delta" between host and target behaviours.)
+
+128 array hc08-seekeys
+
+( Default key action is to run host key code)
+host-seekeys hc08-seekeys  128 cells cmove
+
+hc08-seekeys 'seekeys !    ( switch over to our bindings)
+
+( Support for dumping memory)
+: 1dump  ( a)
+   hex-bytes  ( set field width)
+   >image   dup .addr  dup .hex-bytes
+   chatting @ if
+      >chat   dup _addr  dup .hex-bytes
+   then
+   drop ( a) ;
+
+key: d  ( a - a 0)  ['] skip+  advance!
+                    ['] skip-  retreat!
+                    ['] 1dump  inspect!  0 ;
+
+key: i  ( a - a 0)  ['] i-skip  advance!
+                    ['] 0       retreat!
+                    ['] 1dis    inspect!  0 ;
+
+( Interactive)
+meta
+: du  ( a - a')    hc08-seekeys 'seekeys !    ( switch over to our bindings)
+                   >target
+                   ['] skip+  advance!
+                   ['] skip-  retreat!
+                   ['] 1dump  inspect ;
+
+: dis  ( a - a')   hc08-seekeys 'seekeys !    ( switch over to our bindings)
+                   >target
+                   ['] i-skip  advance!
+                   ['] 0       retreat!
+                   ['] 1dis    inspect ;
+forth
+
+( We keep a local copy of the target's registers in the same order as they
+  appear in an exception frame.
+
+  The order, low to high: H CC A X PCH PCL)
+
+( These index into our local chat-frame, _not_ into target memory!)
+: reg  ( offset)  constant  does> @  chat-frame + ;  ( self-index)
+00 reg .H
+01 reg .CC
+02 reg .A
+03 reg .X
+04 reg .PC
+04 reg .PCH
+05 reg .PCL
+
+: .bits8  radix @ push  binary  <# # # # # # # # # #> type  pop radix ! ;
+: w@  ( a - w)  ( like chat-@ above, but local)  dup c@ 8 <<  swap 1+ c@ or ;
+
+: .b  ( a)  c@ .h8_ ;
+: .w  ( a)  w@  .hcell_ ;
+
+: .regs
+   cr  ." V--HINZC  A  H  X   SP   PC"
+   cr  .CC c@ .bits8 space  .A .b  .H .b  .X .b  chat-sp @ .hcell_  .PC .w ;
+
+( These are handy.)
+: pc!  >lohi  .PCH c!  .PCL c! ;
+: hx!  >lohi  .H c!  .X c! ;
+
+( Useful utilities)
+: c@+  ( a - a+1 b)  dup 1+  swap c@ ;
+: c!+  ( b a - a+1)  tuck  c!  1+ ;
+
+: put  ( from to)  ( copy code to target)
+   2dup u< if  over - ( from count)  over t.SetAddr  swap  |+  swap
+   for  c@+ t.Write  next  drop  ^  then  2drop ;
+
+hex
+
+outside
+: equ  ( make a constant in .outside.)
+  current preserve  outside constant ;
+
+assembler
+: label   |here  \o equ ;
+: ;c   __outside ;
+
+compiler
+: ;m   \ ^  __outside ;  ( to exit from macro compilation)
+
+outside
+: ram  ram ;
+: flash  flash ;
+: org  org ;
+: code   \a label  __asm ;
+: macro  current preserve  assembler :  __macro ;
+: var   |ram @  \o equ  |ram +! ( allot) ;
+
+( For forward references)
+: forward    "100 \a ) \a jmp  \a label ;
+: resolve>>  ( src)  |here  swap 2 -  |! ;
+
+: .or   or ;
+: .x  ( like .s)  .X c@ du ;
+
+variable reset
+variable swi
+: vector  ( a)  |here  swap !  __asm ;
+
+.ifdef emulated-swi
+: __swi  ( compile my version instead!)  \o swi @  \a ) \a jsr ;
+.else
+: __swi  ( compile the real thing)  \a swi ;
+.then
+
+forth
+: .r   .regs ;
+: hi   @ram  |ram @  put  \o reset @  pc!  .regs ;
+
+( XXX change this!)
+: chat-run  t.SetRegs  t.Run  t.GetRegs ;
+
+: go   chat-run  .regs ;
+
+
+: call  pc!  go ;
+: run   \o reset @   call ;
+
+: \o  .outside. chain' execute ;

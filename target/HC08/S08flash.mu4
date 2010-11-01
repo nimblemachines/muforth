@@ -1,0 +1,191 @@
+( This file is part of muFORTH: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2010 David Frech. All rights reserved, and all wrongs
+  reversed. (See the file COPYRIGHT for details.)
+
+loading HCS08 Flash programming
+
+hex
+
+( Posts from the 8-bit forum about programming S08 flash:
+  http://forums.freescale.com/freescale/board/message?board.id=8BITCOMM&thread.id=14410
+  http://forums.freescale.com/freescale/board/message?board.id=8BITCOMM&message.id=9610
+  http://forums.freescale.com/freescale/board/message?board.id=8BITCOMM&message.id=627)
+
+comment tonyp  Bomb-proof working code from tonyp:
+
+;*******************************************************************************
+; Purpose: RAM routine to do the job we can't do from Flash
+; Input  : A = value to program
+; Output : None
+; Note(s): This routine is modified in RAM by its loader at @2,3 and @5
+;        : Stack needed: 20 bytes + 2 for JSR/BSR
+
+?RAM_Execute       sta       EEPROM              ;Step 1 - Latch data/address
+                                                 ;EEPROM (@2,@3) replaced
+                   lda       #mByteProg          ;mByteProg (@5) replaced
+                   sta       FCMD                ;Step 2 - Write command to FCMD
+
+                   lda       #FCBEF_
+                   sta       FSTAT               ;Step 3 - Write FCBEF_ in FSTAT
+                   lsra                          ;min delay before checking FSTAT
+                                                 ;(FCBEF -> FCCF for later BIT)
+?RAM_Execute.Loop  bit       FSTAT               ;Step 4 - Wait for completion
+                   beq       ?RAM_Execute.Loop   ;check FCCF_ for completion
+                   rts
+
+;after exit, check FSTAT for FPVIOL and FACCERR
+
+?RAM_Needed        equ       *-?RAM_Execute
+
+XXX: add the short - sometimes-it-works code as well.
+
+comment tonyp
+
+( S08 Flash memory layout.
+
+  ffac  my FTRIM - trims to 9.216M
+  ffad  my TRIM  - ditto
+  ffae  FTRIM bit - factory trim for 8M
+  ffaf  TRIM byte - ditto
+
+  ffb0 - ffbf    is all about _security_
+  ffb0 - b7   comparison key
+  ffb8 - bc   available
+  ffbd        NVPROT
+  ffbe        available
+  ffbf        NVOPT
+
+  ffc0 - ffff  Interrupt and reset vectors)
+
+( What does it take to program a single byte - like my TRIM byte - entirely
+  via BDM?)
+
+forth
+
+20 constant mByteProgram
+25 constant mBurstProgram
+40 constant mPageErase
+
+__outside
+
+ram
+
+( Target code to write to and erase the Flash. By "pasting in" different
+  values for flash-command and flash-status, it's possible to do regular
+  byte programming, burst programming, or page/mass erase.)
+
+code RunFlashCommand  ( value in A, address in HX)
+   ( This routine must preserve HX.)
+   0 ,x sta   ( store byte into Flash array)
+label flash-command
+   00 # lda   FCMD ) sta
+   80 # lda   FSTAT ) sta  ( pwpp - clear FCBEF - start command)
+label flash-status
+   00 # lda
+   begin  FSTAT ) bit  ( prpp)  0!= until  ( until flash-status matches)
+   rts  ;c
+
+1 var flashCount
+
+( XXX Ending this with "bgnd" works, but only because we get lucky. In chat
+  mode bgnd causes a reset, but since that simply re-starts the chat
+  protocol it "seems" to work. Doing this more correctly and elegantly
+  would be nice.)
+
+code FlashRow  ( program up to 64 bytes; Flash address in HX; bytes on stack)
+   begin  .a pul  RunFlashCommand bsr  1 # aix
+   0< while  ( FCBEF)  flashCount ) decz? until  then  bgnd  ;c
+
+__forth
+forth
+
+#512 constant /page    ( S08 has 512 byte Flash pages - this is erase size)
+ #64 constant /chunk   ( max size of row to program)
+
+
+( Allocate room for len bytes on stack; set up write pointer to first byte)
+
+( When doing this over chat, we need to _actually_ set the target's SP, not
+  just our local idea of it; the chat target is executing code and making
+  subroutine calls; these _will_ mess up our buffer unless the return
+  addresses get pushed _below_ it.
+
+  XXX right now I'm using SetRegs to set SP. Do I need a SetSP command? It
+  exists in the two places I want to use it - BDM and chat.)
+
+: write-buffer  ( len)
+   chat-sp @ swap -  dup chat-sp !  ( allocate write-buffer on stack)
+   t.SetRegs ( XXX misusing this to set target's SP)  t.SetAddr ;
+
+( If target address is in the last page of flash, return true)
+: last-page?  ( 'target - f)
+   /page negate and  ( round down to start of page)
+   @flash #flash +  /page -  = ;
+
+: flash-setup  ( 'target len flash-status flash-command)
+   \o flash-command 1+ chat-c!  ( paste into lda #)
+   \o flash-status 1+ chat-c!  ( paste into lda #)
+   ( len) \o flashCount chat-c!  ( 'target) hx!
+   \o FlashRow ( PC) pc! ;
+
+( Flash a chunk of 64 bytes or less.)
+: program-chunk  ( 'target len)
+   cr ." program-chunk "  2dup swap u. u.
+   %1011_0000 ( FCBEF | FPVIOL | FACCERR)
+   mBurstProgram  flash-setup  chat-run ;
+
+( On S08, erasing the vectors means erasing the TRIM bytes, the secure
+  bits, and the bootloader. So be careful about re-programming things, esp
+  the TRIMs and the secure bits.)
+
+: copy-trims  ( save them from the wrecking ball)
+   cr ." copy-trims"
+   0ffac dup t.SetAddr  |+ ( 'image)  4 for
+      t.Read  over c! ( save in image)  1+  next  drop ;
+
+: erase-page  ( 'target)
+   cr ." erase-page " dup u.
+   dup last-page? if  ( erasing last page)  copy-trims  then
+   1 write-buffer  ( so we can pop a byte in FlashRow)
+   1 ( len)  %0111_0000 ( FCCF | FPVIOL | FACCERR)
+   mPageErase  flash-setup  chat-run ;
+
+: blank-check  ( addr len - flag)
+   cr ." blank-check "  2dup swap u. u.
+   swap t.SetAddr  0ff swap  for  t.Read and  next  0ff = ;
+
+: copy-chunk  ( 'target len)
+   cr ." copy-chunk "  2dup swap u. u.
+   swap  |+ ( target -> 'image)  swap
+   dup write-buffer  for  c@+ t.Write  next  drop ;
+
+: erased  ( 'target len - 'target len)
+   2dup blank-check  if ^ then  over erase-page ;
+
+( For each chunk check if blank, erase if necessary, then copy chunks over
+  to buffer and program them!)
+
+: chunk  ( 'target len - 'target+len)
+   2dup + push  erased
+   2dup copy-chunk  program-chunk  pop ;
+
+: flash-region  ( a len)
+   /chunk /mod  ( r q)  swap push  ?for  /chunk chunk  next  then
+                              pop  =if   ( rem) chunk  drop ^  then  2drop ;
+
+: flash-image   flash  |region ( a u)   flash-region ;
+
+: flash-trims  ( re-flash saved trims, and set secure bits to "insecure")
+   0ffac 4  2dup  copy-chunk  program-chunk ( trims)
+   1 write-buffer  0fe t.Write  0ffbf 1 program-chunk ( secure bits) ;
+
+: flash-vectors
+   4 write-buffer
+   \o swi   @ >lohi  t.Write  t.Write
+   \o reset @ >lohi  t.Write  t.Write
+   0fffc 4 program-chunk ;
+
+( XXX This is a bit of a hack, but seems to work.)
+: verify   |region ( a u)  swap  dup t.SetAddr  |+
+    swap for  c@+ t.Read xor if  dup 'image - u.  then  next  drop ;

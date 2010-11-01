@@ -3,36 +3,66 @@
   Copyright 2002-2010 David Frech. All rights reserved, and all wrongs
   reversed. (See the file COPYRIGHT for details.)
 
-cr " HC08 Flash programming " file[#
+loading HC908 Flash programming
+
+hex
 
 ( Code to utilise the on-chip ROM-resident Flash programming routines in
   Freescale's HC908 microcontroller.)
 
 ( Read AN2635 and AN2874 for details.)
 
-( from AN2635:)
-MCU Name         RAM GetByte PutByte RDVRRNG PRGRNGE ERARNGE DELNUS
-MC68HC908QB4/QB8 $80   $2800   $280F   $2803  $2809   $2806   $280C
+ld target/HC08/908flash-defs.mu4
 
-( from AN2874:)
-  MCU     RAM PRGRNGE ERARNGE RDVRRNG GETBYTE DELNUS
-QB4/8     $88   $2809   $2806   $2803   $2800  $280C
+: flash-setup  ( 'target 'len 'code)
+   push
+   control-block c.SetHX
+       0 c.WriteByte ( page erase)
+     #18 c.WriteByte ( running @ 18.432M) 
+     over + 1-  >lohi  c.WriteByte  c.WriteByte  ( last addr)
+   ( write HX and PC to stack frame:)
+   ( 'target) hx!  pop ( PC) pc! ;
 
-2806 constant EraseRange
-2809 constant ProgRange
+( Flash a chunk of 16 bytes or less.)
+: program-chunk  ( 'target len)
+   cr ." program-chunk "  2dup swap u. u.
+   'program-range flash-setup  chat-run ;
 
-( HX points to first byte of data to Flash.)
-88 Control     ( Used only by FlEraseRange)
-   1 << 6 constant MassErase
-        0 constant PageErase
-89 CpuSpeed    ( 4*bus_speed_in_mhz, rounded up to nearest int)
-8a AddrLastH   ( Last address to Flash)
-8b AddrLastL
-8c Data        ( 1-32 bytes of data to write to Flash)
+( The length - from which we calc last-addr for the control block - doesn't
+  matter for erase-range. The ROM routine always erases an entire page;
+  also HX can point anywhere in the page.)
 
+: erase-chunk  ( 'target)
+   cr ." erase-chunk " dup u.
+   1 'erase-range flash-setup  chat-run ;
 
+: blank-check  ( addr len - flag)
+   cr ." blank-check "  2dup swap u. u.
+   swap c.SetHX  0ff swap  for  c.ReadByte and  next  0ff = ;
 
-#]file
+: copy-chunk  ( 'image len)
+   cr ." copy-chunk "  2dup swap u. u.
+   write-buffer c.SetHX  for  c@+ c.WriteByte  next  drop ;
 
+: erased  ( 'target len - 'target len)
+   2dup blank-check  if ^ then  over erase-chunk ;
 
+( For each chunk check if blank, erase if necessary, then copy chunks over
+  to buffer and program them!)
 
+: chunk  ( 'target len - 'target+len)
+   2dup + push  erased
+   over |+ ( 'target to 'image)  over  ( 'image len)  copy-chunk
+   program-chunk  pop ;
+
+: flash-region  ( a len)
+   /chunk /mod  ( r q)  swap push  ?for  /chunk chunk  next  then
+                              pop  =if   ( rem) chunk  drop ^  then  2drop ;
+
+: flash-image   flash  |region ( a u)   flash-region ;
+
+: flash-vectors
+   write-buffer c.SetHX
+   \o swi   @ >lohi  c.WriteByte c.WriteByte
+   \o reset @ >lohi  c.WriteByte c.WriteByte
+   0fffc 4 'program-range flash-setup  chat-run ;

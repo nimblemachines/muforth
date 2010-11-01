@@ -1,0 +1,1319 @@
+: definitions  current ! ;
+: forth        .forth. definitions ;
+: compiler  .compiler. definitions ;
+
+: literal  (literal) (literal) compile,  compile, ;
+
+: ]   literal -] ;
+: char   token  drop  c@ ;
+
+: (    [ char ) ]  parse  2drop ;
+
+( Phew! now we can have comments!)
+
+( $Id$
+
+  This file is part of muforth.
+
+  Copyright 1997-2006 David Frech. All rights reserved, and all wrongs
+  reversed.
+
+  Licensed under the Apache License, Version 2.0 [the "License"];
+  you may not use this file except in compliance with the License.
+  You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+  or see the file LICENSE in the top directory of this distribution.
+
+  Unless required by applicable law or agreed to in writing, software
+  distributed under the License is distributed on an "AS IS" BASIS,
+  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  See the License for the specific language governing permissions and
+  limitations under the License.)
+
+( This file is muforth/startup.mu4. It contains high-level Forth code
+  necessary to the useful execution of Forth. This file is loaded and
+  interpreted when Forth starts up.
+
+  The idea is to move as much code as possible -out- of the Forth kernel.
+  Hence the name: "mu" is the Greek letter often used in engineering to
+  represent "micro". I had called it "nu" Forth, because it was new, but I
+  like this nu Greek letter better.)
+
+( This file exemplifies a Forth strength - shared by Lisp and Smalltalk,
+  among other interpretive/compiled languages - that I like to call
+  "writing the reader"; the reader being, in this case, the Forth
+  interpreter/compiler.
+
+  As defined in the kernel, the interpreter/compiler is very simple; it
+  only knows how to do the following things:
+
+  1. compile a call to an already-defined word [Forth for "named piece of
+     code"];
+
+  2. convert a compiled call into a jump, if it would be followed by a
+     "return" instruction [so-called "tail-call conversion"];
+
+  3. create a new word, making a dictionary entry for it;
+
+  4. compile code to push a constant onto the stack [an "inline literal"];
+
+  5. compile code to do a few stack manipulations, or stack tests [TOP ==
+     0, for instance], that are difficult or impossible to do in Forth, or
+     involve machine dependencies.
+
+  That's it! The machine-dependent compiler code - in this first pass at
+  the problem, for the x86 architecture - is around 300 lines of C code,
+  but in principle very simple.
+
+  In this file, in Forth, we need to extend the interpreter/compiler to do
+  the following:
+
+  1. compile control structures: if/then, for/next, begin/while/repeat;
+
+  2. compile data structures: variables, constants, create/does words;
+
+  3. read and write numbers - an interesting exercise since muforth starts
+     life _not_ even knowing only the constant 1!
+
+  4. read and write strings.
+
+  Once these are complete we will have a useful Forth for doing real work.
+
+  The order of business will sometimes seem haphazard; words can only be
+  defined after the words they depend on have been defined, so we end up
+  jumping around a bit in the "semantics" of the language.
+
+  Hopefully the reader will find this an interesting exercise in
+  bootstrapping, which was precisely my intention.
+
+  So, here goes; now we start extending the language, bit by bit.)
+
+
+( !! NOTE !! Do -NOT- change this part of the file without thinking VERY
+  hard first. Make changes below the line marked `Add changes below this
+  line', otherwise it may be difficult to diagnose problems added by new
+  code.)
+
+
+( First, we need compiler versions of ( and char. Since we no longer hide
+  words as they are being defined, we need to be careful about how we do
+  this. So let's define some words that are useful for searching specific
+  dictionary chains and compiling words from them.)
+
+( Stack comment and word comment words. We redefine these to generate
+  documentation.)
+: (s  ( ;  ( stack comment)
+: (w  ( ;  (w word comment)
+
+( Roll tokenizing and searching into one.)
+: token'   token  rot  find ;   (s chain - a u F | body T)
+
+( Compiling from specific chains. Note that `\' is an elaboration of the
+  basic scheme of `\chain'. These words will be handy in the assembler
+  and target compiler.)
+
+( Tick)
+: chain'  token'  huh?  ;
+: \chain  chain'  compile,  ;
+
+( 28-apr-2000. Do we ever -really- want to search anything other than .forth.?)
+: '   .forth.  chain'  ;
+( : '   current @  chain'  ;  ( XXX)
+
+compiler
+( XXX: should this and ' do the same thing?)
+( : [']  .forth. chain' literal ;)
+: [']  ' literal ;
+
+( XXX: is this useful? Here? Maybe in a target compiler...)
+: \f     .forth. \chain ;
+: \c  .compiler. \chain ;  ( until we have \ ; we need this for "if")
+
+( Ok, now we can define our compiler comment char, ( .)
+: (    \f ( ;
+: (s   \f ( ;  (w stack comment)
+: (w   \f ( ;  (w word comment)
+forth
+
+
+( Some useful tidbits.)
+: -   negate + ;
+: u+  (s a b c - a+c b)  rot +  swap ;  ( "under-plus")
+: v+  (s x1 y1 x2 y2 - x1+x2 y1+y2)  push u+ pop + ;  ( add 2-vectors)
+
+( We don't even have any constants yet! So we make the easiest one first...)
+: 0   [ dup dup xor ] ;
+: -1  [ 0 invert ] ;
+: 1   [ -1 negate ] ;
+: 2   [ 1 2* ] ;
+
+: 1+   1 + ;  ( these are common)
+: 1-  -1 + ;
+
+: cell   [ 1 cells ] ;
+: cell+  [ cell ] + ;
+: cell-  [ cell negate ] + ;
+
+: bl  [ 2 2* 2* 2* 2* ] ;  ( space character)
+
+: tuck  (s a b - b a b)  swap over ;
+
+: @+  (s a - n a+)  dup @  swap cell+ ;
+: !+  (s n a - a+)  tuck !  cell+ ;
+
+: 2@  @+ @  swap ;  ( cell at lower address to TOP)
+: 2!  !+ ! ;
+
+: 2dup  over over ;
+: 2swap  rot push  rot pop ;
+: 2push  (s a b -> R: a b)  pop -rot  swap push push  push ;
+: 2pop   (s R: a b -> a b)  pop       pop pop swap    rot push ;
+
+( Compatibility.)
+: =  xor 0= ;
+: bic  invert and ;
+: lshift  << ;
+: rshift  >> ;
+: urshift  u>> ;
+
+: @execute  @ execute ;
+
+( XXX: can this be refactored to get rid of some of the swaps?)
+( XXX: can this be got rid of entirely?)
+: vector    (s n a)  swap cells +  @execute ;
+: |vector|  (s n a mask)  rot and  swap  vector  ;
+
+( Compiler nuts and bolts.)
+: aligned  [ cell 1- ] +  [ cell negate ] and ;
+: here   h @ ;  ( h points to the first free byte in code space)
+: ram    r @ ;  ( r points to the first free byte in data space)
+: allot  aligned  r +! ;  ( keeps ram space cell-aligned)
+: ,      ram !  cell allot ;
+
+( We'll define words to compile into code space once we have create/does.)
+
+
+( Now `ctrl' and the compiler's "char" and "ctrl".)
+: ctrl   char  [ bl 2* ( 64) ]  xor ;  ( how you get ^? = 127.)
+compiler
+: char   \f char literal ;
+: ctrl   \f ctrl literal ;
+forth
+
+( A nice way to do full-line comments with no trailing delimiter.)
+: //  ctrl J parse  2drop ;  ( throw away until a newline)
+
+( the old definition)
+// : ctrl   char  [ bl 1- ( 31) ]  and ;  ( elliptical, but it works :-)
+
+
+( Basic conditionals)
+: <resolve  (s dest src)  ! ;
+: resolve>  (s src dest)  swap <resolve ;
+: mark>  (s - src)  here  0 compile, ;
+
+compiler
+: =if   (s - src)  ['] (=0branch) compile,  mark> ;
+: if    (s - src)  [']  (0branch) compile,  mark> ;
+: then  (s src)  here resolve> ;
+
+( make \ more like ANS-Forth's POSTPONE)
+( in our case, what do we compile?
+  movl $xt, %eax; call push_literal; call compile,
+  Now, the confusion happens because we need to write code _in this word_
+  that will compile the above code into _other_ words. How about that?)
+
+( Read a token out of the input stream. If the token is on the compiler
+  chain, postpone its execution until the word we're compiling executes. If
+  the token is on the forth chain, postpone its compilation until the word
+  that we're compiling executes. Got that? ;-)
+
+: \   .compiler. token'  if compile, ^ then
+         .forth. find  huh?  literal  ['] compile,  compile, ;
+
+// : else      (s src0 - src1)  \ (branch) mark>  swap  \ then ;
+
+: begin   (s - dest)  here ;
+: =until  (s dest -)       \ =if  <resolve ;
+: until   (s dest -)        \ if  <resolve ;
+: again   (s dest -)  \ (branch) mark> <resolve ;
+: =while  (s dest - src dest)  \ =if  swap ;
+: while   (s dest - src dest)   \ if  swap ;
+: repeat  (s src dest -)   \ again  \ then ;
+
+( n for .. next         goes n times; 4 billion+ if n=0 )
+( n ?for .. next then   goes n times; 0 if n=0 )
+
+: for     (s - dest)      \ push  \ begin ;
+: ?for    (s - src dest)  \ (?for) mark>  \ begin ;
+: next    (s dest -)      \ (next) mark> <resolve ;
+
+forth
+
+( To bracket comments in a flexible way. If you've bracketed some text
+  using comment, changing "comment" to "uncomment" will interpret the
+  bracketed text - the delimiter becomes a noop.)
+
+: comment  token  begin  2dup token  string-compare 0=  until  2drop ;
+: uncomment  new \ ^ ;  ( create a noop word)
+
+
+( Defining words are next. Right now we only `know' how to make `colon'
+  definitions. We need some structural help first.)
+
+( Some notes on the newer, smarter ] . I wanted to gain a
+  little of the clarity that Chuck Moore's colorForth gains by getting rid
+  of "[ <calculate something here> ] literal". He replaces the whole
+  construct with colored words that are executed or compiled depending on
+  their color, but with a little added twist: words that are executed [of
+  "execute" color] create what I call a "pending literal" that will be
+  compiled just _before_ the next word that is compiled [of "compile"
+  color].
+
+  Even if we don't have color, we do still have [ and ] and can use them to
+  achieve the same end. [ creates a pending literal and ] compiles it.
+
+  How does it work? Simple. ] _always_ compiles a literal before restarting
+  the colon compiler. To restart it _without_ compiling a literal, use -] .)
+
+
+( 2002-mar-18. New and modern create/does. Everything changes dramatically
+  with native compilation. Let's look at what we have.
+
+  First of all, "does>" changes from compiling an _address_ to compiling a
+  _constant_ - which could, of course, be an address. does> splits the code
+  to push a constant into two parts: a load part and a push part. The load 
+  part is the code:
+
+    movl $constant,%edx
+
+  The push part is the call [or jump!] to push-literal. This is the same
+  code that "literal" generates; we're splitting it into two parts to save
+  code space.
+
+  Here's how it works. Let's say we're writing an assembler and need words
+  for addressing modes. Like many create/does> words, these consist of a
+  _constant_ and some code. The old way to do this would go something like:
+
+    : md  create ,  does> @  a b c ;
+
+  This is a clumsy way to work with constants - compiling them into the
+  word only to fetch them out again - and is inefficient when compiled to
+  native code. My modernized way looks like this:
+
+    : md  create  does>  a b c ;
+    octal 004 md deferred
+
+  does> by default creates a constant, which gets pushed when the child
+  word - "deferred" in this example - is executed. The actual code that is
+  compiled looks like this:
+
+  md: call create         ; define-time
+      call ;does          ; define-time
+  md_does:
+      call push_literal   ; run-time
+      call a              ; run-time
+      call b              ; run-time
+      jmp  c              ; run-time
+
+  deferred:
+      movl $004, %edx
+      jmp md_does
+
+  Wait a minute! How did that ";does" thing get in there? Well, does> is
+  actually a _compiler_ word. It compiles "call ;does" followed by "call
+  push_literal" into the word being defined - "md" in this case.
+
+  When md is called - to create a child word, or, equivalently [for OO
+  types] an _instance_ - md create's the new word and then ;does compiles
+  the load constant and the jump to md's run-time code.
+
+  If we hadn't split the push-constant part, the code in each child word -
+  and there could be lots of them! - would have to have an extra call:
+
+  md: call create         ; define-time
+      call ;does          ; define-time
+  md_does:
+      call a              ; run-time
+      call b              ; run-time
+      jmp  c              ; run-time
+
+  deferred:
+      movl $'006, %edx
+      call push_literal
+      jmp md_does
+
+  What we have essentially done is move the "call push_literal", since it
+  is common to every child word, out of the child and into the parent.
+
+  With that long-winded intro, we can now get into some of the odd
+  subtleties of this brave new world.
+
+  The first subtlety is that while does> and constant - as defined below -
+  both create some type of constant, they do it slightly differently.
+  constant creates a word and writes code to push a constant - both the
+  load and push halves of that action - and then forces a _tail-call
+  conversion_ of the call to push_literal, changing it to a _jump_ and
+  thereby ending the word. It can do nothing more than push its constant.
+
+  This ends up being syntactic sugar;
+
+    4 constant cell
+
+  and
+
+    : cell  4 ;
+
+  produce exactly the same code; namely:
+
+  cell:
+    movl $4,%edx
+    jmp  push_literal
+
+  does> is different; it leaves open - in fact encourages! - doing
+  something exciting with the constant that has just been pushed. [Remember
+  that this constant could be the address of some data structure.] It
+  splits the constant-pushing task into two parts, as described above,
+  putting the load into the child and the push into the parent, but leaves
+  the call to push_literal as a _call_ that is expected to be followed, as
+  in "md" above, with code that processes the constant.
+
+  To drive home this subtle difference, assume that we defined constant
+  thus:
+
+    : constant  create does> ;
+    4 constant cell
+
+  Now what do we have?
+
+  constant:
+    call create
+    call ;does
+  constant_does:
+    jmp  push_literal
+
+  cell:
+    movl $4,%edx
+    jmp  constant_does
+
+  This is slightly less efficient; it compiles extra code into the parent
+  word - the run-time code "jmp push_literal" - and to execute this
+  constant we do a jump to a jump, which is both silly and slow.
+
+  Note: the trailing ; in our example definition of "constant" above
+  changed the "call push_literal" to "jmp push_literal". Sneaky!
+
+  The other important subtlety is that these constants - esp. when they are
+  the address of some data structure - can be in the way when compiling
+  said data structure. The constant that you want compiled into the child
+  word has to be on the stack when does> [really ;does] executes. It's a
+  bit clumsy, but you have to do something like this:
+
+    : clumsy  create  ram  push  , ,  pop  does>  a b c ;
+    thing1 thing2 clumsy example
+
+  I suppose you could write that like this too, with consequent changes in
+  how the data is "fetched" and used in a, b, and c:
+
+    : less-clumsy  create  literal  does>  a' b' c' ;
+    thing1 thing2 less-clumsy example
+
+  In this case we compile _two_ literals, the second one being "split in
+  two" in the canonical way:
+
+  less_clumsy:
+    call create
+    call literal    ; compiles code to load & push a literal
+    call ;does
+  less_clumsy_does:
+    call push_literal
+    call aprime
+    call bprime
+    jmp  cprime
+
+  example:
+    movl $thing2,%edx
+    call push_literal
+    movl $thing1,%edx
+    jmp  less_clumsy_does
+
+  With this new kind of create/does>, you choose how to do it.)
+
+
+( "nameless" colon words.)
+: -:   here <:> -] ;
+
+( For comparison, the regular : compiler is defined thus:
+  : :  new <:> -] ; )
+
+: -create  here <does> ;  ( nameless do_does word)
+: create   new <does> ;  ( nameful do_does word)
+: does>  (s constant)
+    pop  compile, ( compile IP of parent does)
+    compile, ;  ( compile constant)
+
+comment XXXalternative with do_does words laid out like this:
+   do_does
+   <constant>
+   <new IP>
+
+: create (s constant)  new <does>  compile, ( constant) ;
+: does>  pop compile, ( parent IP) ;
+XXXalternative
+
+: constant  create  does> ;
+: _buffer  (s bytes - ram)  ram swap  aligned  cell/  ?for 0 , next then ;
+: buffer  _buffer constant ;  ( XXX: untested)
+
+: _var  create  ram  does> ;
+: variable   _var  0 , ;
+: 2variable  _var  0 , 0 , ;
+
+( : array   (s n - ) _var ;  ( XXX: Fixme: I like arrays to be self-indexing.)
+
+( These depended on the data space being zeroed, which makes me nervous.
+  And well I should have been nervous: temporary strings - for file names,
+  among other things - are allocated there. And this just bit me. I was
+  assuming that variables would be zero when allocated; instead I got a
+  bunch of junk. As I was generating a linked-list head pointer - actually
+  a dictionary chain - what was supposed to be a null pointer at the end
+  was instead an invalid pointer off into the weeds!
+
+  : buffer  ram constant  allot ;
+  : variable       cell buffer ;
+  : 2variable   2 cells buffer ; )
+
+( 2002-mar-30. Experimenting with an alternative here.)
+
+( If any code is _compiled_ between create and does>, bad things will
+  happen. The reason for this experimental way is to get the constant out
+  of the way; but by splitting the compilation of the load constant and
+  jump to the does code into two a potentially dangerous situation arises.
+
+  Maybe ;does should look back and "steer" the last-compiled call to point
+  to the code that follows it; this way a complete load-and-call-push could
+  be compiled, then partly un-compiled when the does comes along.
+
+  But does> has compiled a push-literal [call push_literal] into the parent
+  word at the start of its shared does code; this needs to immediately
+  follow a register load in the child word. Which means, once again, that
+  no code can intervene between the two. In fact, as I have envisioned
+  them, does words _only_ consist of a load constant and jump to the
+  parent's code; though I guess if this is the _last_ thing in the child
+  word that it's ok. That means compiling everything in does> and ;does as
+  I am now, instead of doing anything in create. Hmm.
+
+  In fact, as it works now does> does all the work; create is simply a
+  synonym for "name".
+
+  In any case, this allow us to write
+
+    ram create  cells allot  does>
+
+  instead of
+
+    create  ram swap  cells allot  does>
+
+  Maybe it's not such a big deal, but the first seems a lot cleaner.
+
+  Urr. It's still a problem. I going to bed; I'll think about this
+  tomorrow.)
+
+comment XXXperimental 
+( -create is basically the same as "here".)
+: create   new  load-literal ;  ( loads a constant)
+: constant  create  push-literal  \ ^ ;  ( syntactic sugar for : foo  89 ; )
+: 'buffer  ram constant ;
+: buffer   'buffer allot ;
+
+: variable    'buffer  0 , ;
+: 2variable   'buffer  0 , 0 , ;
+
+( These depended on the data space being zeroed, which makes me nervous:
+  : variable       cell buffer ;
+  : 2variable   2 cells buffer ; )
+
+: ;does   -compile  pop compile, \ ^ ;
+compiler
+: does>   ['] ;does compile,  push-literal ;
+forth
+XXXperimental 
+
+( We need words to help us navigate the dictionary structure. find returns
+  a pointer to the code field. We need to be able to convert this to point
+  to other parts of the structure.)
+
+: >link  cell- ;
+: link>  cell+ ;
+: >body  cell+ ;
+: >name  (s code - a n)
+   >link  dup  1- c@ dup push ( length)  1+ aligned -  pop ;
+
+( What about the last word defined? "current @ @" will yield a pointer to a
+  link field.)
+
+: last  current @ @ ;
+
+( I guess we can have deferred words, even though they are, in some ways,
+  inelegant. The alternative - creating a variable and a colon word that
+  calls through that variable, for _every_ deferred word - is also in some
+  ways inelegant - and clumsy.
+
+  Actually, the way we define this is exactly equivalent to what we would
+  have to do with variables; the difference is that instead of two named
+  objects - the variable and the colon word that calls thru it - we have
+  one - the deferred word - and we need an extra mechanism to get to its
+  value to change it.
+
+  The main argument _against_ deferred words is that they aren't orthogonal
+  w.r.t. _user_ variables. The way we are defining them here they are
+  implemented using a global, system variable. On muforth, we don't care,
+  because we don't _have_ user variables; but on a properly multithreaded
+  target machine things are different. There we probably wouldn't implement
+  deferred words at all, using instead the "<variable> @execute" idiom; or,
+  indeed, we could have all deferred use _user_ variables instead of
+  globals. But that's what the fuss is.
+
+  That and that "vectoring" them isn't strictly postfix. And it requires
+  architecture-specific code!)
+
+variable undeferred  ' nope undeferred !
+: defer  create  ram  undeferred @ ,  does> @execute ;
+: >data  >body cell+ @ ;  ( given code addr of does word, fetch its constant)
+: 'data  ' >data ;
+
+( test!!)
+undeferred @  0 undeferred !  undeferred @ drop  undeferred ! zzz
+
+( Syntactic sugar - from Rod Crawford's 4ARM.)
+: now   '  ;
+: is    'data !  ;   ( as in `now host-interpret is interpret')
+
+compiler
+: ['data]  'data literal ;
+: now  \f now  literal ;
+: is   \ ['data]  \ ! ;
+forth
+
+
+( Number input)
+variable dpl    ( location of , or . )
+variable radix
+
+: radixer  create  does>  radix ! ;
+
+2 2* 2* dup 2* ( 16!)  radixer hex
+dup            (  8!)  radixer octal
+2 +            ( 10!)  radixer decimal  
+2                      radixer binary
+
+decimal
+( On and off)
+: on  -1 swap !  ;
+: off  0 swap !  ;
+
+( Punctuation in numbers: sign, radix, decimal point, separators.)
+: punct  (s a u ch - a' u' matched)
+   over if ( still chars to process)  swap push  over c@  xor if
+   ( no match)  pop 0 ^ then
+   ( match)  pop 1 -1 v+  -1 ^  then
+   ( end of input)  drop  pop drop  ( -1 throw) ;  ( XXX use throw!)
+
+: ?sign  char - punct  if  -1 ^  then  0 ;
+
+: ?hex  char " punct  if  hex ^  then
+        char # punct  if  decimal ^  then
+        char ' punct  if  octal ^  then
+        char % punct  if  binary ^  then ;
+
+( . resets dpl; others leave it unchanged; this means that embedding . in a
+  number causes a double number to be pushed, and dpl set to the count of
+  digits _after_ the _last_ . in the number.)
+: ?dot  char . punct  if  dpl off ^  then
+        char , punct  if   ^  then
+        char - punct  if   ^  then
+        char / punct  if   ^  then
+        char : punct  if   ^  then
+        char _ punct  if   ^  then   complain ;
+
+: ?c-hex    char x  punct  if  hex ^  then
+            char X  punct  if  hex ^  then   octal ;
+
+: ?c-octal  char 0  punct  if  ?c-hex ^  then   ?hex ;
+
+( 4-apr-2000. Added `C' style radices.)
+( 29-apr-2000. Changeable forth-style and c-style radices. Having the C
+  stuff always working is confusing because `hex 08' tries to convert the
+  number in octal and fails.)
+
+defer ?radix
+: c-radices   now ?c-octal  is ?radix ;
+: forth-radices   now ?hex  is ?radix ;   forth-radices
+
+( This is scary.  We need a bunch of literals for `digit?'.)
+
+: digit?    (s ch - digit T | junk F)
+   char 0 -  [ 2 2* 2* 1+ ]  ( 9)   over u< if  ( !decimal)
+          [ 2 2* 2* 2* 1+ ]  ( 17)  - 
+     [ 2 1+  2* 2* 2*  1+ ]  ( 25)  over u< if  ( !hex, UPPERCASE)
+          [ 2 2* 2* 2* 2* ]  ( 32)  - 
+     [ 2 1+  2* 2* 2*  1+ ]  ( 25)  over u< if  ( !hex, lowercase)
+      ( junk)  0 ^
+   then  then  ( hex) [ 2 2* 1+ 2* ]  ( 10) +  then  ( decimal)
+   dup radix @  u<  ;
+
+: @digit?   (s a - a digit T | a junk F)   dup c@  digit?  ;
+
+: *digit  (s ud a digit - ud*base+digit a)
+   swap push ( a)  swap ( lo dig hi)  radix @ um* drop  rot ( dig hi*radix lo)
+   radix @ um*  d+  pop  dpl @ 0< 1+  dpl +!  ;
+
+( 2002-mar-23. I still don't like how number parsing works. It seems
+  clumsy. On the one hand, we know ahead of time exactly how many
+  characters we have [in the token we are trying to convert]; on the other,
+  the way the prefix [sign and radix] and embedded [. , - : /] characters
+  work, we can't simply put them in a loop: there should be at most one sign
+  and one radix at the beginning. Right now I have >number [which converts
+  digits] and punct words _both_ checking if there are any characters left
+  to process. This seems clumsy.
+
+  And that "dpl!" in ?dot bugs me, too.)
+
+( ANS compatible!)
+: >number  (s ud1 a1 c1 - ud2 a2 c2)  ( a2 is first unconvertible char)
+   =if  for  @digit?  while  *digit 1+ next  0 ^  then
+                                drop  pop  then  ;
+
+: fancy-number  (s a u - d)  ( was -: )
+   2push  0 0  2pop  ?radix  ?sign push  dpl on
+   begin  >number  =while ( still chars)  ?dot  repeat
+   2drop  pop  if dnegate then  ;
+
+( Now some help for the colon compiler. Note that the colon compiler now
+  calls `number,' to convert-and-compile and calls `number' when interpreting.
+  This is so that `number,' or `number' can reset dpl when they're done. We do
+  this so that constants don't screw up fixed-point arithmetic conversion.
+  Without this code, if you were to use a fixed-point number, 3.1415 eg, dpl
+  would be set to 4. Then `0' pushes 0 on the stack but doesn't affect dpl,
+  so Forth tries to convert it, and BOOM.)
+
+: (number)  (s a u - d)
+   radix @ push   ['] fancy-number  catch   pop radix !  throw  ;
+( always reset the radix, even in case of error)
+
+-: (number)  dpl @  0< if  drop literal ^  then  swap  literal literal ;
+'number, !
+
+-: (number)  dpl @  0< if  drop  then  ;
+'number !
+
+( Make it easy to call "number" and "number," from interpreter mode words.)
+: number   'number  @execute ;
+: number,  'number, @execute ;
+
+
+( Basic character i/o.)
+
+1024 constant #inbuf
+#inbuf buffer inbuf  ( terminal input)
+variable keybuf
+variable emitbuf
+
+variable fd-in
+variable fd-out
+: writes  fd-out ! ;
+: reads   fd-in  ! ;
+: <stdin   0 reads  ;
+: >stdout  1 writes ;  <stdin  >stdout  ( sanity)
+: >stderr  2 writes ;
+
+: <key   (s fd - ch)                  keybuf 1 read  drop  keybuf c@ ;
+: >emit  (s ch fd)  swap emitbuf c!  emitbuf 1 write ;
+
+: key   (s - ch)   fd-in @  <key ;
+: emit  (s ch)    fd-out @  >emit ;
+
+: space  bl emit ;
+: cr     ctrl J emit ;
+
+: type                   fd-out @  -rot  write ;
+: accept  (s a # - #in)   fd-in @  -rot  read ( 1-)  ;  ( ANS)
+  ( chop trailing newline)
+
+: typing  (s - a #)  inbuf dup [ #inbuf 2 - ] accept  ;  ( get a line of input)
+
+
+( WARNING:  this is different from what the CPU would do;
+  it ignores OVERFLOW, unlike the CPU's signed comparisons.  <' is useful 
+  for `modulo' less than -- it compare two numbers in the same half of the
+  number space.  Useful for 32-bit clock operations [with monotonically
+  increasing time] and for TCP sequence numbers.)
+
+: <'      - 0<  ;  ( This violates what is -required- by FORTH-83 standard)
+: >     swap <  ;
+: min   2dup >  if swap then  drop  ;
+: max   2dup <  if swap then  drop  ;
+: not   0=  ;
+
+
+( Pictured numeric output.)
+: /digit   (s ud - udquot urem)
+   0 radix @ um/mod  ( 0:hi / radix -> urhi uqhi)  push
+   ( urhi:lo)  radix @ um/mod  ( urlo uqlo)  pop rot  ;
+
+: >digit   (s n - ch)  ( convert 1 binary digit to char; hex to uppercase)
+   9 over u<  7 and +  char 0 +  ;
+
+: s->d  (s n - d)  dup 0<  ;  ( only works if true flag is all 1s!)
+
+: abs   (s n - |n|)   s->d  if  negate then ;
+: dabs  (s d - |d|)   s->d  if dnegate then ;
+
+: spaces  (s n)  0 max  ?for  space  next  then  ;
+
+( pad is where we convert numbers to ASCII. A double number is 2 cells -
+  64 bits - and in binary would take 64 characters to represent, plus a
+  character for the sign. pad returns the address of the _end_ of the
+  buffer, since conversion occurs right-to-left.)
+
+: pad  [ 65 allot ram ] ;  ( 64 digits + sign + alignment)
+
+variable hld
+: hold   -1 hld +!  hld @ c! ;
+: <#     pad hld !  ;
+: #>     (s ud - a #)  2drop  hld @  pad over - ;
+: sign   (s n -)   0< if  char - hold  then  ;
+
+: #     (s ud - ud')   /digit  >digit  hold  ;
+: #s    (s ud - 0 0)  begin  #  2dup or 0=  until  ;
+
+: (ud.)   (s ud - a #)  <# #s #>  ;
+: ud.     (s ud -)      (ud.)  type  space  ;
+
+: (u.)    (s u - a #)   0  (ud.)  ;
+: u.      (s u -)       (u.)  type  space  ;
+
+: (d.)    (s d - a #)
+          dup push ( sign)  dabs  <# #s  pop sign  #>  ;
+: d.      (s d -)       (d.)  type  space  ;
+
+: (.)     (s n - a #)   s->d  (d.)  ;
+: .       (s n -)       (.)  type  space  ;
+
+( This should truncate to field length. Actually, it shouldn't. Does it?)
+: truncating-field   (s a c field - a' field)   tuck swap -  ( a field field-c)
+   dup 0< if  drop ^  then  ?for  bl hold  next then  #>  ;
+
+( Non-truncating field.)
+: field   (s a c field - a c)  over - spaces  ;
+
+:  (.r)   (s n field - a #)   push  (.)   pop  field  ;
+:   .r    (.r)  type  ;
+
+: (u.r)   (s u field - a #)   push  (u.)  pop  field  ;
+:  u.r    (u.r)  type  ;
+
+( Useful.)
+: ?  @ .  ;
+
+( XXX: wordlength-specific.)
+: rotate  ( rotates _right_; without =if/then, rotates by 0 break on x86.) 
+  =if  2dup u>> push  negate bl ( 32) +  <<  pop xor ^ then drop ;
+
+
+( : p  ctrl J parse  2dup  u. u. char | emit type char | emit ; XXX )
+
+
+( String primitives.)
+
+( 2003-dec-31!! Compiled strings have a cell-sized count and are referenced
+  by pointing to the first character rather than to the count.
+
+  I have also got rid of c" and now z" is the only string operator that
+  returns a counted string. The z reminds us that it is also a
+  null-terminated string.
+
+  2002-mar-18. All strings are compiled into data space and referenced by
+  creating a normal literal with the string's address. Strings can then be
+  used in an error or abort routine, or whatever. This is nice and postfix.
+
+  It also means that if we want to, for example, return the address of
+  the first character of the string - rather than of the count cell;
+  eg, for strings used by the C library - we can calculate that
+  address _before_ making a literal.  Again, this works because the
+  string isn't compiled inline, so we don't need to jump over it.
+
+  Things are _much_ simpler this way!)
+
+( all compiled strings have a zero terminator.)
+: copy-string   scrabble (s z") ;
+: allot-string   cell- @  cell+ 1+  allot ;
+: make-string   copy-string  dup  allot-string ;
+: string,   (s ch - z")  parse   make-string ;
+: token,       (s - z")  token   make-string ;
+: count  (s z" - a u)  dup  cell- @ ;
+: (.")  count type ;  ( no more jumping over strings at run-time!)
+
+comment XXX
+: (warn")   (s f z")  swap  if
+   last-link cell+ @ ( link) cell+ count type ( name)  ." : "
+   count type ( warning)  ^ then  drop  ;
+: (error")  ; XXX
+
+( Compiled strings.)
+compiler
+: z"   (s - z")   char " string,  literal ;  ( z means zero-terminated)
+:  "   (s - a c)  \ z"  \ count ;
+: ."             \ z"  \ (.") ;
+: error"         \ z"  \ throw ;  ( compile a C-style string for throw'ing)
+comment XXX
+: warn"          \ z"  \ (warn")   ; XXX
+
+( Interpreted strings. Strings that return an address always get compiled!)
+forth
+: z"  (s - z")   char "  string, ;
+:  "  (s - a c)  \f z" count  ;  ( ANS)
+: ."    char " parse ( a #)  type  ;  ( not compiled)
+
+( Words that do something with each word being defined.)
+: being-defined  create  does> 'new-hook ! ;
+
+( To warn of re-defining a word.)
+-: ( a u)  2dup current @ find if  fd-out @ push >stderr
+     drop  2dup type ."  again.  "  pop writes ^  then  2drop ;
+being-defined -redef
+-redef
+
+( A useful list of words as they're being defined.)
+-: ( a u)   current @ ( chain) . here .  2dup type  cr ;
+being-defined -v  ( be verbose)
+
+( You can only do one of these at a time! Is there an easy way to hook
+  the hook?)
+
+
+( Now that we have strings, let's make a more useful definition of
+  undeferred, so that defer'ed words that never get set to anything will
+  complain when used.)
+
+-:  error" undefined deferred word" ;  undeferred !
+
+
+( Ok. Tiny asm!)
+comment do-this-but-later!
+
+( These compile 1-4 bytes of machine code.)
+: asm,  create  does>  swap  here !  h +! ;
+   1 asm, 1,
+   2 asm, 2,
+   3 asm, 3,
+   4 asm, 4,
+
+variable offset  ( for effective memory addresses)
+variable sib     ( sib byte )
+variable immed
+variable variant
+
+octal
+( regs)
+: a  300 ;  : sp  304 ;
+: b  303 ;  : bp  305 ;
+: c  301 ;  : si  306 ;
+: d  302 ;  : di  307 ;
+
+: 00r    7 and ;
+: m00  300 and ;
+: >0r0  00r  3 << ;
+
+( These abbrevs are used in the following stack comments:
+  o = offset, b = base reg, i = index reg, s = scale, m = mod_rm, r = reg)
+
+: osize  (s o - m)
+   dup offset !  =if  200 + 400 u< if  100 ^ then  200 ^ then ;
+
+: bpfix  dup 005 xor if ^ then  100 xor ;  ( 005 -> 105)
+: md    (s o b     - m)  00r  swap osize xor ;
+: >sib  (s o b i s - m)  6 <<  swap >0r0 xor  over 00r xor  sib !  md ;
+: +sib  (s m - m')  m00  004 xor ;
+
+( converts 004/xx5 -> 104/xx5; these are mod_rm/sib pairs)
+: ri)  (s o b i s - m)                >sib  bpfix  +sib ;
+: i)   (s o   i s - m)  bp -rot ( b)  >sib         +sib ;
+: r)   (s o b     - m)  dup sp xor if  md bpfix ^  then  sp 0 ri) ;
+   
+: )   offset !  005 ;
+: $  (s imm)  immed !  cell variant ! ;
+: d-bit  (s r m | m r - m r d-bit)  dup m00 300 xor if  swap 0 ^  then  2 ;
+
+: md->osize
+   307 and  dup 005 xor if  dup 004 xor if  ^  then
+   sib @ 00r 5 xor if  ^  then  then  drop 200 ;
+
+: o8,   offset @ 1, ;
+: o32,  offset @ 4, ;
+: offset,
+   md->osize  6 >> jump  nope o8, o32, nope [
+
+: sib,  00r 004 xor if ^ then  sib @ 1, ;
+: ea,  (s m0r 0r0)  >0r0 xor dup 1,  dup sib, offset, ;
+: mov  d-bit  [ hex 89 octal ] xor 1,  ea, ;
+: addi    [ hex 83 ] 1,  0 ea,  1, ;
+compiler
+: time  [ hex 310f ] 2,  sp ) c mov  [ 8 negate ] sp ) addi
+   a [ 4 negate ] c r) mov     d [ 8 negate ] c r) mov ;
+forth
+
+( a fun test)
+decimal
+: t time ;  ( contents of TSC: time since boot in processor clock ticks)
+( : clockspeed  750000000 ;  ( on starbuck, a 750 M Athlon)
+: clockspeed  597070000 ;  ( on stubb, a 600 M Celeron/P3)
+: uptime  (s - s)  t clockspeed um/mod nip ;
+
+( PCI bus scan!)
+: getsp  (s r)  sp ) swap mov ;
+: sp+    (s o)  sp ) addi ;
+: ret  "c3 1, ;
+create out  c getsp  0 c r) d mov  4 c r) a mov  "ef 1, 8 sp+  ret
+create in   c getsp  0 c r) d mov  "ed 1,  a 0 c r) mov  ret
+: north  "cf8 out  "cfc in ; ( FreeBSD won't let me!)
+
+hex
+( here . ." start of assembler tests"  cr)
+
+a c mov
+0 bp r) d mov
+0 sp r) d mov
+si 4 negate sp r) mov
+c 0 c 2 i) mov
+c 0 bp c 2 ri) mov
+
+decimal
+: big  -1 -1 um*  1000000 for  2dup (ud.) 2drop next  2drop ;
+do-this-but-later!
+
+comment asmXXX
+: ,s  for  1,  next ;
+: @sp     >0r0  [ octal -] 005 + 1,  sp 4, ;
+compiler ( should I join Chuck in calling this "macro"?)
+: sp->r  [ hex -] 8b 1,    @sp ;
+: +sp    [ hex -] 83 1,  0 @sp  1, ;
+: r->r/m  [ hex -] 89 1, ;
+forth
+asmXXX
+
+
+( !!!!-------------------- Add changes below this line -------------------!!!!)
+
+( Word listing. Putting this in as soon as possible. Needs `space'.)
+: words   0  current @  ( count link)
+  begin  @  =while  1 u+
+            dup link> >name type space space  repeat
+  drop  ." ("  . ." words)" ;
+
+
+( XXX: should be primitive?)
+: fill        (s a u n)  -rot  ?for  2dup c!    1+  next  then  2drop ;
+: cell-fill   (s a u n)  -rot  ?for  2dup  ! cell+  next  then  2drop ;
+
+: erase  (s a u)   0 fill  ;   ( easy, what?)
+: blank  (s a u)  bl fill  ;
+
+
+( Go forth and multiply ... and divide.
+
+  These routines are all based on a handful of low-level primitives:
+     um* : u1 u2 - ud
+      m* : n1 n1 -  d
+  um/mod : ud  u - urem uquot
+  fm/mod :  d  n - mod quot  [floored division]
+
+  Any word whose name starts with 'u' is unsigned, both in its arguments
+  and its results; the others are signed.
+
+  All of the */ variants calculate a double-length intermediate product.)
+
+( To calculate a single-length signed product, calculate a double-length
+  _unsigned_ product and drop the high-order word. Weird but true. And an
+  extra-credit challenge: is "m* drop" always equal to "um* drop"? Why or
+  why not? ;-)
+
+: *       (s n1 n2 - n1*n2)   um*  drop  ;  ( what's in fig)
+
+:  */mod  (s n1 n2 n3 - r q)  push   m*   pop           fm/mod ;
+: u*/mod  (s u1 u2 u3 - r q)  push  um*   pop           um/mod ;
+
+:  /mod   (s n1    n2 - r q)  push  s->d  pop ( d1 n2)  fm/mod ;
+: u/mod   (s u1    u2 - r q)          0 swap ( ud1 u2)  um/mod ;
+
+:  */     (s n1 n2 n3 - n1*n2/n3)   */mod  nip ;
+: u*/     (s u1 u2 u3 - u1*u2/u3)  u*/mod  nip ;
+
+:  /      (s n1 n2 - quot)    /mod  nip ;
+: u/      (s u1 u2 - uquot)  u/mod  nip ;
+
+:  mod    (s n1 n2 - mod)     /mod  drop ;
+: umod    (s u1 u2 - umod)   u/mod  drop ;
+
+
+( Within.)
+: within  (s n lo hi - lo <= n < hi)  over - push  - pop u<  ;
+
+
+( Character classifications - useful for ASCII dumps and keyboard input.)
+: letter?         32 127 within  ;  ( excludes ctrls & DEL)
+: graphic?  dup  160 256 within  if  drop -1 ^  then  letter? ;
+
+
+( Useful stack dump.)
+( These don't work! For subtle reasons...)
+( : sp!  s0 sp ! ;   ( reset to an empty stack)
+( : sp@     sp @ ;   ( get current stack position)
+( : depth  s0 sp@ - cell/ 1- ; )
+
+: .s  ( stack)
+   depth  s0 cell- swap  ?for  cell- dup @ .  next then  drop  ;
+
+
+comment %%
+( Even more useful backtrace of return stack.)
+: rdepth  r0  rp@ -  cell/  1-  ;  ( remember: there's a return addr on R!)
+
+: where  ( ip - offset z" ip)  push  forth  0
+   begin  drop  @  =while  r@ over link> -
+   ( offset)  dup 0< 0= until  ( 'link offset) swap cell+  pop  ^
+   then  ( 'link = 0)  z" ????"  pop  ;
+
+: .where  ( offset z" ip)  hex  .a16  decimal
+   count type  ?dup if  cell/  ."  + "  u.  then  ;
+
+: backtrace  ( a n)
+   radix @ push
+   for  dup @  where  cr .where  cell+  next  drop  cr
+   pop radix !  ;
+
+( The `push .s pop' removes the abort string from the stack dump.)
+: stacks  rp@ rdepth backtrace  ." Stack: "  push .s pop  cr  ;
+( now stacks  is aborting)
+
+( I was going to put `backtrace' into `better-error' but then realized that
+  `better-error' is called as the result of a `throw', so much of the return
+  stack info has been lost. Instead I put a hook into abort".)
+%%
+
+
+( Conditional compilation)
+
+( 30-aug-1998. Created.)
+( 28-apr-1999. Added compiler word to create conditionals.)
+( 27-apr-2000. Changed names to more standard [if] [else] [then] and added
+               the capability of nesting them.)
+( 4-aug-2000. Added [with] and moved all conditional constants into
+          `conditional' vocab.)
+
+( Compiler/interpreter modes.)
+: mode   create  (s prompt interpret)  ram push , ,   pop  does>  state ! ;
+
+( Defining new dictionary chains. These used to be in an array but are now
+  independent of each other; now they are simply variables that point to the
+  last-defined word on the chain.)
+: chain  variable ;
+
+chain .conditional.
+: conditional   .conditional. definitions ;
+
+-:  ."  (inside a conditional)"  ;
+-:  .conditional. find  if  execute ^  then  2drop ;
+mode eat
+
+variable cond-nest
+variable cond-save-state
+: cond[   state @  cond-save-state !  cond-nest off  ;
+: ]cond   cond-save-state @  state !  ;
+
+compiler
+: [else]   cond[  eat  ;
+: [if]   (s f)  0= if  \ [else]  then  ;
+: [then]  ;
+: [with]   .forth. token' if  drop -1 ^  then  2drop 0 ;
+
+conditional
+: [if]     1 cond-nest +!  ;
+: [else]                   cond-nest @  0=  if  ]cond  then  ;
+: [then]  -1 cond-nest +!  cond-nest @  0<  if  ]cond  then  ;
+
+forth
+: [if]      \ [if]  ;
+: [else]    \ [else]  ;
+: [then]   ;
+: [with]    \ [with]  ;
+
+( A defining word that makes words that return -1)  
+: trues  create  -1 does> ;
+
+( The defining word `with' for creating conditional compilation words.
+  No matter what chain we are compiling into, define the word - using
+  "trues" - in .forth.)
+
+: with   current @  forth  trues  definitions  ;
+
+( Now, the main reason for doing this is to have `debug' and `eprom'
+  versions. The best way is to load the file `debug' or `eprom'!)
+
+
+( A useful list of words as they're being defined.)
+ 0 [if]
+( If we've got this far we can see what words are being defined)
+-:  ( a u - a u)
+   2dup current @
+   find  if  >name type  ."  again.  "  ^  then  2drop  ;  drop
+
+-:  ( z" #chain)  fd-out @ push
+   >stderr  cr over count type  2 spaces  .s  pop writes  ;  is unique-hook
+[then]
+
+( Just for fun)
+: 3*  dup 2* + ;     ( 3x = x + 2x)
+: 5*  dup 2* 2* + ;  ( 5x = x + 4x)
+: 10*  5* 2* ;
+
+( Two useful sets of units; these adhere to SI and IEC guidelines. ;-)
+: k   10* 10* 10* ;  ( "kilo": 10^3.)
+: M   k k ;          ( "mega": 10^6.)
+: G   k M ;          ( "giga": 10^9.)   ( too big)
+: T   k G ;          ( "tera": 10^12.)  ( too big)
+
+: Ki  10 << ;   ( "Kibi", or "kilobinary": 2^10.)
+: Mi  Ki Ki ;   ( "Mebi", or "megabinary": 2^20.)
+: Gi  Ki Mi ;   ( "Gibi", or "gigabinary": 2^30.)  ( too big)
+: Ti  Ki Gi ;   ( "Tebi", or "terabinary": 2^40.)  ( too big)
+
+( For loading, to see if we've left anything lying about.)
+variable csp  ( what does this stand for? `check stack pointer'?)
+: !csp   depth  csp !  ;
+: ?csp   depth  csp @  swap - cell/
+         =if  . ."  stack depth change"  hex  .s  then  drop  ;
+
+( Bracket the contents of a file and check for stack depth change.)
+: file[  (s a u)   >stderr  ." (( "  type  >stdout  !csp  ;
+: ]file            >stderr  ." )) "        >stdout  ?csp  ;
+
+( For counting the size of a loaded file.)
+: file[#   (s a u)  file[  here  ;
+: #]file   here  swap -  decimal  >stderr  .  ." bytes "  ]file  ;
+
+
+( Time, timestamp.)
+: "hold  (s a #)  dup negate  hld +!  hld @  swap cmove  ;
+: ##   (s n)  0  # #  2drop  ;
+
+( Separators)
+: ":   char : hold  ;
+: "-   char - hold  ;
+: ".   char . hold  ;
+: ||   bl hold  ;  ( a space)
+
+: month"  (s n - a #)  ( n is 0--11)
+   3*  z" janfebmaraprmayjunjulaugsepoctnovdec"  +  3  ;
+
+( clock returns a count of seconds since 1970-jan-01 00:00:00 UTC,
+  the Unix "epoch".)
+
+: (date)   (s year month mday yday - 0 0)
+   drop  ## "-  month" "hold "-  0 #s ( year)  ;
+
+: hh:mm:ss  (s hms)  ## ":  ## ":  ## ;
+: hh:mm     (s hms)  drop ( sec)  ## ":  ## ;
+: (time")  (s year month mday yday hour min sec 'zone #zone - a #)
+   radix @ push  decimal
+   <#  "hold  ( zone)  || hh:mm:ss  ||  (date)  #>
+   pop radix !  ;
+
+: (short-time")  ( year month mday yday hour min sec 'zone #zone - a #)
+   radix @ push  decimal
+   <#  2drop ( zone)  hh:mm  ||  (date)  #>
+   pop radix !  ;
+
+: time"   (s epoch - a #)  local-time  (time")  ;
+: utc"    (s epoch - a #)         utc  (time")  ;
+
+( Better primitives? More elegant, certainly.)
+: s->sm    (s s - s m)    60 u/mod ;
+: s->smh   (s s - s m h)  s->sm  s->sm ;
+: s->smhd  (s s - s m h d)  s->smh  24 u/mod ;
+: sm->s    60 * + ;
+: smh->s   sm->s  sm->s ;
+: smhd->s  24 * +  smh->s ;
+
+( If anyone had any idea how long a year really is, we could also define 
+  s->smhdy and smhdy->s. ;-)
+
+: smhq->s  6 * +  smh->s ;  ( sec min hr quarter-day)
+: smhdy->s  [ 365 3* 366 + ] * ( quarter-days/yr)  push 4 * pop +  smhq->s ;
+
+( for command-line args)
+: ld  token make-string  load-file ;
+: -f  ( load file)  ld ;
+: --file  -f  ;
+: -d  ( define)  trues  ;
+: --define  -d  ;
+
+
+( Prompt, quit, and warm.)
+compiler
+: 'compiler-prompt  state @  cell+ ;
+forth
+-: ."  (compiling)"  'compiler-prompt  ;  !  ( bwa ha ha!)
+
+: .mode-prompt   state @  cell+  @execute ;  ( secondary prompt)
+: .Ok   ."  Ok"  ;
+: prompt   .Ok  .mode-prompt  ;  ( ` Ok' then sub-prompt)
+
+
+defer canonical  ( XXX: is this obsolete?)
+-:  forth  \ [ ;  is canonical
+
+: quit
+   begin  cr  <stdin  >stdout  typing interpret  >stderr  prompt  again  [
+   ( infinite loop, until error... )
+
+( 2004-jun-26. error now expects a cell-length-prefixed compiled string.)
+: error  parsed type space  count type  ( cr) ;
+: carefully  catch  =if  error  sp!  ^  then  drop ;
+
+( XXX: difference betw error and warning, so that, eg, "isn't defined"
+  doesn't clear the stack.)
+
+: banner
+( Print banner.)
+ ." muFORTH "  version count type ( space)
+ ." , made "  build-time ( seconds since epoch)  time"  type  cr
+ ." Copyright (c) 1997-2006 David Frech. All rights reserved."  cr cr
+ ." muFORTH is free software; see the file LICENSE for details." cr ;
+
+: warm
+   >stderr banner
+   >stdout command-line count  ['] interpret carefully
+   begin  canonical  ['] quit carefully  again  [
+
+( Identify ourselves.)
+trues muforth
+
+comment %%
+( marker, empty)
+( 1-may-2000. marker now saves current as well.)
+( 2001-jan-23. remember is now marker, to be slightly less incompatible.)
+: marker
+   create
+     current  max-chains 1+ for  dup @ ,  cell-  next drop   ( save chains)
+   does>  ( from to)
+     current  max-chains 1+ for  push  @+  r@ !  pop cell-  next  drop
+      ( new `here')  h !  ;
+
+marker empty
+%%
+
+(  here  pop -  constant startup-size)
+

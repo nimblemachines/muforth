@@ -3,7 +3,7 @@
   Copyright 2002-2010 David Frech. All rights reserved, and all wrongs
   reversed. (See the file COPYRIGHT for details.)
 
-cr  " HC08 memory image " file[#
+loading HC08 memory image
 
 ( Space for compiling into. HC08s can get big; for now let's limit ourselves
   to 60k address space. This is where most of the varieties I'm interested
@@ -12,40 +12,58 @@ cr  " HC08 memory image " file[#
   XXX: We should really define this in a device/xxx file that gets loaded
   _before_ this one.)
 
-60 Ki constant #image
+( Represent the entire address space. This way we don't worry about any
+  translation issues - like forcing target address fc00 to refer to first
+  byte of the image buffer.)
+
+64 Ki constant #image
 #image buffer 'image
 : |+  'image + ;
 
-( HC08s are big-endian, like all Motorola/Freescale processors!)
+: image-c@  |+ c@ ;
 
--:  |+ c@ ;                                        is |c@
--:  dup |c@ ( hi) 8 <<  swap 1+ |c@ ( lo)  or ;    is |@
-2 |cell !  ( size of cell)
+( HC08s are big-endian, like all Motorola/Freescale processors!)
+: be-w@     dup |c@ ( hi) 8 <<  swap 1+ |c@ ( lo)  or ;
+
+: >image   ['] image-c@  is  |c@
+           ['] be-w@     is  |@
+           2 |cell !  ( size of cell) ;
+>image
 
 : |c!  |+ c! ;
 : |!  ( w a)  push  dup 8 >> r@ ( hi) |c!  pop 1+ ( lo) |c! ;
 
 ( Dictionary operators.)
-variable |h   ( image dictionary pointer)
+variable |h   ( image dictionary pointer pointer; points to one of:)
+   2variable |flash   ( flash pointer, origin)
+   2variable |ram     ( ram pointer, origin)
+: ram     |ram    |h ! ;
+: flash   |flash  |h ! ;
+: org    ( a) ( set dict pointer)  |h @  ! ;
 
+0 .if
 ( XXX - necessary?)
 : |aligned  1 + -2 and ;
 : |align  |h @ |aligned |h ! ;
+.then
 
+( DEBUG: show code as it's compiled)
 : .h  radix preserve  hex <# # # #> type space ;
-: |here  ( - a)  |h @  ;
-: |c,    ( ch)   dup .h  |here |c!  1 |h +!  ;
+
+: |here  ( - a)  |h @ @ ;
+: |allot ( n)    |h @ +! ;
+: |c,    ( ch)   dup .h  |here |c!  1 |allot ;
 : |,     ( n)    ( |align)  dup 8 >> |c, ( hi)  |c, ( lo) ;
-: |#     ( - n)  |here |+  'image -  ;  ( return the number of bytes in image)
+
+( return the origin & number of bytes in region)
+: |region  ( - a u)  |h @   2@  ( origin ptr)  over - ;
 
 ( Initialization.)
-: wipe      'image  #image  ( erase)   "55  fill  ;
-: org   ( buffer len org)  nip nip  ( for now)  |h ! ;
+: wipe   'image  #image  ( erase)   "55  fill ;
+: origin!  ( ram-origin flash-origin)
+   dup |flash 2!  dup |ram 2! ( set ptr and origin to origin) ;
 
-wipe  'image #image  0  org
+( Erase image, default origins to @ram and @flash, resp.)
+wipe  @ram @flash origin!
 
 forth
-
-#]file
-
-

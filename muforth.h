@@ -6,34 +6,35 @@
  */
 
 #include <sys/types.h>
+#include <stdint.h>
 #include <string.h>
 
 #include "env.h"
 
-typedef int cell;
-typedef unsigned int ucell;
-
-typedef unsigned char uint8;
+typedef  int32_t  cell;
+typedef uint32_t ucell;
+typedef struct {
+     cell hi;       /* Forth puts high cell at lower address (top of stack) */
+    ucell lo;
+} dcell;
 
 /* data stack */
-#define STACK_SIZE 4096
-#define STACK_SAFETY 32
+#define STACK_SIZE  4096
+#define STACK_SAFETY  32
 extern cell stack[];
 #define S0    &stack[STACK_SIZE - STACK_SAFETY]
 #define SMAX  &stack[STACK_SAFETY]
 
 /* TOP is a synonym for ST0 */
-#define ST0      TOP
-#define ST1      SP[0]
-#define ST2      SP[1]
-#define ST3      SP[2]
+#define TOP   ST0
+#define ST0   SP[0]
+#define ST1   SP[1]
+#define ST2   SP[2]
+#define ST3   SP[3]
 
-#define DUP      (*--SP = TOP)
-#define NIP(n)   (SP += (n))
-#define DROP(n)  (TOP = SP[(n)-1], NIP(n))
-
-#define PUSH(v)  (DUP, TOP = (cell)(v))
-#define POP      pop_dstack()
+#define DROP(n)  (SP += (n))
+#define PUSH(v)  (*--SP = (cell)(v))
+#define POP      (*SP++)
 
 typedef void (*pw)(void);    /* ptr to word's machine code */
 typedef pw    *ppw;          /* ptr to ptr to word's code */
@@ -41,7 +42,6 @@ typedef ppw    xtk;          /* "execution token" - ptr to ptr to code */
 
 /* from mip, with changes */
 extern cell  *SP;     /* parameter stack pointer */
-extern cell   TOP;    /* top of stack */
 extern xtk   *IP;     /* instruction pointer */
 extern xtk    W;      /* on entry, points to the current Forth word */
 
@@ -56,10 +56,11 @@ extern xtk  **RP;     /* return stack pointer */
  * we have to search for them; so we simply define them. They are
  * conventionally named "p_<mu_name>".
  */
-#define XTK(w)   (&p_ ## w)   /* make an execution token from a word's name */
+#define CODE(w)  pw p_ ## w = &(w);     /* declare a code field for a word */
+#define XTK(w)   (&p_ ## w)  /* make an execution token from a word's name */
 
 #define EXECUTE   execute_xtk((xtk)POP)
-#define CALL(x)   (W = (xtk)(x), (*W)())
+#define CALL(x)   (W = (xtk)(x), (**W)())
 #define NEXT      CALL(*IP++)
 #define BRANCH    (IP = *(xtk **)IP)
 
@@ -95,8 +96,8 @@ struct string
  */
 struct text
 {
-    char *start;
-    char *end;
+    char *end;      /* need them in this order so that "source 2@" will */
+    char *start;    /* put end on top of stack. */
 };
 
 struct counted_string
@@ -105,18 +106,11 @@ struct counted_string
     char data[0];
 };
 
+extern int parsed_lineno;       /* captured with first character of token */
 extern struct string parsed;    /* for errors */
 
-extern int  cmd_line_argc;
-extern char **cmd_line_argv;
-
-extern int   names_size;   /* count of bytes alloted to names */
-
-extern uint8 *pdt0;   /* ptr to data space */
-extern cell  *pcd0;   /* ptr to code & names space */
-
-extern uint8 *pdt;    /* ptrs to next free byte in each space */
-extern cell  *pcd;
+extern cell  *ph0;     /* pointer to start of heap space */
+extern cell  *ph;      /* ptr to next free byte in heap space */
 
 /* declare common functions */
 
@@ -132,8 +126,8 @@ void execute_xtk(xtk x);
 char *to_counted_string(char *);
 
 /* error.c */
-void die(const char *msg);
-void throw(const char *zstring);
+void die(const char *zmsg);
+void abort_zmsg(const char *zmsg);
 
 /* kernel.c */
 int string_compare(const char *string1, size_t length1,

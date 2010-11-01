@@ -13,7 +13,6 @@
 
 /* for debug */
 #include <sys/uio.h>
-#include <unistd.h>
 
 #if defined (DEBUG_STACK) || defined(DEBUG_TOKEN)
 #include <stdio.h>
@@ -27,19 +26,31 @@ struct imode        /* interpreter mode */
 
 static struct text source;
 static char *first;         /* goes from source.start to source.end */
+
+static int lineno = 1;      /* line number - incremented for each newline */
+int parsed_lineno;          /* captured with first character of token */
 struct string parsed;       /* for errors */
 
-/*
- * This isn't exactly ANS-kosher, since traditionally >IN contained an
- * offset within the input text that went from 0 to length-1; here it goes
- * from source.start to source.end-1, but the important effect is that we
- * can do this:
- *
- * >in @ <parse> >in ! <re-parse>
- */
-void mu_to_in()
+/* Push lineno variable */
+void mu_push_line()
+{
+    PUSH(&lineno);
+}
+
+/* Push captured line number */
+void mu_at_line()
+{
+    PUSH(parsed_lineno);
+}
+
+void mu_first()
 {
     PUSH(&first);
+}
+
+void mu_source()
+{
+    PUSH(&source);
 }
 
 static void mu_return_token(char *last, int trailing)
@@ -51,61 +62,62 @@ static void mu_return_token(char *last, int trailing)
     /* Account for characters processed, return token */
     first = last + trailing;
 
-    NIP(-1);    /* make room for result */
+    DROP(-2);
     ST1 = (cell) parsed.data;
     TOP = parsed.length;
 
 #ifdef DEBUG_TOKEN
-    fprintf(stderr, "%.*s\n", parsed.length, parsed.data);
+    fprintf(stderr, "%.*s\n", TOP, ST1);
 #endif
 }
 
-void mu_token()  /* -- start len */
+/* Skip leading whitespace */
+static void skip()
 {
-    char *last;
-
-    DUP;   /* we'll be setting TOP when we're done */
-
-    /* Skip leading whitespace */
-    for (; first < source.end && isspace(*first); first++)
-        ;
-
-    /*
-     * Scan for trailing whitespace and consume it, unless we run out of
-     * input text first.
-     */
-    for (last = first; last < source.end; last++)
-        if (isspace(*last))
-        {
-            /* found trailing whitespace; consume it */
-            mu_return_token(last, 1);
-            return;
-        }
-
-    /* ran out of text; don't consume trailing */
-    mu_return_token(last, 0);
+    while (first < source.end && isspace(*first))
+    {
+        if (*first == '\n') lineno++;
+        first++;
+    }
 }
 
-void mu_parse()  /* delim -- start len */
+/*
+ * Scan for trailing delimiter and consume it, unless we run out of
+ * input text first.
+ */
+static void mu_scan(int delim)
 {
     char *last;
 
-    /* The first character of unseen input is the first character of token. */
+    /* capture lineno that token begins on */
+    parsed_lineno = lineno;
 
-    /*
-     * Scan for trailing delimiter and consume it, unless we run out of
-     * input text first.
-     */
     for (last = first; last < source.end; last++)
-        if (TOP == *last)
+    {
+        if (*last == '\n') lineno++;
+        if (delim == *last
+            || (delim == ' ' && isspace(*last)))
         {
             /* found trailing delimiter; consume it */
             mu_return_token(last, 1);
             return;
         }
+    }
 
     /* ran out of text; don't consume trailing */
     mu_return_token(last, 0);
+}
+
+void mu_token()  /* -- start len */
+{
+    skip();         /* skip leading whitespace */
+    mu_scan(' ');   /* scan for trailing whitespace and collect token */
+}
+
+void mu_parse()  /* delim -- start len */
+{
+    /* The first character of unseen input is the first character of token. */
+    mu_scan(POP);   /* scan for trailing delimiter and collect token */
 }
 
 /*
@@ -120,7 +132,7 @@ defer not-defined  now complain is not-defined
 void mu_complain()
 {
     DROP(2);
-    throw("isn't defined");
+    abort_zmsg("isn't defined");
 }
 
 void mu_huh_q()
@@ -129,10 +141,9 @@ void mu_huh_q()
     mu_complain();
 }
 
-void mu_execute() { EXECUTE; }
-
 /* The interpreter's "consume" function. */
-void _mu__lbracket()
+/* Not declared "static" because it is needed by muforth.c to fire up warm! */
+void muboot_interpret_token()
 {
     mu_push_forth_chain();
     mu_find();
@@ -145,7 +156,7 @@ void _mu__lbracket()
 }
 
 /* The compiler's "consume" function. */
-void _mu__rbracket()
+static void muboot_compile_token()
 {
     mu_push_compiler_chain();
     mu_find();
@@ -164,23 +175,22 @@ void _mu__rbracket()
     mu_complain();
 }
 
-void mu_nope() {}    /* very useful NO-OP */
-void mu_zzz()  {}    /* a convenient GDB breakpoint */
-
 /*
  * Remember that the second part of a struct imode is a pointer to code to
  * print a mode-specific prompt. The muforth kernel lacks decent I/O
  * facilities. Until these are defined in startup.mu4, the prompts are
  * noops.
  */
+CODE(muboot_interpret_token)
+CODE(muboot_compile_token)
 
-static struct imode forth_interpreter  = { XTK(_mu__lbracket), XTK(mu_nope) };
-static struct imode forth_compiler     = { XTK(_mu__rbracket), XTK(mu_nope) };
+static struct imode forth_interpreter  = { XTK(muboot_interpret_token), XTK(mu_nope) };
+static struct imode forth_compiler     = { XTK(muboot_compile_token),   XTK(mu_nope) };
 
 static struct imode *state = &forth_interpreter;
 
 
-static void consume()
+void mu_consume()
 {
     execute_xtk(state->eat);      /* call the current consume function */
 }
@@ -202,21 +212,20 @@ void mu_minus_rbracket()
 
 void mu_push_parsed()
 {
-    DUP; NIP(-1);
-    ST1 = (cell) parsed.data;
-    TOP = parsed.length;
+    PUSH((cell) parsed.data);
+    PUSH(parsed.length);
 }
 
-static void mu_qstack()
+void mu_qstack()
 {
     if (SP > S0)
     {
         mu_sp_reset();
-        throw("tried to pop an empty stack");
+        return abort_zmsg("tried to pop an empty stack");
     }
     if (SP < SMAX)
     {
-        throw("too many items on the stack");
+        return abort_zmsg("too many items on the stack");
     }
 #ifdef DEBUG_STACK
     /* print stack */
@@ -233,51 +242,51 @@ static void mu_qstack()
 #endif
 }
 
-void mu_interpret()
+/*
+ * This version of interpret is -not- exported to Forth! We are going to
+ * re-define it in Forth so it executes as "pure" Forth, and we can use
+ * Forth-side, return-stack-based exception handling!
+ *
+ * Oddly enough, the Forth implementation will be be *exactly* the same!
+ * The only difference is that it will be executing in Forth, so we can use
+ * R stack tricks to change its behaviour.
+ */
+static void muboot_interpret()
 {
-    source.start = (char *)ST1;
-    source.end =   (char *)ST1 + TOP;
-    DROP(2);
-
-    first = source.start;
-
     for (;;)
     {
         mu_token();
         if (TOP == 0) break;
-        consume();
+        mu_consume();
         mu_qstack();
     }
     DROP(2);
 }
 
-void mu_evaluate()
-{
-    struct text saved_source;
-    char *saved_first;
-
-    saved_source = source;
-    saved_first = first;
-
-    PUSH(XTK(mu_interpret));
-    mu_catch();
-    source = saved_source;
-    first = saved_first;
-    mu_throw();
-}
-
-void mu_load_file()    /* c-string-name */
+/*
+ * This will also be re-implemented in Forth, but with nice nesting of
+ * various context variables: radix, first, source, etc.
+ */
+void muboot_load_file()    /* c-string-name */
 {
     int fd;
 
-    mu_push_r_slash_o();
-    mu_open_file();
+    mu_open_file_ro();
     fd = TOP;
-    mu_mmap_file();
-    PUSH(XTK(mu_evaluate));
-    mu_catch();
-    close(fd);
-    mu_throw();
+    mu_read_file();
+
+    source.start = (char *)ST1;
+    source.end   = (char *)ST1 + TOP;
+    DROP(2);
+
+    /* wait to reset these until just before we evaluate the new file */
+    lineno = 1;
+    first = source.start;
+
+    muboot_interpret();
+
+    PUSH(fd);
+    mu_close_file();
 }
 
 /*

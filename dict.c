@@ -12,16 +12,11 @@
 #include <sys/mman.h>
 
 /*
- * Names currently live in _code_ space, rather than in their own name space.
+ * Dictionary is one unified space, just like the old days. ;-)
  */
 
-int   names_size;   /* count of bytes alloted to names */
-
-cell  *pcd0;   /* pointer to start of code & names space */
-uint8 *pdt0;   /* ... data space */
-
-cell  *pcd;    /* ptrs to next free byte in code & names space */
-uint8 *pdt;    /* ... data space */
+cell  *ph0;     /* pointer to start of heap space */
+cell  *ph;      /* ptr to next free byte in heap space */
 
 /*
  * A struct dict_name represents what Forth folks often call a "head" - a
@@ -122,6 +117,7 @@ static struct dict_name compiler_chain = { " VH", 3, NULL };
 static struct dict_name *current_chain = &forth_chain;
 
 /* hook called when a new name is created */
+CODE(mu_nope)
 static xtk xtk_new_hook = XTK(mu_nope);
 
 /* bogus C-style dictionary init */
@@ -141,34 +137,14 @@ struct inm initial_compiler[] = {
     { NULL, NULL }
 };
 
-void mu_push_h()        /* "here" code space pointer */
+void mu_push_h0()       /* start of head (dictionary) */
 {
-    PUSH(&pcd);
+    PUSH(ph0);
 }
 
-void mu_push_r()        /* "ram" space pointer */
+void mu_push_h()        /* heap pointer */
 {
-    PUSH(&pdt);
-}
-
-/*
- * Compile (that is, *copy*) a cell into the current code space.
- */
-void mu_code_comma()     { *pcd++ = POP; }
-
-void mu_push_code_size()
-{
-    PUSH(((caddr_t)pcd - (caddr_t)pcd0) - names_size);
-}
-
-void mu_push_names_size()
-{
-    PUSH(names_size);
-}
-
-void mu_push_data_size()
-{
-    PUSH(pdt - pdt0);
+    PUSH(&ph);
 }
 
 /*
@@ -195,32 +171,6 @@ void mu_push_compiler_chain()
     PUSH(&compiler_chain);
 }
 
-/* the char *string param here does _not_ need to be zero-terminated!! */
-static char *compile_counted_string(char *string, size_t length)
-{
-    struct counted_string *cs;
-    struct string s;
-
-    cs = (struct counted_string *)pdt;
-    s.data = string;
-    s.length = length;
-    cs->length = s.length;  /* prefix count cell */
-    bcopy(s.data, &cs->data[0], s.length);
-    cs->data[s.length] = 0; /* zero terminate */
-    return &cs->data[0];
-}
-
-/*
- * copy string; return a counted string (addr of first character;
- * prefix count cell _precedes_ first character of string).
- * This does _not_ allot space in the dictionary!
- */
-void mu_scrabble()  /* ( a u - z") */
-{
-    TOP = (cell)compile_counted_string((char *)ST1, TOP);
-    NIP(1);
-}
-
 /*
  * find takes a token (a u) and a chain (the head of a vocab word list) and
  * searches for the token on that chain. If found, it returns the address
@@ -240,7 +190,7 @@ void mu_find()
         if (memcmp(pde->n.suffix + 3 - length, token, length) != 0) continue;
 
         /* found: drop token, push code address and true flag */
-        NIP(1);
+        DROP(1);
         ST1 = (cell)&pde->code;
         TOP = -1;
         return;
@@ -257,14 +207,13 @@ static void make_new_name(
     struct dict_name *pnmHead, char *name, int length)
 {
     struct dict_name *pnm;              /* the new name */
-    char *pch = (char *)ALIGNED(pcd);   /* start out nicely aligned */
+    char *pch = (char *)ALIGNED(ph);    /* start out nicely aligned */
 
     /* Allocate extra cells for name, if longer than 3 characters */
     if (length > 3)
     {
         int cchExtra = ALIGNED(length - 3);
         pch += cchExtra;
-        names_size += cchExtra;         /* count extra bytes alloc'ed */
     }
 
     pnm = (struct dict_name *)pch;
@@ -272,16 +221,13 @@ static void make_new_name(
     pnm->link = pnmHead->link;          /* compile link to last */
     pnmHead->link = pnm;                /* link onto front of chain */
     pnm->length = length;
-    bcopy(name, pnm->suffix + 3 - length, length);        /* copy name string */
+    memcpy(pnm->suffix + 3 - length, name, length);        /* copy name string */
 
     /* Allot entry */
-    pcd = (cell *)(pnm + 1);
-
-    /* Account for its size */
-    names_size += (caddr_t)pcd - (caddr_t)pnm;
+    ph = (cell *)(pnm + 1);
 
 #if defined(BEING_DEFINED)
-    fprintf(stderr, "%p %.*s\n", pcd, length, name);
+    fprintf(stderr, "%p %.*s\n", ph, length, name);
 #endif
 }
 
@@ -322,24 +268,20 @@ static void init_chain(struct dict_name *pchain, struct inm *pinm)
     for (; pinm->name != NULL; pinm++)
     {
         make_new_name(pchain, pinm->name, strlen(pinm->name));
-        *pcd++ = (cell)pinm->code;  /* set code pointer */
+        *ph++ = (cell)pinm->code;   /* set code pointer */
     }
 }
 
 static void allocate()
 {
-    pcd0 = (cell *)  mmap(0, 256 * 4096, PROT_READ | PROT_WRITE,
+    ph0 = (cell *)  mmap(0, 1024 * 4096, PROT_READ | PROT_WRITE,
                             MAP_ANON | MAP_PRIVATE, -1, 0);
 
-    pdt0 = (uint8 *) mmap(0, 1024 * 4096, PROT_READ | PROT_WRITE,
-                            MAP_ANON | MAP_PRIVATE, -1, 0);
-
-    if (pcd0 == MAP_FAILED || pdt0 == MAP_FAILED)
+    if (ph0 == MAP_FAILED)
         die("couldn't allocate memory");
 
-    /* init compiler ptrs */
-    pcd = pcd0;
-    pdt = pdt0;
+    /* init heap pointer */
+    ph = ph0;
 }
 
 void init_dict()

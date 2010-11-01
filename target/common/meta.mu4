@@ -8,91 +8,69 @@
 ( daf 2001-feb-02. Created, from v25 version.)
 ( daf 2002-apr-01. Converted to muforth.)
 
-cr " Meta compiler common "  file[#
+loading Meta compiler common
 
 forth  decimal
 
 ( Metacompiler vocabs)
-chain .utility.   ( useful words shared by several modes - comments,
-                    radix changes, printing numbers, conditional
-                    evaluation, debug stack dumps, etc)
-chain .machine.   ( words specific to a target machine)
-chain .outside.   ( used outside of target definitions - the `meta' forth)
-chain .inside.    ( used inside target definitions - the `meta' compiler)
-chain .definer.   ( used inside definer definitions - the `meta' definer)
-chain .assembler. ( the host-resident target assembler)
-chain .target.    ( the target words - like `forth' on the host)
+sealed .meta.      ( used outside of target definitions - the `meta' forth)
+sealed .meta-compiler.  ( used inside target definitions - the `meta' compiler)
+sealed .assembler. ( the host-resident target assembler)
+sealed .target.    ( the target words - like `forth' on the host)
 
-: utility      .utility. definitions ;
-: machine      .machine. definitions ;
-: outside      .outside. definitions ;
-: inside        .inside. definitions ;
-: assembler  .assembler. definitions ;
-: definer      .definer. definitions ;
-: target        .target. definitions ;
+: meta                    .meta. definitions ;
+: meta-compiler  .meta-compiler. definitions ;
+: assembler          .assembler. definitions ;
+: target                .target. definitions ;
 
 compiler
-: \u   ( compile from utility)      .utility. \chain ;
-: \m   ( compile from machine)      .machine. \chain ;
-: \o   ( compile from outside)      .outside. \chain ;
-: \i   ( compile from inside)        .inside. \chain ;
-: \a   ( compile from assembler)  .assembler. \chain ;
-: \d   ( compile from definer)      .definer. \chain ;
-: \t   ( compile from target)        .target. \chain ;
+: \m   ( compile from meta)                    .meta. \chain ;
+: \mc  ( compile from meta-compiler)  .meta-compiler. \chain ;
+: \a   ( compile from assembler)          .assembler. \chain ;
+: \t   ( compile from target)                .target. \chain ;
 
-( We need to defer a few words to we can define the interpret modes before
-  we load the target-specific meta-compiler.)
-outside  ( XXX should be machine?)
-defer compile,   ( compile a call to a word)
-defer number     ( convert a number in a target-specific way)
-defer literal    ( compile a literal on the target)
-defer remote     ( call a word on the target - tethered mode only)
-defer here       ( current dict location)
-
+( XXX revert when we convert to __meta and __meta-colon)
+: \o  \ \m ;
+: \i  \ \mc ;
 forth
+
 ( The various token consumers for each mode.)
 -:  ."  (assembling)"  ;
 -:  .assembler. find  if  execute ^  then
-      .outside. find  if  execute ^  then  ( equates are in .outside.)
-      .utility. find  if  execute ^  then  number ;
+         .meta. find  if  execute ^  then  ( equates are in .meta.)
+        .forth. find  if  execute ^  then  ( utility words in .forth.)
+                                           number ;
 mode __asm
 
--:  ."  (assembling a macro)"  ;
--:   .compiler. find  if  execute ^ then
-    .assembler. find  if  compile, ^  then
-      .outside. find  if  compile, ^  then  ( equates are in .outside.)
+-:  ."  (compiling an assembler macro)"  ;
+-:
+     .compiler. find  if  execute  ^  then  ( compiler's if/then/begin ...)
+    .assembler. find  if  compile, ^  then  ( ... trump the the assembler's)
+         .meta. find  if  compile, ^  then
+        .forth. find  if  compile, ^  then  ( utility words in .forth.)
                                             number literal ;
 mode __macro
 
--:  ."  (outside)"  ;
--:    .outside. find  if  execute ^  then
-      .utility. find  if  execute ^  then  number ;
-mode __outside
+-:  ."  (meta-interpreting)"  ;
+-:     .meta. find  if  execute ^  then
+      .forth. find  if  execute ^  then  number ;
+mode __meta
 
--:  ."  (inside)"  ;
--:     .inside. find  if  execute ^  then
-       .target. find  if  execute  \o compile, ^  then  \o number \o literal ;
-mode __inside
+( XXX we don't even use this yet...)
+0 .if
+( only one that we can't define until we know what it means to make target
+  literals!)
+-:  ."  (meta-compiling)"  ;
+-:  .meta-compiler. find  if  execute ^  then
+           .target. find  if  execute  \o compile, ^  then  \o number \o literal ;
+mode __meta-colon
+.then
 
--:  ."  (interacting)"  ;
--:     .target. find  if  execute  \o remote ^  then
-      .outside. find  if  execute ^  then
-      .utility. find  if  execute ^  then  number ;
-mode __interact
 
-forth
-: \   .outside. chain' execute ;  ( escape to meta - find and execute a word)
-
-outside
-: \     .forth. chain' execute ;  ( escape to forth - find and execute a word)
 
 ( XXX: I'd love for this code to work, but the order is wrong to get it to
   compile. I've got work to do still.)
-0 [if]
-outside
-: equ  ( make a constant in .outside.)
-  current preserve  outside constant ;
-
+0 .if
 assembler
 : label   \o here  \o equ ;
 : ;c   __outside ;
@@ -100,45 +78,46 @@ assembler
 outside
 : org  org ;
 : code   \a label  __asm ;
-[then]
+.then
 
-utility
-( Random useful goodies.)
-: hex      hex ;
-: decimal  decimal ;
-: octal    octal ;
-: binary   binary ;
-: .     . ;
-: u.    u. ;
-: .s    .s ;
+( Common things we'll always want when meta-colon compiling.)
+meta-compiler
+: (     \f ( ;   ( comments are nice!)
+: --    \f -- ;  ( ditto!)
 
-: comment  comment ;
-: (     \f ( ;
-: --    \f -- ;
-: char  \f char ;
-: ."    \f ." ;
-: "     \f "  ;
-
-: cr       cr ;
-: file[    file[ ;
-: ]file    ]file ;
-: file[#   file[# ;
-: #]file   #]file ;
-: ld       ld ;
-
-: [if]      \ [if]   ;
-: [else]    \ [else] ;
-: [then]    \ [then] ;
-: [with]    \ [with] ;
-
-( Common things we'll always want inside a colon def.)
-inside
-: (     \f ( ;
-: --    \f -- ;
-: [if]      \ [if]   ;
-: [else]    \ [else] ;
-: [then]    \ [then] ;
+: .if      \ .if   ;  ( and conditional compilation is nice too)
+: .else    \ .else ;
+: .then    \ .then ;
+: .ifdef   \ .ifdef ;
+: .ifndef  \ .ifndef ;
+: .def     \ .def ;
 
 forth
 
-#]file
+-- ------------------------------------------------------------------------
+-- Everything below this is a CROCK and should be removed!
+-- ------------------------------------------------------------------------
+
+( XXX revert when we convert to __meta and __meta-colon)
+: __outside  __meta ;
+: outside  meta ;
+: .outside.  .meta. ;
+-- : __inside   __meta-colon ;
+: inside   meta-compiler ;
+: .inside.   .meta-compiler. ;
+
+( kludge - for conditionals - XXX remove later)
+: .not  not ;
+: .and  and ;
+: .or   or ;
+
+: \   .outside. chain' execute ;  ( escape to meta - find and execute a word)
+: __forth  \ [ ;  ( it's nice to be able to do this - idempotently - from forth)
+
+outside
+: \     .forth. chain' execute ;  ( escape to forth - find and execute a word)
+: __forth  \ [ ;
+: equ  ( make a constant in .meta.)
+  current preserve  meta constant ;
+forth
+

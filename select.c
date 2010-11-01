@@ -42,17 +42,17 @@ void mu_fd_in_set_q()
 void mu_select()
 {
     int count;
-    cell nfds = SP[3];
+    cell nfds = SP[4];
     fd_set *readfds = (fd_set *) ST3;
     fd_set *writefds = (fd_set *) ST2;
     fd_set *exceptfds = (fd_set *) ST1;
     struct timeval *timeout = (struct timeval *) TOP;
 
-    NIP(4);
+    DROP(4);
     while((count = select(nfds, readfds, writefds, exceptfds, timeout)) == -1)
     {
         if (errno == EINTR) continue;
-        throw_strerror();
+        return abort_strerror();
     }
     TOP = count;
 }

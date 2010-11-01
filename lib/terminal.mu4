@@ -10,73 +10,65 @@
 
 ( Created 5-aug-1999.)
 
-cr " Terminal "  file[#
+loading Terminal
 
 decimal
 
-( Open serial device.)
-variable fd-target
-( used /dev/cuad0 on FreeBSD)
-: tty-target  z" /dev/ttyS0" r/w  open-file  fd-target ! ;
+( Support for target serial port.)
 
+variable fd-target
+
+( tty-target returns fd of tty connected to target. If not yet opened,
+  opens it, and sets it to target-raw.)
+
+: tty-target  fd-target @  =if ^ then ( already opened!)  drop
+   z" /dev/ttyS0" open-file-rw  ( used /dev/cuad0 on FreeBSD)
+   dup fd-target !  dup target-raw  ( fd) ;
+
+( Now automagically opens target tty if necessary.)
 : bps   ( speed)
-   fd-target @ ram get-termios drop ( returns size of struct)
-      ( speed) ram set-termios-speed
-   fd-target @ ram set-termios ;
+   tty-target here get-termios drop ( returns size of struct)
+     ( speed) here set-termios-speed
+   tty-target here set-termios ;
 
 ( Keymaps)
--: ( self)  emit  0 ;  256 defarray term-keys
-   ( nop)       ' 0    256 defarray term-esc-keys
+-: ( self)  emit  0 ;  256 defarray+ term-keys
+   ( nop)       ' 0    256 defarray+ term-esc-keys
 -: drop ( ESC)  key term-esc-keys @execute ;  #ESC term-keys !
 : esc:  -:  \f char  term-esc-keys ! ;
 
-comment %use-typing%
-  256 constant #serialbuf
-  #serialbuf buffer serialbuf ( serial input buffer)
-%use-typing%
-
-comment %coroutines-broken%
-( 2003-mar-13. It's coroutine time!)
-
-: coroutine  ( dstack-safety dstack-size - s0)
-   cells allot ( size)  cells ( safety)  ram  swap -  constant ;
-
-coroutine serial-s0
-%coroutines-broken%
-
 variable fdmax
-: new-fd-set  ram fd!  buffer ;
+: new-fd-set   create  here fd-reset ( sizeof)  aligned allot ;
 new-fd-set fds
 
 : te-select  ( fd0 .. fdn n)
-   fds fd! drop  fdmax off
+   fds fd-reset drop  fdmax off
    for  fds over fd-set   fdmax @ max  fdmax !  next
    fdmax @ 1+  fds  0  0  0  select  drop  ;
 
 ( Serial input to screen, keyboard input to serial.)
 
 : serial->screen
-   fds fd-target @ fd-in-set? if
-     fd-target @ reads  tty writes  typing type
-  then ;
+   fds tty-target fd-in-set? if
+      tty-target reads  tty writes  typing type
+   then ;
 
 : keyboard->serial  ( - done?)
    fds tty fd-in-set? if
-     tty reads  fd-target @ writes  key dup term-keys @execute ^
+      tty reads  tty-target writes  key dup term-keys @execute ^
    then  0 ;
 
 : te-stream
-   begin  tty fd-target @ 2 te-select
+   begin  tty tty-target 2 te-select
       serial->screen  keyboard->serial  until  tty writes  ;
 
-: <drain  begin  fd-target @ 1 te-select  serial->screen  until
-   fd-target @ writes  ;
+: <drain  begin  tty-target 1 te-select  serial->screen  until
+   tty-target writes  ;
 
 : te  ( terminal)
-   tty-target  fd-target @ target-raw  ( disallows signals)
    115200 bps  ( default to hi speed)
-   radix @ push  tty user-raw   ['] te-stream catch
-                 tty cooked  fd-target @ close-file  pop radix !  throw ;
+   radix preserve  tty user-raw   tty on-exit cooked
+   te-stream ;
 
 ( Special keys.)
 
@@ -106,7 +98,7 @@ esc: [  ( vt10x)  CSI  0 ;
 
 esc: q  ( quit)  -1 ;
 
-00 [if]
+00 .if
 
 ( Test code.)
 : kb  raw  begin  key  dup <ESC> xor while  u.  repeat  cooked  ;
@@ -114,9 +106,7 @@ esc: q  ( quit)  -1 ;
 : kb-test
    if  tty keyboard-in 1 read   tty keyboard-in 1 write  2drop  then  ;
 
-: kb    fds fd! drop  fds tty fd-set  raw
+: kb    fds fd-reset drop  fds tty fd-set  raw
    begin  te-select drop  kb-test  again  [
 
-[then]
-
-#]file
+.then

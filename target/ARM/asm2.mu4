@@ -5,7 +5,7 @@
 
 ( ARM assembler!)
 
-cr " Assembler "  file[#
+loading ARM assembler
 
 ( daf 2006-apr-01. Totally reworked! Keeping lots of tagged data on the
   stack as we build the insn is totally for the birds. I want something
@@ -44,8 +44,7 @@ forth hex
 ( Some bit definitions.)
 1 #25 <<  constant I     ( I immed bit)
 1 #24 <<  constant Pre   ( P bit: 0=post, 1=pre)
-1 #23 <<  constant U     ( U bit; 0=down, 1=up;
-                                 set to 1 - Up - in the index types)
+1 #23 <<  constant U     ( U bit; 0=down, 1=up)
 1 #22 <<  constant PSR   ( S bit for LDM/STM: load PSR or force user mode)
 1 #21 <<  constant W     ( W bit; 0=leave base alone, 1=write back new base;
                                  sets USER access mode in post-index)
@@ -62,13 +61,19 @@ forth hex
   I think I'm going for conditions and S being postfix.)
 
 ( Conditions, S-bit.)
-: op   (w address of compiled op)  |here cell- |+ ;
-: op1  (s n)  (w set some bits in op)      op @       or   op ! ;
-: op0  (s n)  (w reset some bits in op)    op @  swap bic  op ! ;
-: op^  (s n)  (w twiddle some bits in op)  op @       xor  op ! ;
+: op   ( address of compiled op)  \m here \m cell- ;
+: op1  (  n)  ( set some bits in op)      op \m @       or   op \m ! ;
+: op0  (  n)  ( reset some bits in op)    op \m @  swap bic  op \m ! ;
+: op^  (  n)  ( twiddle some bits in op)  op \m @       xor  op \m ! ;
 
 : >cond   #28 << ;
-: icond   >cond constant   does>  [ 0f >cond ] op0 op1 ;
+
+( We only clear the top three bits; the lowest bit is positive/negative
+  logic. By setting it - with "ne" below - and then xoring in a condition,
+  we can negate the logic of the condition. "if" and "while" in the control
+  structure code do precisely this.)
+
+: icond   >cond constant   does> @  [ 0e >cond ] op0 op^ ;
 
 assembler
  00 icond eq   00 icond 0=
@@ -103,7 +108,7 @@ variable pair  ( which of an insn pair to compile)
   each insn?)
 
 ( Compile the insn!)
-: op,  [ always >cond ] or  |,   pair off ;
+: op,  [ always >cond ] or  \m ,   pair off ;
 
 
 forth
@@ -111,7 +116,7 @@ forth
 ( Create words to insert reg nums into op in the right place, depending on
   the register function.)
 
-: |reg   constant  ( sh)  does>  ( r op sh)  rot  0f and  swap <<  or ;
+: |reg   constant  ( sh)  does> @  ( r op sh)  rot  0f and  swap <<  or ;
   0 |reg Rm   ( 2nd operand register; multiplicand)
   8 |reg Rs   ( shift amount reg; multiplier)
 #12 |reg Rd   ( destination)
@@ -119,13 +124,19 @@ forth
 
 ( Registers.)
 assembler
- 09 constant top ( t)  ( data stack top)
- 0a constant ct  ( c)  ( for loop count reg)
- 0b constant up  ( u)  ( user pointer; for multitasking!)
- 0c constant sp  ( s)  ( data stack pointer)
- 0d constant rp  ( r)  ( return stack pointer)
- 0e constant lr  ( l?) ( link register; top of return stack!)
  0f constant pc  ( p or i?)  ( program counter)
+ 0e constant lr  ( l?) ( link register; top of return stack!)
+ 0d constant sp  ( XXX what register does this relate to in Thumb mode?)
+ 0c constant r12
+ 0b constant r11
+ 0a constant r10
+ 09 constant r9
+  8 constant r8
+
+  3 constant r3
+  2 constant r2
+  1 constant r1
+  0 constant r0
 forth
 
 
@@ -178,11 +189,11 @@ forth
 
 : regshift  ( Rm Rs - op)
    5 <<  constant  ( shiftop)
-   does>  ( Rm Rs shift - op)   Rs Rm  10 or ;
+   does> @  ( Rm Rs shift - op)   Rs Rm  10 or ;
 
 : immshift  ( Rm n - op)
    5 <<  constant  ( shiftop)
-   does>  ( Rm n shift)   swap  1f and  7 << or  Rm ;
+   does> @  ( Rm n shift)   swap  1f and  7 << or  Rm ;
 
 assembler
  00 regshift asl
@@ -251,10 +262,10 @@ There are three kinds of data processing instructions:
 
 ( a b pair => 1_bbbb_aaaa)
 : pairop  ( a b - pairop)   4 <<  or  100 or  ;
-: 1mi1  pairop  constant  does>  ?pair  Rd  Rn   Operand2        op, ;
-: 1mi2          constant  does>  ?pair  Rd  Rn   Operand2        op, ;
-: 1mi3          constant  does>  ?pair      Rn   Operand2  S or  op, ;
-: 1mi4  pairop  constant  does>  ?pair  Rd       Operand2        op, ;
+: 1mi1  pairop  constant  does> @  ?pair  Rd  Rn   Operand2        op, ;
+: 1mi2          constant  does> @  ?pair  Rd  Rn   Operand2        op, ;
+: 1mi3          constant  does> @  ?pair      Rn   Operand2  S or  op, ;
+: 1mi4  pairop  constant  does> @  ?pair  Rd       Operand2        op, ;
 
 assembler
 
@@ -277,14 +288,77 @@ assembler
 
 forth
 
-( B, BL -- easy)
+( B, BL BLX -- easy)
 : |pc-  ( to from - offset)   8 + ( compensate for prefetch)  - ;
-: >branch-offset  ( to from - bits)  |here |pc-  cell/  00ffffff and ;
+: >branch-offset  ( to from - bits)  |pc-  \m cell/  00ffffff and ;
+: br  ( op)  constant  does> @ ( dest op)  swap
+             \m here  >branch-offset  or  op, ;
+: brr ( op)  constant  does> @ ( reg op) or op, ;
 
 assembler
-: b   ( dest)  >branch-offset  0a000000 or  op, ;
-: bl  ( dest)  >branch-offset  0b000000 or  op, ;
+0a000000 br b
+0b000000 br bl
+012fff30 brr blx
 forth
+
+
+( Okay, now that we've got conditions and branches sorted, let's create
+  some control structure words! Remember that all conditions are
+  -postfix-.)
+
+( "again" and "then" will generate b - branch - instructions with condition
+  0e - always. "if" and "while" will set the condition to 01 [ne], which
+  will negate the sense of the [postfix] condition later applied to the if
+  or while.)
+
+( Create an unconditional - always - branch with empty offset, and leave
+  a pointer to it on stack)
+
+: >mark-asm  ( - src)  \m here  [ 2 cells ] +  b ;
+
+: <resolve-asm  ( dest src)  tuck swap  >branch-offset  ( src bits)
+                             over \m @  or  swap \m ! ;
+
+: >resolve-asm  ( src dest)  swap <resolve-asm ;
+
+assembler
+: then  ( src)     \m here  >resolve-asm ;
+: if    ( - src)   >mark-asm  \a ne ( invert cond) ;
+
+: else  ( src0 - src1)  >mark-asm  swap  \a then ;
+
+: while   ( dest - src dest)   \a if  swap ;
+
+: begin   ( - dest)   \m here ;
+: again   ( dest)     >mark-asm  <resolve-asm ;
+: until   ( dest)      \a again  \a ne ;  ( invert cond)
+: repeat  ( src dest)  \a again  \a then ;
+forth
+
+
+comment load-address
+
+  Before we head into ldr & str let's define adr, which loads a pc-relative
+  address into a register. It does this by generating an add or subtract to
+  or from the pc. Since immediate constants (which we are using here as
+  address offsets) are unsigned, we have to subtract if the address is less
+  than the PC.
+
+  adr takes an address and a register; if it can turn the address into a
+  pc-relative offset that fits into the immediate field of an ALU
+  instruction, it generates one of the two instructions:
+
+  <offset> # pc <reg> add   ( if address was >= pc+8)
+  <offset> # pc <reg> sub   ( if address was <  pc+8)
+
+load-address
+
+assembler
+: adr  ( a reg)  swap  \m here |pc-  ( offset)
+   dup 0<  if  negate  \a #  \a pc  rot  \a sub  ^  then
+                       \a #  \a pc  rot  \a add ;
+forth
+
 
 comment %%
   Load, Store. LDR, STR. More than a little bit icky. The instruction formats
@@ -311,13 +385,16 @@ comment %%
   <idx> Rn   r)-   post-indexed, decrement, indexed register offset %%
 
 ( offset1 can override the setting of U that in]dex sets.)
-( disallow negative offset? I think that might be best...)
+( If passed a negative offset it toggles the U - up - bit before checking
+  that the offset fits in 12 bits.)
+
 : offset1  ( n op - op')
+   over 0<  if  swap negate swap  U xor  then
    over 1000 u<  if  ( non-negative offset, fits in 12 bits)
    or  ^ then  oops  [
 
-: immindex   constant does>  ( off Rn op - op)   Rn offset1 ;
-: regindex   constant does>  ( idx op - op)   Rn or  dup 10 and if oops then ;
+: immindex   constant does> @  ( off Rn op - op)   Rn offset1 ;
+: regindex   constant does> @  ( idx op - op)   Rn or  dup 10 and if oops then ;
 
 ( Since post-indexing _always_ writes back to the base reg, the W bit is
   redundant if Pre is clear [ie, Post is true]. So ARM have attached wholly
@@ -325,7 +402,7 @@ comment %%
   do a User mode transfer instead. Remember: this is usable _only_ when the
   Pre bit is clear.)
 
-: 2mi  ( ldr/str)  constant does>  ( index/offset Rd op)  Rd or op, ;
+: 2mi  ( ldr/str)  constant does> @  ( index/offset Rd op)  Rd or op, ;
 
 assembler
 
@@ -349,7 +426,7 @@ I               regindex r)-
 ( This fixes only one way to do this. It might be nice to be able to use
   indexed offsets too.)
 
-: pc)  ( addr - index)  |here |pc-  \a pc  ( n R15)   \a +)  ;
+: pc)  ( addr - index)  \m here |pc-  \a pc  ( n R15)   \a +)  ;
 
 ( Now the instructions.)
 04100000 2mi ldr
@@ -371,8 +448,8 @@ forth
   they map directly to UP bits: D=-U, I=U, A=-P, B=P.)
 
 : >PU  #23 << ;
-: PUstack  >PU constant  does>  op^ ;
-: PU       >PU constant  does>  [ %11 >PU ] op0 ( clear PU)  op1  ;
+: PUstack  >PU constant  does> @  op^ ;
+: PU       >PU constant  does> @  [ %11 >PU ] op0 ( clear PU)  op1  ;
 
 assembler
 %00 PUstack fd   ( full descending stack - default)
@@ -406,12 +483,12 @@ assembler
 
 forth
 
-: 3mi  constant  does> ( reg-mask+Rn op)  Rn or  op, ;
+: 3mi  constant  does> @ ( reg-mask+Rn op)  Rn or  op, ;
 
 assembler
                   ( 0000 100P USWL ...)
-08900000 3mi ldm  ( 0000 1000 1001 ...; -P,  U)
-09000000 3mi stm  ( 0000 1001 0000 ...;  P, -U)
+08900000 3mi ldm  ( 0000 1000 1001 ...; -P,  U)  ( ldm ia)
+09000000 3mi stm  ( 0000 1001 0000 ...;  P, -U)  ( stm db)
 
 forth
 
@@ -420,7 +497,7 @@ forth
   Rm Rn Rd swp
 
   Rn holds the address. Rm is the source. Rd is the dest. Rm may equal Rd.)
-: 4mi   constant does>    Rd  Rn  Rm  op, ;
+: 4mi   constant does> @    Rd  Rn  Rm  op, ;
 
 assembler
  01000090 4mi swp   ( Rm Rn Rd)
@@ -430,16 +507,26 @@ forth
 ( MUL, MLA. Multiply and Multiply-accumulate. Careful with this: the
   multiplies swap Rn and Rd in their encodings.
 
-  MUL/MLA:   Rd  Rn  Rs  9  Rm
-  arith:     Rn  Rd  Rs  X  Rm)
+    MUL/MLA:   Rd  Rn  Rs  9  Rm
+UMULL/SMULL:   Rhi Rlo Rs  9  Rm
+      arith:   Rn  Rd  Rs  X  Rm)
 
 : _mul  ( Rm Rs Rn Rd op)
-   over push ( copy Rd)  Rn ( Rd!)  Rd ( Rn!)  Rs  ( Rm op)
-   over pop = if  oops  then  ( barf if Rm == Rd)  Rm  op,  ;
+   Rn ( Rd!)  Rd ( Rn!)  Rs  Rm  op,  ;
+
+--   ARM Arch v6 and v7 support re-use of registers in multiply
+--   over push ( copy Rd)  Rn ( Rd!)  Rd ( Rn!)  Rs  ( Rm op)
+--   over pop = if  oops  then  ( barf if Rm == Rd)  Rm  op,  ;
 
 assembler
 : mul  ( Rm Rs Rd)      ( Rd := Rm * Rs; ignore Rn - we set to 0)
    0 ( Rn)  swap  00000090  _mul ;
+
+: umull ( Rm Rs Rhi Rlo) ( Rhi,Rlo := Rm * Rs)
+   swap  00800090  _mul ;
+
+: smull ( Rm Rs Rhi Rlo) ( Rhi,Rlo := Rm * Rs)
+   swap  00C00090  _mul ;
 
 : mla  ( Rm Rs Rn Rd)   ( Rd := Rm * Rs + Rn)
                   00200090  _mul ;
@@ -449,5 +536,3 @@ assembler
 : swi  ( n)  00ffffff and  0f000000 or  op,  ;
 
 forth
-
-#]file

@@ -17,7 +17,7 @@ void mu_get_termios()
 {
     tcgetattr(ST1, (struct termios *)TOP);
 
-    NIP(1);
+    DROP(1);
     TOP = sizeof(struct termios);
 }
 
@@ -26,9 +26,8 @@ void mu_set_termios()
 {
     /* drain out, flush in, set */
     if (tcsetattr(ST1, TCSAFLUSH, (struct termios *)TOP) == -1)
-    {
-        throw_strerror();
-    }
+        return abort_strerror();
+
     DROP(2);
 }
 
@@ -96,6 +95,7 @@ void mu_set_termios_speed()
 
     switch(ST1)
     {
+        BPS(  4800);
         BPS(  9600);
         BPS( 19200);
         BPS( 38400);
@@ -103,7 +103,7 @@ void mu_set_termios_speed()
         BPS(115200);
         BPS(230400);
     default:
-        throw("Unsupported speed");
+        return abort_zmsg("Unsupported speed");
     }
 
 #ifdef __CYGWIN__
@@ -124,6 +124,12 @@ void mu_set_termios_speed()
 void mu_tty_send_break()
 {
     tcsendbreak(TOP, 0);         /* most implementions ignore the duration */
+    DROP(1);
+}
+
+void mu_tty_iflush()
+{
+    tcflush(TOP, TCIFLUSH);          /* drain output, discard input */
     DROP(1);
 }
 

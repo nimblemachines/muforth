@@ -9,118 +9,53 @@
 
 #include "muforth.h"
 
-#include <setjmp.h>
-#include <stdlib.h>
+#include <stdlib.h>     /* for exit() */
 #include <errno.h>
-
-#ifndef XXX
-#include <sys/uio.h>
-#include <unistd.h>
-#endif
-
-#define write_string(f,s)  write(f,s,strlen(s))
+#include <stdio.h>
 
 /* A bit of a crock, but only called if we haven't set up a catch frame. */
-void die(const char *msg)
+void die(const char* zmsg)
 {
-    write_string(2, "muforth: ");
-    if (parsed.length != 0)
-    {
-        write(2, parsed.data, parsed.length);
-        write(2, " ", 1);
-    }
-    write_string(2, msg);
-    write(2, "\n", 1);
+    fprintf(stderr, "startup.mu4, line %d: %.*s %s\n",
+        parsed_lineno, (int)parsed.length, parsed.data, zmsg);
     exit(1);
 }
 
-/* This works like C and not like Forth: catch returns 0 when it sets up
- * the frame and non-zero when it has been longjumped to. Catch does _not_
- * call a function. But then, how/when do you undo the frame? Hmmm.
- * Okay, doing it the Forth way. */
-
-#define SETJMP setjmp
-#define LONGJMP longjmp
-
-struct trapframe
+void muboot_die()      /* zmsg */
 {
-    jmp_buf jb;
-    struct trapframe *prev;
-    xtk *ip;
-    xtk **rp;
-};
-
-static struct trapframe *last_tf;    /* top of "stack" of trap frames */
-
-void mu_catch()
-{
-    struct trapframe tf;
-    cell thrown;
-
-    /* link onto front of trapframe list */
-    tf.prev = last_tf;
-    last_tf = &tf;
-
-    tf.rp = RP;
-    tf.ip = IP;
-
-    thrown = SETJMP(tf.jb);
-    if (thrown == 0)
-    {
-        EXECUTE;
-        DUP;     /* make room for thrown value */
-    }
-    else
-    {
-        RP = tf.rp;     /* we longjmp'ed; restore rp & ip */
-        IP = tf.ip;
-    }
-    /* unlink frame */
-    last_tf = tf.prev;
-
-    /* return thrown value */
-    TOP = thrown;
+    die((char *)TOP);
 }
 
-void mu_throw()
-{
-    if (TOP != 0)
-    {
-        if (TOP == -1)        /* generic error value */
-            TOP = (cell)"Unspecified fatal error";
+/* abort() is deferred via this variable */
+CODE(muboot_die)
+static xtk xtk_abort = XTK(muboot_die);
 
-        if (last_tf)
-            LONGJMP(last_tf->jb, TOP);
-        else
-            die((char *)TOP);
-    }
-    DROP(1);
+void mu_abort()     /* zmsg */
+{
+    execute_xtk(xtk_abort);
+}
+
+void mu_push_tick_abort()
+{
+    PUSH(&xtk_abort);
 }
 
 /*
- * throw() is shorthand for PUSH(zstring); mu_throw();
- *
- * Since we're going to reset the SP anyway, why not always do a
- * PUSH(zstring) and then mu_throw()? In other words, don't worry about
- * whether it's ok to simply assign TOP to the zstring. Let's always PUSH,
- * and let catch reset the stack.
- *
- * This code assumes that zstring != 0. Otherwise, the assumption that we
- * can always PUSH is false, since throw()ing 0 doesn't change the stack.
+ * abort_zmsg() is shorthand for PUSH(zmsg); mu_abort();
  */
 
-void throw(const char *zstring)
+void abort_zmsg(const char *zmsg)
 {
-    PUSH(zstring);
-    mu_throw();
+    PUSH(zmsg);
+    mu_abort();
 }
 
 /*
- * We've returned to using C strings for throw()ing. Since all we ever do
- * with strerror strings is throw() them, let's roll the two ideas into
- * one.
+ * We've returned to using C strings for abort()ing. Since all we ever do
+ * with strerror strings is abort(), passing them, let's roll the two ideas
+ * into one.
  */
-void throw_strerror()
+void abort_strerror()
 {
-    throw(strerror(errno));
+    abort_zmsg(strerror(errno));
 }

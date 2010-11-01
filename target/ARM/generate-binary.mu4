@@ -1,0 +1,44 @@
+( This file is part of muFORTH: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2010 David Frech. All rights reserved, and all wrongs
+  reversed. (See the file COPYRIGHT for details.)
+
+
+loading Generation of binary image
+
+forth decimal
+
+( Code to generate a binary of the image and relocation bitmap, followed
+  immediately by the text of the file target/ARM/startup.mu4, which is
+  padded with blanks - on output - to a cell boundary.)
+
+: out  ( 'cell)  fd-out @  swap  \m cell  write ;
+
+: .words  ( a u)   for  dup out  \m cell+  next  drop ;
+
+variable junk
+: .w  ( u)  junk !  junk out ;
+
+( Image format: little endian.
+   4 byte count of image cells
+   4 byte count of relocation bitmap cells
+   image
+   bitmap
+   4 byte count of -bytes- in startup file - excluding padding
+   startup.mu4.)
+
+: get-startup ( - fd)
+   z" target/ARM/startup.mu4" open-file-ro  ( fd) ;
+
+: gen-binary-image
+   >stdout
+   \m here \m cell/  dup  ( #image-cells)
+            31 + 5 >>  ( #reloc-bitmap-cells)  swap
+   2dup
+   ( #image-cells) .w
+   ( #reloc-bitmap-cells) .w
+            image  swap ( #image-cells) .words
+   0 reloc-bitmap  swap ( #reloc-bitmap-cells) .words
+   get-startup  ( fd)  dup on-exit close-file
+   read-file  dup ( size in bytes) .w
+   tuck  ( fd u a u) type  negate 3 and spaces ( pad) ;

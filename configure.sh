@@ -12,21 +12,39 @@
 while [ "$1" ]; do
   case "$1" in
      gnu)     gnu=yes ;;
+     bsd)     bsd=yes ;;
        *) ;;
   esac
   shift
 done
 
+# Set archcflags and archldflags based on system. Useful for 64-bit Linux
+# and for Darwin (OSX).
+
+os=$(uname -s)
+cpu=$(uname -m)
+archcflags=""
+archldflags=""
+if [ "$os" = "Darwin" ]; then
+    archcflags="-m32 -mdynamic-no-pic"
+    archldflags="-m32"
+fi
+if [ "$os" = "Linux" -a "$cpu" = "x86_64" ]; then
+    archcflags="-m32"
+    archldflags="-m32"
+fi
+
+# Figure out which version of sed we're running, so we can properly specify
+# the use of extended (ie, sane) regular expressions.
+
 if sed --version 2> /dev/null | grep -q "GNU"; then
   cat <<EOF
 Found GNU sed; using "-r" for extended regular expressions.
-
 EOF
   sedext="-r"
 else
   cat <<EOF
 Found BSD sed; using "-E" for extended regular expressions.
-
 EOF
   sedext="-E"
 fi
@@ -37,30 +55,43 @@ sed ${sedext} \
   scripts/do_sed.sh.in > scripts/do_sed.sh
 chmod 755 scripts/do_sed.sh
  
+# Figure out which version of make we're using (most likely GNU or BSD) and
+# set up an appropriate Makefile.
+
 if [ "${gnu}" = "yes" ] || 
-    make --version 2> /dev/null | grep -q "GNU Make"; then
+   ([ "${bsd}" != "yes" ] &&
+    make --version 2> /dev/null | grep -q "GNU Make"); then
   cat <<EOF
-Found GNU make. I'm going to create a compatible makefile for you.
+Found GNU make; creating a GNU-compatible Makefile.
+If instead you want to force the creation of a BSD-compatible Makefile,
+re-run configure.sh like this:
+
+  ./configure.sh bsd
+
+Then run your BSD make.
 
 EOF
   sed ${sedext} \
     -e "s/%sedext%/${sedext}/g" \
+    -e "s/%archcflags%/${archcflags}/g" \
+    -e "s/%archldflags%/${archldflags}/g" \
     -f scripts/make.sed \
     -f scripts/gnu-make.sed \
     -e 's/^### Makefile/### GNU Makefile/' Makefile.in > Makefile
 else
   cat <<EOF
-Found non-GNU (perhaps BSD?) make. I'm going to assume it's a BSD make and
-create a makefile for you. If the build fails, try re-running configure
-like this:
+Found non-GNU (perhaps BSD?) make; creating a BSD-compatible Makefile.
+If the build fails, try re-running configure like this:
 
-  ./configure gnu
+  ./configure.sh gnu
 
 Then type "gmake" instead of "make".
 
 EOF
   sed ${sedext} \
     -e "s/%sedext%/${sedext}/g" \
+    -e "s/%archcflags%/${archcflags}/g" \
+    -e "s/%archldflags%/${archldflags}/g" \
     -f scripts/make.sed \
     -e 's/^### Makefile/### BSD Makefile/' Makefile.in > Makefile
 fi

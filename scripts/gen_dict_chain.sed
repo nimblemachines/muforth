@@ -1,6 +1,6 @@
 # This file is part of muFORTH: http://muforth.nimblemachines.com/
 #
-# Copyright (c) 2002-2009 David Frech. All rights reserved, and all wrongs
+# Copyright (c) 2002-2010 David Frech. All rights reserved, and all wrongs
 # reversed. (See the file COPYRIGHT for details.)
 
 #
@@ -31,7 +31,7 @@ s/^void mu_//
 s/(.*)\(void\);/\1/
 
 # don't do do_colon, do_does - they are not real forth words
-/do_/d
+#/do_/d
 
 # now we've got the name, save it in hold space
 h
@@ -41,7 +41,7 @@ s/_carefully//
 s/less/</
 s/equal/=/
 s/zero/0/
-s/reset/!/
+#s/reset/!/
 s/star(_|$)/*/
 s/backslash/\\\\/
 s/slash/\//
@@ -50,6 +50,7 @@ s/minus/-/
 s/shift_left/<</
 s/shift_right/>>/
 s/fetch/@/
+s/^at_/@_/
 s/store/!/
 s/(.*)_chain/\.\1\./
 s/set_(.*)_code/<\1>/

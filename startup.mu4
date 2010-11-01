@@ -88,13 +88,8 @@ forth
   this. So let's define some words that are useful for searching specific
   dictionary chains and compiling words from them.)
 
-( Stack comment and word comment words. We redefine these to generate
-  documentation.)
-: (s  ( ;  ( stack comment)
-: (w  ( ;  (w word comment)
-
 ( Roll tokenizing and searching into one.)
-: token'   token  rot  find ;   (s chain - a u F | body T)
+: token'   token  rot  find ;   ( chain - a u F | body T)
 
 ( Compiling from specific chains. Note that `\' is an elaboration of the
   basic scheme of `\chain'. These words will be handy in the assembler
@@ -119,15 +114,13 @@ compiler
 
 ( Ok, now we can define our compiler comment char, ( .)
 : (    \f ( ;
-: (s   \f ( ;  (w stack comment)
-: (w   \f ( ;  (w word comment)
 forth
 
 
 ( Some useful tidbits.)
 : -   negate + ;
-: u+  (s a b c - a+c b)  rot +  swap ;  ( "under-plus")
-: v+  (s x1 y1 x2 y2 - x1+x2 y1+y2)  push u+ pop + ;  ( add 2-vectors)
+: u+  ( a b c - a+c b)  rot +  swap ;  ( "under-plus")
+: v+  ( x1 y1 x2 y2 - x1+x2 y1+y2)  push u+ pop + ;  ( add 2-vectors)
 
 ( We don't even have any constants yet! So we make the easiest one first...)
 : 0   [ dup dup xor ] ;
@@ -138,16 +131,16 @@ forth
 : 1+   1 + ;  ( these are common)
 : 1-  -1 + ;
 
-: cells  cell-shift << ;
-: cell/  cell-shift >> ;  ( signed)
+: cells  2 << ;  ( cell is 32 bits!)
+: cell/  2 >> ;  ( signed)
 : cell   [ 1 cells ] ;
 : cell+  [ cell ] + ;
 : cell-  [ cell negate ] + ;
 
 : bl  [ 2 2* 2* 2* 2* ] ;  ( space character)
 
-: @+  (s a - n a+)  dup @  swap cell+ ;
-: !+  (s n a - a+)  tuck !  cell+ ;
+: @+  ( a - n a+)  dup @  swap cell+ ;
+: !+  ( n a - a+)  tuck !  cell+ ;
 
 ( Double-length words.)
 : 2@  @+ @  swap ;  ( cell at lower address to TOP)
@@ -155,20 +148,15 @@ forth
 
 : 2dup  over over ;
 : 2swap  rot push  rot pop ;
-: 2push  (s a b -> R: a b)  pop -rot  swap push push  push ;   ( NOTAIL)
-: 2pop   (s R: a b -> a b)  pop       pop pop swap    rot push ;  ( NOTAIL)
+: 2push  ( a b -> R: a b)  pop -rot  swap push push  push ;
+: 2pop   ( R: a b -> a b)  pop       pop pop swap    rot push ;
 
-( Compatibility.)
-: not  0= ;
-: =  xor 0= ;
+: =    xor 0= ;
+: not      0= ;  ( warning! this is NOT 1's complement)
 : bic  invert and ;
-: lshift  << ;
-: rshift  >> ;
-: urshift  u>> ;
-
 : @execute  @ execute ;
 
-(w jump allows jumping thru a table of addresses; you are responsible for
+( jump allows jumping thru a table of addresses; you are responsible for
   making sure the index is within range! It must be used at the end of a
   word. Common usage looks like this:  jump  nope  do1  do2  do3  [
 
@@ -177,7 +165,7 @@ forth
   Since no UNNEST needs to be compiled, use of [ rather than ; to end the
   word is common.)
 
-: jump  (s which)  cells pop + @execute ;
+: jump  ( which)  cells pop + @execute ;
 
 ( Now `ctrl' and the compiler's "char" and "ctrl".)
 : ctrl   char  [ bl 2* ( 64) ]  xor ;  ( how you get ^? = 127.)
@@ -208,47 +196,51 @@ forth
 --  : allot  aligned  dp @ +! ;
 --  : ,      dp @ !  cell allot ;
 
-: here   h @ ;  ( h points to the first free byte in code space)
-: ram    r @ ;  ( r points to the first free byte in data space)
+: here   h @ ;  ( h points to the first free byte in dictionary)
 
 : aligned  [ cell 1- ] +  [ cell negate ] and ;
-: allot  aligned  r +! ;  ( keeps ram space cell-aligned)
-: ,      ram !  cell allot ;
+: align    here aligned  h ! ;
+: allot    h +! ;
+: ,      here !  cell allot ;
 
 ( We'll define words to compile into code space once we have create/does.)
 
 ( Mark a branch source for later fixup.)
-: mark>  (s - src)  here  0 code, ;
+: >mark  ( - src)  here  0 , ;
 
 ( Resolve a forward or backward jump, from src to dest.)
-( In ITC land, this is easy: just store dest at src.)
-: <resolve  (s dest src)  ! ;
-: resolve>  ( src dest)  swap <resolve ;
+( When using absolute branch addresses, this is easy: just store dest at src.)
+: <resolve  ( dest src)  ! ;
+: >resolve  ( src dest)  swap <resolve ;
 
 ( Going back to fig-FORTH!)
 : compile   pop @+ push  compile, ;
 
 compiler
-: =if   (s - src)        compile (=0branch)  mark> ;
-: if    (s - src)        compile  (0branch)  mark> ;
-: then  (s src)          here resolve> ;
-: else  (s src0 - src1)  compile   (branch)  mark>  swap  \c then ;
+: =if   ( - src)        compile (=0branch)  >mark ;
+: if    ( - src)        compile  (0branch)  >mark ;
+: then  ( src)          here >resolve ;
+: else  ( src0 - src1)  compile   (branch)  >mark  swap  \c then ;
 
-: begin   (s - dest)  here ;
-: =until  (s dest -)       \c =if  <resolve ;
-: until   (s dest -)        \c if  <resolve ;
-: again   (s dest -)     compile   (branch)  mark>  <resolve ;
-: =while  (s dest - src dest)  \c =if  swap ;
-: while   (s dest - src dest)   \c if  swap ;
-: repeat  (s src dest -)   \c again  \c then ;
+: begin   ( - dest)  here ;
+: =until  ( dest -)       \c =if  <resolve ;
+: until   ( dest -)        \c if  <resolve ;
+: again   ( dest -)     compile   (branch)  >mark  <resolve ;
+: =while  ( dest - src dest)  \c =if  swap ;
+: while   ( dest - src dest)   \c if  swap ;
+: repeat  ( src dest -)   \c again  \c then ;
 
 ( n for .. next         goes n times; 2^wordsize if n=0 )
 ( n ?for .. next then   goes n times; 0 if n=0 )
 
-: for     (s - dest)      compile push           \c begin ;
-: ?for    (s - src dest)  compile (?for)  mark>  \c begin ;
-: next    (s dest -)      compile (next)  mark>  <resolve ;
+: for     ( - dest)      compile push           \c begin ;
+: ?for    ( - src dest)  compile (?for)  >mark  \c begin ;
+: next    ( dest -)      compile (next)  >mark  <resolve ;
 
+( do, loop, +loop)
+: do      ( - src dest)   compile (do)     >mark  \c begin ;
+: loop    ( src dest -)   compile (loop)   >mark  <resolve  \c then ;
+: +loop   ( src dest -)   compile (+loop)  >mark  <resolve  \c then ;
 
 ( make \ more like ANS-Forth's POSTPONE)
 ( Now, the confusion happens because we need to write code _in this word_
@@ -263,13 +255,6 @@ compiler
          .forth. find  huh?  literal  ['] compile,  compile, ;
 
 forth
-
-( To bracket comments in a flexible way. If you've bracketed some text
-  using comment, changing "comment" to "uncomment" will interpret the
-  bracketed text - the delimiter becomes a noop.)
-
-: comment  token  begin  2dup token  string= until  2drop ;
-: uncomment  new <:> \ ^ ;  ( create a noop word)
 
 
 ( Defining words are next. Right now we only `know' how to make `colon'
@@ -320,7 +305,7 @@ forth
 ( For comparison, the regular : compiler is defined thus:
 :  :   new <:> -] ; )
 
-
+ 
 ( Dictionary structure words. Remember that link fields point to the last
   cell - suffix - of a name, which precedes the link field. Roughly, a
   dictionary entry is the following cell-sized things: suffix, link, code;
@@ -336,38 +321,78 @@ forth
 : >link   ( 'code - 'link)  cell- ;
 : link>   ( 'link - 'code)  cell+ ;
 : >name   ( 'code - a u)   >link  link>name  ;
-: >does   ( 'code - 'does)  cell+ ;  ( cell containing does> ip pointer)
-: >body   ( 'code - 'body)  >does  cell+ ;
+: >ip     ( 'code - 'does-ip)  cell+ ;  ( cell containing does> ip pointer)
+: ip>     ( 'does-ip - 'code)  cell- ;  ( cell containing does> ip pointer)
+: >body   ( 'code - 'body)  >ip  cell+ ;
+: body>   ( 'body - 'code)       cell- ip> ;
 
 ( last contains the address of the does ip of the last <does> word defined)
-: last  [ ram  0 , ] ;  ( make the variable by hand!)
+: sleazy-variable  pop ;  ( push address of following cell in caller!)
+: last  sleazy-variable  [  0 ,  ( make the variable by hand!)
 
 ( does> fixes up the does ip of the last <does> word to point to the code
   after "does>" in the caller.)
 
 : does>  pop  last @  ! ;
 
-( Everything is defined in terms of `constant'.)
-: constant   new <does>
-             here last !  0 code, ( placeholder for does ip)
-             code, ( constant)
-             does> ;
+( We may not want to consume the token when we create new words; for
+  example, if we are meta-compiling another Forth and want to compile heads
+  into the image. So let's factor constant to make this possible.)
 
-: create   ram constant ;
+( The underlying engine for all "create/does>" words. It allocates no data
+  space in the word. This version does not consume a token from the input
+  stream, instead expecting one on the stack. Useful for meta-compilers.)
 
-: _buffer  (s default cells)  ?for dup , next then  drop ;
-: buffer   create  aligned  cell/  0 swap  _buffer ;
+: (create)   ( a u)
+   (new) <does>
+   here last !  0 , ( placeholder for does ip)
+   does> ;
+
+( Everything is defined in terms of `create'.)
+: create   token (create) ;
+
+: constant  ( con)  create , ( compile the constant)  does> @ ;
+
+( An array with every cell set to a default value.)
+: defarray   ( default cells)  create  ?for dup , next then  drop ;
+: array      ( cells)  0 swap  defarray ;
+
+( A byte array; length is rounded up to cell boundary.)
+: buffer   ( bytes)  aligned  ( round up)  cell/  0 swap  defarray ;
+
+( A self-indexing array with every cell set to a default value.)
+: defarray+  ( default cells)  defarray  does>  ( i - a)  swap cells + ;
+: array+     ( cells)  0 swap  defarray+ ;
 
 : variable    create  0 , ;
 : 2variable   variable  0 , ;
 
-( An array with every cell set to a default value:)
-: defarray  (s default cells)
-   create  _buffer
-   does>  (s i - a)  swap cells + ;  ( self-indexing!)
 
-: array     (s cells)  0 swap  defarray ;
+( To bracket comments in a flexible way. If you've bracketed some text
+  using comment, changing "comment" to "uncomment" will interpret the
+  bracketed text - the delimiter becomes a noop.)
 
+: (comment)  ( a u)
+   begin  2dup token  =while  string= until  2drop ^ then
+          2drop 2drop 2drop ;
+: comment  token  (comment) ;
+: uncomment  new <:> \ ^ ;  ( create a noop word)
+
+
+( How about a really cool word that makes self-parsing comment words? In
+  other words, like using "comment" - defined above - but instead of having
+  to say "comment **foobar** <commented text> **foobar**", you define
+  **foobar** to skip tokens until it comes to a matching **foobar**!!)
+
+comment no-self-comments
+: make-comment  create  does>  body> >name  (comment) ;
+
+( Here is one to get you started - good for block comments. It's 75
+  characters long:)
+
+make-comment
+===========================================================================
+no-self-comments
 
 ( I guess we can have deferred words, even though they are, in some ways,
   inelegant. The alternative - creating a variable and a colon word that
@@ -395,63 +420,151 @@ forth
 variable undeferred  ' nope undeferred !
 : defer  create  undeferred @ ,  does> @execute ;
 
-: >data  >body @ ;  ( given code addr of does word, fetch its constant)
-: 'data  ' >data ;
-
-( test!!)
-undeferred @  0 undeferred !  undeferred @ drop  undeferred ! zzz
-
 ( Syntactic sugar - from Rod Crawford's 4ARM.)
 : now   '  ;
-: is    'data !  ;   ( as in `now host-interpret is interpret')
+: is    ' >body !  ;   ( as in `now host-interpret is interpret')
 
 compiler
-: ['data]  'data literal ;
-: now  \f now  literal ;
-: is   \ ['data]  \ ! ;
+: now  '        literal ;
+: is   ' >body  literal  \ ! ;
 forth
 
 
-( Fluid, or dynamic, binding of global variables.)
+( Trying out, after all these years, the techniques that Klaus Schleisiek
+  presented in 1984 [at FORML] and that I read about in 1993.
 
-( A common pattern in muFORTH is code like this:
- 
-  radix @ push   do-something   pop radix !
+  The basic idea is that, in addition to return address pointers [saved
+  IPs], there are stack frames on the return stack. These can be for any
+  purpose, but we're interested here the following: local variable storage,
+  "fluid" rebinding of variables - aka dynamic scoping, and
+  cleanup-on-return - eg, to close a file that we opened.)
 
-  This is clumsy, and also bad style. What if do-something throws an
-  exception after setting the radix? radix will remain set to its new
-  value. Much better is the idiom:
+( Here is a picture of the return stack, with high memory towards the top of
+  the page, and low memory further down:
 
-  radix @ push   ['] do-something  catch  pop radix !  [ re-] throw
+  ^   |                    |
+  |   +--------------------+
+  |   |  prev return addr  |
+  |   +--------------------+
+  |   |        ...         |   several cells could be here; depends on the
+  |   +--------------------+   type of frame
+  |   |        ...         |
+  |   +--------------------+
+  |   |   cfa of cleanup   |
+  |   +--------------------+
+  +---+     prev frame     |<--- fp
+      +--------------------+
+      |    ip of remove    |<--- rp      remove just calls unlink
+      +--------------------+                                          )
 
-  This code resets radix in the event of an exception, but it's still
-  clumsy. What I really want to be able to do is to save the old value of
-  radix, set it for the duration of the executing word, and reset it to its
-  saved value when the executing word finishes - either through a "normal"
-  exit, or by throwing an exception.
+variable fp    ( the "top" - most recently pushed - frame)
+               ( fp points to a frame ptr, which pts to a frame ptr...)
 
-  After puzzling over this for a few days I realised that I could do this
-  with catch and throw. The new word "preserve" shows how.)
+( link creates a new frame. It fetches the cfa of the following word and
+  pushes it onto the return stack. This is the cleanup routine. Then it
+  links this frame into the list rooted at fp, and then returns to its
+  caller, skipping the following cfa. link is called by a word that builds
+  a new stack frame.)
 
-( Execute starting from the IP on the stack.)
-: execute-ip  ( ip -)  push ;
+: link     r> dup @  >r         ( fetch following cfa & push to r)
+           fp @ >r  rp@ fp !    ( link this frame to previous)
+           cell+ >r             ( skip fetched cfa) ;
 
-( Preserve the value of the variable whose address is on the stack. When
-  the word that called "preserve" exits, or in the case of a call to throw,
-  the value is reset.)
-: preserve  ( a -)
-   pop  ( ip of following word)  swap ( ip a)
-   dup @ 2push ( save addr and value)
-   ['] execute-ip catch  ( execute starting with following word)
-   2pop  swap ! ( reset value)
-   ( re-) throw ;
- 
+( unlink undoes what link did. It unlinks the frame from the list rooted at
+  fp, and then runs the cleanup routine, which will do whatever is
+  necessary to de-allocate the frame and undo any state changes made by the
+  word that called link.)
+
+: unlink   r>  ( save return address)
+           fp @ rp!  r> fp !    ( unlink frame)
+           r> execute           ( execute cleanup word)
+           >r  ( restore return address) ;
+
+( unwind is useful in the context of exceptions. It starts at fp and
+  unlinks each frame in turn until fp points to a frame with a zero link.)
+
+: unwind   r>  ( save return address)
+           -- begin  fp @ @  while  unlink  repeat
+           begin  fp @  while  unlink  repeat
+           >r  ( restore return address) ;
+
+
+create remove  -]  unlink ;   ( remove pushes IP when executed!)
+
+
+( Now some interesting applications.)
+
+-- -----------------------------------------------------------------------
+-- Fluid binding (dynamically-scoped variables)
+-- -----------------------------------------------------------------------
+( Restore saved value of a variable.)
+: restore
+   r> ( ra)   r> r>  ( value addr) !   >r ( ra) ;
+
+( Preserve the value of a variable for the duration of the execution of the
+  calling word.)
+
+: preserve  ( addr)  ( address of variable)
+   r> ( ra)
+   over ( addr) >r  swap @  ( value)  >r
+   link restore ( push cleanup)
+   remove >r    ( normal return - unlink and cleanup)
+   >r ( ra) ;
+
+
+-- -----------------------------------------------------------------------
+-- Cleanup on return
+-- -----------------------------------------------------------------------
+: cleanup
+   r> ( ra)   r> ( value)  r>  ( cfa) execute   >r ( ra) ;
+
+( Push value and following cfa to R stack; on exit or unwind, execute cfa
+  with value on the stack.)
+
+: on-exit  ( value)
+   r> ( ra)
+   dup @  >r       ( fetch following cfa & push to r)
+   swap >r         ( push value)
+   link cleanup    ( push code to undo whatever needs undoing)
+   remove >r       ( normal return - unlink and cleanup)
+   cell+ >r ( ra)  ( skip fetched cfa) ;
+
+
+-- -----------------------------------------------------------------------
+-- Local variable frames
+-- -----------------------------------------------------------------------
+( Deallocate local variables.)
+: unroom
+   r> ( ra)
+   r> ( #cells)  rp+!  ( rp+! takes cell count!)
+   >r ( ra) ;
+
+( Allocate space for local variables.)
+( NOTE: do -not- try to use a for loop to push cells! It doesn't work! The
+  return stack is being used to store the loop index, but you're busy
+  pushing stuff there! All hell breaks loose! If you absolutely want to
+  zero locals as they are allocated, do a begin/until loop with the count
+  on the data stack.)
+
+: room  ( #cells)
+   r> ( ra)
+
+   ( choose one! mark, zero, allocate)
+   -- swap dup  begin  "55aa55aa >r  1-  dup 0= until  drop  ( mark)
+   -- swap dup  begin          0 >r  1-  dup 0= until  drop  ( zero)
+   swap dup  negate rp+!  ( allocate)
+
+   ( #cells)  >r
+   link unroom
+   remove >r  ( normal return - unlink and cleanup)
+   >r ( ra) ;
+
 
 ( Number input)
 variable dpl    ( location of , or . )
 variable radix
 
-: radixer  constant  does>  radix ! ;
+: radixer  constant  does> @  radix ! ;
 
 2 2* 2* dup 2* ( 16!)  radixer hex
 dup            (  8!)  radixer octal
@@ -470,19 +583,19 @@ decimal
   for instance, with no digits to keep it company, is happily parsed as a
   number. The number? 0. Urgh.)
 
-: punct  (s a1 u1 ch - a2 u2 matched)
+: punct  ( a1 u1 ch - a2 u2 matched)
    over if ( still chars to process)  swap push  over c@  xor if
    ( no match)  pop 0 ^ then
    ( match)  pop 1 -1 v+  -1 ^  then
    ( end of input)  drop 0 ;
 
-: ?sign  (s a1 u1 - a2 u2 neg) char - punct  if  -1 ^  then  0 ;
+: ?sign  ( a1 u1 - a2 u2 neg) char - punct  if  -1 ^  then  0 ;
 
 ( I wanted to add Michael Pruemm's '0' as a hex specifier, but it's not as
   simple as adding it to this list. It will match a bare 0, which won't be
   matched as a number.)
 
-: ?radix  (s a1 u1 - a2 u2)
+: ?radix  ( a1 u1 - a2 u2)
 (   char 0 punct  if  hex ^  then )
    char " punct  if  hex ^  then
    char # punct  if  decimal ^  then
@@ -492,7 +605,7 @@ decimal
 ( . resets dpl; others leave it unchanged; this means that embedding . in a
   number causes a double number to be pushed, and dpl set to the count of
   digits _after_ the _last_ . in the number.)
-: ?dot  (s a1 u1 - a2 u2)
+: ?dot  ( a1 u1 - a2 u2)
    char . punct  if  dpl off ^  then
    char , punct  if   ^  then
    char - punct  if   ^  then
@@ -502,7 +615,7 @@ decimal
 
 ( This is scary.  We need a bunch of literals for `digit?'.)
 
-: digit?    (s ch - digit T | junk F)
+: digit?    ( ch - digit T | junk F)
    char 0 -  [ 2 2* 2* 1+ ]  ( 9)   over u< if  ( !decimal)
           [ 2 2* 2* 2* 1+ ]  ( 17)  -
      [ 2 1+  2* 2* 2*  1+ ]  ( 25)  over u< if  ( !hex, UPPERCASE)
@@ -512,9 +625,9 @@ decimal
    then  then  ( hex) [ 2 2* 1+ 2* ]  ( 10) +  then  ( decimal)
    dup radix @  u<  ;
 
-: @digit?   (s a - a digit T | a junk F)   dup c@  digit?  ;
+: @digit?   ( a - a digit T | a junk F)   dup c@  digit?  ;
 
-: *digit  (s u a digit - u*base+digit a)
+: *digit  ( u a digit - u*base+digit a)
    swap push ( a)  swap ( dig u)  radix @ * +  pop  dpl @ 0< 1+  dpl +!  ;
 
 ( 2002-mar-23. I still don't like how number parsing works. It seems
@@ -529,12 +642,12 @@ decimal
   And that "dpl!" in ?dot bugs me, too.)
 
 ( ANS compatible! - or at least it was when it converting with double numbers.)
-: >number  (s u1 a1 c1 - u2 a2 c2)  ( a2 is first unconvertible char)
+: >number  ( u1 a1 c1 - u2 a2 c2)  ( a2 is first unconvertible char)
    =if  for  @digit?  while  *digit 1+ next  0 ^  then
                                 drop  pop  then  ;
 
 ( If >number can't convert any digits, complain.)
-: digits   (s u1 a1 c1 - u2 a2 c2 u3)
+: digits   ( u1 a1 c1 - u2 a2 c2 u3)
    dup push ( chars left)  >number  pop over - ( count of digits converted)
    0= if  drop complain  then ;
 
@@ -549,22 +662,22 @@ decimal
   would be set to 4. Then `0' pushes 0 on the stack but doesn't affect dpl,
   so Forth tries to convert it, and BOOM.)
 
-: number  (s a u - n)
+: number  ( a u - n)
    radix preserve ( always reset the radix, even in case of error)
    2push  0  2pop  ?sign push  ?radix  dpl on
    begin  digits  =while ( still chars)  ?dot  repeat
    2drop  pop  if negate then  ;
 
+
 ( Ok, folks, now that we have number parsing code we can redefine the
   interpreter and compiler, which up till this point have simply complained
   if they saw something not in the dictionary.)
 
-( Ready for our new & improved interpreter and compiler? Here we go!)
+( Let's define a word to create new modes. This is mostly useful for
+  meta-compilers.)
 
-( XXX: Is this the right way to do this? Truly, while it's "nice" to have
-  the new interpreters written in - and running in! - true Forth, the only
-  parts that have changed from the C version are the bits after the last
-  "then": number [in interpreter], and "number literal" [in compiler].)
+: mode   create  ( prompt token-consumer)  ,  ,  does>  state ! ;
+
 
 ( To set the compiler consumer, we need a sneaky word to get the value of
   state while compiling - we use the same trick later to set the compiler
@@ -589,97 +702,74 @@ forth
 
 ( Basic character i/o.)
 
-1024 constant #inbuf
-#inbuf buffer inbuf  ( terminal input)
-variable keybuf
-variable emitbuf
-
 variable fd-in
 variable fd-out
 : writes  fd-out ! ;
 : reads   fd-in  ! ;
 : <stdin   0 reads  ;
-: >stdout  1 writes ;  <stdin  >stdout  ( sanity)
-: >stderr  2 writes ;
+: >stdout  1 writes ;
+: >stderr  2 writes ;  <stdin  >stderr  ( sanity)
 
-variable ztimeout  -1 ztimeout !  ( generic throw value)
-: ?timeout  ( n)  1 = if ^ then  ( read a character successfully)
-   ztimeout @ throw  ( throw timeout string - which we can't define yet!) [
+: type   ( a u)  fd-out @  -rot  write ;
 
-: <key   (s fd - ch)                  keybuf 1 read  ?timeout  keybuf c@ ;
-: >emit  (s ch fd)  swap emitbuf c!  emitbuf 1 write ;
+variable charbuf  ( for >emit and <key)
+: >emit  ( ch fd)  swap charbuf c!  charbuf 1 write ;
+: emit   ( ch)  fd-out @  >emit ;
 
-: key   (s - ch)   fd-in @  <key ;
-: emit  (s ch)    fd-out @  >emit ;
-
-: space  bl emit ;
-: cr     ctrl J emit ;
-
-: type                   fd-out @  -rot  write ;
-: accept  (s a # - #in)   fd-in @  -rot  read ( 1-)  ;  ( ANS)
-  ( chop trailing newline)
-
-: typing  (s - a #)  inbuf dup [ #inbuf 2 - ] accept  ;  ( get a line of input)
+ctrl J  constant #LF   --  10
+ctrl M  constant #CR   --  13
+: space      bl emit ;
+: cr        #LF emit ;  ( emit newline; assumes OPOST)
 
 
-( WARNING: this is different from what the CPU would do; it ignores
-  OVERFLOW, unlike the CPU's signed comparisons. <' is useful for `modulo'
-  less than -- it compare two numbers in the same half of the number space.
-  Useful for 32-bit clock operations [with monotonically increasing time]
-  and for TCP sequence numbers.)
-
-: <'      - 0<  ;  ( This violates what is -required- by FORTH-83 standard)
 : >     swap <  ;
 : min   2dup >  if swap then  drop  ;
 : max   2dup <  if swap then  drop  ;
 
 
 ( Pictured numeric output.)
-: /digit   (s u - uquot umod)  radix @  u/mod swap ;
+: /digit   ( u - uquot umod)  radix @  u/mod swap ;
 
-: >digit   (s n - ch)  ( convert 1 binary digit to char; hex to uppercase)
+: >digit   ( n - ch)  ( convert 1 binary digit to char; hex to uppercase)
    9 over u<  7 and +  char 0 +  ;
 
-: abs   (s n - |n|)   dup 0<  if  negate then ;
+: abs   ( n - |n|)   dup 0<  if  negate then ;
 
-: spaces  (s n)  0 max  ?for  space  next  then  ;
+: spaces  ( n)  0 max  ?for  space  next  then  ;
 
 ( pad is where we convert numbers to ASCII. A number is 1 cell - could be
   64 bits! - and in binary would take 64 characters to represent, plus a
   character for the sign. pad returns the address of the _end_ of the
   buffer, since conversion occurs right-to-left.)
 
-( Let's make this more configurable.)
-variable 'pad
-: pad  'pad @ ;
-65 allot ram 'pad !  ( 64 digits + sign + alignment)
+65 aligned allot  here constant pad   ( 64 digits + sign + alignment)
 
 variable hld
 : hold   -1 hld +!  hld @ c! ;
 : <#     pad hld !  ;
-: #>     (s u - a #)  drop  hld @  pad over - ;
-: sign   (s n -)   0< if  char - hold  then  ;
+: #>     ( u - a #)  drop  hld @  pad over - ;
+: sign   ( n -)   0< if  char - hold  then  ;
 
-: #     (s u - u')   /digit  >digit  hold  ;
-: #s    (s u - 0)  begin  #  dup 0=  until  ;
+: #     ( u - u')   /digit  >digit  hold  ;
+: #s    ( u - 0)  begin  #  dup 0=  until  ;
 
-: (u.)    (s u - a #)   <# #s #> ;
-: u.      (s u -)       (u.)  type  space  ;
+: (u.)    ( u - a #)   <# #s #> ;
+: u.      ( u -)       (u.)  type  space  ;
 
-: (.)     (s n - a #)   dup push ( sign)  abs  <# #s  pop sign  #> ;
-: .       (s n -)       (.)  type  space ;
+: (.)     ( n - a #)   dup push ( sign)  abs  <# #s  pop sign  #> ;
+: .       ( n -)       (.)  type  space ;
 
 ( This should truncate to field length. Actually, it shouldn't. Does it?)
-: truncating-field   (s a c field - a' field)   tuck swap -  ( a field field-c)
+: truncating-field   ( a c field - a' field)   tuck swap -  ( a field field-c)
    dup 0< if  drop ^  then  ?for  bl hold  next then  #>  ;
 
 ( Non-truncating field.)
-: field   (s a c field - a c)  over - spaces  ;
+: field   ( a c field - a c)  over - spaces  ;
 
-:  (.r)   (s n field - a #)   push  (.)   pop  field  ;
+:  (.r)   ( n field - a #)   push  (.)   pop  field  ;
 :   .r    (.r)  type  ;
 
-: (u.r)   (s u field - a #)   push  (u.)  pop  field  ;
+: (u.r)   ( u field - a #)   push  (u.)  pop  field  ;
 :  u.r    (u.r)  type  ;
 
 ( Useful.)
@@ -690,52 +780,55 @@ variable hld
   =if  2dup u>> push  negate bits/cell +  <<  pop xor ^ then drop ;
 
 
-( : p  ctrl J parse  2dup  u. u. char | emit type char | emit ; XXX )
-
-
 ( String primitives.)
 
-( 2003-dec-31!! Compiled strings have a cell-sized count and are referenced
-  by pointing to the first character rather than to the count.
+( 2010-feb-27. In converting to a single dictionary space I was forced to
+  "revert" to having strings compiled inline. Now we have to jump over
+  their bodies again.
 
-  I have also got rid of c" and now z" is the only string operator that
-  returns a counted string. The z reminds us that it is also a
-  null-terminated string.
+  The single string literal primitive is called (")
 
-  2002-mar-18. All strings are compiled into data space and referenced by
-  creating a normal literal with the string's address. Strings can then be
-  used in an error or abort routine, or whatever. This is nice and postfix.
+( It jumps over the inline, cell-count-prefixed string, and pushes the
+  address of its first character and its length on the stack. Because all
+  strings are compiled with zero-terminators, it is possible to pass the
+  address of the first character to a C function, and it will work.
 
-  It also means that if we want to, for example, return the address of
-  the first character of the string - rather than of the count cell;
-  eg, for strings used by the C library - we can calculate that
-  address _before_ making a literal.  Again, this works because the
-  string isn't compiled inline, so we don't need to jump over it.
+  I use z" to identify this kind of address. It suggests a zero-terminated
+  string.)
 
-  Things are _much_ simpler this way!)
+( Copy string; return a counted string [addr of first character;
+  prefix count cell _precedes_ first character of string].
+  This does _not_ allot space in the dictionary!)
+
+: scrabble  ( a u - z")
+   here cell+ push ( z")
+   dup here ! ( prefix cell-sized length)
+   tuck ( u a u)  r@ swap cmove  ( copy string)
+   r@ + 0 swap c! ( zero terminator)  pop ;
 
 ( all compiled strings have a zero terminator.)
-: count  (s z" - a u)  dup  cell- @ ;
-: _string    scrabble  count cell+ 1+  allot ;
-: string,   (s ch - z")  parse  _string ;
-: token,       (s - z")  token  _string ;
-: (.")  count type ;  ( no more jumping over strings at run-time!)
+: count  ( z" - a u)  dup  cell- @ ;
+: (")    ( - a u)  pop  cell+ count ( a u)  2dup + 1+ aligned push ;
+
+: _string      ( - z")  scrabble  count cell+ 1+  aligned allot ;
+: string,   ( ch - z")  parse  _string ;
+: token,       ( - z")  token  _string ;
 
 ( Compiled strings.)
 compiler
-: z"   (s - z")   char " string,  literal ;  ( z means zero-terminated)
-:  "   (s - a c)  \ z"  \ count ;
-: ."              \ z"  \ (.") ;
-: error"          \ z"  \ throw ;  ( compile a C-style string for throw'ing)
+:  "   ( - a c)   \ (")  char " string,  drop ;
+: z"   ( - z")    \ "  \ drop ;   ( z means zero-terminated)
+: ."              \ "  \ type ;
+: error"         \ z"  \ abort ;  ( compile a C-style string for abort)
 
 ( Interpreted strings. Strings that return an address always get compiled!)
 forth
-: z"  (s - z")   char "  string, ;
-:  "  (s - a c)  \f z" count  ;  ( ANS)
+: z"  ( - z")   char "  string, ;
+:  "  ( - a c)  \f z" count  ;  ( ANS)
 : ."    char " parse ( a #)  type  ;  ( not compiled)
 
 ( Words that do something with each word being defined.)
-: being-defined  constant  does> 'new-hook ! ;
+: being-defined  constant  does> @  'new-hook ! ;
 
 ( To warn of re-defining a word.)
 -: ( a u)  2dup current @ find if  fd-out preserve  >stderr
@@ -744,7 +837,7 @@ being-defined -redef
  -redef
 
 ( A useful list of words as they're being defined.)
--: ( a u)   current @ ( chain) . here .  2dup type  cr ;
+-: ( a u)   cr depth . current @ ( chain) . here .  2dup type ;
 being-defined -v  ( be verbose)
 -- -v
 
@@ -758,25 +851,30 @@ being-defined -v  ( be verbose)
 
 -:  error" undefined deferred word" ;  undeferred !
 
-( And let's fix key> timeout string, which will currently crash.)
-z" <key timed out" ztimeout !
-
 
 ( !!!!-------------------- Add changes below this line -------------------!!!!)
+
+( Undefine a word by replacing the first character of its name with a DEL.)
+: undef   current @  chain'  >name  ( a u)  drop  127 swap c! ;
+
+( Print word name, but skip deleted words, whose names start with a blank.)
+
+: ?deleted  ( link)
+   link>name  ( a u)  over c@ 127 = if  ( deleted)  2drop ^ then
+   type space space ;
 
 ( Word listing. Putting this in as soon as possible. Needs `space'.)
 : words   0  current @  ( count 'suffix)
   begin  suffix>link @  =while  1 u+
-            dup suffix>link  link>name type space space  repeat
+            dup suffix>link  ?deleted  repeat
   drop  cr  ." ("  . ." words)" ;
 
-
 ( XXX: should be primitive?)
-: fill        (s a u n)  -rot  ?for  2dup c!    1+  next  then  2drop ;
-: cell-fill   (s a u n)  -rot  ?for  2dup  ! cell+  next  then  2drop ;
+: fill        ( a u n)  -rot  ?for  2dup c!    1+  next  then  2drop ;
+: cell-fill   ( a u n)  -rot  ?for  2dup  ! cell+  next  then  2drop ;
 
-: erase  (s a u)   0 fill  ;   ( easy, what?)
-: blank  (s a u)  bl fill  ;
+: erase  ( a u)   0 fill  ;   ( easy, what?)
+: blank  ( a u)  bl fill  ;
 
 
 ( Go forth and multiply ... and divide.
@@ -794,18 +892,18 @@ z" <key timed out" ztimeout !
   */ and */mod no longer calculate a double-length intermediate product,
   so beware!)
 
-:  /      (s n1 n2 - quot)    /mod  nip ;
-: u/      (s u1 u2 - uquot)  u/mod  nip ;
+:  /      ( n1 n2 - quot)    /mod  nip ;
+: u/      ( u1 u2 - uquot)  u/mod  nip ;
 
-:  mod    (s n1 n2 - mod)     /mod  drop ;
-: umod    (s u1 u2 - umod)   u/mod  drop ;
+:  mod    ( n1 n2 - mod)     /mod  drop ;
+: umod    ( u1 u2 - umod)   u/mod  drop ;
 
-: */mod   (s n1 n2 n3 - mod quot)   push  *  pop  /mod ;
-: */      (s n1 n2 n3 - n1*n2/n3)   */mod  nip ;
+: */mod   ( n1 n2 n3 - mod quot)   push  *  pop  /mod ;
+: */      ( n1 n2 n3 - n1*n2/n3)   */mod  nip ;
 
 
 ( Within.)
-: within  (s n lo hi - lo <= n < hi)  over - push  - pop u<  ;
+: within  ( n lo hi - lo <= n < hi)  over - push  - pop u<  ;
 
 
 ( Character classifications - useful for ASCII dumps and keyboard input.)
@@ -815,20 +913,21 @@ z" <key timed out" ztimeout !
 
 ( Useful stack dump.)
 : .s  ( stack)
-   depth  s0 cell- swap  ?for  cell- dup @ .  next then  drop  ;
+   depth 0<  if ^ then  ( don't print underflowed stack!!)
+   depth  s0 swap  ?for  cell- dup @ .  next then  drop  ;
 
-
-( Compiler/interpreter modes.)
-: mode   create  (s prompt interpret)  ,  ,  does>  state ! ;
-
+( Sometimes it's nicer to see _unsigned_ stack values.)
+: .us  ( stack)
+   depth 0<  if ^ then  ( don't print underflowed stack!!)
+   depth  s0 swap  ?for  cell- dup @ u.  next then  drop  ;
 
 ( Defining new dictionary chains.)
 
 ( These used to be in an array but are now independent of each other. They
   are structures that look just like a name entry in the dictionary - a
-  name "suffix" followed by a link field.
+  name-suffix followed by a link field.
 
-  By convention, the name "suffix" fully defines a name - " VH" - that's
+  By convention, the name-suffix fully defines a name - " VH" - that's
   "space victor hotel" - that contains a space so it's hard to accidentally
   match. "VH" suggests "vocab head".
 
@@ -839,7 +938,7 @@ z" <key timed out" ztimeout !
   that is -not- endianness-dependent.)
 
 : chain   create  [ char ) parse  VH )  ( a u)  drop @ ] ,
-   ( now put in length)  3 ram 1- c!
+   ( now put in length)  3 here 1- c!
    ( link) , ;  ( fake name field before link)
 
 : sealed           0  chain ;  ( create an independent vocab chain)
@@ -850,84 +949,64 @@ z" <key timed out" ztimeout !
   .arbitrary. chain .new-is-chained-to-arbitrary. )
 
 
-( Conditional compilation)
-
-( 30-aug-1998. Created.)
-( 28-apr-1999. Added compiler word to create conditionals.)
-( 27-apr-2000. Changed names to more standard [if] [else] [then] and added
-               the capability of nesting them.)
-( 4-aug-2000. Added [with] and moved all conditional constants into
-          `conditional' vocab.)
+( Conditional compilation.)
 
 sealed .conditional.
 : conditional   .conditional. definitions ;
 
--:  ."  (inside a conditional)"  ;
--:  .conditional. find  if  execute ^  then  2drop ;
-mode eat
+( eat consumes tokens until it either consumes all the input - in which
+  case the while loop will exit - or an execute'd word shunt's to exit the
+  containing loop. ?toss processes each token. If it exists in
+  .conditional. , it executes it; otherwise, it throws it away.)
 
-variable cond-nest
-variable cond-save-state
-: cond[   state @  cond-save-state !  cond-nest off  ;
-: ]cond   cond-save-state @  state !  ;
+: ?toss   .conditional. find  if  execute ^  then  2drop  0 ;
+: eat   0 ( nesting)  begin  token  =while  ?toss  until  drop ( nesting) ^
+                                    then  2drop ( token)  drop ( nesting) ;
 
 compiler
-: [else]   cond[  eat  ;
-: [if]   (s f)  0= if  \ [else]  then  ;
-: [then]  ;
-: [with]   .forth. token' if  drop -1 ^  then  2drop 0 ;
+: .if     0= if  eat  then ;
+: .else   eat ;
+: .then   ;
+
+( Consume a token, search .forth., and return only the "found or not" flag.)
+: .def  .forth. token' nip  =if ^ then  nip ;
+
+: .ifdef   \ .def      \ .if ;
+: .ifndef  \ .def  0=  \ .if ;
 
 conditional
-: [if]     1 cond-nest +!  ;
-: [else]                   cond-nest @  0=  if  ]cond  then  ;
-: [then]  -1 cond-nest +!  cond-nest @  0<  if  ]cond  then  ;
+( nesting - nesting exitflag)
+: .if       1+       0 ;  ( .if nests, never exits)
+: .else         dup 0= ;  ( .else doesn't nest, exits if nesting at 0)
+: .then     1-  dup 0< ;  ( .then unnests, exits if nesting -was- at 0)
+
+: .ifdef    1+       0 ;  ( these are like .if)
+: .ifndef   1+       0 ;
 
 forth
-: [if]      \ [if]  ;
-: [else]    \ [else]  ;
-: [then]   ;
-: [with]    \ [with]  ;
+: .if     \ .if ;
+: .else   \ .else ;
+: .then   ;
 
-( A defining word that makes words that return -1)
-: trues   -1 constant ;
-
-( The defining word `with' for creating conditional compilation words.
-  No matter what chain we are compiling into, define the word - using
-  "trues" - in .forth.)
-
-: with   current preserve  forth  trues ;
-
-( Now, the main reason for doing this is to have `debug' and `eprom'
-  versions. The best way is to load the file `debug' or `eprom'!)
+: .def     \ .def ;
+: .ifdef   \ .ifdef ;
+: .ifndef  \ .ifndef ;
 
 
 ( Two useful sets of units; these adhere to SI and IEC guidelines. ;-)
-: k   1000 * ;  ( "kilo": 10^3.)
-: M   k k ;     ( "mega": 10^6.)
+( K is uppercased so as not to conflict with do-loop's k)
+: K   1000 * ;  ( "kilo": 10^3.)
+: M   K K ;     ( "mega": 10^6.)
 
 : Ki  10 << ;   ( "Kibi", or "kilobinary": 2^10.)
 : Mi  Ki Ki ;   ( "Mebi", or "megabinary": 2^20.)
 
-( For loading, to see if we've left anything lying about.)
-variable csp  ( what does this stand for? `check stack pointer'?)
-: !csp   depth  csp !  ;
-: ?csp   depth  csp @  -
-         =if  . ." stack depth change: "  radix preserve  hex  .s cr  ^  then
-         drop  ;
 
-( Bracket the contents of a file and check for stack depth change.)
-: file[  (s a u)   >stderr  ." (( "  type  >stdout  !csp  ;
-: ]file            >stderr  ." )) "        >stdout  ?csp  ;
-
-( For counting the size of a loaded file.)
-: file[#   (s a u)  file[  here  ;
-: #]file   here  swap -  radix preserve  decimal  >stderr  .  ." bytes "
-   ]file  ;
-
+.ifdef clock
 
 ( Time, timestamp.)
-: "hold  (s a n)  dup negate  hld +!  hld @  swap cmove  ;
-: ##     (s n)   # #  drop  ;
+: "hold  ( a n)  dup negate  hld +!  hld @  swap cmove  ;
+: ##     ( n)   # #  drop  ;
 
 ( Separators)
 : ":   char : hold  ;
@@ -935,38 +1014,38 @@ variable csp  ( what does this stand for? `check stack pointer'?)
 : ".   char . hold  ;
 : ||   bl hold  ;  ( a space)
 
-: month"  (s n - a n)  ( n is 0--11)
+: month"  ( n - a n)  ( n is 0--11)
    3 *  z" janfebmaraprmayjunjulaugsepoctnovdec" +  3 ;
 
 ( clock returns a count of seconds since 1970-jan-01 00:00:00 UTC,
   the Unix "epoch".)
 
 ( leaves a 0 which is consumed by #>)
-: <date>   (s year month mday yday - 0)
+: <date>   ( year month mday yday - 0)
    drop  ## "-  month" "hold "-  #s ( year) ;
 
-: <hh:mm:ss>  (s hms)        ## ":  ## ":  ## ;
-: <hh:mm>     (s hms)  drop ( sec)  ## ":  ## ;
+: <hh:mm:ss>  ( hms)        ## ":  ## ":  ## ;
+: <hh:mm>     ( hms)  drop ( sec)  ## ":  ## ;
 
-: (time")  (s year month mday yday hour min sec 'zone #zone - a #)
+: (time")  ( year month mday yday hour min sec 'zone #zone - a #)
    radix preserve  decimal  <#  "hold  ( zone)  ||  <hh:mm:ss>  ||  <date>  #> ;
 
 : (short-time")  ( year month mday yday hour min sec 'zone #zone - a #)
    radix preserve  decimal  <#  2drop ( zone)  <hh:mm>  ||  <date>  #> ; 
 
-: (date")  (s year month mday yday hour min sec 'zone #zone - a #)
+: (date")  ( year month mday yday hour min sec 'zone #zone - a #)
    radix preserve  decimal  <#  2drop 2drop drop  <date>  #> ;
 
-: date    (s epoch - y m d yday)  local-time  2drop 2drop drop ;
+: date    ( epoch - y m d yday)  local-time  2drop 2drop drop ;
 
-: date"   (s epoch - a n)  local-time  (date") ;
-: time"   (s epoch - a n)  local-time  (time") ;
-: utc"    (s epoch - a n)         utc  (time") ;
+: date"   ( epoch - a n)  local-time  (date") ;
+: time"   ( epoch - a n)  local-time  (time") ;
+: utc"    ( epoch - a n)         utc  (time") ;
 
 ( Better primitives? More elegant, certainly.)
-: s->sm    (s s - s m)    60 u/mod ;
-: s->smh   (s s - s m h)  s->sm  s->sm ;
-: s->smhd  (s s - s m h d)  s->smh  24 u/mod ;
+: s->sm    ( s - s m)    60 u/mod ;
+: s->smh   ( s - s m h)  s->sm  s->sm ;
+: s->smhd  ( s - s m h d)  s->smh  24 u/mod ;
 : sm->s    60 * + ;
 : smh->s   sm->s  sm->s ;
 : smhd->s  24 * +  smh->s ;
@@ -977,12 +1056,7 @@ variable csp  ( what does this stand for? `check stack pointer'?)
 : smhq->s  6 * +  smh->s ;  ( sec min hr quarter-day)
 : smhdy->s  [ 365 3 * 366 + ] * ( quarter-days/yr)  push 4 * pop +  smhq->s ;
 
-( for command-line args)
-: ld  token _string  load-file ;
-: -f  ( load file)  ld ;
-: --file  -f  ;
-: -d  ( define)  with  ;
-: --define  -d  ;
+.then ( time support)
 
 
 ( Link to project home page.)
@@ -993,34 +1067,102 @@ variable csp  ( what does this stand for? `check stack pointer'?)
  ;
 
 
-( Prompt, quit, and warm.)
+( show ` Ok' then sub-prompt)
+: prompt   ."  Ok"   state @  cell+  @execute ;
+
+( set prompt in compile mode)
 -: ."  (compiling)"  'compiler-mode  ;  cell+ !  ( bwa ha ha!)
 
-: .mode-prompt   state @  cell+  @execute ;  ( secondary prompt)
-: .Ok   ."  Ok"  ;
-: prompt   .Ok  .mode-prompt  ;  ( ` Ok' then sub-prompt)
+( Forth re-implementation of C interpret; semantics are exactly the same!)
+: interpret
+   begin  token =while  consume  ?stack  repeat  2drop ;
 
-: quit
-   begin  cr  <stdin  >stdout  typing interpret  >stderr  prompt  again  [
-   ( infinite loop, until error... )
+: evaluate  ( a u)
+   source preserve  source cell+ preserve  ( save input source)
+   first preserve                ( save our place in the input)
+   over first !
+   over +  ( start end)  source 2!
+   interpret ;
 
-( 2004-jun-26. error now expects a cell-length-prefixed compiled string.)
-: error  parsed type space  zcount type  ( cr) ;
-: carefully  catch  =if  error  ^  then  drop ;
+variable zloading    ( C-string name of file being loaded)
+
+( check-depth only prints anything out if depth has changed since the file
+  started loading _and_ zloading is non-zero - ie, we're loading a file.)
+
+: check-depth  ( saved-depth)
+   depth swap -  2 - ( seems to always be 2!)
+      =if  zloading @ =if
+      ."  [ "  zcount type  ." : +depth " .  ." ]" ^  then  drop  then  drop ;
+
+: show-depths  ( saved)   .  depth . ;
+
+( XXX I was hoping to use on-exit to check stack depths, but I can't seem
+  to get them to reconcile. More research is indicated. ;-)
+
+: load-file  ( z")
+   depth  on-exit check-depth
+   -- depth  on-exit show-depths
+   dup open-file-ro ( fd)  dup on-exit close-file
+   zloading preserve  swap zloading !
+   line preserve  1 line !
+   radix preserve  decimal
+   fd-out preserve  >stderr
+   read-file ( a u)  evaluate ;
+
+( Consumes a token - a filename - and loads it.)
+: ld  token _string ( z")  load-file ;
+
+( how much dictionary space was consumed?)
+: show-consumed  ( here)
+   radix preserve  decimal
+   fd-out preserve  >stderr
+   here swap - .  ." bytes ))" ;
+
+( Print some descriptive text and the amount of dictionary space consumed
+  by loading. Consumes and prints the rest of the command line.)
+
+: loading
+   cr ." (( "  #LF parse type  space
+   here  on-exit show-consumed  interpret ;
+
+( Define words for use with the conditional compilation words.  No matter
+  what chain we are compiling into, define the word in .forth.)
+
+: -d   current preserve  forth  -1 constant ;
+: -f  ( load file)  ld ;
 
 : banner
 ( Print banner.)
  ." muFORTH/ITC "
- build-time ( seconds since epoch)  time"  type  cr
+ .ifdef clock
+    build-time ( seconds since epoch)  time"
+ .else
+    build-time ( pushes a string!)
+ .then  type  cr
  ." Copyright (c) 2002-2010 David Frech. All rights reserved."  cr cr
  ." muFORTH is free software; see the file COPYRIGHT for details." cr
  ." To read more about muFORTH, type "
        char " emit  ." info" char " emit ." ." cr ;
 
+( Don't print file & lineno if interactive - ie, zloading is zero)
+: .where
+   zloading @  =if  zcount type  ." , line "
+   @line  radix preserve decimal u.  ." : "  ^  then
+   drop ;
+
+-: ( z")
+   >stderr  cr  .where  parsed type space  zcount type  cr  unwind ;   'abort !
+
+: quit
+   begin  cr  <stdin  typing evaluate  >stderr  prompt  again  [
+   ( infinite loop, until error... )
+
 : warm
+   decimal \ [
    >stderr banner
-   >stdout command-line count  ['] interpret carefully
-   begin  ['] quit carefully  again  [
+   1 line !  ( so it's "correct" for interactive!)
+   command-line count  evaluate
+   begin  quit  again  [
 
 ( Identify ourselves.)
-trues muFORTH
+-d  muFORTH

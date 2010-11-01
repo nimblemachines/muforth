@@ -5,7 +5,7 @@
 
 ( Assembler for Freescale HC08/HCS08 microcontrollers.)
 
-cr " HC08 assembler " file[#
+loading HC08 assembler
 
 forth
 
@@ -13,15 +13,12 @@ hex  ( it rules!)
 
 -- defer b,  ( so other code can decide how and where code gets assembled)
           ( XXX: is this necessary? |c! is already deferred...)
--- : b,  .h cr  1 |h +! ( so branches will be righter) ;
+-- : b,  .h cr  1 |allot ( so branches will be righter) ;
 -- : w,  ( w)  dup 8 u>> b,  b, ;  ( big endian!)
 : b,  |c, ;
 : w,  |, ;
 
-
-( The bulk of errors are using an illegal operand - H register or
-  addressing mode - for a particular type of instruction. Hence:)
-: ill   error" illegal operand" ;
+: ill   error" illegal addressing mode" ;
 
 comment
 ===========================================================================
@@ -62,21 +59,21 @@ d0 constant ix2  9ed0 constant sp2
 e0 constant ix1  9ee0 constant sp1
 f0 constant ix
 
-: u8?  ( u - u flag)  dup 100 u< ;  ( if unsigned value fits in 8 bits)
-: s8?  ( n - n flag)  dup 80 + 100 u< ;  ( if signed offset fits into 8 bits)
+: u8?  ( u - flag)       100 u< ;  ( if unsigned value fits in 8 bits)
+: s8?  ( n - flag)  80 + 100 u< ;  ( if signed value fits into 8 bits)
 
 assembler
-: )   ( a - a op)  u8? if dir ^ then  ext ;
+: )   ( a - a op)  dup u8? if dir ^ then  ext ;
 : #   ( n - n op)  imm ;
 : ,s  ( offset - offset' op)
    ( adjusts offset by 1 since hardware stack is empty descending)
-               1+  u8? if sp1 ^ then  sp2 ;
-: ,x  ( offset - offset op | op)
-   =if ( nonzero)  u8? if ix1 ^ then  ix2 ^ then  drop ( 0) ix ;
+               1+  dup u8? if sp1 ^ then  sp2 ;
+: ,x  ( offset - offset op)
+   =if ( nonzero)  dup u8? if ix1 ^ then  ix2 ^ then  ( 0) ix ;
 
 40 constant .a
 50 constant .x
-60 constant .h  ( fake column)
+60 constant .h  ( fake column - contiguous with .a and .x to make clr easier)
 forth
 
 ( Convert column to index)
@@ -84,12 +81,12 @@ forth
 
 
 forth
-: inh  constant does> b, ; ( "inherent")
-: stackop  constant does>  ( reg op)  swap \a .a - col> 2* + b, ;
+: inh  constant does> @ b, ; ( "inherent")
+: stackop  constant does> @  ( reg op)  swap \a .a - col> 2* + b, ;
 assembler
 80 inh rti
 81 inh rts
-( 82)
+82 inh bgnd  ( XXX but only for S08 - runtime check? or .def S08 ??)
 83 inh swi
 84 inh tap
 85 inh tpa
@@ -118,34 +115,46 @@ assembler
 9f inh txa
 
 
+comment 1ops-and-2ops
+
+  Addressing modes that actually address memory, rather than specify a
+  register, are represented by the column number in the opcode - the high
+  nybble.
+ 
+  But not all modes that are allowed for 2ops are allowed for 1ops. So we
+  have to check, convert it to the correct 1op column, and also dup it if
+  necessary, so that after compiling the opcode we still have a reference
+  to the address mode, so we can compile the correct bits - immediate or
+  offset value - after it!
+
+  Laying it all out in a jump table makes it more obvious what is going
+  on.)
+
+  The valid 1op memory addressing modes - dir, ix1, and ix - are shifted
+  from their 2op counterparts by 8 columns. Since by default the
+  assembler's "addressing operators" - such as # and ) - generate column
+  values for 2ops, we need to convert those valid modes to 1op modes, but
+  also preserve the 2op mode for ea, so it can compile any immediate data
+  or offset.
+
+1ops-and-2ops
+
 forth
-: op,  u8? if b, ^ then  w, ;  ( output op, including pre-byte)
-: ea,  ( col)  40 - col>  jump
+: op,  dup u8? if b, ^ then  w, ;  ( output op, including pre-byte)
+: ea,  ( ea)  ( immed value or offset, if required, is underneath ea)
+   dup imm u< if  ill  then  imm -  col>  jump
+   (  a0   b0   c0   d0   e0   f0
+     imm  dir  ext  ix2  ix1   ix)
+      b,   b,   w,   w,   b,  drop   [
+
+: cv  ( op - ea op)  dup  80 -  op, ea, ;
+
+: 1op  constant does> @  ( ea op)  or
+   dup \a .a u< if  ill  then  dup  \a .a -  col>  jump
    ( 40   50   60   70   80   90   a0   b0   c0   d0   e0   f0
-     .a   .x   --   --   .h   --  imm  dir  ext  ix2  ix1   ix)
-    nope nope ill  ill  ill  ill   b,   b,   w,   w,   b,  nope   [
+     .a   .x   .h   --   --   --  imm  dir  ext  ix2  ix1   ix)
+    op,  op,  ill  ill  ill  ill  ill   cv  ill  ill   cv   cv   [
 
-( What 1colCheck is a bit subtle. Addressing modes that actually address
-  memory, rather than specify a register, are represented by the column
-  number in the address, including the possible pre-byte - or SP-relative
-  modes - in the high byte. But not all modes that are allowed for 2ops are
-  allowed for 1ops. So we have to check, convert it to the correct 1op
-  column, and also dup it if necessary, so that after compiling the opcode
-  we still have a reference to the address mode, so we can compile the
-  correct bits after it!
-
-  Laying it all out in a jump table makes it really simple to see what is
-  going on.)
-
-: ok  dup ;  ( ok as is; don't convert - this is already a 1col mode)
-: cv  ( col - col2 col1)  dup  80 - ;  ( dup and convert)
-: 1colCheck  ( col - 2col 1col | col)  ( make sure address mode is allowed)
-   dup  40 - col>  jump
-   ( 40   50   60   70   80   90   a0   b0   c0   d0   e0   f0
-     .a   .x   --   --   .h   --  imm  dir  ext  ix2  ix1   ix)
-     ok   ok  ill  ill  ill  ill  ill   cv  ill  ill   cv   cv   [
-
-: 1op  constant does>  ( col row)  or  1colCheck  op, ea, ;
 assembler
 00 1op neg
 forth
@@ -178,7 +187,7 @@ assembler
              dir = if  drop  55 b, b, ^ then  ill ;
 
 forth
-: 2op  constant does> ( 2col row)  or  dup op,  ea, ;
+: 2op  constant does> @  ( ea op)  or  dup op,  ea, ;
 assembler
 00 2op sub
 01 2op cmp
@@ -192,13 +201,17 @@ assembler
 09 2op adc
 0a 2op ora
 0b 2op add
-0c 2op jmp  ( no imm, no off s)
-0d 2op jsr  ( bsr is imm, no off s)
+0c 2op jmp  ( no imm, no sp1 or sp2)  ( XXX check jmp & jsr for illegal ,s)
+0d 2op jsr  ( bsr is imm, no sp1 or sp2)
 0e 2op ldx
 0f 2op stx  ( imm is aix)
 
-: ais  ( n imm )  \a sta ;
-: aix  ( n imm )  \a stx ;
+forth
+: ?imm  ( ea - imm)  dup imm = if ^ then  ill ;
+
+assembler
+: ais  ( n imm )  ?imm  \a sta ;
+: aix  ( n imm )  ?imm  \a stx ;
 
 ( Instructions that break the nice patterns in the opcode map.)
 : mov  ( n src m dest)  swap push ( n src dest; R: m)
@@ -216,9 +229,14 @@ assembler
 forth
 ( XXX - these take a dir address, but don't expect the dir col on the
   stack. Is this wrong?)
-: bit  constant does> ( dir bit op)  swap 2* or  b, ( op)  b, ( dir) ;
+
+: bit  constant does> @  ( dir bit op)
+   swap 2* or  b, ( p)  dup u8? if  b, ( dir)  ^ then
+   error" address not in zero page" ;
+
 ( Note: These are _hex_ instruction values! The sets are even;
   the clrs are odd.)
+
 assembler
 10 bit bset  ( XXX: all these bitops should _require_ a dir parameter)
 11 bit bclr
@@ -313,7 +331,7 @@ assembler
 25 2cond u<  u>=  ( blo bhs  - unsigned lower)
 25 2cond CS  CC   ( bcs bcc  - C set/clear)
 27 2cond 0=  0!=  ( beq bne  - Z set/clear)
-2b 2cond 0<  0>=  ( bmi bpl  - S set/clear)
+2b 2cond 0<  0>=  ( bmi bpl  - N set/clear)
 91 2cond <   >=   ( blt bge  - N xor V set/clear)
 92 2cond >   <=   ( bgt ble  - Z or [N xor V] clear/set)
 ( The next few are for testing status bits and IRQ pin.)
@@ -330,24 +348,43 @@ assembler
 
 forth
 : resolve>  ( src dest)
-   over -  s8? not if . error" relative branch out of range" then
+   over -  dup s8? not if . error" relative branch out of range" then
    swap 1-  |c! ;
+
+( XXX should compile a long branch if necessary; in case of conditionals,
+  compile a short branch with the inverse condition _over_ the long branch
+  backward.)
 
 : <resolve  ( dest src)  swap resolve> ;
 
 assembler
-: if      (s - src)  0 b, ( offset)  |here ;
-: then    (s src)  |here  resolve> ;
-: else    (s src1 - src2)  20 b, ( bra)  \a if  swap  \a then ;
+: if      ( - src)  0 b, ( offset)  |here ;
+: then    ( src)  |here  resolve> ;
+: else    ( src1 - src2)  20 b, ( bra)  \a if  swap  \a then ;
 
-: begin   (s - dest)       |here ;
-: until   (s bit dest)                \a if  <resolve ;
-: again   (s dest)         20 b, ( bra)  \a until ;
-: while   (s bit dest - src dest)     \a if  swap ;
-: repeat  (s src dest)                \a again  \a then ;
+: begin   ( - dest)       |here ;
+: until   ( bit dest)                \a if  <resolve ;
+: again   ( dest)         20 b, ( bra)  \a until ;
+: while   ( bit dest - src dest)     \a if  swap ;
+: repeat  ( src dest)                \a again  \a then ;
 
 ( Special case: short branch to subroutine; looks just like a short branch.)
+( XXX - should compile jsr if necessary)
 : bsr  ( dest)  0ad b, ( bsr)  \a until ;
+
+( Smart jump and call.)
+forth
+: rel8?  ( dest - offset flag)
+   |here 2 + ( just past 2 byte branch)  -  dup s8? ;
+
+: rel,  ( dest offset op)  b, b, drop ;
+
+assembler
+: j  ( dest)  ( compile a jump as efficiently as possible)
+   dup rel8? if   20 ( bra)  rel, ^  then  drop  \a ) \a jmp ;
+
+: c  ( dest)  ( compile a call as efficiently as possible)
+   dup rel8? if  0ad ( bsr)  rel, ^  then  drop  \a ) \a jsr ;
 
 forth
 
@@ -360,5 +397,3 @@ forth
   * cbeq dbnz and brset/brclr are misnamed now, since we're using them with
   if/while/until. What to do about this?
   )
-#]file
-

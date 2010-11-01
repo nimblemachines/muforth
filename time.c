@@ -15,17 +15,16 @@
 /* time and date */
 static void push_forth_time_from_libc_time (struct tm *ptm, char *tz)
 {
-    DUP;
-    NIP(-8);
+    DROP(-8);
     TOP = strlen (tz);
     ST1 = (cell) tz;
     ST2 = ptm->tm_sec;
     ST3 = ptm->tm_min;
-    SP[3] = ptm->tm_hour;
-    SP[4] = ptm->tm_yday;     /* 0 to 365 */
-    SP[5] = ptm->tm_mday;
-    SP[6] = ptm->tm_mon;      /* 0 to 11 */
-    SP[7] = ptm->tm_year + 1900;
+    SP[4] = ptm->tm_hour;
+    SP[5] = ptm->tm_yday;     /* 0 to 365 */
+    SP[6] = ptm->tm_mday;
+    SP[7] = ptm->tm_mon;      /* 0 to 11 */
+    SP[8] = ptm->tm_year + 1900;
 }
 
 void mu_local_time()
@@ -33,7 +32,7 @@ void mu_local_time()
     struct tm tm;
     time_t clock;
 
-    clock = POP;
+    clock = TOP;
 #ifndef XXX__NetBSD__
     tzset();
 #endif
@@ -46,7 +45,7 @@ void mu_utc()
     struct tm tm;
     time_t clock;
 
-    clock = POP;
+    clock = TOP;
     gmtime_r (&clock, &tm);
     push_forth_time_from_libc_time (&tm, "UTC");
 }
@@ -71,7 +70,7 @@ void mu_nanosleep()
     while (nanosleep(&ts, &ts) == -1)
     {
         if (errno == EINTR) continue;
-        throw_strerror();
+        return abort_strerror();
     }
     DROP(2);
 }
