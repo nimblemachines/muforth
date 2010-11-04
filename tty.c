@@ -69,7 +69,7 @@ void mu_set_termios_user_raw()
     struct termios *pti = (struct termios *) TOP;
     set_termios_raw(pti);
     pti->c_oflag |= (OPOST);  /* set opost, so newlines become CR/LF */
-    //pti->c_lflag |= (ISIG);   /* accept special chars and gen signals */
+    /* pti->c_lflag |= (ISIG); */   /* accept special chars and gen signals */
     pti->c_cc[VMIN] = 1;
     pti->c_cc[VTIME] = 0;
     DROP(1);
