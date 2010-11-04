@@ -24,13 +24,17 @@ int main(int argc, char *argv[])
         int quot = -7 / 4;
         int rem  = -7 % 4;
         div_t r = div(-7, 4);
-        lldiv_t llr = lldiv(-7LL, 4LL);
 
         if (quot != r.quot || rem != r.rem)
             printf("#error \"Weird. div(3) has different semantics than / and %%.\"\n");
 
-        if (llr.quot != r.quot || llr.rem != r.rem)
-            printf("#error \"Weird. div(3) has different semantics than lldiv(3).\"\n");
+#ifdef TEST_LLDIV
+        {
+            lldiv_t llr = lldiv(-7LL, 4LL);
+            if (llr.quot != r.quot || llr.rem != r.rem)
+                printf("#error \"Weird. div(3) has different semantics than lldiv(3).\"\n");
+        }
+#endif
 
         if (quot == -2 && rem == 1)
             printf("#define DIVIDE_FLOORS\n");
@@ -50,18 +54,20 @@ int main(int argc, char *argv[])
     {
         int mem;
         uint8_t *pb = (uint8_t *)&mem;
-        *pb++ = 0x11;
-        *pb++ = 0x22;
-        *pb++ = 0x33;
-        *pb++ = 0x44;
+        pb[0] = 0x11;
+        pb[1] = 0x22;
+        pb[2] = 0x33;
+        pb[3] = 0x44;
         if (mem == 0x11223344)
             printf("#define HOST_TESTS_BIG_ENDIAN\n");
         if (mem == 0x44332211)
             printf("#define HOST_TESTS_LITTLE_ENDIAN\n");
+#ifdef BYTE_ORDER
         if (BYTE_ORDER == LITTLE_ENDIAN)
             printf("#define ENDIAN_H_CLAIMS_LITTLE_ENDIAN\n");
         if (BYTE_ORDER == BIG_ENDIAN)
             printf("#define ENDIAN_H_CLAIMS_BIG_ENDIAN\n");
+#endif
     }
 
     /* show size of jmpbuf */
