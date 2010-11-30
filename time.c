@@ -55,6 +55,7 @@ void mu_push_clock()
     PUSH(time(NULL));       /* seconds since UNIX epoch */
 }
 
+#ifdef WITH_NANOSLEEP
 /*
  * We need a way to do short sleeps for talking to sensitive hardware
  * targets (like the Freescale HC908 series). I'm not getting good data
@@ -74,4 +75,4 @@ void mu_nanosleep()
     }
     DROP(2);
 }
-
+#endif
