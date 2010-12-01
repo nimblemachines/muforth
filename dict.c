@@ -9,7 +9,7 @@
 
 #include "muforth.h"
 #include <stdio.h>
-#include <sys/mman.h>
+#include <stdlib.h>
 
 /*
  * Dictionary is one unified space, just like the old days. ;-)
@@ -274,10 +274,9 @@ static void init_chain(struct dict_name *pchain, struct inm *pinm)
 
 static void allocate()
 {
-    ph0 = (cell *)  mmap(0, 1024 * 4096, PROT_READ | PROT_WRITE,
-                            MAP_ANON | MAP_PRIVATE, -1, 0);
+    ph0 = (cell *) calloc(DICT_CELLS, sizeof(cell));
 
-    if (ph0 == MAP_FAILED)
+    if (ph0 == NULL)
         die("couldn't allocate memory");
 
     /* init heap pointer */

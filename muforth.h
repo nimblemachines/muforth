@@ -18,6 +18,9 @@ typedef struct {
     ucell lo;
 } dcell;
 
+/* dictionary size */
+#define DICT_CELLS     (1024 * 1024)
+
 /* data stack */
 #define STACK_SIZE  4096
 #define STACK_SAFETY  32
