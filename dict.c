@@ -1,7 +1,7 @@
 /*
  * This file is part of muFORTH: http://muforth.nimblemachines.com/
  *
- * Copyright (c) 2002-2010 David Frech. All rights reserved, and all wrongs
+ * Copyright (c) 2002-2011 David Frech. All rights reserved, and all wrongs
  * reversed. (See the file COPYRIGHT for details.)
  */
 
@@ -189,6 +189,19 @@ void mu_push_compiler_chain()
     PUSH(&compiler_chain);
 }
 
+/* Type of string compare functions */
+typedef int (*match_fn_t)(const char*, const char*, size_t);
+
+/* Default at startup is case-sensitive */
+match_fn_t match = (match_fn_t)memcmp;
+
+/*
+ * +case  -- make dictionary searches case-sensitive -- DEFAULT
+ * -case  -- make dictionary searches case-insensitive
+ */
+void mu_plus_case() { match = (match_fn_t)memcmp; }
+void mu_minus_case() { match = strncasecmp; }
+
 /*
  * find takes a token (a u) and a chain (the head of a vocab word list) and
  * searches for the token on that chain. If found, it returns the address
@@ -205,7 +218,7 @@ void mu_find()
     while ((pde = (struct dict_entry *)pde->n.link) != NULL)
     {
         if (pde->n.length != length) continue;
-        if (memcmp(pde->n.suffix + 3 - length, token, length) != 0) continue;
+        if ((*match)(pde->n.suffix + 3 - length, token, length) != 0) continue;
 
         /* found: drop token, push code address and true flag */
         DROP(1);
