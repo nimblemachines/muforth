@@ -169,7 +169,7 @@ static void muboot_compile_token()
     mu_find();
     if (POP)
     {
-        mu_compile_comma();
+        mu_comma();
         return;
     }
     mu_complain();

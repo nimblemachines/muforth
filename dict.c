@@ -137,15 +137,33 @@ struct inm initial_compiler[] = {
     { NULL, NULL }
 };
 
-void mu_push_h0()       /* start of head (dictionary) */
+void mu_push_h0()       /* push address of start of dictionary */
+
 {
     PUSH(ph0);
 }
 
-void mu_push_h()        /* heap pointer */
+void mu_here()          /* push current _value_ of heap pointer */
 {
-    PUSH(&ph);
+    PUSH(ph);
 }
+
+/*
+ * , (comma) copies the cell on the top of the stack into the dictionary,
+ * and advances the heap pointer. Note that the ph is always kept aligned!
+ */
+void mu_comma() { *ph++ = POP; }
+
+/*
+ * allot ( n)
+ *
+ * Takes a count of bytes, rounds it up to a cell boundary, and adds it to
+ * the heap pointer. Again, this keeps ph always aligned.
+ */
+void mu_allot() { ph += ALIGNED(POP) / sizeof(cell); }
+
+/* Align TOP to cell boundary */
+void mu_aligned() { TOP = ALIGNED(TOP); }
 
 /*
  * NOTE: The value of current_chain is a pointer to a struct dict_name.
@@ -207,7 +225,9 @@ static void make_new_name(
     struct dict_name *pnmHead, char *name, int length)
 {
     struct dict_name *pnm;              /* the new name */
-    char *pch = (char *)ALIGNED(ph);    /* start out nicely aligned */
+    char *pch = (char *)ph;
+
+    assert((char *)ALIGNED(pch) == pch, "dict misaligned");
 
     /* Allocate extra cells for name, if longer than 3 characters */
     if (length > 3)

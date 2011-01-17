@@ -131,6 +131,7 @@ char *to_counted_string(char *);
 /* error.c */
 void die(const char *zmsg);
 void abort_zmsg(const char *zmsg);
+void assert(int cond, const char *zmsg);
 
 /* kernel.c */
 int string_compare(const char *string1, size_t length1,

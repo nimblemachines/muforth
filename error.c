@@ -50,6 +50,11 @@ void abort_zmsg(const char *zmsg)
     mu_abort();
 }
 
+void assert(int cond, const char *zmsg)
+{
+    if (!cond) return abort_zmsg(zmsg);
+}
+
 /*
  * We've returned to using C strings for abort()ing. Since all we ever do
  * with strerror strings is abort(), passing them, let's roll the two ideas

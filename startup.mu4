@@ -4,13 +4,13 @@ new :  <:> -]   new <:> -]  ^ [
 : forth        .forth. definitions  ^ [
 : compiler  .compiler. definitions  ^ [
 
-: literal   (lit) (lit) compile,  compile,  ^ [
+: literal   (lit) (lit) ,  ,  ^ [
 
 : ]   literal -]  ^ [
 
 compiler
-: ;   [  token ^    .forth. find huh?  ]  compile,
-      [  token [ .compiler. find huh?     compile,  -]  ^ [
+: ;   [  token ^    .forth. find huh?  ]  ,
+      [  token [ .compiler. find huh?     ,  -]  ^ [
 forth
 
 : char   token  drop  c@ ;
@@ -29,10 +29,9 @@ forth
 
   The idea is to move as much code as possible -out- of the Forth kernel.
   Hence the name: "mu" is the Greek letter often used in engineering to
-  represent "micro". I had called it "nu" Forth, because it was new, but I
-  like this nu Greek letter better.)
+  represent "micro".
 
-( This file exemplifies a Forth strength - shared by Lisp and Smalltalk,
+  This file exemplifies a Forth strength - shared by Lisp and Smalltalk,
   among other interpretive/compiled languages - that I like to call
   "writing the reader"; the reader being, in this case, the Forth
   interpreter/compiler.
@@ -97,7 +96,7 @@ forth
 
 ( Tick)
 : chain'  token'  huh?  ;
-: \chain  chain'  compile,  ;
+: \chain  chain'  ,  ;
 
 ( 28-apr-2000. Do we ever -really- want to search anything other than .forth.?)
 : '   .forth.  chain'  ;
@@ -167,7 +166,6 @@ forth
 
 : jump  ( which)  cells pop + @execute ;
 
-( Now `ctrl' and the compiler's "char" and "ctrl".)
 : ctrl   char  [ bl 2* ( 64) ]  xor ;  ( how you get ^? = 127.)
 compiler
 : char   \f char literal ;
@@ -180,30 +178,10 @@ compiler
 : --  \f -- ;
 forth
 
-( the old definition)
+( Before I figured out the trick above, which yields the correct answer for
+  ctrl ?, I defined ctrl thus:)
 -- : ctrl   char  [ bl 1- ( 31) ]  and ;  ( elliptical, but it works :-)
 
-
-( Compiler nuts and bolts.)
-
--- Do something like this: (of course, I can't compile the variable yet...)
--- Could define it like this:
---  : dp  [ r @ ( ram)  0 , ] ;
---  variable dp
---  : code   h dp ! ;  ( switch to code space)
---  : data   r dp ! ;  ( switch to data space)
---  : here   dp @ @ ;
---  : allot  aligned  dp @ +! ;
---  : ,      dp @ !  cell allot ;
-
-: here   h @ ;  ( h points to the first free byte in dictionary)
-
-: aligned  [ cell 1- ] +  [ cell negate ] and ;
-: align    here aligned  h ! ;
-: allot    h +! ;
-: ,      here !  cell allot ;
-
-( We'll define words to compile into code space once we have create/does.)
 
 ( Mark a branch source for later fixup.)
 : >mark  ( - src)  here  0 , ;
@@ -214,7 +192,7 @@ forth
 : >resolve  ( src dest)  swap <resolve ;
 
 ( Going back to fig-FORTH!)
-: compile   pop @+ push  compile, ;
+: compile   pop @+ push  , ;
 
 compiler
 : =if   ( - src)        compile (=0branch)  >mark ;
@@ -251,8 +229,8 @@ compiler
   the token is on the forth chain, postpone its compilation until the word
   that we're compiling executes. Got that? ;-)
 
-: \   .compiler. token'  if compile, ^ then
-         .forth. find  huh?  literal  ['] compile,  compile, ;
+: \   .compiler. token'  if , ^ then
+         .forth. find  huh?  literal  ['] ,  , ;
 
 forth
 
@@ -260,44 +238,23 @@ forth
 ( Defining words are next. Right now we only `know' how to make `colon'
   definitions. We need some structural help first.)
 
-( Some notes on the newer, smarter ] . I wanted to gain a
-  little of the clarity that Chuck Moore's colorForth gains by getting rid
-  of "[ <calculate something here> ] literal". He replaces the whole
-  construct with colored words that are executed or compiled depending on
-  their color, but with a little added twist: words that are executed [of
-  "execute" color] create what I call a "pending literal" that will be
-  compiled just _before_ the next word that is compiled [of "compile"
-  color].
+( I wanted to gain a little of the clarity that Chuck Moore's colorForth
+  gains by getting rid of "[ <calculate something here> ] literal". He
+  replaces the whole construct with colored words that are executed or
+  compiled depending on their color, but with a little added twist: when
+  switching from executed to compiled words -- yellow to green --
+  colorForth assumes that the yellow words calculated a literal; just
+  before starting to compile the first green word after the transition,
+  colorForth compiles a literal.
 
-  Even if we don't have color, we do still have [ and ] and can use them to
-  achieve the same end. [ creates a pending literal and ] compiles it.
+  Even though we don't have color in muFORTH, we can make things a bit
+  cleaner by assuming -- unlike traditional Forth -- that between  [  and
+  ]  we will calculate a literal.
 
-  How does it work? Simple. ] _always_ compiles a literal before restarting
-  the colon compiler. To restart it _without_ compiling a literal, use -] .)
+  How does it work? Simple.  ]  _always_ compiles a literal before
+  restarting the colon compiler. To restart it _without_ compiling a
+  literal, use  -]  .)
 
-
-( 2002-mar-18. New and modern create/does. Everything changes dramatically
-  with native compilation. Let's look at what we have.)
-
-( 2006-mar-30. I removed the big comment about create/does>. It's all in
-  the README now, and also all out of date, since it's about the
-  native-code version of muforth.)
-
-( 2006-apr-11. Revamped create & does again. This time I think I got it
-  right.
-
-  Since a word's data are not stored in the dict [code] space, we compile a
-  pointer into the word's definition [in code space] instead. This is not
-  new, but the way it happens, and the semantics of some of the related
-  words - like constant and create - is new.
-
-  The fundamental defining word for data is *constant*. create is defined
-  in terms of it. Words that allocate space in "ram" compile a pointer to
-  that ram space as their constant.
-
-  constant creates the head and compiles a code word pointing to <does>, an
-  empty ip [does] pointer, and the constant. It then calls does>, which
-  immediately rewrites the empty ip to point to constant's null does> body.)
 
 ( "nameless" colon words.)
 : -:  here <:> -] ;
@@ -326,6 +283,44 @@ forth
 : >body   ( 'code - 'body)  >ip  cell+ ;
 : body>   ( 'body - 'code)       cell- ip> ;
 
+
+( create and does>. Everything old is new again. ;-)
+
+( 2010-nov-30. After many iterations, I have finally arrived at fig-forth's
+  implementation of create/does>.  The only difference is the names of the
+  words.)
+
+( In fig, there are xx kinds of words:
+    * CODE words, whose code field points to machine code
+    * COLON words, whose code field points to docolon, and whose bodies
+      contain a list of execution tokens
+    * CONSTANTS, whose code field points to doconst, and whose body
+      contains a value
+    * VARIABLES, whose code field points to dovar, and whose body contains
+      a value
+    * DOES words, whose code field points to dodoes, and whose body
+      contains an IP pointer, followed optionally by data.
+
+  In muforth there are only three kinds of words:
+    * CODE words - primitives defined in C whose code field points to the C
+      code implementation
+    * COLON words, whose code field points to docolon; body contains a list
+      of execution tokens
+    * DOES words, whose code field points to dodoes; body starts with IP
+      pointer - to parent's Forth code - followed optionally by data.
+
+  fig and muforth share this inefficient but simple implementation. In the
+  case of fig, it was because they didn't know any better. In my case, I
+  knew better but in the interest of avoiding machine-code dependencies -
+  the efficient way of compiling does> words essentially being a form of
+  DTC [direct-threaded code] - I had no choice.
+
+  If you want a threaded-code implementation using only pure pointers, you
+  need two pointers in each "child" word defined with create/does: one to
+  point to C [dodoes] and one to point to Forth [the body of the parent
+  defining word].)
+
+
 ( last contains the address of the does ip of the last <does> word defined)
 : sleazy-variable  pop ;  ( push address of following cell in caller!)
 : last  sleazy-variable  [  0 ,  ( make the variable by hand!)
@@ -335,13 +330,13 @@ forth
 
 : does>  pop  last @  ! ;
 
-( We may not want to consume the token when we create new words; for
-  example, if we are meta-compiling another Forth and want to compile heads
-  into the image. So let's factor constant to make this possible.)
 
 ( The underlying engine for all "create/does>" words. It allocates no data
   space in the word. This version does not consume a token from the input
-  stream, instead expecting one on the stack. Useful for meta-compilers.)
+  stream, instead expecting one on the stack. This is particularly useful
+  if we are meta-compiling another Forth and want to compile heads into the
+  image, since we have to process the token - the name of the new word -
+  twice.)
 
 : (create)   ( a u)
    (new) <does>
@@ -358,7 +353,7 @@ forth
 : array      ( cells)  0 swap  defarray ;
 
 ( A byte array; length is rounded up to cell boundary.)
-: buffer   ( bytes)  aligned  ( round up)  cell/  0 swap  defarray ;
+: buffer   ( bytes)  aligned  ( round up)  cell/  array ;
 
 ( A self-indexing array with every cell set to a default value.)
 : defarray+  ( default cells)  defarray  does>  ( i - a)  swap cells + ;
@@ -560,6 +555,10 @@ create remove  -]  unlink ;   ( remove pushes IP when executed!)
    >r ( ra) ;
 
 
+-- -----------------------------------------------------------------------
+-- End of fancy R-stack goodies, and back to pedestrian Forth.
+-- -----------------------------------------------------------------------
+
 ( Number input)
 variable dpl    ( location of , or . )
 variable radix
@@ -630,21 +629,20 @@ decimal
 : *digit  ( u a digit - u*base+digit a)
    swap push ( a)  swap ( dig u)  radix @ * +  pop  dpl @ 0< 1+  dpl +!  ;
 
-( 2002-mar-23. I still don't like how number parsing works. It seems
-  clumsy. On the one hand, we know ahead of time exactly how many
-  characters we have [in the token we are trying to convert]; on the other,
-  the way the prefix [sign and radix] and embedded [. , - : /] characters
-  work, we can't simply put them in a loop: there should be at most one sign
-  and one radix at the beginning. Right now I have >number [which converts
-  digits] and punct words _both_ checking if there are any characters left
-  to process. This seems clumsy.
+( 2002-mar-23. I still don't like how number parsing works. On the one
+  hand, we know ahead of time exactly how many characters we have [in the
+  token we are trying to convert]; on the other, the way the prefix [sign
+  and radix] and embedded [. , - : /] characters work, we can't simply put
+  them in a loop: there should be at most one sign and one radix at the
+  beginning. Right now I have >number [which converts digits] and punct
+  words _both_ checking if there are any characters left to process. This
+  seems clumsy.
 
   And that "dpl!" in ?dot bugs me, too.)
 
 ( ANS compatible! - or at least it was when it converting with double numbers.)
 : >number  ( u1 a1 c1 - u2 a2 c2)  ( a2 is first unconvertible char)
-   =if  for  @digit?  while  *digit 1+ next  0 ^  then
-                                drop  pop  then  ;
+   =if  for  @digit?  while  *digit 1+ next  0 ^  then   drop  pop  then  ;
 
 ( If >number can't convert any digits, complain.)
 : digits   ( u1 a1 c1 - u2 a2 c2 u3)
@@ -696,7 +694,7 @@ forth
 
 -:   ( compile one token)
    .compiler. find  if  execute ^  then
-      .forth. find  if  compile, ^  then  number literal ;
+      .forth. find  if  ,       ^  then  number literal ;
                                       -]  'compiler-mode [  !
 
 
@@ -742,7 +740,7 @@ ctrl M  constant #CR   --  13
   character for the sign. pad returns the address of the _end_ of the
   buffer, since conversion occurs right-to-left.)
 
-65 aligned allot  here constant pad   ( 64 digits + sign + alignment)
+65 allot  here constant pad   ( 64 digits + sign + alignment)
 
 variable hld
 : hold   -1 hld +!  hld @ c! ;
@@ -810,7 +808,7 @@ variable hld
 : count  ( z" - a u)  dup  cell- @ ;
 : (")    ( - a u)  pop  cell+ count ( a u)  2dup + 1+ aligned push ;
 
-: _string      ( - z")  scrabble  count cell+ 1+  aligned allot ;
+: _string      ( - z")  scrabble  count cell+ 1+  allot ;
 : string,   ( ch - z")  parse  _string ;
 : token,       ( - z")  token  _string ;
 
