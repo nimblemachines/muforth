@@ -35,7 +35,7 @@ void mu_cfetch()  { TOP = *(uint8_t *)TOP; }
 void mu_cstore()  { *(uint8_t *)TOP = ST1; DROP(2); }
 
 /* fetch and store data values (64 bit) */
-void mu_fetch()        { TOP =  *(cell *)TOP; }
+void mu_fetch()       { TOP =  *(cell *)TOP; }
 void mu_store()       { *(cell *)TOP  = ST1; DROP(2); }
 void mu_plus_store()  { *(cell *)TOP += ST1; DROP(2); }
 
@@ -55,7 +55,7 @@ void mu_swap()   { cell t = TOP; TOP = ST1; ST1 = t; }
 void mu_over()   { cell o = ST1; PUSH(o); }          /* a b -> a b a */
 
 void mu_uless()  { ST1 = (ST1 < (ucell)TOP) ? -1 : 0; DROP(1); }
-void mu_less()   { ST1 = (ST1 < TOP)           ? -1 : 0; DROP(1); }
+void mu_less()   { ST1 = (ST1 <        TOP) ? -1 : 0; DROP(1); }
 
 void mu_zero_less()   { TOP = (TOP <  0) ? -1 : 0; }
 void mu_zero_equal()  { TOP = (TOP == 0) ? -1 : 0; }
@@ -70,28 +70,6 @@ void mu_sp_store()  { SP = (cell *)TOP; }       /* set stack pointer */
 void mu_rp_store()       { RP  = (ucell *)TOP; DROP(1); }
 void mu_rp_plus_store()  { RP += TOP; DROP(1); }    /* TOP is cell count! */
 void mu_rp_fetch()       { PUSH(RP); }
-
-/*
- * Single-length math routines.
- *
- * Sometimes I really hate C and gcc. This is one of those times. It is
- * trivially easy to write the basic Forth word fm/mod in assembler. The
- * machine gives you the pieces you need: given two 32bit operands, it
- * multiplies and gives a 64bit result; then you divide that by another
- * 32bit operand. There is no opportunity for over- or underflow, and it's
- * about 6 instructions - including stack moves - in x86 assembler.
- *
- * It's impossible to do this in gcc. Grrr.
- *
- * Also, since integer divide by definition gives you both quotient and
- * remainder, why does C make you calculate them separately? It's stupid.
- *
- * So, I've given up on double-length math for muFORTH. It's a beautiful
- * and elegant part of Forth, but since I intend muFORTH mostly for
- * cross-compiling (to 32bit architectures at the moment, though that could
- * change!), single-length is plenty. So don't try using star-slash with
- * large operands. ;-)
- */
 
 /*
  * We don't need a ustar, since single-length star and ustar yield the same
@@ -111,7 +89,8 @@ void mu_uslash_mod()  /* u1 u2 -- um uq */
 }
 
 /*
- * Of course, I'm not giving up floored division. ;-)
+ * Even though I'm now allowing GCC its ugly machinations (so I can have
+ * 64-bit multiply and divide), I'm not giving up floored division. ;-)
  *
  * Most processors do symmetric division. To fix this (to make it _FLOOR_)
  * we have to adjust the quotient and remainder when rem != 0 and the
@@ -157,58 +136,6 @@ void mu_slash_mod()  /* n1 n2 -- m q */
     ST1 = mod;
     TOP = quot;
 }
-
-#ifdef GCC_IS_COMPLETELY_FUCKED
-void mu_umstar()
-{
-    uint64_t prod = (uint32_t)ST1 * TOP;
-    cell *p = &prod;
-    ST1 = p[0];     /* low half of product */
-    TOP = p[1];     /* high half */
-}
-
-void mu_mstar()
-{
-    int64_t prod = ST1 * TOP;
-    cell *p = &prod;
-    ST1 = p[0];     /* low half of product */
-    TOP = p[1];     /* high half */
-}
-
-void mu_fm_slash_mod()  /* dn1 n2 -- m q */
-{
-    cell num[2];    /* numerator (dividend) */
-    cell mod;
-    cell quot;
-    int64_t dividend;
-
-    /* Set up 64-bit dividend */
-    num[0] = ST2;   /* low half */
-    num[1] = ST1;   /* high half */
-    quot = (int64_t)num[0] / TOP;
-    mod  = (int64_t)num[0] % TOP;
-
-    /* Set up 64-bit dividend */
-    dividend = ST2 /* low */ + ((int64_t)ST1 << 32) /* high */ ;
-    quot = dividend / TOP;
-    mod  = dividend % TOP;
-#ifdef DIVIDE_IS_SYMMETRIC
-    /*
-     * We now have the results of a stupid symmetric division, which we
-     * must convert to floored. We only do this if the modulus was non-zero
-     * and if the dividend and divisor had opposite signs.
-     */
-    if (mod != 0 && (ST1 ^ TOP) < 0)
-    {
-        quot -= 1;
-        mod  += TOP;
-    }
-#endif
-
-    ST1 = mod;
-    TOP = quot;
-}
-#endif /* GCC_IS_COMPLETELY_FUCKED */
 
 
 void mu_string_equal()   /* a1 len1 a2 len2 -- flag */
