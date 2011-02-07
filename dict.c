@@ -118,22 +118,18 @@ struct dict_entry
 };
 
 /*
- * The forth and compiler "vocabulary" chains - VH means vocab head.
- * Because the name field contains the three-character name " VH", these
- * will show up in a word list, if another vocab chains to one of these;
- * however, the names cannot easily be matched because they contain a
- * space.
+ * The forth and compiler "vocabulary" chains
+ *
+ * Thes are now initialised at dictionary init time, by calling new_name()
+ * with a name starting with a DEL character. This way these pseudo-words
+ * won't show up when listed by  word  but _can_ be found (with care) using
+ * find.
  */
-#ifdef ADDR_64
-static struct dict_name forth_chain    = { "     VH", 7, NULL };
-static struct dict_name compiler_chain = { "     VH", 7, NULL };
-#else
-static struct dict_name forth_chain    = { " VH", 3, NULL };
-static struct dict_name compiler_chain = { " VH", 3, NULL };
-#endif
+static struct dict_name *forth_chain;
+static struct dict_name *compiler_chain;
 
 /* current chain to compile into */
-static struct dict_name *current_chain = &forth_chain;
+static struct dict_name *current_chain;
 
 /* hook called when a new name is created */
 CODE(mu_nope)
@@ -212,12 +208,12 @@ void mu_push_current()
  */
 void mu_push_forth_chain()
 {
-    PUSH(&forth_chain);
+    PUSH(forth_chain);
 }
 
 void mu_push_compiler_chain()
 {
-    PUSH(&compiler_chain);
+    PUSH(compiler_chain);
 }
 
 /* Type of string compare functions */
@@ -263,11 +259,10 @@ void mu_find()
 }
 
 /*
- * make_new_name creates a new dictionary (name) entry, and links it onto
- * the chain represented by pnmHead.
+ * new_name creates a new dictionary (name) entry and returns it
  */
-static void make_new_name(
-    struct dict_name *pnmHead, char *name, int length)
+static struct dict_name *new_name(
+    struct dict_name *link, char *name, int length)
 {
     struct dict_name *pnm;              /* the new name */
     char *pch = (char *)ph;
@@ -282,35 +277,57 @@ static void make_new_name(
     }
 
     pnm = (struct dict_name *)pch;
-
-    pnm->link = pnmHead->link;          /* compile link to last */
-    pnmHead->link = pnm;                /* link onto front of chain */
-    pnm->length = length;
     /* copy name string */
     memcpy(pnm->suffix + SUFFIX_LEN - length, name, length);
+    pnm->length = length;
+
+    /* set link pointer */
+    pnm->link = link;
 
     /* Allot entry */
     ph = (addr *)(pnm + 1);
 
 #if defined(BEING_DEFINED)
-    fprintf(stderr, "%p %.*s\n", ph, length, name);
+    fprintf(stderr, "%p %.*s\n", pnm, length, name);
 #endif
+
+    return pnm;
+}
+
+/* (name)  ( link a u - 'suffix) */
+void mu_name_()
+{
+    struct dict_name *pnm = new_name(
+        (struct dict_name *)ST2, (char *)ST1, (int)TOP);
+    DROP(2);
+    TOP = (cell)pnm;
+}
+
+/*
+ * new_linked_name creates a new dictionary (name) entry and links it onto
+ * the chain represented by pnmHead.
+ */
+static void new_linked_name(
+    struct dict_name *pnmHead, char *name, int length)
+{
+    /* create new name & link onto front of chain */
+    pnmHead->link = new_name(pnmHead->link, name, length);
 }
 
 /*
  * Called (indirectly, thru the mu_new* words) from Forth. Only creates a
  * name; does NOT set the code field!
  */
-static void mu_make_new_name()
+static void mu_new_name()
 {
-    make_new_name(current_chain, (char *)ST1, TOP);
+    new_linked_name(current_chain, (char *)ST1, TOP);
     DROP(2);
 }
 
 void mu_new_()
 {
     execute_xtk(xtk_new_hook);
-    mu_make_new_name();
+    mu_new_name();
 }
 
 void mu_new()
@@ -333,7 +350,7 @@ static void init_chain(struct dict_name *pchain, struct inm *pinm)
 {
     for (; pinm->name != NULL; pinm++)
     {
-        make_new_name(pchain, pinm->name, strlen(pinm->name));
+        new_linked_name(pchain, pinm->name, strlen(pinm->name));
         *ph++ = (addr)pinm->code;   /* set code pointer */
     }
 }
@@ -352,8 +369,11 @@ static void allocate()
 void init_dict()
 {
     allocate();
-    init_chain(&forth_chain, initial_forth);
-    init_chain(&compiler_chain, initial_compiler);
+    forth_chain    = new_name( NULL, "\177.forth.", 8 );
+    compiler_chain = new_name( NULL, "\177.compiler.", 11 );
+    init_chain(forth_chain, initial_forth);
+    init_chain(compiler_chain, initial_compiler);
+    current_chain = forth_chain;
 }
 
 /*
