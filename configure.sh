@@ -23,11 +23,12 @@ done
 
 os=$(uname -s)
 cpu=$(uname -m)
-archcflags=""
+
+# Silence annoying cast warnings on 32-bit hosts
+archcflags="-Wno-int-to-pointer-cast -Wno-pointer-to-int-cast"
 archldflags=""
+
 if [ "$os" = "Darwin" ]; then
-    #archcflags="-m32 -mdynamic-no-pic"
-    #archldflags="-m32"
     archcflags="-m64 -mdynamic-no-pic"
     archldflags="-m64 "
 fi
