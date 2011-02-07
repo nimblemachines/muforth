@@ -39,7 +39,7 @@ void mu_fetch()        { TOP =  *(cell *)TOP; }
 void mu_store()       { *(cell *)TOP  = ST1; DROP(2); }
 void mu_plus_store()  { *(cell *)TOP += ST1; DROP(2); }
 
-/* fetch and store address values (arch-specific) */
+/* fetch and store address (pointer) values (arch-specific) */
 void mu_afetch()  { TOP =  (cell)*(addr *)TOP; }
 void mu_astore()  { *(addr *)TOP = (addr)ST1; DROP(2); }
 
@@ -67,7 +67,7 @@ void mu_sp_fetch()  { cell *s = SP; PUSH(s); }  /* push stack pointer */
 void mu_sp_store()  { SP = (cell *)TOP; }       /* set stack pointer */
 
 /* So we can do return-stack magic. */
-void mu_rp_store()       { RP  = (xtk **)TOP; DROP(1); }
+void mu_rp_store()       { RP  = (ucell *)TOP; DROP(1); }
 void mu_rp_plus_store()  { RP += TOP; DROP(1); }    /* TOP is cell count! */
 void mu_rp_fetch()       { PUSH(RP); }
 

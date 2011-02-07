@@ -67,7 +67,8 @@ static void mu_return_token(char *last, int trailing)
     TOP = parsed.length;
 
 #ifdef DEBUG_TOKEN
-    fprintf(stderr, "%.*s\n", TOP, ST1);
+    /* Without these casts, this doesn't work! */
+    fprintf(stderr, "%.*s\n", (int)TOP, (char *)ST1);
 #endif
 }
 
@@ -169,7 +170,7 @@ static void muboot_compile_token()
     mu_find();
     if (POP)
     {
-        mu_comma();
+        mu_acomma();
         return;
     }
     mu_complain();
@@ -235,10 +236,10 @@ void mu_qstack()
         printf("%16lx  %16lx  %16lx\n", (intptr_t)IP, (intptr_t)SP, (intptr_t)RP);
         */
         int i;
-        fprintf(stderr, "[ ");
+        fprintf(stderr, "S [");
         for (i = 0; i < 4; i++)
-            fprintf(stderr, "%16llx  ", (ucell)SP[i]);
-        fprintf(stderr, " ]\n");
+            fprintf(stderr, "  %16llx", (ucell)SP[i]);
+        fprintf(stderr, "  ]\n");
         fflush(stderr);
     }
 #endif

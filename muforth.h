@@ -52,14 +52,11 @@ extern cell  *SP;     /* parameter stack pointer */
 extern xtk   *IP;     /* instruction pointer */
 extern xtk    W;      /* on entry, points to the current Forth word */
 
-/*
- * XXX: On 32-bit platforms return stack width is 1/2 that of data stack,
- * so push/pull (>r and r>) need to move two pieces of data for each cell!
- */
-
 /* return stack */
-extern xtk *rstack[];
-extern xtk  **RP;     /* return stack pointer */
+/* NOTE: Even on 32-bit platforms the R stack is 64 bits wide! This makes
+ * things _much_ simpler, at the expense of a bit more storage. */
+extern ucell  rstack[];
+extern ucell  *RP;    /* return stack pointer */
 #define R0  &rstack[STACK_SIZE]
 
 /*
@@ -76,11 +73,12 @@ extern xtk  **RP;     /* return stack pointer */
 #define NEXT      CALL(*IP++)
 #define BRANCH    (IP = *(xtk **)IP)
 
-#define RPUSH(n)  (*--RP = (xtk *)(n))
+#define RDROP(n)  (RP += (n))
+#define RPUSH(n)  (*--RP = (ucell)(n))
 #define RPOP      (*RP++)
 
 #define NEST      RPUSH(IP)
-#define UNNEST    (IP = RPOP)
+#define UNNEST    (IP = (xtk *)RPOP)
 
 #define ALIGN_SIZE  sizeof(addr)
 #define ALIGNED(x)  (((intptr_t)(x) + ALIGN_SIZE - 1) & -ALIGN_SIZE)
@@ -133,9 +131,6 @@ extern addr  *ph;      /* ptr to next free byte in heap space */
 
 /* engine-itc.c */
 void execute_xtk(xtk x);
-
-/* compile.c */
-char *to_counted_string(char *);
 
 /* error.c */
 void die(const char *zmsg);

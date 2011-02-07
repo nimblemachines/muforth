@@ -19,7 +19,7 @@ static struct counted_string *pcmd_line;
  */
 static char *str_copy(char *dest, char *src)
 {
-    int length = strlen(src);
+    size_t length = strlen(src);
     return memcpy(dest, src, length) + length;
 }
 

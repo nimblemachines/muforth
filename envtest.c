@@ -48,12 +48,12 @@ int main(int argc, char *argv[])
     if (sizeof(void *) == 4)
     {
         printf("#define ADDR_SHIFT 2\n");
-        printf("#define ADDR32\n");
+        printf("#define ADDR_32\n");
     }
     else
     {
         printf("#define ADDR_SHIFT 3\n");
-        printf("#define ADDR64\n");
+        printf("#define ADDR_64\n");
     }
 
     /* endianness */

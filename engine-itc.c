@@ -45,7 +45,7 @@ void mu_execute() { EXECUTE; }
  */
 void execute_xtk(xtk x)
 {
-    xtk **rp_saved;
+    ucell *rp_saved;
 
     rp_saved = RP;
 
@@ -76,7 +76,19 @@ void mu_set_does_code()  { *ph++ = (addr)&mu_do_does; }
 void mu_exit()      { UNNEST; }
 
 /* Push an inline literal */
-void mu_lit_()  { PUSH(*IP++); }
+void mu_alit_()  { PUSH(*IP++); }
+#ifdef ADDR_64
+void mu_lit_()   { mu_alit(); }
+#else
+void mu_lit_()
+{
+    cell *plit = (cell *)IP;
+
+    PUSH(*plit++);              /* fetch literal and push it */
+    IP = (xtk *)plit;
+}
+#endif
+
 
 /*
  * These are the control structure runtime workhorses. They are static
@@ -106,12 +118,12 @@ void mu_qfor_()
 
 void mu_next_()
 {
-    cell rtop = (cell)RP[0];            /* counter on top of R stack */
+    cell rtop = RP[0];                  /* counter on top of R stack */
 
     if (--rtop == 0)
-        { IP++; RP++; }                     /* skip branch, pop counter */
+        { IP++; RP++; }                 /* skip branch, pop counter */
     else
-        { RP[0] = (xtk *)rtop; BRANCH; }    /* update index, branch back */
+        { RP[0] = rtop; BRANCH; }       /* update index, branch back */
 }
 
 /*
@@ -144,33 +156,33 @@ void mu_do_()   /* (do)  ( limit start) */
 
 void mu_loop_()
 {
-    cell rtop = (cell)RP[0];
+    cell rtop = RP[0];
 
-    rtop++;                 /* increment index */
+    rtop++;                             /* increment index */
     if (rtop == 0)
-        { IP++; RP += 3; }                  /* skip branch, pop R stack */
+        { IP++; RP += 3; }              /* skip branch, pop R stack */
     else
-        { RP[0] = (xtk *)rtop; BRANCH; }    /* update index, branch back */
+        { RP[0] = rtop; BRANCH; }       /* update index, branch back */
 }
 
 void mu_plus_loop_()    /* (+loop)  ( incr) */
 {
-    cell rtop = (cell)RP[0];
+    cell rtop = RP[0];
     cell prev = rtop;
 
     rtop += TOP;                /* increment index */
     if ((rtop ^ prev) < 0)      /* current & prev index have opposite signs */
-        { IP++; RP += 3; }                  /* skip branch, pop R stack */
+        { IP++; RP += 3; }              /* skip branch, pop R stack */
     else
-        { RP[0] = (xtk *)rtop; BRANCH; }    /* update index, branch back */
+        { RP[0] = rtop; BRANCH; }       /* update index, branch back */
     DROP(1);
 }
 
 /* leave the do loop early */
 void mu_leave()
 {
-    IP = RP[2];     /* jump to address saved on R stack */
-    RP += 3;        /* pop "do" context */
+    IP = (xtk *)RP[2];  /* jump to address saved on R stack */
+    RP += 3;            /* pop "do" context */
 }
 
 /* conditionally leave */
@@ -184,9 +196,9 @@ void mu_qleave()
  * third-level (k) do-loops
  */
 
-void mu_i() { PUSH((cell)RP[0] + (cell)RP[1]); }
-void mu_j() { PUSH((cell)RP[3] + (cell)RP[4]); }
-void mu_k() { PUSH((cell)RP[6] + (cell)RP[7]); }
+void mu_i() { PUSH(RP[0] + RP[1]); }
+void mu_j() { PUSH(RP[3] + RP[4]); }
+void mu_k() { PUSH(RP[6] + RP[7]); }
 
 /* R stack functions */
 void mu_to_r()   { RPUSH(POP); }
@@ -195,12 +207,12 @@ void mu_rfetch() { PUSH(RP[0]); }
 
 #ifdef CHUMOO
 /* These are Chuck's newfangled names for >r and r> */
-void mu_push()  { mu_to_r(); }
-void mu_pop()   { mu_r_from(); }
+void mu_push()   { mu_to_r(); }
+void mu_pop()    { mu_r_from(); }
 #endif
 
 /* shunt is shorthand for r> drop */
-void mu_shunt()  {  RP++; }
+void mu_shunt()  { RP++; }
 
 
 #if 0

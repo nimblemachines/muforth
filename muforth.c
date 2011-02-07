@@ -13,8 +13,8 @@ cell stack[STACK_SIZE];
 cell *SP;
 
 /* return stack */
-xtk *rstack[STACK_SIZE];
-xtk **RP;
+ucell rstack[STACK_SIZE];
+ucell *RP;
 
 xtk   *IP;     /* instruction pointer */
 xtk    W;      /* on entry, points to the current Forth word */

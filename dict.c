@@ -125,11 +125,11 @@ struct dict_entry
  * space.
  */
 #ifdef ADDR_64
-static struct dict_name forth_chain    = { " V HEAD", 7, NULL };
-static struct dict_name compiler_chain = { " V HEAD", 7, NULL };
+static struct dict_name forth_chain    = { "     VH", 7, NULL };
+static struct dict_name compiler_chain = { "     VH", 7, NULL };
 #else
-static struct dict_name forth_chain    = { "V H", 3, NULL };
-static struct dict_name compiler_chain = { "V H", 3, NULL };
+static struct dict_name forth_chain    = { " VH", 3, NULL };
+static struct dict_name compiler_chain = { " VH", 3, NULL };
 #endif
 
 /* current chain to compile into */
