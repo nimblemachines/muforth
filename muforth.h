@@ -11,12 +11,16 @@
 
 #include "env.h"
 
-typedef  int32_t  cell;
-typedef uint32_t ucell;
+/* data cells */
+typedef  int64_t  cell;
+typedef uint64_t ucell;
 typedef struct {
      cell hi;       /* Forth puts high cell at lower address (top of stack) */
     ucell lo;
 } dcell;
+
+/* address cells */
+typedef void *addr;
 
 /* dictionary size */
 #define DICT_CELLS     (1024 * 1024)
@@ -48,6 +52,11 @@ extern cell  *SP;     /* parameter stack pointer */
 extern xtk   *IP;     /* instruction pointer */
 extern xtk    W;      /* on entry, points to the current Forth word */
 
+/*
+ * XXX: On 32-bit platforms return stack width is 1/2 that of data stack,
+ * so push/pull (>r and r>) need to move two pieces of data for each cell!
+ */
+
 /* return stack */
 extern xtk *rstack[];
 extern xtk  **RP;     /* return stack pointer */
@@ -73,8 +82,8 @@ extern xtk  **RP;     /* return stack pointer */
 #define NEST      RPUSH(IP)
 #define UNNEST    (IP = RPOP)
 
-#define ALIGN_SIZE  sizeof(cell)
-#define ALIGNED(x)  (((cell)(x) + ALIGN_SIZE - 1) & -ALIGN_SIZE)
+#define ALIGN_SIZE  sizeof(addr)
+#define ALIGNED(x)  (((intptr_t)(x) + ALIGN_SIZE - 1) & -ALIGN_SIZE)
 
 /*
  * struct string is a "normal" string: pointer to the first character, and
@@ -112,8 +121,8 @@ struct counted_string
 extern int parsed_lineno;       /* captured with first character of token */
 extern struct string parsed;    /* for errors */
 
-extern cell  *ph0;     /* pointer to start of heap space */
-extern cell  *ph;      /* ptr to next free byte in heap space */
+extern addr  *ph0;     /* pointer to start of heap space */
+extern addr  *ph;      /* ptr to next free byte in heap space */
 
 /* declare common functions */
 

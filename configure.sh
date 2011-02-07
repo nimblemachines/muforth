@@ -26,12 +26,14 @@ cpu=$(uname -m)
 archcflags=""
 archldflags=""
 if [ "$os" = "Darwin" ]; then
-    archcflags="-m32 -mdynamic-no-pic"
-    archldflags="-m32"
+    #archcflags="-m32 -mdynamic-no-pic"
+    #archldflags="-m32"
+    archcflags="-m64 -mdynamic-no-pic"
+    archldflags="-m64 "
 fi
 if [ "$os" = "Linux" -a "$cpu" = "x86_64" ]; then
-    archcflags="-m32"
-    archldflags="-m32"
+    archcflags="-m64"
+    archldflags="-m64"
 fi
 
 # Figure out which version of sed we're running, so we can properly specify

@@ -15,8 +15,13 @@
  * Dictionary is one unified space, just like the old days. ;-)
  */
 
-cell  *ph0;     /* pointer to start of heap space */
-cell  *ph;      /* ptr to next free byte in heap space */
+/*
+ * Dictionary is kept addr-aligned - _not_ cell-aligned! On 32-bit machines
+ * this means that data values (64 bits) may not be aligned. I don't think
+ * this is a problem.
+ */
+addr  *ph0;     /* pointer to start of heap space */
+addr  *ph;      /* ptr to next free byte in heap space */
 
 /*
  * A struct dict_name represents what Forth folks often call a "head" - a
@@ -67,8 +72,9 @@ cell  *ph;      /* ptr to next free byte in heap space */
  * code, but how?
  *
  * My solution is a bit weird, but it works rather well. Since I know that
- * there will be at least -one- cell (3 bytes and a length) of name (but
- * likely more), I will define a struct that represents only the last three
+ * there will be at least -one- address cell (on 32-bit machines, 3 bytes
+ * and a length; on 64-bit machines, 7 bytes and a length) of name I will
+ * define a struct that represents only the last three (or seven)
  * characters of the name, the length, and the link; the previous
  * characters are "off the map" as far as C is concerned, but there is an
  * easy way to address them. (To get to the beginning of a name, take the
@@ -86,11 +92,19 @@ cell  *ph;      /* ptr to next free byte in heap space */
  * name's. (One neat advantage to this is that it works well when chaining
  * vocabs together.)
  */
+
+/*
+ * On 64-bit machines (where addr's are 8 bytes), the suffix is 7
+ * characters, followed by a count byte. On 32-bit machines, suffixes are 3
+ * characters, followed by a count byte.
+ */
+
+#define SUFFIX_LEN  (ALIGN_SIZE - 1)
 struct dict_name
 {
-    char suffix[3];              /* last 3 characters of name */
+    char suffix[SUFFIX_LEN];     /* last 3 or 7 characters of name */
     unsigned char length;        /* true length of name */
-    struct dict_name *link;      /* to preceding dict_name */
+    struct dict_name *link;      /* link to preceding dict_name */
 };
 
 /*
@@ -110,8 +124,13 @@ struct dict_entry
  * however, the names cannot easily be matched because they contain a
  * space.
  */
-static struct dict_name forth_chain    = { " VH", 3, NULL };
-static struct dict_name compiler_chain = { " VH", 3, NULL };
+#ifdef ADDR_64
+static struct dict_name forth_chain    = { " V HEAD", 7, NULL };
+static struct dict_name compiler_chain = { " V HEAD", 7, NULL };
+#else
+static struct dict_name forth_chain    = { "V H", 3, NULL };
+static struct dict_name compiler_chain = { "V H", 3, NULL };
+#endif
 
 /* current chain to compile into */
 static struct dict_name *current_chain = &forth_chain;
@@ -152,7 +171,19 @@ void mu_here()          /* push current _value_ of heap pointer */
  * , (comma) copies the cell on the top of the stack into the dictionary,
  * and advances the heap pointer. Note that the ph is always kept aligned!
  */
-void mu_comma() { *ph++ = POP; }
+void mu_comma()
+{
+    cell *pcell = (cell *)ph;
+    *pcell++ = POP;
+    ph = (addr *)pcell;
+}
+
+/*
+ * a, (a-comma) copies the address on the top of the stack into the
+ * dictionary, and advances the heap pointer. Note that this might leave
+ * the dictionary unaligned w.r.t cell-size!
+ */
+void mu_acomma() { *ph++ = (addr)POP; }
 
 /*
  * allot ( n)
@@ -160,7 +191,7 @@ void mu_comma() { *ph++ = POP; }
  * Takes a count of bytes, rounds it up to a cell boundary, and adds it to
  * the heap pointer. Again, this keeps ph always aligned.
  */
-void mu_allot() { ph += ALIGNED(POP) / sizeof(cell); }
+void mu_allot() { ph += ALIGNED(POP) / sizeof(addr); }
 
 /* Align TOP to cell boundary */
 void mu_aligned() { TOP = ALIGNED(TOP); }
@@ -218,7 +249,8 @@ void mu_find()
     while ((pde = (struct dict_entry *)pde->n.link) != NULL)
     {
         if (pde->n.length != length) continue;
-        if ((*match)(pde->n.suffix + 3 - length, token, length) != 0) continue;
+        if ((*match)(pde->n.suffix + SUFFIX_LEN - length, token, length) != 0)
+            continue;
 
         /* found: drop token, push code address and true flag */
         DROP(1);
@@ -242,10 +274,10 @@ static void make_new_name(
 
     assert((char *)ALIGNED(pch) == pch, "dict misaligned");
 
-    /* Allocate extra cells for name, if longer than 3 characters */
-    if (length > 3)
+    /* Allocate extra cells for name, if longer than SUFFIX_LEN */
+    if (length > SUFFIX_LEN)
     {
-        int cchExtra = ALIGNED(length - 3);
+        intptr_t cchExtra = ALIGNED(length - SUFFIX_LEN);
         pch += cchExtra;
     }
 
@@ -254,10 +286,11 @@ static void make_new_name(
     pnm->link = pnmHead->link;          /* compile link to last */
     pnmHead->link = pnm;                /* link onto front of chain */
     pnm->length = length;
-    memcpy(pnm->suffix + 3 - length, name, length);        /* copy name string */
+    /* copy name string */
+    memcpy(pnm->suffix + SUFFIX_LEN - length, name, length);
 
     /* Allot entry */
-    ph = (cell *)(pnm + 1);
+    ph = (addr *)(pnm + 1);
 
 #if defined(BEING_DEFINED)
     fprintf(stderr, "%p %.*s\n", ph, length, name);
@@ -301,13 +334,13 @@ static void init_chain(struct dict_name *pchain, struct inm *pinm)
     for (; pinm->name != NULL; pinm++)
     {
         make_new_name(pchain, pinm->name, strlen(pinm->name));
-        *ph++ = (cell)pinm->code;   /* set code pointer */
+        *ph++ = (addr)pinm->code;   /* set code pointer */
     }
 }
 
 static void allocate()
 {
-    ph0 = (cell *) calloc(DICT_CELLS, sizeof(cell));
+    ph0 = (addr *) calloc(DICT_CELLS, sizeof(addr));
 
     if (ph0 == NULL)
         die("couldn't allocate memory");

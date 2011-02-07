@@ -44,11 +44,17 @@ int main(int argc, char *argv[])
             printf("#error \"Wow. Divide is broken.\"\n");
     }
 
-    /* verify that int and void * are the same size: */
-    if (sizeof(int32_t) != sizeof(void *))
-        printf("#error \"Hmm. Pointer and int32_t types are different sizes: "
-            "sizeof(int32_t) = %d, sizeof(void *) = %d\"\n",
-            (int) sizeof(int32_t), (int) sizeof(void *));
+    /* Size of addresses */
+    if (sizeof(void *) == 4)
+    {
+        printf("#define ADDR_SHIFT 2\n");
+        printf("#define ADDR32\n");
+    }
+    else
+    {
+        printf("#define ADDR_SHIFT 3\n");
+        printf("#define ADDR64\n");
+    }
 
     /* endianness */
     {

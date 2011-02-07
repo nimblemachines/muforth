@@ -70,10 +70,10 @@ s/(.*)_size/#\1/
 # turn foo_ to (foo)
 s/((.*)_)$/\(\2\)/
 
-s/([a-z])_([^a-z])/\1\2/g
-s/([^a-z])_([a-z])/\1\2/g
-s/([^a-z])_([^a-z])/\1\2/g
-s/([a-z])_([a-z])/\1-\2/g
+s/([a-zA-Z])_([^a-zA-Z])/\1\2/g
+s/([^a-zA-Z])_([a-zA-Z])/\1\2/g
+s/([^a-zA-Z])_([^a-zA-Z])/\1\2/g
+s/([a-zA-Z])_([a-zA-Z])/\1-\2/g
 
 # concat hold & pattern
 H

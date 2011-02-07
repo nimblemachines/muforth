@@ -22,20 +22,29 @@ void mu_xor()   { ST1 ^= TOP; DROP(1); }
 void mu_negate()  { TOP = -TOP; }
 void mu_invert()  { TOP = ~TOP; }
 
-void mu_2star()                    { TOP <<= 1; }
-void mu_2slash()                   { TOP >>= 1; }
-void mu_u2slash()  { TOP = (unsigned)TOP >>  1; }
+void mu_2star()                 { TOP <<= 1; }
+void mu_2slash()                { TOP >>= 1; }
+void mu_u2slash()  { TOP = (ucell)TOP >>  1; }
 
-void mu_shift_left()              { ST1 = ST1 << TOP; DROP(1); }
-void mu_shift_right()             { ST1 = ST1 >> TOP; DROP(1); }
-void mu_ushift_right()  { ST1 = (unsigned)ST1 >> TOP; DROP(1); }
+void mu_shift_left()           { ST1 = ST1 << TOP; DROP(1); }
+void mu_shift_right()          { ST1 = ST1 >> TOP; DROP(1); }
+void mu_ushift_right()  { ST1 = (ucell)ST1 >> TOP; DROP(1); }
 
-void mu_fetch()   { TOP =  *(cell *)TOP; }
+/* fetch and store character (really _byte_) values */
 void mu_cfetch()  { TOP = *(uint8_t *)TOP; }
+void mu_cstore()  { *(uint8_t *)TOP = ST1; DROP(2); }
 
-void mu_store()        { *(cell *)TOP = ST1; DROP(2); }
-void mu_cstore()      { *(uint8_t *)TOP = ST1; DROP(2); }
+/* fetch and store data values (64 bit) */
+void mu_fetch()        { TOP =  *(cell *)TOP; }
+void mu_store()       { *(cell *)TOP  = ST1; DROP(2); }
 void mu_plus_store()  { *(cell *)TOP += ST1; DROP(2); }
+
+/* fetch and store address values (arch-specific) */
+void mu_afetch()  { TOP =  (cell)*(addr *)TOP; }
+void mu_astore()  { *(addr *)TOP = (addr)ST1; DROP(2); }
+
+/* export ADDR_SHIFT to forth code */
+void mu_ADDR_SHIFT() { PUSH(ADDR_SHIFT); }
 
 void mu_dup()    { cell t = TOP; PUSH(t); }
 void mu_nip()    { cell t = POP; TOP = t; }
@@ -45,7 +54,7 @@ void mu_drops()  { DROP(TOP+1); }
 void mu_swap()   { cell t = TOP; TOP = ST1; ST1 = t; }
 void mu_over()   { cell o = ST1; PUSH(o); }          /* a b -> a b a */
 
-void mu_uless()  { ST1 = (ST1 < (unsigned)TOP) ? -1 : 0; DROP(1); }
+void mu_uless()  { ST1 = (ST1 < (ucell)TOP) ? -1 : 0; DROP(1); }
 void mu_less()   { ST1 = (ST1 < TOP)           ? -1 : 0; DROP(1); }
 
 void mu_zero_less()   { TOP = (TOP <  0) ? -1 : 0; }
@@ -95,8 +104,8 @@ void mu_uslash_mod()  /* u1 u2 -- um uq */
     ucell umod;
     ucell uquot;
 
-    uquot = (unsigned)ST1 / TOP;
-    umod  = (unsigned)ST1 % TOP;
+    uquot = (ucell)ST1 / TOP;
+    umod  = (ucell)ST1 % TOP;
     ST1 = umod;
     TOP = uquot;
 }
@@ -152,7 +161,7 @@ void mu_slash_mod()  /* n1 n2 -- m q */
 #ifdef GCC_IS_COMPLETELY_FUCKED
 void mu_umstar()
 {
-    uint64_t prod = (unsigned)ST1 * TOP;
+    uint64_t prod = (uint32_t)ST1 * TOP;
     cell *p = &prod;
     ST1 = p[0];     /* low half of product */
     TOP = p[1];     /* high half */

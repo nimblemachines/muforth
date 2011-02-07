@@ -43,7 +43,7 @@ static void convert_command_line(int argc, char *argv[])
 
     /* null terminate and align */
     *pline++ = 0;
-    ph = (cell *)ALIGNED(pline);
+    ph = (addr *)ALIGNED(pline);
 }
 
 void mu_push_command_line()

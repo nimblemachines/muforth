@@ -69,8 +69,8 @@ static void mu_do_does()
     PUSH(&W[2]);            /* push the address of the word's body */
 }
 
-void mu_set_colon_code() { *ph++ = (cell)&mu_do_colon; }
-void mu_set_does_code()  { *ph++ = (cell)&mu_do_does; }
+void mu_set_colon_code() { *ph++ = (addr)&mu_do_colon; }
+void mu_set_does_code()  { *ph++ = (addr)&mu_do_does; }
 
 /* Normal exit */
 void mu_exit()      { UNNEST; }

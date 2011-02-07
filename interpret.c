@@ -228,16 +228,18 @@ void mu_qstack()
         return abort_zmsg("too many items on the stack");
     }
 #ifdef DEBUG_STACK
-    /* print stack */
     {
-        cell *p;
-
-        printf("  [ ");
-
-        for (p = S0; p > SP; )
-            printf("%x ", *--p);
-
-        printf("] %x\n", TOP);
+        /* print top few stack items */
+        /*
+        printf("IP             .  SP             .  RP             .\n");
+        printf("%16lx  %16lx  %16lx\n", (intptr_t)IP, (intptr_t)SP, (intptr_t)RP);
+        */
+        int i;
+        fprintf(stderr, "[ ");
+        for (i = 0; i < 4; i++)
+            fprintf(stderr, "%16llx  ", (ucell)SP[i]);
+        fprintf(stderr, " ]\n");
+        fflush(stderr);
     }
 #endif
 }
