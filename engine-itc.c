@@ -78,7 +78,7 @@ void mu_exit()      { UNNEST; }
 /* Push an inline literal */
 void mu_alit_()  { PUSH(*IP++); }
 #ifdef ADDR_64
-void mu_lit_()   { mu_alit(); }
+void mu_lit_()   { mu_alit_(); }
 #else
 void mu_lit_()
 {
