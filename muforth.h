@@ -95,21 +95,6 @@ struct string
     char *data;
 };
 
-/*
- * struct text is intended for parsing, and other applications that scan a
- * piece of text. Because we will be scanning the text but also making sure
- * we don't run off the end, we store a pointer to the first character
- * (start) and a pointer to the first character not belonging to the text
- * (end). This way we can increment start and check that its less than end.
- * If we used struct string instead we'd have to keep adding length to data
- * to see if we've overrun.
- */
-struct text
-{
-    char *end;      /* need them in this order so that "source 2@" will */
-    char *start;    /* put end on top of stack. */
-};
-
 struct counted_string
 {
     size_t length;  /* cell-sized length, unlike older Forths */

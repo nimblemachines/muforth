@@ -24,10 +24,13 @@ struct imode        /* interpreter mode */
     xtk prompt;     /* display a mode-specific prompt */
 };
 
-static struct text source;
-static char *first;         /* goes from source.start to source.end */
+static char *start, *end;   /* input source text */
+static char *first;         /* goes from start to end */
 
-static int lineno = 1;      /* line number - incremented for each newline */
+/* NOTE: since we'll effectively be using a@ and a! to access it, lineno
+ * has to have the _size_ of a pointer. */
+static intptr_t lineno = 1;      /* line number - incremented for each newline */
+
 int parsed_lineno;          /* captured with first character of token */
 struct string parsed;       /* for errors */
 
@@ -48,9 +51,14 @@ void mu_first()
     PUSH(&first);
 }
 
-void mu_source()
+void mu_start()
 {
-    PUSH(&source);
+    PUSH(&start);
+}
+
+void mu_end()
+{
+    PUSH(&end);
 }
 
 static void mu_return_token(char *last, int trailing)
@@ -75,7 +83,7 @@ static void mu_return_token(char *last, int trailing)
 /* Skip leading whitespace */
 static void skip()
 {
-    while (first < source.end && isspace(*first))
+    while (first < end && isspace(*first))
     {
         if (*first == '\n') lineno++;
         first++;
@@ -93,7 +101,7 @@ static void mu_scan(int delim)
     /* capture lineno that token begins on */
     parsed_lineno = lineno;
 
-    for (last = first; last < source.end; last++)
+    for (last = first; last < end; last++)
     {
         if (*last == '\n') lineno++;
         if (delim == *last
@@ -268,7 +276,7 @@ static void muboot_interpret()
 
 /*
  * This will also be re-implemented in Forth, but with nice nesting of
- * various context variables: radix, first, source, etc.
+ * various context variables: radix, first, start/end, etc.
  */
 void muboot_load_file()    /* c-string-name */
 {
@@ -278,13 +286,13 @@ void muboot_load_file()    /* c-string-name */
     fd = TOP;
     mu_read_file();
 
-    source.start = (char *)ST1;
-    source.end   = (char *)ST1 + TOP;
+    start = (char *)ST1;
+    end   = (char *)ST1 + TOP;
     DROP(2);
 
     /* wait to reset these until just before we evaluate the new file */
     lineno = 1;
-    first = source.start;
+    first = start;
 
     muboot_interpret();
 
