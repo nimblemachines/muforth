@@ -72,14 +72,14 @@ addr  *ph;      /* ptr to next free byte in heap space */
  * code, but how?
  *
  * My solution is a bit weird, but it works rather well. Since I know that
- * there will be at least -one- address cell (on 32-bit machines, 2 bytes,
- * flags, and a length; on 64-bit machines, 6 bytes, flags, and a length)
- * of name I will define a struct that represents only the last two (or
- * six) characters of the name, the flags, the length, and the link; the
- * previous characters are "off the map" as far as C is concerned, but
- * there is an easy way to address them. (To get to the beginning of a
- * name, take the address of the suffix, add the SUFFIX_LEN (2 or 6), and
- * subtract the length.)
+ * there will be at least -one- address cell (on 32-bit machines, 3 bytes
+ * and a length; on 64-bit machines, 7 bytes and a length) of name I will
+ * define a struct that represents only the last three (or seven)
+ * characters of the name, the length, and the link; the previous
+ * characters are "off the map" as far as C is concerned, but there is an
+ * easy way to address them. (To get to the beginning of a name, take the
+ * address of the suffix, add the SUFFIX_LEN (3 or 7), and subtract the
+ * length.)
  *
  * The only part of the code that seems a bit hackish is the calculation of
  * how many bytes to allocate for the name to put the link on a cell
@@ -96,14 +96,11 @@ addr  *ph;      /* ptr to next free byte in heap space */
 /*
  * On 64-bit machines ALIGN_SIZE is 8. On 32-bit machines, ALIGN_SIZE is 4.
  */
-#define SUFFIX_LEN  (ALIGN_SIZE - 2)
-#define DICT_HIDDEN 1
-#define DICT_CHAIN  2
+#define SUFFIX_LEN  (ALIGN_SIZE - 1)
 struct dict_name
 {
-    char suffix[SUFFIX_LEN];     /* last 2 or 6 characters of name */
-    unsigned char flags;
-    unsigned char length;        /* true length of name */
+    char suffix[SUFFIX_LEN];     /* last 3 or 7 characters of name */
+    unsigned char length;        /* 127 max; high bit = hidden */
     struct dict_name *link;      /* link to preceding dict_name */
 };
 
@@ -242,23 +239,28 @@ void mu_find()
     cell length = ST1;
     struct dict_entry *pde = (struct dict_entry *) TOP;
 
-    while ((pde = (struct dict_entry *)pde->n.link) != NULL)
+    if (length < 128)
     {
-        /* for speed, don't test anything else unless lengths match */
-        if (pde->n.length != length) continue;
+        /*
+         * Only search if length < 128. This prevents us from matching
+         * hidden entries!
+         */
 
-        /* skip word if any flags are set */
-        if (pde->n.flags) continue;
+        while ((pde = (struct dict_entry *)pde->n.link) != NULL)
+        {
+            /* for speed, don't test anything else unless lengths match */
+            if (pde->n.length != length) continue;
 
-        /* lengths match & flags zero - compare strings */
-        if ((*match)(pde->n.suffix + SUFFIX_LEN - length, token, length) != 0)
-            continue;
+            /* lengths match - compare strings */
+            if ((*match)(pde->n.suffix + SUFFIX_LEN - length, token, length) != 0)
+                continue;
 
-        /* found: drop token, push code address and true flag */
-        DROP(1);
-        ST1 = (cell)&pde->code;
-        TOP = -1;
-        return;
+            /* found: drop token, push code address and true flag */
+            DROP(1);
+            ST1 = (cell)&pde->code;
+            TOP = -1;
+            return;
+        }
     }
     /* not found: leave token, push false */
     TOP = 0;
@@ -268,12 +270,18 @@ void mu_find()
  * new_name creates a new dictionary (name) entry and returns it
  */
 static struct dict_name *new_name(
-    struct dict_name *link, char *name, int length, int flags)
+    struct dict_name *link, char *name, int length, int hidden)
 {
     struct dict_name *pnm;              /* the new name */
     char *pch = (char *)ph;
 
     assert((char *)ALIGNED(pch) == pch, "dict misaligned");
+
+    /*
+     * Since we're using the high bit of the length as a "hidden" or
+     * "deleted" flag, cap the length at 127.
+     */
+    length = MIN(length, 127);
 
     /* Allocate extra cells for name, if longer than SUFFIX_LEN */
     if (length > SUFFIX_LEN)
@@ -282,11 +290,12 @@ static struct dict_name *new_name(
         pch += cchExtra;
     }
 
+    /* pch now points to a suffix. Alias as pnm, and fill it out. */
     pnm = (struct dict_name *)pch;
+
     /* copy name string */
     memcpy(pnm->suffix + SUFFIX_LEN - length, name, length);
-    pnm->length = length;
-    pnm->flags = flags;
+    pnm->length = length + (hidden ? 128 : 0);
 
     /* set link pointer */
     pnm->link = link;
@@ -301,7 +310,7 @@ static struct dict_name *new_name(
     return pnm;
 }
 
-/* (name)  ( link a u flags - 'suffix) */
+/* (name)  ( link a u hidden - 'suffix) */
 void mu_name_()
 {
     struct dict_name *pnm = new_name(
@@ -376,8 +385,11 @@ static void allocate()
 void init_dict()
 {
     allocate();
-    forth_chain    = new_name( NULL, ".forth.", 7, DICT_CHAIN );
-    compiler_chain = new_name( NULL, ".compiler.", 10, DICT_CHAIN );
+
+    /* create "hidden" names */
+    forth_chain    = new_name( NULL, ".forth.", 7, 1);
+    compiler_chain = new_name( NULL, ".compiler.", 10, 1);
+
     init_chain(forth_chain, initial_forth);
     init_chain(compiler_chain, initial_compiler);
     current_chain = forth_chain;

@@ -125,3 +125,7 @@ void assert(int cond, const char *zmsg);
 /* kernel.c */
 int string_compare(const char *string1, size_t length1,
                    const char *string2, size_t length2);
+
+/* Utility macros */
+#define MIN(a,b)    (((a) < (b)) ? (a) : (b))
+

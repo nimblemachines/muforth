@@ -9,8 +9,6 @@
 
 #include "muforth.h"
 
-#define MIN(a,b)    (((a) < (b)) ? (a) : (b))
-
 void mu_nope() {}    /* very useful NO-OP */
 void mu_zzz()  {}    /* a convenient GDB breakpoint */
 

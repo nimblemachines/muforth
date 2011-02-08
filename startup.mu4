@@ -279,10 +279,10 @@ forth
 ( Dictionary structure words. Remember that link fields point to the last
   cell - suffix - of a name, which precedes the link field. Roughly, a
   dictionary entry is the following addr-sized things: suffix, link, code;
-  where suffix is the last 2 [32-bit] or 6 [64-bit] characters of the name,
-  followed by a one-byte flags field, and its byte-sized length.)
+  where suffix is the last 3 [32-bit] or 7 [64-bit] characters of the name,
+  followed by its byte-sized length.)
 
-: link>name    ( 'link - a u)  1- dup  c@  tuck - 1-  swap ;
+: link>name    ( 'link - a u)  1- dup  c@  tuck -  swap ;
 : suffix>link  ( 'suffix - 'link)  addr+ ;
 
 ( These words all assume we're calculating to or from a code field
@@ -866,15 +866,12 @@ being-defined -v  ( be verbose)
 
 ( !!!!-------------------- Add changes below this line -------------------!!!!)
 
-( Undefine a word by setting the DELETED flag - bit0.)
-: undef   current @  chain'  >link 2 - ( flags)  dup c@  1 or  swap c! ;
-
-( Don't show words that have any flags set. Currently flags are:
-  1 = DELETED; 2 = CHAIN HEAD)
+( Undefine a word by setting high bit of length.)
+: undef   current @  chain'  >link 1- ( len)  dup c@  128 or  swap c! ;
 
 : ?hidden  ( 'suffix - counted?)
-   suffix>link  dup  2 - c@  ( flags)
-   if  ( flags)  drop 0 ^  then   link>name  type space space  1 ;
+   suffix>link  dup  1- c@  ( len)  128 and
+   if  ( hidden)  drop 0 ^  then   link>name  type space space  1 ;
 
 ( Word listing. Putting this in as soon as possible. Needs `space'.)
 : words   0  current @  ( count 'suffix)
@@ -939,19 +936,18 @@ being-defined -v  ( be verbose)
   are structures that look just like a name entry in the dictionary - a
   name-suffix followed by a link field.
 
-  The name is hidden - currently by rewriting the first character with a
-  DEL - so that "normal" dictionary searches - and invocations of  word  -
-  won't see them.
+  The name is hidden - currently by setting the high bit of the name's
+  length - so that dictionary searches and word listings won't see it.
 
   The link field points to the name entry - suffix - of the last word
   defined on the chain.
 
-  new-head consumes a token, creates a new name entry structure, blots out
-  the first character with DEL, and returns it - addressed by its suffix.)
+  new-head consumes a token, creates a new hidden name entry structure and
+  returns it - addressed by its suffix.)
 
-( The 2 is a flags setting: it means that this is a DICT_CHAIN entry.)
+( The -1 means "hidden".)
 : new-head  ( link - 'suffix a u)
-   token 2dup 2push  2  (name)  2pop  ( 'suffix a u) ;
+   token 2dup 2push  -1  (name)  2pop  ( 'suffix a u) ;
 
 : chain   new-head  (constant) ;
 
@@ -959,7 +955,7 @@ being-defined -v  ( be verbose)
 : chained  current @  chain ;  ( chain to the current vocab)
 
 ( It's also possible to chain to an -arbitrary- vocab by simply doing this:
-  
+
   .arbitrary. chain .new-is-chained-to-arbitrary. )
 
 
