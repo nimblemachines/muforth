@@ -278,11 +278,11 @@ forth
  
 ( Dictionary structure words. Remember that link fields point to the last
   cell - suffix - of a name, which precedes the link field. Roughly, a
-  dictionary entry is the following cell-sized things: suffix, link, code;
-  where suffix is the last 3 characters of the name, followed by its
-  byte-sized length.)
+  dictionary entry is the following addr-sized things: suffix, link, code;
+  where suffix is the last 2 [32-bit] or 6 [64-bit] characters of the name,
+  followed by a one-byte flags field, and its byte-sized length.)
 
-: link>name    ( 'link - a u)  1- dup  c@  tuck -  swap ;
+: link>name    ( 'link - a u)  1- dup  c@  tuck - 1-  swap ;
 : suffix>link  ( 'suffix - 'link)  addr+ ;
 
 ( These words all assume we're calculating to or from a code field
@@ -866,19 +866,19 @@ being-defined -v  ( be verbose)
 
 ( !!!!-------------------- Add changes below this line -------------------!!!!)
 
-( Undefine a word by replacing the first character of its name with a DEL.)
-: undef   current @  chain'  >name  ( a u)  drop  127 swap c! ;
+( Undefine a word by setting the DELETED flag - bit0.)
+: undef   current @  chain'  >link 2 - ( flags)  dup c@  1 or  swap c! ;
 
-( Print word name, but skip deleted words, whose names start with a blank.)
+( Don't show words that have any flags set. Currently flags are:
+  1 = DELETED; 2 = CHAIN HEAD)
 
-: ?deleted  ( link)
-   link>name  ( a u)  over c@ 127 = if  ( deleted)  2drop ^ then
-   type space space ;
+: ?hidden  ( 'suffix - counted?)
+   suffix>link  dup  2 - c@  ( flags)
+   if  ( flags)  drop 0 ^  then   link>name  type space space  1 ;
 
 ( Word listing. Putting this in as soon as possible. Needs `space'.)
 : words   0  current @  ( count 'suffix)
-  begin  suffix>link a@  =while  1 u+
-            dup suffix>link  ?deleted  repeat
+  begin  suffix>link a@  =while  dup ?hidden  u+  repeat
   drop  cr  ." ("  . ." words)" ;
 
 ( XXX: should be primitive?)
@@ -949,10 +949,9 @@ being-defined -v  ( be verbose)
   new-head consumes a token, creates a new name entry structure, blots out
   the first character with DEL, and returns it - addressed by its suffix.)
 
+( The 2 is a flags setting: it means that this is a DICT_CHAIN entry.)
 : new-head  ( link - 'suffix a u)
-   token 2dup 2push  (name)  dup
-   suffix>link link>name drop  127 swap c!  ( rewrite first char with DEL)
-   2pop  ( 'suffix a u) ;
+   token 2dup 2push  2  (name)  2pop  ( 'suffix a u) ;
 
 : chain   new-head  (constant) ;
 

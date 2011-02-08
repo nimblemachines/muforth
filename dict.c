@@ -72,14 +72,14 @@ addr  *ph;      /* ptr to next free byte in heap space */
  * code, but how?
  *
  * My solution is a bit weird, but it works rather well. Since I know that
- * there will be at least -one- address cell (on 32-bit machines, 3 bytes
- * and a length; on 64-bit machines, 7 bytes and a length) of name I will
- * define a struct that represents only the last three (or seven)
- * characters of the name, the length, and the link; the previous
- * characters are "off the map" as far as C is concerned, but there is an
- * easy way to address them. (To get to the beginning of a name, take the
- * address of the last three characters - suffix - add three and subtract
- * the length.)
+ * there will be at least -one- address cell (on 32-bit machines, 2 bytes,
+ * flags, and a length; on 64-bit machines, 6 bytes, flags, and a length)
+ * of name I will define a struct that represents only the last two (or
+ * six) characters of the name, the flags, the length, and the link; the
+ * previous characters are "off the map" as far as C is concerned, but
+ * there is an easy way to address them. (To get to the beginning of a
+ * name, take the address of the suffix, add the SUFFIX_LEN (2 or 6), and
+ * subtract the length.)
  *
  * The only part of the code that seems a bit hackish is the calculation of
  * how many bytes to allocate for the name to put the link on a cell
@@ -94,15 +94,15 @@ addr  *ph;      /* ptr to next free byte in heap space */
  */
 
 /*
- * On 64-bit machines (where addr's are 8 bytes), the suffix is 7
- * characters, followed by a count byte. On 32-bit machines, suffixes are 3
- * characters, followed by a count byte.
+ * On 64-bit machines ALIGN_SIZE is 8. On 32-bit machines, ALIGN_SIZE is 4.
  */
-
-#define SUFFIX_LEN  (ALIGN_SIZE - 1)
+#define SUFFIX_LEN  (ALIGN_SIZE - 2)
+#define DICT_HIDDEN 1
+#define DICT_CHAIN  2
 struct dict_name
 {
-    char suffix[SUFFIX_LEN];     /* last 3 or 7 characters of name */
+    char suffix[SUFFIX_LEN];     /* last 2 or 6 characters of name */
+    unsigned char flags;
     unsigned char length;        /* true length of name */
     struct dict_name *link;      /* link to preceding dict_name */
 };
@@ -244,7 +244,13 @@ void mu_find()
 
     while ((pde = (struct dict_entry *)pde->n.link) != NULL)
     {
+        /* for speed, don't test anything else unless lengths match */
         if (pde->n.length != length) continue;
+
+        /* skip word if any flags are set */
+        if (pde->n.flags) continue;
+
+        /* lengths match & flags zero - compare strings */
         if ((*match)(pde->n.suffix + SUFFIX_LEN - length, token, length) != 0)
             continue;
 
@@ -262,7 +268,7 @@ void mu_find()
  * new_name creates a new dictionary (name) entry and returns it
  */
 static struct dict_name *new_name(
-    struct dict_name *link, char *name, int length)
+    struct dict_name *link, char *name, int length, int flags)
 {
     struct dict_name *pnm;              /* the new name */
     char *pch = (char *)ph;
@@ -280,6 +286,7 @@ static struct dict_name *new_name(
     /* copy name string */
     memcpy(pnm->suffix + SUFFIX_LEN - length, name, length);
     pnm->length = length;
+    pnm->flags = flags;
 
     /* set link pointer */
     pnm->link = link;
@@ -294,12 +301,12 @@ static struct dict_name *new_name(
     return pnm;
 }
 
-/* (name)  ( link a u - 'suffix) */
+/* (name)  ( link a u flags - 'suffix) */
 void mu_name_()
 {
     struct dict_name *pnm = new_name(
-        (struct dict_name *)ST2, (char *)ST1, (int)TOP);
-    DROP(2);
+        (struct dict_name *)ST3, (char *)ST2, (int)ST1, (int)TOP);
+    DROP(3);
     TOP = (cell)pnm;
 }
 
@@ -311,7 +318,7 @@ static void new_linked_name(
     struct dict_name *pnmHead, char *name, int length)
 {
     /* create new name & link onto front of chain */
-    pnmHead->link = new_name(pnmHead->link, name, length);
+    pnmHead->link = new_name(pnmHead->link, name, length, 0);
 }
 
 /*
@@ -369,8 +376,8 @@ static void allocate()
 void init_dict()
 {
     allocate();
-    forth_chain    = new_name( NULL, "\177.forth.", 8 );
-    compiler_chain = new_name( NULL, "\177.compiler.", 11 );
+    forth_chain    = new_name( NULL, ".forth.", 7, DICT_CHAIN );
+    compiler_chain = new_name( NULL, ".compiler.", 10, DICT_CHAIN );
     init_chain(forth_chain, initial_forth);
     init_chain(compiler_chain, initial_compiler);
     current_chain = forth_chain;
