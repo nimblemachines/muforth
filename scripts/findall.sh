@@ -7,7 +7,7 @@
 
 find . \( -name BUILDING -o -name NOTES -o -name README -o -name TODO \
        -o -name COPYRIGHT -o -name README.obsolete \
-       -o -name "*.in" -o -name "*.sh" \
+       -o -name "*.in" -o -name "*.sh" -o -name "*.sed" \
        -o -name "*.c" -o -name "*.h" -o -name "*.mu4" \) \
        -exec "$@" {} \;
 
