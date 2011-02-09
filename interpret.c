@@ -18,18 +18,25 @@
 #include <stdio.h>
 #endif
 
-struct imode        /* interpreter mode */
+/* interpreter mode */
+struct imode
 {
-    xtk eat;        /* consume one token */
-    xtk prompt;     /* display a mode-specific prompt */
+    xtk_cell eat;        /* consume one token */
+    xtk_cell prompt;     /* display a mode-specific prompt */
 };
 
-static char *start, *end;   /* input source text */
-static char *first;         /* goes from start to end */
+/* cell versions of char * pointers */
+typedef CELL_T(char *) char_ptr_cell;
 
-/* NOTE: since we'll effectively be using a@ and a! to access it, lineno
- * has to have the _size_ of a pointer. */
-static intptr_t lineno = 1;      /* line number - incremented for each newline */
+static char_ptr_cell start;    /* input source text */
+static char_ptr_cell end;
+static char_ptr_cell first;    /* goes from start to end */
+
+/* cell version of int type */
+typedef CELL_T(intptr_t) intptr_cell;
+
+/* line number - incremented for each newline */
+static intptr_cell lineno = CELL(1);
 
 int parsed_lineno;          /* captured with first character of token */
 struct string parsed;       /* for errors */
@@ -64,11 +71,11 @@ void mu_end()
 static void mu_return_token(char *last, int trailing)
 {
     /* Get address and length of the token */
-    parsed.data = first;
-    parsed.length = last - first;
+    parsed.data = _(first);
+    parsed.length = last - _(first);
 
     /* Account for characters processed, return token */
-    first = last + trailing;
+    _(first) = last + trailing;
 
     DROP(-2);
     ST1 = (cell) parsed.data;
@@ -83,10 +90,10 @@ static void mu_return_token(char *last, int trailing)
 /* Skip leading whitespace */
 static void skip()
 {
-    while (first < end && isspace(*first))
+    while (_(first) < _(end) && isspace(*_(first)))
     {
-        if (*first == '\n') lineno++;
-        first++;
+        if (*_(first) == '\n') _(lineno)++;
+        _(first)++;
     }
 }
 
@@ -99,11 +106,11 @@ static void mu_scan(int delim)
     char *last;
 
     /* capture lineno that token begins on */
-    parsed_lineno = lineno;
+    parsed_lineno = _(lineno);
 
-    for (last = first; last < end; last++)
+    for (last = _(first); last < _(end); last++)
     {
-        if (*last == '\n') lineno++;
+        if (*last == '\n') _(lineno)++;
         if (delim == *last
             || (delim == ' ' && isspace(*last)))
         {
@@ -178,7 +185,7 @@ static void muboot_compile_token()
     mu_find();
     if (POP)
     {
-        mu_acomma();
+        mu_comma();
         return;
     }
     mu_complain();
@@ -193,15 +200,19 @@ static void muboot_compile_token()
 CODE(muboot_interpret_token)
 CODE(muboot_compile_token)
 
-static struct imode forth_interpreter  = { XTK(muboot_interpret_token), XTK(mu_nope) };
-static struct imode forth_compiler     = { XTK(muboot_compile_token),   XTK(mu_nope) };
+static struct imode forth_interpreter  =
+    { CELL(XTK(muboot_interpret_token)), CELL(XTK(mu_nope)) };
 
-static struct imode *state = &forth_interpreter;
+static struct imode forth_compiler =
+    { CELL(XTK(muboot_compile_token)),   CELL(XTK(mu_nope)) };
+
+static CELL_T(struct imode *) state = CELL(&forth_interpreter);
 
 
 void mu_consume()
 {
-    execute_xtk(state->eat);      /* call the current consume function */
+    /* call the current consume function */
+    execute_xtk(_(_(state)->eat));  
 }
 
 void mu_push_state()
@@ -211,12 +222,12 @@ void mu_push_state()
 
 void mu_compiler_lbracket()
 {
-    state = &forth_interpreter;
+    _(state) = &forth_interpreter;
 }
 
 void mu_minus_rbracket()
 {
-    state = &forth_compiler;
+    _(state) = &forth_compiler;
 }
 
 void mu_push_parsed()
@@ -225,6 +236,7 @@ void mu_push_parsed()
     PUSH(parsed.length);
 }
 
+#include <stdio.h>
 void mu_qstack()
 {
     if (SP > S0)
@@ -286,13 +298,13 @@ void muboot_load_file()    /* c-string-name */
     fd = TOP;
     mu_read_file();
 
-    start = (char *)ST1;
-    end   = (char *)ST1 + TOP;
+    _(start) = (char *)ST1;
+    _(end)   = (char *)ST1 + TOP;
     DROP(2);
 
     /* wait to reset these until just before we evaluate the new file */
-    lineno = 1;
-    first = start;
+    _(lineno) = 1;
+    _(first) = _(start);
 
     muboot_interpret();
 

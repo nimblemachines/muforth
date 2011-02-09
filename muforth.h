@@ -11,19 +11,38 @@
 
 #include "env.h"
 
+/* Support for putting 32-bit values into cell (64-bit) sized containers -
+ * for support of 64-bit muFORTH on 32-bit platforms.
+ */
+#ifdef ADDR_32
+#ifdef HOST_TESTS_LITTLE_ENDIAN
+/* LE 32 */
+#define CELL_T(type)    struct { type value; uintptr_t padding; }
+#define CELL(value)     { value, 0 }
+#else
+/* BE 32 */
+#define CELL_T(type)    struct { uintptr_t padding; type value; }
+#define CELL(value)     { 0, value }
+#endif
+#define _(cell)         (cell).value
+#define _STAR(pcell)    (pcell)->value
+#else
+
+/* These are no-ops for 64-bit. */
+#define CELL_T(type)    type
+#define CELL(value)     (value)
+#define _(cell)         (cell)
+#define _STAR(pcell)    *(pcell)
+
+#endif
+
 /* data cells */
 typedef  int64_t  cell;
 typedef uint64_t ucell;
-typedef struct {
-     cell hi;       /* Forth puts high cell at lower address (top of stack) */
-    ucell lo;
-} dcell;
-
-/* address cells */
-typedef void *addr;
 
 /* dictionary size */
-#define DICT_CELLS     (1024 * 1024)
+/* Now that cells are 8 bytes (64-bit), allocate 512k cells - 4MB of heap. */
+#define DICT_CELLS     (512 * 1024)
 
 /* data stack */
 #define STACK_SIZE  4096
@@ -43,14 +62,16 @@ extern cell stack[];
 #define PUSH(v)  (*--SP = (cell)(v))
 #define POP      (*SP++)
 
-typedef void (*pw)(void);    /* ptr to word's machine code */
-typedef pw    *ppw;          /* ptr to ptr to word's code */
-typedef ppw    xtk;          /* "execution token" - ptr to ptr to code */
+/* pointer and cell types */
+typedef void (*code)(void);         /* POINTER to word's machine code */
+typedef CELL_T(code)  code_cell;    /* CELL wrapper of code */
+typedef code_cell    *xtk;          /* POINTER to code; aka "execution token" */
+typedef CELL_T(xtk)   xtk_cell;     /* CELL wrapper of xtk */
 
-/* from mip, with changes */
-extern cell  *SP;     /* parameter stack pointer */
-extern xtk   *IP;     /* instruction pointer */
-extern xtk    W;      /* on entry, points to the current Forth word */
+/* Forth VM execution registers */
+extern cell      *SP;   /* parameter stack pointer */
+extern xtk_cell  *IP;   /* instruction pointer */
+extern xtk        W;    /* on entry, points to the current Forth word */
 
 /* return stack */
 /* NOTE: Even on 32-bit platforms the R stack is 64 bits wide! This makes
@@ -65,22 +86,26 @@ extern ucell  *RP;    /* return stack pointer */
  * we have to search for them; so we simply define them. They are
  * conventionally named "p_<mu_name>".
  */
-#define CODE(w)  pw p_ ## w = &(w);     /* declare a code field for a word */
-#define XTK(w)   (&p_ ## w)  /* make an execution token from a word's name */
 
-#define EXECUTE   execute_xtk((xtk)POP)
-#define CALL(x)   (W = (xtk)(x), (**W)())
-#define NEXT      CALL(*IP++)
-#define BRANCH    (IP = *(xtk **)IP)
+/* declare a code field for a word */
+#define CODE(w)  code_cell p_ ## w = CELL(&(w));
+
+/* make an execution token from a word's name */
+#define XTK(w)   (&p_ ## w)
+
+#define EXECUTE   execute_xtk(_STAR(((xtk_cell *)(SP++))))
+#define CALL(x)   (W = (x), (*_STAR(W))())
+#define NEXT      CALL(_STAR(IP++))
+#define BRANCH    (IP = (xtk_cell *)_STAR(IP))
 
 #define RDROP(n)  (RP += (n))
 #define RPUSH(n)  (*--RP = (ucell)(n))
 #define RPOP      (*RP++)
 
 #define NEST      RPUSH(IP)
-#define UNNEST    (IP = (xtk *)RPOP)
+#define UNNEST    (IP = (xtk_cell *)RPOP)
 
-#define ALIGN_SIZE  sizeof(addr)
+#define ALIGN_SIZE  sizeof(cell)
 #define ALIGNED(x)  (((intptr_t)(x) + ALIGN_SIZE - 1) & -ALIGN_SIZE)
 
 /*
@@ -97,15 +122,15 @@ struct string
 
 struct counted_string
 {
-    size_t length;  /* cell-sized length, unlike older Forths */
+    cell length;    /* cell-sized length, unlike older Forths */
     char data[0];
 };
 
 extern int parsed_lineno;       /* captured with first character of token */
 extern struct string parsed;    /* for errors */
 
-extern addr  *ph0;     /* pointer to start of heap space */
-extern addr  *ph;      /* ptr to next free byte in heap space */
+extern cell  *ph0;     /* pointer to start of heap space */
+extern cell  *ph;      /* ptr to next free byte in heap space */
 
 /* declare common functions */
 

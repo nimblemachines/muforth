@@ -16,8 +16,8 @@ cell *SP;
 ucell rstack[STACK_SIZE];
 ucell *RP;
 
-xtk   *IP;     /* instruction pointer */
-xtk    W;      /* on entry, points to the current Forth word */
+xtk_cell  *IP;  /* instruction pointer */
+xtk        W;   /* on entry, points to the current Forth word */
 
 static void init_stacks()
 {
@@ -28,10 +28,10 @@ static void init_stacks()
 void mu_push_build_time()
 {
 #ifdef WITH_TIME
-    PUSH(build_time);
+    PUSH(BUILD_TIME);
 #else
-    PUSH(build_date);
-    PUSH(strlen(build_date));
+    PUSH(BUILD_DATE);
+    PUSH(strlen(BUILD_DATE));
 #endif
 }
 
@@ -54,4 +54,3 @@ void muforth_start()
     muboot_load_file();
     mu_start_up();
 }
-

@@ -16,12 +16,10 @@
  */
 
 /*
- * Dictionary is kept addr-aligned - _not_ cell-aligned! On 32-bit machines
- * this means that data values (64 bits) may not be aligned. I don't think
- * this is a problem.
+ * Dictionary is kept cell-aligned.
  */
-addr  *ph0;     /* pointer to start of heap space */
-addr  *ph;      /* ptr to next free byte in heap space */
+cell  *ph0;     /* pointer to start of heap space */
+cell  *ph;      /* ptr to next free byte in heap space */
 
 /*
  * A struct dict_name represents what Forth folks often call a "head" - a
@@ -97,11 +95,13 @@ addr  *ph;      /* ptr to next free byte in heap space */
  * On 64-bit machines ALIGN_SIZE is 8. On 32-bit machines, ALIGN_SIZE is 4.
  */
 #define SUFFIX_LEN  (ALIGN_SIZE - 1)
+typedef CELL_T(struct dict_name *) link_cell;
+
 struct dict_name
 {
-    char suffix[SUFFIX_LEN];     /* last 3 or 7 characters of name */
+    char suffix[SUFFIX_LEN];     /* last 7 characters of name */
     unsigned char length;        /* 127 max; high bit = hidden */
-    struct dict_name *link;      /* link to preceding dict_name */
+    link_cell link;              /* link to preceding dict_name */
 };
 
 /*
@@ -111,7 +111,7 @@ struct dict_name
 struct dict_entry
 {
     struct dict_name n;
-    pw code;
+    code_cell code;
 };
 
 /*
@@ -130,13 +130,13 @@ static struct dict_name *current_chain;
 
 /* hook called when a new name is created */
 CODE(mu_nope)
-static xtk xtk_new_hook = XTK(mu_nope);
+static xtk_cell xtk_new_hook = CELL(XTK(mu_nope));
 
 /* bogus C-style dictionary init */
 struct inm          /* "initial name" */
 {
     char *name;
-    pw   code;
+    code  code;
 };
 
 struct inm initial_forth[] = {
@@ -164,19 +164,7 @@ void mu_here()          /* push current _value_ of heap pointer */
  * , (comma) copies the cell on the top of the stack into the dictionary,
  * and advances the heap pointer. Note that the ph is always kept aligned!
  */
-void mu_comma()
-{
-    cell *pcell = (cell *)ph;
-    *pcell++ = POP;
-    ph = (addr *)pcell;
-}
-
-/*
- * a, (a-comma) copies the address on the top of the stack into the
- * dictionary, and advances the heap pointer. Note that this might leave
- * the dictionary unaligned w.r.t cell-size!
- */
-void mu_acomma() { *ph++ = (addr)POP; }
+void mu_comma() { *ph++ = (cell)POP; }
 
 /*
  * allot ( n)
@@ -184,7 +172,7 @@ void mu_acomma() { *ph++ = (addr)POP; }
  * Takes a count of bytes, rounds it up to a cell boundary, and adds it to
  * the heap pointer. Again, this keeps ph always aligned.
  */
-void mu_allot() { ph += ALIGNED(POP) / sizeof(addr); }
+void mu_allot() { ph += ALIGNED(POP) / sizeof(cell); }
 
 /* Align TOP to cell boundary */
 void mu_aligned() { TOP = ALIGNED(TOP); }
@@ -246,7 +234,7 @@ void mu_find()
          * hidden entries!
          */
 
-        while ((pde = (struct dict_entry *)pde->n.link) != NULL)
+        while ((pde = (struct dict_entry *)_(pde->n.link)) != NULL)
         {
             /* for speed, don't test anything else unless lengths match */
             if (pde->n.length != length) continue;
@@ -298,10 +286,10 @@ static struct dict_name *new_name(
     pnm->length = length + (hidden ? 128 : 0);
 
     /* set link pointer */
-    pnm->link = link;
+    _(pnm->link) = link;
 
     /* Allot entry */
-    ph = (addr *)(pnm + 1);
+    ph = (cell *)(pnm + 1);
 
 #if defined(BEING_DEFINED)
     fprintf(stderr, "%p %.*s\n", pnm, length, name);
@@ -327,7 +315,7 @@ static void new_linked_name(
     struct dict_name *pnmHead, char *name, int length)
 {
     /* create new name & link onto front of chain */
-    pnmHead->link = new_name(pnmHead->link, name, length, 0);
+    _(pnmHead->link) = new_name(_(pnmHead->link), name, length, 0);
 }
 
 /*
@@ -342,7 +330,7 @@ static void mu_new_name()
 
 void mu_new_()
 {
-    execute_xtk(xtk_new_hook);
+    execute_xtk(_(xtk_new_hook));
     mu_new_name();
 }
 
@@ -367,13 +355,13 @@ static void init_chain(struct dict_name *pchain, struct inm *pinm)
     for (; pinm->name != NULL; pinm++)
     {
         new_linked_name(pchain, pinm->name, strlen(pinm->name));
-        *ph++ = (addr)pinm->code;   /* set code pointer */
+        *ph++ = (cell)pinm->code;   /* set code pointer */
     }
 }
 
 static void allocate()
 {
-    ph0 = (addr *) calloc(DICT_CELLS, sizeof(addr));
+    ph0 = (cell *) calloc(DICT_CELLS, sizeof(cell));
 
     if (ph0 == NULL)
         die("couldn't allocate memory");

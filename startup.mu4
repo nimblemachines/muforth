@@ -4,14 +4,13 @@ new :  <:> -]   new <:> -]  ^ [
 : forth        .forth. definitions  ^ [
 : compiler  .compiler. definitions  ^ [
 
-: aliteral  (alit) (alit)  a,  a,  ^ [
-: literal   (alit)  (lit)  a,  ,   ^ [
+: literal   (lit)  (lit)  ,  ,   ^ [
 
 : ]   literal -]  ^ [
 
 compiler
-: ;   [  token ^    .forth. find huh?  aliteral  -]  a,
-      [  token [ .compiler. find huh?        a,  -]  ^ [
+: ;   [  token ^    .forth. find huh?  ]  ,
+      [  token [ .compiler. find huh?     ,  -]  ^ [
 forth
 
 : char   token  drop  c@ ;
@@ -97,7 +96,7 @@ forth
 
 ( Tick)
 : chain'  token'  huh?  ;
-: \chain  chain'  a,  ;
+: \chain  chain'  ,  ;
 
 ( 28-apr-2000. Do we ever -really- want to search anything other than .forth.?)
 : '   .forth.  chain'  ;
@@ -105,8 +104,8 @@ forth
 
 compiler
 ( XXX: should this and ' do the same thing?)
-( : [']  .forth. chain' aliteral ;)
-: [']  ' aliteral ;
+( : [']  .forth. chain' literal ;)
+: [']  ' literal ;
 
 ( XXX: is this useful? Here? Maybe in a target compiler...)
 : \f     .forth. \chain ;
@@ -139,20 +138,10 @@ forth
 : cell+  [ cell ] + ;
 : cell-  [ cell negate ] + ;
 
-( Addrs store addresses. These are architecture-specific.)
-: addrs  ADDR-SHIFT << ;
-: addr/  ADDR-SHIFT >> ;  ( signed)
-: addr   [ 1 addrs ] ;
-: addr+  [ addr ] + ;
-: addr-  [ addr negate ] + ;
-
 : bl  [ 2 2* 2* 2* 2* ] ;  ( space character)
 
 : @+  ( a - n a+)  dup @  swap cell+ ;
 : !+  ( n a - a+)  tuck !  cell+ ;
-
-: a@+  ( a - n a+)  dup a@  swap addr+ ;
-: a!+  ( n a - a+)  tuck a!  addr+ ;
 
 ( Double-length words.)
 : 2@  @+ @  swap ;  ( cell at lower address to TOP)
@@ -177,12 +166,12 @@ forth
   Since no UNNEST needs to be compiled, use of [ rather than ; to end the
   word is common.)
 
-: jump  ( which)  addrs pop + a@ execute ;
+: jump  ( which)  cells pop + @execute ;
 
 : ctrl   char  [ bl 2* ( 64) ]  xor ;  ( how you get ^? = 127.)
 compiler
-: char   \f char aliteral ;  ( aliteral is more compact)
-: ctrl   \f ctrl aliteral ;
+: char   \f char literal ;
+: ctrl   \f ctrl literal ;
 forth
 
 ( A nice way to do full-line comments with no trailing delimiter.)
@@ -197,15 +186,15 @@ forth
 
 
 ( Mark a branch source for later fixup.)
-: >mark  ( - src)  here  0 a, ;
+: >mark  ( - src)  here  0 , ;
 
 ( Resolve a forward or backward jump, from src to dest.)
 ( When using absolute branch addresses, this is easy: just store dest at src.)
-: <resolve  ( dest src)  a! ;
+: <resolve  ( dest src)  ! ;
 : >resolve  ( src dest)  swap <resolve ;
 
 ( Going back to fig-FORTH!)
-: compile   pop a@+ push  a, ;
+: compile   pop @+ push  , ;
 
 compiler
 : =if   ( - src)        compile (=0branch)  >mark ;
@@ -242,8 +231,8 @@ compiler
   the token is on the forth chain, postpone its compilation until the word
   that we're compiling executes. Got that? ;-)
 
-: \   .compiler. token'  if a, ^ then
-         .forth. find  huh?  aliteral  ['] a,  a, ;
+: \   .compiler. token'  if , ^ then
+         .forth. find  huh?  literal  ['] ,  , ;
 
 forth
 
@@ -278,23 +267,23 @@ forth
  
 ( Dictionary structure words. Remember that link fields point to the last
   cell - suffix - of a name, which precedes the link field. Roughly, a
-  dictionary entry is the following addr-sized things: suffix, link, code;
+  dictionary entry is the following cell-sized things: suffix, link, code;
   where suffix is the last 3 [32-bit] or 7 [64-bit] characters of the name,
   followed by its byte-sized length.)
 
 : link>name    ( 'link - a u)  1- dup  c@  tuck -  swap ;
-: suffix>link  ( 'suffix - 'link)  addr+ ;
+: suffix>link  ( 'suffix - 'link)  cell+ ;
 
 ( These words all assume we're calculating to or from a code field
   address.)
 
-: >link   ( 'code - 'link)  addr- ;
-: link>   ( 'link - 'code)  addr+ ;
+: >link   ( 'code - 'link)  cell- ;
+: link>   ( 'link - 'code)  cell+ ;
 : >name   ( 'code - a u)   >link  link>name  ;
-: >ip     ( 'code - 'does-ip)  addr+ ;  ( addr containing does> ip pointer)
-: ip>     ( 'does-ip - 'code)  addr- ;  ( addr containing does> ip pointer)
-: >body   ( 'code - 'body)  >ip  addr+ ;
-: body>   ( 'body - 'code)       addr- ip> ;
+: >ip     ( 'code - 'does-ip)  cell+ ;  ( cell containing does> ip pointer)
+: ip>     ( 'does-ip - 'code)  cell- ;  ( cell containing does> ip pointer)
+: >body   ( 'code - 'body)  >ip  cell+ ;
+: body>   ( 'body - 'code)       cell- ip> ;
 
 
 ( create and does>. Everything old is new again. ;-)
@@ -341,7 +330,7 @@ forth
 ( does> fixes up the does ip of the last <does> word to point to the code
   after "does>" in the caller.)
 
-: does>  pop  last @  a! ;
+: does>  pop  last @  ! ;
 
 
 ( The underlying engine for all "create/does>" words. It allocates no data
@@ -353,7 +342,7 @@ forth
 
 : (create)   ( a u)
    (new) <does>
-   here last !  0 a, ( placeholder for does ip)
+   here last !  0 , ( placeholder for does ip)
    does> ;
 
 ( Everything is defined in terms of `create'.)
@@ -434,8 +423,8 @@ variable undeferred  ' nope undeferred !
 : is    ' >body !  ;   ( as in `now host-interpret is interpret')
 
 compiler
-: now  '        aliteral ;
-: is   ' >body  aliteral  \ ! ;
+: now  '        literal ;
+: is   ' >body  literal  \ ! ;
 forth
 
 
@@ -475,9 +464,9 @@ variable fp    ( the "top" - most recently pushed - frame)
   caller, skipping the following cfa. link is called by a word that builds
   a new stack frame.)
 
-: link     r> dup a@  >r        ( fetch following cfa & push to r)
+: link     r> dup @  >r         ( fetch following cfa & push to r)
            fp @ >r  rp@ fp !    ( link this frame to previous)
-           addr+ >r             ( skip fetched cfa) ;
+           cell+ >r             ( skip fetched cfa) ;
 
 ( unlink undoes what link did. It unlinks the frame from the list rooted at
   fp, and then runs the cleanup routine, which will do whatever is
@@ -532,11 +521,11 @@ create remove  -]  unlink ;   ( remove pushes IP when executed!)
 
 : on-exit  ( value)
    r> ( ra)
-   dup a@  >r      ( fetch following cfa & push to r)
+   dup @  >r      ( fetch following cfa & push to r)
    swap >r         ( push value)
    link cleanup    ( push code to undo whatever needs undoing)
    remove >r       ( normal return - unlink and cleanup)
-   addr+ >r ( ra)  ( skip fetched cfa) ;
+   cell+ >r ( ra)  ( skip fetched cfa) ;
 
 
 -- -----------------------------------------------------------------------
@@ -688,7 +677,7 @@ decimal
 ( Let's define a word to create new modes. This is mostly useful for
   meta-compilers.)
 
-: mode   create  ( prompt token-consumer)  a,  a,  does>  state ! ;
+: mode   create  ( prompt token-consumer)  ,  ,  does>  state ! ;
 
 
 ( To set the compiler consumer, we need a sneaky word to get the value of
@@ -708,7 +697,7 @@ forth
 
 -:   ( compile one token)
    .compiler. find  if  execute ^  then
-      .forth. find  if  a,      ^  then  number literal ;
+      .forth. find  if  ,       ^  then  number literal ;
                                       -]  'compiler-mode [  !
 
 
@@ -813,16 +802,16 @@ variable hld
   This does _not_ allot space in the dictionary!)
 
 : scrabble  ( a u - z")
-   here addr+ push ( z")
-   dup here ! ( prefix addr-sized length)
+   here cell+ push ( z")
+   dup here ! ( prefix cell-sized length)
    tuck ( u a u)  r@ swap cmove  ( copy string)
    r@ + 0 swap c! ( zero terminator)  pop ;
 
 ( all compiled strings have a zero terminator.)
-: count  ( z" - a u)  dup  addr- a@ ;
-: (")    ( - a u)  pop  addr+ count ( a u)  2dup + 1+ aligned push ;
+: count  ( z" - a u)  dup  cell- @ ;
+: (")    ( - a u)  pop  cell+ count ( a u)  2dup + 1+ aligned push ;
 
-: _string      ( - z")  scrabble  count addr+ 1+  allot ;
+: _string      ( - z")  scrabble  count cell+ 1+  allot ;
 : string,   ( ch - z")  parse  _string ;
 : token,       ( - z")  token  _string ;
 
@@ -875,7 +864,7 @@ being-defined -v  ( be verbose)
 
 ( Word listing. Putting this in as soon as possible. Needs `space'.)
 : words   0  current @  ( count 'suffix)
-  begin  suffix>link a@  =while  dup ?hidden  u+  repeat
+  begin  suffix>link @  =while  dup ?hidden  u+  repeat
   drop  cr  ." ("  . ." words)" ;
 
 ( XXX: should be primitive?)
@@ -1078,10 +1067,10 @@ forth
 
 
 ( show ` Ok' then sub-prompt)
-: prompt   ."  Ok"   state @  addr+  @execute ;
+: prompt   ."  Ok"   state @  cell+  @execute ;
 
 ( set prompt in compile mode)
--: ."  (compiling)"  'compiler-mode  ;  addr+ !  ( bwa ha ha!)
+-: ."  (compiling)"  'compiler-mode  ;  cell+ !  ( bwa ha ha!)
 
 ( Forth re-implementation of C interpret; semantics are exactly the same!)
 : interpret
@@ -1143,7 +1132,7 @@ variable zloading    ( C-string name of file being loaded)
 
 : banner
 ( Print banner.)
- ." muFORTH/ITC "
+ ." muFORTH/ITC 64-bit "
  .ifdef clock
     build-time ( seconds since epoch)  time"
  .else

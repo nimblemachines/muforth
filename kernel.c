@@ -33,55 +33,9 @@ void mu_cfetch()  { TOP = *(uint8_t *)TOP; }
 void mu_cstore()  { *(uint8_t *)TOP = ST1; DROP(2); }
 
 /* fetch and store data values (64 bit) */
-/* NOTE: these are not visible to Forth! They are only callable via the
- * "smart" versions, defined below. */
-static void mu_fetch_64()       { TOP =  *(cell *)TOP; }
-static void mu_store_64()       { *(cell *)TOP  = ST1; DROP(2); }
-static void mu_plus_store_64()  { *(cell *)TOP += ST1; DROP(2); }
-
-/* fetch and store address (pointer) values (arch-specific) */
-void mu_afetch()       { TOP =  (cell)*(addr *)TOP; }
-void mu_astore()       {     *(addr *)TOP  =     (addr)ST1; DROP(2); }
-void mu_aplus_store()  { *(intptr_t *)TOP += (intptr_t)ST1; DROP(2); }
-
-/* 
- * Smart fetch and store: if address (TOP) is in the Forth heap (>= ph0)
- * then fetch or store a _data_ value; otherwise, an address value. This
- * will allow us to access C variables without having to be as careful
- * about it.
- *
- * NOTE: it is still necessary to sometimes use a@ and a! store, however.
- * Any access to a list of xtk's (eg when building control structures) must
- * use a@ and a!.
- */
-
-void mu_fetch()
-{
-    if ((uintptr_t)TOP >= (uintptr_t)ph0)
-        mu_fetch_64();
-    else
-        mu_afetch();
-}
-
-void mu_store()
-{
-    if ((uintptr_t)TOP >= (uintptr_t)ph0)
-        mu_store_64();
-    else
-        mu_astore();
-}
-
-void mu_plus_store()
-{
-    if ((uintptr_t)TOP >= (uintptr_t)ph0)
-        mu_plus_store_64();
-    else
-        mu_aplus_store();
-}
-
-
-/* export ADDR_SHIFT to forth code */
-void mu_ADDR_SHIFT() { PUSH(ADDR_SHIFT); }
+void mu_fetch()       { TOP =  *(cell *)TOP; }
+void mu_store()       { *(cell *)TOP  = ST1; DROP(2); }
+void mu_plus_store()  { *(cell *)TOP += ST1; DROP(2); }
 
 void mu_dup()    { cell t = TOP; PUSH(t); }
 void mu_nip()    { cell t = POP; TOP = t; }

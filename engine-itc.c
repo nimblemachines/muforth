@@ -58,36 +58,25 @@ void execute_xtk(xtk x)
 static void mu_do_colon()
 {
     NEST;                   /* entering a new word; push IP */
-    IP = (xtk *)&W[1];      /* new IP is address of parameter field */
+    IP = (xtk_cell *)&W[1]; /* new IP is address of parameter field */
 }
 
 /* The basis of create/does>. */
 static void mu_do_does()
 {
     NEST;                   /* entering a new word; push IP */
-    IP = (xtk *)W[1];       /* new IP is stored in the parameter field */
+    IP = (xtk_cell *)_(W[1]);  /* new IP is stored in the parameter field */
     PUSH(&W[2]);            /* push the address of the word's body */
 }
 
-void mu_set_colon_code() { *ph++ = (addr)&mu_do_colon; }
-void mu_set_does_code()  { *ph++ = (addr)&mu_do_does; }
+void mu_set_colon_code() { *ph++ = (cell)&mu_do_colon; }
+void mu_set_does_code()  { *ph++ = (cell)&mu_do_does; }
 
 /* Normal exit */
 void mu_exit()      { UNNEST; }
 
 /* Push an inline literal */
-void mu_alit_()  { PUSH(*IP++); }
-#ifdef ADDR_64
-void mu_lit_()   { mu_alit_(); }
-#else
-void mu_lit_()
-{
-    cell *plit = (cell *)IP;
-
-    PUSH(*plit++);              /* fetch literal and push it */
-    IP = (xtk *)plit;
-}
-#endif
+void mu_lit_()  { PUSH(*(cell *)IP++); }
 
 
 /*
@@ -148,7 +137,7 @@ void mu_next_()
 
 void mu_do_()   /* (do)  ( limit start) */
 {
-    RPUSH(*IP++);       /* push following branch address for (leave) */
+    RPUSH(_STAR(IP++)); /* push following branch address for (leave) */
     RPUSH(ST1);         /* limit */
     RPUSH(TOP - ST1);   /* index = start - limit */
     DROP(2);
@@ -181,8 +170,8 @@ void mu_plus_loop_()    /* (+loop)  ( incr) */
 /* leave the do loop early */
 void mu_leave()
 {
-    IP = (xtk *)RP[2];  /* jump to address saved on R stack */
-    RP += 3;            /* pop "do" context */
+    IP = (xtk_cell *)RP[2];     /* jump to address saved on R stack */
+    RP += 3;                    /* pop "do" context */
 }
 
 /* conditionally leave */
