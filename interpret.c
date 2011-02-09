@@ -236,7 +236,9 @@ void mu_push_parsed()
     PUSH(parsed.length);
 }
 
-#include <stdio.h>
+static xtk xtk_show_stack = XTK(mu_nope);
+void mu_push_tick_show_stack()  { PUSH(&xtk_show_stack); }
+
 void mu_qstack()
 {
     if (SP > S0)
@@ -248,18 +250,17 @@ void mu_qstack()
     {
         return abort_zmsg("too many items on the stack");
     }
+
+    /* Call Forth code to print stack, maybe. */
+    execute_xtk(xtk_show_stack);
+
 #ifdef DEBUG_STACK
     {
-        /* print top few stack items */
-        /*
-        printf("IP             .  SP             .  RP             .\n");
-        printf("%16lx  %16lx  %16lx\n", (intptr_t)IP, (intptr_t)SP, (intptr_t)RP);
-        */
         int i;
-        fprintf(stderr, "S [");
+        fprintf(stderr, "  --");
         for (i = 0; i < 4; i++)
-            fprintf(stderr, "  %16llx", (ucell)SP[i]);
-        fprintf(stderr, "  ]\n");
+            fprintf(stderr, "  %16llx", (ucell)SP[3-i]);
+        fprintf(stderr, "\n");
         fflush(stderr);
     }
 #endif
