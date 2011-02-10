@@ -48,7 +48,7 @@ static void convert_command_line(int argc, char *argv[])
 
 void mu_push_command_line()
 {
-    PUSH(&pcmd_line->data);
+    PUSH_ADDR(&pcmd_line->data);
 }
 
 void mu_bye()

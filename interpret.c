@@ -44,7 +44,7 @@ struct string parsed;       /* for errors */
 /* Push lineno variable */
 void mu_push_line()
 {
-    PUSH(&lineno);
+    PUSH_ADDR(&lineno);
 }
 
 /* Push captured line number */
@@ -53,19 +53,19 @@ void mu_at_line()
     PUSH(parsed_lineno);
 }
 
-void mu_first()
+void mu_push_first()
 {
-    PUSH(&first);
+    PUSH_ADDR(&first);
 }
 
-void mu_start()
+void mu_push_start()
 {
-    PUSH(&start);
+    PUSH_ADDR(&start);
 }
 
-void mu_end()
+void mu_push_end()
 {
-    PUSH(&end);
+    PUSH_ADDR(&end);
 }
 
 static void mu_return_token(char *last, int trailing)
@@ -78,7 +78,7 @@ static void mu_return_token(char *last, int trailing)
     _(first) = last + trailing;
 
     DROP(-2);
-    ST1 = (cell) parsed.data;
+    ST1 = (addr) parsed.data;
     TOP = parsed.length;
 
 #ifdef DEBUG_TOKEN
@@ -217,7 +217,7 @@ void mu_consume()
 
 void mu_push_state()
 {
-    PUSH(&state);
+    PUSH_ADDR(&state);
 }
 
 void mu_compiler_lbracket()
@@ -232,12 +232,12 @@ void mu_minus_rbracket()
 
 void mu_push_parsed()
 {
-    PUSH((cell) parsed.data);
+    PUSH((addr) parsed.data);
     PUSH(parsed.length);
 }
 
 static xtk xtk_show_stack = XTK(mu_nope);
-void mu_push_tick_show_stack()  { PUSH(&xtk_show_stack); }
+void mu_push_tick_show_stack()  { PUSH_ADDR(&xtk_show_stack); }
 
 void mu_qstack()
 {

@@ -152,12 +152,12 @@ struct inm initial_compiler[] = {
 void mu_push_h0()       /* push address of start of dictionary */
 
 {
-    PUSH(ph0);
+    PUSH_ADDR(ph0);
 }
 
 void mu_here()          /* push current _value_ of heap pointer */
 {
-    PUSH(ph);
+    PUSH_ADDR(ph);
 }
 
 /*
@@ -184,7 +184,7 @@ void mu_aligned() { TOP = ALIGNED(TOP); }
  */
 void mu_push_current()
 {
-    PUSH(&current_chain);
+    PUSH_ADDR(&current_chain);
 }
 
 /*
@@ -193,12 +193,12 @@ void mu_push_current()
  */
 void mu_push_forth_chain()
 {
-    PUSH(forth_chain);
+    PUSH_ADDR(forth_chain);
 }
 
 void mu_push_compiler_chain()
 {
-    PUSH(compiler_chain);
+    PUSH_ADDR(compiler_chain);
 }
 
 /* Type of string compare functions */
@@ -245,7 +245,7 @@ void mu_find()
 
             /* found: drop token, push code address and true flag */
             DROP(1);
-            ST1 = (cell)&pde->code;
+            ST1 = (addr)&pde->code;
             TOP = -1;
             return;
         }
@@ -304,7 +304,7 @@ void mu_name_()
     struct dict_name *pnm = new_name(
         (struct dict_name *)ST3, (char *)ST2, (int)ST1, (int)TOP);
     DROP(3);
-    TOP = (cell)pnm;
+    TOP = (addr)pnm;
 }
 
 /*
@@ -342,7 +342,7 @@ void mu_new()
 
 void mu_push_tick_new_hook()
 {
-    PUSH(&xtk_new_hook);
+    PUSH_ADDR(&xtk_new_hook);
 }
 
 /*
@@ -355,7 +355,7 @@ static void init_chain(struct dict_name *pchain, struct inm *pinm)
     for (; pinm->name != NULL; pinm++)
     {
         new_linked_name(pchain, pinm->name, strlen(pinm->name));
-        *ph++ = (cell)pinm->code;   /* set code pointer */
+        *ph++ = (addr)pinm->code;   /* set code pointer */
     }
 }
 

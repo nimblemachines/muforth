@@ -53,14 +53,14 @@ void mu_zero_equal()  { TOP = (TOP == 0) ? -1 : 0; }
 
 void mu_depth()     { cell d = S0 - SP; PUSH(d); }
 void mu_sp_reset()  { SP = S0; SP[0] = 0xdecafbad; }
-void mu_push_s0()   { PUSH(S0); }           /* address of stack bottom */
-void mu_sp_fetch()  { cell *s = SP; PUSH(s); }  /* push stack pointer */
-void mu_sp_store()  { SP = (cell *)TOP; }       /* set stack pointer */
+void mu_push_s0()   { PUSH_ADDR(S0); }          /* address of stack bottom */
+void mu_sp_fetch()  { cell *s = SP; PUSH_ADDR(s); } /* push stack pointer */
+void mu_sp_store()  { SP = (cell *)TOP; }           /* set stack pointer */
 
 /* So we can do return-stack magic. */
 void mu_rp_store()       { RP  = (ucell *)TOP; DROP(1); }
 void mu_rp_plus_store()  { RP += TOP; DROP(1); }    /* TOP is cell count! */
-void mu_rp_fetch()       { PUSH(RP); }
+void mu_rp_fetch()       { PUSH_ADDR(RP); }
 
 /*
  * We don't need a ustar, since single-length star and ustar yield the same

@@ -186,7 +186,7 @@ void mu_read_file()     /* fd - addr len */
     }
 
     DROP(-1);
-    ST1 = (cell) p;
+    ST1 = (addr) p;
     TOP = s.st_size;
 }
 
@@ -266,9 +266,9 @@ void mu_typing()   /* -- inbuf #read */
 {
     static char inbuf[1024];
     DROP(-4);
-    ST3 = (cell)inbuf;
+    ST3 = (addr)inbuf;
     ST2 = 0;                /* stdin */
-    ST1 = (cell)inbuf;
+    ST1 = (addr)inbuf;
     TOP = 1024;
     mu_read_carefully();    /* stdin inbuf size -- #read */
 }

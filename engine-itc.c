@@ -66,11 +66,11 @@ static void mu_do_does()
 {
     NEST;                   /* entering a new word; push IP */
     IP = (xtk_cell *)_(W[1]);  /* new IP is stored in the parameter field */
-    PUSH(&W[2]);            /* push the address of the word's body */
+    PUSH_ADDR(&W[2]);       /* push the address of the word's body */
 }
 
-void mu_set_colon_code() { *ph++ = (cell)&mu_do_colon; }
-void mu_set_does_code()  { *ph++ = (cell)&mu_do_does; }
+void mu_set_colon_code() { *ph++ = (addr)&mu_do_colon; }
+void mu_set_does_code()  { *ph++ = (addr)&mu_do_does; }
 
 /* Normal exit */
 void mu_exit()      { UNNEST; }
@@ -137,7 +137,7 @@ void mu_next_()
 
 void mu_do_()   /* (do)  ( limit start) */
 {
-    RPUSH(_STAR(IP++)); /* push following branch address for (leave) */
+    RPUSH((addr)_STAR(IP++)); /* push following branch address for (leave) */
     RPUSH(ST1);         /* limit */
     RPUSH(TOP - ST1);   /* index = start - limit */
     DROP(2);

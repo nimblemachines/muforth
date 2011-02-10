@@ -37,7 +37,7 @@ void mu_push_build_time()
 
 static void mu_start_up()
 {
-    PUSH("warm");       /* push the token "warm" */
+    PUSH_ADDR("warm");       /* push the token "warm" */
     PUSH(4);
     muboot_interpret_token();    /* ... and execute it! */
 }
@@ -50,7 +50,7 @@ void muforth_init()
 
 void muforth_start()
 {
-    PUSH("startup.mu4");
+    PUSH_ADDR("startup.mu4");
     muboot_load_file();
     mu_start_up();
 }

@@ -40,6 +40,14 @@
 typedef  int64_t  cell;
 typedef uint64_t ucell;
 
+/* address type */
+typedef uintptr_t addr;  /* intptr_t and uintptr_t are integer types that
+                           are the same size as a native pointer. Whether
+                           this type is unsigned or not will affect how
+                           32-bit addresses are treated when pushed onto a
+                           64-bit stack: signed will sign-extend, unsigned
+                           will zero-extend. */
+
 /* dictionary size */
 /* Now that cells are 8 bytes (64-bit), allocate 512k cells - 4MB of heap. */
 #define DICT_CELLS     (512 * 1024)
@@ -60,6 +68,7 @@ extern cell stack[];
 
 #define DROP(n)  (SP += (n))
 #define PUSH(v)  (*--SP = (cell)(v))
+#define PUSH_ADDR(v)  PUSH((addr)(v))
 #define POP      (*SP++)
 
 /* pointer and cell types */
@@ -102,7 +111,7 @@ extern ucell  *RP;    /* return stack pointer */
 #define RPUSH(n)  (*--RP = (ucell)(n))
 #define RPOP      (*RP++)
 
-#define NEST      RPUSH(IP)
+#define NEST      RPUSH((addr)IP)
 #define UNNEST    (IP = (xtk_cell *)RPOP)
 
 #define ALIGN_SIZE  sizeof(cell)
@@ -153,4 +162,3 @@ int string_compare(const char *string1, size_t length1,
 
 /* Utility macros */
 #define MIN(a,b)    (((a) < (b)) ? (a) : (b))
-

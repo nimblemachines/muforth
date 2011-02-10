@@ -24,8 +24,12 @@ done
 os=$(uname -s)
 cpu=$(uname -m)
 
-# Silence annoying cast warnings on 32-bit hosts
-archcflags="-Wno-int-to-pointer-cast -Wno-pointer-to-int-cast"
+# On 32-bit hosts, silence annoying warnings about _narrowing_ casts (from
+# cell (64-bit) to address (32-bit)), but leave turned on warnings about
+# _widening_ casts (address to cell) so we know where they happen, and can
+# specify them as sign-extending (seemingly gcc's default) or not.
+
+archcflags="-Wno-int-to-pointer-cast"
 archldflags=""
 
 if [ "$os" = "Darwin" ]; then
