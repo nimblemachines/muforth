@@ -236,7 +236,7 @@ void mu_push_parsed()
     PUSH(parsed.length);
 }
 
-static xtk xtk_show_stack = XTK(mu_nope);
+static xtk_cell xtk_show_stack = CELL(XTK(mu_nope));
 void mu_push_tick_show_stack()  { PUSH_ADDR(&xtk_show_stack); }
 
 void mu_qstack()
@@ -252,7 +252,7 @@ void mu_qstack()
     }
 
     /* Call Forth code to print stack, maybe. */
-    execute_xtk(xtk_show_stack);
+    execute_xtk(_(xtk_show_stack));
 
 #ifdef DEBUG_STACK
     {
