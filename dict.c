@@ -261,9 +261,8 @@ static struct dict_name *new_name(
     struct dict_name *link, char *name, int length, int hidden)
 {
     struct dict_name *pnm;              /* the new name */
-    char *pch = (char *)ph;
 
-    assert((char *)ALIGNED(pch) == pch, "dict misaligned");
+    assert(ALIGNED(ph) == (intptr_t)ph, "dict misaligned");
 
     /*
      * Since we're using the high bit of the length as a "hidden" or
@@ -271,15 +270,8 @@ static struct dict_name *new_name(
      */
     length = MIN(length, 127);
 
-    /* Allocate extra cells for name, if longer than SUFFIX_LEN */
-    if (length > SUFFIX_LEN)
-    {
-        intptr_t cchExtra = ALIGNED(length - SUFFIX_LEN);
-        pch += cchExtra;
-    }
-
-    /* pch now points to a suffix. Alias as pnm, and fill it out. */
-    pnm = (struct dict_name *)pch;
+    /* Allot space for name + length byte so that suffix is aligned. */
+    pnm = (struct dict_name *)ALIGNED((intptr_t)ph + length - SUFFIX_LEN);
 
     /* copy name string */
     memcpy(pnm->suffix + SUFFIX_LEN - length, name, length);
