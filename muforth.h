@@ -11,17 +11,35 @@
 
 #include "env.h"
 
-/* Support for putting 32-bit values into cell (64-bit) sized containers -
+/* 
+ * Support for putting 32-bit values into cell (64-bit) sized containers -
  * for support of 64-bit muFORTH on 32-bit platforms.
+ *
+ * NOTE: these "cell-wrapped" values need to aligned to a cell boundary,
+ * but their structure - being made up of two 4-byte objects - is only
+ * guaranteed by C to have four byte alignment. As a quick fix we apply a
+ * GCC extension - adding an _attribute_ - but it would be preferred to
+ * find a non-GCC-specific solution.
+ *
+ * By making a union, with one member a cell, we could force alignment. But
+ * I'm not sure how to write initialisers for union types. :-(
  */
 #ifdef ADDR_32
 #ifdef HOST_TESTS_LITTLE_ENDIAN
 /* LE 32 */
-#define CELL_T(type)    struct { type value; uintptr_t padding; }
+#ifdef __GNUC__
+#define CELL_T(type)    struct { type value; uintptr_t padding; } __attribute__ ((aligned (8)))
+#else
+#error "Figure how to specify alignment without using GCC extensions."
+#endif
 #define CELL(value)     { value, 0 }
 #else
 /* BE 32 */
-#define CELL_T(type)    struct { uintptr_t padding; type value; }
+#ifdef __GNUC__
+#define CELL_T(type)    struct { uintptr_t padding; type value; } __attribute__ ((aligned (8)))
+#else
+#error "Figure how to specify alignment without using GCC extensions."
+#endif
 #define CELL(value)     { 0, value }
 #endif
 #define _(cell)         (cell).value
