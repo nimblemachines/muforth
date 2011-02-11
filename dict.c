@@ -260,7 +260,7 @@ void mu_find()
 static struct dict_name *new_name(
     struct dict_name *link, char *name, int length, int hidden)
 {
-    struct dict_name *pnm;              /* the new name */
+    struct dict_name *pnm;      /* the new name */
 
     assert(ALIGNED(ph) == (intptr_t)ph, "dict misaligned");
 
