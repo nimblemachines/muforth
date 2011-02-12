@@ -34,7 +34,7 @@ archcflags="-Wno-int-to-pointer-cast"
 archldflags=""
 
 if [ "$os" = "Darwin" ]; then
-    archcflags="-m64 -mdynamic-no-pic"
+    archcflags="-m64"
     archldflags="-m64 "
 fi
 if [ "$os" = "Linux" -a "$cpu" = "x86_64" ]; then
