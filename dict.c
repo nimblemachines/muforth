@@ -92,9 +92,9 @@ cell  *ph;      /* ptr to next free byte in heap space */
  */
 
 /*
- * On 64-bit machines ADDR_ALIGN_SIZE is 8. On 32-bit machines, it is 4.
+ * On 64-bit machines ALIGN_SIZE is 8. On 32-bit machines, it is 4.
  */
-#define SUFFIX_LEN  (ADDR_ALIGN_SIZE - 1)
+#define SUFFIX_LEN  (ALIGN_SIZE - 1)
 struct dict_name
 {
     char suffix[SUFFIX_LEN];     /* last 3 or 7 characters of name */
@@ -160,24 +160,10 @@ void mu_here()          /* push current _value_ of heap pointer */
 
 /*
  * , (comma) copies the cell on the top of the stack into the dictionary,
- * and advances the heap pointer by one cell. Note that the ph is kept
- * cell-aligned, not addr-aligned!
+ * and advances the heap pointer by one cell. Note that ph is kept
+ * cell-aligned.
  */
 void mu_comma() { *ph++ = (cell)POP; }
-
-/*
- * a, (a-comma) copies the address on the top of the stack into the
- * dictionary, and advances the heap pointer by one address. NOTE: this
- * operation assumes that the dictionary has the correct alignment for an
- * address. We assert that this is true.
- */
-void mu_acomma()
-{   
-    assert(ADDR_ALIGNED(ph) == (intptr_t)ph, "misaligned (acomma)");
-
-    *(addr *)ph = POP;
-    ph += sizeof(addr)/sizeof(cell);
-}
 
 /*
  * allot ( n)
@@ -185,10 +171,10 @@ void mu_acomma()
  * Takes a count of bytes, rounds it up to a cell boundary, and adds it to
  * the heap pointer. Again, this keeps ph always aligned.
  */
-void mu_allot() { ph += ALIGNED(POP) / sizeof(cell); }
+void mu_allot()    { ph += ALIGNED(POP) / sizeof(cell); }
 
 /* Align TOP to cell boundary */
-void mu_aligned() { TOP = ALIGNED(TOP); }
+void mu_aligned()  { TOP = ALIGNED(TOP); }
 
 /*
  * NOTE: The value of current_chain is a pointer to a struct dict_name.
@@ -275,7 +261,7 @@ static struct dict_name *new_name(
 {
     struct dict_name *pnm;  /* the new name */
 
-    assert(ADDR_ALIGNED(ph) == (intptr_t)ph, "misaligned (new_name)");
+    assert(ALIGNED(ph) == (intptr_t)ph, "misaligned (new_name)");
 
     /*
      * Since we're using the high bit of the length as a "hidden" or
@@ -284,7 +270,7 @@ static struct dict_name *new_name(
     length = MIN(length, 127);
 
     /* Allot space for name + length byte so that suffix is aligned. */
-    pnm = (struct dict_name *)ADDR_ALIGNED((intptr_t)ph + length - SUFFIX_LEN);
+    pnm = (struct dict_name *)ALIGNED((intptr_t)ph + length - SUFFIX_LEN);
 
     /* copy name string */
     memcpy(pnm->suffix + SUFFIX_LEN - length, name, length);
@@ -360,8 +346,7 @@ static void init_chain(struct dict_name *pchain, struct inm *pinm)
     for (; pinm->name != NULL; pinm++)
     {
         new_linked_name(pchain, pinm->name, strlen(pinm->name));
-        PUSH_ADDR(pinm->code);      /* set code pointer */
-        mu_acomma();
+        *ph++ = (addr)pinm->code;      /* set code pointer */
     }
 }
 

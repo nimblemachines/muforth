@@ -57,16 +57,16 @@ void execute_xtk(xtk x)
 /* The most important "word" of all: */
 static void mu_do_colon()
 {
-    NEST;                   /* entering a new word; push IP */
+    NEST;              /* entering a new word; push IP */
     IP = (xtk *)&W[1]; /* new IP is address of parameter field */
 }
 
 /* The basis of create/does>. */
 static void mu_do_does()
 {
-    NEST;                   /* entering a new word; push IP */
+    NEST;              /* entering a new word; push IP */
     IP = (xtk *)W[1];  /* new IP is stored in the parameter field */
-    PUSH_ADDR(&W[2]);       /* push the address of the word's body */
+    PUSH_ADDR(&W[2]);  /* push the address of the word's body */
 }
 
 void mu_set_colon_code() { *ph++ = (addr)&mu_do_colon; }

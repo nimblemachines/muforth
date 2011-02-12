@@ -11,27 +11,25 @@
 
 #include "env.h"
 
-/* data cells - always 32 bits! */
-typedef  int32_t  cell;
-typedef uint32_t ucell;
+/* data cells - big enough to hold an address */
+typedef  intptr_t   cell;
+typedef uintptr_t  ucell;
 
 /* stack cells - "values" - always 64 bits! */
-typedef  int64_t  val;
+typedef  int64_t   val;
 typedef uint64_t  uval;
 
-/* address cells - the native size */
-typedef void *acell;    /* XXX do I even need this? or can I use addr for everything? */
-
-/* address type */
-typedef uintptr_t addr;  /* intptr_t and uintptr_t are integer types that
-                           are the same size as a native pointer. Whether
-                           this type is unsigned or not will affect how
-                           32-bit addresses are treated when pushed onto a
-                           64-bit stack: signed will sign-extend, unsigned
-                           will zero-extend. */
+/* address type - for casting */
+typedef uintptr_t  addr;  /* intptr_t and uintptr_t are integer types that
+                             are the same size as a native pointer. Whether
+                             this type is unsigned or not will affect how
+                             32-bit addresses are treated when pushed onto
+                             a 64-bit stack: signed will sign-extend,
+                             unsigned will zero-extend. */
 
 /* dictionary size */
-/* Cells are 4 bytes (32-bit), so allocate 1M cells - 4MB of heap. */
+/* Cells are the native word size. Let's allocate 1M cells - 4MB of heap on
+ * 32-bit machines, 8MB on 64-bit. */
 #define DICT_CELLS     (1024 * 1024)
 
 /* data stack */
@@ -94,14 +92,8 @@ extern val  *RP;    /* return stack pointer */
 #define NEST      RPUSH((addr)IP)
 #define UNNEST    (IP = (xtk *)RPOP)
 
-#define _ALIGNED(x, align_size)  \
-    (((intptr_t)(x) + align_size - 1) & -(align_size))
-
-#define ADDR_ALIGN_SIZE  sizeof(addr)
-#define ADDR_ALIGNED(x)  _ALIGNED(x, ADDR_ALIGN_SIZE)
-
-#define ALIGN_SIZE       sizeof(cell)
-#define ALIGNED(x)       _ALIGNED(x, ALIGN_SIZE)
+#define ALIGN_SIZE  sizeof(cell)
+#define ALIGNED(x)  (((intptr_t)(x) + ALIGN_SIZE - 1) & -(ALIGN_SIZE))
 
 /*
  * struct string is a "normal" string: pointer to the first character, and
@@ -117,7 +109,7 @@ struct string
 
 struct counted_string
 {
-    addr length;    /* addr-sized length, unlike older Forths */
+    cell length;    /* cell-sized length, unlike older Forths */
     char data[0];
 };
 

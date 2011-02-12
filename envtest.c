@@ -44,16 +44,16 @@ int main(int argc, char *argv[])
             printf("#error \"Wow. Divide is broken.\"\n");
     }
 
-    /* Size of addresses */
-    if (sizeof(void *) == 4)
+    /* Size of cells */
+    if (sizeof(intptr_t) == 4)
     {
-        printf("#define ADDR_SHIFT 2\n");
-        printf("#define ADDR_32\n");
+        printf("#define CELL_SHIFT 2\n");
+        printf("#define CELL_32\n");
     }
     else
     {
-        printf("#define ADDR_SHIFT 3\n");
-        printf("#define ADDR_64\n");
+        printf("#define CELL_SHIFT 3\n");
+        printf("#define CELL_64\n");
     }
 
     /* endianness */

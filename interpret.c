@@ -25,7 +25,6 @@ struct imode
     xtk prompt;     /* display a mode-specific prompt */
 };
 
-/* XXX need apreserve again! */
 static char *start;    /* input source text */
 static char *end;
 static char *first;    /* goes from start to end */
@@ -180,7 +179,7 @@ static void muboot_compile_token()
     mu_find();
     if (POP)
     {
-        mu_acomma();
+        mu_comma();
         return;
     }
     mu_complain();

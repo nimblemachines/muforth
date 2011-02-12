@@ -28,25 +28,21 @@ void mu_shift_left()           { ST1 = ST1 << TOP; DROP(1); }
 void mu_shift_right()          { ST1 = ST1 >> TOP; DROP(1); }
 void mu_ushift_right()  { ST1 = (uval) ST1 >> TOP; DROP(1); }
 
+/* export cell size to Forth */
+void mu_CELL_SHIFT()  { PUSH(CELL_SHIFT); }
+
 /* fetch and store character (really _byte_) values */
 void mu_cfetch()  { TOP = *(uint8_t *)TOP; }
 void mu_cstore()  { *(uint8_t *)TOP = ST1; DROP(2); }
 
-/* fetch and store data values (32 bit) */
+/* fetch and store cell values (32 or 64 bit) */
 void mu_fetch()       { TOP =  *(cell *)TOP; }
 void mu_store()       { *(cell *)TOP  = ST1; DROP(2); }
 void mu_plus_store()  { *(cell *)TOP += ST1; DROP(2); }
 
-/* fetch and store double values (64 bit) */
-void mu_dfetch()      { TOP =  *(val *)TOP; }
-void mu_dstore()      { *(val *)TOP  = ST1; DROP(2); }
-
-/* fetch and store address values (32 or 64 bit) */
-void mu_afetch()      { TOP =  *(addr *)TOP; }
-void mu_astore()      { *(addr *)TOP  = ST1; DROP(2); }
-
-/* export constant to Forth */
-void mu_ADDR_SHIFT()  { PUSH(ADDR_SHIFT); }
+/* fetch and store stack values (64 bit) */
+void mu_sfetch()      { TOP =  *(val *)TOP; }
+void mu_sstore()      { *(val *)TOP  = ST1; DROP(2); }
 
 void mu_dup()    { val t = TOP; PUSH(t); }
 void mu_nip()    { val t = POP; TOP = t; }
@@ -62,7 +58,7 @@ void mu_less()   { ST1 = (ST1 <        TOP) ? -1 : 0; DROP(1); }
 void mu_zero_less()   { TOP = (TOP <  0) ? -1 : 0; }
 void mu_zero_equal()  { TOP = (TOP == 0) ? -1 : 0; }
 
-void mu_depth()     { intptr_t d = S0 - SP; PUSH(d); }
+void mu_depth()     { cell d = S0 - SP; PUSH(d); }
 void mu_sp_reset()  { SP = S0; SP[0] = 0xdecafbad; }
 void mu_push_s0()   { PUSH_ADDR(S0); }          /* address of stack bottom */
 void mu_sp_fetch()  { val *s = SP; PUSH_ADDR(s); } /* push stack pointer */
