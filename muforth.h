@@ -11,20 +11,31 @@
 
 #include "env.h"
 
-typedef  int32_t  cell;
-typedef uint32_t ucell;
-typedef struct {
-     cell hi;       /* Forth puts high cell at lower address (top of stack) */
-    ucell lo;
-} dcell;
+/* data cells - big enough to hold an address */
+typedef  intptr_t   cell;
+typedef uintptr_t  ucell;
+
+/* stack cells - "values" - always 64 bits! */
+typedef  int64_t   val;
+typedef uint64_t  uval;
+
+/* address type - for casting */
+typedef uintptr_t  addr;  /* intptr_t and uintptr_t are integer types that
+                             are the same size as a native pointer. Whether
+                             this type is unsigned or not will affect how
+                             32-bit addresses are treated when pushed onto
+                             a 64-bit stack: signed will sign-extend,
+                             unsigned will zero-extend. */
 
 /* dictionary size */
+/* Cells are the native word size. Let's allocate 1M cells - 4MB of heap on
+ * 32-bit machines, 8MB on 64-bit. */
 #define DICT_CELLS     (1024 * 1024)
 
 /* data stack */
 #define STACK_SIZE  4096
 #define STACK_SAFETY  32
-extern cell stack[];
+extern val stack[];
 #define S0    &stack[STACK_SIZE - STACK_SAFETY]
 #define SMAX  &stack[STACK_SAFETY]
 
@@ -36,21 +47,24 @@ extern cell stack[];
 #define ST3   SP[3]
 
 #define DROP(n)  (SP += (n))
-#define PUSH(v)  (*--SP = (cell)(v))
+#define PUSH(v)  (*--SP = (val)(v))
+#define PUSH_ADDR(v)  PUSH((addr)(v))
 #define POP      (*SP++)
 
-typedef void (*pw)(void);    /* ptr to word's machine code */
-typedef pw    *ppw;          /* ptr to ptr to word's code */
-typedef ppw    xtk;          /* "execution token" - ptr to ptr to code */
+/* pointer and cell types */
+typedef void (*code)(void);     /* POINTER to word's machine code */
+typedef code  *xtk;             /* POINTER to code; aka "execution token" */
 
-/* from mip, with changes */
-extern cell  *SP;     /* parameter stack pointer */
-extern xtk   *IP;     /* instruction pointer */
-extern xtk    W;      /* on entry, points to the current Forth word */
+/* Forth VM execution registers */
+extern val  *SP;    /* parameter stack pointer */
+extern xtk  *IP;    /* instruction pointer */
+extern xtk   W;     /* on entry, points to the current Forth word */
 
 /* return stack */
-extern xtk *rstack[];
-extern xtk  **RP;     /* return stack pointer */
+/* NOTE: Even on 32-bit platforms the R stack is 64 bits wide! This makes
+ * things _much_ simpler, at the expense of a bit more storage. */
+extern val  rstack[];
+extern val  *RP;    /* return stack pointer */
 #define R0  &rstack[STACK_SIZE]
 
 /*
@@ -59,22 +73,27 @@ extern xtk  **RP;     /* return stack pointer */
  * we have to search for them; so we simply define them. They are
  * conventionally named "p_<mu_name>".
  */
-#define CODE(w)  pw p_ ## w = &(w);     /* declare a code field for a word */
-#define XTK(w)   (&p_ ## w)  /* make an execution token from a word's name */
 
-#define EXECUTE   execute_xtk((xtk)POP)
-#define CALL(x)   (W = (xtk)(x), (**W)())
+/* declare a code field for a word */
+#define CODE(w)  code p_ ## w = &(w);
+
+/* make an execution token from a word's name */
+#define XTK(w)   (&p_ ## w)
+
+#define EXECUTE   execute_xtk(*(xtk *)(SP++))
+#define CALL(x)   (W = (x), (**W)())
 #define NEXT      CALL(*IP++)
-#define BRANCH    (IP = *(xtk **)IP)
+#define BRANCH    (IP = (xtk *)*IP)
 
-#define RPUSH(n)  (*--RP = (xtk *)(n))
+#define RDROP(n)  (RP += (n))
+#define RPUSH(n)  (*--RP = (val)(n))
 #define RPOP      (*RP++)
 
-#define NEST      RPUSH(IP)
-#define UNNEST    (IP = RPOP)
+#define NEST      RPUSH((addr)IP)
+#define UNNEST    (IP = (xtk *)RPOP)
 
 #define ALIGN_SIZE  sizeof(cell)
-#define ALIGNED(x)  (((cell)(x) + ALIGN_SIZE - 1) & -ALIGN_SIZE)
+#define ALIGNED(x)  (((intptr_t)(x) + ALIGN_SIZE - 1) & -(ALIGN_SIZE))
 
 /*
  * struct string is a "normal" string: pointer to the first character, and
@@ -88,24 +107,9 @@ struct string
     char *data;
 };
 
-/*
- * struct text is intended for parsing, and other applications that scan a
- * piece of text. Because we will be scanning the text but also making sure
- * we don't run off the end, we store a pointer to the first character
- * (start) and a pointer to the first character not belonging to the text
- * (end). This way we can increment start and check that its less than end.
- * If we used struct string instead we'd have to keep adding length to data
- * to see if we've overrun.
- */
-struct text
-{
-    char *end;      /* need them in this order so that "source 2@" will */
-    char *start;    /* put end on top of stack. */
-};
-
 struct counted_string
 {
-    size_t length;  /* cell-sized length, unlike older Forths */
+    cell length;    /* cell-sized length, unlike older Forths */
     char data[0];
 };
 
@@ -125,9 +129,6 @@ extern cell  *ph;      /* ptr to next free byte in heap space */
 /* engine-itc.c */
 void execute_xtk(xtk x);
 
-/* compile.c */
-char *to_counted_string(char *);
-
 /* error.c */
 void die(const char *zmsg);
 void abort_zmsg(const char *zmsg);
@@ -136,3 +137,6 @@ void assert(int cond, const char *zmsg);
 /* kernel.c */
 int string_compare(const char *string1, size_t length1,
                    const char *string2, size_t length2);
+
+/* Utility macros */
+#define MIN(a,b)    (((a) < (b)) ? (a) : (b))

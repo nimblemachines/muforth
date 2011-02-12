@@ -15,6 +15,9 @@
  * Dictionary is one unified space, just like the old days. ;-)
  */
 
+/*
+ * Dictionary is kept cell-aligned.
+ */
 cell  *ph0;     /* pointer to start of heap space */
 cell  *ph;      /* ptr to next free byte in heap space */
 
@@ -67,13 +70,14 @@ cell  *ph;      /* ptr to next free byte in heap space */
  * code, but how?
  *
  * My solution is a bit weird, but it works rather well. Since I know that
- * there will be at least -one- cell (3 bytes and a length) of name (but
- * likely more), I will define a struct that represents only the last three
+ * there will be at least -one- address cell (on 32-bit machines, 3 bytes
+ * and a length; on 64-bit machines, 7 bytes and a length) of name I will
+ * define a struct that represents only the last three (or seven)
  * characters of the name, the length, and the link; the previous
  * characters are "off the map" as far as C is concerned, but there is an
  * easy way to address them. (To get to the beginning of a name, take the
- * address of the last three characters - suffix - add three and subtract
- * the length.)
+ * address of the suffix, add the SUFFIX_LEN (3 or 7), and subtract the
+ * length.)
  *
  * The only part of the code that seems a bit hackish is the calculation of
  * how many bytes to allocate for the name to put the link on a cell
@@ -86,11 +90,16 @@ cell  *ph;      /* ptr to next free byte in heap space */
  * name's. (One neat advantage to this is that it works well when chaining
  * vocabs together.)
  */
+
+/*
+ * On 64-bit machines ALIGN_SIZE is 8. On 32-bit machines, it is 4.
+ */
+#define SUFFIX_LEN  (ALIGN_SIZE - 1)
 struct dict_name
 {
-    char suffix[3];              /* last 3 characters of name */
-    unsigned char length;        /* true length of name */
-    struct dict_name *link;      /* to preceding dict_name */
+    char suffix[SUFFIX_LEN];     /* last 3 or 7 characters of name */
+    unsigned char length;        /* 127 max; high bit = hidden */
+    struct dict_name *link;      /* link to preceding dict_name */
 };
 
 /*
@@ -100,21 +109,22 @@ struct dict_name
 struct dict_entry
 {
     struct dict_name n;
-    pw code;
+    code code;
 };
 
 /*
- * The forth and compiler "vocabulary" chains - VH means vocab head.
- * Because the name field contains the three-character name " VH", these
- * will show up in a word list, if another vocab chains to one of these;
- * however, the names cannot easily be matched because they contain a
- * space.
+ * The forth and compiler "vocabulary" chains
+ *
+ * Thes are now initialised at dictionary init time, by calling new_name()
+ * with a name starting with a DEL character. This way these pseudo-words
+ * won't show up when listed by  word  but _can_ be found (with care) using
+ * find.
  */
-static struct dict_name forth_chain    = { " VH", 3, NULL };
-static struct dict_name compiler_chain = { " VH", 3, NULL };
+static struct dict_name *forth_chain;
+static struct dict_name *compiler_chain;
 
 /* current chain to compile into */
-static struct dict_name *current_chain = &forth_chain;
+static struct dict_name *current_chain;
 
 /* hook called when a new name is created */
 CODE(mu_nope)
@@ -124,7 +134,7 @@ static xtk xtk_new_hook = XTK(mu_nope);
 struct inm          /* "initial name" */
 {
     char *name;
-    pw   code;
+    code  code;
 };
 
 struct inm initial_forth[] = {
@@ -140,19 +150,24 @@ struct inm initial_compiler[] = {
 void mu_push_h0()       /* push address of start of dictionary */
 
 {
-    PUSH(ph0);
+    PUSH_ADDR(ph0);
 }
 
 void mu_here()          /* push current _value_ of heap pointer */
 {
-    PUSH(ph);
+    PUSH_ADDR(ph);
 }
 
 /*
  * , (comma) copies the cell on the top of the stack into the dictionary,
- * and advances the heap pointer. Note that the ph is always kept aligned!
+ * and advances the heap pointer by one cell. Note that ph is kept
+ * cell-aligned.
  */
-void mu_comma() { *ph++ = POP; }
+void mu_comma()
+{
+    assert(ALIGNED(ph) == (intptr_t)ph, "misaligned (comma)");
+    *ph++ = (cell)POP;
+}
 
 /*
  * allot ( n)
@@ -160,10 +175,10 @@ void mu_comma() { *ph++ = POP; }
  * Takes a count of bytes, rounds it up to a cell boundary, and adds it to
  * the heap pointer. Again, this keeps ph always aligned.
  */
-void mu_allot() { ph += ALIGNED(POP) / sizeof(cell); }
+void mu_allot()    { ph += ALIGNED(POP) / sizeof(cell); }
 
 /* Align TOP to cell boundary */
-void mu_aligned() { TOP = ALIGNED(TOP); }
+void mu_aligned()  { TOP = ALIGNED(TOP); }
 
 /*
  * NOTE: The value of current_chain is a pointer to a struct dict_name.
@@ -172,7 +187,7 @@ void mu_aligned() { TOP = ALIGNED(TOP); }
  */
 void mu_push_current()
 {
-    PUSH(&current_chain);
+    PUSH_ADDR(&current_chain);
 }
 
 /*
@@ -181,12 +196,12 @@ void mu_push_current()
  */
 void mu_push_forth_chain()
 {
-    PUSH(&forth_chain);
+    PUSH_ADDR(forth_chain);
 }
 
 void mu_push_compiler_chain()
 {
-    PUSH(&compiler_chain);
+    PUSH_ADDR(compiler_chain);
 }
 
 /* Type of string compare functions */
@@ -199,8 +214,8 @@ match_fn_t match = (match_fn_t)memcmp;
  * +case  -- make dictionary searches case-sensitive -- DEFAULT
  * -case  -- make dictionary searches case-insensitive
  */
-void mu_plus_case() { match = (match_fn_t)memcmp; }
-void mu_minus_case() { match = strncasecmp; }
+void mu_plus_case()   { match = (match_fn_t)memcmp; }
+void mu_minus_case()  { match = strncasecmp; }
 
 /*
  * find takes a token (a u) and a chain (the head of a vocab word list) and
@@ -213,71 +228,105 @@ void mu_find()
 {
     char *token = (char *) ST2;
     cell length = ST1;
-    struct dict_entry *pde = (struct dict_entry *) TOP;
+    struct dict_entry *pde = (struct dict_entry *)TOP;
 
-    while ((pde = (struct dict_entry *)pde->n.link) != NULL)
+    if (length < 128)
     {
-        if (pde->n.length != length) continue;
-        if ((*match)(pde->n.suffix + 3 - length, token, length) != 0) continue;
+        /*
+         * Only search if length < 128. This prevents us from matching
+         * hidden entries!
+         */
 
-        /* found: drop token, push code address and true flag */
-        DROP(1);
-        ST1 = (cell)&pde->code;
-        TOP = -1;
-        return;
+        while ((pde = (struct dict_entry *)pde->n.link) != NULL)
+        {
+            /* for speed, don't test anything else unless lengths match */
+            if (pde->n.length != length) continue;
+
+            /* lengths match - compare strings */
+            if ((*match)(pde->n.suffix + SUFFIX_LEN - length, token, length) != 0)
+                continue;
+
+            /* found: drop token, push code address and true flag */
+            DROP(1);
+            ST1 = (addr)&pde->code;
+            TOP = -1;
+            return;
+        }
     }
     /* not found: leave token, push false */
     TOP = 0;
 }
 
 /*
- * make_new_name creates a new dictionary (name) entry, and links it onto
- * the chain represented by pnmHead.
+ * new_name creates a new dictionary (name) entry and returns it
  */
-static void make_new_name(
-    struct dict_name *pnmHead, char *name, int length)
+static struct dict_name *new_name(
+    struct dict_name *link, char *name, int length, int hidden)
 {
-    struct dict_name *pnm;              /* the new name */
-    char *pch = (char *)ph;
+    struct dict_name *pnm;  /* the new name */
 
-    assert((char *)ALIGNED(pch) == pch, "dict misaligned");
+    assert(ALIGNED(ph) == (intptr_t)ph, "misaligned (new_name)");
 
-    /* Allocate extra cells for name, if longer than 3 characters */
-    if (length > 3)
-    {
-        int cchExtra = ALIGNED(length - 3);
-        pch += cchExtra;
-    }
+    /*
+     * Since we're using the high bit of the length as a "hidden" or
+     * "deleted" flag, cap the length at 127.
+     */
+    length = MIN(length, 127);
 
-    pnm = (struct dict_name *)pch;
+    /* Allot space for name + length byte so that suffix is aligned. */
+    pnm = (struct dict_name *)ALIGNED((intptr_t)ph + length - SUFFIX_LEN);
 
-    pnm->link = pnmHead->link;          /* compile link to last */
-    pnmHead->link = pnm;                /* link onto front of chain */
-    pnm->length = length;
-    memcpy(pnm->suffix + 3 - length, name, length);        /* copy name string */
+    /* copy name string */
+    memcpy(pnm->suffix + SUFFIX_LEN - length, name, length);
+    pnm->length = length + (hidden ? 128 : 0);
+
+    /* set link pointer */
+    pnm->link = link;
 
     /* Allot entry */
     ph = (cell *)(pnm + 1);
 
 #if defined(BEING_DEFINED)
-    fprintf(stderr, "%p %.*s\n", ph, length, name);
+    fprintf(stderr, "%p %p %.*s\n", pnm, link, length, name);
 #endif
+
+    return pnm;
+}
+
+/* (name)  ( link a u hidden - 'suffix) */
+void mu_name_()
+{
+    struct dict_name *pnm = new_name(
+        (struct dict_name *)ST3, (char *)ST2, (int)ST1, (int)TOP);
+    DROP(3);
+    TOP = (addr)pnm;
+}
+
+/*
+ * new_linked_name creates a new dictionary (name) entry and links it onto
+ * the chain represented by pnmHead.
+ */
+static void new_linked_name(
+    struct dict_name *pnmHead, char *name, int length)
+{
+    /* create new name & link onto front of chain */
+    pnmHead->link = new_name(pnmHead->link, name, length, 0);
 }
 
 /*
  * Called (indirectly, thru the mu_new* words) from Forth. Only creates a
  * name; does NOT set the code field!
  */
-static void mu_make_new_name()
+static void mu_new_name()
 {
-    make_new_name(current_chain, (char *)ST1, TOP);
+    new_linked_name(current_chain, (char *)ST1, TOP);
     DROP(2);
 }
 
 void mu_new_()
 {
     execute_xtk(xtk_new_hook);
-    mu_make_new_name();
+    mu_new_name();
 }
 
 void mu_new()
@@ -288,7 +337,7 @@ void mu_new()
 
 void mu_push_tick_new_hook()
 {
-    PUSH(&xtk_new_hook);
+    PUSH_ADDR(&xtk_new_hook);
 }
 
 /*
@@ -300,8 +349,8 @@ static void init_chain(struct dict_name *pchain, struct inm *pinm)
 {
     for (; pinm->name != NULL; pinm++)
     {
-        make_new_name(pchain, pinm->name, strlen(pinm->name));
-        *ph++ = (cell)pinm->code;   /* set code pointer */
+        new_linked_name(pchain, pinm->name, strlen(pinm->name));
+        *ph++ = (addr)pinm->code;      /* set code pointer */
     }
 }
 
@@ -319,8 +368,14 @@ static void allocate()
 void init_dict()
 {
     allocate();
-    init_chain(&forth_chain, initial_forth);
-    init_chain(&compiler_chain, initial_compiler);
+
+    /* create "hidden" names */
+    forth_chain    = new_name( NULL, ".forth.", 7, 1);
+    compiler_chain = new_name( NULL, ".compiler.", 10, 1);
+
+    init_chain(forth_chain, initial_forth);
+    init_chain(compiler_chain, initial_compiler);
+    current_chain = forth_chain;
 }
 
 /*

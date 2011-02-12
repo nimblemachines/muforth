@@ -164,3 +164,93 @@ void mu_dplus3()
     DROP(2);
 }
 #endif /* ALTERNATE_MP_MATH */
+
+/*
+ * This is now an archive of routines moved _out_ of kernel.c. I don't want
+ * to get rid of the completely - even though they are not used in muforth!
+ * - so I put them here.
+ */
+
+/*
+ * Single-length math routines.
+ *
+ * Sometimes I really hate C and gcc. This is one of those times. It is
+ * trivially easy to write the basic Forth word fm/mod in assembler. The
+ * machine gives you the pieces you need: given two 32bit operands, it
+ * multiplies and gives a 64bit result; then you divide that by another
+ * 32bit operand. There is no opportunity for over- or underflow, and it's
+ * about 6 instructions - including stack moves - in x86 assembler.
+ *
+ * It's impossible to do this in gcc. Grrr.
+ *
+ * Also, since integer divide by definition gives you both quotient and
+ * remainder, why does C make you calculate them separately? It's stupid.
+ *
+ * So, I've given up on double-length math for muFORTH. It's a beautiful
+ * and elegant part of Forth, but since I intend muFORTH mostly for
+ * cross-compiling (to 32bit architectures at the moment, though that could
+ * change!), single-length is plenty. So don't try using star-slash with
+ * large operands. ;-)
+ */
+
+#ifdef GCC_IS_COMPLETELY_FUCKED
+/* 
+ * Some tests that didn't work out. I think the fault was intially mine: I
+ * had cast using "(unsigned)" rather than "(uint32_t)". That may have made
+ * a difference. It certainly caused my initial 64-bit port to work in
+ * every way except when doing unsigned math, and that was the culprit
+ * there.
+ *
+ * But I'm still willing to believe that GCC is completely fucked. ;-)
+ */
+void mu_umstar()
+{
+    uint64_t prod = (uint32_t)ST1 * TOP;
+    cell *p = &prod;
+    ST1 = p[0];     /* low half of product */
+    TOP = p[1];     /* high half */
+}
+
+void mu_mstar()
+{
+    int64_t prod = ST1 * TOP;
+    cell *p = &prod;
+    ST1 = p[0];     /* low half of product */
+    TOP = p[1];     /* high half */
+}
+
+void mu_fm_slash_mod()  /* dn1 n2 -- m q */
+{
+    cell num[2];    /* numerator (dividend) */
+    cell mod;
+    cell quot;
+    int64_t dividend;
+
+    /* Set up 64-bit dividend */
+    num[0] = ST2;   /* low half */
+    num[1] = ST1;   /* high half */
+    quot = (int64_t)num[0] / TOP;
+    mod  = (int64_t)num[0] % TOP;
+
+    /* Set up 64-bit dividend */
+    dividend = ST2 /* low */ + ((int64_t)ST1 << 32) /* high */ ;
+    quot = dividend / TOP;
+    mod  = dividend % TOP;
+#ifdef DIVIDE_IS_SYMMETRIC
+    /*
+     * We now have the results of a stupid symmetric division, which we
+     * must convert to floored. We only do this if the modulus was non-zero
+     * and if the dividend and divisor had opposite signs.
+     */
+    if (mod != 0 && (ST1 ^ TOP) < 0)
+    {
+        quot -= 1;
+        mod  += TOP;
+    }
+#endif
+
+    ST1 = mod;
+    TOP = quot;
+}
+#endif /* GCC_IS_COMPLETELY_FUCKED */
+

@@ -19,7 +19,7 @@ static struct counted_string *pcmd_line;
  */
 static char *str_copy(char *dest, char *src)
 {
-    int length = strlen(src);
+    size_t length = strlen(src);
     return memcpy(dest, src, length) + length;
 }
 
@@ -48,7 +48,7 @@ static void convert_command_line(int argc, char *argv[])
 
 void mu_push_command_line()
 {
-    PUSH(&pcmd_line->data);
+    PUSH_ADDR(&pcmd_line->data);
 }
 
 void mu_bye()
@@ -63,4 +63,3 @@ int main(int argc, char *argv[])
     muforth_start();
     return 0;
 }
-

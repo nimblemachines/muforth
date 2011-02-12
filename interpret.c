@@ -18,23 +18,27 @@
 #include <stdio.h>
 #endif
 
-struct imode        /* interpreter mode */
+/* interpreter mode */
+struct imode
 {
     xtk eat;        /* consume one token */
     xtk prompt;     /* display a mode-specific prompt */
 };
 
-static struct text source;
-static char *first;         /* goes from source.start to source.end */
+static char *start;    /* input source text */
+static char *end;
+static char *first;    /* goes from start to end */
 
-static int lineno = 1;      /* line number - incremented for each newline */
+/* line number - incremented for each newline */
+static cell lineno = 1;
+
 int parsed_lineno;          /* captured with first character of token */
 struct string parsed;       /* for errors */
 
 /* Push lineno variable */
 void mu_push_line()
 {
-    PUSH(&lineno);
+    PUSH_ADDR(&lineno);
 }
 
 /* Push captured line number */
@@ -43,14 +47,19 @@ void mu_at_line()
     PUSH(parsed_lineno);
 }
 
-void mu_first()
+void mu_push_first()
 {
-    PUSH(&first);
+    PUSH_ADDR(&first);
 }
 
-void mu_source()
+void mu_push_start()
 {
-    PUSH(&source);
+    PUSH_ADDR(&start);
+}
+
+void mu_push_end()
+{
+    PUSH_ADDR(&end);
 }
 
 static void mu_return_token(char *last, int trailing)
@@ -63,18 +72,19 @@ static void mu_return_token(char *last, int trailing)
     first = last + trailing;
 
     DROP(-2);
-    ST1 = (cell) parsed.data;
+    ST1 = (addr) parsed.data;
     TOP = parsed.length;
 
 #ifdef DEBUG_TOKEN
-    fprintf(stderr, "%.*s\n", TOP, ST1);
+    /* Without these casts, this doesn't work! */
+    fprintf(stderr, "%.*s\n", (int)TOP, (char *)ST1);
 #endif
 }
 
 /* Skip leading whitespace */
 static void skip()
 {
-    while (first < source.end && isspace(*first))
+    while (first < end && isspace(*first))
     {
         if (*first == '\n') lineno++;
         first++;
@@ -92,7 +102,7 @@ static void mu_scan(int delim)
     /* capture lineno that token begins on */
     parsed_lineno = lineno;
 
-    for (last = first; last < source.end; last++)
+    for (last = first; last < end; last++)
     {
         if (*last == '\n') lineno++;
         if (delim == *last
@@ -184,20 +194,24 @@ static void muboot_compile_token()
 CODE(muboot_interpret_token)
 CODE(muboot_compile_token)
 
-static struct imode forth_interpreter  = { XTK(muboot_interpret_token), XTK(mu_nope) };
-static struct imode forth_compiler     = { XTK(muboot_compile_token),   XTK(mu_nope) };
+static struct imode forth_interpreter =
+    { XTK(muboot_interpret_token), XTK(mu_nope) };
+
+static struct imode forth_compiler =
+    { XTK(muboot_compile_token),   XTK(mu_nope) };
 
 static struct imode *state = &forth_interpreter;
 
 
 void mu_consume()
 {
-    execute_xtk(state->eat);      /* call the current consume function */
+    /* call the current consume function */
+    execute_xtk(state->eat);  
 }
 
 void mu_push_state()
 {
-    PUSH(&state);
+    PUSH_ADDR(&state);
 }
 
 void mu_compiler_lbracket()
@@ -212,9 +226,12 @@ void mu_minus_rbracket()
 
 void mu_push_parsed()
 {
-    PUSH((cell) parsed.data);
+    PUSH((addr) parsed.data);
     PUSH(parsed.length);
 }
+
+static xtk xtk_show_stack = XTK(mu_nope);
+void mu_push_tick_show_stack()  { PUSH_ADDR(&xtk_show_stack); }
 
 void mu_qstack()
 {
@@ -227,17 +244,18 @@ void mu_qstack()
     {
         return abort_zmsg("too many items on the stack");
     }
+
+    /* Call Forth code to print stack, maybe. */
+    execute_xtk(xtk_show_stack);
+
 #ifdef DEBUG_STACK
-    /* print stack */
     {
-        cell *p;
-
-        printf("  [ ");
-
-        for (p = S0; p > SP; )
-            printf("%x ", *--p);
-
-        printf("] %x\n", TOP);
+        int i;
+        fprintf(stderr, "  --");
+        for (i = 0; i < 4; i++)
+            fprintf(stderr, "  %16llx", (uval)SP[3-i]);
+        fprintf(stderr, "\n");
+        fflush(stderr);
     }
 #endif
 }
@@ -265,7 +283,7 @@ static void muboot_interpret()
 
 /*
  * This will also be re-implemented in Forth, but with nice nesting of
- * various context variables: radix, first, source, etc.
+ * various context variables: radix, first, start/end, etc.
  */
 void muboot_load_file()    /* c-string-name */
 {
@@ -275,13 +293,13 @@ void muboot_load_file()    /* c-string-name */
     fd = TOP;
     mu_read_file();
 
-    source.start = (char *)ST1;
-    source.end   = (char *)ST1 + TOP;
+    start = (char *)ST1;
+    end   = (char *)ST1 + TOP;
     DROP(2);
 
     /* wait to reset these until just before we evaluate the new file */
     lineno = 1;
-    first = source.start;
+    first = start;
 
     muboot_interpret();
 

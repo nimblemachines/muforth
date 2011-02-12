@@ -37,7 +37,7 @@ void mu_abort()     /* zmsg */
 
 void mu_push_tick_abort()
 {
-    PUSH(&xtk_abort);
+    PUSH_ADDR(&xtk_abort);
 }
 
 /*
@@ -46,7 +46,7 @@ void mu_push_tick_abort()
 
 void abort_zmsg(const char *zmsg)
 {
-    PUSH(zmsg);
+    PUSH_ADDR(zmsg);
     mu_abort();
 }
 

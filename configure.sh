@@ -23,15 +23,23 @@ done
 
 os=$(uname -s)
 cpu=$(uname -m)
-archcflags=""
+
+# On 32-bit hosts, silence annoying warnings about _narrowing_ casts (from
+# cell (64-bit) to address (32-bit)), but leave turned on warnings about
+# _widening_ casts (address to cell) so we know where they happen, and can
+# specify them as sign-extending (seemingly gcc's default) or not.
+
+archcflags="-Wno-int-to-pointer-cast"
+#archcflags=""
 archldflags=""
+
 if [ "$os" = "Darwin" ]; then
-    archcflags="-m32 -mdynamic-no-pic"
-    archldflags="-m32"
+    archcflags="-m64"
+    archldflags="-m64 "
 fi
 if [ "$os" = "Linux" -a "$cpu" = "x86_64" ]; then
-    archcflags="-m32"
-    archldflags="-m32"
+    archcflags="-m64"
+    archldflags="-m64"
 fi
 
 # Figure out which version of sed we're running, so we can properly specify
