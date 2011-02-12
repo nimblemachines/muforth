@@ -40,9 +40,8 @@ void mu_fetch()       { TOP =  *(cell *)TOP; }
 void mu_store()       { *(cell *)TOP  = ST1; DROP(2); }
 void mu_plus_store()  { *(cell *)TOP += ST1; DROP(2); }
 
-/* fetch and store stack values (64 bit) */
-void mu_sfetch()      { TOP =  *(val *)TOP; }
-void mu_sstore()      { *(val *)TOP  = ST1; DROP(2); }
+/* copy nth value (counting from 0) to top - ANS calls this "pick" */
+void mu_nth()    { TOP = SP[TOP+1]; }
 
 void mu_dup()    { val t = TOP; PUSH(t); }
 void mu_nip()    { val t = POP; TOP = t; }
