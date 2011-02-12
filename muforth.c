@@ -9,15 +9,15 @@
 #include "version.h"
 
 /* data stack */
-cell stack[STACK_SIZE];
-cell *SP;
+val  stack[STACK_SIZE];
+val  *SP;
 
 /* return stack */
-ucell rstack[STACK_SIZE];
-ucell *RP;
+val  rstack[STACK_SIZE];
+val  *RP;
 
-xtk_cell  *IP;  /* instruction pointer */
-xtk        W;   /* on entry, points to the current Forth word */
+xtk  *IP;   /* instruction pointer */
+xtk   W;    /* on entry, points to the current Forth word */
 
 static void init_stacks()
 {
@@ -44,8 +44,8 @@ static void mu_start_up()
 
 void muforth_init()
 {
-    init_dict();
     init_stacks();
+    init_dict();
 }
 
 void muforth_start()

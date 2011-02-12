@@ -45,7 +45,7 @@ void mu_execute() { EXECUTE; }
  */
 void execute_xtk(xtk x)
 {
-    ucell *rp_saved;
+    val *rp_saved;
 
     rp_saved = RP;
 
@@ -58,14 +58,14 @@ void execute_xtk(xtk x)
 static void mu_do_colon()
 {
     NEST;                   /* entering a new word; push IP */
-    IP = (xtk_cell *)&W[1]; /* new IP is address of parameter field */
+    IP = (xtk *)&W[1]; /* new IP is address of parameter field */
 }
 
 /* The basis of create/does>. */
 static void mu_do_does()
 {
     NEST;                   /* entering a new word; push IP */
-    IP = (xtk_cell *)_(W[1]);  /* new IP is stored in the parameter field */
+    IP = (xtk *)W[1];  /* new IP is stored in the parameter field */
     PUSH_ADDR(&W[2]);       /* push the address of the word's body */
 }
 
@@ -137,7 +137,7 @@ void mu_next_()
 
 void mu_do_()   /* (do)  ( limit start) */
 {
-    RPUSH((addr)_STAR(IP++)); /* push following branch address for (leave) */
+    RPUSH((addr)*IP++); /* push following branch address for (leave) */
     RPUSH(ST1);         /* limit */
     RPUSH(TOP - ST1);   /* index = start - limit */
     DROP(2);
@@ -145,7 +145,7 @@ void mu_do_()   /* (do)  ( limit start) */
 
 void mu_loop_()
 {
-    cell rtop = RP[0];
+    val rtop = RP[0];
 
     rtop++;                             /* increment index */
     if (rtop == 0)
@@ -156,8 +156,8 @@ void mu_loop_()
 
 void mu_plus_loop_()    /* (+loop)  ( incr) */
 {
-    cell rtop = RP[0];
-    cell prev = rtop;
+    val rtop = RP[0];
+    val prev = rtop;
 
     rtop += TOP;                /* increment index */
     if ((rtop ^ prev) < 0)      /* current & prev index have opposite signs */
@@ -170,7 +170,7 @@ void mu_plus_loop_()    /* (+loop)  ( incr) */
 /* leave the do loop early */
 void mu_leave()
 {
-    IP = (xtk_cell *)RP[2];     /* jump to address saved on R stack */
+    IP = (xtk *)RP[2];     /* jump to address saved on R stack */
     RP += 3;                    /* pop "do" context */
 }
 

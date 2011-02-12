@@ -11,52 +11,16 @@
 
 #include "env.h"
 
-/* 
- * Support for putting 32-bit values into cell (64-bit) sized containers -
- * for support of 64-bit muFORTH on 32-bit platforms.
- *
- * NOTE: these "cell-wrapped" values need to aligned to a cell boundary,
- * but their structure - being made up of two 4-byte objects - is only
- * guaranteed by C to have four byte alignment. As a quick fix we apply a
- * GCC extension - adding an _attribute_ - but it would be preferred to
- * find a non-GCC-specific solution.
- *
- * By making a union, with one member a cell, we could force alignment. But
- * I'm not sure how to write initialisers for union types. :-(
- */
-#ifdef ADDR_32
-#ifdef HOST_TESTS_LITTLE_ENDIAN
-/* LE 32 */
-#ifdef __GNUC__
-#define CELL_T(type)    struct { type value; uintptr_t padding; } __attribute__ ((aligned (8)))
-#else
-#error "Figure how to specify alignment without using GCC extensions."
-#endif
-#define CELL(value)     { value, 0 }
-#else
-/* BE 32 */
-#ifdef __GNUC__
-#define CELL_T(type)    struct { uintptr_t padding; type value; } __attribute__ ((aligned (8)))
-#else
-#error "Figure how to specify alignment without using GCC extensions."
-#endif
-#define CELL(value)     { 0, value }
-#endif
-#define _(cell)         (cell).value
-#define _STAR(pcell)    (pcell)->value
-#else
+/* data cells - always 32 bits! */
+typedef  int32_t  cell;
+typedef uint32_t ucell;
 
-/* These are no-ops for 64-bit. */
-#define CELL_T(type)    type
-#define CELL(value)     (value)
-#define _(cell)         (cell)
-#define _STAR(pcell)    *(pcell)
+/* stack cells - "values" - always 64 bits! */
+typedef  int64_t  val;
+typedef uint64_t  uval;
 
-#endif
-
-/* data cells */
-typedef  int64_t  cell;
-typedef uint64_t ucell;
+/* address cells - the native size */
+typedef void *acell;    /* XXX do I even need this? or can I use addr for everything? */
 
 /* address type */
 typedef uintptr_t addr;  /* intptr_t and uintptr_t are integer types that
@@ -67,13 +31,13 @@ typedef uintptr_t addr;  /* intptr_t and uintptr_t are integer types that
                            will zero-extend. */
 
 /* dictionary size */
-/* Now that cells are 8 bytes (64-bit), allocate 512k cells - 4MB of heap. */
-#define DICT_CELLS     (512 * 1024)
+/* Cells are 4 bytes (32-bit), so allocate 1M cells - 4MB of heap. */
+#define DICT_CELLS     (1024 * 1024)
 
 /* data stack */
 #define STACK_SIZE  4096
 #define STACK_SAFETY  32
-extern cell stack[];
+extern val stack[];
 #define S0    &stack[STACK_SIZE - STACK_SAFETY]
 #define SMAX  &stack[STACK_SAFETY]
 
@@ -85,26 +49,24 @@ extern cell stack[];
 #define ST3   SP[3]
 
 #define DROP(n)  (SP += (n))
-#define PUSH(v)  (*--SP = (cell)(v))
+#define PUSH(v)  (*--SP = (val)(v))
 #define PUSH_ADDR(v)  PUSH((addr)(v))
 #define POP      (*SP++)
 
 /* pointer and cell types */
-typedef void (*code)(void);         /* POINTER to word's machine code */
-typedef CELL_T(code)  code_cell;    /* CELL wrapper of code */
-typedef code_cell    *xtk;          /* POINTER to code; aka "execution token" */
-typedef CELL_T(xtk)   xtk_cell;     /* CELL wrapper of xtk */
+typedef void (*code)(void);     /* POINTER to word's machine code */
+typedef code  *xtk;             /* POINTER to code; aka "execution token" */
 
 /* Forth VM execution registers */
-extern cell      *SP;   /* parameter stack pointer */
-extern xtk_cell  *IP;   /* instruction pointer */
-extern xtk        W;    /* on entry, points to the current Forth word */
+extern val  *SP;    /* parameter stack pointer */
+extern xtk  *IP;    /* instruction pointer */
+extern xtk   W;     /* on entry, points to the current Forth word */
 
 /* return stack */
 /* NOTE: Even on 32-bit platforms the R stack is 64 bits wide! This makes
  * things _much_ simpler, at the expense of a bit more storage. */
-extern ucell  rstack[];
-extern ucell  *RP;    /* return stack pointer */
+extern val  rstack[];
+extern val  *RP;    /* return stack pointer */
 #define R0  &rstack[STACK_SIZE]
 
 /*
@@ -115,25 +77,31 @@ extern ucell  *RP;    /* return stack pointer */
  */
 
 /* declare a code field for a word */
-#define CODE(w)  code_cell p_ ## w = CELL(&(w));
+#define CODE(w)  code p_ ## w = &(w);
 
 /* make an execution token from a word's name */
 #define XTK(w)   (&p_ ## w)
 
-#define EXECUTE   execute_xtk(_STAR(((xtk_cell *)(SP++))))
-#define CALL(x)   (W = (x), (*_STAR(W))())
-#define NEXT      CALL(_STAR(IP++))
-#define BRANCH    (IP = (xtk_cell *)_STAR(IP))
+#define EXECUTE   execute_xtk(*(xtk *)(SP++))
+#define CALL(x)   (W = (x), (**W)())
+#define NEXT      CALL(*IP++)
+#define BRANCH    (IP = (xtk *)*IP)
 
 #define RDROP(n)  (RP += (n))
-#define RPUSH(n)  (*--RP = (ucell)(n))
+#define RPUSH(n)  (*--RP = (val)(n))
 #define RPOP      (*RP++)
 
 #define NEST      RPUSH((addr)IP)
-#define UNNEST    (IP = (xtk_cell *)RPOP)
+#define UNNEST    (IP = (xtk *)RPOP)
 
-#define ALIGN_SIZE  sizeof(cell)
-#define ALIGNED(x)  (((intptr_t)(x) + ALIGN_SIZE - 1) & -ALIGN_SIZE)
+#define _ALIGNED(x, align_size)  \
+    (((intptr_t)(x) + align_size - 1) & -(align_size))
+
+#define ADDR_ALIGN_SIZE  sizeof(addr)
+#define ADDR_ALIGNED(x)  _ALIGNED(x, ADDR_ALIGN_SIZE)
+
+#define ALIGN_SIZE       sizeof(cell)
+#define ALIGNED(x)       _ALIGNED(x, ALIGN_SIZE)
 
 /*
  * struct string is a "normal" string: pointer to the first character, and
@@ -149,7 +117,7 @@ struct string
 
 struct counted_string
 {
-    cell length;    /* cell-sized length, unlike older Forths */
+    addr length;    /* addr-sized length, unlike older Forths */
     char data[0];
 };
 

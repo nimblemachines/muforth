@@ -28,11 +28,11 @@ void muboot_die()      /* zmsg */
 
 /* abort() is deferred via this variable */
 CODE(muboot_die)
-static xtk_cell xtk_abort = CELL(XTK(muboot_die));
+static xtk xtk_abort = XTK(muboot_die);
 
 void mu_abort()     /* zmsg */
 {
-    execute_xtk(_(xtk_abort));
+    execute_xtk(xtk_abort);
 }
 
 void mu_push_tick_abort()

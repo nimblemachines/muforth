@@ -92,16 +92,14 @@ cell  *ph;      /* ptr to next free byte in heap space */
  */
 
 /*
- * On 64-bit machines ALIGN_SIZE is 8. On 32-bit machines, ALIGN_SIZE is 4.
+ * On 64-bit machines ADDR_ALIGN_SIZE is 8. On 32-bit machines, it is 4.
  */
-#define SUFFIX_LEN  (ALIGN_SIZE - 1)
-typedef CELL_T(struct dict_name *) link_cell;
-
+#define SUFFIX_LEN  (ADDR_ALIGN_SIZE - 1)
 struct dict_name
 {
-    char suffix[SUFFIX_LEN];     /* last 7 characters of name */
+    char suffix[SUFFIX_LEN];     /* last 3 or 7 characters of name */
     unsigned char length;        /* 127 max; high bit = hidden */
-    link_cell link;              /* link to preceding dict_name */
+    struct dict_name *link;      /* link to preceding dict_name */
 };
 
 /*
@@ -111,7 +109,7 @@ struct dict_name
 struct dict_entry
 {
     struct dict_name n;
-    code_cell code;
+    code code;
 };
 
 /*
@@ -130,7 +128,7 @@ static struct dict_name *current_chain;
 
 /* hook called when a new name is created */
 CODE(mu_nope)
-static xtk_cell xtk_new_hook = CELL(XTK(mu_nope));
+static xtk xtk_new_hook = XTK(mu_nope);
 
 /* bogus C-style dictionary init */
 struct inm          /* "initial name" */
@@ -162,9 +160,24 @@ void mu_here()          /* push current _value_ of heap pointer */
 
 /*
  * , (comma) copies the cell on the top of the stack into the dictionary,
- * and advances the heap pointer. Note that the ph is always kept aligned!
+ * and advances the heap pointer by one cell. Note that the ph is kept
+ * cell-aligned, not addr-aligned!
  */
 void mu_comma() { *ph++ = (cell)POP; }
+
+/*
+ * a, (a-comma) copies the address on the top of the stack into the
+ * dictionary, and advances the heap pointer by one address. NOTE: this
+ * operation assumes that the dictionary has the correct alignment for an
+ * address. We assert that this is true.
+ */
+void mu_acomma()
+{   
+    assert(ADDR_ALIGNED(ph) == (intptr_t)ph, "misaligned (acomma)");
+
+    *(addr *)ph = POP;
+    ph += sizeof(addr)/sizeof(cell);
+}
 
 /*
  * allot ( n)
@@ -211,8 +224,8 @@ match_fn_t match = (match_fn_t)memcmp;
  * +case  -- make dictionary searches case-sensitive -- DEFAULT
  * -case  -- make dictionary searches case-insensitive
  */
-void mu_plus_case() { match = (match_fn_t)memcmp; }
-void mu_minus_case() { match = strncasecmp; }
+void mu_plus_case()   { match = (match_fn_t)memcmp; }
+void mu_minus_case()  { match = strncasecmp; }
 
 /*
  * find takes a token (a u) and a chain (the head of a vocab word list) and
@@ -225,7 +238,7 @@ void mu_find()
 {
     char *token = (char *) ST2;
     cell length = ST1;
-    struct dict_entry *pde = (struct dict_entry *) TOP;
+    struct dict_entry *pde = (struct dict_entry *)TOP;
 
     if (length < 128)
     {
@@ -234,7 +247,7 @@ void mu_find()
          * hidden entries!
          */
 
-        while ((pde = (struct dict_entry *)_(pde->n.link)) != NULL)
+        while ((pde = (struct dict_entry *)pde->n.link) != NULL)
         {
             /* for speed, don't test anything else unless lengths match */
             if (pde->n.length != length) continue;
@@ -260,9 +273,9 @@ void mu_find()
 static struct dict_name *new_name(
     struct dict_name *link, char *name, int length, int hidden)
 {
-    struct dict_name *pnm;      /* the new name */
+    struct dict_name *pnm;  /* the new name */
 
-    assert(ALIGNED(ph) == (intptr_t)ph, "dict misaligned");
+    assert(ADDR_ALIGNED(ph) == (intptr_t)ph, "misaligned (new_name)");
 
     /*
      * Since we're using the high bit of the length as a "hidden" or
@@ -271,20 +284,20 @@ static struct dict_name *new_name(
     length = MIN(length, 127);
 
     /* Allot space for name + length byte so that suffix is aligned. */
-    pnm = (struct dict_name *)ALIGNED((intptr_t)ph + length - SUFFIX_LEN);
+    pnm = (struct dict_name *)ADDR_ALIGNED((intptr_t)ph + length - SUFFIX_LEN);
 
     /* copy name string */
     memcpy(pnm->suffix + SUFFIX_LEN - length, name, length);
     pnm->length = length + (hidden ? 128 : 0);
 
     /* set link pointer */
-    _(pnm->link) = link;
+    pnm->link = link;
 
     /* Allot entry */
     ph = (cell *)(pnm + 1);
 
 #if defined(BEING_DEFINED)
-    fprintf(stderr, "%p %.*s\n", pnm, length, name);
+    fprintf(stderr, "%p %p %.*s\n", pnm, link, length, name);
 #endif
 
     return pnm;
@@ -307,7 +320,7 @@ static void new_linked_name(
     struct dict_name *pnmHead, char *name, int length)
 {
     /* create new name & link onto front of chain */
-    _(pnmHead->link) = new_name(_(pnmHead->link), name, length, 0);
+    pnmHead->link = new_name(pnmHead->link, name, length, 0);
 }
 
 /*
@@ -322,7 +335,7 @@ static void mu_new_name()
 
 void mu_new_()
 {
-    execute_xtk(_(xtk_new_hook));
+    execute_xtk(xtk_new_hook);
     mu_new_name();
 }
 
@@ -347,7 +360,8 @@ static void init_chain(struct dict_name *pchain, struct inm *pinm)
     for (; pinm->name != NULL; pinm++)
     {
         new_linked_name(pchain, pinm->name, strlen(pinm->name));
-        *ph++ = (addr)pinm->code;   /* set code pointer */
+        PUSH_ADDR(pinm->code);      /* set code pointer */
+        mu_acomma();
     }
 }
 

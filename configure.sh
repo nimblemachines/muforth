@@ -30,6 +30,7 @@ cpu=$(uname -m)
 # specify them as sign-extending (seemingly gcc's default) or not.
 
 archcflags="-Wno-int-to-pointer-cast"
+#archcflags=""
 archldflags=""
 
 if [ "$os" = "Darwin" ]; then
