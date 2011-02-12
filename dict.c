@@ -163,7 +163,11 @@ void mu_here()          /* push current _value_ of heap pointer */
  * and advances the heap pointer by one cell. Note that ph is kept
  * cell-aligned.
  */
-void mu_comma() { *ph++ = (cell)POP; }
+void mu_comma()
+{
+    assert(ALIGNED(ph) == (intptr_t)ph, "misaligned (comma)");
+    *ph++ = (cell)POP;
+}
 
 /*
  * allot ( n)
