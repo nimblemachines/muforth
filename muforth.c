@@ -30,14 +30,14 @@ void mu_push_build_time()
 #ifdef WITH_TIME
     PUSH(BUILD_TIME);
 #else
-    PUSH(BUILD_DATE);
+    PUSH_ADDR(BUILD_DATE);
     PUSH(strlen(BUILD_DATE));
 #endif
 }
 
 void mu_push_build_commit()
 {
-    PUSH(GIT_COMMIT);
+    PUSH_ADDR(GIT_COMMIT);
     PUSH(strlen(GIT_COMMIT));
 }
 
