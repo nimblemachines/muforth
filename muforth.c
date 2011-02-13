@@ -35,6 +35,12 @@ void mu_push_build_time()
 #endif
 }
 
+void mu_push_build_commit()
+{
+    PUSH(GIT_COMMIT);
+    PUSH(strlen(GIT_COMMIT));
+}
+
 static void mu_start_up()
 {
     PUSH_ADDR("warm");       /* push the token "warm" */

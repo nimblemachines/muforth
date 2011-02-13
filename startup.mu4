@@ -724,6 +724,31 @@ ctrl M  constant #CR   --  13
 : max   2dup <  if swap then  drop  ;
 
 
+( Go forth and multiply ... and divide.
+
+  As of r438 - 2006-mar-26 - there are no double-length numbers!
+
+  Our new primitives are:
+      * : n1 n2 - n3 [single-length product]
+   /mod : n1 n2 - mod quot
+  u/mod : u1 u2 - umod uquot
+
+  Any word whose name starts with 'u' is unsigned, both in its arguments
+  and its results; the others are signed.
+
+  */ and */mod no longer calculate a double-length intermediate product,
+  so beware!)
+
+:  /      ( n1 n2 - quot)    /mod  nip ;
+: u/      ( u1 u2 - uquot)  u/mod  nip ;
+
+:  mod    ( n1 n2 - mod)     /mod  drop ;
+: umod    ( u1 u2 - umod)   u/mod  drop ;
+
+: */mod   ( n1 n2 n3 - mod quot)   push  *  pop  /mod ;
+: */      ( n1 n2 n3 - n1*n2/n3)   */mod  nip ;
+
+
 ( Pictured numeric output.)
 : /digit   ( u - uquot umod)  radix @  u/mod swap ;
 
@@ -739,16 +764,31 @@ ctrl M  constant #CR   --  13
   character for the sign. pad returns the address of the _end_ of the
   buffer, since conversion occurs right-to-left.)
 
-65 allot  here constant pad   ( 64 digits + sign + alignment)
+( Since we're putting "thousands" separations in here as well, I thought I
+  might increase the size to an over-generous 128 bytes.)
+
+128 allot  here constant pad   ( 64 digits + sign + alignment)
 
 variable hld
 : hold   -1 hld +!  hld @ c! ;
+: held   ( - #chars)  pad  hld @ - ;
 : <#     pad hld !  ;
 : #>     ( u - a #)  drop  hld @  pad over - ;
 : sign   ( n -)   0< if  char - hold  then  ;
 
 : #     ( u - u')   /digit  >digit  hold  ;
-: #s    ( u - 0)  begin  #  dup 0=  until  ;
+
+( For base-10 numbers, insert a "," every three digits; for other
+  bases, insert a "_" every four digits.)
+
+: ?sep  radix @ 10 = if  held 4 mod  3 = if  char , hold  then  ^  then
+                         held 5 mod  4 = if  char _ hold  then ;
+defer #s
+-: ( #,s)   ( u - 0)  begin  #  =while  ?sep  repeat ;
+: +sep  [ ]  is #s ;  +sep
+
+-: ( #s)    ( u - 0)  begin  #  dup 0= until  ;
+: -sep  [ ]  is #s ;
 
 : (u.)    ( u - a #)   <# #s #> ;
 : u.      ( u -)       (u.)  type  space  ;
@@ -871,31 +911,6 @@ being-defined -v  ( be verbose)
 : blank  ( a u)  bl fill  ;
 
 
-( Go forth and multiply ... and divide.
-
-  As of r438 - 2006-mar-26 - there are no double-length numbers!
-
-  Our new primitives are:
-      * : n1 n2 - n3 [single-length product]
-   /mod : n1 n2 - mod quot
-  u/mod : u1 u2 - umod uquot
-
-  Any word whose name starts with 'u' is unsigned, both in its arguments
-  and its results; the others are signed.
-
-  */ and */mod no longer calculate a double-length intermediate product,
-  so beware!)
-
-:  /      ( n1 n2 - quot)    /mod  nip ;
-: u/      ( u1 u2 - uquot)  u/mod  nip ;
-
-:  mod    ( n1 n2 - mod)     /mod  drop ;
-: umod    ( u1 u2 - umod)   u/mod  drop ;
-
-: */mod   ( n1 n2 n3 - mod quot)   push  *  pop  /mod ;
-: */      ( n1 n2 n3 - n1*n2/n3)   */mod  nip ;
-
-
 ( Within.)
 : within  ( n lo hi - lo <= n < hi)  over - push  - pop u<  ;
 
@@ -909,7 +924,7 @@ being-defined -v  ( be verbose)
   status" display, showing the top four items on the stack every time
   ?stack is executed.)
 
--:  radix preserve  hex  ."   --"
+-:  radix preserve  hex  [ ' #s >body ] preserve -sep  ."   --"
     0 3 do  i nth  18 u.r  -1 +loop  cr ;
 
 : +stack       [ ]  'show-stack ! ;
@@ -1024,6 +1039,7 @@ forth
 
 ( leaves a 0 which is consumed by #>)
 : <date>   ( year month mday yday - 0)
+   [ ' #s >body ] preserve  -sep  ( don't want separators in the year!)
    drop  ## "-  month" "hold "-  #s ( year) ;
 
 : <hh:mm:ss>  ( hms)        ## ":  ## ":  ## ;
@@ -1059,14 +1075,6 @@ forth
 : smhdy->s  [ 365 3 * 366 + ] * ( quarter-days/yr)  push 4 * pop +  smhq->s ;
 
 .then ( time support)
-
-
-( Link to project home page.)
-: info
- ." For more information about muFORTH, please visit" cr cr
-   ( ### httplink ###; keep following line, blank or not!)
- ."   http://muforth.nimblemachines.com/" cr cr
- ;
 
 
 ( show ` Ok' then sub-prompt)
@@ -1134,21 +1142,62 @@ variable zloading    ( C-string name of file being loaded)
 : -d   current preserve  forth  -1 constant ;
 : -f   ( load file)  ld ;
 
-: banner
+
+: settings  ."
+Display of the top four stack items is on by default. Use
+   -stack   to turn it off,
+   +stack   to turn it back on.
+
+Digit separators (in number output) are on by default. Use
+   -sep     to turn them off,
+   +sep     to turn them back on.
+
+Dictionary searches (via 'find') are case-sensitive by default.
+   -case    makes them case-insensitive,
+   +case    makes them case-sensitive again.
+
+These defaults can be easily changed either by overriding them on
+the command line, or by editing startup.mu4. Look for the word 'warm'
+near the end of the file.
+
+" ;
+
+
 ( Print banner.)
- ." muFORTH/ITC "
- cell 8 = if ." (64-bit) " then
- .ifdef clock
-    build-time ( seconds since epoch)  time"
- .else
-    build-time ( pushes a string!)
- .then  type  cr
- ." Copyright (c) 2002-2011 David Frech. All rights reserved."  cr cr
- ." muFORTH is free software; see the file COPYRIGHT for details." cr
- ." To read more about muFORTH, type "
-       char " emit  ." info" char " emit ." ." cr cr
- ." Stack display has been turned on. To turn it off (or back on)" cr
- ." use -stack (or +stack)." cr ;
+0 .if
+: banner
+   ." muFORTH/ITC "
+   cell 8 = if ." (64-bit) " then
+   .ifdef clock
+      build-time ( seconds since epoch)  time"
+   .else
+      build-time ( pushes a string!)
+   .then  type  ."
+
+http://muforth.nimblemachines.com/
+
+Copyright (c) 2002-2011 David Frech. All rights reserved.
+muFORTH is free software; see the file COPYRIGHT for details.
+
+Type 'settings' to see a few of muFORTH's tweakable behaviours.
+" ;
+.then
+
+: banner
+   ." muFORTH "
+   cell 8 = if ." 64-bit " else ." 32-bit " then
+   .ifdef clock
+      build-time ( seconds since epoch)  time"
+   .else
+      build-time ( pushes a string!)
+   .then  type
+   ."  ("  build-commit  drop 16  type  ." ) "
+   ."
+
+Copyright (c) 2002-2011 David Frech. http://muforth.nimblemachines.com/
+
+Type 'settings' to see a few of muFORTH's tweakable behaviours.
+" ;
 
 ( Don't print file & lineno if interactive - ie, zloading is zero)
 : .where
@@ -1167,7 +1216,8 @@ variable zloading    ( C-string name of file being loaded)
    decimal \ [
    >stderr banner
    1 line !  ( so it's "correct" for interactive!)
-   +stack  command-line count  evaluate
+   +stack +sep +case ( defaults - reset these how you like)
+   command-line count  evaluate
    begin  quit  again  [
 
 ( Identify ourselves.)
