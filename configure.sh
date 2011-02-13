@@ -30,12 +30,11 @@ cpu=$(uname -m)
 # specify them as sign-extending (seemingly gcc's default) or not.
 
 archcflags="-Wno-int-to-pointer-cast"
-#archcflags=""
 archldflags=""
 
 if [ "$os" = "Darwin" ]; then
     archcflags="-m64"
-    archldflags="-m64 "
+    archldflags="-m64"
 fi
 if [ "$os" = "Linux" -a "$cpu" = "x86_64" ]; then
     archcflags="-m64"
