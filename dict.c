@@ -27,8 +27,8 @@ cell  *ph;      /* ptr to next free byte in heap space */
  * vocabulary).
  *
  * Note that this definition does -not- include the code field. All of the
- * dictionary code - except for mu_find - deals only with these "pure"
- * names.
+ * dictionary code - except for mu_find() and init_chain() - deals only
+ * with these "pure" names.
  *
  * The way that names are stored is a bit odd, but has -huge- advantages.
  * Many Forths store the link, then a byte-count-prefixed name, then
@@ -54,20 +54,20 @@ cell  *ph;      /* ptr to next free byte in heap space */
  * This obviously makes it easy to skip over the name, forwards or
  * backwards.
  *
- * A much nicer solution is the move the link field -after- the name, and
- * forgo the prefix length entirely.  This is the solution that muFORTH
- * adopts (as dforth did before it).  Instead of -following- the link
- * field, the name -precedes- it, starting with padding, then the
- * characters of the name, then its length (one byte), followed directly by
- * the link. (The padding puts the link on a cell boundary.)
+ * A much nicer solution is to move the link field -after- the name, and
+ * forgo the prefix length entirely. This is the solution that muFORTH
+ * adopts (as dforth did before it). Instead of -following- the link field,
+ * the name -precedes- it, starting with padding, then the characters of
+ * the name, then its length (one byte), followed directly by the link.
+ * (The padding puts the link on a cell boundary.)
  *
  * Experienced C programmers will immediately notice a problem: structs
  * (such as the one we want to use to define the structure of dictionary
  * entries) cannot begin with a variable-length field. (In standard C they
- * cannot even -end- with variable-length fields - or that's my understand.
- * There are evil GCC-only workarounds, however.) So, what do we do? We'd
- * like to profitably use C's structs to help write readable and bug-free
- * code, but how?
+ * cannot even -end- with variable-length fields - or that's my
+ * understanding. There are evil GCC-only workarounds, however.) So, what
+ * do we do? We'd like to profitably use C's structs to help write readable
+ * and bug-free code, but how?
  *
  * My solution is a bit weird, but it works rather well. Since I know that
  * there will be at least -one- address cell (on 32-bit machines, 3 bytes
@@ -79,13 +79,9 @@ cell  *ph;      /* ptr to next free byte in heap space */
  * address of the suffix, add the SUFFIX_LEN (3 or 7), and subtract the
  * length.)
  *
- * The only part of the code that seems a bit hackish is the calculation of
- * how many bytes to allocate for the name to put the link on a cell
- * boundary.
- *
  * One quirk of this method is that links no longer point to links, and
- * this forced me to restructure some code. In particular, .forth.  and
- * .compiler. (and all other vocab chains) are no longer simply
+ * this forced me to restructure some code. In particular,  .forth.  and
+ * .compiler.  (and all other vocab chains) are no longer simply
  * single-celled organisms (variables); they are now fully-fledged struct
  * name's. (One neat advantage to this is that it works well when chaining
  * vocabs together.)
@@ -115,7 +111,7 @@ struct dict_entry
 /*
  * The forth and compiler "vocabulary" chains
  *
- * Thes are now initialised at dictionary init time, by calling new_name()
+ * These are now initialised at dictionary init time, by calling new_name()
  * with a name starting with a DEL character. This way these pseudo-words
  * won't show up when listed by  word  but _can_ be found (with care) using
  * find.
