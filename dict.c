@@ -111,10 +111,9 @@ struct dict_entry
 /*
  * The forth and compiler "vocabulary" chains
  *
- * These are now initialised at dictionary init time, by calling new_name()
- * with a name starting with a DEL character. This way these pseudo-words
- * won't show up when listed by  word  but _can_ be found (with care) using
- * find.
+ * These are now initialised at dictionary init time by calling new_name()
+ * with the hidden flag true. This way these pseudo-words won't be found by
+ * mu_find() or show up when listed by  word .
  */
 static struct dict_name *forth_chain;
 static struct dict_name *compiler_chain;
