@@ -697,31 +697,58 @@ forth
                                       -]  'compiler-mode [  !
 
 
+: >    swap <  ;
+: <=   > 0= ;
+: >=   < 0= ;
+
+: min   2dup >  if swap then  drop  ;
+: max   2dup <  if swap then  drop  ;
+
+
 ( Basic character i/o.)
 
-variable fd-in
-variable fd-out
-: writes  fd-out ! ;
-: reads   fd-in  ! ;
-: <stdin   0 reads  ;
-: >stdout  1 writes ;
-: >stderr  2 writes ;  <stdin  >stderr  ( sanity)
+: channel  create , ( fd)  0 , ( column)  , ( width) ;
 
-: type   ( a u)  fd-out @  -rot  write ;
+ 0 0 channel stdin
+80 1 channel stdout  ( XXX should get set from tty!)
+80 2 channel stderr
+
+: >col  ( 'channel - 'col)  cell+ ;
+: >width  ( 'channel - 'width)  cell+ cell+ ;
+
+variable in-channel    ( these point to channels)
+variable out-channel
+
+: writes  out-channel ! ;
+: reads   in-channel  ! ;
+: <stdin   stdin reads  ;
+: >stdout  stdout writes ;
+: >stderr  stderr writes ;  <stdin  >stderr  ( sanity)
 
 variable charbuf  ( for >emit and <key)
-: >emit  ( ch fd)  swap charbuf c!  charbuf 1 write ;
-: emit   ( ch)  fd-out @  >emit ;
+
+( XXX handle #CR and #BS _here_ instead of in separate words?)
+: >emit  ( char channel)
+   1 over >col +!  ( increment column count)
+   swap charbuf c!  @ ( fd)  charbuf 1 write ;
+
+: emit   ( char)  out-channel @  >emit ;
 
 ctrl J  constant #LF   --  10
 ctrl M  constant #CR   --  13
+
 : space      bl emit ;
-: cr        #LF emit ;  ( emit newline; assumes OPOST)
+: cr        #LF emit  ( emit newline; assumes OPOST)
+            out-channel @  >col off ( clear column) ;
 
+: type   ( a u)
+   out-channel @  2dup ( u channel)  >col +! ( incr column by count)
+   @ ( fd)  -rot  write ;
 
-: >     swap <  ;
-: min   2dup >  if swap then  drop  ;
-: max   2dup <  if swap then  drop  ;
+( Third parameter is the value to use to calculate whether to wrap.)
+: typewrap  ( a u uwrap)
+   out-channel @ push
+   r@ >col @ +  pop >width @  >=  if cr then  type ;
 
 
 ( Go forth and multiply ... and divide.
@@ -868,7 +895,7 @@ forth
 : being-defined  constant  does> @  'new-hook ! ;
 
 ( To warn of re-defining a word.)
--: ( a u)  2dup current @ find if  fd-out preserve  >stderr
+-: ( a u)  2dup current @ find if  out-channel preserve  >stderr
      drop  2dup type ."  again.  "  ^  then  2drop ;
 being-defined -redef
  -redef
@@ -896,7 +923,7 @@ being-defined -v  ( be verbose)
 
 : ?hidden  ( 'suffix - counted?)
    suffix>link  dup  1- c@  ( len)  128 and
-   if  ( hidden)  drop 0 ^  then   link>name  type space space  1 ;
+   if  ( hidden)  drop 0 ^  then  link>name  dup 2 +  typewrap space space  1 ;
 
 ( Word listing. Putting this in as soon as possible. Needs `space'.)
 : words   0  current @  ( count 'suffix)
@@ -924,7 +951,9 @@ being-defined -v  ( be verbose)
   status" display, showing the top four items on the stack every time
   ?stack is executed.)
 
--:  radix preserve  hex  [ ' #s >body ] preserve -sep  ."   --"
+-:  radix preserve  hex  [ ' #s >body ] preserve -sep
+    out-channel preserve >stderr
+    out-channel @ >col @ if cr then  ."   --"
     0 3 do  i nth  18 u.r  -1 +loop  cr ;
 
 : +stack       [ ]  'show-stack ! ;
@@ -1122,7 +1151,7 @@ variable zloading    ( C-string name of file being loaded)
    zloading preserve  swap zloading !
    line preserve  1 line !
    radix preserve  decimal
-   fd-out preserve  >stderr
+   out-channel preserve  >stderr
    'show-stack preserve  -stack
    read-file ( a u)  evaluate ;
 
@@ -1132,7 +1161,7 @@ variable zloading    ( C-string name of file being loaded)
 ( how much dictionary space was consumed?)
 : show-consumed  ( here)
    radix preserve  decimal
-   fd-out preserve  >stderr
+   out-channel preserve  >stderr
    here swap - .  ." bytes ))" ;
 
 ( Print some descriptive text and the amount of dictionary space consumed
