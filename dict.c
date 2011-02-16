@@ -289,12 +289,12 @@ void mu_linked_name_()
     DROP(3);
 }
 
-/* (hidden-name)  ( link a u - 'suffix) */
-void mu_hidden_name_()
+/* (name)  ( link a u hidden - 'suffix) */
+void mu_name_()
 {
     struct dict_name *pnm = new_name(
-        (struct dict_name *)ST2, (char *)ST1, TOP, 1);
-    DROP(2);
+        (struct dict_name *)ST3, (char *)ST2, ST1, TOP);
+    DROP(3);
     TOP = (addr)pnm;
 }
 
