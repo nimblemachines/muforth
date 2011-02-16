@@ -41,8 +41,12 @@ static void convert_command_line(int argc, char *argv[])
     }
     pcmd_line->length = pline - pcmd_line->data;
 
-    /* null terminate and align */
-    *pline++ = 0;
+    /* 
+     * No need to null-terminate! This string is evaluated by the Forth
+     * parser, not C code. Any pieces - like filenames - that get passed to
+     * C are copied out of this string into the dictionary and
+     * null-terminated first - just like input from _any other_ source.
+     */
     ph = (cell *)ALIGNED(pline);
 }
 
