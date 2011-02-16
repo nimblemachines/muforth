@@ -11,6 +11,7 @@
 
 #include <sys/ioctl.h>
 #include <termios.h>
+#include <unistd.h>         /* isatty */
 
 /* stack: ( fd termios - sizeof(termios) ) */
 void mu_get_termios()
@@ -132,6 +133,31 @@ void mu_tty_iflush()
     tcflush(TOP, TCIFLUSH);          /* drain output, discard input */
     DROP(1);
 }
+
+/*
+ * Support for querying the column width of terminals, and staying updated
+ * (via SIGWINCH) when they change.
+ *
+ * In case the user has redirected stdout to a file, use stderr as the file
+ * descriptor to test.
+ */
+void mu_tty_width()
+{
+    int fd = TOP;
+    struct winsize tty_size;
+
+    if (!isatty(fd))
+    {
+        TOP = 80;   /* default width for file output */
+        return;
+    }
+
+    if (ioctl(fd, TIOCGWINSZ, &tty_size) == -1)
+        return abort_strerror();
+
+    TOP = tty_size.ws_col;
+}
+
 
 #if 0
 /* This is for testing - to see what libc considers raw mode. */
