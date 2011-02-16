@@ -191,6 +191,7 @@ static void muboot_compile_token()
  * facilities. Until these are defined in startup.mu4, the prompts are
  * noops.
  */
+CODE(mu_nope)
 CODE(muboot_interpret_token)
 CODE(muboot_compile_token)
 

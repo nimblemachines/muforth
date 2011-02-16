@@ -1,4 +1,24 @@
-new :  <:> -]   new <:> -]  ^ [
+here
+   .forth. ,
+
+token current  .forth.  (linked-name)
+   <:> -]   (lit)  [  ,  -]  ^ [
+
+token (new)  current @  (linked-name)
+   <:> -]
+      nope
+      current @  (linked-name)
+   ^ [
+
+token new  (new)
+   <:> -]
+      token (new)
+   ^ [
+
+new :
+   <:> -]
+      new <:> -]
+   ^ [
 
 : definitions  current !  ^ [
 : forth        .forth. definitions  ^ [
@@ -320,8 +340,8 @@ forth
 
 
 ( last contains the address of the does ip of the last <does> word defined)
-: sleazy-variable  pop ;  ( push address of following cell in caller!)
-: last  sleazy-variable  [  0 ,  ( make the variable by hand!)
+here 0 ,
+: last  [ ] ;  ( make the variable by hand!)
 
 ( does> fixes up the does ip of the last <does> word to point to the code
   after "does>" in the caller.)
@@ -901,7 +921,8 @@ forth
 : ."    char " parse ( a #)  type  ;  ( not compiled)
 
 ( Words that do something with each word being defined.)
-: being-defined  constant  does> @  'new-hook ! ;
+( hook into (new) ( by rewriting its first cell!)
+: being-defined  constant  does> @  [ ' (new) cell+ ]  ! ;
 
 ( To warn of re-defining a word.)
 -: ( a u)  2dup current @ find if  out-channel preserve  >stderr
@@ -910,7 +931,10 @@ being-defined -redef
  -redef
 
 ( A useful list of words as they're being defined.)
--: ( a u)   cr depth . current @ ( chain) . here .  2dup type ;
+-: ( a u)   radix preserve hex  [ ' #s >body ] preserve -sep
+   out-channel preserve >stderr
+   out-channel @ >col @ if cr then
+   depth . current @ ( chain) u. here u.  2dup type cr ;
 being-defined -v  ( be verbose)
 -- -v
 
@@ -961,9 +985,9 @@ being-defined -v  ( be verbose)
   ?stack is executed.)
 
 -:  radix preserve  hex  [ ' #s >body ] preserve -sep
-    out-channel preserve >stderr
-    out-channel @ >col @ if cr then  ."   --"
-    0 3 do  i nth  18 u.r  -1 +loop  cr ;
+   out-channel preserve >stderr
+   out-channel @ >col @ if cr then  ."   --"
+   0 3 do  i nth  18 u.r  -1 +loop  cr ;
 
 : +stack       [ ]  'show-stack ! ;
 : -stack  ['] nope  'show-stack ! ;
@@ -987,14 +1011,11 @@ being-defined -v  ( be verbose)
   The link field points to the name entry - suffix - of the last word
   defined on the chain.
 
-  new-head consumes a token, creates a new hidden name entry structure and
-  returns it - addressed by its suffix.)
+  chain consumes a token, creates a new hidden name entry structure and
+  then creates a constant with the same name, which returns this hidden
+  name entry, addressed by its suffix.)
 
-( The -1 means "hidden".)
-: new-head  ( link - 'suffix a u)
-   token 2dup 2push  -1  (name)  2pop  ( 'suffix a u) ;
-
-: chain   new-head  (constant) ;
+: chain   token 2dup 2push (hidden-name)  2pop (constant) ;
 
 : sealed           0  chain ;  ( create an independent vocab chain)
 : chained  current @  chain ;  ( chain to the current vocab)

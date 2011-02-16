@@ -118,13 +118,6 @@ struct dict_entry
 static struct dict_name *forth_chain;
 static struct dict_name *compiler_chain;
 
-/* current chain to compile into */
-static struct dict_name *current_chain;
-
-/* hook called when a new name is created */
-CODE(mu_nope)
-static xtk xtk_new_hook = XTK(mu_nope);
-
 /* bogus C-style dictionary init */
 struct inm          /* "initial name" */
 {
@@ -174,16 +167,6 @@ void mu_allot()    { ph += ALIGNED(POP) / sizeof(cell); }
 
 /* Align TOP to cell boundary */
 void mu_aligned()  { TOP = ALIGNED(TOP); }
-
-/*
- * NOTE: The value of current_chain is a pointer to a struct dict_name.
- * Here we are pushing its address since we're expecting to fetch or store
- * its value in Forth.
- */
-void mu_push_current()
-{
-    PUSH_ADDR(&current_chain);
-}
 
 /*
  * .forth. and .compiler. push the address of the respective struct
@@ -288,15 +271,6 @@ static struct dict_name *new_name(
     return pnm;
 }
 
-/* (name)  ( link a u hidden - 'suffix) */
-void mu_name_()
-{
-    struct dict_name *pnm = new_name(
-        (struct dict_name *)ST3, (char *)ST2, (int)ST1, (int)TOP);
-    DROP(3);
-    TOP = (addr)pnm;
-}
-
 /*
  * new_linked_name creates a new dictionary (name) entry and links it onto
  * the chain represented by pnmHead.
@@ -308,31 +282,20 @@ static void new_linked_name(
     pnmHead->link = new_name(pnmHead->link, name, length, 0);
 }
 
-/*
- * Called (indirectly, thru the mu_new* words) from Forth. Only creates a
- * name; does NOT set the code field!
- */
-static void mu_new_name()
+/* (linked-name)  ( a u chain) */
+void mu_linked_name_()
 {
-    new_linked_name(current_chain, (char *)ST1, TOP);
+    new_linked_name((struct dict_name *)TOP, (char *)ST2, ST1);
+    DROP(3);
+}
+
+/* (hidden-name)  ( link a u - 'suffix) */
+void mu_hidden_name_()
+{
+    struct dict_name *pnm = new_name(
+        (struct dict_name *)ST2, (char *)ST1, TOP, 1);
     DROP(2);
-}
-
-void mu_new_()
-{
-    execute_xtk(xtk_new_hook);
-    mu_new_name();
-}
-
-void mu_new()
-{
-    mu_token();
-    mu_new_();
-}
-
-void mu_push_tick_new_hook()
-{
-    PUSH_ADDR(&xtk_new_hook);
+    TOP = (addr)pnm;
 }
 
 /*
@@ -365,12 +328,11 @@ void init_dict()
     allocate();
 
     /* create "hidden" names */
-    forth_chain    = new_name( NULL, ".forth.", 7, 1);
-    compiler_chain = new_name( NULL, ".compiler.", 10, 1);
+    forth_chain    = new_name(NULL, ".forth.", 7, 1);
+    compiler_chain = new_name(NULL, ".compiler.", 10, 1);
 
     init_chain(forth_chain, initial_forth);
     init_chain(compiler_chain, initial_compiler);
-    current_chain = forth_chain;
 }
 
 /*
