@@ -231,33 +231,15 @@ void mu_push_parsed()
     PUSH(parsed.length);
 }
 
-static xtk xtk_show_stack = XTK(mu_nope);
-void mu_push_tick_show_stack()  { PUSH_ADDR(&xtk_show_stack); }
-
-void mu_qstack()
+static void muboot_show_stack()
 {
-    if (SP > S0)
-    {
-        mu_sp_reset();
-        return abort_zmsg("tried to pop an empty stack");
-    }
-    if (SP < SMAX)
-    {
-        return abort_zmsg("too many items on the stack");
-    }
-
-    /* Call Forth code to print stack, maybe. */
-    execute_xtk(xtk_show_stack);
-
 #ifdef DEBUG_STACK
-    {
-        int i;
-        fprintf(stderr, "  --");
-        for (i = 0; i < 4; i++)
-            fprintf(stderr, "  %16llx", (uval)SP[3-i]);
-        fprintf(stderr, "\n");
-        fflush(stderr);
-    }
+    int i;
+    fprintf(stderr, "  --");
+    for (i = 0; i < 4; i++)
+        fprintf(stderr, "  %16llx", (uval)SP[3-i]);
+    fprintf(stderr, "\n");
+    fflush(stderr);
 #endif
 }
 
@@ -277,7 +259,7 @@ static void muboot_interpret()
         mu_token();
         if (TOP == 0) break;
         mu_consume();
-        mu_qstack();
+        muboot_show_stack();
     }
     DROP(2);
 }

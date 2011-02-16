@@ -59,7 +59,9 @@ void mu_zero_equal()  { TOP = (TOP == 0) ? -1 : 0; }
 
 void mu_depth()     { cell d = S0 - SP; PUSH(d); }
 void mu_sp_reset()  { SP = S0; SP[0] = 0xdecafbad; }
+#ifdef MAYBE_UNNECESSARY
 void mu_push_s0()   { PUSH_ADDR(S0); }          /* address of stack bottom */
+#endif
 void mu_sp_fetch()  { val *s = SP; PUSH_ADDR(s); } /* push stack pointer */
 void mu_sp_store()  { SP = (val *)TOP; }           /* set stack pointer */
 
