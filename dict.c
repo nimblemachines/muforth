@@ -208,13 +208,12 @@ void mu_find()
     cell length = ST1;
     struct dict_entry *pde = (struct dict_entry *)TOP;
 
+    /*
+     * Only search if length < 128. This prevents us from matching hidden
+     * entries!
+     */
     if (length < 128)
     {
-        /*
-         * Only search if length < 128. This prevents us from matching
-         * hidden entries!
-         */
-
         while ((pde = (struct dict_entry *)pde->n.link) != NULL)
         {
             /* for speed, don't test anything else unless lengths match */
