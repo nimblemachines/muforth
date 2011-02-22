@@ -136,57 +136,14 @@ compiler
 forth
 
 
-( Some useful tidbits.)
-: -   negate + ;
-: u+  ( a b c - a+c b)  rot +  swap ;  ( "under-plus")
-: v+  ( x1 y1 x2 y2 - x1+x2 y1+y2)  push u+ pop + ;  ( add 2-vectors)
-
 ( We don't even have any constants yet! So we make the easiest one first...)
 : 0   [ dup dup xor ] ;
 : -1  [ 0 invert ] ;
 : 1   [ -1 negate ] ;
 : 2   [ 1 2* ] ;
 
-: 1+   1 + ;  ( these are common)
-: 1-  -1 + ;
-
-( Cells store data values.)
-: cells  CELL-SHIFT << ;
-: cell/  CELL-SHIFT >> ;  ( signed)
-: cell   [ 1 cells ] ;
-: cell+  [ cell ] + ;
-: cell-  [ cell negate ] + ;
 
 : bl  [ 2 2* 2* 2* 2* ] ;  ( space character)
-
-( XXX keep these?)
-: @+  ( a - n a+)  dup @  swap cell+ ;
-: !+  ( n a - a+)  tuck !  cell+ ;
-
-( Double-length words.)
-: 2@  @+ @  swap ;  ( cell at lower address to TOP)
-: 2!  !+ ! ;
-
-: 2dup  over over ;
-: 2swap  rot push  rot pop ;
-: 2push  ( a b -> R: a b)  pop -rot  swap push push  push ;
-: 2pop   ( R: a b -> a b)  pop       pop pop swap    rot push ;
-
-: =    xor 0= ;
-: not      0= ;  ( warning! this is NOT 1's complement)
-: bic  invert and ;
-: @execute  @ execute ;
-
-( jump allows jumping thru a table of addresses; you are responsible for
-  making sure the index is within range! It must be used at the end of a
-  word. Common usage looks like this:  jump  nope  do1  do2  do3  [
-
-  That example assumes the top of stack has a number from 0 to 3.
-
-  Since no UNNEST needs to be compiled, use of [ rather than ; to end the
-  word is common.)
-
-: jump  ( which)  cells pop + @execute ;
 
 : ctrl   char  [ bl 2* ( 64) ]  xor ;  ( how you get ^? = 127.)
 compiler
@@ -203,6 +160,49 @@ forth
 ( Before I figured out the trick above, which yields the correct answer for
   ctrl ?, I defined ctrl thus:)
 -- : ctrl   char  [ bl 1- ( 31) ]  and ;  ( elliptical, but it works :-)
+
+
+( Some useful tidbits.)
+: -   negate + ;
+: u+  ( a b c - a+c b)  rot +  swap ;  ( "under-plus")
+: v+  ( x1 y1 x2 y2 - x1+x2 y1+y2)  push u+ pop + ;  ( add 2-vectors)
+
+: 1+   1 + ;  ( these are common)
+: 1-  -1 + ;
+
+: cell   [ 1 cells ] ;
+: cell+  [ cell ] + ;
+: cell-  [ cell negate ] + ;
+
+( XXX keep these?)
+: @+  ( a - n a+)  dup @  swap cell+ ;
+: !+  ( n a - a+)  tuck !  cell+ ;
+
+( Double-length words.)
+: 2@  @+ @  swap ;  ( cell at lower address to TOP)
+: 2!  !+ ! ;
+
+: 2dup  over over ;
+: 2swap  rot push  rot pop ;
+
+: 2push  ( a b -> R: a b)  swap  pop -rot  push push      push ;
+: 2pop   ( R: a b -> a b)        pop       pop pop    rot push  swap ;
+
+: =    xor 0= ;
+: not      0= ;  ( warning! this is NOT 1's complement)
+: bic  invert and ;
+: @execute  @ execute ;
+
+( jump allows jumping thru a table of addresses; you are responsible for
+  making sure the index is within range! It must be used at the end of a
+  word. Common usage looks like this:  jump  nope  do1  do2  do3  [
+
+  That example assumes the top of stack has a number from 0 to 3.
+
+  Since no UNNEST needs to be compiled, use of [ rather than ; to end the
+  word is common.)
+
+: jump  ( which)  cells pop + @execute ;
 
 
 ( Mark a branch source for later fixup.)
@@ -1108,9 +1108,11 @@ forth
 
 : date    ( epoch - y m d yday)  local-time  2drop 2drop drop ;
 
+: utc"    ( epoch - a n)         utc  (time") ;
 : date"   ( epoch - a n)  local-time  (date") ;
 : time"   ( epoch - a n)  local-time  (time") ;
-: utc"    ( epoch - a n)         utc  (time") ;
+: short-time"
+          ( epoch - a n)  local-time  (short-time") ;
 
 ( Better primitives? More elegant, certainly.)
 : s->sm    ( s - s m)    60 u/mod ;
@@ -1227,16 +1229,16 @@ Dictionary searches (via 'find') are case-sensitive by default.
    -case    makes them case-insensitive,
    +case    makes them case-sensitive again.
 
-These defaults can be easily changed either by overriding them on
-the command line, or by editing startup.mu4. Look for the word 'warm'
-near the end of the file.
+These defaults can be easily changed either by overriding them on the
+command line, or by editing startup.mu4. Look for the word 'warm' near
+the end of the file.
 
 " ;
 
 
-( Print banner.)
-0 .if
-: banner
+.ifdef old-banners
+
+: banner-oldest
    ." muFORTH/ITC "
    cell 8 = if ." (64-bit) " then
    .ifdef clock
@@ -1245,16 +1247,14 @@ near the end of the file.
       build-time ( pushes a string!)
    .then  type  ."
 
-http://muforth.nimblemachines.com/
 
 Copyright (c) 2002-2011 David Frech. All rights reserved.
 muFORTH is free software; see the file COPYRIGHT for details.
 
 Type 'settings' to see a few of muFORTH's tweakable behaviours.
 " ;
-.then
 
-: banner
+: banner-older
    ." muFORTH "
    cell 8 = if ." 64-bit " else ." 32-bit " then
    .ifdef clock
@@ -1268,6 +1268,26 @@ Type 'settings' to see a few of muFORTH's tweakable behaviours.
    ."
 
 Copyright (c) 2002-2011 David Frech. http://muforth.nimblemachines.com/
+
+Type 'settings' to see a few of muFORTH's tweakable behaviours.
+" ;
+
+.then
+
+
+( Print banner.)
+: banner
+   ." muFORTH "
+   build-commit  if  ( empty if not a checkout)
+      ." ("  8  type  ." ) "
+   else drop ( empty string) then
+   .ifdef clock
+      build-time ( seconds since epoch)  short-time"
+   .else
+      build-time ( pushes a string!)
+   .then  type
+   ."  (http://muforth.nimblemachines.com/)
+Copyright (c) 2002-2011 David Frech. See the file COPYRIGHT for details.
 
 Type 'settings' to see a few of muFORTH's tweakable behaviours.
 " ;

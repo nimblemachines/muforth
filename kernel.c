@@ -28,8 +28,11 @@ void mu_shift_left()           { ST1 = ST1 << TOP; DROP(1); }
 void mu_shift_right()          { ST1 = ST1 >> TOP; DROP(1); }
 void mu_ushift_right()  { ST1 = (uval) ST1 >> TOP; DROP(1); }
 
-/* export cell size to Forth */
-void mu_CELL_SHIFT()  { PUSH(CELL_SHIFT); }
+/* By defining these here, we don't need to export the cell size to Forth.
+ * This saves a word in the dictionary. ;-) */
+#define CELL_SHIFT  (sizeof(cell) == 8 ? 3 : 2)
+void mu_cells()        { TOP <<= CELL_SHIFT; }
+void mu_cell_slash()   { TOP >>= CELL_SHIFT; }  /* signed & flooring! */
 
 /* fetch and store character (really _byte_) values */
 void mu_cfetch()  { TOP = *(uint8_t *)TOP; }
@@ -119,7 +122,7 @@ void mu_slash_mod()  /* n1 n2 -- m q */
     quot = ST1 / TOP;
     mod  = ST1 % TOP;
 
-#ifdef DIVIDE_IS_SYMMETRIC
+#ifdef DIVISION_IS_SYMMETRIC
     /*
      * We now have the results of a stupid symmetric division, which we
      * must convert to floored. We only do this if the modulus was non-zero

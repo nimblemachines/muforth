@@ -37,26 +37,27 @@ int main(int argc, char *argv[])
 #endif
 
         if (quot == -2 && rem == 1)
-            printf("#define DIVIDE_FLOORS\n");
+            printf("#define DIVISION_FLOORS\n");
         else if (quot == -1 && rem == -3)
-            printf("#define DIVIDE_IS_SYMMETRIC\n");
+            printf("#define DIVISION_IS_SYMMETRIC\n");
         else
-            printf("#error \"Wow. Divide is broken.\"\n");
+            printf("#error \"Wow. Division Is broken.\"\n");
     }
 
-    /* Size of cells */
+#ifdef TEST_CELL_SIZE
     if (sizeof(intptr_t) == 4)
     {
         printf("#define CELL_SHIFT 2\n");
-        printf("#define CELL_32\n");
+        printf("#define CELL_BITS  32\n");
     }
     else
     {
         printf("#define CELL_SHIFT 3\n");
-        printf("#define CELL_64\n");
+        printf("#define CELL_BITS  64\n");
     }
+#endif
 
-    /* endianness */
+#ifdef TEST_ENDIANNESS
     {
         int mem;
         uint8_t *pb = (uint8_t *)&mem;
@@ -65,19 +66,15 @@ int main(int argc, char *argv[])
         pb[2] = 0x33;
         pb[3] = 0x44;
         if (mem == 0x11223344)
-            printf("#define HOST_TESTS_BIG_ENDIAN\n");
+            printf("#define BIG_ENDIAN\n");
         if (mem == 0x44332211)
-            printf("#define HOST_TESTS_LITTLE_ENDIAN\n");
-#ifdef BYTE_ORDER
-        if (BYTE_ORDER == LITTLE_ENDIAN)
-            printf("#define ENDIAN_H_CLAIMS_LITTLE_ENDIAN\n");
-        if (BYTE_ORDER == BIG_ENDIAN)
-            printf("#define ENDIAN_H_CLAIMS_BIG_ENDIAN\n");
-#endif
+            printf("#define LITTLE_ENDIAN\n");
     }
+#endif
 
-    /* show size of jmpbuf */
-    printf("#define JMPBUF_CELLS %d\n", (int)(sizeof(jmp_buf) / sizeof(int32_t)));
+#ifdef TEST_JMPBUF_SIZE
+    printf("#define JMPBUF_CELLS %d\n", (int)(sizeof(jmp_buf) / sizeof(intptr_t)));
+#endif
 
     return 0;
 }

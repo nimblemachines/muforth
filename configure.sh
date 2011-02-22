@@ -18,8 +18,8 @@ while [ "$1" ]; do
   shift
 done
 
-# Set archcflags and archldflags based on system. Useful for 64-bit Linux
-# and for Darwin (OSX).
+# Set cflags and ldflags based on system. Useful for 64-bit Linux and for
+# Darwin (OSX).
 
 os=$(uname -s)
 cpu=$(uname -m)
@@ -29,16 +29,21 @@ cpu=$(uname -m)
 # _widening_ casts (address to cell) so we know where they happen, and can
 # specify them as sign-extending (seemingly gcc's default) or not.
 
-archcflags="-Wno-int-to-pointer-cast"
-archldflags=""
+cflags="-Wno-int-to-pointer-cast"
+ldflags=""
+
+# On 64-bit hosts, we now default to _forcing_ the compilation of a 32-bit
+# version of muforth. Compiling muforth with 64-bit cells is now left as an
+# exercise for the reader (it's not hard, and all the pieces are still
+# there - it's just rather _pointless_ ;-).
 
 if [ "$os" = "Darwin" ]; then
-    archcflags="-m64"
-    archldflags="-m64"
+    cflags="${cflags} -m32 -mdynamic-no-pic"
+    ldflags="${ldflags} -m32"
 fi
 if [ "$os" = "Linux" -a "$cpu" = "x86_64" ]; then
-    archcflags="-m64"
-    archldflags="-m64"
+    cflags="${cflags} -m32"
+    ldflags="${ldflags} -m32"
 fi
 
 # Figure out which version of sed we're running, so we can properly specify
@@ -80,8 +85,8 @@ Then run your BSD make.
 EOF
   sed ${sedext} \
     -e "s/%sedext%/${sedext}/g" \
-    -e "s/%archcflags%/${archcflags}/g" \
-    -e "s/%archldflags%/${archldflags}/g" \
+    -e "s/%archcflags%/${cflags}/g" \
+    -e "s/%archldflags%/${ldflags}/g" \
     -f scripts/make.sed \
     -f scripts/gnu-make.sed \
     -e 's/^### Makefile/### GNU Makefile/' Makefile.in > Makefile
@@ -97,8 +102,8 @@ Then type "gmake" instead of "make".
 EOF
   sed ${sedext} \
     -e "s/%sedext%/${sedext}/g" \
-    -e "s/%archcflags%/${archcflags}/g" \
-    -e "s/%archldflags%/${archldflags}/g" \
+    -e "s/%archcflags%/${cflags}/g" \
+    -e "s/%archldflags%/${ldflags}/g" \
     -f scripts/make.sed \
     -e 's/^### Makefile/### BSD Makefile/' Makefile.in > Makefile
 fi
