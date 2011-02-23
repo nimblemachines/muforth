@@ -80,7 +80,7 @@ extern val  *RP;    /* return stack pointer */
 /* make an execution token from a word's name */
 #define XTK(w)   (&p_ ## w)
 
-#define EXECUTE   execute_xtk(*(xtk *)(SP++))
+#define EXECUTE   execute_xtk((xtk)POP)
 #define CALL(x)   (W = (x), (**W)())
 #define NEXT      CALL(*IP++)
 #define BRANCH    (IP = (xtk *)*IP)

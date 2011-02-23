@@ -38,8 +38,8 @@ ldflags=""
 # there - it's just rather _pointless_ ;-).
 
 if [ "$os" = "Darwin" ]; then
-    cflags="${cflags} -m32 -mdynamic-no-pic"
-    ldflags="${ldflags} -m32"
+    cflags="${cflags} -m32 -mdynamic-no-pic -arch i386 -arch ppc"
+    ldflags="${ldflags} -m32 -arch i386 -arch ppc"
 fi
 if [ "$os" = "Linux" -a "$cpu" = "x86_64" ]; then
     cflags="${cflags} -m32"
