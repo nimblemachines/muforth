@@ -20,7 +20,7 @@ typedef  int64_t   val;
 typedef uint64_t  uval;
 
 /* address type - for casting */
-typedef uintptr_t  addr;  /* intptr_t and uintptr_t are integer types that
+typedef intptr_t  addr;   /* intptr_t and uintptr_t are integer types that
                              are the same size as a native pointer. Whether
                              this type is unsigned or not will affect how
                              32-bit addresses are treated when pushed onto
