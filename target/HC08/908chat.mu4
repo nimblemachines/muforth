@@ -159,13 +159,29 @@ reset vector
    -- We're staying in FEI mode, but we're going to trim the internal
    -- reference so that our bus clock is 9.216M - a nice multiplier for
    -- 115200.
-   -- I've put my own trim values into the chips @ FFAD.
+   -- I've put my own trim values into the chips @ FFAD (for 9.216M).
+
    0ffad ) lda   ICSTRM ) sta
+
+.ifdef try-xtal
+   -- Let's try switching on the 4.9152M xtal osc.
+   %00_11_0111 # lda  ICSC2 ) ora  ICSC2 ) sta
+   -- wait for osc to start
+   begin  ICSSC 1  bset? until
+   -- switch! making sure to change RDIV at the same time
+   %00_111_000 # ICSC1 ) mov
+.then
+
    ICSC2 ) clr   ( switch BDIV to /1 from /2)
 
    -- Set FCDIV - flash clock divider - to match our bus clock
    -- FCDIV = ceil(busclock/200k) - 1
-   #9216 #199 + #200 / 1 -  # lda   FCDIV ) sta
+
+   -- We leave off the - 1 to slow the flash a bit. Insurance against our
+   -- clock being a bit fast... better to have the flash clock run a bit
+   -- slow than too fast.
+
+   #9216 #199 + #200 / # lda   FCDIV ) sta
 
    -- Configure SCI
    0c # SCIC2 ) mov  ( enable rcvr, xmitter)
@@ -207,10 +223,8 @@ reset vector
    SCC1 6 ( ENSCI) bset
    0c # SCC2 ) mov   ( enable rcvr, xmitter)
 
-   -- %001_10000 # SCPSC ) mov  ( prescaler divisor of 2 + 16/32)
-   --                           ( yields 115200 from 18.432M clock)
-   %110_10000 # SCPSC ) mov  ( prescaler divisor of 7 + 16/32)
-                             ( yields 38400 from 18.432M clock)
+   %001_10000 # SCPSC ) mov  ( prescaler divisor of 2 + 16/32)
+                             ( yields 115200 from 18.432M clock)
 
 .then
 
