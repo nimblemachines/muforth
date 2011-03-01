@@ -153,8 +153,12 @@ reset vector
 
    -- Turn off watchdog
    -- Can't use bit ops! SOPT1 not in z-page.
-   SOPT1 ) lda  7f # and  ( clear COPE)  SOPT1 ) sta
+   -- Clear bits 6 & 7. These have different meanings on different chips,
+   -- but at least for the JS and QG clearing both bits will shut off the
+   -- watchdog.
+   SOPT1 ) lda  3f # and  SOPT1 ) sta
 
+.ifndef S08JS
    -- Configure ICS (internal clock source)
    -- We're staying in FEI mode, but we're going to trim the internal
    -- reference so that our bus clock is 9.216M - a nice multiplier for
@@ -181,13 +185,42 @@ reset vector
    -- clock being a bit fast... better to have the flash clock run a bit
    -- slow than too fast.
 
-   #9216 #199 + #200 / # lda   FCDIV ) sta
+   #9216 >fcdiv  # lda   FCDIV ) sta
 
    -- Configure SCI
    0c # SCIC2 ) mov  ( enable rcvr, xmitter)
    SCIBDH ) clr      ( baud rate divisor, high)
    5 # SCIBDL ) mov  ( baud rate divisor, low)
                      ( yields 115200 from 9.216M bus clock)
+
+.else    -- S08JS
+   -- Do all the same things explained above, but adjust registers and
+   -- values for the JS parts, which use a different clock generator (MCG
+   -- instead of ICS), and run twice as fast.
+
+   0ffad ) lda   MCGTRM ) sta
+   MCGC2 ) clr   ( switch BDIV to /1 from /2)
+   #18432 >fcdiv  # lda   FCDIV ) sta
+
+   -- #9216 >fcdiv  # lda   FCDIV ) sta
+
+   -- Configure SCI
+   0c # SCIC2 ) mov  ( enable rcvr, xmitter)
+   #10 # ldhx        ( baud rate divisor)
+   SCIBDH ) sthx     ( yields 115200 from 18.432M bus clock)
+
+.ifdef so-that-worked
+   -- UART test
+   begin
+      %1111_1111 # lda  SciTx c
+      %0101_0101 # lda  SciTx c
+      %0100_1001 # lda  SciTx c
+      %0001_0001 # lda  SciTx c
+      %0000_0001 # lda  SciTx c
+   again
+.then
+
+.then
 
 .else  -- 908
 
