@@ -137,16 +137,16 @@ forth
 
 ( On S08, erasing the vectors means erasing the TRIM bytes, the secure
   bits, and the bootloader. So be careful about re-programming things, esp
-  the TRIMs and the secure bits.)
+  the TRIMs and the secure bits. Copy from ffac to ffbf.)
 
-: copy-trims  ( save them from the wrecking ball)
-   cr ." copy-trims"
-   0ffac dup t.SetAddr  |+ ( 'image)  4 for
+: save-trims  ( save them from the wrecking ball)
+   cr ." save-trims"
+   0ffac dup t.SetAddr  |+ ( 'image)  14 ( hex) for
       t.Read  over c! ( save in image)  1+  next  drop ;
 
 : erase-page  ( 'target)
    cr ." erase-page " dup u.
-   dup last-page? if  ( erasing last page)  copy-trims  then
+   dup last-page? if  ( erasing last page)  save-trims  then
    1 write-buffer  ( so we can pop a byte in FlashRow)
    1 ( len)  %0111_0000 ( FCCF | FPVIOL | FACCERR)
    mPageErase  flash-setup  chat-run ;
@@ -176,9 +176,17 @@ forth
 
 : flash-image   flash  |region ( a u)   flash-region ;
 
-: flash-trims  ( re-flash saved trims, and set secure bits to "insecure")
-   0ffac 4  2dup  copy-chunk  program-chunk ( trims)
-   1 write-buffer  0fe t.Write  0ffbf 1 program-chunk ( secure bits) ;
+( Use this to initially set the value of "our" trim - the one that trims
+  the internal osc to 9.216M.)
+: set-trim  ( trim)  0ffad |+ c! ;
+
+( Bypass checksum check on JS parts.)
+: bypass-checksum   0  0ffba |+ c! ;
+
+( Re-flash, from values saved in local image, trim and security bytes.)
+( Trims are ffac -- ffaf. Security bytes are ffb0 -- ffbf.)
+: flash-trims  ( re-flash saved trims and security bits.)
+   0ffac 14  2dup  copy-chunk  program-chunk ;
 
 : flash-vectors
    4 write-buffer
