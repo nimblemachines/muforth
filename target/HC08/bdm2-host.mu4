@@ -130,67 +130,21 @@ WriteNextS   51 w d r       -- inc HX, write byte, read status
 
 comment Commands
 
-( Execute a byte of code - useful for setting up and tearing down SWI stack
-  frames, rather than emulating the SWI and RTI instructions.)
-
-: trace1  ( instruction)
-   b.ReadSP  -1 +wrap  dup b.WritePC  b.WriteByte  b.Trace
-   begin  b.ReadStatus 40 and  until ( ready for commands) ;
-
-( Before we force the target to execute our code, read and save the PC)
-: do-swi  ( execute SWI & PSHH to create SWI frame)
-   b.ReadPC ( before we clobber it)
-   "83 ( swi)  trace1  "8b ( psh h) trace1
-   b.ReadSP chat-sp !  pc!  ( using captured SP) ;
-
-: do-rti  ( execute PULH & RTI to pop SWI frame)
-   "8a ( pul h) trace1  "80 ( rti)  trace1 ;
-
-( To make interworking with chat code easier, and to allow interaction with
-  the target without upsetting the contents of registers - let's emulate
-  SWI and RTI instructions as we enter and leave active BDM.
-
-  SWI frame, low memory to high: H CC A X PCH PCL)
-
-: emulate-swi  ( read regs via BDM and push onto SWI stack frame)
-   b.ReadHX >lohi ( before we clobber it)
-   b.ReadSP 6 - dup b.WriteSP  1- b.WriteHX  ( alloc frame, point HX at it)
-   ( X H)  b.WriteNext  b.ReadCC b.WriteNext
-   b.ReadA b.WriteNext  b.WriteNext ( X)
-   b.ReadPC >lohi  b.WriteNext  b.WriteNext ;
-
-: emulate-rti  ( pop regs off SWI frame and write into registers via BDM)
-   b.ReadSP dup  1- b.WriteHX
-   b.ReadNext ( H)  b.ReadNext ( CC) b.WriteCC
-   b.ReadNext ( A)  b.WriteA
-   b.ReadNext ( X)  b.ReadNext b.ReadNext ( PCH PCL) hilo> b.WritePC
-   ( H X)  hilo>  b.WriteHX  ( do this last!)
-   ( SP)  6 + b.WriteSP ;
 
 ( BDM versions of interact operations)
 
+( Since WriteNext and ReadNext _pre-increment_, let's subtract one when we
+  set the address.)
 : b.SetAddr  -1 +wrap  b.WriteHX ;
 
-: b.GetRegs
-   ( get the regs on stack in the right order to "comma" them into frame:
-     PCL PCH X A CC H)
+: b.GetRegs  ( - SP H CC A X PCH PCL)
+   b.ReadSP
+   b.ReadHX >lohi swap push ( X)  b.ReadCC  b.ReadA  pop ( X)
+   b.ReadPC >lohi swap ;
 
-   b.ReadPC >lohi  b.ReadHX >lohi push ( H)  b.ReadA  b.ReadCC  pop ( H)
-   chat-frame  6 for  c!+  next  drop  b.ReadSP  chat-sp ! ;
-
-: b.SetRegs
-   chat-sp @  b.WriteSP
-
-   chat-frame  6 for  c@+ swap  next  drop  ( H CC A X PCH PCL)
-   hilo> b.WritePC  push ( X)  b.WriteA  b.WriteCC
-   pop ( H X) hilo> b.WriteHX ;
-
-comment another-way
-   c@+ swap ( H)
-   c@+ b.WriteCC  c@+ b.WriteA
-   c@+ swap ( X)  c@+ c@+ hilo> b.WritePC  drop
-   hilo> b.WriteHX ;
-comment another-way
+: b.SetRegs  ( PCL PCH X A CC H)
+   push ( H)  b.WriteCC  b.WriteA  pop ( X H) swap hilo> b.WriteHX
+   swap hilo> b.WritePC ;
 
 : b.Run  b.Go  begin  b.ReadStatus  40 and until ;
 
@@ -285,11 +239,11 @@ decimal
    115200 bps
    -- b.Idle b.Bye  ( exit BDM loop, if running)
 
-   bdm-start pc!  t.SetRegs  t.Go   ( start bdm chat loop)
+   bdm-start pc!  regs@ c.SetRegs  c.Go   ( start bdm chat loop)
    b.Clock4M  ( assume bus clock of 4M, forced active mode)
    pwrcycle  b.Hi
    -- comment out the b.Hi if you're talking to JS16; the code still
-   -- assumes GQ register offsets, and does screwball things to JS16!
+   -- assumes QG register offsets, and does screwball things to JS16!
 
    ( Wire our versions into the interact code.)
    ['] b.Run is t.Run
@@ -301,3 +255,7 @@ decimal
    ['] b.WriteNext is t.Write
 
    _chat ;
+
+( Handy shortcuts -esp for testing.)
+: s  b.Sync u. ;
+: t  b.Trace  b.GetRegs regs! .r ;

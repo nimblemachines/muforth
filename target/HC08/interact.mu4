@@ -66,9 +66,47 @@ chat-hx off
 : chat-@  ( a - word)  chat-c@ ( hi)  t.Read ( lo)  hilo> ;
 : chat-!  ( word a)    >lohi  rot chat-c! ( hi)  t.Write ( lo) ;
 
+( We keep a local copy of the target's registers in the same order as they
+  appear in an exception frame.
+
+  The order, low to high: H CC A X PCH PCL)
+
+( These index into our local chat-frame, _not_ into target memory!)
+: reg  ( offset)  constant  does> @  chat-frame + ;  ( self-index)
+00 reg .H
+01 reg .CC
+02 reg .A
+03 reg .X
+04 reg .PC
+04 reg .PCH
+05 reg .PCL
+
+: regs!  ( SP H CC A X PCH PCL)
+   [ chat-frame 6 + ]  6 for  1-  tuck c!  next  drop
+   chat-sp ! ;
+
+: regs@  ( - PCL PCH X A CC H)
+   [ chat-frame 6 + ]  6 for  1- dup  c@ swap  next  drop ;
+
+: GetRegs  ( run "current" x.GetRegs & store those in our local frame)
+   t.GetRegs regs! ;
+
+: SetRegs  ( fetch regs from our local frame & run "current" x.SetRegs)
+   regs@  t.SetRegs ;
+
+: .bits8  radix @ push  binary  <# # # # # # # # # #> type  pop radix ! ;
+: w@  ( a - w)  ( like chat-@ above, but local)  dup c@ 8 <<  swap 1+ c@ or ;
+
+: .b  ( a)  c@ .h8_ ;
+: .w  ( a)  w@  .hcell_ ;
+
+: .regs
+   cr  ." V--HINZC  A  H  X   SP   PC"
+   cr  .CC c@ .bits8 space  .A .b  .H .b  .X .b  chat-sp @ .hcell_  .PC .w ;
+
 : _chat  ( initialise)
    chatting on
-   t.GetRegs  0 t.SetAddr  chat-hx off ( so they match!) ;
+   GetRegs  0 t.SetAddr  chat-hx off ( so they match!) ;
 
 : >chat   ['] chat-c@  is  |c@
           ['] be-w@    is  |@
@@ -125,31 +163,6 @@ meta
                    ['] 1dis    inspect ;
 forth
 
-( We keep a local copy of the target's registers in the same order as they
-  appear in an exception frame.
-
-  The order, low to high: H CC A X PCH PCL)
-
-( These index into our local chat-frame, _not_ into target memory!)
-: reg  ( offset)  constant  does> @  chat-frame + ;  ( self-index)
-00 reg .H
-01 reg .CC
-02 reg .A
-03 reg .X
-04 reg .PC
-04 reg .PCH
-05 reg .PCL
-
-: .bits8  radix @ push  binary  <# # # # # # # # # #> type  pop radix ! ;
-: w@  ( a - w)  ( like chat-@ above, but local)  dup c@ 8 <<  swap 1+ c@ or ;
-
-: .b  ( a)  c@ .h8_ ;
-: .w  ( a)  w@  .hcell_ ;
-
-: .regs
-   cr  ." V--HINZC  A  H  X   SP   PC"
-   cr  .CC c@ .bits8 space  .A .b  .H .b  .X .b  chat-sp @ .hcell_  .PC .w ;
-
 ( These are handy.)
 : pc!  >lohi  .PCH c!  .PCL c! ;
 : hx!  >lohi  .H c!  .X c! ;
@@ -185,7 +198,7 @@ outside
 
 ( For forward references)
 : forward    "100 \a ) \a jmp  \a label ;
-: resolve>>  ( src)  |here  swap 2 -  |! ;
+: resolve>>  ( src)  |here  swap 2 -  image-! ;
 
 : .or   or ;
 : .x  ( like .s)  .X c@ du ;
@@ -205,7 +218,7 @@ forth
 : hi   @ram  |ram @  put  \o reset @  pc!  .regs ;
 
 ( XXX change this!)
-: chat-run  t.SetRegs  t.Run  t.GetRegs ;
+: chat-run  SetRegs  t.Run  GetRegs ;
 
 : go   chat-run  .regs ;
 
