@@ -32,20 +32,7 @@ ld target/HC08/908flash-defs.mu4
   matter for erase-range. The ROM routine always erases an entire page;
   also HX can point anywhere in the page.)
 
-( On 908, erasing the vectors means erasing the TRIM byte, so we copy it
-  before erasing the last page.)
-
-: copy-trim  ( save from the wrecking ball)
-   cr ." copy-trim"
-   0ffc0 dup c.SetHX  c.ReadNext  swap image-c! ;
-
-( If target address is in the last page of flash, return true)
-: last-page?  ( 'target - f)
-   /page negate and  ( round down to start of page)
-   [ #64 Ki /page - ]  = ;
-
 : erase-page  ( 'target)
-   dup last-page? if  ( erasing last page)  copy-trim  then
    cr ." erase-page " dup u.
    1 'erase-range flash-setup  chat-run ;
 
@@ -79,7 +66,17 @@ ld target/HC08/908flash-defs.mu4
    write-buffer c.SetHX  c.WriteNext
    0ffc0 1 'program-range flash-setup  chat-run ;
 
+( On 908, erasing the vectors means erasing the TRIM byte, so we copy it
+  before erasing the last page.)
+
+: copy-trim  ( save from the wrecking ball)
+   cr ." copy-trim"
+   0ffc0 dup c.SetHX  c.ReadNext  swap image-c! ;
+
 : flash-vectors
+   copy-trim
+   0ffc0 erase-page  ( trim & vectors)
+   flash-trim
    write-buffer c.SetHX
    \o swi   @ >lohi  c.WriteNext c.WriteNext
    \o reset @ >lohi  c.WriteNext c.WriteNext

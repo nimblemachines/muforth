@@ -21,11 +21,13 @@ variable spy  spy off
 : send          spy @ if ." >"  dup .h8_ then  _send ;
 : recv   _recv  spy @ if ." <"  dup .h8_ then ;
 
+.ifdef chat1-host
+
 ( Host side)
-: c.Bye        00 send  ;
+: c.Bye        00 send  ;  ( commands 0 and 1 are ignored by the chat target)  
 : c.Idle       01 send  ;
-: c.Run        02 send  recv ( flags)  drop ;  ( wait for response)
-: c.Go         02 send  ;                      ( don't wait)
+: c.RunWait    02 send  recv ( flags)  drop ;  ( wait for response)
+: c.Run        02 send  ;                      ( don't wait)
 : c.Id         03 send  recv ;
 : c.SetH       04 send  send ;
 : c.SetX       05 send  send ;
@@ -35,6 +37,33 @@ variable spy  spy off
 : c.SPtoHX     09 send  ;
 : c.ReadNext   10 send  recv ;
 : c.WriteNext  11 send  send ;
+
+.else
+
+( One change with newer "chat2" protocol is that target no longer sends a
+  byte when it executes an swi and returns to chatting. It just waits. But
+  if the host sends a command - say to read the stack pointer - then the
+  target will get that command when it returns to chatting, and will
+  immediately answer. This is the new way we do "rendez-vous".)
+
+( Host side)
+: c.Bye        00 send  ;  ( command 0 is ignored by the chat target)  
+: c.Run        01 send  ;  ( start target executing; don't wait)
+: c.Id         02 send  recv ;
+: c.SetH       03 send  send ;
+: c.SetX       04 send  send ;
+: c.GetH       05 send  recv ;
+: c.GetX       06 send  recv ;
+: c.HXtoSP     07 send  ;
+: c.SPtoHX     08 send  ;
+: c.ReadNext   09 send  recv ;
+: c.WriteNext  10 send  send ;
+
+( These are not chat protocol commands, but are "faked" for compatibility.)
+: c.Idle       11 send  ;  ( anything >10 is ignored by target)
+: c.RunWait   c.Run  c.Id drop ;
+
+.then
 
 ( Resynchronise the protocol - just to make sure. We throw away any unread
   input, and then send one ChatIdle, just in case we were in the middle of
@@ -64,11 +93,11 @@ variable spy  spy off
 
 : chat
    115200 bps
-   c.Idle c.Bye  ( exit BDM loop, if running)
+   c.Idle  c.Bye  ( exit BDM loop, if running)
 
    ( Wire our versions into the interact code.)
+   ['] c.RunWait is t.RunWait
    ['] c.Run is t.Run
-   ['] c.Go is t.Go
    ['] c.GetRegs is t.GetRegs
    ['] c.SetRegs is t.SetRegs
    ['] c.SetHX is t.SetAddr

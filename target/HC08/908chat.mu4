@@ -45,9 +45,10 @@ code SciTx  ( transmits char in A)
    begin  SciStatus 7 ( xmit empty)  bset? until
    SciData ) sta  rts  ;c
 
+.ifdef chat1
 
 ( Commands:
-  0  Bye        - return to chat; this is a no-op in chat; matches BDM cmd
+  0  Bye        - ignored by chat; force other command loops to return to chat
   1  Idle       - no-op - so we can re-sync the protocol
   2  Run        - does an RTI - pops stack frame and runs
   3  Id         - read low byte of S08 Id register SDIDL @1807
@@ -61,15 +62,39 @@ code SciTx  ( transmits char in A)
  11  WriteNext  - reads a byte from SCI, writes into memory @ HX, inc HX
 )
 
+.else  ( chat2 - newer protocol - only minor changes)
+
+( Commands:
+  0  Bye        - ignored by chat; force other command loops to return to chat
+  1  Run        - does an RTI - pops stack frame and runs
+  2  Id         - read low byte of S08 Id register SDIDL @1807
+  3  SetH       - reads a byte from SCI, writes into H register
+  4  SetX       - reads a byte from SCI, writes into X register
+  5  GetH       - writes H register to SCI
+  6  GetX       - writes X register to SCI
+  7  HXtoSP     - sets SP from HX
+  8  SPtoHX     - sets HX from SP
+  9  ReadNext   - reads a byte from memory @ HX, writes it to SCI, inc HX
+ 10  WriteNext  - reads a byte from SCI, writes into memory @ HX, inc HX
+>10  ignored    - can be used for Idle
+)
+
+.then
+
 code SendByte  ( send char in A)
    SciTx bsr
 
 label Dispatch
    SciRx bsr  ( command)
 
+.ifdef chat1
    02 # sub   ( map 0 -> fe, 1 -> ff -- both ignored)
 
    0= if ( Run)   .h pul  rti  then
+.else
+   ( map 0 -> ff -- ignore)
+   .a decz? if ( Run)   .h pul  rti  then
+.then
 
    .a decz? if ( Id)
 .ifdef S08
@@ -131,7 +156,11 @@ swi vector
    .x psh  .a psh  tpa ( flags to A)  .a psh  sei
 .then
    .h psh
+.ifdef chat1
    SendByte again  ;c
+.else
+   Dispatch again  ;c
+.then
 
 ( If the chat interaction changes the PC on this stack frame to point
   somewhere other than _after_ the __swi, not all is lost - since we got
