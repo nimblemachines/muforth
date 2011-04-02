@@ -60,29 +60,35 @@ macro SciTxBuf
    begin  SciStatus  7 ( xmit empty)  bset? until
    0 ,x  SciData )  mov  ;m  ( the mov does post-incr of HX)
 
+hex
+
+( NOTE: Command numbers are all given in HEX.)
+
+
+( Misc commands)
 code BdmMisc
-   .a decz? if  ( 09 BkgdLow)
+   .a decz? if  ( 28 BkgdLow)
       BdmDriveLow ) jmp  -- drive BKGD/MS low
    then
 
-   .a decz? if  ( 10 BkgdHiZ)
+   .a decz? if  ( 29 BkgdHiZ)
       BdmHiZ ) jmp
    then
 
-   .a decz? if  ( 11 Set4M)
+   .a decz? if  ( 2a Set4M)
       BdmRx1 # ldhx
       SetRx1_4M ) jsr
       SetTx1_4M ) jmp
    then
 
-   .a decz? if  ( 12 Set8M)
+   .a decz? if  ( 2b Set8M)
       BdmRx1 # ldhx
       SetRx1_8M ) jsr
       SetTx1_8M ) jmp
    then
 
 .ifdef S08  ( not defined for 908's - not going fast enough)
-   .a decz? if  ( 13 Set16M)
+   .a decz? if  ( 2c Set16M)
       BdmRx1 # ldhx
       SetRx1_16M ) jsr
       SetTx1_16M ) jmp
@@ -104,31 +110,33 @@ code BdmChat
    BdmHiZ ) jsr  ( make sure BKGD high and tri-stated)
 label BdmLoop
    SciRx
-   0= if  ( 00 Bye)  ( return to byteloader)  7 # ais  rts  then
 
-   .a decz? if  ( 01 Idle)
+   20 # sub   ( BDM commands start at 20 hex; anything below that, we exit)
+   u< if  ( 00 Bye up to 1f)  ( return to byteloader)  7 # ais  rts  then
+
+   0= if  ( 20 Idle)
       BdmLoop again
    then
 
-   .a decz? if  ( 02 WriteFirst)
+   .a decz? if  ( 21 Send1, aka SendFirst)
       4 ,s sta  ( set write count to 0)
       tsx  ( point HX at start of buffer)
       .a inc  ( so we execute the WriteNext code!)
       ( fall through...)
    then
 
-   .a decz? if  ( 03 WriteNext)
+   .a decz? if  ( 22 SendNext)
       4 ,s inc  ( incr write count)
       SciRxBuf  BdmLoop again
    then
 
-   .a decz? if  ( 04 ReadNext)
-label ReadNext
+   .a decz? if  ( 23 RecvNext)
+label RecvNext
       SciTxBuf  BdmLoop again
    then
 
    .a dec
-   03 # cmp  u< if  ( 05..07 Execute BDM, Read 0..2)
+   03 # cmp  u< if  ( 24..26 Execute BDM, Expect 0..2)
       5 ,s sta  ( read count)
 
       4 ,s lda  ( get write count)
@@ -153,14 +161,14 @@ label ReadNext
 
       tsx  ( point HX at start of buffer)
       ( send back first byte of response, or junk byte for Expect0)
-      ReadNext again
+      RecvNext again
    then
 
    03 # sub
-   0= if  ( 08 SyncPulse)
+   0= if  ( 27 SyncPulse)
       tsx  ( point HX at start of buffer)
       SyncPulse ) jsr
-      ReadNext again
+      RecvNext again
    then
 
    BdmMisc ) jsr
