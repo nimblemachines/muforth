@@ -45,7 +45,7 @@ code SciTx  ( transmits char in A)
    begin  SciStatus 7 ( xmit empty)  bset? until
    SciData ) sta  rts  ;c
 
-.ifdef chat1
+( chat1 - original - protocol)
 
 ( Commands:
   0  Bye        - ignored by chat; force other command loops to return to chat
@@ -62,24 +62,20 @@ code SciTx  ( transmits char in A)
  11  WriteNext  - reads a byte from SCI, writes into memory @ HX, inc HX
 )
 
-.else  ( chat2 - newer protocol - only minor changes)
+( chat2 protocol - minor changes)
 
 ( Commands:
   0  Bye        - ignored by chat; force other command loops to return to chat
+                - can be used as an Idle
   1  Run        - does an RTI - pops stack frame and runs
-  2  Id         - read low byte of S08 Id register SDIDL @1807
-  3  SetH       - reads a byte from SCI, writes into H register
-  4  SetX       - reads a byte from SCI, writes into X register
-  5  GetH       - writes H register to SCI
-  6  GetX       - writes X register to SCI
-  7  HXtoSP     - sets SP from HX
-  8  SPtoHX     - sets HX from SP
-  9  ReadNext   - reads a byte from memory @ HX, writes it to SCI, inc HX
- 10  WriteNext  - reads a byte from SCI, writes into memory @ HX, inc HX
->10  ignored    - can be used for Idle
+                - when it returns to chat loop, returns flags register
+  2  SetHX      - reads two bytes from SCI, writes them into H & X registers
+  3  GetHX      - writes H then X register to SCI
+  4  HXtoSP     - sets SP from HX
+  5  SPtoHX     - sets HX from SP
+  6  ReadNext   - reads a byte from memory @ HX, writes it to SCI, inc HX
+  7  WriteNext  - reads a byte from SCI, writes into memory @ HX, inc HX
 )
-
-.then
 
 code SendByte  ( send char in A)
    SciTx bsr
@@ -87,39 +83,28 @@ code SendByte  ( send char in A)
 label Dispatch
    SciRx bsr  ( command)
 
-.ifdef chat1
-   02 # sub   ( map 0 -> fe, 1 -> ff -- both ignored)
-
-   0= if ( Run)   .h pul  rti  then
-.else
    ( map 0 -> ff -- ignore)
    .a decz? if ( Run)   .h pul  rti  then
-.then
 
-   .a decz? if ( Id)
-.ifdef S08
-      SDIDL ) lda
-.else
-      0ff # lda  -- pretend that 908 parts have Id 0ff
-.then
-      SendByte again  then
-
-   .a decz? if ( SetH)
-   SciRx bsr  .a psh  .h pul  ( set H)  Dispatch again  then
-
-   .a decz? if ( SetX)
+   .a decz? if ( SetHX)
+   SciRx bsr  .a psh  .h pul  ( set H)
    SciRx bsr  tax ( set X)  Dispatch again  then
 
-   .a decz? if ( GetH)
-   .h psh  .a pul  SendByte again  then
-
-   .a decz? if ( GetX)
-   txa  SendByte again  then
+   .a decz? if ( GetHX)
+   .h psh  .a pul  SciTx bsr  ( send H)
+   txa  SendByte again  ( send X)  then
 
    .a decz? if ( HXtoSP)  txs  Dispatch again  then
    .a decz? if ( SPtoHX)  tsx  Dispatch again  then
 
-   ( fall through to continued...)  ;c
+   .a decz? if ( ReadByte)
+   0 ,x lda  1 # aix  SendByte again  then
+
+   .a decz? if ( WriteByte)
+   SciRx bsr   0 ,x sta   1 # aix  then  ( fall through)
+
+   ( unknown command)   Dispatch again  ;c
+
 
 ( If compiling into RAM and using 908 flash control block, check to make
   sure we haven't "run into" the control block, then jump forward over it
@@ -133,34 +118,14 @@ __forth
    then ;
 ?fits
 __outside
-code skip_flash
-   09c again  ;c  -- branch forward over control block
 09c org           -- continue compiling there
 .then
 
-code continued...
-   .a decz? if ( ReadByte)
-   0 ,x lda  1 # aix  SendByte again  then
-
-   .a decz? if ( WriteByte)
-   SciRx bsr   0 ,x sta   1 # aix  then  ( fall through)
-
-   ( unknown command)   Dispatch again  ;c
-
-
-( We need this because the monitor ROM has taken the SWI vector, and getting
-  it back means flashing the vectors, which for now I want to avoid...)
-swi vector
-.ifdef emulated-swi
+code emulated-swi
    ( jsr/bsr has already pushed PC)
    .x psh  .a psh  tpa ( flags to A)  .a psh  sei
-.then
    .h psh
-.ifdef chat1
    SendByte again  ;c
-.else
-   Dispatch again  ;c
-.then
 
 ( If the chat interaction changes the PC on this stack frame to point
   somewhere other than _after_ the __swi, not all is lost - since we got
@@ -171,9 +136,9 @@ swi vector
   stack frame wil simply return here, and we'll take the "exception" again.)
 
 code interact
-   begin  __swi  again  ;c
+   begin  emulated-swi c  again  ;c
 
-reset vector
+Vreset handler
    \ @ram \ #ram + # ldhx
    txs
 

@@ -21,7 +21,9 @@ variable spy  spy off
 : send          spy @ if ." >"  dup .h8_ then  _send ;
 : recv   _recv  spy @ if ." <"  dup .h8_ then ;
 
-.ifdef chat1-host
+.ifdef chat1
+
+( Original chat protocol)
 
 ( Host side)
 : c.Bye        00 send  ;  ( commands 0 and 1 are ignored by the chat target)  
@@ -38,32 +40,29 @@ variable spy  spy off
 : c.ReadNext   10 send  recv ;
 : c.WriteNext  11 send  send ;
 
-.else
+.else  ( chat2)
 
-( One change with newer "chat2" protocol is that target no longer sends a
-  byte when it executes an swi and returns to chatting. It just waits. But
-  if the host sends a command - say to read the stack pointer - then the
-  target will get that command when it returns to chatting, and will
-  immediately answer. This is the new way we do "rendez-vous".)
+( Simpler, slightly improved chat protocol)
 
 ( Host side)
 : c.Bye        00 send  ;  ( command 0 is ignored by the chat target)  
 : c.Run        01 send  ;  ( start target executing; don't wait)
-: c.Id         02 send  recv ;
-: c.SetH       03 send  send ;
-: c.SetX       04 send  send ;
-: c.GetH       05 send  recv ;
-: c.GetX       06 send  recv ;
-: c.HXtoSP     07 send  ;
-: c.SPtoHX     08 send  ;
-: c.ReadNext   09 send  recv ;
-: c.WriteNext  10 send  send ;
+: c.SetHX      02 send  >lohi send send ;
+: c.GetHX      03 send        recv recv hilo> ;
+: c.HXtoSP     04 send  ;
+: c.SPtoHX     05 send  ;
+: c.ReadNext   06 send  recv ;
+: c.WriteNext  07 send  send ;
 
 ( These are not chat protocol commands, but are "faked" for compatibility.)
-: c.Idle       11 send  ;  ( anything >10 is ignored by target)
-: c.RunWait   c.Run  c.Id drop ;
+: c.RunWait    c.Run  recv ( flags)  drop ;  ( wait for response)
+: c.Idle       c.Bye ;  ( XXX shouldn't even be defining this)
+: c.Id   "1807 ( SDIDL)  c.SetHX c.ReadNext
+   dup "0af = if  drop "0ff ^  then  ( 908 will return 0af) ;
 
 .then
+
+.ifdef chat1
 
 ( Resynchronise the protocol - just to make sure. We throw away any unread
   input, and then send one ChatIdle, just in case we were in the middle of
@@ -80,8 +79,18 @@ variable spy  spy off
 
 : c.SetHX  resync  >lohi  c.SetH  c.SetX ;
 : c.GetHX                 c.GetH  c.GetX  hilo> ;
+
+.else  ( chat2)
+
+( In this case we send two dummy bytes in case we were doing a SetHX.)
+
+: resync  flush  c.Bye c.Bye ;
+
+.then
+
 : c.GetSP  resync  c.SPtoHX  c.GetHX ;
 : c.SetSP                    c.SetHX  c.HXtoSP ;
+
 
 : c.GetRegs  ( - SP H CC A X PCH PCL)
    c.GetSP ( sets HX too!)

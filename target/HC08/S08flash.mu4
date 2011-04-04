@@ -130,16 +130,6 @@ variable flash-status   ( ram-resident code; for bdm we store them in vars.)
    80 \m FSTAT b.WriteByte  ( start command)
    0  begin  drop  \m FSTAT b.ReadByte  flash-status @  and  =until ;
 
-
-#512 constant /page    ( S08 has 512 byte Flash pages - this is erase size)
- #64 constant /chunk   ( max size of row to program)
-
-
-( If target address is in the last page of flash, return true)
-: last-page?  ( 'target - f)
-   /page negate and  ( round down to start of page)
-   @flash #flash +  /page -  = ;
-
 ( So we can switch how we flash the chip.)
 defer flash-setup  ( 'target flash-status flash-command) 
 defer _flash-run   ( byte - status)
@@ -150,10 +140,17 @@ defer _flash-run   ( byte - status)
 : flash-via-bdm  ['] bdm-flash-setup is flash-setup
                  ['] bdm-flash-run is _flash-run ;
 
+-: ( byte - status)  drop  0c0 ;
+: flash-via-test  ['] chat-flash-setup is flash-setup
+                                   [ ] is _flash-run ;
+
 : flash-run  ( byte)
    _flash-run  30 and if  error" flash program or erase error"  then ;
 
-( Flash a chunk of 64 bytes or less.)
+#512 constant /page    ( S08 has 512 byte Flash pages - this is erase size)
+ #64 constant /chunk   ( max size of row to program)
+
+( Flash a chunk of 64 bytes or less, all in the same 64-byte "line".)
 : program-chunk  ( 'target len)
    cr ." program-chunk "  2dup swap u. u.  over
    %0111_0000 ( FCCF | FPVIOL | FACCERR)  mByteProgram  flash-setup
@@ -166,27 +163,44 @@ defer _flash-run   ( byte - status)
 
 : save-trims  ( save them from the wrecking ball)
    cr ." save-trims"
-   0ffac dup t.SetAddr  |+ ( 'image)  14 ( hex) for
+   0ffac dup t.SetAddr  |+ ( 'image)  4 for
       t.Read  over c! ( save in image)  1+  next  drop ;
+
+( If target address is first byte of the last page of flash, return true)
+: last-page?  ( 'target - f)
+   @flash #flash +  /page -  = ;
 
 : erase-page  ( 'target)
    cr ." erase-page " dup u.
-   dup last-page? if  ( erasing last page)  save-trims  then
    %0111_0000 ( FCCF | FPVIOL | FACCERR)  mPageErase  flash-setup
    0 ( byte)  flash-run ;
 
-: blank-check  ( addr len - flag)
-   cr ." blank-check "  2dup swap u. u.
-   swap t.SetAddr  0ff swap  for  t.Read and  next  0ff = ;
+: blank-check  ( addr - flag)
+   cr ." blank-check "  dup u.
+   t.SetAddr  -1  /page  for  t.Read and  next  0ff = ;
 
-: erased  ( 'target len - 'target len)
-   2dup blank-check  if ^ then  over erase-page ;
+( Flash vectors, security bytes, & trims)
+: flash-vectors
+   cr ." flashing vectors, security bytes, and trims"
+   0ffac 14  ( 0ffac - 0ffcf)  program-chunk  ( trims and security bytes)
+   0ffc0 40  ( 0ffc0 - 0ffff)  program-chunk  ( vectors) ;
+
+( The only correct semantics for blank-check are that when we are about to
+  program the _first_ byte of a page, we check the entire page & erase it
+  if necessary.)
+
+: erased  ( 'target)
+   dup [ /page 1- ] and  if  drop ^  then  ( do nothing if not first byte)
+   dup blank-check  if  drop ^  then
+   dup last-page? if  ( erasing last page)
+      save-trims  erase-page  flash-vectors  ^  then
+   erase-page ;
 
 ( For each chunk check if blank, erase if necessary, then copy chunks over
   to buffer and program them!)
 
 : chunk  ( 'target len - 'target+len)
-   2dup + push  erased  program-chunk  pop ;
+   2dup + push  over erased  program-chunk  pop ;
 
 : flash-region  ( a len)
    /chunk /mod  ( r q)  swap push  ?for  /chunk chunk  next  then
@@ -196,24 +210,15 @@ defer _flash-run   ( byte - status)
 
 ( Use this to initially set the value of "our" trim - the one that trims
   the internal osc to 9.216M.)
-: set-trims ( ours factory)  0ffaf image-c!  0ffad image-c!
-   0fe 0ffbf image-c! ( unsecured) ;
+: set-trims ( ours factory)  0ffaf image-c!  0ffad image-c! ;
 
+: set-unsecured
+   0fe 0ffbf image-c! ;  set-unsecured
+
+.ifdef S08JS
 ( Bypass checksum check on JS parts.)
-: bypass-checksum   0  0ffba image-c! ;
-
-( Re-flash, from values saved in local image, trim and security bytes.)
-( Trims are ffac -- ffaf. Security bytes are ffb0 -- ffbf.)
-: flash-trims  ( re-flash saved trims and security bits.)
-   0ffad 3 program-chunk  ( ours, factory ftrim, factory trim)
-   0ffbf 1 program-chunk  ( security byte) ;
-
-( XXX - maybe vector words should store the values in the correct place in
-  the image?)
-: flash-vectors
-   \o swi   @  0fffc image-!
-   \o reset @  0fffe image-!
-   0fffc 4 program-chunk ;
+: bypass-checksum   0  0ffba image-c! ;  bypass-checksum
+.then
 
 ( XXX This is a bit of a hack, but seems to work.)
 : verify   |region ( a u)  swap  dup t.SetAddr  |+

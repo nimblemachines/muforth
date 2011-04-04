@@ -14,14 +14,43 @@ hex
 
 ld target/HC08/908flash-defs.mu4
 
+
+-- Rescue mode -----------------------------------------------------------
+
+( This is only for use when 908 is messed up and use of "forced monitor
+  mode" is necessary. This means that there is a 9.8304M or 4.9152M clock
+  signal connected to OSC1, and nIRQ is at TST voltage - above 7v. We only
+  use rescue mode to do two things: do a mass erase, and program the
+  oscillator trim byte. Once this is done, the chip can be used in "normal"
+  monitor mode again.)
+
+: rescue-flash-setup  ( 'target len erase-cmd 'code )
+   ( write PC to stack frame) pc!
+   control-block t.SetAddr
+      ( erase-cmd) t.Write
+                #5 t.Write ( running @ 4.9152M)
+   over + 1-  >lohi  t.Write  t.Write  ( last addr)
+   ( write HX to stack frame:) hx! ;
+
+: mass-erase
+   0ffbe ( flash protect register)  1 ( bogus length)
+   40 ( mass erase)  'erase-range  rescue-flash-setup  chat-run ;
+
+: rescue-trim   ( trim)
+   write-buffer t.SetAddr  t.Write
+   0ffc0 1 0 'program-range rescue-flash-setup  chat-run ;
+
+-- -----------------------------------------------------------------------
+
+
 : flash-setup  ( 'target 'len 'code)
-   push
-   control-block c.SetHX
-       0 c.WriteNext ( page erase)
-     #18 c.WriteNext ( running @ 18.432M) 
-     over + 1-  >lohi  c.WriteNext  c.WriteNext  ( last addr)
-   ( write HX and PC to stack frame:)
-   ( 'target) hx!  pop ( PC) pc! ;
+   ( write PC to stack frame) pc!
+   control-block t.SetAddr
+       0 t.Write ( page erase)
+     #18 t.Write ( running @ 18.432M) 
+   over + 1-  >lohi  t.Write  t.Write  ( last addr)
+   ( write HX to stack frame:)
+   ( 'target) hx! ;
 
 ( Flash a chunk of 16 bytes or less.)
 : program-chunk  ( 'target len)
@@ -36,22 +65,27 @@ ld target/HC08/908flash-defs.mu4
    cr ." erase-page " dup u.
    1 'erase-range flash-setup  chat-run ;
 
-: blank-check  ( addr len - flag)
-   cr ." blank-check "  2dup swap u. u.
-   swap c.SetHX  0ff swap  for  c.ReadNext and  next  0ff = ;
+: blank-check  ( addr - flag)
+   cr ." blank-check "  dup u.
+   t.SetAddr  -1  /page  for  t.Read and  next  0ff = ;
 
 : copy-chunk  ( 'image len)
    cr ." copy-chunk "  2dup swap u. u.
-   write-buffer c.SetHX  for  c@+ c.WriteNext  next  drop ;
+   write-buffer t.SetAddr  for  c@+ t.Write  next  drop ;
 
-: erased  ( 'target len - 'target len)
-   2dup blank-check  if ^ then  over erase-page ;
+( For each chunk check if blank, erase if necessary, then copy chunks over
+  to buffer and program them!)
+
+: erased  ( 'target)
+   dup [ /page 1- ] and  if  drop ^  then  ( do nothing if not first byte)
+   dup blank-check  if  drop ^  then
+   erase-page ;
 
 ( For each chunk check if blank, erase if necessary, then copy chunks over
   to buffer and program them!)
 
 : chunk  ( 'target len - 'target+len)
-   2dup + push  erased
+   2dup + push  over erased
    over |+ ( 'target to 'image)  over  ( 'image len)  copy-chunk
    program-chunk  pop ;
 
@@ -63,7 +97,7 @@ ld target/HC08/908flash-defs.mu4
 
 : flash-trim   ( re-flash saved trim value)
    0ffc0 image-c@  
-   write-buffer c.SetHX  c.WriteNext
+   write-buffer t.SetAddr  t.Write
    0ffc0 1 'program-range flash-setup  chat-run ;
 
 ( On 908, erasing the vectors means erasing the TRIM byte, so we copy it
@@ -71,13 +105,12 @@ ld target/HC08/908flash-defs.mu4
 
 : copy-trim  ( save from the wrecking ball)
    cr ." copy-trim"
-   0ffc0 dup c.SetHX  c.ReadNext  swap image-c! ;
+   0ffc0 dup t.SetAddr  t.Read  swap image-c! ;
 
 : flash-vectors
    copy-trim
    0ffc0 erase-page  ( trim & vectors)
    flash-trim
-   write-buffer c.SetHX
-   \o swi   @ >lohi  c.WriteNext c.WriteNext
-   \o reset @ >lohi  c.WriteNext c.WriteNext
-   0fffc 4 'program-range flash-setup  chat-run ;
+   write-buffer t.SetAddr
+   \m Vreset image-@ >lohi  t.Write t.Write
+   \m Vreset 2 'program-range flash-setup  chat-run ;
