@@ -151,6 +151,48 @@ Vreset handler
    -- watchdog.
    SOPT1 ) lda  3f # and  SOPT1 ) sta
 
+.ifdef 4.9152m
+
+   -- Let's try switching on the xtal osc.
+   %01_11_0110 # ICSC2 ) mov  ( keep BDIV at /2, start ext osc)
+   -- wait for osc to start
+   begin  ICSSC 1  bset? until
+   -- switch! making sure to change RDIV at the same time
+   %00_111_000 # ICSC1 ) mov
+
+   #49152 hhz>fcdiv  # lda   FCDIV ) sta
+
+   -- Configure SCI
+   -- At this xtal frequency we can't do better than 38400 and still get a
+   -- good divisor.
+
+   SCIBDH ) clr      ( baud rate divisor, high)
+   8 # SCIBDL ) mov  ( baud rate divisor, low)
+                     ( yields 38400 from 9.8304M bus clock)
+   0c # SCIC2 ) mov  ( enable rcvr, xmitter)
+
+.else .ifdef 9.8304m
+
+   -- Let's try switching on the xtal osc.
+   %00_11_0110 # ICSC2 ) mov  ( BDIV to /1 from /2, start ext osc)
+   -- wait for osc to start
+   begin  ICSSC 1  bset? until
+   -- switch! making sure to change RDIV at the same time
+   %00_111_000 # ICSC1 ) mov
+
+   #98304 hhz>fcdiv  # lda   FCDIV ) sta
+
+   -- Configure SCI
+   -- At this xtal frequency we can't do better than 38400 and still get a
+   -- good divisor.
+
+   SCIBDH ) clr       ( baud rate divisor, high)
+   10 # SCIBDL ) mov  ( baud rate divisor, low)
+                      ( yields 38400 from 9.8304M bus clock)
+   0c # SCIC2 ) mov   ( enable rcvr, xmitter)
+
+.else  ( configure ICS or MCG, depending on device)
+
 .meta. .contains ICSTRM .if
    -- Configure ICS (internal clock source)
    -- We're staying in FEI mode, but we're going to trim the internal
@@ -169,22 +211,17 @@ Vreset handler
    0ffad ) lda   MCGTRM ) sta
    -- leave BDIV/2 set; MCG runs 2x as fast as QG's ICS
 
-.then
+.then  ( ICS vs MCG)
 
-   -- Set FCDIV - flash clock divider - to match our bus clock
-   -- FCDIV = ceil(busclock/200k) - 1
-
-   -- We leave off the - 1 to slow the flash a bit. Insurance against our
-   -- clock being a bit fast... better to have the flash clock run a bit
-   -- slow than too fast.
-
-   #9216 >fcdiv  # lda   FCDIV ) sta
+   #9216 khz>fcdiv  # lda   FCDIV ) sta
 
    -- Configure SCI
-   0c # SCIC2 ) mov  ( enable rcvr, xmitter)
    SCIBDH ) clr      ( baud rate divisor, high)
    5 # SCIBDL ) mov  ( baud rate divisor, low)
                      ( yields 115200 from 9.216M bus clock)
+   0c # SCIC2 ) mov  ( enable rcvr, xmitter)
+
+.then  .then  ( xtal vs internal osc)
 
 .ifdef so-that-worked
    -- UART test
@@ -195,15 +232,6 @@ Vreset handler
       %0001_0001 # lda  SciTx c
       %0000_0001 # lda  SciTx c
    again
-.then
-
-.ifdef try-xtal
-   -- Let's try switching on the 4.9152M xtal osc.
-   %00_11_0111 # lda  ICSC2 ) ora  ICSC2 ) sta
-   -- wait for osc to start
-   begin  ICSSC 1  bset? until
-   -- switch! making sure to change RDIV at the same time
-   %00_111_000 # ICSC1 ) mov
 .then
 
 .else  -- 908
@@ -238,10 +266,9 @@ Vreset handler
 
    -- Configure SCI
    SCC1 6 ( ENSCI) bset
-   0c # SCC2 ) mov   ( enable rcvr, xmitter)
-
    %001_10000 # SCPSC ) mov  ( prescaler divisor of 2 + 16/32)
                              ( yields 115200 from 18.432M clock)
+   0c # SCC2 ) mov   ( enable rcvr, xmitter)
 
 .then
 

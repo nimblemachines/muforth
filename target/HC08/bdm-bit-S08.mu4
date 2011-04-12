@@ -8,7 +8,7 @@ loading HCS08 BDM support (bit routines for S08)
 ( Support for Freescale's Background Debug Mode - or BDM.)
 
 ( These are bit send and receive commands for an S08 processor running at
-  18.432M - bus speed of 9.216M - and talking to S08 targets running at
+  18.432M - bus clock of 9.216M - and talking to S08 targets running at
   4M and 8M.
 
   These routines are a bit different from their cousins for the 908 for
@@ -60,9 +60,228 @@ code BdmHiZ
     the falling edge of the start bit.
 )
 
+( IMPORTANT NOTE: We use the instruction  0 ,x tst  as a one-byte, 3 cycle
+  delay. This only works if HX points to RAM or into defined flash space!
+  If it points to undefined memory, an illegal address [ILAD] exception
+  will occur. If it points into I/O register space, it could erroneously
+  clear flag bits - by reading data registers, eg. So be careful!
 
-( BDM code for host S08 running at 9.216M, and target at 4M.
+  The way we've defined the by-byte transmit and receive routines, HX
+  always points into RAM space.)
 
+
+.ifdef 4.9152m
+
+( I'm defining these bit routines so I can run an S08QG part from a xtal
+  and get more accurate clock trim values for other parts - by measuring
+  BDM sync pulses. This is precisely what I do with the 908.
+
+  I found that running S08 parts from the internal clock - while accurate
+  enough to do reliable serial communication - somehow got flaky results
+  when trimming other parts, esp the JS parts. I tried trimming three QE32
+  parts from an internally-clocked S08, and all three were off by one,
+  compared to the trim I got when I ran the BDM code on a 908 clocked by a
+  xtal. The JS parts were much worse: I was off so much that one of them
+  barely worked over serial, and when I tried to flash it [via chat] the
+  address being flashed jumped around. The high bit of H kept getting set,
+  jumping the memory being flashed forward by 128 bytes. Better trims fixed
+  the problem. But, oddly, the JS trims, instead of being off by one, were
+  off by sixteen or more!
+
+  The QG parts have a known erratum with their ICS. Running them with BDIV =
+  1 - which is what I'm doing! - is known to cause erratic behaviour.
+  Whether clocked from the internal reference or from an external xtal,
+  running them with BDIV = 2 is the only way to get solid clocking. But
+  since I'm limited to using a 5M xtal - resulting in a 20M FLL clock -
+  with BDIV = 2 I'll be running at 5M bus clock. Since I'll be using a
+  4.9152M xtal, that will be my bus clock too.
+
+  This is about half the speed the I'm currently running the QG S08's, so I
+  had to rewrite the BDM bit routines, and that's what we have here.)
+
+-- ------------------------------------------------------------------------
+-- Host 4.9152M, Target 4M
+-- ------------------------------------------------------------------------
+(
+  4M target      4.9152M host
+  =========       ==========
+     4               4.9
+    10              12.3
+    13              16
+)
+
+code SetTx1_4M
+   MakeJmp bsr  -- pushes address of following code onto stack!
+
+( Send one bit via BDM, from A0)
+   ( 5~ start bit; hold for 16~)
+   PortA 0 bclr              ( rfwpp    - drive start bit)
+   nop nop                   ( p.p      - delay 2 cycles)
+   PortA ) sta               ( wpp      - drive data bit)
+   .a psh  .a pul  nop       ( sp.ufp.p - delay 6 cycles)
+   PortA 0 bset              ( rfwpp    - drive stop bit)
+   rts  ;c
+
+code SetRx1_4M
+   MakeJmp bsr  -- pushes address of following routine on stack!
+
+( Recv one bit via BDM, into A0)
+   ( 5~ start bit; sample at 12~)
+   DirA 0 bset               ( rfwpp  - drive start bit)
+   DirA 0 bclr               ( rfwpp  - tri-state BKGD)
+   0 ,x tst  nop             ( rfp.p  - delay 4 cycles)
+   PortA ) lda               ( rpp    - sample bit)
+   rts  ;c
+
+
+-- ------------------------------------------------------------------------
+-- Host 4.9152M, Target 8M
+-- ------------------------------------------------------------------------
+(
+  8M target      4.9152M host
+  =========       ==========
+     4               2.4
+    10               6
+    13               8
+)
+
+code SetTx1_8M
+   MakeJmp bsr  -- pushes address of following code onto stack!
+
+( Send one bit via BDM, from A0)
+   ( 3~ start bit; hold for 8~)
+   PortA 0 bclr              ( rfwpp  - drive start bit)
+   PortA ) sta               ( wpp    - drive data bit)
+   PortA 0 bset              ( rfwpp  - drive stop bit)
+   rts  ;c
+
+code SetRx1_8M
+   MakeJmp bsr  -- pushes address of following code onto stack!
+
+( Recv one bit via BDM, into A0)
+   ( 3~ start bit; sample at 6~)
+   .a clr
+   -- DirA ) lda   "0fe # and   ( get ready to clear low bit)
+   DirA 0 bset               ( rfwpp  - drive start bit)
+   DirA ) sta                ( wpp    - tri-state BKGD)
+   PortA ) lda               ( rpp    - sample bit)
+   rts  ;c
+
+
+.else .ifdef 9.8304m
+
+
+( I'm defining these bit routines so I can run an S08QG part from a xtal
+  and get more accurate clock trim values for other parts - by measuring
+  BDM sync pulses. This is precisely what I do with the 908.
+
+  I found that running S08 parts from the internal clock - while accurate
+  enough to do reliable serial communication - somehow got flaky results
+  when trimming other parts, esp the JS parts. I tried trimming three QE32
+  parts from an internally-clocked S08, and all three were off by one,
+  compared to the trim I got when I ran the BDM code on a 908 clocked by a
+  xtal. The JS parts were much worse: I was off so much that one of them
+  barely worked over serial, and when I tried to flash it [via chat] the
+  address being flashed jumped around. The high bit of H kept getting set,
+  jumping the memory being flashed forward by 128 bytes. Better trims fixed
+  the problem. But, oddly, the JS trims, instead of being off by one, were
+  off by sixteen or more!
+
+  The QG parts have a known erratum with their ICS. Running them with BDIV =
+  1 - which is what I'm doing! - is known to cause erratic behaviour. OTOH,
+  I can't seem to reliably connect to one of my JS16 chips at this speed,
+  so I'm going to try running with a 4.9152M xtal, but running with BDIV =
+  1; this will yield a 9.8304M bus clock.)
+
+
+-- ------------------------------------------------------------------------
+-- Host 9.8304, Target 4M
+-- ------------------------------------------------------------------------
+(
+  4M target       9.8304M host
+  =========       ==========
+     4               9.8
+    10              24.6
+    13              31.9
+)
+
+code SetTx1_4M
+   MakeJmp bsr  -- pushes address of following code onto stack!
+
+( Send one bit via BDM, from A0)
+   ( 10~ start bit; hold for 32~)
+   PortA 0 bclr              ( rfwpp  - drive start bit)
+   0 ,x tst                  ( rfp    )
+   0 ,x tst                  ( rfp    )
+   nop                       ( p      )
+   PortA ) sta               ( wpp    - drive data bit)
+   0 ,x tst                  ( rfp    )
+   0 ,x tst                  ( rfp    )
+   0 ,x tst                  ( rfp    )
+   0 ,x tst                  ( rfp    )
+   0 ,x tst                  ( rfp    )
+   nop  nop                  ( pp     )
+   PortA 0 bset              ( rfwpp  - drive stop bit)
+   rts  ;c
+
+code SetRx1_4M
+   MakeJmp bsr  -- pushes address of following code onto stack!
+
+( Recv one bit via BDM, into A0)
+   ( 10~ start bit; sample at 25~)
+   DirA 0 bset               ( rfwpp   - drive start bit)
+   0 ,x tst  nop  nop        ( rfp.p.p )
+   DirA 0 bclr               ( rfwpp   - tri-state BKGD)
+   0 ,x tst                  ( rfw     )
+   0 ,x tst                  ( rfw     )
+   0 ,x tst                  ( rfw     )
+   0 ,x tst                  ( rfw     )
+   PortA ) lda               ( rpp     - sample bit)
+   rts  ;c
+
+
+-- ------------------------------------------------------------------------
+-- Host 9.8304, Target 8M
+-- ------------------------------------------------------------------------
+(
+  8M target      9.8304M host
+  =========       ==========
+     4               4.9
+    10              12.3
+    13              16
+)
+
+code SetTx1_8M
+   MakeJmp bsr  -- pushes address of following code onto stack!
+
+( Send one bit via BDM, from A0)
+   ( 5~ start bit; hold for 16~)
+   PortA 0 bclr              ( rfwpp    - drive start bit)
+   nop nop                   ( p.p      - delay 2 cycles)
+   PortA ) sta               ( wpp      - drive data bit)
+   .a psh  .a pul  nop       ( sp.ufp.p - delay 6 cycles)
+   PortA 0 bset              ( rfwpp    - drive stop bit)
+   rts  ;c
+
+code SetRx1_8M
+   MakeJmp bsr  -- pushes address of following routine on stack!
+
+( Recv one bit via BDM, into A0)
+   ( 5~ start bit; sample at 12~)
+   DirA 0 bset               ( rfwpp  - drive start bit)
+   DirA 0 bclr               ( rfwpp  - tri-state BKGD)
+   0 ,x tst  nop             ( rfp.p  - delay 4 cycles)
+   PortA ) lda               ( rpp    - sample bit)
+   rts  ;c
+
+
+.else  ( 9.216M host)
+
+
+-- ------------------------------------------------------------------------
+-- Host 9.216M, Target 4M
+-- ------------------------------------------------------------------------
+(
   4M target       9.216 host
   =========       ==========
      4               9.2
@@ -71,10 +290,9 @@ code BdmHiZ
 )
 
 code SetTx1_4M
-   MakeJmp bsr  ;c   -- pushes address of following routine on stack!
+   MakeJmp bsr  -- pushes address of following code onto stack!
 
-( Send one bit via BDM)
-code tx1_4m  ( tx bit in A0)
+( Send one bit via BDM, from A0)
    ( 9~ start bit; hold for 30~)
    PortA 0 bclr              ( rfwpp  - drive start bit)
    0 ,x tst                  ( rfp    - delay 6 cycles)
@@ -90,10 +308,9 @@ code tx1_4m  ( tx bit in A0)
    rts  ;c
 
 code SetRx1_4M
-   MakeJmp bsr  ;c   -- pushes address of following routine on stack!
+   MakeJmp bsr  -- pushes address of following code onto stack!
 
-( Recv one bit via BDM)
-code rx1_4m  ( recvd bit in A0)
+( Recv one bit via BDM, into A0)
    ( 9~ start bit; sample at 23~)
    DirA 0 bset               ( rfwpp  - drive start bit)
    0 ,x tst  nop             ( rfp.p  - delay 4 cycles)
@@ -105,8 +322,10 @@ code rx1_4m  ( recvd bit in A0)
    rts  ;c
 
 
-( BDM code for host S08 running at 9.216M, and target at 8M.
-
+-- ------------------------------------------------------------------------
+-- Host 9.216M, Target 8M
+-- ------------------------------------------------------------------------
+(
   8M target       9.216 host
   =========       ==========
      4               4.6
@@ -115,10 +334,9 @@ code rx1_4m  ( recvd bit in A0)
 )
 
 code SetTx1_8M
-   MakeJmp bsr  ;c   -- pushes address of following routine on stack!
+   MakeJmp bsr  -- pushes address of following code onto stack!
 
-( Send one bit via BDM)
-code tx1_8m  ( tx bit in A0)
+( Send one bit via BDM, from A0)
    ( 5~ start bit; hold for 15~)
    PortA 0 bclr              ( rfwpp  - drive start bit)
    nop nop                   ( p.p    - delay 2 cycles)
@@ -128,10 +346,9 @@ code tx1_8m  ( tx bit in A0)
    rts  ;c
 
 code SetRx1_8M
-   MakeJmp bsr  ;c   -- pushes address of following routine on stack!
+   MakeJmp bsr  -- pushes address of following code onto stack!
 
-( Recv one bit via BDM)
-code rx1_8m  ( recvd bit in A0)
+( Recv one bit via BDM, into A0)
    ( 5~ start bit; sample at 12~)
    DirA 0 bset               ( rfwpp  - drive start bit)
    DirA 0 bclr               ( rfwpp  - tri-state BKGD)
@@ -139,8 +356,13 @@ code rx1_8m  ( recvd bit in A0)
    PortA ) lda               ( rpp    - sample bit)
    rts  ;c
 
-( BDM code for host S08 running at 9.216M, and target at 16M.
 
+.ifdef bdm-16m-target
+
+-- ------------------------------------------------------------------------
+-- Host 9.216M, Target 16M
+-- ------------------------------------------------------------------------
+(
   16M target      9.216 host
   =========       ==========
      4               2.3
@@ -149,10 +371,9 @@ code rx1_8m  ( recvd bit in A0)
 )
 
 code SetTx1_16M
-   MakeJmp bsr  ;c   -- pushes address of following routine on stack!
+   MakeJmp bsr  -- pushes address of following code onto stack!
 
-( Send one bit via BDM)
-code tx1_16m  ( tx bit in A0)
+( Send one bit via BDM, from A0)
    ( 3~ start bit; hold for 8~)
    PortA 0 bclr              ( rfwpp  - drive start bit)
    PortA ) sta               ( wpp    - drive data bit)
@@ -160,10 +381,9 @@ code tx1_16m  ( tx bit in A0)
    rts  ;c
 
 code SetRx1_16M
-   MakeJmp bsr  ;c   -- pushes address of following routine on stack!
+   MakeJmp bsr  -- pushes address of following code onto stack!
 
-( Recv one bit via BDM)
-code rx1_16m  ( recvd bit in A0)
+( Recv one bit via BDM, into A0)
    ( 3~ start bit; sample at 6~)
    .a clr
    -- DirA ) lda   "0fe # and   ( get ready to clear low bit)
@@ -171,6 +391,15 @@ code rx1_16m  ( recvd bit in A0)
    DirA ) sta                ( wpp    - tri-state BKGD)
    PortA ) lda               ( rpp    - sample bit)
    rts  ;c
+
+.then  ( 16M target)
+
+.then  .then  ( 4.9152M host)
+
+
+-- ------------------------------------------------------------------------
+-- Byte-wise transmit and receive
+-- ------------------------------------------------------------------------
 
 ( Send one byte via BDM.)
 ( NOT the usual X stack discipline with two slots free!)
