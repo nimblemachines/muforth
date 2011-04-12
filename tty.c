@@ -135,6 +135,22 @@ void mu_tty_iflush()
 }
 
 /*
+ * Sometimes it's nice to know how many characters are waiting in the input
+ * buffer.
+ */
+void mu_tty_icount()
+{
+    if (!isatty(TOP))
+    {
+        TOP = 0;
+        return;
+    }
+
+    if (ioctl(TOP, FIONREAD, &TOP) == -1)
+        return abort_strerror();
+}
+
+/*
  * Support for querying the column width of terminals, and staying updated
  * (via SIGWINCH) when they change.
  *
