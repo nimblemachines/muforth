@@ -53,26 +53,35 @@ RUN:    Send 28
   returns to the ROM monitor. This is undocumented behaviour.)
 decimal
 
+variable addr  ( we can't fetch it from target, so keep a shadow copy)
+: +addr  ( n)  addr @  +a  addr ! ;
+
 variable leftover  ( single byte, since tgIread returns two)
 variable #leftover
 
 : m.SetAddr
-   -1 +wrap  tgRead drop  ( simple, brutal, and inefficient!)
+   dup addr !
+   -1 +a  tgRead drop  ( simple, brutal, and inefficient!)
    #leftover off ;
 
+: m.GetAddr  addr @ ;
+
 : m.GetRegs  ( - SP H CC A X PCH PCL)
-   tgReadSp dup  m.SetAddr  tgIread  tgIread  tgIread ;
+   tgReadSp dup  m.SetAddr  tgIread  tgIread  tgIread
+   6 +addr ;
 
 : m.SetRegs  ( PCL PCH X A CC H)
    ( We can't set SP using the ROM monitor!)
    ( Instead, get current SP - which points to SWI frame - and put regs there)
-   tgReadSp  m.SetAddr  6 for  tgIwrite  next ;
+   tgReadSp  m.SetAddr  6 for  tgIwrite  next
+   6 +addr ;
 
 : m.Read  ( - byte)
+   1 +addr
    #leftover @ if  leftover @  ( return cached byte)  #leftover off  ^  then
    tgIread  ( b0 b1)  leftover !  1 #leftover ! ;
 
-( m.Write  tgIwrite ; )
+: m.Write  tgIwrite  1 +addr ;
 
 ( XXX I need better names for these... esp since they already called their
   command "run")
@@ -90,11 +99,12 @@ decimal
    ['] m.SetRegs is t.SetRegs
    undeferred @  is t.AllocStackBuf   ( can't set SP using ROM monitor)
    ['] m.SetAddr is t.SetAddr
+   ['] m.GetAddr is t.GetAddr
    ['] m.Read is t.Read
-   ['] tgIwrite is t.Write
+   ['] m.Write is t.Write
    ['] drop is t.StreamCount   ( these two are probably unnecessary; we)
    ['] m.Read is t.StreamRead  ( only do stream reads on S08)
    ['] complain is t.Return    ( similar - complain if used)
 
    9600 bps  flush  security
-   _chat ;
+   +chat  hi ;

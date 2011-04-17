@@ -47,6 +47,7 @@ defer t.GetRegs
 defer t.SetRegs
 defer t.AllocStackBuf  ( n)  ( allocate room for buffer; set HX to point to it)
 defer t.SetAddr  ( a)
+defer t.GetAddr  ( - a)
 defer t.Read     ( - byte)
 defer t.Write    ( byte)
 defer t.StreamCount  ( n)   ( read several bytes at once)
@@ -55,24 +56,6 @@ defer t.Run
 defer t.RunWait
 defer t.Return  ( - instruction)  ( return the instruction that gets us
                                     back to talking to host)
-
-variable chatting
-
-( Convert random reads into sequential reads, if possible.)
-variable chat-hx   ( current HX pointer for indexed reads and writes)
-chat-hx off
-
-: +wrap  ( a n - a+n fitting in 16 bits)  +  "0ffff and ;
-: match-hx?  ( a - f)  chat-hx @ = ; 
-: update-hx  ( a +a)  +wrap chat-hx ! ;
-: setup-hx  ( a)  dup match-hx?  over 1 update-hx  if drop ^ then  t.SetAddr ;
-
-: chat-c@  ( a - byte)  setup-hx  t.Read ;
-: chat-c!  ( byte a)    setup-hx  t.Write ;
-
-: chat-@  ( a - word)  chat-c@ ( hi)  t.Read ( lo)  hilo> ;
-: chat-!  ( word a)    setup-hx  >lohi  t.Write ( hi)  t.Write ( lo) ;
-
 
 ( We keep a local copy of the target's registers in the same order as they
   appear in an exception frame.
@@ -119,24 +102,24 @@ variable chat-sp     ( current value of target's SP)
    cr  ." V--HINZC  A  H  X   SP   PC"
    cr  .CC c@ .bits8 space  .A .b  .H .b  .X .b  chat-sp @ .hcell_  .PC .w ;
 
-( Useful utilities)
-: c@+  ( a - a+1 b)  dup 1+  swap c@ ;
-: c!+  ( b a - a+1)  tuck  c!  1+ ;
-
 : put  ( from to)  ( copy code to target)
-   2dup u< if  over - ( from count)  over t.SetAddr  swap  |+  swap
-   for  c@+ t.Write  next  drop  ^  then  2drop ;
+   2dup u< if  over - ( from count)  over t.SetAddr  swap image-p!
+   for  image-c*  t.Write  next  ^  then  2drop ;
 
 : copy-ram   @ram  |ram @  put  ;
 : hi   copy-ram  GetRegs .regs ;
 
-: _chat  ( initialise)
-   chatting on
-   0 t.SetAddr  chat-hx off ( so they match!) ;
+variable chatting
 
-: >chat   ['] chat-c@  is  |c@
-          ['] chat-@   is  |@
-          2 |cell !  ( size of cell) ;
+: +chat  chatting on ;
+
+: t.ReadW  ( - word)  t.Read ( hi)  t.Read ( lo)  hilo> ;
+
+: >chat  ['] t.SetAddr  is |p!
+         ['] t.GetAddr  is |p@
+         ['] t.Read     is |c*
+         ['] t.ReadW    is |*
+                         2 |cell !  ( size of cell) ;
 
 ( Set |@ and |c@ to _some_ form of target fetch. Prefer to get bytes from
   target if we're connected. This word is useful so we can set an initial
