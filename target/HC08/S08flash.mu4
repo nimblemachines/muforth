@@ -139,10 +139,12 @@ forth
    1 ( len)  %0111_0000 ( FCCF | FPVIOL | FACCERR)
    mPageErase  flash-setup  _runwait ;
 
-( XXX change this to use t.ReadN?)
-: blank-check  ( addr - flag)
-   cr ." blank-check "  dup u.
-   t.SetAddr  -1  /page  for  t.Read and  next  0ff = ;
+: blank?  ( addr - flag)
+   cr ." blank? "  dup u.
+   t.SetAddr  -1  [ /page  40 / ] for  ( do it in chunks of 64)
+      40 t.StreamCount ( request 64 bytes)  40 for  t.StreamRead and  next
+      dup 0ff xor if  pop 2drop  0 ^  then  ( exit early)
+   next  0ff = ;
 
 ( If target address is first byte of the last page of flash, return true)
 : last-page?  ( 'target - f)
@@ -167,16 +169,15 @@ forth
    0ffac 14  ( 0ffac - 0ffcf)  program-row  ( trims and security bytes)
    0ffc0 40  ( 0ffc0 - 0ffff)  program-row  ( vectors) ;
 
-( The only correct semantics for blank-check are that when we are about to
+( The only correct semantics for blank? are that when we are about to
   program the _first_ byte of a page, we check the entire page & erase it
   if necessary.)
 
 : erased  ( 'target)
    dup [ /page 1- ] and  if  drop ^  then  ( do nothing if not first byte)
-   dup blank-check  if  drop ^  then
+   dup blank?  if  drop ^  then
    dup last-page? if  ( erasing last page)
       save-trims  erase-page  flash-vectors  ^  then  ( normal case)
-      -- save-trims  erase-page  ^  then  ( for fixing trims)
    erase-page ;
 
 ( For each row check if blank, erase if necessary, then copy rows over
@@ -186,8 +187,8 @@ forth
    2dup + push  over erased  program-row  pop ;
 
 : flash-region  ( a len)
-   /row /mod  ( r q)  swap push  ?for  /row row  next  then
-                          pop  =if   ( rem) row  drop ^  then  2drop ;
+   /row /mod  ( r q)  swap push  ?for   /row row  next  then
+                            pop  =if  ( rem) row  drop ^  then  2drop ;
 
 : flash-image   flash  |region ( a u)   flash-region ;
 
@@ -205,5 +206,16 @@ forth
 .then
 
 ( XXX This is a bit of a hack, but seems to work.)
-: verify   |region ( a u)  swap  dup t.SetAddr  |+
+: slow-verify   |region ( a u)  swap  dup t.SetAddr  |+
     swap for  c@+ t.Read xor if  dup 'image - u.  then  next  drop ;
+
+: verify-chunk  ( 'image len - 'image+len)
+   2dup + push
+   dup t.StreamCount
+   for  c@+ t.StreamRead xor if  dup 'image - u.  then  next  drop
+   pop ;
+
+( Fast verify! Using stream reads.)
+: verify   |region ( a u)  swap  dup t.SetAddr  |+
+   swap >lohi  swap push  ?for    100 verify-chunk  next  then
+                     pop  =if  ( rem) verify-chunk  drop ^  then  2drop ;

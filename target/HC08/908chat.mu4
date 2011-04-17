@@ -65,16 +65,18 @@ code SciTx  ( transmits char in A)
 ( chat2 protocol - minor changes)
 
 ( Commands:
-  0  Bye        - ignored by chat; force other command loops to return to chat
-                - can be used as an Idle
+  0  Bye        - ignored by chat; force other command loops to return to chat;
+                  can be used as an Idle
   1  Run        - does an RTI - pops stack frame and runs
-                - when it returns to chat loop, returns flags register
+                  when it returns to chat loop, returns flags register
   2  SetHX      - reads two bytes from SCI, writes them into H & X registers
   3  GetHX      - writes H then X register to SCI
   4  HXtoSP     - sets SP from HX
   5  SPtoHX     - sets HX from SP
   6  ReadNext   - reads a byte from memory @ HX, writes it to SCI, inc HX
   7  WriteNext  - reads a byte from SCI, writes into memory @ HX, inc HX
+  8  ReadN      - reads a length from SCI, reads that many bytes from
+                  memory, and writes them to SCI [S08 only!]
 )
 
 code SendByte  ( send char in A)
@@ -101,8 +103,19 @@ label Dispatch
    0 ,x lda  1 # aix  SendByte again  then
 
    .a decz? if ( WriteByte)
-   SciRx bsr   0 ,x sta   1 # aix  then  ( fall through)
+   SciRx bsr   0 ,x sta   1 # aix
 
+.ifdef S08
+   ( end prev command)               Dispatch again  then
+
+   .a decz? if ( ReadN)
+   SciRx bsr  .a psh ( count)
+   begin  0 ,x lda  1 # aix  SciTx bsr  0 ,s decz? until
+   .a pul
+
+.then
+
+   then   ( fall through)
    ( unknown command)   Dispatch again  ;c
 
 
