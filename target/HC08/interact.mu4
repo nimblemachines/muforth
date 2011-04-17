@@ -45,6 +45,7 @@ comment chat-commands
 
 defer t.GetRegs
 defer t.SetRegs
+defer t.AllocStackBuf  ( n)  ( allocate room for buffer; set HX to point to it)
 defer t.SetAddr  ( a)
 defer t.Read     ( - byte)
 defer t.Write    ( byte)
@@ -53,8 +54,7 @@ defer t.RunWait
 
 variable chatting
 
-6 buffer chat-frame  ( local copy of SWI stack frame)
-variable chat-sp   ( current value of target's SP)
+( Convert random reads into sequential reads, if possible.)
 variable chat-hx   ( current HX pointer for indexed reads and writes)
 chat-hx off
 
@@ -69,10 +69,14 @@ chat-hx off
 : chat-@  ( a - word)  chat-c@ ( hi)  t.Read ( lo)  hilo> ;
 : chat-!  ( word a)    setup-hx  >lohi  t.Write ( hi)  t.Write ( lo) ;
 
+
 ( We keep a local copy of the target's registers in the same order as they
   appear in an exception frame.
 
   The order, low to high: H CC A X PCH PCL)
+
+6 buffer chat-frame  ( local copy of SWI stack frame)
+variable chat-sp     ( current value of target's SP)
 
 ( These index into our local chat-frame, _not_ into target memory!)
 : reg  ( offset)  constant  does> @  chat-frame + ;  ( self-index)
@@ -97,8 +101,12 @@ chat-hx off
 : SetRegs  ( fetch regs from our local frame & run "current" x.SetRegs)
    regs@  t.SetRegs ;
 
+( These are handy.)
+: pc!  >lohi  .PCH c!  .PCL c! ;
+: hx!  >lohi    .H c!    .X c! ;
+
 : .bits8  radix preserve  binary  <# # # # # # # # # #> type ;
-: w@  ( a - w)  ( like chat-@ above, but local)  dup c@ 8 <<  swap 1+ c@ or ;
+: w@  ( a - w)  dup c@ 8 <<  swap 1+ c@ or ;
 
 : .b  ( a)  c@ .h8_ ;
 : .w  ( a)  w@  .hcell_ ;
@@ -107,9 +115,20 @@ chat-hx off
    cr  ." V--HINZC  A  H  X   SP   PC"
    cr  .CC c@ .bits8 space  .A .b  .H .b  .X .b  chat-sp @ .hcell_  .PC .w ;
 
+( Useful utilities)
+: c@+  ( a - a+1 b)  dup 1+  swap c@ ;
+: c!+  ( b a - a+1)  tuck  c!  1+ ;
+
+: put  ( from to)  ( copy code to target)
+   2dup u< if  over - ( from count)  over t.SetAddr  swap  |+  swap
+   for  c@+ t.Write  next  drop  ^  then  2drop ;
+
+: copy-ram   @ram  |ram @  put  ;
+: hi   copy-ram  GetRegs .regs ;
+
 : _chat  ( initialise)
    chatting on
-   GetRegs  0 t.SetAddr  chat-hx off ( so they match!) ;
+   0 t.SetAddr  chat-hx off ( so they match!) ;
 
 : >chat   ['] chat-c@  is  |c@
           ['] chat-@   is  |@
@@ -167,18 +186,6 @@ key: i  ( a - a 0)  ['] i-skip  advance!
                    ['] 1dis    inspect ;
 forth
 
-( These are handy.)
-: pc!  >lohi  .PCH c!  .PCL c! ;
-: hx!  >lohi  .H c!  .X c! ;
-
-( Useful utilities)
-: c@+  ( a - a+1 b)  dup 1+  swap c@ ;
-: c!+  ( b a - a+1)  tuck  c!  1+ ;
-
-: put  ( from to)  ( copy code to target)
-   2dup u< if  over - ( from count)  over t.SetAddr  swap  |+  swap
-   for  c@+ t.Write  next  drop  ^  then  2drop ;
-
 hex
 
 outside
@@ -212,17 +219,13 @@ outside
 
 forth
 : .r   .regs ;
-: hi   @ram  |ram @  put  \m Vreset image-@  pc!  .regs ;
 
-( XXX change this!)
-: chat-run  SetRegs  t.RunWait  GetRegs ;
-: chat-go   SetRegs  t.Run ;  ( don't wait for target)
+: _runwait  SetRegs  t.RunWait  GetRegs ;
+: _run      SetRegs  t.Run ;  ( don't wait for target)
 
-: go   chat-run  .regs ;
-
-
-: call  pc!  go ;
-: run   \m Vreset image-@  call ;
+: runwait   _runwait  .regs ;
+: call  pc!  runwait ;
+: reset   \m Vreset image-@  call ;
 
 : \o  .outside. chain' execute ;
 

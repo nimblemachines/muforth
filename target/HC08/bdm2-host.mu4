@@ -148,6 +148,14 @@ comment Commands
    push ( H)  b.WriteCC  b.WriteA  pop ( X H) swap hilo> b.WriteHX
    swap hilo> b.WritePC ;
 
+( Allocate n bytes on stack; set HX to point to allocated space. There is
+  no register frame on the stack, so SP and HX can be the same - well,
+  except we have to subtract one in SetAddr before we actually set HX...)
+
+: b.AllocStackBuf  ( n)
+   b.ReadSP  swap -  dup b.WriteSP  b.SetAddr ;
+
+( XXX should be a limited number of tries)
 : b.RunWait  b.Go  begin  b.ReadStatus  40 and until ;
 
 : ResetSP
@@ -201,7 +209,7 @@ comment Commands
 
 : SetFCDIV
    \o FCDIV b.ReadByte  80 and if ^ then  ( already set)
-   [ \o POR-bus-clock #199 + #200 / ]  ( divide freq by 200k, rounding up)
+   [ \o POR-bus-clock  khz>fcdiv ]  ( divide freq by 200k, rounding up)
    \o FCDIV b.WriteByte ;
 
 comment misguided
@@ -223,11 +231,16 @@ comment misguided
 ( Get target into a known, safe state. Chat code will have done this for
   itself at reset, so this is only necessary for BDM targets.)
 
+( Since we are flashing - even via BDM - by executing code from RAM, we
+  have to initialise the chip first.)
+
 : b.Hi
-   TrimOsc  SetFCDIV  NoWatchdog  ResetSP ;
+   TrimOsc  SetFCDIV  NoWatchdog  ResetSP
+   hi ( copy ram flash routine) ;
 
 : pwrcycle  b.BkgdLow  ." power cycle S08, then press a key..."  key drop
-            b.BkgdHiZ   b.Sync u.  b.ReadStatus u. ;
+            b.BkgdHiZ   b.Sync u.  b.Sync u.  b.ReadStatus dup u.
+            0c8 = if  b.Hi  then ;
 
 ( Get start address of BDM code.)
 variable bdm-ram-start  ( filled in by loaded code)
@@ -238,33 +251,30 @@ variable bdm-ram-start  ( filled in by loaded code)
                .else   0fc00           ( S08, flash version)  .then ;
 decimal
 
-defer flash-via-bdm  ( flash code will define this)
-
 : bdm
 .ifdef chat-slow  ( using a xtal that only allows 38400)
     38400 bps
 .else
    115200 bps
 .then
-   -- b.Idle b.Bye  ( exit BDM loop, if running)
 
-   bdm-start pc!  regs@ c.SetRegs  c.Run   ( start bdm chat loop)
-   b.Clock4M  ( assume bus clock of 4M, forced active mode)
-   pwrcycle  -- b.Hi
-   -- comment out the b.Hi if you're talking to JS16; the code still
-   -- assumes QG register offsets, and does screwball things to JS16!
+   bdm-start pc!  SetRegs  c.Run   ( start bdm chat loop)
 
    ( Wire our versions into the interact code.)
    ['] b.RunWait is t.RunWait
    ['] b.Go is t.Run  ( keeping b.Go since it's a BDM command name)
    ['] b.GetRegs is t.GetRegs
    ['] b.SetRegs is t.SetRegs
+   ['] b.AllocStackBuf is t.AllocStackBuf
    ['] b.SetAddr is t.SetAddr
    ['] b.ReadNext is t.Read
    ['] b.WriteNext is t.Write
 
-   flash-via-bdm  ( default to this)
-   _chat ;
+   ( We'd like to set BDM clock from Sync pulse, but it doesn't seem to
+     work. A hack is to set it instead from the chip defs that we load.)
+   \o POR-bus-clock #4000 = if  b.Clock4M  else  b.Clock8M  then
+
+   _chat  pwrcycle ;
 
 ( Handy shortcuts - esp for testing.)
 : s  b.Sync u. ;

@@ -68,122 +68,104 @@ __outside
 
 ram
 
+1 var flashCount
+
 ( Target code to write to and erase the Flash. By "pasting in" different
   values for flash-command and flash-status, it's possible to do regular
-  byte programming, burst programming, or page/mass erase.)
+  byte programming, burst programming, or page/mass erase.
 
-( This code is only used for flashing via chat. Using BDM we can do this
-  directly.)
+  A note on timing: according to Freescale docs there should be _at least_
+  four bus cycles between the write to FSTAT that starts the command, and
+  the first test of FSTAT for command completion and error status. Based
+  on this code and the machine-cycle diagrams shown, there are six cycles
+  between the two.
 
-( NOTE!! This code must be run from RAM. Normally it will be "scripted" via
-  the chat interface, and the rts will return to flash. Because of this, it
-  cannot be used with the mBurstProgram command! Only mByteProgram works.
-  The reason: because the burst program command leaves the charge pump on,
-  the flash array is not accessible when rts executes, and the chip resets
-  with an illegal opcode error!
+  Ending this with "bgnd" works, but only because we get lucky. In chat
+  mode bgnd causes a reset, but since that simply re-starts the chat
+  protocol it's almost like executing an SWI.)
 
-  Given all that, I could use Tony's code above and replace the "lda
-  #status" with his lsra - though I like the idea of also matching the
-  error bits and using them as reasons to exit.)
-
-code RunFlashCommand  ( value in A, address in HX)
-   0 ,x sta   ( store byte into Flash array)
-   1 # aix    ( post-increment - mostly we're going to write several bytes)
+code FlashRow  ( program up to 64 bytes; Flash address in HX; bytes on stack)
+   begin
+      .a pul  ( pop next byte to program)
+      0 ,x sta   ( store byte into Flash array)
+      1 # aix
 label flash-command
-   00 # lda   FCMD ) sta
-   80 # lda   FSTAT ) sta  ( pwpp - clear FCBEF - start command)
+      00 # lda   FCMD ) sta
+      80 # lda   FSTAT ) sta  ( pwpp)  ( clear FCBEF - start command)
 label flash-status
-   00 # lda
-   begin  FSTAT ) bit  ( prpp)  0!= until  ( until flash-status matches)
-   FSTAT ) and
-   rts  ;c
+      begin
+         00 # lda     ( pp)
+         FSTAT ) and  ( prpp)
+      0!= until  ( until flash-status matches)
+      30 # and  0= while  ( !error)
+   flashCount ) decz? until  then
+   bgnd  ;c
+
 
 __forth
 forth
 
-( XXX - is this necessary? should it be renamed?)
-: wbyte  ( byte addr)  c.SetHX  c.WriteNext ;
 
-: chat-flash-setup  ( 'target flash-status flash-command)
-   30 \m FSTAT wbyte  ( clear errors)
-   \o flash-command 1+ wbyte  ( paste into lda #)
-   \o flash-status 1+ wbyte  ( paste into lda #)
-   ( 'target) hx! ;
+#512 constant /page   ( S08 has 512 byte Flash pages - this is erase size)
+ #64 constant /row    ( max size of row to program)
 
-: chat-flash-run  ( byte - status)
-   \o RunFlashCommand ( PC) pc!
-   .A c! ( put byte to program into A)
-   regs@ c.SetRegs  c.RunWait  c.GetRegs regs!  .A c@ ( status) ;
-
-( We need similar routines for flashing via BDM.)
-variable flash-command  ( in chat code these are "cached" in the actual)
-variable flash-status   ( ram-resident code; for bdm we store them in vars.)
-
-: bdm-flash-setup  ( 'target flash-status flash-command)
-   30 \m FSTAT b.WriteByte  ( clear errors - doesn't use HX)
-   flash-command !  flash-status !  b.SetAddr ;
-
-( This does via BDM what RunFlashCommand does by executing code.)
-: bdm-flash-run    ( byte - status)
-   ( byte) b.WriteNext  ( write via HX and incr HX)
-   flash-command @  \m FCMD b.WriteByte  ( set command)
-   80 \m FSTAT b.WriteByte  ( start command)
-   0  begin  drop  \m FSTAT b.ReadByte  flash-status @  and  =until ;
-
-( So we can switch how we flash the chip.)
-defer flash-setup  ( 'target flash-status flash-command) 
-defer _flash-run   ( byte - status)
-
--: ['] chat-flash-setup is flash-setup
-   ['] chat-flash-run is _flash-run ;  is flash-via-chat
-
--: ['] bdm-flash-setup is flash-setup
-   ['] bdm-flash-run is _flash-run ;   is flash-via-bdm
-
--: ( byte - status)  drop  0c0 ;
-: flash-via-test  ['] chat-flash-setup is flash-setup
-                                   [ ] is _flash-run ;
-
-: flash-run  ( byte)
-   _flash-run  30 and if  error" flash program or erase error"  then ;
-
-#512 constant /page    ( S08 has 512 byte Flash pages - this is erase size)
- #64 constant /chunk   ( max size of row to program)
-
-( Flash a chunk of 64 bytes or less, all in the same 64-byte "line".)
-: program-chunk  ( 'target len)
-   cr ." program-chunk "  2dup swap u. u.  over
-   %0111_0000 ( FCCF | FPVIOL | FACCERR)  mByteProgram  flash-setup
+: copy-row  ( 'target len)
    swap  |+ ( target -> 'image)  swap
-   for  c@+ flash-run  next drop ;
+   dup t.AllocStackBuf  for  c@+ t.Write  next  drop ;
 
-( On S08, erasing the vectors means erasing the TRIM bytes, the secure
-  bits, and the bootloader. So be careful about re-programming things, esp
-  the TRIMs and the secure bits. Copy from ffac to ffbf.)
+: target-c!  ( byte a)   t.SetAddr  t.Write ;
 
-: save-trims  ( save them from the wrecking ball)
-   cr ." save-trims"
-   0ffac dup t.SetAddr  |+ ( 'image)  4 for
-      t.Read  over c! ( save in image)  1+  next  drop ;
+: flash-setup  ( 'target len flash-status flash-command)
+   \o flash-command 1+ target-c!  ( paste into lda #)
+   \o flash-status 1+ target-c!  ( paste into lda #)
+   ( len) \o flashCount target-c!  ( 'target) hx!
+   \o FlashRow ( PC) pc!  68 .CC c! ( ensure I is set) ;
+
+( Flash a row of 64 bytes or less, all in the same 64-byte "line".)
+: check-row  ( 'target len)
+   dup /row > if  error" programming too many bytes in one row"  then
+   over + 1- xor  [ /row 1- ] bic  if
+      error" row overlaps flash row boundary"  then ;
+
+: program-row  ( 'target len)
+   cr ." program-row "  2dup swap u. u.
+   2dup check-row  2dup copy-row
+   %1011_0000 ( FCBEF | FPVIOL | FACCERR)
+   mBurstProgram  flash-setup  _runwait ;
+
+: erase-page  ( 'target)
+   cr ." erase-page " dup u.
+   1 t.AllocStackBuf  ( so we can pop a byte in FlashRow)
+   1 ( len)  %0111_0000 ( FCCF | FPVIOL | FACCERR)
+   mPageErase  flash-setup  _runwait ;
+
+( XXX change this to use t.ReadN?)
+: blank-check  ( addr - flag)
+   cr ." blank-check "  dup u.
+   t.SetAddr  -1  /page  for  t.Read and  next  0ff = ;
 
 ( If target address is first byte of the last page of flash, return true)
 : last-page?  ( 'target - f)
    @flash #flash +  /page -  = ;
 
-: erase-page  ( 'target)
-   cr ." erase-page " dup u.
-   %0111_0000 ( FCCF | FPVIOL | FACCERR)  mPageErase  flash-setup
-   0 ( byte)  flash-run ;
+( On S08, erasing the vectors means erasing the TRIM bytes, the secure
+  bits, and the bootloader. So be careful about re-programming things, esp
+  the TRIMs and the secure bits. Copy from ffac to ffaf.
 
-: blank-check  ( addr - flag)
-   cr ." blank-check "  dup u.
-   t.SetAddr  -1  /page  for  t.Read and  next  0ff = ;
+  In the case that the chip is blank, and we've put trims into the image,
+  don't overwrite these with the FF's from the chip.)
+
+: save-trims  ( save them from the wrecking ball)
+   cr ." save-trims"
+   0ffac dup t.SetAddr  |+ ( 'image)  4 for
+      t.Read  dup 0ff xor  if  over c! ( save in image)  else  drop  then
+      1+  next  drop ;
 
 ( Flash vectors, security bytes, & trims)
 : flash-vectors
    cr ." flashing vectors, security bytes, and trims"
-   0ffac 14  ( 0ffac - 0ffcf)  program-chunk  ( trims and security bytes)
-   0ffc0 40  ( 0ffc0 - 0ffff)  program-chunk  ( vectors) ;
+   0ffac 14  ( 0ffac - 0ffcf)  program-row  ( trims and security bytes)
+   0ffc0 40  ( 0ffc0 - 0ffff)  program-row  ( vectors) ;
 
 ( The only correct semantics for blank-check are that when we are about to
   program the _first_ byte of a page, we check the entire page & erase it
@@ -193,24 +175,26 @@ defer _flash-run   ( byte - status)
    dup [ /page 1- ] and  if  drop ^  then  ( do nothing if not first byte)
    dup blank-check  if  drop ^  then
    dup last-page? if  ( erasing last page)
-      save-trims  erase-page  flash-vectors  ^  then
+      save-trims  erase-page  flash-vectors  ^  then  ( normal case)
+      -- save-trims  erase-page  ^  then  ( for fixing trims)
    erase-page ;
 
-( For each chunk check if blank, erase if necessary, then copy chunks over
+( For each row check if blank, erase if necessary, then copy rows over
   to buffer and program them!)
 
-: chunk  ( 'target len - 'target+len)
-   2dup + push  over erased  program-chunk  pop ;
+: row  ( 'target len - 'target+len)
+   2dup + push  over erased  program-row  pop ;
 
 : flash-region  ( a len)
-   /chunk /mod  ( r q)  swap push  ?for  /chunk chunk  next  then
-                              pop  =if   ( rem) chunk  drop ^  then  2drop ;
+   /row /mod  ( r q)  swap push  ?for  /row row  next  then
+                          pop  =if   ( rem) row  drop ^  then  2drop ;
 
 : flash-image   flash  |region ( a u)   flash-region ;
 
 ( Use this to initially set the value of "our" trim - the one that trims
   the internal osc to 9.216M.)
-: set-trims ( ours factory)  0ffaf image-c!  0ffad image-c! ;
+: set-trims ( ours factory-ftrim factory)
+   0ffaf image-c!  0ffae image-c!  0ffad image-c! ;
 
 : set-unsecured
    0fe 0ffbf image-c! ;  set-unsecured

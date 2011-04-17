@@ -34,11 +34,11 @@ ld target/HC08/908flash-defs.mu4
 
 : mass-erase
    0ffbe ( flash protect register)  1 ( bogus length)
-   40 ( mass erase)  'erase-range  rescue-flash-setup  chat-run ;
+   40 ( mass erase)  'erase-range  rescue-flash-setup  _runwait ;
 
 : rescue-trim   ( trim)
    write-buffer t.SetAddr  t.Write
-   0ffc0 1 0 'program-range rescue-flash-setup  chat-run ;
+   0ffc0 1 0 'program-range rescue-flash-setup  _runwait ;
 
 -- -----------------------------------------------------------------------
 
@@ -52,10 +52,10 @@ ld target/HC08/908flash-defs.mu4
    ( write HX to stack frame:)
    ( 'target) hx! ;
 
-( Flash a chunk of 16 bytes or less.)
-: program-chunk  ( 'target len)
-   cr ." program-chunk "  2dup swap u. u.
-   'program-range flash-setup  chat-run ;
+( Flash a row of 16 bytes or less.)
+: program-row  ( 'target len)
+   cr ." program-row "  2dup swap u. u.
+   'program-range flash-setup  _runwait ;
 
 ( The length - from which we calc last-addr for the control block - doesn't
   matter for erase-range. The ROM routine always erases an entire page;
@@ -63,42 +63,38 @@ ld target/HC08/908flash-defs.mu4
 
 : erase-page  ( 'target)
    cr ." erase-page " dup u.
-   1 'erase-range flash-setup  chat-run ;
+   1 'erase-range flash-setup  _runwait ;
 
 : blank-check  ( addr - flag)
    cr ." blank-check "  dup u.
    t.SetAddr  -1  /page  for  t.Read and  next  0ff = ;
 
-: copy-chunk  ( 'image len)
-   cr ." copy-chunk "  2dup swap u. u.
+: copy-row  ( 'image len)
    write-buffer t.SetAddr  for  c@+ t.Write  next  drop ;
-
-( For each chunk check if blank, erase if necessary, then copy chunks over
-  to buffer and program them!)
 
 : erased  ( 'target)
    dup [ /page 1- ] and  if  drop ^  then  ( do nothing if not first byte)
    dup blank-check  if  drop ^  then
    erase-page ;
 
-( For each chunk check if blank, erase if necessary, then copy chunks over
+( For each row check if blank, erase if necessary, then copy rows over
   to buffer and program them!)
 
-: chunk  ( 'target len - 'target+len)
+: row  ( 'target len - 'target+len)
    2dup + push  over erased
-   over |+ ( 'target to 'image)  over  ( 'image len)  copy-chunk
-   program-chunk  pop ;
+   over |+ ( 'target to 'image)  over  ( 'image len)  copy-row
+   program-row  pop ;
 
 : flash-region  ( a len)
-   /chunk /mod  ( r q)  swap push  ?for  /chunk chunk  next  then
-                              pop  =if   ( rem) chunk  drop ^  then  2drop ;
+   /row /mod  ( r q)  swap push  ?for  /row row  next  then
+                          pop  =if   ( rem) row  drop ^  then  2drop ;
 
 : flash-image   flash  |region ( a u)   flash-region ;
 
 : flash-trim   ( re-flash saved trim value)
    0ffc0 image-c@  
    write-buffer t.SetAddr  t.Write
-   0ffc0 1 'program-range flash-setup  chat-run ;
+   0ffc0 1 'program-range flash-setup  _runwait ;
 
 ( On 908, erasing the vectors means erasing the TRIM byte, so we copy it
   before erasing the last page.)
@@ -113,4 +109,8 @@ ld target/HC08/908flash-defs.mu4
    flash-trim
    write-buffer t.SetAddr
    \m Vreset image-@ >lohi  t.Write t.Write
-   \m Vreset 2 'program-range flash-setup  chat-run ;
+   \m Vreset 2 'program-range flash-setup  _runwait ;
+
+( XXX This is a bit of a hack, but seems to work.)
+: verify   |region ( a u)  swap  dup t.SetAddr  |+
+    swap for  c@+ t.Read xor if  dup 'image - u.  then  next  drop ;
