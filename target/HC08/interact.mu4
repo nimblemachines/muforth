@@ -106,14 +106,15 @@ variable chat-sp     ( current value of target's SP)
    2dup u< if  over - ( from count)  over t.SetAddr  swap image-p!
    for  image-c*  t.Write  next  ^  then  2drop ;
 
-: copy-ram   @ram  |ram @  put  ;
+: copy-ram   @ram  'ram @  put  ;
 : hi   copy-ram  GetRegs .regs ;
 
 variable chatting
 
 : +chat  chatting on ;
 
-: t.ReadW  ( - word)  t.Read ( hi)  t.Read ( lo)  hilo> ;
+: t.ReadW  ( - word)         t.Read  ( hi)  t.Read  ( lo)  hilo> ;
+: t.WriteW  ( word)   >lohi  t.Write ( hi)  t.Write ( lo) ;
 
 : >chat  ['] t.SetAddr  is |p!
          ['] t.GetAddr  is |p@
@@ -173,32 +174,27 @@ key: i  ( a - a 0)  ['] i-skip  advance!
                    ['] i-skip  advance!
                    ['] 0       retreat!
                    ['] 1dis    inspect ;
-forth
-
-hex
-
-outside
-: equ  ( make a constant in .outside.)
-  current preserve  outside constant ;
 
 assembler
-: label   |here  \o equ ;
-: ;c   __outside ;
+: ;c   __meta ;
 
 compiler
-: ;m   \ ^  __outside ;  ( to exit from macro compilation)
+: ;m   \ ^  __meta ;  ( to exit from macro compilation)
 
-outside
-: ram  ram ;
-: flash  flash ;
-: org  org ;
-: code   \a label  __asm ;
-: macro  current preserve  assembler :  __macro ;
-: var   |ram @  \o equ  |ram +! ( allot) ;
+meta
+: equ    current preserve  meta            constant ;
+: name   current preserve  target  \m here constant ;
+: macro  current preserve  assembler       :   __macro ;
+
+: label   \m here  \m equ  __asm ;
+: var      'ram @  \m equ  'ram +! ( allot) ;
+: code    \m name   __asm ;
+
+: '  .target. chain' execute ;  ( target words are constants!)
 
 ( For forward references)
-: forward    "100 \a ) \a jmp  \a label ;
-: resolve>>  ( src)  |here  swap 2 -  image-! ;
+: forward    "100 \a ) \a jmp  \m label ;
+: resolve>>  ( src)  \m here  swap 2 -  image-! ;
 
 : .or   or ;
 : .x  ( like .s)  .X c@ du ;
@@ -210,9 +206,9 @@ variable vector-offset  ( 0 if vectors not relocated)
    dup \m Vreset = if ^ then  ( reset doesn't get relocated)
    vector-offset @ +a ;
 
-outside
+meta
 : handler  ( vector-offset)
-   reloc-vector  |here swap  image-!  __asm ;
+   reloc-vector  \m here swap  image-!  __asm ;
 
 forth
 : .r   .regs ;
@@ -224,7 +220,7 @@ forth
 : call  pc!  runwait ;
 : reset   \m Vreset image-@  call ;
 
-: \o  .outside. chain' execute ;
+: \m  .meta. chain' execute ;
 
 
 ( Calculation of FCDIV - flash clock divider [sic])
@@ -243,8 +239,6 @@ forth
 -- that works. One caveat: if the calculated value is > 63, set a bit that
 -- first divides the bus clock by 8 before dividing by our divider
 -- (actually, our divider + 1).
-
-decimal
 
 : _fcdiv   ( divisor - fcdiv)
    dup 64 u< not if

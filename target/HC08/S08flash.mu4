@@ -64,7 +64,7 @@ forth
 25 constant mBurstProgram
 40 constant mPageErase
 
-__outside
+__meta
 
 ram
 
@@ -87,7 +87,7 @@ ram
   last page, and now we've lost the trim, and the chip is also now secure,
   and it's a pain to unsecure it!)
 
-code FlashRow  ( program up to 64 bytes; Flash address in HX; bytes on stack)
+label FlashRow  ( program up to 64 bytes; Flash address in HX; bytes on stack)
    begin
       .a pul  ( pop next byte to program)
 label FlashByte  ( if we're only doing one, we can start here)
@@ -123,11 +123,11 @@ forth
 
 : flash-setup  ( 'target len flash-status flash-command 'code)
    ( 'code) pc!
-   \o flash-command 1+ target-c!  ( paste into lda #)
-   \o flash-status target-c!  ( paste nop or lsra)
-   ( len) \o flashCount target-c!  ( 'target) hx!
+   \m flash-command 1+ target-c!  ( paste into lda #)
+   \m flash-status target-c!  ( paste nop or lsra)
+   ( len) \m flashCount target-c!  ( 'target) hx!
    68 .CC c! ( ensure I is set)
-   t.Return ( rts or bgnd, depending on mode)  \o flash-exit target-c! ;
+   t.Return ( rts or bgnd, depending on mode)  \m flash-exit target-c! ;
 
 ( Flash a row of 64 bytes or less, all in the same 64-byte "line".)
 : check-row  ( 'target len)
@@ -147,12 +147,12 @@ forth
    cr ." program-row "  2dup swap u. u.
    2dup check-row  2dup copy-row
    9d ( nop)  ( to test status: matches FCBEF)
-   mBurstProgram  \o FlashRow  flash-run ;
+   mBurstProgram  \m FlashRow  flash-run ;
 
 : erase-page  ( 'target)
    cr ." erase-page " dup u.
    1 ( len)  44 ( lsra)  ( to test status: matches FCCF)
-   mPageErase  \o FlashByte  flash-run ;
+   mPageErase  \m FlashByte  flash-run ;
 
 : blank?  ( addr - flag)
    cr ." blank? "  dup u.
@@ -205,7 +205,7 @@ forth
    /row /mod  ( r q)  swap push  ?for   /row row  next  then
                             pop  =if  ( rem) row  drop ^  then  2drop ;
 
-: flash-image   flash  |region ( a u)   flash-region ;
+: flash-image   flash  region ( a u)   flash-region ;
 
 ( Use this to initially set the value of "our" trim - the one that trims
   the internal osc to 9.216M.)
@@ -230,13 +230,13 @@ forth
 .then
 
 ( XXX This is a bit of a hack, but seems to work.)
-: slow-verify   |region ( a u)  over t.SetAddr  swap image-p!
+: slow-verify   region ( a u)  over t.SetAddr  swap image-p!
    for  image-c* t.Read       xor  if  image-p@ 1- u.  then  next ;
 
 : verify-chunk  ( len)  dup t.StreamCount
    for  image-c* t.StreamRead xor  if  image-p@ 1- u.  then  next ;
 
 ( Fast verify! Using stream reads.)
-: verify   |region ( a u)  over t.SetAddr  swap image-p!
+: verify   region ( a u)  over t.SetAddr  swap image-p!
    >lohi  swap push  ?for    100 verify-chunk  next  then
                 pop  =if  ( rem) verify-chunk  ^  then  drop ;
