@@ -91,6 +91,7 @@ variable chat-sp     ( current value of target's SP)
 ( These are handy.)
 : pc!  >lohi  .PCH c!  .PCL c! ;
 : hx!  >lohi    .H c!    .X c! ;
+: hx@           .H c@    .X c@  hilo> ;
 
 : .bits8  radix preserve  binary  <# # # # # # # # # #> type ;
 : w@  ( a - w)  dup c@ 8 <<  swap 1+ c@ or ;
@@ -254,3 +255,46 @@ forth
   hectahertz - hhz.)
 : hhz>fcdiv  ( clock-in-hhz - fcdiv)
    1999 +  2000 /  _fcdiv ;
+
+( Getting ready to test interactively - time for a real meta-compiler!)
+
+( NOTE: top cell of target stack is _scratch_ - so allocate it but don't
+  copy it back and forth.)
+
+meta
+: r0  @ram #ram + ;  ( bottom of target's R stack)
+: s0  \m r0  64 - ;  ( bottom of target's D stack; room for 32 values on R)
+: cell   2  ;
+: cell/  2/ ;
+: cells  2* ;
+: depth  \m s0 hx@ -  \m cell/  1- ( scratch) ;
+: u.  u. ;
+: .  . ;
+: du   du ;
+: dis  dis ;
+
+forth
+: stack>  ( "push" stack to target)
+   depth 8 min  ( more than that would be silly)
+   \m s0 over \m cells -  dup \m cell - hx! ( top of D stack)  t.SetAddr
+   ?for  t.WriteW  next  then ( copy each cell as a word to D stack) ;
+ 
+( XXX should this set hx when done?)
+: stack<  ( "pop" stack from target)
+   \m depth 8 min  ( more than that would be silly)  =if
+   hx@ \m cell + t.SetAddr  dup ( depth)
+   for  t.ReadW  pop 2push  next  ( starting with top, push to R)
+   for  2pop push  next  ( pop from R to reverse order)  ^  then  drop ;
+
+meta
+: remote  ( cfa)  ( execute target word on stack)
+   pc!  stack>  runwait  stack< ;
+
+forth
+
+-:  ."  (interacting with target)"  ;
+-:
+      .meta. find  if  execute  ^  then
+    .target. find  if  execute  \m remote  ^  then
+                                                 number ;
+mode __target
