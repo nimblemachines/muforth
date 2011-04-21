@@ -41,7 +41,7 @@ int main(int argc, char *argv[])
         else if (quot == -1 && rem == -3)
             printf("#define DIVISION_IS_SYMMETRIC\n");
         else
-            printf("#error \"Wow. Division Is broken.\"\n");
+            printf("#error \"Wow. Division is broken.\"\n");
     }
 
 #ifdef TEST_CELL_SIZE
