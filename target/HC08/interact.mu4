@@ -302,13 +302,19 @@ forth
 ( NOTE: top cell of target stack is _scratch_ - so allocate it but don't
   copy it back and forth.)
 
+.ifdef two-byte-scratch
+2 constant #scratch  ( number of "scratch" bytes on top of target stack)
+.else
+1 constant #scratch  ( number of "scratch" bytes on top of target stack)
+.then
+
 meta
 : r0  @ram #ram + ;  ( bottom of target's R stack)
 : s0  \m r0  64 - ;  ( bottom of target's D stack; room for 32 values on R)
 : cell   2  ;
 : cell/  2/ ;
 : cells  2* ;
-: depth  \m s0 hx@ -  \m cell/  1- ( scratch) ;
+: depth  \m s0 hx@ #scratch +  -  \m cell/ ;
 : u.  u. ;
 : .  . ;
 : du   du ;
@@ -317,24 +323,22 @@ meta
 forth
 : stack>  ( "push" stack to target)
    depth 8 min  ( more than that would be silly)
-   \m s0 over \m cells -  dup \m cell - hx! ( top of D stack)  t.SetAddr
+   \m s0 over \m cells -  dup #scratch -  hx! ( top of D stack) t.SetAddr
    ?for  t.WriteW  next  then ( copy each cell as a word to D stack) ;
  
 ( XXX should this set hx when done?)
 : stack<  ( "pop" stack from target)
    \m depth 8 min  ( more than that would be silly)  =if
-   hx@ \m cell + t.SetAddr  dup ( depth)
+   hx@ #scratch + t.SetAddr  dup ( depth)
    for  t.ReadW  pop 2push  next  ( starting with top, push to R)
    for  2pop push  next  ( pop from R to reverse order)  ^  then  drop ;
 
-meta
 : remote  ( cfa)  ( execute target word on stack)
    pc!  stack>  runwait  stack< ;
 
-forth
 -:  ."  (interacting with target)"  ;
 -:
       .meta. find  if  execute  ^  then
-    .target. find  if  execute  \m remote  ^  then
+    .target. find  if  execute  remote  ^  then
                                                  number ;
 mode __target
