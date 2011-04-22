@@ -176,6 +176,45 @@ key: i  ( a - a 0)  ['] i-skip  advance!
                    ['] 0       retreat!
                    ['] 1dis    inspect ;
 
+
+( XXX these are only temporary - as is this whole file. ;-)
+( Borrowed from target/HC08/meta, which was copied from ARM.)
+
+( The various token consumers for each mode.)
+
+-:  ."  (assembling)"  ;
+-:
+    .assembler. find  if  execute  ^  then
+       .labels. find  if  execute  ^  then  ( equates are in .labels.)
+         .meta. find  if  execute  ^  then
+        .forth. find  if  execute  ^  then  ( utility words in .forth.)
+                                            number ;
+mode __asm
+
+
+-:  ."  (compiling an assembler macro)"  ;
+-:
+     .compiler. find  if  execute  ^  then  ( compiler's if/then/begin ...)
+    .assembler. find  if  ,  ^        then  ( ... trump the the assembler's)
+       .labels. find  if  ,  ^        then  ( equates are in .labels.)
+         .meta. find  if  ,  ^        then
+        .forth. find  if  ,  ^        then  ( utility words in .forth.)
+                                            number literal ;
+mode __macro
+
+
+( The meta-interpreter. We're in this mode when we're building the target
+  image, and when in between [ and ] when running the target colon
+  compiler.)
+
+-:  ."  (meta)"  ;
+-:
+         .meta. find  if  execute  ^  then
+        .forth. find  if  execute  ^  then
+                                            number ;
+mode __meta
+
+
 assembler
 : ;c   __meta ;
 
@@ -183,12 +222,12 @@ compiler
 : ;m   \ ^  __meta ;  ( to exit from macro compilation)
 
 meta
-: equ    current preserve  meta            constant ;
+: __host  \ [ ;  ( return to host forth mode)
 : name   current preserve  target  \m here constant ;
 : macro  current preserve  assembler       :   __macro ;
 
-: label   \m here  \m equ  __asm ;
-: var      'ram @  \m equ  'ram +! ( allot) ;
+: label   \m here  equ  __asm ;
+: var      'ram @  equ  'ram +! ( allot) ;
 : code    \m name   __asm ;
 
 : '  .target. chain' execute ;  ( target words are constants!)
@@ -197,6 +236,7 @@ meta
 : forward    "100 \a ) \a jmp  \m label ;
 : resolve>>  ( src)  \m here  swap 2 -  image-! ;
 
+: .and  and ;
 : .or   or ;
 : .x  ( like .s)  .X c@ du ;
 
@@ -222,6 +262,7 @@ forth
 : reset   \m Vreset image-@  call ;
 
 : \m  .meta. chain' execute ;
+: \l  .labels. chain' execute ;
 
 
 ( Calculation of FCDIV - flash clock divider [sic])
@@ -291,7 +332,6 @@ meta
    pc!  stack>  runwait  stack< ;
 
 forth
-
 -:  ."  (interacting with target)"  ;
 -:
       .meta. find  if  execute  ^  then
