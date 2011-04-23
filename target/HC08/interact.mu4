@@ -216,6 +216,8 @@ mode __macro
 mode __meta
 
 
+: macro  current preserve  assembler       :   __macro ;
+
 assembler
 : ;c   __meta ;
 
@@ -225,7 +227,6 @@ compiler
 meta
 : __host  \ [ ;  ( return to host forth mode)
 : name   current preserve  target  \m here constant ;
-: macro  current preserve  assembler       :   __macro ;
 
 : label   \m here  equ  __asm ;
 : var   ( bytes)   'ram @  equ   'ram +! ( allot) ;
@@ -346,3 +347,151 @@ forth
     .target. find  if  execute  remote  ^  then
                                                  number ;
 mode __target
+
+
+-- ------------------------------------------------------------------------
+-- Stack layout
+-- ------------------------------------------------------------------------
+
+.ifndef two-byte-scratch
+
+( To make use of literals easier, we keep one "scratch" byte allocated on
+  the D stack, at 0,x. Below this is top, and below that, second. Like
+  this:
+
+     |      |      |
+     +------+------+
+  4  |  sh  |  sl  |  3   second
+     +------+------+
+  2  |  th  |  tl  |  1   top
+     +------+------+
+  0  |  xh  |  xl  | -1   scratch [xl generally unused]
+     +------+------+
+
+  An odd feature of this arrangement is that the data stack is
+  little-endian, so we cannot use 16-bit instructions - like ldhx - to
+  access it.)
+
+macro sh  4 ,x  ;
+macro sl  3 ,x  ;
+macro th  2 ,x  ;
+macro tl  1 ,x  ;
+macro xh  0 ,x  ;
+macro xl -1 ,x  ;
+
+( And for double-length values:)
+
+macro s0  7 ,x  ;  ( second, lsb)
+macro s1  8 ,x  ;
+macro s2  5 ,x  ;
+macro s3  6 ,x  ;  ( second, msb)
+macro t0  3 ,x  ;  ( top, lsb)
+macro t1  4 ,x  ;
+macro t2  1 ,x  ;
+macro t3  2 ,x  ;  ( top, msb)
+
+.else  ( use two bytes of "scratch" space on D stack)
+
+( To make use of literals easier, we keep two "scratch" bytes allocated on
+  the D stack, at 0,x and 1,x. Below this is top, and below that, second.
+  Like this:
+
+     |      |      |
+     +------+------+
+  4  |  sh  |  sl  |  5   second
+     +------+------+
+  2  |  th  |  tl  |  3   top
+     +------+------+
+  0  |  xh  |  xl  |  1   scratch
+     +------+------+
+)
+
+macro sl  5 ,x  ;
+macro sh  4 ,x  ;
+macro tl  3 ,x  ;
+macro th  2 ,x  ;
+macro xl  1 ,x  ;
+macro xh  0 ,x  ;
+
+( And for double-length values:)
+
+macro s0  9 ,x  ;  ( second, lsb)
+macro s1  8 ,x  ;
+macro s2  7 ,x  ;
+macro s3  6 ,x  ;  ( second, msb)
+macro t0  5 ,x  ;  ( top, lsb)
+macro t1  4 ,x  ;
+macro t2  3 ,x  ;
+macro t3  2 ,x  ;  ( top, msb)
+
+.then
+
+-- ------------------------------------------------------------------------
+-- Literal loading.
+-- ------------------------------------------------------------------------
+--
+-- The low half is put into A, the high half into xh - 0,x, on the data
+-- stack.
+--
+-- If high half and low half are equal and non-zero,
+--    half # lda  xh sta  ( 3 bytes)
+-- Otherwise:
+--
+-- High half:
+-- If hi =  0, xh clr          ( 1 byte)
+-- If hi =  1, xh clr  xh inc  ( 2 bytes)
+-- If hi = -1, xh clr  xh dec  ( 2 bytes)
+-- Otherwise, #hi lda  xh sta  ( 3 bytes)
+--
+-- Low half:
+-- If lo = 0,  .a clr   ( 1 byte)
+-- Otherwise,  #lo lda  ( 2 bytes)
+-- ------------------------------------------------------------------------
+
+( XXX should these be macros?)
+: hi-lit  ( hi)
+   dup     0= if  drop  \a xh \a clr  ^  then
+   dup    1 = if  drop  \a xh \a clr  \a xh \a inc  ^  then
+   dup "0ff = if  drop  \a xh \a clr  \a xh \a dec  ^  then
+   \a # \a lda  \a xh  \a sta ;
+
+: lo-lit  ( lo)
+   =if  \a # \a lda  ^  then  drop  \a .a \a clr ;
+
+: make-literal  ( n)
+   >lohi  2dup = if  =if  ( if hi & lo are equal and non-zero)
+      drop  \a # \a lda  \a xh  \a sta  ^  then  then
+   hi-lit  lo-lit ;
+
+( XXX push-literal?)
+macro _dpush  ( A -> tl, xh -> th)
+   -2 # aix ( xh -> th)  tl sta  ;
+
+( XXX pop-literal?)
+macro _dpop   ( tl -> A, th -> xh)
+   tl lda  2 # aix  ( th -> xh)  ;
+
+variable pending-lit  ( literal waiting on the stack)
+: ?lit  pending-lit @ if  make-literal \a _dpush  pending-lit off  then ;
+meta
+: number  ( the target version)
+   ?lit  \f number  pending-lit on ;
+: compile,  ( target-cfa)
+   ?lit  \a c ( compile call) ;
+
+meta-compiler
+( Support for binops with special "immediate" - ie, literal - entry
+  points.)
+
+.ifdef not-yet
++
+and
+or
+xor
+: -  negate  \mc + ;  ( we don't have a special subtract; use add instead!)
+u<
+<
+.then
+
+forth
+
