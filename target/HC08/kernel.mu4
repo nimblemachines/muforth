@@ -183,3 +183,180 @@ code !  ( word a)
 
 .then
 
+( Test make-literal)
+hex
+0 make-literal
+0ca make-literal
+0ff make-literal
+0ff00 make-literal
+5555 make-literal
+0134 make-literal
+0babe make-literal
+
+decimal
+
+( For fun, multiply-by-shifting. So I can compare with multiply using the
+  built-in 8x8->16 instruction.)
+
+code umul  ( u8_multiplier u8_multiplicand - u16)
+   9 # lda
+label umul_n
+   .a psh ( count)
+   begin
+      sl ror ( shift mer right; low bit into C)
+   0 ,s decz? if  .a pul  2 # aix  rts  then
+      sh lda ( accum hi)  CS if  tl add ( multiplicand)  then
+      .a ror  sh sta ( shift accum)
+   again  ;c
+
+code smul  ( s8_multiplier u8_multiplicand - s16)
+   7 # lda  umul_n c  ( it pops the stack, so change offsets)
+   tl lda ( multiplier)  .a lsr ( lo bit into C)
+   xh lda ( accum hi)  CS if  xl sub ( multiplicand)  then
+   .a ror  th sta ( shift accum)  tl ror ( shift multiplier)  rts  ;c
+
+( Correct version)
+code um*  ( umer umcand - uprodlo uprodhi)
+   ( Move multiplicand to S and zero accumulator)
+   16 # lda ( loop count)  .a psh
+   tl lda  .a psh  th lda  .a psh  tl clr  th clr
+   sl lda ( multiplier)
+   begin
+      .a lsr ( lo bit into C)  .a clr
+      CS if  1 ,s lda ( mcand lo)        tl add ( accum lo)  tl sta
+             0 ,s lda ( mcand hi)  then  th adc ( accum hi)
+
+      ( Now shift right, carry, accum, and mer, high to low)
+      .a ror  th sta  tl ror  sh ror  sl lda  .a ror  sl sta
+   2 ,s decz? until  3 # ais  rts  ;c
+
+( Also correct!)
+code um*2  ( umer umcand - uprodlo uprodhi)
+   ( Move multiplicand to S and zero accumulator)
+   17 # lda ( loop count)  .a psh
+   tl lda  .a psh  th lda  .a psh  tl clr  th clr
+   begin
+      sh ror  sl ror ( rotate mer right 1 bit into C)
+   2 ,s decz? if  3 # ais  rts  then
+      .a clr
+      CS if  1 ,s lda ( mcand lo)        tl add ( accum lo)  tl sta
+             0 ,s lda ( mcand hi)  then  th adc ( accum hi)
+
+      ( Now shift carry & accum right 1 bit, high to low)
+      .a ror  th sta  tl ror
+   again  ;c
+
+( Works, and only takes one jump per loop instead of two.)
+code um*3  ( umer umcand - uprodlo uprodhi)
+   ( Move multiplicand to S and zero accumulator)
+   17 # lda ( loop count)  .a psh
+   tl lda  .a psh  th lda  .a psh  tl clr  th clr
+forward prime-pump
+   begin
+      .a clr
+      CS if  1 ,s lda ( mcand lo)        tl add ( accum lo)  tl sta
+             0 ,s lda ( mcand hi)  then  th adc ( accum hi)
+
+      ( Now shift carry & accum right 1 bit, high to low)
+      .a ror  th sta  tl ror
+prime-pump resolve>>
+      sh ror  sl ror ( rotate mer right 1 bit into C)
+   2 ,s decz? until  3 # ais  rts  ;c
+
+( What about using the chip? The above routines clock in at about 760~!
+  Ouch. How fast can we go using the chip's 8x8 multiply?
+
+  Unfortunately it uses the X register, so we can't do this on the X stack.
+  We have to move everything to S or zram, do the multiply, and then move
+  back. Even so, can it be worse that the - arguably simple and elegant -
+  loop above?
+
+  Stack layout:)
+
+macro s_sl   8 ,s  ;m -- sl
+macro s_sh   7 ,s  ;m -- sh
+macro s_tl   6 ,s  ;m -- tl
+macro s_th   5 ,s  ;m -- th
+macro s_p0   4 ,s  ;m -- prod0 - lsb
+macro s_p1   3 ,s  ;m -- prod1
+macro s_p2   2 ,s  ;m -- prod2
+macro s_p3   1 ,s  ;m -- prod3 - msb
+        --   0 ,s  ;m -- saved X
+
+code um*4  ( umer umcand - uprodlo uprodhi)
+   ( Move everything to S)
+   sl lda  .a psh  sh lda  .a psh  tl lda  .a psh  th lda  .a psh
+   ( Room for result - on S)  -4 # ais
+   ( We need it for mul, so push X)  .x psh
+             s_sh ldx  mul ( th*sh)  s_p2 sta  s_p3 stx
+   s_tl lda  s_sl ldx  mul ( tl*sl)  s_p0 sta  s_p1 stx
+   s_tl lda  s_sh ldx  mul ( tl*sh)
+   s_p1 add  s_p1 sta  txa  s_p2 adc  s_p2 sta  CS if  s_p3 inc  then
+   s_th lda  s_sl ldx  mul ( th*sl)
+   s_p1 add  s_p1 sta  txa  s_p2 adc  s_p2 sta
+                               .x pul  .a pul ( s_p3)  0 # adc
+   ( Move result back to X stack)
+   th sta  .a pul  tl sta  .a pul  sh sta  .a pul  sl sta
+   4 # ais  rts  ;c
+
+( Another version using mov ,x+ to move values between X stack and zram
+  scratch space. For every ",s" in the above code we save a byte and a
+  cycle by switching to zram - direct - accesses.
+
+  Scratch space layout - low to high memory, unlike stack picture above:)
+
+1 zvar x_p3   -- prod3 - msb
+1 zvar x_p2   -- prod2
+1 zvar x_p1   -- prod1
+1 zvar x_p0   -- prod0 - lsb
+1 zvar x_th   -- th
+1 zvar x_tl   -- tl
+1 zvar x_sh   -- sh
+1 zvar x_sl   -- sl
+
+.ifdef two-byte-scratch
+
+code um*5  ( umer umcand - uprodlo uprodhi)
+   ( Move everything to zpage and push X)
+   #scratch # aix  ( so HX points _at_ th)
+   ( We need it for mul, so push X - when it points to tl)
+   0 ,x  x_th ) mov  .x psh  0 ,x  x_tl ) mov
+   0 ,x  x_sh ) mov          0 ,x  x_sl ) mov
+
+   x_th ) lda  x_sh ) ldx  mul ( th*sh)  x_p2 ) sta  x_p3 ) stx
+   x_tl ) lda  x_sl ) ldx  mul ( tl*sl)  x_p0 ) sta  x_p1 ) stx
+   x_tl ) lda  x_sh ) ldx  mul ( tl*sh)
+   x_p1 ) add  x_p1 ) sta  txa  x_p2 ) adc  x_p2 ) sta  CS if  x_p3 ) inc  then
+   x_th ) lda  x_sl ) ldx  mul ( th*sl)
+   x_p1 ) add  x_p1 ) sta  txa  x_p2 ) adc  x_p2 ) sta  x_p3 ) lda  0 # adc
+
+   ( Move result back to X stack)
+   .x pul  ( points to tl)
+   x_p2 ) 0 ,x mov  x_p1 ) 0 ,x mov  x_p0 ) 0 ,x mov
+   #scratch 4 + negate # aix  th sta  rts  ;c
+
+.else
+
+( X stack order: xh tl th sl sh
+         Result:    p2 p3 p0 p1)
+
+code um*5  ( umer umcand - uprodlo uprodhi)
+   ( Move everything to zpage and push X)
+   #scratch # aix  ( so HX points _at_ tl)
+   ( We need it for mul, so push X)  .x psh
+   0 ,x  x_tl ) mov   0 ,x  x_th ) mov
+   0 ,x  x_sl ) mov   0 ,x  x_sh ) mov
+
+   x_th ) lda  x_sh ) ldx  mul ( th*sh)  x_p2 ) sta  x_p3 ) stx
+   x_tl ) lda  x_sl ) ldx  mul ( tl*sl)  x_p0 ) sta  x_p1 ) stx
+   x_tl ) lda  x_sh ) ldx  mul ( tl*sh)
+   x_p1 ) add  x_p1 ) sta  txa  x_p2 ) adc  x_p2 ) sta  CS if  x_p3 ) inc  then
+   x_th ) lda  x_sl ) ldx  mul ( th*sl)
+   x_p1 ) add  x_p1 ) sta  txa  x_p2 ) adc  x_p2 ) sta  x_p3 ) lda  0 # adc
+
+   ( Move result back to X stack)
+   .x pul  ( points to tl)
+   x_p2 ) 0 ,x mov  0 ,x sta  1 # aix  x_p0 ) 0 ,x mov  x_p1 ) 0 ,x mov
+   #scratch 4 + negate # aix  rts  ;c
+
+.then
