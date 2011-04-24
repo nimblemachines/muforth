@@ -376,3 +376,55 @@ code *
    ( Move result back to X stack)
    .x pul  ( points to sl)  x_p0 ) 0 ,x mov
    #scratch 2 + negate # aix  th sta  rts  ;c
+
+
+( Now, to tackle _divide_.)
+
+( First, the bit-by-bit shift-and-subtract method.
+
+  This is essentially the reverse of the multipy's add-and-shift - as you
+  would expect. However, with multiply we get lucky: for every one bit in
+  the multiplier, we add the multiplicand into an accumulator, and then
+  immediately shift both the accumulator and the multiplier together, one
+  bit to the right. Our add produces 17-bits but we immediately shift the
+  generated carry in at the left, so we don't have to save it.
+
+  With divide we don't get so lucky. We first shift _left_, creating a
+  17-bit value - including the carry bit. We then test to see if
+  subtracting the divisor causes underflow; if it does _not_, we actually
+  do the subtract, put a 1 into the space that shifting created [in the
+  lowest bit of the quotient] and then shift left again. The trouble is
+  that we do the shift from low to high, generating a carry - which we have
+  to save somewhere - and then do the compare, again starting with the less
+  significant byte. So we con't optimise the way we can with multiply, and
+  the code is clumsier than I would like.)
+
+( NOTE 1: Unlike the published fig-FORTH code for u/, which calculates the
+  division of a 31-bit unsigned dividend by a 16-bit unsigned divisor, I
+  want to do a full 32-bit division. Leaving off that high-order bit allows
+  an optimisation: they only have to subtract from 16 bits instead of 17,
+  so things can be simpler.)
+
+( NOTE 2: the order of the results is _opposite_ that of fig-FORTH and
+  FORTH-83! I think I understand why they want to have the quotient on
+  top - it's "more significant" - but in the shift-and-subtract method the
+  quotient naturally ends up in the _lower_ half of the result.
+
+  In the 6502 assembler source for fig-FORTH's u/ the high and low halves
+  of the dividend are swapped before entering the loop. This is how they
+  end up with quot and rem in the right order at the end.)
+
+( Dividend is in sh:sl:s3:s2
+  Divisor  is in th:tl)
+
+code um/mod  ( ud u - uquot urem)
+   16 # lda  .a psh ( loop count)
+   begin
+      s2 lsl  s3 rol  sl rol  sh rol  .a clr  .a rol ( C -> A)  .a psh ( save)
+      sl lda  tl sub  sh lda  th sbc  .a pul  0 # sbc  ( compare)
+      u>= if ( no borrow: do subtract, shift 1 bit into lsb)
+         s2 inc ( shift in 1)
+         sl lda  tl sub  sl sta
+         sh lda  th sbc  sh sta  then
+   0 ,s decz? until  .a pul
+   2 # aix  rts  ;c
