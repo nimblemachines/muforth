@@ -1,46 +1,50 @@
-2160 lda 1800
-2163 and #80
-2165 bne 217d
-2167 lda 180f
+2160 lda 1800		SRS
+2163 and #80		POR
+2165 bne 217d		if POR -> 217d (power on reset)
+2167 lda 180f		if SIGNATURE = 0c3
 216a cmp #c3
-216c beq 219e
+216c beq 219e		-> 219e
 216e mov #04 40
 2171 mov #40 41
 2174 mov #01 44
-2177 ldhx fffe
+2177 ldhx fffe		jump thru reset vector
 217a jmp ,x
 217b bra 217b
 217d lda 1802
 2180 and #04
 2182 bne 219e
-2184 lda ffba
-2187 beq 216e
+2184 lda ffba		load crc check flag
+2187 beq 216e		if 00, jump to reset vector
 2189 cmp #ff
 218b bne 219e
+
 218d lda #55		watchdog
 218f sta 1800
 2192 coma
 2193 sta 1800
+
 2196 jsr 2515
 2199 jsr 247c
 219c beq 216e
+
 219e lda #55		watchdog
 21a0 sta 1800
 21a3 coma
 21a4 sta 1800
+
 21a7 lda #c3
 21a9 sta 180f
-21ac ldhx #027d
+21ac ldhx #027d		what lives between 27d and 280?
 21af txs
 21b0 sei
 21b1 jsr 2524
-21b4 clrh
+21b4 clrh		HX = 000d
 21b5 ldx #0d
-21b7 clr 7f,x
+21b7 clr 7f,x		clr 80 - 8c
 21b9 dbnzx 21b7
 21bb lda #4e
-21bd sta 1820
-21c0 mov #80 50
+21bd sta 1820		FCDIV: set to 8 * 14 (24M/8/15 == 200k)
+21c0 mov #80 50		USBCTL0: set USBRESET
 21c3 lda #00
 21c5 sta 1860
 21c8 sta 1861
@@ -52,36 +56,42 @@
 21d7 sta 1864
 21da lda #18
 21dc sta 1865
-21df mov #01 65
-21e2 lda 1848
-21e5 and #44
-21e7 sta 50
-21e9 bset0 50
+21df mov #01 65		CTL: set USBEN
+21e2 lda 1848		!! undocumented register 
+21e5 and #44		USBPU or USBVREN
+21e7 sta 50		USBCTL0
+21e9 bset0 50		USBCTL0: set USBPHYEN
+
 21eb lda #55		watchdog
 21ed sta 1800
 21f0 coma
 21f1 sta 1800
-21f4 brclr0 60 21eb
-21f7 mov #ff 62
-21fa mov #bf 60
-21fd mov #bf 63
-2200 clr 61
-2202 clr 66
-2204 mov #0d 6d
+
+21f4 brclr0 60 21eb	INTSTAT: wait till STALLF=1
+21f7 mov #ff 62		ERRSTAT: clear all flags
+21fa mov #bf 60		INTSTAT: clear all flags
+21fd mov #bf 63		ERRENB: enable all error interrupts (?!)
+2200 clr 61		INTENB: disable all interrupts sources (including ERROR!)
+2202 clr 66		clr ADDR
+2204 mov #0d 6d		EPCTL0: enable control endpt 0
+
 2207 lda #55
-2209 sta 180e
-220c lda #aa
+2209 sta 180e		FPROTD - is this an error in the ROM code?
+220c lda #aa		should be 1800!
 220e sta 180e
+
 2211 lda #01
-2213 sta 1824
+2213 sta 1824		FPROT: set FPDIS: disable flash protection!
+
 2216 lda #55		watchdog
 2218 sta 1800
 221b coma
 221c sta 1800
-221f brclr3 60 2242
-2222 lda 64
-2224 and #f8
-2226 cbeqa #08 223d
+
+221f brclr3 60 2242	wait for TOKDNEF
+2222 lda 64		STAT
+2224 and #f8		ENDP or IN
+2226 cbeqa #08 223d	endp0 in?
 2229 bne 2240
 222b lda 1863
 222e and #3c
@@ -92,10 +102,10 @@
 2238 jsr 23bc
 223b bra 2240
 223d jsr 2387
-2240 bset3 60
-2242 brclr7 60 2249
-2245 bclr1 6d
-2247 bset7 60
+2240 bset3 60		INTSTAT: ack TOKDNEF
+2242 brclr7 60 2249	INTSTAT: wait for STALLF
+2245 bclr1 6d		EPCTL0: clear EPSTALL
+2247 bset7 60		INTSTAT: ack STALLF
 2249 bra 2216
 224b lda 18c0
 224e and #60
@@ -178,7 +188,7 @@
 2314 bra 233e
 2316 jsr 24bd
 2319 bra 233e
-231b lda 87
+231b lda 87		control transfer status byte (?)
 231d sta 1880
 2320 lda #01
 2322 sta 1861
@@ -208,6 +218,7 @@
 235b sta 1865
 235e bclr5 65
 2360 rts
+
 2361 clrh
 2362 clr 86
 2364 lda 85
@@ -227,6 +238,7 @@
 2381 lda 86
 2383 sta 1861
 2386 rts
+
 2387 brclr0 80 2391
 238a lda 18c2
 238d sta 66
@@ -243,6 +255,7 @@
 23a6 bra 23aa
 23a8 bsr 23ab
 23aa rts
+
 23ab clr 81
 23ad lda #20
 23af sta 1864
@@ -251,15 +264,16 @@
 23b7 clra
 23b8 sta 1860
 23bb rts
+
 23bc brclr1 81 2417
 23bf brclr3 80 2405
 23c2 lda 1864
 23c5 cmp 8c
 23c7 bne 2405
-23c9 lda 1848
+23c9 lda 1848		?? undocumented - diff between JS8 and JS16?
 23cc and #03
-23ce cbeqa #02 23eb
-23d1 cbeqa #03 23db
+23ce cbeqa #02 23eb	JS8
+23d1 cbeqa #03 23db	JS16
 23d4 mov #f2 87
 23d7 bclr3 80
 23d9 bra 2405
@@ -291,6 +305,7 @@
 2415 bra 2419
 2417 bsr 23ab
 2419 rts
+
 241a lda 18c2
 241d cbeqa #00 2426
 2420 cbeqa #01 2432
@@ -318,10 +333,10 @@
 2456 lda 18c2
 2459 cmp #02
 245b bne 247b
-245d lda 1848
+245d lda 1848		?? undocumented - diff between JS8 and JS16?
 2460 and #03
-2462 cbeqa #02 246a
-2465 cbeqa #03 2471
+2462 cbeqa #02 246a	JS8
+2465 cbeqa #03 2471	JS16
 2468 bra 247b
 246a lda #38
 246c sta 1886
@@ -331,10 +346,11 @@
 2476 lda #36
 2478 sta 1888
 247b rts
-247c lda 1848
+
+247c lda 1848		?? undocumented - diff between JS8 and JS16?
 247f and #03
-2481 cbeqa #03 248e
-2484 cbeqa #02 2489
+2481 cbeqa #03 248e	JS16
+2484 cbeqa #02 2489	JS8
 2487 bra 24b8
 2489 ldhx #e400
 248c bra 2491
@@ -344,10 +360,12 @@
 2497 mov ,x+ 0d
 2499 cphx #ffae
 249c bne 2497
+
 249e lda #55		watchdog
 24a0 sta 1800
 24a3 coma
 24a4 sta 1800
+
 24a7 ldhx #ffc0
 24aa mov ,x+ 0d
 24ac cphx #0000
@@ -357,35 +375,44 @@
 24b6 beq 24bb
 24b8 lda #ff
 24ba rts
+
 24bb clra
 24bc rts
-24bd lda 1848
+
+24bd lda 1848		?? undocumented - diff between JS8 and JS16?
 24c0 and #03
-24c2 cbeqa #03 24d1
-24c5 cbeqa #02 24cc
+24c2 cbeqa #03 24d1	JS16
+24c5 cbeqa #02 24cc	JS8
 24c8 mov #f2 87
 24cb rts
+
 24cc ldhx #e400
 24cf bra 24d4
 24d1 ldhx #c400
-24d4 mov #8d 0c
-24d7 mov #9d 0d
+24d4 mov #8d 0c		CRCH:
+24d7 mov #9d 0d		CRCL: set seed to 8d9d
+
 24da lda #55		watchdog
 24dc sta 1800
 24df coma
 24e0 sta 1800
+
 24e3 mov ,x+ 0d
 24e5 cphx #ffae
 24e8 bne 24da
+
 24ea lda #55		watchdog
 24ec sta 1800
 24ef coma
 24f0 sta 1800
+
 24f3 ldhx #ffc0
+
 24f6 lda #55		watchdog
 24f8 sta 1800
 24fb coma
 24fc sta 1800
+
 24ff mov ,x+ 0d
 2501 cphx #0000
 2504 bne 24f6
@@ -394,37 +421,46 @@
 250b beq 2511
 250d mov #f5 87
 2510 rts
+
 2511 mov #01 87
 2514 rts
+
 2515 lda 180d
 2518 sta 42
 251a mov #04 40
-251d mov #32 41
+251d mov #32 41		MCGC2: RANGE=1, HGO=1, EREFS=0, ERCLKEN=1
 2520 mov #00 44
 2523 rts
+
 2524 bsr 2515
 2526 bra 253b
-2528 mov #36 41
+2528 mov #36 41		MCGC2: RANGE=1, HGO=1, EREFS=1, ERCLKEN=1
 252b clr 10
 252d clr 48
+
 252f lda #55		watchdog
 2531 sta 1800
 2534 coma
 2535 sta 1800
-2538 brclr1 43 252f
+
+2538 brclr1 43 252f	MCGSC: wait till OSCINIT=1
+
 253b lda #55		watchdog
 253d sta 1800
 2540 coma
 2541 sta 1800
+
 2544 mov #a8 48
 2547 mov #b9 4a
 254a ldhx #2710
 254d sthx 13
 254f mov #0c 10
+
 2552 lda #55		watchdog
 2554 sta 1800
 2557 coma
 2558 sta 1800
+
 255b brclr7 10 2552
 255e brset7 48 256b
 2561 lda 49
@@ -434,324 +470,393 @@
 2569 bra 257b
 256b mov #80 48
 256e clr 10
+
 2570 lda #55		watchdog
 2572 sta 1800
 2575 coma
 2576 sta 1800
+
 2579 bra 2570
-257b mov #36 41
+257b mov #36 41		MCGC2: RANGE=1, HGO=1, EREFS=1, ERCLKEN=1
+
 257e lda #55		watchdog
 2580 sta 1800
 2583 coma
 2584 sta 1800
+
 2587 brclr1 43 257e
-258a mov #98 40
+258a mov #98 40		MCGC1: CLKS=10, RDIV=011 (/8)
+
 258d lda #55		watchdog
 258f sta 1800
 2592 coma
 2593 sta 1800
+
 2596 lda 43
 2598 and #1c
 259a cmp #08
 259c bne 258d
 259e mov #46 44
+
 25a1 lda #55		watchdog
 25a3 sta 1800
 25a6 coma
 25a7 sta 1800
+
 25aa brclr6 43 25a1
-25ad brclr5 43 25a1
-25b0 mov #18 40
+25ad brclr5 43 25a1	MCGSC: wait for LOCK & PLLST set
+25b0 mov #18 40		MCGC1: CLKS=00, RDIV=011 (/8)
+
 25b3 lda #55		watchdog
 25b5 sta 1800
 25b8 coma
 25b9 sta 1800
+
 25bc brclr2 43 25b3
-25bf brclr3 43 25b3
+25bf brclr3 43 25b3	MCGSC: wait for CLKST=11 (PLL)
 25c2 jmp 274a
 25c5 cmp #64
 25c7 bcs 2613
-25c9 mov #36 41
+25c9 mov #36 41		MCGC2: RANGE=1, HGO=1, EREFS=1, ERCLKEN=1
+
 25cc lda #55		watchdog
 25ce sta 1800
 25d1 coma
 25d2 sta 1800
-25d5 brclr1 43 25cc
-25d8 mov #98 40
+
+25d5 brclr1 43 25cc	MCGSC: wait till OSCINIT=1
+25d8 mov #98 40		MCGC1: CLKS=10, RDIV=011 (/8)
+
 25db lda #55		watchdog
 25dd sta 1800
 25e0 coma
 25e1 sta 1800
+
 25e4 lda 43
 25e6 and #1c
 25e8 cmp #08
 25ea bne 25db
 25ec mov #48 44
+
 25ef lda #55		watchdog
 25f1 sta 1800
 25f4 coma
 25f5 sta 1800
+
 25f8 brclr6 43 25ef
-25fb brclr5 43 25ef
-25fe mov #18 40
+25fb brclr5 43 25ef	MCGSC: wait for LOCK & PLLST set
+25fe mov #18 40		MCGC1: CLKS=00, RDIV=011 (/8)
+
 2601 lda #55		watchdog
 2603 sta 1800
 2606 coma
 2607 sta 1800
+
 260a brclr2 43 2601
-260d brclr3 43 2601
+260d brclr3 43 2601	MCGSC: wait till CLKST=11 (PLL)
 2610 jmp 274a
 2613 cmp #46
 2615 bcs 2661
-2617 mov #36 41
+2617 mov #36 41		MCGC2: RANGE=1, HGO=1, EREFS=1, ERCLKEN=1
+
 261a lda #55		watchdog
 261c sta 1800
 261f coma
 2620 sta 1800
-2623 brclr1 43 261a
-2626 mov #90 40
+
+2623 brclr1 43 261a	MCGSC: wait till OSCINIT=1
+2626 mov #90 40		MCGC1: CLKS=10, RDIV=010 (/4)
+
 2629 lda #55		watchdog
 262b sta 1800
 262e coma
 262f sta 1800
+
 2632 lda 43
 2634 and #1c
 2636 cmp #08
 2638 bne 2629
 263a mov #46 44
+
 263d lda #55		watchdog
 263f sta 1800
 2642 coma
 2643 sta 1800
+
 2646 brclr6 43 263d
-2649 brclr5 43 263d
-264c mov #10 40
+2649 brclr5 43 263d	MCGSC: wait for LOCK & PLLST set
+264c mov #10 40		MCGC1: CLKS=00, RDIV=010 (/4)
+
 264f lda #55		watchdog
 2651 sta 1800
 2654 coma
 2655 sta 1800
+
 2658 brclr2 43 264f
-265b brclr3 43 264f
+265b brclr3 43 264f	MCGSC: wait till CLKST=11 (PLL)
 265e jmp 274a
 2661 cmp #32
 2663 bcs 26af
-2665 mov #36 41
+2665 mov #36 41		MCGC2: RANGE=1, HGO=1, EREFS=1, ERCLKEN=1
+
 2668 lda #55		watchdog
 266a sta 1800
 266d coma
 266e sta 1800
-2671 brclr1 43 2668
-2674 mov #90 40
+
+2671 brclr1 43 2668	MCGSC: wait till OSCINIT=1
+2674 mov #90 40		MCGC1: CLKS=10, RDIV=010 (/4)
+
 2677 lda #55		watchdog
 2679 sta 1800
 267c coma
 267d sta 1800
+
 2680 lda 43
 2682 and #1c
 2684 cmp #08
 2686 bne 2677
 2688 mov #48 44
+
 268b lda #55		watchdog
 268d sta 1800
 2690 coma
 2691 sta 1800
+
 2694 brclr6 43 268b
-2697 brclr5 43 268b
-269a mov #10 40
+2697 brclr5 43 268b	MCGSC: wait for LOCK & PLLST set
+269a mov #10 40		MCGC1: CLKS=00, RDIV=010 (/4)
+
 269d lda #55		watchdog
 269f sta 1800
 26a2 coma
 26a3 sta 1800
+
 26a6 brclr2 43 269d
-26a9 brclr3 43 269d
+26a9 brclr3 43 269d	MCGSC: wait till CLKST=11 (PLL)
 26ac jmp 274a
 26af cmp #1e
 26b1 bcs 26ff
-26b3 mov #36 41
+26b3 mov #36 41		MCGC2: RANGE=1, HGO=1, EREFS=1, ERCLKEN=1
+
 26b6 lda #55		watchdog
 26b8 sta 1800
 26bb coma
 26bc sta 1800
-26bf brclr1 43 26b6
-26c2 mov #88 40
+
+26bf brclr1 43 26b6	MCGSC: wait till OSCINIT=1
+26c2 mov #88 40		MCGC1: CLKS=10, RDIV=001 (/2)
+
 26c5 lda #55		watchdog
 26c7 sta 1800
 26ca coma
 26cb sta 1800
+
 26ce lda 43
 26d0 and #1c
 26d2 cmp #08
 26d4 bne 26c5
 26d6 mov #46 44
+
 26d9 lda #55		watchdog
 26db sta 1800
 26de coma
 26df sta 1800
+
 26e2 brclr6 43 26d9
-26e5 brclr5 43 26d9
-26e8 mov #08 40
+26e5 brclr5 43 26d9	MCGSC: wait for LOCK & PLLST set
+26e8 mov #08 40		MCGC1: CLKS=00, RDIV=001 (/2)
+
 26eb lda #55		watchdog
 26ed sta 1800
 26f0 coma
 26f1 sta 1800
+
 26f4 brclr2 43 26eb
-26f7 brclr3 43 26eb
+26f7 brclr3 43 26eb	MCGSC: wait till CLKST=11 (PLL)
 26fa bra 274a
 26fc jmp 256b
 26ff cmp #0c
 2701 bcs 26fc
-2703 mov #36 41
+2703 mov #36 41		MCGC2: RANGE=1, HGO=1, EREFS=1, ERCLKEN=1
+
 2706 lda #55		watchdog
 2708 sta 1800
 270b coma
 270c sta 1800
-270f brclr1 43 2706
-2712 mov #80 40
+
+270f brclr1 43 2706	MCGSC: wait till OSCINIT=1
+2712 mov #80 40		MCGC1: CLKS=10 (ext ref), RDIV=0, IREFS=0
+
 2715 lda #55		watchdog
 2717 sta 1800
 271a coma
 271b sta 1800
-271e lda 43
-2720 and #1c
-2722 cmp #08
+
+271e lda 43		MCGSC
+2720 and #1c		IREFST and CLKST
+2722 cmp #08		IREFST=0 & CLKST=10 (ext ref)
 2724 bne 2715
-2726 mov #46 44
+2726 mov #46 44		MCGC3: PLLS=1, VDIV=6
+
 2729 lda #55		watchdog
 272b sta 1800
 272e coma
 272f sta 1800
-2732 brclr6 43 2729
-2735 brclr5 43 2729
-2738 mov #00 40
+
+2732 brclr6 43 2729	MCGSC: wait for LOCK
+2735 brclr5 43 2729	MCGSC: wait for PLLST
+2738 mov #00 40		MCGC1: CLKS=00 (FLL or PLL), RDIV=0
+
 273b lda #55		watchdog
 273d sta 1800
 2740 coma
 2741 sta 1800
-2744 brclr2 43 273b
+
+2744 brclr2 43 273b	MCGSC: wait for CLKST=11 (PLL)
 2747 brclr3 43 273b
+
 274a lda #55		watchdog
 274c sta 1800
 274f coma
 2750 sta 1800
+
 2753 mov #80 48
 2756 clr 10
 2758 rts
+
 2759 lda #30		clear errors by writing 30 to FSTAT
 275b sta 1825
 275e clr 86
 2760 clrh
-2761 ldx 86
-2763 lda 18c0,x
-2766 ldhx 88
+2761 ldx 86		offset into usb OUT buffer
+2763 lda 18c0,x		get byte
+2766 ldhx 88		flash pointer
 2768 sta ,x
 2769 lda #20		mByteProgram command
 276b sta 1826		FCMD register
 276e lda #80		write 80 to
 2770 sta 1825		FSTAT to start flash process
+
 2773 lda #55		watchdog
 2775 sta 1800
 2778 coma
 2779 sta 1800
-277c lda 1825
+
+277c lda 1825		check for flash errors
 277f and #30
 2781 beq 2788
-2783 mov #f4 87
+2783 mov #f4 87		error: 0f4 87 c! ^
 2786 bra 27b0
+
 2788 lda #55		watchdog
 278a sta 1800
 278d coma
 278e sta 1800
-2791 lda 1825
+
+2791 lda 1825		wait for FCCF
 2794 lsla
 2795 bpl 2788
 2797 clrh
-2798 ldx 86
-279a lda 18c0,x
+2798 ldx 86		86 is offset into USB buffer
+279a lda 18c0,x		get byte again
 279d ldhx 88
-279f cmp ,x
-27a0 bne 2783
-27a2 incx
+279f cmp ,x		compare with flash
+27a0 bne 2783		error -> 2783
+27a2 incx		inc flash ptr
 27a3 sthx 88
-27a5 inc 86
-27a7 lda 8c
-27a9 cmp 86
-27ab bne 2760
-27ad mov #01 87
+27a5 inc 86		inc usb ptr
+27a7 lda 8c		load end offset
+27a9 cmp 86		done?
+27ab bne 2760		no, flash next byte
+27ad mov #01 87		yes, all ok, 01 87 c! ^
 27b0 rts
-27b1 lda #30
+
+27b1 lda #30		clear flash errors
 27b3 sta 1825
-27b6 lda 1848
+27b6 lda 1848		?? undocumented - diff between JS8 and JS16?
 27b9 and #03
-27bb cbeqa #03 27cb
-27be cbeqa #02 27c6
+27bb cbeqa #03 27cb	erase by page from 0c400 - fe00 (JS16)
+27be cbeqa #02 27c6	erase by page from 0e400 - fe00 (JS8)
 27c1 mov #f2 87
 27c4 bra 27eb
 27c6 ldhx #e400
 27c9 bra 27ce
 27cb ldhx #c400
 27ce sthx 88
-27d0 bsr 27ec
-27d2 beq 27d9
-27d4 mov #f1 87
+27d0 bsr 27ec		flash page erase
+27d2 beq 27d9		ok -> 27d9
+27d4 mov #f1 87		bad: 0f1 87 c! return
 27d7 bra 27eb
-27d9 ldhx 88
+27d9 ldhx 88		flash pointer
 27db cphx #fe00
-27de beq 27e8
+27de beq 27e8		done
 27e0 pshh
 27e1 pula
-27e2 add #02
+27e2 add #02		add 200 (page) to HX
 27e4 psha
 27e5 pulh
 27e6 bra 27ce
-27e8 mov #01 87
+27e8 mov #01 87		done, success: 01 87 c! return
 27eb rts
-27ec sta ,x
-27ed lda #40
-27ef sta 1826
+
+27ec sta ,x		Write to flash; HX has page address
+27ed lda #40		page erase command
+27ef sta 1826		FCMD c!
 27f2 lda #80
-27f4 sta 1825
+27f4 sta 1825		start command
+
 27f7 lda #55		watchdog
 27f9 sta 1800
 27fc coma
 27fd sta 1800
-2800 lda 1825
+
+2800 lda 1825		check for errors
 2803 and #30
 2805 beq 2809
-2807 bra 2819
+2807 bra 2819		if error, return A != 0, Z clear
+
 2809 lda #55		watchdog
 280b sta 1800
 280e coma
 280f sta 1800
-2812 lda 1825
+
+2812 lda 1825		wait for FCCF (flash command complete)
 2815 lsla
 2816 bpl 2809
-2818 clra
+2818 clra		erase ok: return A = 0, Z set
 2819 rts
-281a lda #30
+
+281a lda #30		30 FSTAT c! ( clear flash errors)
 281c sta 1825
-281f sta f000
-2822 lda #41
-2824 sta 1826
-2827 lda #80
+281f sta f000		Write to flash
+2822 lda #41		mass erase command
+2824 sta 1826		FCMD c!
+2827 lda #80		80 FSTAT c! ( to start command)
 2829 sta 1825
+
 282c lda #55		watchdog
 282e sta 1800
 2831 coma
 2832 sta 1800
-2835 lda 1825
+
+2835 lda 1825		FSTAT c@ 30 and ( check for errors)
 2838 and #30
 283a beq 2841
-283c mov #f0 87
+283c mov #f0 87		flash erase error: 0f7 87 c! return
 283f bra 2853
+
 2841 lda #55		watchdog
 2843 sta 1800
 2846 coma
 2847 sta 1800
-284a lda 1825
+
+284a lda 1825		wait for FCCF (command complete)
 284d lsla
 284e bpl 2841
-2850 mov #01 87
+2850 mov #01 87		flash erase ok: 01 87 c!
 2853 rts
+
 2854 bset1 01
 2856 brset0 02 2859
 2859 brset0 00 287c
