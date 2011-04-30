@@ -24,7 +24,7 @@
 2193 sta 1800
 
 2196 jsr 2515
-2199 jsr 247c
+2199 jsr 247c		calc CRC - only feed dog once!
 219c beq 216e
 
 219e lda #55		watchdog
@@ -127,11 +127,11 @@
 2279 cbeqa #02 228c
 227c cbeqa #03 2297
 227f bra 2256
-2281 ldhx #2854
-2284 sthx 82
-2286 mov #12 84
+2281 ldhx #2854		device descriptor
+2284 sthx 82		source string ptr - for sending descriptors?
+2286 mov #12 84		source string length
 2289 jmp 2327
-228c ldhx #2866
+228c ldhx #2866		configuration descriptor
 228f sthx 82
 2291 mov #19 84
 2294 jmp 2327
@@ -145,37 +145,38 @@
 22a9 jmp 2334
 22ac bset0 80
 22ae jmp 233e
-22b1 lda 18c1
-22b4 cbeqa #68 22c8
-22b7 cbeqa #61 22e5
-22ba cbeqa #63 2302
-22bd cbeqa #64 2307
-22c0 cbeqa #69 2316
-22c3 cbeqa #6f 231b
+22b1 lda 18c1		load bootloader command byte:
+22b4 cbeqa #68 22c8	Reset
+22b7 cbeqa #61 22e5	Program - start addr, end addr, length, data;
+				01 = success; f4 = fail
+22ba cbeqa #63 2302	Mass erase; 01 = success, f0 = fail
+22bd cbeqa #64 2307	Partial (page-by-page) erase; 01 = success, f1 = fail
+22c0 cbeqa #69 2316	CRC check; 01 = success, f5 = fail
+22c3 cbeqa #6f 231b	Get result
 22c6 bra 2256
 22c8 clra
 22c9 sta 180f
-22cc sta 1861
-22cf lda #c8
-22d1 sta 1860
+22cc sta 1861		zero length pkt
+22cf lda #c8		OWN + DATA1 + DTS
+22d1 sta 1860		ep0 IN BD
 22d4 bclr5 65
 22d6 clrh
 22d7 ldx #0d
 22d9 clr 7f,x
 22db dbnzx 22d9
 22dd lda 1860
-22e0 bmi 22dd
-22e2 jmp 28a1
+22e0 bmi 22dd		wait till OWN=0
+22e2 jmp 28a1		jmp to 8d instruction - illegal op - causes ILOP reset
 22e5 bset3 80
-22e7 lda 18c3
+22e7 lda 18c3		start_addr_hi
 22ea sta 88
-22ec lda 18c2
+22ec lda 18c2		start_addr_lo
 22ef sta 89
-22f1 lda 18c5
+22f1 lda 18c5		end_addr_hi
 22f4 sta 8a
-22f6 lda 18c4
+22f6 lda 18c4		end_addr_lo
 22f9 sta 8b
-22fb lda 18c6
+22fb lda 18c6		wLength_lo
 22fe sta 8c
 2300 bra 233e
 2302 jsr 281a
@@ -186,7 +187,7 @@
 230f bra 233e
 2311 jsr 27b1
 2314 bra 233e
-2316 jsr 24bd
+2316 jsr 24bd		calc crc, being careful about watchdog
 2319 bra 233e
 231b lda 87		control transfer status byte (?)
 231d sta 1880
@@ -206,37 +207,37 @@
 233e mov #02 81
 2341 clra
 2342 sta 1861
-2345 lda #c8
-2347 sta 1863
-234a lda #c8
-234c sta 1860
+2345 lda #c8		OWN + DATA1 + DTS
+2347 sta 1863		ep0 OUT BD
+234a lda #c8		OWN + DATA1 + DTS
+234c sta 1860		ep0 IN BD
 234f lda #08
-2351 sta 1862
+2351 sta 1862		ep0 IN buffer @ 1860 + 20 = 1880
 2354 lda #20
-2356 sta 1864
+2356 sta 1864		ep0 OUT data len = 20
 2359 lda #18
-235b sta 1865
+235b sta 1865		ep0 OUT buffer @ 1860 + 60 = 18c0
 235e bclr5 65
 2360 rts
 
 2361 clrh
 2362 clr 86
-2364 lda 85
+2364 lda 85		total count to send?
 2366 cbeq 84 2381
 2369 ldx 86
 236b cbeqx #20 2381
-236e ldhx 82
+236e ldhx 82		flash read_addr
 2370 lda ,x
 2371 aix #01
-2373 sthx 82
+2373 sthx 82		read from flash, incr ptr, save ptr
 2375 clrh
 2376 ldx 86
-2378 sta 1880,x
+2378 sta 1880,x		store into IN buffer
 237b inc 85
 237d inc 86
 237f bra 2364
 2381 lda 86
-2383 sta 1861
+2383 sta 1861		length to send
 2386 rts
 
 2387 brclr0 80 2391
@@ -246,21 +247,21 @@
 2391 brclr0 81 23a8
 2394 bsr 2361
 2396 lda 1860
-2399 bit #40
+2399 bit #40		test for DATA0/1
 239b bne 23a1
-239d lda #c8
+239d lda #c8		OWN + DATA1 + DTS
 239f bra 23a3
-23a1 lda #88
-23a3 sta 1860
+23a1 lda #88		OWN + DATA0 + DTS
+23a3 sta 1860		ep0 IN BD
 23a6 bra 23aa
 23a8 bsr 23ab
 23aa rts
 
 23ab clr 81
 23ad lda #20
-23af sta 1864
-23b2 lda #88
-23b4 sta 1863
+23af sta 1864		ep0 OUT length = 20
+23b2 lda #88		OWN + DATA0 + DTS
+23b4 sta 1863		ep0 OUT BD
 23b7 clra
 23b8 sta 1860
 23bb rts
@@ -280,20 +281,20 @@
 23db ldhx 88
 23dd cphx #c000
 23e0 bcs 23f9
-23e2 ldhx 8a
+23e2 ldhx 8a		if last_addr u< c000 (8k)
 23e4 cphx #c000
-23e7 bcs 23f9
+23e7 bcs 23f9			return f3
 23e9 bra 2400
 23eb ldhx 88
 23ed cphx #e000
 23f0 bcs 23f9
-23f2 ldhx 8a
+23f2 ldhx 8a		if last_addr u< e000 (8k)
 23f4 cphx #e000
 23f7 bcc 2400
-23f9 mov #f3 87
+23f9 mov #f3 87			return f3
 23fc bclr3 80
 23fe bra 2405
-2400 jsr 2759
+2400 jsr 2759		flash buffer
 2403 bclr3 80
 2405 lda 1863
 2408 bit #40
@@ -315,17 +316,17 @@
 242b lda 287f
 242e sta 84
 2430 bra 2448
-2432 ldhx #2883
+2432 ldhx #2883		string descriptor "Freescale"
 2435 sthx 82
-2437 lda 2883
+2437 lda 2883		descr length
 243a sta 84
 243c bra 2448
-243e ldhx #2897
+243e ldhx #2897		string desc "JS"
 2441 sthx 82
-2443 lda 2897
+2443 lda 2897		length
 2446 sta 84
-2448 lda 18c6
-244b cmp 84
+2448 lda 18c6		wLength_lo (request)
+244b cmp 84		compare to read_count
 244d bcc 2451
 244f sta 84
 2451 clr 85
@@ -347,18 +348,23 @@
 2478 sta 1888
 247b rts
 
+Calculate CRC and compare to value saved at ffb8/9; return 0 if matched, ff if
+didn't. This version only feeds the dog between calc'ing the main body of the
+flash and calc'ing the vectors. Is it unused?? No! Called from first 32 bytes
+of ROM!
+
 247c lda 1848		?? undocumented - diff between JS8 and JS16?
 247f and #03
 2481 cbeqa #03 248e	JS16
 2484 cbeqa #02 2489	JS8
 2487 bra 24b8
-2489 ldhx #e400
+2489 ldhx #e400		start @e400 for 8k device (JS8)
 248c bra 2491
-248e ldhx #c400
-2491 mov #8d 0c
+248e ldhx #c400		start @c400 for 16k device (JS16)
+2491 mov #8d 0c		seed CRC with 8d9d
 2494 mov #9d 0d
 2497 mov ,x+ 0d
-2499 cphx #ffae
+2499 cphx #ffae		calc from start to ffad, inclusive
 249c bne 2497
 
 249e lda #55		watchdog
@@ -366,18 +372,22 @@
 24a3 coma
 24a4 sta 1800
 
-24a7 ldhx #ffc0
+24a7 ldhx #ffc0		also calc ffc0 - ffff inclusive
 24aa mov ,x+ 0d
 24ac cphx #0000
 24af bne 24aa
-24b1 ldhx 0c
-24b3 cphx ffb8
+24b1 ldhx 0c		load calc'ed crc
+24b3 cphx ffb8		compare with saved crc
 24b6 beq 24bb
-24b8 lda #ff
+24b8 lda #ff		return ff if not equal
 24ba rts
 
 24bb clra
-24bc rts
+24bc rts		return 0 if equal
+
+Calculate CRC and compare to value saved at ffb8/9; if match, set 87 to 01; if
+didn't match, set 87 to f5. Be careful to feed the dog after calc'ing each
+byte of CRC.
 
 24bd lda 1848		?? undocumented - diff between JS8 and JS16?
 24c0 and #03
@@ -386,9 +396,9 @@
 24c8 mov #f2 87
 24cb rts
 
-24cc ldhx #e400
+24cc ldhx #e400		start @e400 for 8k device (JS8)
 24cf bra 24d4
-24d1 ldhx #c400
+24d1 ldhx #c400		start @c400 for 16k device (JS16)
 24d4 mov #8d 0c		CRCH:
 24d7 mov #9d 0d		CRCL: set seed to 8d9d
 
@@ -398,7 +408,7 @@
 24e0 sta 1800
 
 24e3 mov ,x+ 0d
-24e5 cphx #ffae
+24e5 cphx #ffae		calc from start to ffaf, inclusive
 24e8 bne 24da
 
 24ea lda #55		watchdog
@@ -406,7 +416,7 @@
 24ef coma
 24f0 sta 1800
 
-24f3 ldhx #ffc0
+24f3 ldhx #ffc0		also calc ffc0 - ffff inclusive
 
 24f6 lda #55		watchdog
 24f8 sta 1800
@@ -416,13 +426,13 @@
 24ff mov ,x+ 0d
 2501 cphx #0000
 2504 bne 24f6
-2506 ldhx 0c
-2508 cphx ffb8
+2506 ldhx 0c		load calc'ed crc
+2508 cphx ffb8		compare with saved
 250b beq 2511
-250d mov #f5 87
+250d mov #f5 87		didn't match, return f5
 2510 rts
 
-2511 mov #01 87
+2511 mov #01 87		matched, return 01
 2514 rts
 
 2515 lda 180d
@@ -729,7 +739,7 @@
 275b sta 1825
 275e clr 86
 2760 clrh
-2761 ldx 86		offset into usb OUT buffer
+2761 ldx 86		offset into usb ep0 OUT buffer
 2763 lda 18c0,x		get byte
 2766 ldhx 88		flash pointer
 2768 sta ,x
@@ -746,7 +756,7 @@
 277c lda 1825		check for flash errors
 277f and #30
 2781 beq 2788
-2783 mov #f4 87		error: 0f4 87 c! ^
+2783 mov #f4 87		error: 0f4 87 c! ^ ( program error)
 2786 bra 27b0
 
 2788 lda #55		watchdog
@@ -786,7 +796,7 @@
 27ce sthx 88
 27d0 bsr 27ec		flash page erase
 27d2 beq 27d9		ok -> 27d9
-27d4 mov #f1 87		bad: 0f1 87 c! return
+27d4 mov #f1 87		bad: 0f1 87 c! return (page erase error)
 27d7 bra 27eb
 27d9 ldhx 88		flash pointer
 27db cphx #fe00
@@ -843,7 +853,7 @@
 2835 lda 1825		FSTAT c@ 30 and ( check for errors)
 2838 and #30
 283a beq 2841
-283c mov #f0 87		flash erase error: 0f7 87 c! return
+283c mov #f0 87		flash mass erase error: 0f0 87 c! return
 283f bra 2853
 
 2841 lda #55		watchdog
