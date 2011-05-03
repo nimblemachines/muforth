@@ -32,6 +32,15 @@ cpu=$(uname -m)
 cflags="-Wno-int-to-pointer-cast"
 ldflags=""
 
+if [ "$os" = "Linux" ]; then
+    # Try to find libusb-0.1. libusb-1.0 puts its include and library files in
+    # slightly different places, so we shouldn't worry about collisions.
+    libusb="none"
+    [ -f "/usr/include/usb.h" ] && libusb="/usr"
+    [ -f "/usr/local/include/usb.h" ] && libusb="/usr/local"
+    [ -f "$HOME/include/usb.h" ] && libusb="$HOME"
+fi
+
 # On 64-bit hosts, we now default to _forcing_ the compilation of a 32-bit
 # version of muforth. Compiling muforth with 64-bit cells is now left as an
 # exercise for the reader (it's not hard, and all the pieces are still
@@ -70,7 +79,7 @@ chmod 755 scripts/do_sed.sh
 # Figure out which version of make we're using (most likely GNU or BSD) and
 # set up an appropriate Makefile.
 
-if [ "${gnu}" = "yes" ] || 
+if [ "${gnu}" = "yes" ] ||
    ([ "${bsd}" != "yes" ] &&
     make --version 2> /dev/null | grep -q "GNU Make"); then
   cat <<EOF
@@ -87,6 +96,7 @@ EOF
     -e "s/%sedext%/${sedext}/g" \
     -e "s/%archcflags%/${cflags}/g" \
     -e "s/%archldflags%/${ldflags}/g" \
+    -e "s#%libusb%#${libusb}#g" \
     -f scripts/make.sed \
     -f scripts/gnu-make.sed \
     -e 's/^### Makefile/### GNU Makefile/' Makefile.in > Makefile
@@ -104,6 +114,7 @@ EOF
     -e "s/%sedext%/${sedext}/g" \
     -e "s/%archcflags%/${cflags}/g" \
     -e "s/%archldflags%/${ldflags}/g" \
+    -e "s#%libusb%#${libusb}#g" \
     -f scripts/make.sed \
     -e 's/^### Makefile/### BSD Makefile/' Makefile.in > Makefile
 fi
