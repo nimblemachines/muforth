@@ -32,10 +32,10 @@ cpu=$(uname -m)
 cflags="-Wno-int-to-pointer-cast"
 ldflags=""
 
+libusb="none"
 if [ "$os" = "Linux" ]; then
     # Try to find libusb-0.1. libusb-1.0 puts its include and library files in
     # slightly different places, so we shouldn't worry about collisions.
-    libusb="none"
     [ -f "/usr/include/usb.h" ] && libusb="/usr"
     [ -f "/usr/local/include/usb.h" ] && libusb="/usr/local"
     [ -f "$HOME/include/usb.h" ] && libusb="$HOME"
