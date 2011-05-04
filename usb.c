@@ -18,6 +18,106 @@
  */
 
 #include "muforth.h"
+
+#ifdef USE_IOKIT
+
+#include <CoreFoundation/CoreFoundation.h>
+#include <IOKit/IOCFPlugIn.h>
+#include <IOKit/usb/IOUSBLib.h>
+
+/*
+ * usb-find-device (vendor-id product-id -- handle)
+ */
+void mu_usb_find_device()
+{
+    CFMutableDictionaryRef matching;
+    CFNumberRef numberRef;
+    io_service_t ioService;
+    IOCFPlugInInterface **pluginInterface;
+    IOUSBDeviceInterface **deviceInterface;
+    IOReturn ior;
+    SInt32 score;      /* unused */
+    SInt32 idVendor = ST1;
+    SInt32 idProduct = TOP;
+
+    /* Match instances of IOUSBDevice and its subclasses */
+    matching = IOServiceMatching(kIOUSBDeviceClassName);
+    if (matching == NULL) return abort_zmsg("IOServiceMatching returned NULL");
+
+    /* Create a CFNumber for the idVendor and set the value in the dictionary */
+    numberRef = CFNumberCreate(kCFAllocatorDefault, kCFNumberSInt32Type, &idVendor);
+    CFDictionarySetValue(matching, CFSTR(kUSBVendorID), numberRef);
+    CFRelease(numberRef);
+
+    /* Create a CFNumber for the idProduct and set the value in the dictionary */
+    numberRef = CFNumberCreate(kCFAllocatorDefault, kCFNumberSInt32Type, &idProduct);
+    CFDictionarySetValue(matching, CFSTR(kUSBProductID), numberRef);
+    CFRelease(numberRef);
+
+    /* Look up our service. We have to release it when we're done. */
+    ioService = IOServiceGetMatchingService(kIOMasterPortDefault, matching);
+    if (ioService == 0) return abort_zmsg("No matching device found");
+
+    ior = IOCreatePlugInInterfaceForService(ioService,
+            kIOUSBDeviceUserClientTypeID,
+            kIOCFPlugInInterfaceID,
+            &pluginInterface,
+            &score);
+
+    if ((ior != kIOReturnSuccess) || (pluginInterface == NULL))
+        return abort_zmsg("IOCreatePlugInInterfaceForService failed");
+
+    /* Use the plugin interface to retrieve the device interface. */
+    ior = (*pluginInterface)->QueryInterface(pluginInterface,
+            CFUUIDGetUUIDBytes(kIOUSBDeviceInterfaceID),
+            (LPVOID*) &deviceInterface);
+
+    /* We're done with the plugin interface. */
+    (*pluginInterface)->Release(pluginInterface);
+
+    if ((ior != kIOReturnSuccess) || (deviceInterface == NULL))
+        return abort_zmsg("QueryInterface failed");
+
+    /* Return deviceInterface as a handle for further operations on device. */
+    DROP(1);
+    TOP = (addr)deviceInterface;
+}
+
+/*
+ * usb-close (handle)
+ */
+void mu_usb_close()
+{
+    IOUSBDeviceInterface **deviceInterface = (IOUSBDeviceInterface **)TOP;
+
+    /* We're done with the device interface. */
+    (*deviceInterface)->Release(deviceInterface);
+    DROP(1);
+}
+
+/*
+ * usb-control (handle bmRequestType bRequest wValue wIndex 'buffer wLength)
+ */
+void mu_usb_control()
+{
+    IOUSBDevRequest req;
+    IOReturn ior;
+    IOUSBDeviceInterface **dev = (IOUSBDeviceInterface **)SP[6];
+
+    req.bmRequestType = SP[5];
+    req.bRequest = SP[4];
+    req.wValue = ST3;
+    req.wIndex = ST2;
+    req.pData = (void *)ST1;
+    req.wLength = TOP;
+    DROP(7);
+    ior = (*dev)->DeviceRequest(dev, &req);
+    if (ior != kIOReturnSuccess)
+        return abort_zmsg("DeviceRequest failed");
+}
+
+#else  /* USE_LIBUSB */
+
 #include <usb.h>
 
 /*
@@ -26,11 +126,11 @@
  */
 static void abort_usb_error(int error)
 {
-    return abort_zmsg("USB error");
+    return abort_zmsg("libusb error");
 }
 
 /*
- * usb-find-device (vendor-id product-id -- handle -1 | vid 0)
+ * usb-find-device (vendor-id product-id -- handle)
  */
 void mu_usb_find_device()
 {
@@ -50,40 +150,44 @@ void mu_usb_find_device()
                 pdev->descriptor.idProduct == TOP)
             {
                 /* Open the device & return a handle */
-                ST1 = (addr)usb_open(pdev);
-                TOP = -1;       /* found */
+                DROP(1);
+                TOP = (addr)usb_open(pdev);
                 return;
             }
         }
     }
-    TOP = 0;    /* not found */
-}
-
-void mu_usb_close()
-{
-    int err = usb_close((struct usb_dev_handle *)TOP);
-    if (err < 0) return abort_usb_error(err);
-    DROP(1);
+    abort_zmsg("No matching device found");
 }
 
 /*
- * usb-control (handle bmRequestType bRequest wValue wIndex 'buffer wLength timeout)
+ * usb-close ( handle)
+ */
+void mu_usb_close()
+{
+    int err = usb_close((struct usb_dev_handle *)TOP);
+    DROP(1);
+    if (err < 0) return abort_usb_error(err);
+}
+
+/*
+ * usb-control (handle bmRequestType bRequest wValue wIndex 'buffer wLength)
  */
 void mu_usb_control()
 {
     int err;
 
-    usb_dev_handle *pdevh = (usb_dev_handle *)SP[7];
-    int bmReqType = SP[6];
-    int bReq = SP[5];
-    int wValue = SP[4];
-    int wIndex = ST3;
-    char *pbuf = (char *)ST2;
-    int wLength = ST1;
-    int timeout = TOP;
+    usb_dev_handle *pdevh = (usb_dev_handle *)SP[6];
+    int bmRequestType = SP[5];
+    int bRequest = SP[4];
+    int wValue = ST3;
+    int wIndex = ST2;
+    char *pbuf = (char *)ST1;
+    int wLength = TOP;
+    DROP(7);
 
-    err = usb_control_msg(pdevh, bmReqType, bReq, wValue, wIndex,
-                          pbuf, wLength, timeout);
+    err = usb_control_msg(pdevh, bmRequestType, bRequest, wValue, wIndex,
+                          pbuf, wLength, 4000 /* ms timeout */);
     if (err < 0) return abort_usb_error(err);
-    DROP(8);
 }
+
+#endif

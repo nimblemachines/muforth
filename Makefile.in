@@ -36,13 +36,14 @@ WARNPLATFORM=	yes
 
 .if ${MUPLATFORM} == "nixy"
 # This is the "standard" Unix-y platform.
-PLATOBJS=	time.o tty.o select.o file.o main.o
+PLATOBJS=	time.o tty.o select.o file.o main.o usb.o
 PLATDEFS=	-DWITH_TIME
 .if %libusb% != "none"
-HAVE_USB=yes
-PLATOBJS+=	usb.o
-LIBUSB_LD=	-lusb -L%libusb%/lib -Wl,-rpath,%libusb%/lib
-LIBUSB_CC=	-I%libusb%/include
+USB_CC=		-I%libusb%/include
+USB_LD=		-lusb -L%libusb%/lib -Wl,-rpath,%libusb%/lib
+.else
+USB_CC=		-DUSE_IOKIT
+USB_LD=		-framework CoreFoundation -framework IOKit
 .endif
 .endif
 
@@ -75,12 +76,6 @@ show-plat :
 .endif
 
 show-usb :
-.ifdef HAVE_USB
-	@echo "Building USB support with libusb found in %libusb%/lib."
-.else
-	@echo "No libusb was found. muFORTH will build without USB support."
-.endif
-	@echo
 
 # If platform.mk doesn't exist, create it. Since all the .ph and object files
 # depend on it, if it doesn't exist they will get remade every time!
@@ -155,13 +150,13 @@ version.h : always
 	@echo "#define GIT_COMMIT \"`git rev-parse HEAD`\"" >> version.h
 
 muforth : ${ALLOBJS} ${DEPFILES}
-	${CC} ${LDFLAGS} ${LIBUSB_LD} -o ${.TARGET} ${ALLOBJS} ${LIBS}
+	${CC} ${LDFLAGS} ${USB_LD} -o ${.TARGET} ${ALLOBJS} ${LIBS}
 
 muforth-bare : ${ALLOBJS} ${DEPFILES}
 	${CC} ${LDFLAGS} -nodefaultlibs -o ${.TARGET} ${ALLOBJS} ${LIBS}
 
 usb.o : usb.c ${DEPFILES}
-	${CC} ${CFLAGS} ${LIBUSB_CC} -o ${.TARGET} -c ${.IMPSRC}
+	${CC} ${CFLAGS} ${USB_CC} -o ${.TARGET} -c ${.IMPSRC}
 
 ${ALLOBJS:.o=.asm} : $(DEPFILES)
 
