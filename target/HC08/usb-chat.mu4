@@ -1,0 +1,169 @@
+( This file is part of muFORTH: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2011 David Frech. All rights reserved, and all wrongs
+  reversed. (See the file COPYRIGHT for details.)
+
+( The USB version of the serial byteloader. Trying to fit it into less than
+  512 bytes - I actually have 428 bytes of room!)
+
+loading HCS08 USB chat (target)
+
+hex
+
+__meta
+
+aka SCIS1 SciStatus
+aka SCID  SciData
+
+label SciRx  ( returns char in A)
+   begin  SciStatus 5 ( recvr full)  bset? until
+   SciData ) lda  rts  ;c
+
+label SciTx  ( transmits char in A)
+   begin  SciStatus 7 ( xmit empty)  bset? until
+   SciData ) sta  rts  ;c
+
+( chat2 protocol - minor changes)
+
+( Commands:
+  0  Bye        - ignored by chat; force other command loops to return to chat;
+                  can be used as an Idle
+  1  Run        - does an RTI - pops stack frame and runs
+                  when it returns to chat loop, returns flags register
+  2  SetHX      - reads two bytes from SCI, writes them into H & X registers
+  3  GetHX      - writes H then X register to SCI
+  4  HXtoSP     - sets SP from HX
+  5  SPtoHX     - sets HX from SP
+  6  ReadNext   - reads a byte from memory @ HX, writes it to SCI, inc HX
+  7  WriteNext  - reads a byte from SCI, writes into memory @ HX, inc HX
+  8  ReadN      - reads a length from SCI, reads that many bytes from
+                  memory, and writes them to SCI [S08 only!]
+)
+
+label SendByte  ( send char in A)
+   SciTx bsr
+
+label Dispatch
+   SciRx bsr  ( command)
+
+   ( map 0 -> ff -- ignore)
+   .a decz? if ( Run)   .h pul  rti  then
+
+   .a decz? if ( SetHX)
+   SciRx bsr  .a psh  .h pul  ( set H)
+   SciRx bsr  tax ( set X)  Dispatch again  then
+
+   .a decz? if ( GetHX)
+   .h psh  .a pul  SciTx bsr  ( send H)
+   txa  SendByte again  ( send X)  then
+
+   .a decz? if ( HXtoSP)  txs  Dispatch again  then
+   .a decz? if ( SPtoHX)  tsx  Dispatch again  then
+
+   .a decz? if ( ReadByte)
+   0 ,x lda  1 # aix  SendByte again  then
+
+   .a decz? if ( WriteByte)
+   SciRx bsr   0 ,x sta   1 # aix
+
+.ifdef S08
+   ( end prev command)               Dispatch again  then
+
+   .a decz? if ( ReadN)
+   SciRx bsr  .a psh ( count)
+   begin  0 ,x lda  1 # aix  SciTx bsr  0 ,s decz? until
+   .a pul
+
+.then
+
+   then   ( fall through)
+   ( unknown command)   Dispatch again  ;c
+
+
+label emulated-swi
+   ( jsr/bsr has already pushed PC)
+   .x psh  .a psh  tpa ( flags to A)  .a psh  sei
+   .h psh
+   SendByte again  ;c
+
+( If the chat interaction changes the PC on this stack frame to point
+  somewhere other than _after_ the __swi, not all is lost - since we got
+  here via a _call_ from reset, we'll return to _that_ loop, and re-enter
+  the SWI.
+
+  On the other hand, if the PC remains unaltered, an RTI from the SWI's
+  stack frame wil simply return here, and we'll take the "exception" again.)
+
+label interact
+   begin  emulated-swi c  again  ;c
+
+Vreset handler
+   @ram #ram + # ldhx
+   txs
+
+   -- Turn off watchdog
+   -- Can't use bit ops! SOPT1 not in z-page.
+   -- Clear bits 6 & 7. These have different meanings on different chips,
+   -- but at least for the JS and QG clearing both bits will shut off the
+   -- watchdog.
+   SOPT1 ) lda  3f # and  SOPT1 ) sta
+
+   ( Set up the xtal oscillator and PLL. For USB we need a 48M clock - 24M
+     bus clock. Getting there takes a few steps...)
+
+   -- FEI ==> FBE
+   -- Start xtal osc - we've got a 4M xtal on the board.
+   -- Datasheet and appnotes have you set BDIV to /1 here, but since we're
+   -- running off untrimmed internal osc still, that's a bad idea. We leave
+   -- that until the end.
+   %01_11_0110 # MCGC2 ) mov  ( keep BDIV at /2, start ext osc)
+   -- wait for osc to start (OSCINIT)
+   begin  MCGSC 1  bset? until
+   -- switch to ext clock (FBE): CLKS=10, RDIV=111 (/128), IREFS=0
+   %10_111_000 # MCGC1 ) mov
+   -- Wait until we've switched clocks
+   begin  MCGSC ) lda  %0001_1100 # and  ( mask IREFST and CLKST)
+          %0000_1000 # cmp  0= until  ( IREFST=0, CLKST=10)
+
+   -- FBE ==> PBE
+   -- We're spinning up the PLL. We want to divide our 4M xtal by two
+   -- (RDIV) to get 2M (PLL freq), then we multiply that by 24 (VDIV) to
+   -- get 48M, which is our target clock.
+
+   %10_001_000 # MCGC1 ) mov   -- CLKS=01 (ext), RDIV=001 (/2)
+   %0100_0110 # MCGC3 ) mov    -- PLLS=1, VDIV=0110 (*24)
+
+   begin
+      begin  MCGSC 5 bset?  until   -- loop until PLLST set
+             MCGSC 6 bset?  until   -- loop until LOCK set
+
+   -- PBE ==> PEE
+   MCGC1 7 bclr  -- set CLKS to 00 (PLL)
+   begin
+      begin  MCGSC 2 bset?  until
+             MCGSC 3 bset?  until   -- loop until CLKST=11
+
+   -- Lastly, set BDIV to /1
+   MCGC2 6 bclr
+
+   #24000 khz>fcdiv  # lda   FCDIV ) sta
+
+   -- Configure SCI for 115200 bps
+
+   SCIBDH ) clr        ( baud rate divisor, high)
+   #13 # SCIBDL ) mov  ( baud rate divisor, low)
+                       ( yields 115200 from 24M bus clock)
+   0c # SCIC2 ) mov    ( enable rcvr, xmitter)
+
+.ifdef so-that-worked
+   -- UART test
+   begin
+      %1111_1111 # lda  SciTx c
+      %0101_0101 # lda  SciTx c
+      %0100_1001 # lda  SciTx c
+      %0001_0001 # lda  SciTx c
+      %0000_0001 # lda  SciTx c
+   again
+.then
+
+   begin  interact bsr  again  ;c
