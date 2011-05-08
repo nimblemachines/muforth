@@ -1,3 +1,35 @@
+Notes on RAM memory usage.
+
+80: flags: bit0 = set address pending
+           bit3 = program command underway
+81: ??
+82-83: read pointer when returning descriptors
+84: count of bytes to read
+85: count of bytes read so far
+86: byte offset into USB buffer (read & write)
+87: command status byte
+
+88-89: flash address pointer
+8a-8b: last flash address pointer
+8c: count of bytes to program
+
+1860: ep0 IN buffer descriptor (3 bytes)
+1860: ep0_IN_control
+1861: ep0_IN_byte_count
+1862: ep0_IN_buf_address
+
+1863: ep0 OUT buffer descriptor (3 bytes)
+1863: ep0_OUT_control
+1864: ep0_OUT_byte_count
+1865: ep0_OUT_buf_address
+
+1880 - 18bf: ep0 IN buffer (64 bytes - but firmware only uses 32!)
+18c0 - 1900: ep0 OUT buffer (64 bytes - but firmware only uses 32!)
+
+1848: Undocumented flash register; used to differentiate between JS8 and JS16
+      On my JS16, its value is 47h
+
+The code!
 2160 lda 1800		SRS
 2163 and #80		POR
 2165 bne 217d		if POR -> 217d (power on reset)
@@ -10,7 +42,7 @@
 2177 ldhx fffe		jump thru reset vector
 217a jmp ,x
 217b bra 217b
-217d lda 1802
+217d lda 1802		test BLMS pin
 2180 and #04
 2182 bne 219e
 2184 lda ffba		load crc check flag
@@ -32,7 +64,7 @@
 21a3 coma
 21a4 sta 1800
 
-21a7 lda #c3
+21a7 lda #c3		set SIGNATURE to c3
 21a9 sta 180f
 21ac ldhx #027d		what lives between 27d and 280?
 21af txs
@@ -67,7 +99,7 @@
 21f0 coma
 21f1 sta 1800
 
-21f4 brclr0 60 21eb	INTSTAT: wait till STALLF=1
+21f4 brclr0 60 21eb	INTSTAT: wait till USBRSTF=1
 21f7 mov #ff 62		ERRSTAT: clear all flags
 21fa mov #bf 60		INTSTAT: clear all flags
 21fd mov #bf 63		ERRENB: enable all error interrupts (?!)
@@ -75,76 +107,110 @@
 2202 clr 66		clr ADDR
 2204 mov #0d 6d		EPCTL0: enable control endpt 0
 
+Disable flash protection; see JS16 manual
 2207 lda #55
-2209 sta 180e		FPROTD - is this an error in the ROM code?
-220c lda #aa		should be 1800!
+2209 sta 180e		FPROTD
+220c lda #aa
 220e sta 180e
-
 2211 lda #01
 2213 sta 1824		FPROT: set FPDIS: disable flash protection!
 
+USB-loop
 2216 lda #55		watchdog
 2218 sta 1800
 221b coma
 221c sta 1800
 
-221f brclr3 60 2242	wait for TOKDNEF
+221f brclr3 60 2242	if TOKDNEF
 2222 lda 64		STAT
 2224 and #f8		ENDP or IN
 2226 cbeqa #08 223d	endp0 in?
-2229 bne 2240
-222b lda 1863
-222e and #3c
-2230 cmp #34
-2232 bne 2238
+2229 bne 2240		not ep0? ack TOKDNEF and ignore
+
+SETUP or OUT token on ep0
+222b lda 1863		ep0 OUT control
+222e and #3c		mask PID
+2230 cmp #34		SETUP? (1101)
+2232 bne 2238		no, must be OUT
+
+process SETUP token
 2234 bsr 224b
 2236 bra 2240
+
+process OUT token
 2238 jsr 23bc
 223b bra 2240
+
+IN token on ep0
 223d jsr 2387
 2240 bset3 60		INTSTAT: ack TOKDNEF
-2242 brclr7 60 2249	INTSTAT: wait for STALLF
-2245 bclr1 6d		EPCTL0: clear EPSTALL
-2247 bset7 60		INTSTAT: ack STALLF
-2249 bra 2216
-224b lda 18c0
-224e and #60
-2250 cbeqa #00 2262
-2253 cbeqa #40 22b1
-2256 bset1 6d
+
+skip here if TOKDNEF unset
+2242 brclr7 60 2249	INTSTAT: if STALLF
+2245 bclr1 6d		  EPCTL0: clear EPSTALL
+2247 bset7 60		  INTSTAT: ack STALLF
+2249 bra 2216		then; goto USB-loop
+
+do SETUP token
+224b lda 18c0		ep0 OUT buffer: bmRequestType
+224e and #60		mask type bits
+2250 cbeqa #00 2262	standard request
+2253 cbeqa #40 22b1	vendor request
+
+stall ep0
+2256 bset1 6d		unimplemented: stall ep0
 2258 lda #88
-225a sta 1863
-225d clr 81
+225a sta 1863		prepare for new SETUP token
+225d clr 81		clear control transfer stage flags
 225f jmp 2354
-2262 lda 18c1
-2265 cbeqa #00 229d
-2268 cbeqa #05 22ac
-226b cbeqa #06 2273
-226e cbeqa #09 22ae
-2271 bra 2256
-2273 lda 18c3
-2276 cbeqa #01 2281
-2279 cbeqa #02 228c
-227c cbeqa #03 2297
-227f bra 2256
+
+Process standard USB request
+2262 lda 18c1		bRequest
+2265 cbeqa #00 229d	get_status
+2268 cbeqa #05 22ac	set_address
+226b cbeqa #06 2273	get_descriptor
+226e cbeqa #09 22ae	set_configuration
+2271 bra 2256		unimplemented: STALL endpoint
+
+get_descriptor
+2273 lda 18c3		descriptor type:
+2276 cbeqa #01 2281	device
+2279 cbeqa #02 228c	configuration
+227c cbeqa #03 2297	string
+227f bra 2256		unimplemented: STALL
+
+get device descriptor
 2281 ldhx #2854		device descriptor
 2284 sthx 82		source string ptr - for sending descriptors?
 2286 mov #12 84		source string length
 2289 jmp 2327
+
+get configuration descriptor
 228c ldhx #2866		configuration descriptor
 228f sthx 82
 2291 mov #19 84
 2294 jmp 2327
+
+get string descriptor
 2297 jsr 241a
 229a jmp 2334
+
+get_status
 229d clra
-229e sta 1880
+229e sta 1880		send two zeroes
 22a1 sta 1881
 22a4 lda #02
-22a6 sta 1861
+22a6 sta 1861		byte count for IN
 22a9 jmp 2334
-22ac bset0 80
+
+set_address
+22ac bset0 80		flags: set address pending; can't actually do it until after
+			the status stage of the control transfer!
+
+set_configuration	no-op!
 22ae jmp 233e
+
+Process vendor (bootloader) request
 22b1 lda 18c1		load bootloader command byte:
 22b4 cbeqa #68 22c8	Reset
 22b7 cbeqa #61 22e5	Program - start addr, end addr, length, data;
@@ -153,21 +219,25 @@
 22bd cbeqa #64 2307	Partial (page-by-page) erase; 01 = success, f1 = fail
 22c0 cbeqa #69 2316	CRC check; 01 = success, f5 = fail
 22c3 cbeqa #6f 231b	Get result
-22c6 bra 2256
+22c6 bra 2256		unimplemented: STALL
+
+reset command
 22c8 clra
-22c9 sta 180f
-22cc sta 1861		zero length pkt
-22cf lda #c8		OWN + DATA1 + DTS
+22c9 sta 180f		clear SIGNATURE semaphore
+22cc sta 1861		zero length pkt -- status stage of control transfer
+22cf lda #c8		OWN + DATA1 + DTS -- always DATA1
 22d1 sta 1860		ep0 IN BD
-22d4 bclr5 65
-22d6 clrh
+22d4 bclr5 65		clr TSUSPEND - resume processing (SETUP token sets this)
+22d6 clrh		clear 80 to 8c (inclusive)
 22d7 ldx #0d
 22d9 clr 7f,x
 22db dbnzx 22d9
 22dd lda 1860
-22e0 bmi 22dd		wait till OWN=0
+22e0 bmi 22dd		wait till OWN=0 -- till IN packet sent
 22e2 jmp 28a1		jmp to 8d instruction - illegal op - causes ILOP reset
-22e5 bset3 80
+
+program command
+22e5 bset3 80		flags: bit3 is program command underway
 22e7 lda 18c3		start_addr_hi
 22ea sta 88
 22ec lda 18c2		start_addr_lo
@@ -179,53 +249,74 @@
 22fb lda 18c6		wLength_lo
 22fe sta 8c
 2300 bra 233e
+
+mass erase command
 2302 jsr 281a
 2305 bra 233e
-2307 lda ffbe
-230a beq 2311
+
+Partial (page-by-page) erase command
+2307 lda ffbe		flash partial erase semaphore: program to 00 to enable
+230a beq 2311		partial erase command in bootloader
 230c mov #f1 87
 230f bra 233e
+
+do partial erase command
 2311 jsr 27b1
 2314 bra 233e
+
+CRC check command
 2316 jsr 24bd		calc crc, being careful about watchdog
 2319 bra 233e
-231b lda 87		control transfer status byte (?)
-231d sta 1880
+
+Get result command
+231b lda 87		command status byte
+231d sta 1880		0 IN buffer
 2320 lda #01
-2322 sta 1861
+2322 sta 1861		byte count: send one byte
 2325 bra 2334
-2327 lda 18c6
+
+2327 lda 18c6		wLength_lo
 232a cmp 84
-232c bcc 2330
-232e sta 84
+232c bcc 2330		if wLength_lo u< count_to_send
+232e sta 84		  use wLength_lo as count_to_send
 2330 clr 85
 2332 bsr 2361
-2334 mov #01 81
-2337 lda #80
-2339 sta 1863
+
+finish control read request - setup IN (data stage)
+2334 mov #01 81		control read
+2337 lda #80		OWN - match DATA0 and DATA1 (DTS not set)
+2339 sta 1863		ep0 OUT control
 233c bra 234a
-233e mov #02 81
+
+finish control write request - setup IN (status stage)
+233e mov #02 81		control write
 2341 clra
-2342 sta 1861
+2342 sta 1861		ep0 IN count = 0 -- status return?
 2345 lda #c8		OWN + DATA1 + DTS
 2347 sta 1863		ep0 OUT BD
+
+Prepare either first transaction of IN data stage, or IN status stage for a
+control write. In both cases we want to send a DATA1 packet.
 234a lda #c8		OWN + DATA1 + DTS
 234c sta 1860		ep0 IN BD
 234f lda #08
 2351 sta 1862		ep0 IN buffer @ 1860 + 20 = 1880
+
+reset OUT buffer address and count; resume processing of tokens
 2354 lda #20
 2356 sta 1864		ep0 OUT data len = 20
 2359 lda #18
 235b sta 1865		ep0 OUT buffer @ 1860 + 60 = 18c0
-235e bclr5 65
+235e bclr5 65		clr TSUSPEND - resume processing (SETUP token sets this)
 2360 rts
 
+copy (part of) string into IN buffer
 2361 clrh
-2362 clr 86
-2364 lda 85		total count to send?
-2366 cbeq 84 2381
+2362 clr 86		byte offset into USB buffer
+2364 lda 85		count of bytes sent so far
+2366 cbeq 84 2381	number of bytes we need to send
 2369 ldx 86
-236b cbeqx #20 2381
+236b cbeqx #20 2381	buffer full? (32 bytes)
 236e ldhx 82		flash read_addr
 2370 lda ,x
 2371 aix #01
@@ -233,19 +324,20 @@
 2375 clrh
 2376 ldx 86
 2378 sta 1880,x		store into IN buffer
-237b inc 85
-237d inc 86
+237b inc 85		incr count of bytes sent
+237d inc 86		incr IN buffer pointer
 237f bra 2364
-2381 lda 86
+2381 lda 86		byte offset becomes...
 2383 sta 1861		length to send
 2386 rts
 
-2387 brclr0 80 2391
-238a lda 18c2
-238d sta 66
-238f bclr0 80
-2391 brclr0 81 23a8
-2394 bsr 2361
+do IN token
+2387 brclr0 80 2391	80 bit0: set_address pending
+238a lda 18c2		wValue_lo
+238d sta 66		set ADDR register!
+238f bclr0 80		clear pending flag
+2391 brclr0 81 23a8	81 bit0 is set for IN data stage
+2394 bsr 2361		get next piece of string to return
 2396 lda 1860
 2399 bit #40		test for DATA0/1
 239b bne 23a1
@@ -254,29 +346,33 @@
 23a1 lda #88		OWN + DATA0 + DTS
 23a3 sta 1860		ep0 IN BD
 23a6 bra 23aa
+
+last IN was status stage
 23a8 bsr 23ab
 23aa rts
 
-23ab clr 81
+no more IN tokens expected
+23ab clr 81		no IN data or status stage
 23ad lda #20
 23af sta 1864		ep0 OUT length = 20
-23b2 lda #88		OWN + DATA0 + DTS
+23b2 lda #88		accept SETUP or OUT(DATA0): OWN + DATA0 + DTS
 23b4 sta 1863		ep0 OUT BD
 23b7 clra
-23b8 sta 1860
+23b8 sta 1860		IN will return NAK
 23bb rts
 
-23bc brclr1 81 2417
-23bf brclr3 80 2405
-23c2 lda 1864
-23c5 cmp 8c
+do OUT token
+23bc brclr1 81 2417	81 bit1 is set for IN status
+23bf brclr3 80 2405	program command underway?
+23c2 lda 1864		length received
+23c5 cmp 8c		does it match count of bytes to program?
 23c7 bne 2405
 23c9 lda 1848		?? undocumented - diff between JS8 and JS16?
 23cc and #03
 23ce cbeqa #02 23eb	JS8
 23d1 cbeqa #03 23db	JS16
 23d4 mov #f2 87
-23d7 bclr3 80
+23d7 bclr3 80		program command finished
 23d9 bra 2405
 23db ldhx 88
 23dd cphx #c000
@@ -292,60 +388,68 @@
 23f4 cphx #e000
 23f7 bcc 2400
 23f9 mov #f3 87			return f3
-23fc bclr3 80
+23fc bclr3 80		program command finished
 23fe bra 2405
 2400 jsr 2759		flash buffer
-2403 bclr3 80
+2403 bclr3 80		program command finished
 2405 lda 1863
-2408 bit #40
+2408 bit #40		data toggle bit (OUT)
 240a bne 2410
 240c lda #c8
 240e bra 2412
 2410 lda #88
 2412 sta 1863
 2415 bra 2419
+
 2417 bsr 23ab
 2419 rts
 
-241a lda 18c2
-241d cbeqa #00 2426
-2420 cbeqa #01 2432
-2423 cbeqa #02 243e
+find string descriptor
+241a lda 18c2		wValue_lo: string descriptor index
+241d cbeqa #00 2426	descr 0: 09 04 (lang ids?)
+2420 cbeqa #01 2432	descr 1: Freescale
+2423 cbeqa #02 243e	descr 2: JS
+
+(default to sending descr 0)
 2426 ldhx #287f
 2429 sthx 82
 242b lda 287f
 242e sta 84
 2430 bra 2448
+
 2432 ldhx #2883		string descriptor "Freescale"
 2435 sthx 82
 2437 lda 2883		descr length
 243a sta 84
 243c bra 2448
-243e ldhx #2897		string desc "JS"
+
+243e ldhx #2897		string desc "JS  "
 2441 sthx 82
 2443 lda 2897		length
 2446 sta 84
+
+return string descriptor
 2448 lda 18c6		wLength_lo (request)
 244b cmp 84		compare to read_count
-244d bcc 2451
-244f sta 84
-2451 clr 85
+244d bcc 2451		if wLength_lo u< count_to_send
+244f sta 84		  use wLength_lo as count_to_send
+2451 clr 85		count of bytes sent (total)
 2453 jsr 2361
 2456 lda 18c2
-2459 cmp #02
-245b bne 247b
-245d lda 1848		?? undocumented - diff between JS8 and JS16?
+2459 cmp #02		Are we returning string descriptor 2?
+245b bne 247b		no, done
+245d lda 1848		yes, append 8 or 16 depending on chip!
 2460 and #03
 2462 cbeqa #02 246a	JS8
 2465 cbeqa #03 2471	JS16
 2468 bra 247b
-246a lda #38
+246a lda #38		append '8'
 246c sta 1886
 246f bra 247b
-2471 lda #31
+2471 lda #31		append '1' and then
 2473 sta 1886
 2476 lda #36
-2478 sta 1888
+2478 sta 1888		append '6'
 247b rts
 
 Calculate CRC and compare to value saved at ffb8/9; return 0 if matched, ff if
@@ -408,7 +512,7 @@ byte of CRC.
 24e0 sta 1800
 
 24e3 mov ,x+ 0d
-24e5 cphx #ffae		calc from start to ffaf, inclusive
+24e5 cphx #ffae		calc from start to ffad, inclusive
 24e8 bne 24da
 
 24ea lda #55		watchdog
@@ -435,8 +539,8 @@ byte of CRC.
 2511 mov #01 87		matched, return 01
 2514 rts
 
-2515 lda 180d
-2518 sta 42
+2515 lda 180d		load TRIM from high registers
+2518 sta 42		store into MCGTRM
 251a mov #04 40
 251d mov #32 41		MCGC2: RANGE=1, HGO=1, EREFS=0, ERCLKEN=1
 2520 mov #00 44
