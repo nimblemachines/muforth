@@ -12,6 +12,8 @@ hex
 
 __meta
 
+.ifndef chat-in-ram
+
 ( Our device descriptor. Note: all USB data is little-endian.) 
 label device-descriptor
    12 c, ( bLength)
@@ -49,6 +51,8 @@ label interface-descriptor
     00 c, ( bInterfaceSubClass)
     00 c, ( bInterfaceProtocol)
    00 c, ( iInterface - string index = none)
+
+.then
 
 .ifdef swi-stuff
 
@@ -93,11 +97,10 @@ out-buffer 5 + equ wIndexHi
 out-buffer 6 + equ wLength
 out-buffer 7 + equ wLengthHi
 
-2 zvar memptr
-1 zvar memcount
-1 zvar bufptr  ( offset into IN or OUT buffer)
-
-target
+2 xvar write-byte
+1 xvar bufptr  ( offset into IN or OUT buffer)
+1 xvar memcount
+2 xvar memptr
 
 ( We always want to queue up either a short packet or a zero-length packet
   as the last packet. In particular this means that if the last part of the
@@ -107,9 +110,9 @@ target
 
 label copy-to-in
    bufptr ) clr
-   memcount ) ldx  0!= if  txa
-      10 # cmp  u>= if  ( whole packet)  10 # lda  then
-      .a psh  begin
+   memcount ) ldx  0!= if
+      10 # cpx  u>= if  ( whole packet)  10 # ldx  then
+      .x psh  begin
          memptr ) ldhx  0 ,x lda  1 # aix  memptr ) sthx
          .h clr  bufptr ) ldx  in-buffer ,x sta  .x inc  bufptr ) stx
          memcount ) dec
@@ -128,56 +131,46 @@ label expect-out-token  ( expect OUT or SETUP, really)
    CTL 5 bclr ( TSUSPEND off - resume processing)
    rts  ;c
 
-( A register has length of string to return. If wLength u< A, use wLength
-  instead.)
-
+( If wLength u< A, use wLength instead.)
 label setup-address-length
    ( addr in HX)  memptr ) sthx
    wLength ) cmp  u> if  wLength ) lda  then
    ( count in A)  memcount ) sta  rts  ;c
-
-label prepare-first-out
-   setup-address-length c  ( fall thru)
-
-label prepare-next-out
-   ( toggle DATA0/1)  out-control # ldhx  toggle c
-   expect-out-token j  ;c
-
-label get-device-descriptor
-   device-descriptor # ldhx  
-   12 # lda  ( fall thru)
-
-label prepare-first-in
-   setup-address-length c  ( fall thru)
-   
-label prepare-next-in
-   ( copy data)  copy-to-in c
-   ( toggle DATA0/1)  in-control # ldhx  toggle c
-   expect-setup-token j  ;c
-
-label get-config-descriptor
-   config-descriptor # ldhx
-   12 # lda  prepare-first-in j  ;c
 
 ( For memory reads and writes, wValue contains the address and wLength the
   byte-long length. There is no easy way right now to read 256 bytes in one
   go.
 
   And be careful! Addresses in USB requests are _little-endian_. To read word
-  values - like address - we cannot use ldhx!)
+  values - like address - we cannot use ldhx!
+
+  HX gets the address from wValue. A register receives length from wLength.)
 
 label parse-address-length
    wValueHi ) lda  .a psh  .h pul  wValue ) ldx
    wLength ) lda  rts  ;c
 
-label write-memory
-   parse-address-length c  prepare-first-out j  ;c
-
 label read-memory
-   parse-address-length c  prepare-first-in j  ;c
+   parse-address-length c  ( fall thru)
 
-label cut-and-run
-   parse-address-length c  0 ,x jsr  ( fall thru)
+label prepare-first-in
+   setup-address-length c  ( fall thru)
+
+label prepare-next-in
+   ( copy data)  copy-to-in c
+   ( toggle DATA0/1)  in-control # ldhx  toggle c
+   expect-setup-token j  ;c
+
+label write-memory
+   0f781 # ldhx  ( 0 ,x sta  rts)
+   wIndex ) lda  0!= if  9d # ldx ( nop)  write-byte 3 + ) sta  then
+   write-byte ) sthx
+   parse-address-length c
+   setup-address-length c  ( fall thru)
+
+label prepare-next-out
+   ( toggle DATA0/1)  out-control # ldhx  toggle c
+   expect-out-token j  ;c
 
 ( Set address is a bit tricky. We can't set the address immediately. The
   USB spec says that at every stage of a control transfer the device
@@ -185,6 +178,27 @@ label cut-and-run
   the default address - 0. We can't change this until after the status
   stage of this control transfer, so we always check when handling a status
   IN if ADDR is still zero; if it is, we set the address _then_.)
+
+.ifndef chat-in-ram
+
+label get-device-descriptor
+   device-descriptor # ldhx
+   12 # lda  prepare-first-in j  ;c
+
+label get-config-descriptor
+   config-descriptor # ldhx
+   12 # lda  prepare-first-in j  ;c
+
+label get-descriptor
+   wValueHi ) lda  ( get descriptor type requested)
+   01 # cmp  get-device-descriptor 0!= until
+   02 # cmp  get-config-descriptor 0!= until
+   ( unknown, fall thru)
+
+label stall
+   EPCTL0 1 bset ( STALL)  rts  ;c
+
+.then
 
 label set-address
 label set-config
@@ -200,37 +214,54 @@ label finish-control-write
    0c8 # lda  in-control ) sta
    expect-setup-token j  ;c
 
-label get-descriptor
-   wValueHi ) lda  ( get descriptor type requested)
-   01 # cmp  get-device-descriptor 0!= until
-   02 # cmp  get-config-descriptor 0!= until
-   ( unknown, fall thru)
+label cut-and-run
+   finish-control-write c
+   parse-address-length c  0 ,x jmp  ;c
 
-label stall
-   EPCTL0 1 bset ( STALL)  rts  ;c
-
-label vendor-request
-   bRequest ) lda
-   ( 00)  read-memory          0!= until
-   ( 01)  write-memory  .a dec 0!= until
-   ( 02)  cut-and-run   .a dec 0!= until
-   stall j  ;c
+.ifndef chat-in-ram
 
 label standard-request
    bRequest ) lda
    05 # cmp  set-address 0!= until
    06 # cmp  get-descriptor 0!= until
    09 # cmp  set-config 0!= until
-   stall j  ;c
+   ( unknown) stall j  ;c
+
+.then
+
+label vendor-request
+   bRequest ) lda
+   ( 00)  read-memory          0!= until
+   ( 01)  write-memory  .a dec 0!= until
+   ( 02)  cut-and-run   .a dec 0!= until
+.ifdef chat-in-ram
+   ( unknown, fall thru)
+
+label stall
+   EPCTL0 1 bset ( STALL)  rts  ;c
+
+.else
+   ( unknown) stall j  ;c
+.then
+
 
 ( Receipt of SETUP has set out-control's data toggle to 0. Set in-control's
   as well.)
 
 label setup-token
    .a clr  in-control ) sta
+
+.ifdef chat-in-ram   ( assume vendor request)
+
+   vendor-request j  ;c
+
+.else  ( parse request)
+
    bmRequestType ) lda  60 # and  standard-request 0!= until
                         40 # cmp  vendor-request 0!= until
             ( unknown)  stall j  ;c
+
+.then
 
 label setup-or-out-token
    out-control ) lda  3c # and  34 # cmp  setup-token 0!= until
@@ -243,7 +274,7 @@ label setup-or-out-token
    ( copy data)  .a psh  bufptr ) clr
    begin
       .h clr  bufptr ) ldx  out-buffer ,x lda  .x inc  bufptr ) stx
-      memptr ) ldhx  0 ,x sta  1 # aix  memptr ) sthx
+      memptr ) ldhx  write-byte ) jsr  1 # aix  memptr ) sthx
       memcount ) dec
    0 ,s decz? until  .a pul
 
@@ -265,21 +296,26 @@ label in-token
    ( If last IN was a full packet, ready some more data.)
    in-count ) lda  10 # cmp  0= if  prepare-next-in j  then
 
+.ifndef chat-in-ram
+
    ( If last packet was zero-length, check to make sure our address has
      been set.)
    .a tst 0= if
       ADDR ) tst  0= if  wValue ) lda  ADDR ) sta  then
    then
+
+.then
+
    ( Last packet was partial or zero-length; no further IN's expected.)
    .a clr  in-control ) sta  ( further IN's will return NAK)
    expect-setup-token j  ;c
-   
+
 label process-usb
    INTSTAT 3 bset? if ( TOKDNEF)
       STAT ) lda  INTSTAT 3 bset  ( ack TOKDNEF)
       0f8 # and  setup-or-out-token 0!= until
        08 # cmp  in-token 0!= until
-      ( not EP0; ignore)  rts
+      ( not EP0; ignore)  ( fall thru)
    then
    INTSTAT 7 bset? if ( STALLF)
       INTSTAT 7 bset  ( ack STALL)
@@ -288,10 +324,12 @@ label process-usb
    rts  ;c
 
 .ifdef chat-in-ram
-Vreset handler
-.then
 
-label usb
+Vreset handler
+
+.else
+
+label start-usb
 .ifdef usb-reset
    80 # USBCTL0 ) mov
    begin  USBCTL0 7 bclr?  until
@@ -307,6 +345,8 @@ label usb
    begin  INTSTAT 0 bset?  until  ( wait for USBRSTF)
    0ff # INTSTAT ) mov     -- clear all flags
    0d # EPCTL0 ) mov       -- enable ep0 as control endpt
+
+.then
 
    begin  process-usb c  again  ;c
 
@@ -377,7 +417,7 @@ Vreset handler
    0c # SCIC2 ) mov    ( enable rcvr, xmitter)
 .then
 
-   usb j  ;c
+   start-usb j  ;c
 org ( back to saved)
 .then
 

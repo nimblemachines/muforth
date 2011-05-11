@@ -47,12 +47,14 @@ variable image-p
 
 ( Dictionary operators.)
 variable h   ( image dictionary pointer pointer; points to one of:)
-   2variable 'flash   ( flash pointer, origin)
+   2variable 'xram    ( xram pointer, origin)
    2variable 'zram    ( zram pointer, origin)
    2variable 'ram     ( ram pointer, origin)
+   2variable 'flash   ( flash pointer, origin)
 
-: zram    'zram   h ! ;
-: ram     'ram    h ! ;
+: xram    'xram   h ! ;  ( critical variables, zero page)
+: zram    'zram   h ! ;  ( zero page)
+: ram     'ram    h ! ;  ( non-zero page)
 : flash   'flash  h ! ;
 : in-flash?  h @  'flash = ;
 : in-ram?    in-flash? not ;
@@ -86,9 +88,36 @@ forth
 ( Initialization.)
 : wipe   'image  #image  ( erase)   "ff  fill ;
 
+: xram!    ( xram-origin)  dup 'xram  2!  ( set ptr and origin to origin) ;
 : zram!    ( zram-origin)  dup 'zram  2!  ( set ptr and origin to origin) ;
 : ram!      ( ram-origin)  dup 'ram   2!  ( set ptr and origin to origin) ;
 : flash!  ( flash-origin)  dup 'flash 2!  ( set ptr and origin to origin) ;
 
-( Erase image, default origins: zram to @ram, ram to "100, and flash to @flash.)
-wipe  @ram zram!  "100 ram!  @flash flash!
+( xram is a bit odd. Sometimes we need to set aside a few bytes of zram
+  for flash-based code - like the USB chat and BDM code - and never
+  allocate these bytes to code or variables that we need while doing
+  interactive development.
+
+  My solution is to break the zero-page ram into two spaces: zram and xram.
+  zram is "application" ram, and is allocated bottom up, from the @ram
+  origin. xram is the "system" ram and is allocated top down, from 0100.
+
+  Routines that might be necessary, say for programming flash, are by
+  default placed at the "ram" origin - 0100. In the case of the USB code,
+  we take advantage of this fact, and allow the write memory USB request to
+  specify a wIndex value. 0 means "just copy the byte into memory";
+  non-zero means "run the flash code at 0100 using wIndex as the command
+  byte". This way it is almost trivial to run flash programming and erase
+  commands via USB.
+
+  But having these things be at arbitrary addresses seemed brittle and
+  error-prone. This way they are at least somewhat fixed, and the memory
+  allocation code checks to see if zram runs into xram.
+
+  The best way to use these is to always load the "system" code even if
+  it's already in flash, just so your code "knows" how much xram is
+  allocated.)
+
+( Erase image, default origins: zram to @ram, ram and xram to "100, and
+  flash to @flash.)
+wipe  @ram zram!  "100 dup xram! ram!  @flash flash!
