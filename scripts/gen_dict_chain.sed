@@ -61,7 +61,8 @@ s/colon/:/
 s/comma$/,/
 s/tick/'/
 s/exit/^/
-s/q/?/
+s/^q/?/
+s/q$/?/
 s/forward/>/
 s/to(_|$)/>/
 s/from(_|$)/>/

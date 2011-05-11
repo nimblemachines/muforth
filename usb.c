@@ -96,20 +96,20 @@ void mu_usb_close()
 }
 
 /*
- * usb-control (handle bmRequestType bRequest wValue wIndex 'buffer wLength)
+ * usb-request (bmRequestType bRequest wValue wIndex wLength 'buffer device)
  */
-void mu_usb_control()
+void mu_usb_request()
 {
     IOUSBDevRequest req;
     IOReturn ior;
-    IOUSBDeviceInterface **dev = (IOUSBDeviceInterface **)SP[6];
+    IOUSBDeviceInterface **dev = (IOUSBDeviceInterface **)TOP;
 
-    req.bmRequestType = SP[5];
-    req.bRequest = SP[4];
-    req.wValue = ST3;
-    req.wIndex = ST2;
+    req.bmRequestType = SP[6];
+    req.bRequest = SP[5];
+    req.wValue = SP[4];
+    req.wIndex = ST3;
+    req.wLength = ST2;
     req.pData = (void *)ST1;
-    req.wLength = TOP;
     DROP(7);
     ior = (*dev)->DeviceRequest(dev, &req);
     if (ior != kIOReturnSuccess)
@@ -170,19 +170,19 @@ void mu_usb_close()
 }
 
 /*
- * usb-control (handle bmRequestType bRequest wValue wIndex 'buffer wLength)
+ * usb-request (bmRequestType bRequest wValue wIndex wLength 'buffer device)
  */
-void mu_usb_control()
+void mu_usb_request()
 {
     int err;
 
-    usb_dev_handle *pdevh = (usb_dev_handle *)SP[6];
-    int bmRequestType = SP[5];
-    int bRequest = SP[4];
-    int wValue = ST3;
-    int wIndex = ST2;
+    usb_dev_handle *pdevh = (usb_dev_handle *)TOP;
+    int bmRequestType = SP[6];
+    int bRequest = SP[5];
+    int wValue = SP[4];
+    int wIndex = ST3;
+    int wLength = ST2;
     char *pbuf = (char *)ST1;
-    int wLength = TOP;
     DROP(7);
 
     err = usb_control_msg(pdevh, bmRequestType, bRequest, wValue, wIndex,
