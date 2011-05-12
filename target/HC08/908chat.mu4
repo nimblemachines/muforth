@@ -71,12 +71,17 @@ label SciTx  ( transmits char in A)
                   when it returns to chat loop, returns flags register
   2  SetHX      - reads two bytes from SCI, writes them into H & X registers
   3  GetHX      - writes H then X register to SCI
-  4  HXtoSP     - sets SP from HX
+  4  HXtoSP     - sets SP from HX -- deprecated, but I'm leaving it in
   5  SPtoHX     - sets HX from SP
   6  ReadNext   - reads a byte from memory @ HX, writes it to SCI, inc HX
   7  WriteNext  - reads a byte from SCI, writes into memory @ HX, inc HX
   8  ReadN      - reads a length from SCI, reads that many bytes from
                   memory, and writes them to SCI [S08 only!]
+  9  FlashNext  - reads a byte from SCI, writes to flash @ HX, inc HX
+                - calls a routine at @ram that host downloads to device
+ 10  FlashStatus - returns FSTAT
+                 - need this as a way to "ping" the device for the
+                 - completion of long operations, such as erase
 )
 
 label SendByte  ( send char in A)
@@ -99,23 +104,33 @@ label Dispatch
    .a decz? if ( HXtoSP)  txs  Dispatch again  then
    .a decz? if ( SPtoHX)  tsx  Dispatch again  then
 
-   .a decz? if ( ReadByte)
+   .a decz? if ( ReadNext)
    0 ,x lda  1 # aix  SendByte again  then
 
-   .a decz? if ( WriteByte)
-   SciRx bsr   0 ,x sta   1 # aix
+   .a decz? if ( WriteNext)
+   SciRx bsr   0 ,x sta
+label write-increment
+   1 # aix
 
 .ifdef S08
-   ( end prev command)               Dispatch again  then
+
+   ( end WriteNext)  Dispatch again  then
 
    .a decz? if ( ReadN)
    SciRx bsr  .a psh ( count)
    begin  0 ,x lda  1 # aix  SciTx bsr  0 ,s decz? until
-   .a pul
+   .a pul  Dispatch again  then
+
+   .a decz? if ( FlashNext)
+   SciRx bsr   @ram ) jsr ( call flash routine in RAM)
+   write-increment again ( to WriteNext)  then
+
+   .a decz? if ( FlashStatus)
+   FSTAT ) lda  SendByte again
 
 .then
 
-   then   ( fall through)
+   then
    ( unknown command)   Dispatch again  ;c
 
 

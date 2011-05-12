@@ -49,17 +49,18 @@ variable spy  spy off
 : c.Run        01 send  ;  ( start target executing; don't wait)
 : c.SetHX      02 send  >lohi send send ;
 : c.GetHX      03 send        recv recv hilo> ;
-: c.HXtoSP     04 send  ;
+-- : c.HXtoSP     04 send  ;  ( deprecated)
+: c.HXtoSP     drop ;
 : c.SPtoHX     05 send  ;
 : c.ReadNext   06 send  recv ;
 : c.WriteNext  07 send  send ;
 : c.Stream     08 send  send ;  ( "stream" N bytes from memory)
+: c.FlashNext  09 send  send ;  ( flash one byte)
+: c.FlashStat  10 send  recv ;  ( read flash status)
 
 ( These are not chat protocol commands, but are "faked" for compatibility.)
 : c.RunWait    c.Run  recv ( flags)  drop ;  ( wait for response)
 : c.Idle       c.Bye ;  ( XXX shouldn't even be defining this)
-: c.Id   "1807 ( SDIDL)  c.SetHX c.ReadNext
-   dup "0af = if  drop "0ff ^  then  ( 908 will return 0af) ;
 
 .then
 
@@ -92,8 +93,14 @@ variable spy  spy off
 : c.SetAddr  resync  c.SetHX ;
 : c.GetAddr          c.GetHX ;
 
+: chat-c@  c.SetAddr  c.ReadNext ;
+: chat-c!  c.SetAddr  c.WriteNext ;
+
+: c.Id   \l SDIDL chat-c@
+   dup "0af = if  drop "0ff ^  then  ( 908 will return 0af) ;
+
 : c.GetSP  resync  c.SPtoHX  c.GetHX ;
-: c.SetSP  resync            c.SetHX  c.HXtoSP ;
+-- : c.SetSP  resync            c.SetHX  c.HXtoSP ;  ( deprecated)
 
 : c.GetRegs  ( - SP H CC A X PCH PCL)
    c.GetSP ( sets HX too!)
@@ -103,14 +110,28 @@ variable spy  spy off
    c.SPtoHX
    6 for  c.WriteNext  next ;
 
-( Allocate n bytes on stack; set HX to point to allocated space. Because SP
-  points to the register frame, we add 6 to SP before setting HX.)
+( This can read from and write to arbitrary buffers on the host side, not
+  just pieces of the image.)
 
-: c.AllocStackBuf  ( n)
-   c.GetSP  swap -  dup c.SetSP  6 +a  c.SetHX ;
+: c.setup-chunk  ( 'target len buffer - len)
+   p!  swap c.SetAddr ;
 
-: c.Return  "81 ( rts) ;
+( Use streaming read.)
+: c.ReadChunk    ( 'target len buffer)
+   c.setup-chunk  dup c.Stream  for  recv c&  next ;
 
+: c.WriteChunk   ( 'target len buffer)
+   c.setup-chunk  for  c* c.WriteNext  next ;
+
+: c.FlashChunk   ( 'target len buffer cmd - status)
+   "30 \l FSTAT chat-c!  ( clear flash errors)
+   \l flash-command 1+  chat-c!
+   c.setup-chunk  for  c* c.FlashNext  next
+   c.FlashStat ;
+
+: c.VerifyChunk   ( 'target len - flag)
+   over image+ c.setup-chunk  dup c.Stream
+   for  recv c*  xor  if  image-p@ 1- u.  then  next ;
 
 : chat
 .ifdef chat-slow  ( using a xtal that only allows 38400)
@@ -126,13 +147,13 @@ variable spy  spy off
    ['] c.Run is t.Run
    ['] c.GetRegs is t.GetRegs
    ['] c.SetRegs is t.SetRegs
-   ['] c.AllocStackBuf is t.AllocStackBuf
    ['] c.SetAddr is t.SetAddr
    ['] c.GetAddr is t.GetAddr
    ['] c.ReadNext is t.Read
    ['] c.WriteNext is t.Write
-   ['] c.Stream is t.StreamCount
-   ['] recv is t.StreamRead
-   ['] c.Return is t.Return
+   ['] c.ReadChunk is t.ReadChunk
+   ['] c.WriteChunk is t.WriteChunk
+   ['] c.FlashChunk is t.FlashChunk
+   ['] c.VerifyChunk is t.VerifyChunk
 
    +chat  hi ;

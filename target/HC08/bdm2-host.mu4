@@ -146,15 +146,32 @@ comment Commands
    push ( H)  b.WriteCC  b.WriteA  pop ( X H) swap hilo> b.WriteHX
    swap hilo> b.WritePC ;
 
-( Allocate n bytes on stack; set HX to point to allocated space. There is
-  no register frame on the stack, so SP and HX can be the same - well,
-  except we have to subtract one in SetAddr before we actually set HX...)
-
-: b.AllocStackBuf  ( n)
-   b.ReadSP  swap -  dup b.WriteSP  b.SetAddr ;
-
 ( XXX should be a limited number of tries)
 : b.RunWait  b.Go  begin  b.ReadStatus  40 and until ;
+
+: b.setup-chunk  ( 'target len buffer - len)
+   p!  swap b.SetAddr ;
+
+: b.ReadChunk    ( 'target len buffer)
+   b.setup-chunk  for  b.ReadNext c&  next ;
+
+: b.WriteChunk   ( 'target len buffer)
+   b.setup-chunk  for  c* b.WriteNext  next ;
+
+( We've already written the byte, so jump to lda # command)
+: b.flash-byte  ( byte)
+   b.WriteNext  \l flash-command b.WritePC  b.RunWait ;
+
+: b.FlashChunk   ( 'target len buffer cmd - status)
+   30 \l FSTAT b.WriteByte  ( clear flash errors)
+   \l flash-command 1+  b.WriteByte
+   82 ( bgnd) \l flash-exit  b.WriteByte
+   b.setup-chunk  for  c* b.flash-byte  next
+   \l FSTAT b.ReadByte  ( return flash status) ;
+
+: b.VerifyChunk   ( 'target len - flag)
+   over image+ b.setup-chunk
+   for  b.ReadNext c*  xor  if  image-p@ 1- u.  then  next ;
 
 : ResetSP
    @ram #ram +  b.WriteSP ;
@@ -258,8 +275,6 @@ variable bdm-ram-start  ( filled in by loaded code)
    .ifdef bdm-in-ram   bdm-ram-start @ ( S08, ram version)
                .else   0fc00           ( S08, flash version)  .then ;
 
-: b.Return  82 ( bgnd) ;
-
 decimal
 
 
@@ -277,14 +292,14 @@ decimal
    ['] b.Go is t.Run  ( keeping b.Go since it's a BDM command name)
    ['] b.GetRegs is t.GetRegs
    ['] b.SetRegs is t.SetRegs
-   ['] b.AllocStackBuf is t.AllocStackBuf
    ['] b.SetAddr is t.SetAddr
    ['] b.GetAddr is t.GetAddr
    ['] b.ReadNext is t.Read
    ['] b.WriteNext is t.Write
-   ['] drop is t.StreamCount
-   ['] b.ReadNext is t.StreamRead
-   ['] b.Return is t.Return
+   ['] b.ReadChunk is t.ReadChunk
+   ['] b.WriteChunk is t.WriteChunk
+   ['] b.FlashChunk is t.FlashChunk
+   ['] b.VerifyChunk is t.VerifyChunk
 
    ( We'd like to set BDM clock from Sync pulse, but it doesn't seem to
      work. A hack is to set it instead from the chip defs that we load.)

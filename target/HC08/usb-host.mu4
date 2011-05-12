@@ -8,7 +8,7 @@
   is nothing like the chat, BDM, or 908 monitor "chat" drivers. Hopefully I
   can make this square peg fit ok!)
 
-loading HC08 USB chat (host)
+loading HCS08 USB chat (host)
 
 hex
 
@@ -44,15 +44,12 @@ hex
 : u.Write  ( target-addr length buffer)  2push
             40 01 rot 0 2pop  usb ;
 : u.Flash  ( target-addr length buffer cmd)  -rot 2push 2push
-            40 01 2pop 2pop  usb ;
+            40 01 2pop 2pop   usb ;
 : u.Run    ( pc)
             40 02 rot 0 0 0   usb ;
 
-( XXX I should probably do some kind of "cache line" approach here. This
-  will get me going, though.)
-
-variable buf
 variable usb-addr  ( current memory access address)
+variable buf       ( for single-byte reads and writes)
 
 : usb-c@  ( addr - byte)             1  buf  u.Read  buf c@ ;
 : usb-c!  ( byte addr)  swap buf c!  1  buf  u.Write ;
@@ -62,7 +59,20 @@ variable usb-addr  ( current memory access address)
 : u.ReadNext   u.GetAddr usb-c@  1 usb-addr +! ;
 : u.WriteNext  u.GetAddr usb-c!  1 usb-addr +! ;
 
-: u.Id   1807 ( SDIDL)  usb-c@ ;
+: u.FlashChunk   ( 'target len buffer cmd - status)
+   30 \l FSTAT usb-c!  ( clear flash errors)
+   u.Flash
+   \l FSTAT usb-c@  ( return status) ;
+
+( Use USB ram image space to hold chunks from target.)
+: c@+  ( a - a+1 byte)  dup 1+  swap c@ ;
+
+: u.VerifyChunk   ( 'target len)
+   over image-p!  ( we'll use c* to read image)
+   tuck  1860 image+ u.Read  ( len)  1860 image+ swap
+   for  c@+ c*  xor  if  image-p@ 1- u.  then  next  drop ;
+
+: u.Id   \l SDIDL usb-c@ ;
 
 : chat
    ( Wire our versions into the interact code.)
@@ -72,7 +82,9 @@ variable usb-addr  ( current memory access address)
    ['] u.GetAddr is t.GetAddr
    ['] u.ReadNext is t.Read
    ['] u.WriteNext is t.Write
-   ['] drop is t.StreamCount
-   ['] u.ReadNext is t.StreamRead
+   ['] u.Read is t.ReadChunk
+   ['] u.Write is t.WriteChunk
+   ['] u.FlashChunk is t.FlashChunk
+   ['] u.VerifyChunk is t.VerifyChunk
 
    +chat  hi ;
