@@ -230,12 +230,15 @@ label stall
    ( unknown) stall j  ;c
 .then
 
+( IN requests will return NAK.)
+label nak-in
+   .a clr  in-control ) sta  rts  ;c
 
 ( Receipt of SETUP has set out-control's data toggle to 0. Set in-control's
   as well.)
 
 label setup-token
-   .a clr  in-control ) sta
+   nak-in c
 
 .ifdef chat-in-ram   ( assume vendor request)
 
@@ -293,7 +296,8 @@ label in-token
 .then
 
    ( Last packet was partial or zero-length; no further IN's expected.)
-   .a clr  in-control ) sta  ( further IN's will return NAK)
+label nak-in-expect-setup
+   nak-in c  ( further IN's will return NAK)
    expect-setup-token j  ;c
 
 label process-usb
@@ -318,10 +322,8 @@ label start-usb
 .then
 
    08 # lda  in-bufaddr ) sta    --  IN buffer @1880
-     .a clr  in-control ) sta    --  IN will return NAK
    0c # lda  out-bufaddr ) sta   -- OUT buffer @1890
-   10 # lda  out-count ) sta     -- expect 16 bytes
-  0c8 # lda  out-control ) sta   -- accept SETUP or OUT/DATA0
+   nak-in-expect-setup c
    01 # CTL ) mov          -- enable USB module
    45 # USBCTL0 ) mov      -- turn on pullup, vreg, and PHY
    begin  INTSTAT 0 bset?  until  ( wait for USBRSTF)
