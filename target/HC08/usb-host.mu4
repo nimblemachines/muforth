@@ -41,23 +41,36 @@ hex
 ( Commands)
 : u.Read   ( target-addr length buffer)  2push
            0c0 00 rot 0 2pop  usb ;
+
 : u.Write  ( target-addr length buffer)  2push
             40 01 rot 0 2pop  usb ;
+
 : u.Flash  ( target-addr length buffer cmd)  -rot 2push 2push
             40 01 2pop 2pop   usb ;
-: u.Run    ( pc)
-            40 02 rot 0 0 0   usb ;
+
+: u.Run     40 02 0 0 0 0   usb ;
+
+: u.ReadSp  ( buffer)  push
+            0c0 03 0 0 2 pop   usb ;
 
 variable usb-addr  ( current memory access address)
-variable buf       ( for single-byte reads and writes)
+variable buf       ( for short reads and writes)
 
 : usb-c@  ( addr - byte)             1  buf  u.Read  buf c@ ;
 : usb-c!  ( byte addr)  swap buf c!  1  buf  u.Write ;
+
+: usb-sp  ( - sp)  buf u.ReadSp  buf c@  buf 1+ c@  hilo> ;
 
 : u.SetAddr  usb-addr ! ;
 : u.GetAddr  usb-addr @ ;
 : u.ReadNext   u.GetAddr usb-c@  1 usb-addr +! ;
 : u.WriteNext  u.GetAddr usb-c!  1 usb-addr +! ;
+
+: u.GetRegs  ( buf - sp)
+   usb-sp  dup push  6 rot  u.Read  pop ;
+
+: u.SetRegs  ( buf)
+   usb-sp  6  rot  u.Write ;
 
 : u.FlashChunk   ( 'target len buffer cmd - status)
    30 \l FSTAT usb-c!  ( clear flash errors)
@@ -78,6 +91,8 @@ variable buf       ( for single-byte reads and writes)
    ( Wire our versions into the interact code.)
    ['] u.Run is t.RunWait
    ['] u.Run is t.Run
+   ['] u.SetRegs is t.SetRegs
+   ['] u.GetRegs is t.GetRegs
    ['] u.SetAddr is t.SetAddr
    ['] u.GetAddr is t.GetAddr
    ['] u.ReadNext is t.Read

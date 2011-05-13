@@ -157,13 +157,15 @@ label prepare-first-in
    setup-address-length c  ( fall thru)
 
 label prepare-next-in
-   ( copy data)  copy-to-in c
+   ( copy data)  copy-to-in c  ( fall thru)
+
+label prepare-fixed-in
    ( toggle DATA0/1)  in-control # ldhx  toggle c
    expect-setup-token j  ;c
 
 label write-memory
    0f781 # ldhx  ( 0 ,x sta  rts)
-   wIndex ) lda  0!= if  9d # ldx ( nop)  write-byte 3 + ) sta  then
+   wIndex ) lda  0!= if  0a6 # ldx ( lda imm)  write-byte 2 + ) sta  then
    write-byte ) sthx
    parse-address-length c
    setup-address-length c  ( fall thru)
@@ -171,6 +173,10 @@ label write-memory
 label prepare-next-out
    ( toggle DATA0/1)  out-control # ldhx  toggle c
    expect-out-token j  ;c
+
+label read-sp
+   tsx  2 # aix  in-buffer ) sthx  2 # lda  in-count ) sta
+   prepare-fixed-in j  ;c
 
 ( Set address is a bit tricky. We can't set the address immediately. The
   USB spec says that at every stage of a control transfer the device
@@ -216,7 +222,7 @@ label finish-control-write
 
 label cut-and-run
    finish-control-write c
-   parse-address-length c  0 ,x jmp  ;c
+   2 # ais  ( skip return from process-usb)  .h pul  rti  ;c
 
 .ifndef chat-in-ram
 
@@ -234,6 +240,7 @@ label vendor-request
    ( 00)  read-memory          0!= until
    ( 01)  write-memory  .a dec 0!= until
    ( 02)  cut-and-run   .a dec 0!= until
+   ( 03)  read-sp       .a dec 0!= until
 .ifdef chat-in-ram
    ( unknown, fall thru)
 
@@ -323,11 +330,7 @@ label process-usb
    then
    rts  ;c
 
-.ifdef chat-in-ram
-
-Vreset handler
-
-.else
+.ifndef chat-in-ram
 
 label start-usb
 .ifdef usb-reset
@@ -345,12 +348,25 @@ label start-usb
    begin  INTSTAT 0 bset?  until  ( wait for USBRSTF)
    0ff # INTSTAT ) mov     -- clear all flags
    0d # EPCTL0 ) mov       -- enable ep0 as control endpt
+   rts  ;c
 
 .then
 
+label emulated-swi
+   ( jsr/bsr has already pushed PC)
+   .x psh  .a psh  tpa ( flags to A)  .a psh  sei
+   .h psh
    begin  process-usb c  again  ;c
 
-.ifndef chat-in-ram
+label interact
+   begin  emulated-swi c  again  ;c
+
+.ifdef chat-in-ram
+
+Vreset handler
+   begin  interact c  again  ;c
+
+.else
 
 here
 0ffc0 org
@@ -417,7 +433,9 @@ Vreset handler
    0c # SCIC2 ) mov    ( enable rcvr, xmitter)
 .then
 
-   start-usb j  ;c
+   start-usb c
+   begin  interact c  again  ;c
+
 org ( back to saved)
 .then
 
