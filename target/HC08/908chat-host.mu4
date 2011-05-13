@@ -21,7 +21,10 @@ variable spy  spy off
 : send          spy @ if ." >"  dup .h8_ then  _send ;
 : recv   _recv  spy @ if ." <"  dup .h8_ then ;
 
-.ifdef chat1
+( Which protocol? Default to chat2.)
+.ndef chat1-host  .ndef chat3-host .and .if  -d chat2-host  .then
+
+.ifdef chat1-host
 
 ( Original chat protocol)
 
@@ -40,32 +43,6 @@ variable spy  spy off
 : c.ReadNext   10 send  recv ;
 : c.WriteNext  11 send  send ;
 
-.else  ( chat2)
-
-( Simpler, slightly improved chat protocol)
-
-( Host side)
-: c.Bye        00 send  ;  ( command 0 is ignored by the chat target)  
-: c.Run        01 send  ;  ( start target executing; don't wait)
-: c.SetHX      02 send  >lohi send send ;
-: c.GetHX      03 send        recv recv hilo> ;
--- : c.HXtoSP     04 send  ;  ( deprecated)
-: c.HXtoSP     drop ;
-: c.SPtoHX     05 send  ;
-: c.ReadNext   06 send  recv ;
-: c.WriteNext  07 send  send ;
-: c.Stream     08 send  send ;  ( "stream" N bytes from memory)
-: c.FlashNext  09 send  send ;  ( flash one byte)
-: c.FlashStat  10 send  recv ;  ( read flash status)
-
-( These are not chat protocol commands, but are "faked" for compatibility.)
-: c.RunWait    c.Run  recv ( flags)  drop ;  ( wait for response)
-: c.Idle       c.Bye ;  ( XXX shouldn't even be defining this)
-
-.then
-
-.ifdef chat1
-
 : c.SetHX   >lohi  c.SetH  c.SetX ;
 : c.GetHX          c.GetH  c.GetX  hilo> ;
 
@@ -75,12 +52,59 @@ variable spy  spy off
 
 : resync  flush  c.Idle ;
 
-.else  ( chat2)
+.then
 
+.ifdef chat2-host
+
+( Simpler, slightly improved chat protocol)
+
+( Host side)
+: c.Bye        00 send  ;  ( command 0 is ignored by the chat target)  
+: c.RunWait    01 send  recv ( flags)  drop ;  ( wait for response)
+: c.Run        01 send  ;                      ( don't wait)
+: c.SetHX      02 send  >lohi send send ;
+: c.GetHX      03 send        recv recv hilo> ;
+-- : c.HXtoSP     04 send  ;  ( deprecated)
+: c.SPtoHX     05 send  ;
+: c.ReadNext   06 send  recv ;
+: c.WriteNext  07 send  send ;
+: c.Stream     08 send  send ;  ( "stream" N bytes from memory)
+: c.FlashNext  09 send  send ;  ( flash one byte)
+: c.FlashStat  10 send  recv ;  ( read flash status)
+
+.then
+
+.ifdef chat3-host
+
+( Mostly reorganised, eliminating HXtoSP - and therefore SetSP.
+  Implementation on the target uses subroutines, rather than being one big
+  loop. Since I keep changing this, I thought from now on I'd include a
+  protocol version command - which will always be command #1!! I'll start
+  the version number at three...)
+
+( Host side)
+: c.Bye        00 send  ;  ( command 0 is ignored by the chat target)  
+: c.Version    01 send  recv ;  ( query chat protocol version)
+: c.RunWait    02 send  recv ( flags)  drop ;  ( wait for response)
+: c.Run        02 send  ;                      ( don't wait)
+: c.GetSP      03 send        recv recv hilo> ;
+: c.GetHX      04 send        recv recv hilo> ;
+: c.SetHX      05 send  >lohi send send ;
+: c.ReadNext   06 send  recv ;
+: c.WriteNext  07 send  send ;
+: c.Stream     08 send  send ;  ( "stream" N bytes from memory)
+: c.FlashNext  09 send  send ;  ( flash one byte)
+: c.FlashStat  10 send  recv ;  ( read flash status)
+
+.then
+
+.ifndef chat1-host
 ( In this case we send two dummy bytes in case we were doing a SetHX.)
-
 : resync  flush  c.Bye c.Bye ;
+.then
 
+.ifndef c.GetSP
+: c.GetSP  resync  c.SPtoHX  c.GetHX ;
 .then
 
 ( We resync right before reading from a new memory address, and when
@@ -98,9 +122,6 @@ variable spy  spy off
 
 : c.Id   \l SDIDL chat-c@
    dup "0af = if  drop "0ff ^  then  ( 908 will return 0af) ;
-
-: c.GetSP  resync  c.SPtoHX  c.GetHX ;
--- : c.SetSP  resync            c.SetHX  c.HXtoSP ;  ( deprecated)
 
 ( This can read from and write to arbitrary buffers on the host side, not
   just pieces of the image.)
