@@ -26,7 +26,7 @@
 #include <IOKit/usb/IOUSBLib.h>
 
 /*
- * usb-find-device (vendor-id product-id -- handle)
+ * usb-find-device (vendor-id product-id -- handle -1 | 0)
  */
 void mu_usb_find_device()
 {
@@ -56,7 +56,12 @@ void mu_usb_find_device()
 
     /* Look up our service. We have to release it when we're done. */
     ioService = IOServiceGetMatchingService(kIOMasterPortDefault, matching);
-    if (ioService == 0) return abort_zmsg("No matching device found");
+    if (ioService == 0)
+    {
+        DROP(1);
+        TOP = 0;
+        return;
+    }
 
     ior = IOCreatePlugInInterfaceForService(ioService,
             kIOUSBDeviceUserClientTypeID,
@@ -79,8 +84,8 @@ void mu_usb_find_device()
         return abort_zmsg("QueryInterface failed");
 
     /* Return deviceInterface as a handle for further operations on device. */
-    DROP(1);
-    TOP = (addr)deviceInterface;
+    ST1 = (addr)deviceInterface;
+    TOP = -1;
 }
 
 /*
@@ -121,16 +126,7 @@ void mu_usb_request()
 #include <usb.h>
 
 /*
- * This is currently a crock, and doesn't tell us much, but it at least
- * signals that something went wrong.
- */
-static void abort_usb_error(int error)
-{
-    return abort_zmsg("libusb error");
-}
-
-/*
- * usb-find-device (vendor-id product-id -- handle)
+ * usb-find-device (vendor-id product-id -- handle -1 | 0)
  */
 void mu_usb_find_device()
 {
@@ -150,13 +146,14 @@ void mu_usb_find_device()
                 pdev->descriptor.idProduct == TOP)
             {
                 /* Open the device & return a handle */
-                DROP(1);
-                TOP = (addr)usb_open(pdev);
+                ST1 = (addr)usb_open(pdev);
+                TOP = -1;
                 return;
             }
         }
     }
-    abort_zmsg("No matching device found");
+    DROP(1);
+    TOP = 0;
 }
 
 /*
@@ -166,7 +163,7 @@ void mu_usb_close()
 {
     int err = usb_close((struct usb_dev_handle *)TOP);
     DROP(1);
-    if (err < 0) return abort_usb_error(err);
+    if (err < 0) return abort_strerror();
 }
 
 /*
@@ -187,7 +184,7 @@ void mu_usb_request()
 
     err = usb_control_msg(pdevh, bmRequestType, bRequest, wValue, wIndex,
                           pbuf, wLength, 4000 /* ms timeout */);
-    if (err < 0) return abort_usb_error(err);
+    if (err < 0) return abort_strerror();
 }
 
 #endif

@@ -1,0 +1,89 @@
+( This file is part of muFORTH: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2011 David Frech. All rights reserved, and all wrongs
+  reversed. (See the file COPYRIGHT for details.)
+
+loading HCS08 JS8/16 ROM bootloader support
+
+hex
+
+variable buf
+
+: usb  ( bmRequest bRequest wValue wIndex wLength 'buffer)
+   usb-js-device  usb-request ;
+
+( testing)
+-- : usb  cr .s  2drop 2drop 2drop ;
+
+( Vendor requests supported by the device:)
+
+: u.Program  ( 'target len)  over image+ ( buffer) push  2push
+   40 61 2pop 2dup + 1- swap ( 'target last len)  pop  usb ;
+
+0 .if
+: u.Program  ( 'target len)  over image+ ( buffer) push  2push
+   40 61 2pop 0 swap ( 'target last len)  pop  usb ;
+.then
+
+: u.Erase  ( mass erase)
+   40 63 0 0 0  buf  usb ;
+
+: u.Reset
+   40 68 0 0 0  buf  usb ;
+
+: u.CheckCRC
+   40 69 0 0 0  buf  usb ;
+
+: u.Result  ( - result-byte)
+  0c0 6f 0 0 1  buf  usb  buf c@ ;
+
+: check  u.Result dup 01 xor if u. error" flash command failed" then  drop ;
+-- : check  u.Result drop ;
+
+20 constant /row  ( JS bootloader can only handle 32 bytes at a time)
+
+( Use this to initially set the value of "our" trim - the one that trims
+  the internal osc to 9.216M.)
+: set-trims ( ours factory-ftrim factory)
+   0ffaf image-c!  0ffae image-c!  0ffad image-c! ;
+
+( Set value of NVOPT, which is loaded into FOPT at reset. We set it so
+  security is off, and vector redirection is _enabled_.)
+: set-unsecured
+   0be 0ffbf image-c! ;  set-unsecured
+
+: >nvprot  ( protected-addr - byte)
+   1-  8 >>  0fe and ( clears FPDIS bit to enable protection!) ;
+
+: protect-flash  ( protected-addr)
+   dup vector-offset !  ( oddly, protected addr is mod 64k vector offset!)
+   >nvprot 0ffbd image-c! ;  -- 0fe00 protect-flash
+
+.ifdef S08JS
+( Bypass checksum check on JS parts.)
+: bypass-checksum   0  0ffba image-c! ;  bypass-checksum
+.then
+
+( Lame! Their firmware barfs if you immediately send a Result request after
+  a Program request - even though the docs for the bootloader _claim_ that
+  it only returns a status IN when absolutely done... So we're putting in a
+  4ms sleep between program and check result. It takes about 1.5ms to
+  program 32 bytes, and I know they verify each byte, so triple it. Should
+  be plenty, no?)
+
+: 4ms  0 #4000000 nanosleep ;
+ 
+: row  ( 'target len - 'target+len)
+   cr  ." Programming "  2dup swap u. u.
+   2dup + push  u.Program  4ms  check  pop ;
+
+: flash-region  ( a len)
+   /row /mod  ( r q)  swap push  ?for   /row row  next  then
+                            pop  =if  ( rem) row  drop ^  then  2drop ;
+
+: flash-image
+   cr ." Erasing"  u.Erase check
+   flash  region ( a u)  flash-region
+   0ffac 14 flash-region  ( trims and security bits)
+   0ffc0 40 flash-region  ( vectors)
+   cr ." Resetting device"  u.Reset ;
