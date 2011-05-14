@@ -1192,21 +1192,30 @@ variable zloading    ( C-string name of file being loaded)
 ( XXX I was hoping to use on-exit to check stack depths, but I can't seem
   to get them to reconcile. More research is indicated. ;-)
 
+( raw-load-file doesn't preserve many settings, so it's useful for loading
+  _settings_ files that will have durable effects on the environment.)
+
+: raw-load-file  ( z")
+   line preserve  1 line !
+   out-channel preserve  >stderr
+   [ ' ?show-stack >body ] preserve  -stack
+   open-file-ro ( fd)  dup on-exit close-file
+   read-file ( a u)  evaluate ;
+
 : load-file  ( z")
    depth  on-exit check-depth
    -- depth  on-exit show-depths
-   dup open-file-ro ( fd)  dup on-exit close-file
-   zloading preserve  swap zloading !
-   line preserve  1 line !
+   zloading preserve  dup zloading !
    radix preserve  decimal
    state preserve  \ [   ( back to forth!)
    current preserve  forth
-   out-channel preserve  >stderr
-   [ ' ?show-stack >body ] preserve  -stack
-   read-file ( a u)  evaluate ;
+   raw-load-file ;
 
-( Consumes a token - a filename - and loads it.)
+( Consumes a token - a filename - and loads it, preserving settings.)
 : ld  token, load-file ;
+
+( Ditto, but allows durable changes to settings.)
+: ld!  token, raw-load-file ;
 
 ( how much dictionary space was consumed?)
 : show-consumed  ( here)
@@ -1225,7 +1234,7 @@ variable zloading    ( C-string name of file being loaded)
   what chain we are compiling into, define the word in .forth.)
 
 : -d   current preserve  forth  -1 constant ;
-: -f   ( load file)  ld ;
+: -f   ( load file)  ld! ;  ( don't preserve settings!)
 
 
 : settings  ."
