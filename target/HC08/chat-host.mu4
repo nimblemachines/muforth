@@ -120,7 +120,8 @@ variable spy  spy off
 : chat-c@  c.SetAddr  c.ReadNext ;
 : chat-c!  c.SetAddr  c.WriteNext ;
 
-: c.Id   \l SDIDL chat-c@
+( Can't use name of register here; will be undefined when loading for 908.)
+: c.Id   "1807 ( SDIDL) chat-c@
    dup "0af = if  drop "0ff ^  then  ( 908 will return 0af) ;
 
 ( This can read from and write to arbitrary buffers on the host side, not
@@ -129,12 +130,11 @@ variable spy  spy off
 : c.setup-chunk  ( 'target len buffer - len)
    p!  swap c.SetAddr ;
 
+.ifdef S08
+
 ( Use streaming read.)
 : c.ReadChunk    ( 'target len buffer)
    c.setup-chunk  dup c.Stream  for  recv c&  next ;
-
-: c.WriteChunk   ( 'target len buffer)
-   c.setup-chunk  for  c* c.WriteNext  next ;
 
 : c.FlashChunk   ( 'target len buffer cmd - status)
    "30 \l FSTAT chat-c!  ( clear flash errors)
@@ -145,6 +145,16 @@ variable spy  spy off
 : c.VerifyChunk   ( 'target len - flag)
    over image+ c.setup-chunk  dup c.Stream
    for  recv c*  xor  if  image-p@ 1- u.  then  next ;
+
+.else  ( 908 version without streaming read)
+
+: c.ReadChunk    ( 'target len buffer)
+   c.setup-chunk  for  c.ReadNext c&  next ;
+
+.then
+
+: c.WriteChunk   ( 'target len buffer)
+   c.setup-chunk  for  c* c.WriteNext  next ;
 
 : c.GetRegs  ( buf - sp)
    c.GetSP ( sets HX too!)  dup push
@@ -173,7 +183,12 @@ variable spy  spy off
    ['] c.WriteNext is t.Write
    ['] c.ReadChunk is t.ReadChunk
    ['] c.WriteChunk is t.WriteChunk
+.ifdef S08
    ['] c.FlashChunk is t.FlashChunk
    ['] c.VerifyChunk is t.VerifyChunk
+.else
+   ['] complain is t.FlashChunk
+   ['] complain is t.VerifyChunk
+.then
 
    +chat  hi ;
