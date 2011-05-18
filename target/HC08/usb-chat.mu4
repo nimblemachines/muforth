@@ -332,12 +332,13 @@ label process-usb
 
 .ifndef in-ram
 
-label start-usb
+label finish-config
 .ifdef usb-reset
    80 # USBCTL0 ) mov
    begin  USBCTL0 7 bclr?  until
 .then
 
+   ( Set up USB registers and buffer descriptors)
    08 # lda  in-bufaddr ) sta    --  IN buffer @1880
    0c # lda  out-bufaddr ) sta   -- OUT buffer @1890
    nak-in-expect-setup c
@@ -346,6 +347,16 @@ label start-usb
    begin  INTSTAT 0 bset?  until  ( wait for USBRSTF)
    0ff # INTSTAT ) mov     -- clear all flags
    0d # EPCTL0 ) mov       -- enable ep0 as control endpt
+
+.ifdef usb-debug-via-serial
+   -- Configure SCI for 115200 bps
+
+   SCIBDH ) clr        ( baud rate divisor, high)
+   #13 # SCIBDL ) mov  ( baud rate divisor, low)
+                       ( yields 115200 from 24M bus clock)
+   0c # SCIC2 ) mov    ( enable rcvr, xmitter)
+.then
+
    rts  ;c
 
 .then
@@ -354,7 +365,12 @@ label emulated-swi
    ( jsr/bsr has already pushed PC)
    .x psh  .a psh  tpa ( flags to A)  .a psh  sei
    .h psh
+.ifdef usb-debug-via-serial
+   begin  process-serial c
+          process-usb c      again  ;c
+.else
    begin  process-usb c  again  ;c
+.then
 
 ( If the chat interaction changes the PC on this stack frame to point
   somewhere other than _after_ the __swi, not all is lost - since we got
@@ -430,16 +446,7 @@ Vreset handler
 
    #24000 khz>fcdiv  # lda   FCDIV ) sta
 
-.ifdef config-sci
-   -- Configure SCI for 115200 bps
-
-   SCIBDH ) clr        ( baud rate divisor, high)
-   #13 # SCIBDL ) mov  ( baud rate divisor, low)
-                       ( yields 115200 from 24M bus clock)
-   0c # SCIC2 ) mov    ( enable rcvr, xmitter)
-.then
-
-   start-usb c
+   finish-config c
    begin  interact c  again  ;c
 
 org ( back to saved)
