@@ -102,14 +102,6 @@ label copy-to-in
 label toggle  ( HX points to EP buffer control byte)
    0 ,x lda  40 # and ( data0/1)  0c8 # eor  0 ,x sta  rts  ;c
 
-( Get ready to receive another SETUP token.)
-label expect-setup-token
-   0c8 # lda
-label expect-out-token  ( expect OUT or SETUP, really)
-   10 # ldx  out-count ) stx  ( .A has value)  out-control ) sta
-   CTL 5 bclr ( TSUSPEND off - resume processing)
-   rts  ;c
-
 ( If wLength u< A, use wLength instead.)
 label setup-address-length
    ( addr in HX)  memptr ) sthx
@@ -139,8 +131,15 @@ label prepare-next-in
    ( copy data)  copy-to-in c  ( fall thru)
 
 label prepare-fixed-in
-   ( toggle DATA0/1)  in-control # ldhx  toggle c
-   expect-setup-token j  ;c
+   ( toggle DATA0/1)  in-control # ldhx  toggle c  ( fall thru)
+
+( Get ready to receive another SETUP token.)
+label expect-setup-token
+   0c8 # lda
+label expect-out-token  ( expect OUT or SETUP, really)
+   10 # ldx  out-count ) stx  ( .A has value)  out-control ) sta
+   CTL 5 bclr ( TSUSPEND off - resume processing)
+   rts  ;c
 
 label write-memory
    0f781 # ldhx  ( 0 ,x sta  rts)
@@ -201,17 +200,6 @@ label cut-and-run
    finish-control-write c
    2 # ais  ( skip return from process-usb)  .h pul  rti  ;c
 
-.ifndef in-ram
-
-label standard-request
-   bRequest ) lda
-   05 # cmp  set-address 0!= until
-   06 # cmp  get-descriptor 0!= until
-   09 # cmp  set-config 0!= until
-   ( unknown) stall j  ;c
-
-.then
-
 label vendor-request
    bRequest ) lda
    ( 00)  read-memory          0!= until
@@ -226,6 +214,17 @@ label stall
 
 .else
    ( unknown) stall j  ;c
+.then
+
+.ifndef in-ram
+
+label standard-request
+   bRequest ) lda
+   05 # cmp  set-address 0!= until
+   06 # cmp  get-descriptor 0!= until
+   09 # cmp  set-config 0!= until
+   ( unknown) stall j  ;c
+
 .then
 
 ( IN requests will return NAK.)
