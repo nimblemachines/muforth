@@ -12,6 +12,8 @@ hex
 
 __meta
 
+10 constant buflen0  ( buffer length, and hence max packet size, for endpoint 0)
+
 .ifndef in-ram
 
 ( Our device descriptor. Note: all USB data is little-endian.) 
@@ -22,7 +24,7 @@ label device-descriptor
    00 c, ( bDeviceClass - composite device - look to interfaces for class)
    00 c, ( bDeviceSubClass)
    00 c, ( bDeviceProtocol)
-   10 c, ( bMaxPacketSize0)
+   buflen0 c, ( bMaxPacketSize0)
   0a2 c,  15 c, ( idVendor = Freescale)
   0de c, 0c0 c, ( idProduct = c0de)
    01 c,  00 c, ( bcdDevice = 00.01)
@@ -55,6 +57,21 @@ label interface-descriptor
 
 .then
 
+1860 equ 'usb            ( USB RAM origin; buffer descriptors live here)
+1880 equ 'usb-buffers    ( endpoint RAM from here to 195f)
+
+__host
+
+: >bufaddr  ( buffer - bufaddr)
+   dup 0f and if  error" endpoint buffer must be on a 16-byte boundary"  then
+   \l 'usb -  2 >> ;
+
+__meta
+
+( Buffer descriptor control byte to match _any_ SETUP, or an OUT with a
+  DATA1 packet.)
+0c8 equ match-data1
+
 ( USB buffer descriptors)
 1860 equ in-control
 1861 equ in-count
@@ -63,8 +80,8 @@ label interface-descriptor
 1864 equ out-count
 1865 equ out-bufaddr
 
-1880 equ in-buffer
-1890 equ out-buffer
+'usb-buffers            equ in-buffer
+'usb-buffers buflen0 +  equ out-buffer
 
 ( Useful aliases for buffer addresses - for control requests.)
 out-buffer 0 + equ bmRequestType
@@ -90,7 +107,7 @@ out-buffer 7 + equ wLengthHi
 label copy-to-in
    bufptr ) clr
    memcount ) ldx  0!= if
-      10 # cpx  u>= if  ( whole packet)  10 # ldx  then
+      buflen0 # cpx  u>= if  ( whole packet)  buflen0 # ldx  then
       .x psh  begin
          memptr ) ldhx  0 ,x lda  1 # aix  memptr ) sthx
          .h clr  bufptr ) ldx  in-buffer ,x sta  .x inc  bufptr ) stx
@@ -100,7 +117,7 @@ label copy-to-in
    in-count ) stx  rts  ;c
 
 label toggle  ( HX points to EP buffer control byte)
-   0 ,x lda  40 # and ( data0/1)  0c8 # eor  0 ,x sta  rts  ;c
+   0 ,x lda  40 # and ( data0/1)  match-data1 # eor  0 ,x sta  rts  ;c
 
 ( If wLength u< A, use wLength instead.)
 label setup-address-length
@@ -135,9 +152,9 @@ label prepare-fixed-in
 
 ( Get ready to receive another SETUP token.)
 label expect-setup-token
-   0c8 # lda
+   match-data1 # lda
 label expect-out-token  ( expect OUT or SETUP, really)
-   10 # ldx  out-count ) stx  ( .A has value)  out-control ) sta
+   buflen0 # ldx  out-count ) stx  ( .A has value)  out-control ) sta
    CTL 5 bclr ( TSUSPEND off - resume processing)
    rts  ;c
 
@@ -193,7 +210,7 @@ label set-config
 label finish-control-write
    ( Setup IN status stage)
    .a clr  in-count ) sta  ( zero-length DATA1 transaction)
-   0c8 # lda  in-control ) sta
+   match-data1 # lda  in-control ) sta
    expect-setup-token j  ;c
 
 label cut-and-run
@@ -280,7 +297,7 @@ label setup-or-out-token
 
 label in-token
    ( If last IN was a full packet, ready some more data.)
-   in-count ) lda  10 # cmp  0= if  prepare-next-in j  then
+   in-count ) lda  buflen0 # cmp  0= if  prepare-next-in j  then
 
 .ifndef in-ram
 
@@ -326,8 +343,9 @@ label finish-config
 .then
 
    ( Set up USB registers and buffer descriptors)
-   08 # lda  in-bufaddr ) sta    --  IN buffer @1880
-   0c # lda  out-bufaddr ) sta   -- OUT buffer @1890
+   in-buffer >bufaddr # lda  in-bufaddr ) sta
+   out-buffer >bufaddr # lda  out-bufaddr ) sta
+
    nak-in-expect-setup c
    01 # CTL ) mov          -- enable USB module
    45 # USBCTL0 ) mov      -- turn on pullup, vreg, and PHY
