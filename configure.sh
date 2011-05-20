@@ -38,9 +38,9 @@ ldflags=""
 # there - it's just rather _pointless_ ;-).
 
 if [ "$os" = "Darwin" ]; then
+    archobjs="usb-darwin.o"
     cflags="${cflags} -m32 -mdynamic-no-pic -arch i386 -arch ppc"
     ldflags="${ldflags} -m32 -arch i386 -arch ppc -framework CoreFoundation -framework IOKit"
-    archobjs="usb-darwin.o"
 fi
 if [ "$os" = "Linux" ]; then
     archobjs="usb-linux.o"

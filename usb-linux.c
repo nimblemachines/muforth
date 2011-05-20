@@ -12,8 +12,6 @@
 
 #include "muforth.h"
 
-#define _BSD_SOURCE 1       /* want d_type in struct dirent */
-
 #include <sys/types.h>
 #include <dirent.h>         /* opendir, readdir */
 
@@ -147,7 +145,6 @@ void mu_usb_close()
 void mu_usb_request()
 {
     struct usbdevfs_ctrltransfer req;
-    int err;
     int fd;
 
     req.bRequestType = SP[6];       /* should be called bmRequestType */
@@ -160,6 +157,5 @@ void mu_usb_request()
     fd = TOP;
     DROP(7);
 
-    err = ioctl(fd, USBDEVFS_CONTROL, &req);
-    if (err == -1) return abort_strerror();
+    if (ioctl(fd, USBDEVFS_CONTROL, &req) == -1) return abort_strerror();
 }
