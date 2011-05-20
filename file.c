@@ -52,7 +52,7 @@ static int readable(char *path)
     return 0;
 }
 
-static char *path_prefix(char *src, char *dest, char sep, char *begin)
+char *path_prefix(char *src, char *dest, char sep, char *begin)
 {
     int len;
 

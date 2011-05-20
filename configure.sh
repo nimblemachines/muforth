@@ -32,15 +32,6 @@ cpu=$(uname -m)
 cflags="-Wno-int-to-pointer-cast"
 ldflags=""
 
-libusb="none"
-if [ "$os" = "Linux" ]; then
-    # Try to find libusb-0.1. libusb-1.0 puts its include and library files in
-    # slightly different places, so we shouldn't worry about collisions.
-    [ -f "/usr/include/usb.h" ] && libusb="/usr"
-    [ -f "/usr/local/include/usb.h" ] && libusb="/usr/local"
-    [ -f "$HOME/include/usb.h" ] && libusb="$HOME"
-fi
-
 # On 64-bit hosts, we now default to _forcing_ the compilation of a 32-bit
 # version of muforth. Compiling muforth with 64-bit cells is now left as an
 # exercise for the reader (it's not hard, and all the pieces are still
@@ -48,11 +39,15 @@ fi
 
 if [ "$os" = "Darwin" ]; then
     cflags="${cflags} -m32 -mdynamic-no-pic -arch i386 -arch ppc"
-    ldflags="${ldflags} -m32 -arch i386 -arch ppc"
+    ldflags="${ldflags} -m32 -arch i386 -arch ppc -framework CoreFoundation -framework IOKit"
+    archobjs="usb-darwin.o"
 fi
-if [ "$os" = "Linux" -a "$cpu" = "x86_64" ]; then
-    cflags="${cflags} -m32"
-    ldflags="${ldflags} -m32"
+if [ "$os" = "Linux" ]; then
+    archobjs="usb-linux.o"
+    if [ "$cpu" = "x86_64" ]; then
+        cflags="${cflags} -m32"
+        ldflags="${ldflags} -m32"
+    fi
 fi
 
 # Figure out which version of sed we're running, so we can properly specify
@@ -69,6 +64,14 @@ Found BSD sed; using "-E" for extended regular expressions.
 EOF
   sedext="-E"
 fi
+
+# Now, put all our variables into an "architecture-specific" make file.
+cat <<EOT > arch.mk
+SEDEXT=     ${sedext}
+ARCH_C=     ${cflags}
+ARCH_LD=    ${ldflags}
+ARCHOBJS=   ${archobjs}
+EOT
 
 # fix up use of sed in scripts/do_sed.sh
 sed ${sedext} \
@@ -93,10 +96,6 @@ Then run your BSD make.
 
 EOF
   sed ${sedext} \
-    -e "s/%sedext%/${sedext}/g" \
-    -e "s/%archcflags%/${cflags}/g" \
-    -e "s/%archldflags%/${ldflags}/g" \
-    -e "s#%libusb%#${libusb}#g" \
     -f scripts/make.sed \
     -f scripts/gnu-make.sed \
     -e 's/^### Makefile/### GNU Makefile/' Makefile.in > Makefile
@@ -111,10 +110,6 @@ Then type "gmake" instead of "make".
 
 EOF
   sed ${sedext} \
-    -e "s/%sedext%/${sedext}/g" \
-    -e "s/%archcflags%/${cflags}/g" \
-    -e "s/%archldflags%/${ldflags}/g" \
-    -e "s#%libusb%#${libusb}#g" \
     -f scripts/make.sed \
     -e 's/^### Makefile/### BSD Makefile/' Makefile.in > Makefile
 fi
