@@ -93,6 +93,8 @@ variable chat-sp     ( current value of target's SP)
    cr  ." V--HINZC  A  H  X   SP   PC"
    cr  .CC c@ .bits8 space  .A .b  .H .b  .X .b  chat-sp @ .hcell_  .PC .w ;
 
+-- : .x  ( like .s)  .X c@ du ;
+
 : put-chunk  ( 'target len - 'target+len)
    2dup + push  over image+  t.WriteChunk  pop ;
 
@@ -174,99 +176,6 @@ key: i  ( a - a 0)  ['] i-skip  advance!
                    ['] 1dis    inspect ;
 
 
-( XXX these are only temporary - as is this whole file. ;-)
-( Borrowed from target/HC08/meta, which was copied from ARM.)
-
-( The various token consumers for each mode.)
-
--:  ."  (assembling)"  ;
--:
-    .assembler. find  if  execute  ^  then
-       .labels. find  if  execute  ^  then  ( equates are in .labels.)
-         .meta. find  if  execute  ^  then
-        .forth. find  if  execute  ^  then  ( utility words in .forth.)
-                                            number ;
-mode __asm
-
-
--:  ."  (compiling an assembler macro)"  ;
--:
-     .compiler. find  if  execute  ^  then  ( compiler's if/then/begin ...)
-    .assembler. find  if  ,  ^        then  ( ... trump the the assembler's)
-       .labels. find  if  ,  ^        then  ( equates are in .labels.)
-         .meta. find  if  ,  ^        then
-        .forth. find  if  ,  ^        then  ( utility words in .forth.)
-                                            number literal ;
-mode __macro
-
-
-( The meta-interpreter. We're in this mode when we're building the target
-  image, and when in between [ and ] when running the target colon
-  compiler.)
-
--:  ."  (meta)"  ;
--:
-         .meta. find  if  execute  ^  then
-       .labels. find  if  execute  ^  then  ( equates are in .labels.)
-        .forth. find  if  execute  ^  then
-                                            number ;
-mode __meta
-
-
-: macro  current preserve  assembler       :   __macro ;
-
-assembler
-: ;c   __meta ;
-
-compiler
-: ;m   \ ^  __meta ;  ( to exit from macro compilation)
-
-meta
-: __host  \ [ ;  ( return to host forth mode)
-: name   current preserve  target  \m here constant ;
-
-: label   \m here  equ  __asm ;
-
-( XXX Should I assume space for stack? Things are bad _before_ we've come
-  to the actual end of RAM...)
-
-: var   ( bytes)
-   'ram @  dup equ  +  dup 'ram ! ( allot)
-   @ram #ram +  swap u<  if error" No available ram"  then ;
-
-forth
-: ?zpage  if error" No available zero-page ram" then ;
-meta
-
-: zvar  ( bytes)
-   'zram @  dup equ  +  dup 'zram ! ( allot)
-   'xram @ swap u< ?zpage ;
-
-: xvar  ( bytes)
-   'xram @  swap -  dup equ  dup 'xram ! ( allot)
-   'zram @ u< ?zpage ;
-
-: code    \m name   __asm ;
-
-: '  .target. chain' execute ;  ( target words are constants!)
-
-( For forward references)
-: forward    "100 \a ) \a jmp  \m label ;
-: resolve>>  ( src)  \m here  swap 2 -  image-! ;
-
-: .x  ( like .s)  .X c@ du ;
-
-"0fffe constant Vreset  ( even though the chips will all re-define this...)
-forth
-variable vector-offset  ( 0 if vectors not relocated)
-: reloc-vector  ( offset - offset')
-   dup \m Vreset = if ^ then  ( reset doesn't get relocated)
-   vector-offset @ +a ;
-
-meta
-: handler  ( vector-offset)
-   reloc-vector  \m here swap  image-!  __asm ;
-
 forth
 : .r   .regs ;
 
@@ -276,46 +185,11 @@ forth
 : runwait   _runwait  .regs ;
 : call  pc!  runwait ;
 
-: 'reset   \m Vreset image-@ ;
+: 'reset   \l Vreset image-@ ;
 : reset    'reset  call ;
 : go       'reset  pc!  _run ;  ( when the code you're calling doesn't speak
                                   the same protocol as running code)
 
-: \m  .meta. chain' execute ;
-: \l  .labels. chain' execute ;
-
-
-( Calculation of FCDIV - flash clock divider [sic])
-
-   -- Set FCDIV - flash clock divider - to match our bus clock
-   -- FCDIV = ceil(busclock/200k) - 1
-
-   -- We leave off the - 1 to slow the flash a bit. Insurance against our
-   -- clock being a bit fast... better to have the flash clock run a bit
-   -- slow than too fast.
-
--- XXX complete crock #42: this belongs in the meta compiler... which
--- doesn't exist yet!
--- We're trying the divide the bus clock down to between 150kHz and 200kHz,
--- to drive the flash programming machinery. We need to calculate a divider
--- that works. One caveat: if the calculated value is > 63, set a bit that
--- first divides the bus clock by 8 before dividing by our divider
--- (actually, our divider + 1).
-
-: _fcdiv   ( divisor - fcdiv)
-   dup 64 u< not if
-      ( too big - round up and divide by 8)  7 + 3 >>
-      ( set "divide by 8" bit)  "40 or
-  then ;
-
-( For most uses: clock speed is in kilohertz - khz.)
-: khz>fcdiv  ( clock-in-khz - fcdiv)
-   199 + 200 /   _fcdiv ;
-
-( For more resolution: clock speed is input in hundreds of hertz -
-  hectahertz - hhz.)
-: hhz>fcdiv  ( clock-in-hhz - fcdiv)
-   1999 +  2000 /  _fcdiv ;
 
 ( Getting ready to test interactively - time for a real meta-compiler!)
 
@@ -338,10 +212,8 @@ meta
 : .s  .s ;
 : du   du ;
 : dis  dis ;
-: __meta  __meta ;  ( XXX something shorter?)
 
 forth
-
 : stack>  ( "push" stack to target)
    depth 8 min  ( more than that would be silly)
    \m s0 over \m cells -  dup \m sp! ( top of D stack) t.SetAddr
@@ -363,113 +235,3 @@ forth
     .target. find  if  execute  remote  ^  then
                                                  number ;
 mode __target
-
-
--- ------------------------------------------------------------------------
--- Stack layout
--- ------------------------------------------------------------------------
-
-( To make use of literals easier, we keep two "scratch" bytes allocated on
-  the D stack, at 0,x and 1,x. Below this is top, and below that, second.
-  Like this:
-
-     |      |      |
-     +------+------+
-  4  |  sh  |  sl  |  5   second
-     +------+------+
-  2  |  th  |  tl  |  3   top
-     +------+------+
-  0  |  xh  |  xl  |  1   scratch
-     +------+------+
-)
-
-macro sl  5 ,x  ;
-macro sh  4 ,x  ;
-macro tl  3 ,x  ;
-macro th  2 ,x  ;
-macro xl  1 ,x  ;
-macro xh  0 ,x  ;
-
-( And for double-length values:)
-
-macro ds0  9 ,x  ;  ( double second, lsb)
-macro ds1  8 ,x  ;
-macro ds2  7 ,x  ;
-macro ds3  6 ,x  ;  ( double second, msb)
-macro dt0  5 ,x  ;  ( double top, lsb)
-macro dt1  4 ,x  ;
-macro dt2  3 ,x  ;
-macro dt3  2 ,x  ;  ( double top, msb)
-
-
--- ------------------------------------------------------------------------
--- Literal loading.
--- ------------------------------------------------------------------------
---
--- The low half is put into A, the high half into xh - 0,x, on the data
--- stack.
---
--- If high half and low half are equal and non-zero,
---    half # lda  xh sta  ( 3 bytes)
--- Otherwise:
---
--- High half:
--- If hi =  0, xh clr          ( 1 byte)
--- If hi =  1, xh clr  xh inc  ( 2 bytes)
--- If hi = -1, xh clr  xh dec  ( 2 bytes)
--- Otherwise, #hi lda  xh sta  ( 3 bytes)
---
--- Low half:
--- If lo = 0,  .a clr   ( 1 byte)
--- Otherwise,  #lo lda  ( 2 bytes)
--- ------------------------------------------------------------------------
-
-( XXX should these be macros?)
-: hi-lit  ( hi)
-   dup     0= if  drop  \a xh \a clr  ^  then
-   dup    1 = if  drop  \a xh \a clr  \a xh \a inc  ^  then
-   dup "0ff = if  drop  \a xh \a clr  \a xh \a dec  ^  then
-   \a # \a lda  \a xh  \a sta ;
-
-: lo-lit  ( lo)
-   =if  \a # \a lda  ^  then  drop  \a .a \a clr ;
-
-: make-literal  ( n)
-   >lohi  2dup = if  =if  ( if hi & lo are equal and non-zero)
-      drop  \a # \a lda  \a xh  \a sta  ^  then  then
-   hi-lit  lo-lit ;
-
-( XXX push-literal?)
-macro _dpush  ( A -> tl, xh -> th)
-   -2 # aix ( xh -> th)  tl sta  ;
-
-( XXX pop-literal?)
-macro _dpop   ( tl -> A, th -> xh)
-   tl lda  2 # aix  ( th -> xh)  ;
-
-variable pending-lit  ( literal waiting on the stack)
-: ?lit  pending-lit @ if  make-literal \a _dpush  pending-lit off  then ;
-meta
-: number  ( the target version)
-   ?lit  \f number  pending-lit on ;
-: compile,  ( target-cfa)
-   ?lit  \a c ( compile call) ;
-
-meta-compiler
-( Support for binops with special "immediate" - ie, literal - entry
-  points.)
-
-.ifdef not-yet
-+
-and
-or
-xor
-: -  negate  \mc + ;  ( we don't have a special subtract; use add instead!)
-u<
-<
-.then
-
-macro pshhx  .x psh  .h psh  ;m
-macro pulhx          .h pul  .x pul  ;m
-
-forth
