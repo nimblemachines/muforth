@@ -178,7 +178,99 @@ code !  ( word a)
                         2 ,s lda  0 ,x sta ( hi)  pulhx
    .a pul  4 # aix  rts  ;c
 
+ram
+
+( do, loop, +loop)
+
+( do/loop stack frame on S:
+
+     |       |       |
+     +-------+-------+
+  4  |  ixh  |  ixl  |  5   index == 8000 + start-limit to 8000
+     +-------+-------+
+  2  |  deh  |  del  |  3   delta == 8000 + limit
+     +-------+-------+
+  0  |  rah  |  ral  |  1   return address
+     +-------+-------+
+)
+
+
+( Note: caller has to do -4 # ais before calling (do)
+code (do)   ( limit start)
+   _dpop  ( tl -> A, th -> xh)
+label #(do)
+           tl sub  5 ,s sta
+   th lda  "80 # eor  th sta  ( delta = "8000 + limit)
+   xh lda  th sbc  4 ,s sta   ( index = start-delta)
+   _r j  ( Move last to R. This has to be a _jump_!!)  ;c
+
+( XXX rethink dpush - aka push-literal?)
+code i
+   ( Push index + delta of inner do loop.)
+   3 ,s lda  5 ,s add  xl sta  2 ,s lda  4 ,s adc
+label push-result
+   -2 # aix  th sta  rts  ;c
+
+code j
+   ( Push index + delta of second enclosing do loop.)
+   7 ,s lda  9 ,s add  xl sta  6 ,s lda  8 ,s adc
+   push-result j  ;c
+
+( Note: caller has to do 4 # ais after calling (loop or (+loop)
+code (+loop)  ( incr)
+   _dpop
+label #(+loop)
+   ( Add incr to index; overflow means we've crossed threshold)
+   ( Be careful: sta clears V bit!)
+           5 ,s add  5 ,s sta
+   xh lda  4 ,s adc  .a psh  tpa .a rol ( V -> C)
+   .a pul  4 ,s sta  rts  ;c
+
+code (loop)
+   ( Add one to index; overflow means we've crossed threshold)
+   xh clr  1 # lda  ( load constant 1)  #(+loop) j  ;c
+
+( for, next)
+-- code (for)  ( this is just >r, right?)
+
+( XXX change if I decide to have tests only set CC and _not_ create a value
+  on the stack represeting the flag.)
+code (next)
+   ( Decrement count on S stack.)
+   3 ,s lda  1 # sub  3 ,s sta
+   2 ,s lda  0 # sbc  2 ,s sta
+   3 ,s ora  1 # sub ( Z -> C)  rts  ;c
+
+.ifdef loop-tests
+code do+  ( limit index)
+   -4 # ais  ' (do) c
+   begin  ' i c  ' (loop) c  CS until
+    4 # ais  rts  ;c
+
+code do-  ( limit index)
+   -4 # ais  ' (do) c
+   begin  ' i c  -1 # lda  xh sta  #(+loop) c  CS until
+    4 # ais  rts  ;c
+
+code dodo
+   -- 4 0 do   16 0 do  i j xor  loop  4 +loop ;
+   xh clr   4 # lda  dpush c
+   xh clr   0 # lda  -4 # ais  #(do) c  begin
+   xh clr  16 # lda  dpush c
+   xh clr   0 # lda  -4 # ais  #(do) c  begin
+   ' i c  ' j c  ' xor c
+    4 # lda  xh clr  #(+loop) c  CS until  4 # ais
+                     ' (loop) c  CS until  4 # ais
+   rts  ;c
+
+code for
+   -2 # ais  _r c
+   begin  r_ c  ' (next) c  CS until
+    2 # ais  rts  ;c
+
 .then
+
+flash
 
 ( Test make-literal)
 hex
