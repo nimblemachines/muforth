@@ -322,40 +322,36 @@ forth
 ( NOTE: top cell of target stack is _scratch_ - so allocate it but don't
   copy it back and forth.)
 
-.ifndef one-byte-scratch
 2 constant #scratch  ( number of "scratch" bytes on top of target stack)
-: ReadStackW   t.ReadW ;
-: WriteStackW  t.WriteW ;
-.else
-1 constant #scratch  ( number of "scratch" bytes on top of target stack)
-( These have to be little-endian!)
-: ReadStackW              t.Read  t.Read swap hilo> ;
-: WriteStackW  >lohi swap t.Write t.Write ;
-.then
 
 meta
-: r0  @ram #ram + ;  ( bottom of target's R stack)
+: r0  chat-sp @ ;    ( bottom of target's R stack)
 : s0  \m r0  64 - ;  ( bottom of target's D stack; room for 32 values on R)
+: sp!  ( target-sp)    #scratch -  hx! ;
+: sp@  ( - target-sp)              hx@  #scratch + ;
 : cell   2  ;
 : cell/  2/ ;
 : cells  2* ;
-: depth  \m s0 hx@ #scratch +  -  \m cell/ ;
+: depth  \m s0 \m sp@ -  \m cell/ ;
 : u.  u. ;
 : .  . ;
+: .s  .s ;
 : du   du ;
 : dis  dis ;
+: __meta  __meta ;  ( XXX something shorter?)
 
 forth
+
 : stack>  ( "push" stack to target)
    depth 8 min  ( more than that would be silly)
-   \m s0 over \m cells -  dup #scratch -  hx! ( top of D stack) t.SetAddr
-   ?for  WriteStackW  next  then ( copy each cell as a word to D stack) ;
+   \m s0 over \m cells -  dup \m sp! ( top of D stack) t.SetAddr
+   ?for  t.WriteW  next  then  ( copy each cell as a word to D stack) ;
  
 ( XXX should this set hx when done?)
 : stack<  ( "pop" stack from target)
    \m depth 0 max 8 min  ( more than that would be silly)  =if
-   hx@ #scratch + t.SetAddr  dup ( depth)
-   for  ReadStackW  pop 2push  next  ( starting with top, push to R)
+   \m sp@ t.SetAddr  dup ( depth)
+   for  t.ReadW  pop 2push  next  ( starting with top, push to R)
    for  2pop push  next  ( pop from R to reverse order)  ^  then  drop ;
 
 : remote  ( cfa)  ( execute target word on stack)
@@ -372,8 +368,6 @@ mode __target
 -- ------------------------------------------------------------------------
 -- Stack layout
 -- ------------------------------------------------------------------------
-
-.ifndef one-byte-scratch
 
 ( To make use of literals easier, we keep two "scratch" bytes allocated on
   the D stack, at 0,x and 1,x. Below this is top, and below that, second.
@@ -407,44 +401,6 @@ macro t1  4 ,x  ;
 macro t2  3 ,x  ;
 macro t3  2 ,x  ;  ( top, msb)
 
-.else  ( use one byte of "scratch" space on D stack)
-
-( To make use of literals easier, we keep one "scratch" byte allocated on
-  the D stack, at 0,x. Below this is top, and below that, second. Like
-  this:
-
-     |      |      |
-     +------+------+
-  4  |  sh  |  sl  |  3   second
-     +------+------+
-  2  |  th  |  tl  |  1   top
-     +------+------+
-  0  |  xh  |  xl  | -1   scratch [xl generally unused]
-     +------+------+
-
-  An odd feature of this arrangement is that the data stack is
-  little-endian, so we cannot use 16-bit instructions - like ldhx - to
-  access it.)
-
-macro sh  4 ,x  ;
-macro sl  3 ,x  ;
-macro th  2 ,x  ;
-macro tl  1 ,x  ;
-macro xh  0 ,x  ;
-macro xl -1 ,x  ;
-
-( And for double-length values:)
-
-macro s0  7 ,x  ;  ( second, lsb)
-macro s1  8 ,x  ;
-macro s2  5 ,x  ;
-macro s3  6 ,x  ;  ( second, msb)
-macro t0  3 ,x  ;  ( top, lsb)
-macro t1  4 ,x  ;
-macro t2  1 ,x  ;
-macro t3  2 ,x  ;  ( top, msb)
-
-.then
 
 -- ------------------------------------------------------------------------
 -- Literal loading.
