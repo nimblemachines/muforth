@@ -228,58 +228,94 @@ macro dt3  2 ,x ;  ( double top, msb)
 -- Otherwise, #hi lda  xh sta  ( 3 bytes)
 --
 -- Low half:
--- If lo = 0,  .a clr   ( 1 byte)
--- Otherwise,  #lo lda  ( 2 bytes)
+-- If lo =  0, .a clr  ( 1 byte)
+-- Otherwise, #lo lda  ( 2 bytes)
 -- ------------------------------------------------------------------------
 
-: hi-lit  ( hi)
-   dup     0= if  drop  asm{ xh clr } ^  then
-   dup    1 = if  drop  asm{ xh clr  xh inc } ^  then
-   dup "0ff = if  drop  asm{ xh clr  xh dec } ^  then
-   asm{ # lda  xh sta } ;
+: load-hi  ( hi)
+   dup              0= if  drop  asm{ xh clr } ^  then
+   dup             1 = if  drop  asm{ xh clr  xh inc } ^  then
+   dup "0ff and "0ff = if  drop  asm{ xh clr  xh dec } ^  then
+                                 asm{  # lda  xh sta } ;
 
-: lo-lit  ( lo)
-   =if  asm{ # lda } ^  then  drop  asm{ .a clr } ;
+: load-lo  ( lo)
+    =if  asm{  # lda } ^  then
+   drop  asm{ .a clr } ;
 
-: make-literal  ( n)
+: load-literal  ( n)
    >lohi  2dup = if  =if  ( if hi & lo are equal and non-zero)
       drop  asm{ # lda  xh sta } ^  then  then
-   hi-lit  lo-lit ;
+   load-hi  load-lo ;
 
-( XXX push-literal?)
-macro _dpush  ( A -> tl, xh -> th)
+( With a literal in A and xh, push it onto the D stack.)
+macro push-literal  ( A -> tl, xh -> th)
    -2 # aix ( xh -> th)  tl sta ;
 
-( XXX pop-literal?)
-macro _dpop   ( tl -> A, th -> xh)
+( Pop top of D stack into A and xh, just as if they were loaded by
+  load-literal. This is used to make versions of binary operations that
+  work either with true literals, or with a value sitting on the D stack.)
+
+macro pop-literal   ( tl -> A, th -> xh)
    tl lda  2 # aix  ( th -> xh) ;
 
-variable pending-lit  ( literal waiting on the stack)
-: ?lit  pending-lit @ if  make-literal \a _dpush  pending-lit off  then ;
+: called  ( target-addr - dest-addr)
+   dup image-c@  ( op)
+   dup "ad = if ( bsr)  drop  dup 1+ image-c@ ( offset)  sext  2 + +a ^ then
+   dup "bd = if ( jsr dir)  drop  1+ image-c@ ^  then
+   dup "cd = if ( jsr ext)  drop  1+ image-@  ^  then
+   drop  error" weird call opcode" ;
+
+variable last-call
+: call!  \m here  last-call ! ;
+: ?retreat  ( addr f)  =if  swap  org ^  then  nip ;
+: lit?   last-call @  dup image-c@ "af ( aix) =  ?retreat ;
+: flag?  last-call @  dup called  "0ffff ( make-flag) =  ?retreat ;
+
 meta
-: number  ( the target version)
-   ?lit  \f number  pending-lit on ;
-: compile,  ( target-cfa)
-   ?lit  \a c ( compile call) ;
+: literal  ( n)  asm{  load-literal }
+          call!  asm{  push-literal } ;
 
-.ifdef not-yet
-meta-compiler
-( Support for binops with special "immediate" - ie, literal - entry
-  points.)
-
-+
-and
-or
-xor
-: -  negate  \mc + ;  ( we don't have a special subtract; use add instead!)
-u<
-<
-+loop
+: compile,  ( target-cfa)  call!  \a c  ( compile a call) ;
 
 forth
-.then
+: litop,  lit?  if  cell+  then  @  \m compile, ;
+: _litop  current preserve  meta-compiler  create  __asm ;
 
-.then  ( ifdef threaded)
+meta
+: litop
+   _litop
+      \m here  ( normal entry point)  ,
+      asm{  pop-literal }
+      \m here  ( literal entry point)  ,
+   does>  litop, ;
+   
+: relop
+   _litop
+      \m here  ( literal entry point)
+      asm{  push-literal }
+      \m here  ( normal entry point)  ,  ,
+   does>  litop,  "0ffff ( make-flag)  \m compile, ;
+
+meta-compiler
+-- : ;   p, ^  __meta ;  ( p, will call compile, which will call ?pending)
+: ;  "0eeee \m compile,  __meta ;  ( for testing)
+
+forth
+
+.then  ( non-threaded)
+
+
+( Finally, we have the definition of the meta-compiler's colon compiler.)
+
+-:  ."  (compiling a target colon word)"  ;
+-:  .meta-compiler. find  if  execute  ^  then
+           .target. find  if  execute  \m compile, ^  then
+                                                 number  \m literal ;
+mode __target-colon
+
+meta
+: ::  __target-colon ;  ( for testing)
+forth
 
 
 macro pshhx  .x psh  .h psh         ;

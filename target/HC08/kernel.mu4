@@ -15,11 +15,11 @@ macro _drop  2 # aix  ;m
 code dup  ( a - a a)
    th lda  xh sta  tl lda  ( fall through)
 
-label dpush
-   _dpush  rts  ;c
+label push-lit
+   push-literal  rts  ;c
 
 code over  ( a b - a b a)
-   sh lda  xh sta  sl lda  dpush j  ;c
+   sh lda  xh sta  sl lda  push-lit j  ;c
 
 code nip  ( a b - b)
    tl lda  sl sta  th lda  sh sta  ( top -> sec)  ( fall through)  ;c
@@ -36,7 +36,7 @@ label _r  ( move to R; needs to be room above return address)
    th lda  2 ,s sta  tl lda  3 ,s sta  ' drop j  ;c
 
 label r_  ( copy from R; needs to be value above return address)
-   2 ,s lda  xh sta  3 ,s lda  dpush j  ;c
+   2 ,s lda  xh sta  3 ,s lda  push-lit j  ;c
 
 ( >r aka push will _compile_ -2 # ais, then call to _r )
 ( r> aka pop will _compile_ call to r_, then 2 # ais )
@@ -48,6 +48,38 @@ code rot   ( a b c - b c a)
    -- : rot  >r swap  r< swap ;
    -2 # ais  _r c  ' swap c  r_ c  2 # ais  ' swap j  ;c
 
+
+( Relational operators.)
+label make-flag  ( C -> -1, NC -> 0)
+   .a clr  0 # sbc  xh sta  push-lit j  ;c
+
+code 0=
+   tl lda  th ora  1 # sub ( Z -> C)  begin  begin  2 # aix  rts  ;c
+
+code 0<
+   th lsl ( N -> C)  again  ;c
+
+label compare  ( subtract top from second, but don't save the result)
+   sl lda  tl sub  sh lda  th sbc  again  ;c
+
+( u< and < require that we first push literal values; there is no
+  "shortcut" like with the other 2ops, because the values are in the wrong
+  order!)
+
+( relop's are backwards from litops: the immediate entry is first,
+  followed by push-literal, followed by normal entry.)
+
+relop u<
+ code u<
+   compare j  ;c
+
+relop <
+ code <
+   compare c  < if  sec  rts  ( true)  then
+                    clc  rts  ( false)  ;c
+
+
+( Unary ops.)
 code invert
    tl com  th com  rts  ;c
 
@@ -58,46 +90,34 @@ code dnegate
    sl neg         .a clr  sh sbc  sh sta
                   .a clr  tl sbc  tl sta  again  ;c
 
-( XXX A few test literals.)
-code #0
-   xh clr  .a clr  rts  ;c
-
-code #-1
-   "0ff # lda  xh sta  rts  ;c
-
-code #smax
-   "7f # lda  xh sta  "0ff # lda  rts  ;c
-
-code #smin
-   "80 # lda  xh sta  .a clr  rts  ;c
-
 ( Binary ops.)
 code -
    ' negate c  ( fall thru)  ;c
 
-code +
-   _dpop
-label #+
+( litop compiles two entry points: the first is the normal one that expects
+  both values on the stack; the second expects the top value as a literal,
+  in A and xh. Between the two entry points litop compiles  pop-literal  .)
+
+ code +
+litop +
            tl add  tl sta
    xh lda  th adc  th sta  rts  ;c
 
-code and
-   _dpop
-label #and
+ code and
+litop and
            tl and  tl sta
    xh lda  th and  th sta  rts  ;c
 
-code or
-   _dpop
-label #or
+ code or
+litop or
            tl ora  tl sta
    xh lda  th ora  th sta  rts  ;c
 
-code xor
-   _dpop  ( tl -> A, th -> xh, second -> top)
-label #xor
+ code xor
+litop xor
            tl eor  tl sta
    xh lda  th eor  th sta  rts  ;c
+
 
 ( Basic double-length - 32-bit - support.)
 code d-
@@ -108,34 +128,6 @@ code d+
    ds1 lda  dt1 adc  ds1 sta
    ds2 lda  dt2 adc  ds2 sta
    ds3 lda  dt3 adc  ds3 sta  4 # aix  rts  ;c
-
-( Flags and tests.)
-code 0=
-   tl lda  th ora  1 # sub ( Z -> C)  ( fall thru)
-
-label makeflag  ( C -> -1, NC -> 0)
-   .a clr  0 # sbc  tl sta  th sta  rts  ;c
-
-code 0<
-   th lsl ( N -> C)  makeflag j  ;c
-
-label compare  ( subtract top from second, but don't save the result)
-   sl lda  tl sub  sh lda  th sbc  2 # aix  rts  ;c
-
-( u< and < require that we first push literal values; there is no
-  "shortcut" like with the other 2ops, because the values are in the wrong
-  order!)
-
-label #u<
-   _dpush  ( 1 byte longer than a call; a lot faster - 12~?)
-code u<
-   compare c  makeflag j  ;c
-
-label #<
-   _dpush  ( 1 byte longer than a call; a lot faster - 12~?)
-code <
-   compare c  < if  sec  makeflag j  ( true)  then
-                    clc  makeflag j  ( false)  ;c
 
 ( Shifts.)
 code 2*
@@ -177,7 +169,6 @@ code !  ( word a)
                         2 ,s lda  0 ,x sta ( hi)  pulhx
    .a pul  4 # aix  rts  ;c
 
-ram
 
 ( do, loop, +loop)
 
@@ -195,15 +186,14 @@ ram
 
 
 ( Note: caller has to do -4 # ais before calling (do)
-code (do)   ( limit start)
-   _dpop  ( tl -> A, th -> xh)
-label #(do)
+ code (do)   ( limit start)
+litop (do)
+label #(do)  -- for test code
            tl sub  5 ,s sta
    th lda  "80 # eor  th sta  ( delta = "8000 + limit)
    xh lda  th sbc  4 ,s sta   ( index = start-delta)
    _r j  ( Move last to R. This has to be a _jump_!!)  ;c
 
-( XXX rethink dpush - aka push-literal?)
 code i
    ( Push index + delta of inner do loop.)
    3 ,s lda  5 ,s add  xl sta  2 ,s lda  4 ,s adc
@@ -216,9 +206,9 @@ code j
    push-result j  ;c
 
 ( Note: caller has to do 4 # ais after calling (loop or (+loop)
-code (+loop)  ( incr)
-   _dpop
-label #(+loop)
+ code (+loop)  ( incr)
+litop (+loop)
+label #(+loop)  -- for test code, and (loop)
    ( Add incr to index; overflow means we've crossed threshold)
    ( Be careful: sta clears V bit!)
            5 ,s add  5 ,s sta
@@ -241,6 +231,7 @@ code (next)
    3 ,s ora  1 # sub ( Z -> C)  rts  ;c
 
 .ifdef loop-tests
+ram
 code do+  ( limit index)
    -4 # ais  ' (do) c
    begin  ' i c  ' (loop) c  CS until
@@ -253,9 +244,9 @@ code do-  ( limit index)
 
 code dodo
    -- 4 0 do   16 0 do  i j xor  loop  4 +loop ;
-   xh clr   4 # lda  dpush c
+   xh clr   4 # lda  push-lit c
    xh clr   0 # lda  -4 # ais  #(do) c  begin
-   xh clr  16 # lda  dpush c
+   xh clr  16 # lda  push-lit c
    xh clr   0 # lda  -4 # ais  #(do) c  begin
    ' i c  ' j c  ' xor c
     4 # lda  xh clr  #(+loop) c  CS until  4 # ais
@@ -267,21 +258,28 @@ code for
    begin  r_ c  ' (next) c  CS until
     2 # ais  rts  ;c
 
+flash
 .then
 
-flash
-
-( Test make-literal)
+.ifdef test-literals
+ram
+( Test load-literal)
 hex
-0 make-literal
-0ca make-literal
-0ff make-literal
-0ff00 make-literal
-5555 make-literal
-0134 make-literal
-0babe make-literal
+
+0 load-literal
+0ca load-literal
+0ff load-literal
+0ff00 load-literal
+5555 load-literal
+0134 load-literal
+0babe load-literal
 
 decimal
+flash
+.then
+
+
+.ifdef toy-multiply
 
 ( For fun, multiply-by-shifting. So I can compare with multiply using the
   built-in 8x8->16 instruction.)
@@ -302,6 +300,8 @@ code smul  ( s8_multiplier u8_multiplicand - s16)
    tl lda ( multiplier)  .a lsr ( lo bit into C)
    xh lda ( accum hi)  CS if  xl sub ( multiplicand)  then
    .a ror  th sta ( shift accum)  tl ror ( shift multiplier)  rts  ;c
+
+.then  ( toy multiply)
 
 ( Correct version)
 code um*  ( umer umcand - uprodlo uprodhi)
