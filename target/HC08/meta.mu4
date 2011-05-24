@@ -9,9 +9,6 @@ loading HC08 Meta-compiler (main)
 
 -- from interact ----------------------------------------------------------
 
-( XXX these are only temporary - as is this whole file. ;-)
-( Borrowed from target/HC08/meta, which was copied from ARM.)
-
 ( The various token consumers for each mode.)
 
 -:  ."  (assembling)"  ;
@@ -23,7 +20,6 @@ loading HC08 Meta-compiler (main)
                                             number ;
 mode __asm
 
-
 -:  ."  (compiling inlne assembler)"  ;
 -:
      .compiler. find  if  execute  ^  then  ( need } and ; to exit this mode)
@@ -33,7 +29,6 @@ mode __asm
         .forth. find  if  ,  ^        then  ( utility words in .forth.)
                                             number literal ;
 mode __inline-asm
-
 
 ( The meta-interpreter. We're in this mode when we're building the target
   image, and when in between [ and ] when running the target colon
@@ -47,8 +42,35 @@ mode __inline-asm
                                             number ;
 mode __meta
 
+( __meta-colon is for compiling new words that are part of the meta-compiler.
+  __meta-colon is to __meta as __inline-asm is to __asm.)
 
-: macro  current preserve  assembler  :  __inline-asm ;
+-:  ."  (compiling a meta colon word)" ;
+-:
+     .compiler. find  if  execute  ^  then
+         .meta. find  if  ,        ^  then
+       .labels. find  if  ,        ^  then  ( equates are in .labels.)
+        .forth. find  if  ,        ^  then  ( utility words in .forth.)
+                                            number literal ;
+mode __meta-colon
+
+
+( Define useful colon compilers:
+      meta:  for defining new target defining words!
+  compiler:  for defining meta-compiler words
+
+  We define the another colon compiler - the actual target colon - in the
+  kernel, using our meta-defining words!)
+
+meta
+
+: meta:           current preserve  meta            :  __meta-colon ;
+: host-compiler:  current preserve       compiler   :  __meta-colon ;
+: meta-compiler:  current preserve  meta-compiler   :  __meta-colon ;
+
+forth
+
+: macro           current preserve       assembler  :  __inline-asm ;
 
 compiler
 : asm{  __inline-asm ;  ( enter inline assembler mode)
@@ -325,67 +347,6 @@ macro pulhx          .h pul  .x pul ;
 -- from interact (end) ----------------------------------------------------------
 
 .ifdef later-gator
-
-( The various token consumers for each mode.)
-
--:  ."  (assembling)"  ;
--:
-    .assembler. find  if  execute  ^  then
-       .labels. find  if  execute  ^  then  ( equates are in .labels.)
-         .meta. find  if  execute  ^  then
-        .forth. find  if  execute  ^  then  ( utility words in .forth.)
-                                            number ;
-mode __asm
-
-
--:  ."  (compiling an assembler macro)"  ;
--:
-     .compiler. find  if  execute  ^  then  ( compiler's if/then/begin ...)
-    .assembler. find  if  compile, ^  then  ( ... trump the the assembler's)
-       .labels. find  if  compile, ^  then  ( equates are in .labels.)
-         .meta. find  if  compile, ^  then
-        .forth. find  if  compile, ^  then  ( utility words in .forth.)
-                                            number literal ;
-mode __macro
-
-
-( The meta-interpreter. We're in this mode when we're building the target
-  image, and when in between [ and ] when running the target colon
-  compiler.)
-
--:  ."  (meta)"  ;
--:
-         .meta. find  if  execute  ^  then
-        .forth. find  if  execute  ^  then
-                                            number ;
-mode __meta
-
-
-( __meta-colon is for compiling new words that are part of the meta-compiler.
-  __meta-colon is to __meta as __macro is to __asm.)
-
--:  ."  (compiling a meta colon word)" ;
--:
-     .compiler. find  if  execute  ^  then
-         .meta. find  if  compile, ^  then
-        .forth. find  if  compile, ^  then  ( utility words in .forth.)
-                                            number literal ;
-mode __meta-colon
-
-
-.ifdef postpone-till-later
-variable 'target-number   ( convert token to a number, specific to target)
-variable 'target-literal  ( compile a target literal)
-
-( Finally, we have the definition of the meta-compiler's colon compiler.)
-
-( Execution behaviour of .target. words is to compile themselves!)
--:  ."  (compiling a target colon word)"  ;
--:  .meta-compiler. find  if  execute  ^  then
-           .target. find  if  execute  ^  then
-           'target-number @execute  'target-literal @execute ;
-mode __target-colon
-.then
 
 meta
 : {    \ [ ;  ( escape back to the host forth)
@@ -692,22 +653,6 @@ meta-compiler
 : do      ( - src dest)   p, (do)     \m >mark  \mc begin ;
 : loop    ( src dest)     p, (loop)   \m >mark  \m <resolve  \mc then ;
 : +loop   ( src dest)     p, (+loop)  \m >mark  \m <resolve  \mc then ;
-forth
-
-( Define useful colon compilers:
-      meta:  for defining new target defining words!
-     macro:  for defining assembler macros
-  compiler:  for defining meta-compiler words
-
-  We define the another colon compiler - the actual target colon - in the
-  kernel, using our meta-defining words!)
-
-meta
-
-: meta:      current preserve  meta       :  __meta-colon ;
-: compiler:  current preserve  compiler   :  __meta-colon ;  ( XXX better name?)
-: macro:                                  :  __macro ;
-
 forth
 
 ( Making [ and ] work, finally.)
