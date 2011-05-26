@@ -49,36 +49,6 @@ code rot   ( a b c - b c a)
    -2 # ais  _r c  ' swap c  r_ c  2 # ais  ' swap j  ;c
 
 
-( Relational operators.)
-label make-flag  ( C -> -1, NC -> 0)
-   .a clr  0 # sbc  xh sta  push-lit j  ;c
-
-code 0=
-   tl lda  th ora  1 # sub ( Z -> C)  begin  begin  2 # aix  rts  ;c
-
-code 0<
-   th lsl ( N -> C)  again  ;c
-
-label compare  ( subtract top from second, but don't save the result)
-   sl lda  tl sub  sh lda  th sbc  again  ;c
-
-( u< and < require that we first push literal values; there is no
-  "shortcut" like with the other 2ops, because the values are in the wrong
-  order!)
-
-( relop's are backwards from litops: the immediate entry is first,
-  followed by push-literal, followed by normal entry.)
-
-relop u<
- code u<
-   compare j  ;c
-
-relop <
- code <
-   compare c  < if  sec  rts  ( true)  then
-                    clc  rts  ( false)  ;c
-
-
 ( Unary ops.)
 code invert
    tl com  th com  rts  ;c
@@ -90,13 +60,14 @@ code dnegate
    sl neg         .a clr  sh sbc  sh sta
                   .a clr  tl sbc  tl sta  again  ;c
 
+
 ( Binary ops.)
 code -
    ' negate c  ( fall thru)  ;c
 
-( litop compiles two entry points: the first is the normal one that expects
-  both values on the stack; the second expects the top value as a literal,
-  in A and xh. Between the two entry points litop compiles  pop-literal  .)
+( litop compiles two entry points: the first expects both values on the
+  stack; the second expects the top value as a literal, in A and xh.
+  Between the two entry points litop compiles  pop-literal  .)
 
  code +
 litop +
@@ -117,6 +88,40 @@ litop or
 litop xor
            tl eor  tl sta
    xh lda  th eor  th sta  rts  ;c
+
+
+( Relational operators.)
+code 0=
+   tl lda  th ora  1 # sub ( Z -> C)  ( fall thru)  ;c
+
+label makeflag  ( C -> -1, NC -> 0)
+   .a clr  0 # sbc  tl sta  th sta  rts  ;c
+
+code 0<
+   th lsl ( N -> C)  makeflag j  ;c
+
+label compare  ( subtract top from second, but don't save the result)
+   sl lda  tl sub  sh lda  th sbc  2 # aix  rts  ;c
+
+( u< and < require that we first push literal values; there is no
+  "shortcut" like with the other 2ops, because the values are in the wrong
+  order!)
+
+( relops are like litops, but have their entry points swapped, with
+  different code in between.
+
+( relop compiles two entry points: the first expects the top value as a
+  literal, in A and xh; the second expects both values on the stack.
+  Between the two entry points litop compiles  push-literal  .)
+
+relop u<
+ code u<
+   compare c  makeflag j  ;c
+
+relop <
+ code <
+   compare c  < if  sec  makeflag j  ( true)  then
+                    clc  makeflag j  ( false)  ;c
 
 
 ( Basic double-length - 32-bit - support.)

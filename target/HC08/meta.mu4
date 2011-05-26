@@ -73,9 +73,9 @@ forth
 : macro           current preserve       assembler  :  __inline-asm ;
 
 compiler
-: asm{  __inline-asm ;  ( enter inline assembler mode)
-: }   -] ;              ( exit inline assembler mode and restart colon compiler)
-: ;m   \ ^  __meta ;    ( exit macro compilation and return to meta-compiler)
+: asm{   __inline-asm ;  ( enter inline assembler mode)
+: }   -] ;               ( exit inline assembler mode and restart colon compiler)
+: ;m   \ ^  __meta ;     ( exit macro compilation and return to meta-compiler)
 
 assembler
 : ;c   __meta ;
@@ -232,6 +232,13 @@ macro dt2  3 ,x ;
 macro dt3  2 ,x ;  ( double top, msb)
 
 
+( Support for looking back at previously compiled code.)
+variable last-code  ( pointer to beginning of last snippet of code)
+: code!   \m here  last-code ! ;
+compiler
+: code{   compile code!  \ asm{ ;
+forth
+
 -- ------------------------------------------------------------------------
 -- Literal loading.
 -- ------------------------------------------------------------------------
@@ -255,18 +262,18 @@ macro dt3  2 ,x ;  ( double top, msb)
 -- ------------------------------------------------------------------------
 
 : load-hi  ( hi)
-   dup              0= if  drop  asm{ xh clr } ^  then
-   dup             1 = if  drop  asm{ xh clr  xh inc } ^  then
-   dup "0ff and "0ff = if  drop  asm{ xh clr  xh dec } ^  then
-                                 asm{  # lda  xh sta } ;
+   dup              0= if  drop  code{  xh clr } ^  then
+   dup             1 = if  drop  code{  xh clr  xh inc } ^  then
+   dup "0ff and "0ff = if  drop  code{  xh clr  xh dec } ^  then
+                                 code{   # lda  xh sta } ;
 
 : load-lo  ( lo)
-    =if  asm{  # lda } ^  then
-   drop  asm{ .a clr } ;
+    =if  code{  # lda } ^  then
+   drop  code{ .a clr } ;
 
 : load-literal  ( n)
    >lohi  2dup = if  =if  ( if hi & lo are equal and non-zero)
-      drop  asm{ # lda  xh sta } ^  then  then
+      drop  code{  # lda  xh sta } ^  then  then
    load-hi  load-lo ;
 
 ( With a literal in A and xh, push it onto the D stack.)
@@ -280,24 +287,33 @@ macro push-literal  ( A -> tl, xh -> th)
 macro pop-literal   ( tl -> A, th -> xh)
    tl lda  2 # aix  ( th -> xh) ;
 
-: called  ( target-addr - dest-addr)
-   dup image-c@  ( op)
+( Since address 0 is in the i/o register range, we will never jsr there, so
+  we can return 0 as "no call found".)
+: called  ( - dest-addr)
+   last-code @ dup  image-c@  ( op)
    dup "ad = if ( bsr)  drop  dup 1+ image-c@ ( offset)  sext  2 + +a ^ then
    dup "bd = if ( jsr dir)  drop  1+ image-c@ ^  then
    dup "cd = if ( jsr ext)  drop  1+ image-@  ^  then
-   drop  error" weird call opcode" ;
+   2drop  0 ;
 
-variable last-call
-: call!  \m here  last-call ! ;
-: ?retreat  ( addr f)  =if  swap  org ^  then  nip ;
-: lit?   last-call @  dup image-c@ "af ( aix) =  ?retreat ;
-: flag?  last-call @  dup called  "0ffff ( make-flag) =  ?retreat ;
+: replace  ( addr jsr-op jmp-op - -1)
+   rot image-c!  drop  -1 ;
+
+: tail?  ( - f)
+   last-code @ dup image-c@  ( op)
+   dup "ad = if ( bsr)      "20 ( bra)      replace ^  then
+   dup "bd = if ( jsr dir)  "bc ( jmp dir)  replace ^  then
+   dup "cd = if ( jsr ext)  "cc ( jmp ext)  replace ^  then
+   2drop  0 ;
+
+: ?retreat  ( f)  =if  last-code @  org ^  then ;
+: lit?   last-code @  image-c@ "af ( aix) =  ?retreat ;
 
 meta
-: literal  ( n)  asm{  load-literal }
-          call!  asm{  push-literal } ;
+: literal  ( n)  code{  load-literal }
+                 code{  push-literal } ;
 
-: compile,  ( target-cfa)  call!  \a c  ( compile a call) ;
+: compile,  ( target-cfa)  code{  c }  ( compile call) ;
 
 forth
 : litop,  lit?  if  cell+  then  @  \m compile, ;
@@ -306,17 +322,17 @@ forth
 meta
 : litop
    _litop
-      \m here  ( normal entry point)  ,
-      asm{  pop-literal }
+      \m here  ( stack entry point)  ,
+      code{  pop-literal }
       \m here  ( literal entry point)  ,
    does>  litop, ;
    
 : relop
    _litop
       \m here  ( literal entry point)
-      asm{  push-literal }
-      \m here  ( normal entry point)  ,  ,
-   does>  litop,  "0ffff ( make-flag)  \m compile, ;
+      code{  push-literal }
+      \m here  ( stack entry point)  ,  ,
+   does>  litop, ;
 
 meta-compiler
 -- : ;   p, ^  __meta ;  ( p, will call compile, which will call ?pending)
