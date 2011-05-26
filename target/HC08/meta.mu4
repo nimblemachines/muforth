@@ -7,8 +7,6 @@
 loading HC08 Meta-compiler (main)
 
 
--- from interact ----------------------------------------------------------
-
 ( The various token consumers for each mode.)
 
 -:  ."  (assembling)"  ;
@@ -23,10 +21,10 @@ mode __asm
 -:  ."  (compiling inlne assembler)"  ;
 -:
      .compiler. find  if  execute  ^  then  ( need } and ; to exit this mode)
-    .assembler. find  if  ,  ^        then
-       .labels. find  if  ,  ^        then  ( equates are in .labels.)
-         .meta. find  if  ,  ^        then
-        .forth. find  if  ,  ^        then  ( utility words in .forth.)
+    .assembler. find  if  ,        ^  then
+       .labels. find  if  ,        ^  then  ( equates are in .labels.)
+         .meta. find  if  ,        ^  then
+        .forth. find  if  ,        ^  then  ( utility words in .forth.)
                                             number literal ;
 mode __inline-asm
 
@@ -55,12 +53,10 @@ mode __meta
 mode __meta-colon
 
 
+( XXX Are these useful??)
 ( Define useful colon compilers:
       meta:  for defining new target defining words!
-  compiler:  for defining meta-compiler words
-
-  We define the another colon compiler - the actual target colon - in the
-  kernel, using our meta-defining words!)
+  compiler:  for defining meta-compiler words)
 
 meta
 
@@ -70,96 +66,9 @@ meta
 
 forth
 
+
+
 : macro           current preserve       assembler  :  __inline-asm ;
-
-compiler
-: asm{   __inline-asm ;  ( enter inline assembler mode)
-: }   -] ;               ( exit inline assembler mode and restart colon compiler)
-: ;m   \ ^  __meta ;     ( exit macro compilation and return to meta-compiler)
-
-assembler
-: ;c   __meta ;
-
-meta
-: __host  \ [ ;  ( return to host forth mode)
-: __meta  __meta ;
-
-: name   current preserve  target  \m here constant ;
-
-: label   \m here  equ  __asm ;
-
-( XXX Should I assume space for stack? Things are bad _before_ we've come
-  to the actual end of RAM...)
-
-: var   ( bytes)
-   'ram @  dup equ  +  dup 'ram ! ( allot)
-   @ram #ram +  swap u<  if error" No available ram"  then ;
-
-forth
-: ?zpage  if error" No available zero-page ram" then ;
-meta
-
-: zvar  ( bytes)
-   'zram @  dup equ  +  dup 'zram ! ( allot)
-   'xram @ swap u< ?zpage ;
-
-: xvar  ( bytes)
-   'xram @  swap -  dup equ  dup 'xram ! ( allot)
-   'zram @ u< ?zpage ;
-
-: code    \m name   __asm ;
-
-: '  .target. chain' execute ;  ( target words are constants!)
-
-( For forward references)
-: forward    "100 \a ) \a jmp  \m label ;
-: resolve>>  ( src)  \m here  swap 2 -  image-! ;
-
-forth
-variable vector-offset  ( 0 if vectors not relocated)
-: reloc-vector  ( offset - offset')
-   dup \l Vreset = if ^ then  ( reset doesn't get relocated)
-   vector-offset @ +a ;
-
-meta
-: handler  ( vector-offset)
-   reloc-vector  \m here swap  image-!  __asm ;
-forth
-
-: \l  .labels. chain' execute ;
-
-
-( Calculation of FCDIV - flash clock divider [sic])
-
-   -- Set FCDIV - flash clock divider - to match our bus clock
-   -- FCDIV = ceil(busclock/200k) - 1
-
-   -- We leave off the - 1 to slow the flash a bit. Insurance against our
-   -- clock being a bit fast... better to have the flash clock run a bit
-   -- slow than too fast.
-
--- XXX complete crock #42: this belongs in the meta compiler... which
--- doesn't exist yet!
--- We're trying the divide the bus clock down to between 150kHz and 200kHz,
--- to drive the flash programming machinery. We need to calculate a divider
--- that works. One caveat: if the calculated value is > 63, set a bit that
--- first divides the bus clock by 8 before dividing by our divider
--- (actually, our divider + 1).
-
-: _fcdiv   ( divisor - fcdiv)
-   dup 64 u< not if
-      ( too big - round up and divide by 8)  7 + 3 >>
-      ( set "divide by 8" bit)  "40 or
-  then ;
-
-( For most uses: clock speed is in kilohertz - khz.)
-: khz>fcdiv  ( clock-in-khz - fcdiv)
-   199 + 200 /   _fcdiv ;
-
-( For more resolution: clock speed is input in hundreds of hertz -
-  hectahertz - hhz.)
-: hhz>fcdiv  ( clock-in-hhz - fcdiv)
-   1999 +  2000 /  _fcdiv ;
 
 
 .ifdef threaded
@@ -236,8 +145,10 @@ macro dt3  2 ,x ;  ( double top, msb)
 variable last-code  ( pointer to beginning of last snippet of code)
 : code!   \m here  last-code ! ;
 compiler
-: code{   compile code!  \ asm{ ;
+: code{   compile code!  __inline-asm ;
+: }       -] ;  ( exit inline assembler mode and restart colon compiler)
 forth
+
 
 -- ------------------------------------------------------------------------
 -- Literal loading.
@@ -287,6 +198,14 @@ macro push-literal  ( A -> tl, xh -> th)
 macro pop-literal   ( tl -> A, th -> xh)
    tl lda  2 # aix  ( th -> xh) ;
 
+meta
+: literal  ( n)  code{  load-literal }
+                 code{  push-literal } ;
+
+: compile,  ( target-cfa)  code{  c }  ( compile call) ;
+
+forth
+
 ( Since address 0 is in the i/o register range, we will never jsr there, so
   we can return 0 as "no call found".)
 : called  ( - dest-addr)
@@ -299,6 +218,9 @@ macro pop-literal   ( tl -> A, th -> xh)
 : replace  ( addr jsr-op jmp-op - -1)
    rot image-c!  drop  -1 ;
 
+( If last code compiled was a call, rewrite it to a jump and return true;
+  else return false.)
+
 : tail?  ( - f)
    last-code @  dup image-c@  ( op)
    dup "ad = if ( bsr)      "20 ( bra)      replace ^  then
@@ -306,16 +228,13 @@ macro pop-literal   ( tl -> A, th -> xh)
    dup "cd = if ( jsr ext)  "cc ( jmp ext)  replace ^  then
    2drop  0 ;
 
+meta-compiler
+: ^   tail? if ^ then  code{  rts } ;
+
+forth
 : ?retreat  ( f)  if  last-code @  org ^  then ;
 : lit?   last-code @  image-c@ "af ( aix) =  dup ?retreat ;
 
-meta
-: literal  ( n)  code{  load-literal }
-                 code{  push-literal } ;
-
-: compile,  ( target-cfa)  code{  c }  ( compile call) ;
-
-forth
 : _litop  current preserve  meta-compiler  create  __asm
           does>  lit?  if  cell+  then  @  \m compile, ;
 
@@ -332,35 +251,124 @@ meta
       code{  push-literal }
       \m here  ( stack entry point)  ,  , ;
 
-meta-compiler
-: [   __meta ;  ( XXX should we go into a special mode here? so that -] and ]
-                  return to target-colon?)
-: ^   tail? if ^ then  code{  rts } ;
-: ;   \mc ^  __meta  ( return to interpretation) ;
-
 forth
 
 .then  ( non-threaded)
 
 
-( Finally, we have the definition of the meta-compiler's colon compiler.)
+( Finally, we have the definition of the target colon compiler.)
 
--:  ."  (compiling a target colon word)"  ;
+-:  ."  (compiling a target word)"  ;
 -:  .meta-compiler. find  if  execute  ^  then
            .target. find  if  execute  \m compile, ^  then
                                                  number  \m literal ;
 mode __target-colon
 
+
+( Create a new target name. A target word is defined as a _constant_ equal
+  to its code field address.)
+
 meta
-: ::  __target-colon ;  ( for testing)
+: label   \m here  equ  __asm ;  ( equ creates a constant in .labels.)
+: name    \m here  current preserve  target  constant ;
+: code    \m name  __asm ;
+: :       \m name  __target-colon ;
+
+: __host  \ [ ;  ( return to host forth mode)
+: __meta  __meta ;
+
+( For forward references)
+: forward    "100 \a ) \a jmp  \m label ;
+: resolve>>  ( src)  \m here  swap 2 -  image-! ;
+
+meta-compiler
+: [   __meta ;
+: ;   \mc ^  __meta  ( return to interpretation) ;
+
+compiler
+: ;m   \ ^  __meta ;     ( exit macro compilation and return to meta-compiler)
+
+assembler
+: ;c   __meta ;
+
+
+meta
+: '  .target. chain' execute ;  ( target words are constants!)
+forth
+: \l  .labels. chain' execute ;
+
+
+( Alloting RAM space to variables.)
+( XXX Should I assume space for stack? Things are bad _before_ we've come
+  to the actual end of RAM...)
+
+: ?zpage  if error" No available zero-page ram" then ;
+
+meta
+: var   ( bytes)
+   'ram @  dup equ  +  dup 'ram ! ( allot)
+   @ram #ram +  swap u<  if error" No available ram"  then ;
+
+: zvar  ( bytes)
+   'zram @  dup equ  +  dup 'zram ! ( allot)
+   'xram @ swap u< ?zpage ;
+
+: xvar  ( bytes)
+   'xram @  swap -  dup equ  dup 'xram ! ( allot)
+   'zram @ u< ?zpage ;
+
 forth
 
-
+( Utility macros.)
 macro pshhx  .x psh  .h psh         ;
 macro pulhx          .h pul  .x pul ;
 
 
+( Calculation of FCDIV - flash clock divider [sic]
+
+  FCDIV = ceil[busclock/200k] - 1
+
+  We leave off the - 1 to slow the flash a bit. Insurance against our clock
+  being a bit fast... better to have the flash clock run a bit slow than
+  too fast.
+
+  We're trying the divide the bus clock down to between 150kHz and 200kHz,
+  to drive the flash programming machinery. We need to calculate a divider
+  that works. One caveat: if the calculated value is > 63, set a bit that
+  first divides the bus clock by 8 before dividing by our divider
+  [actually, our divider + 1].)
+
+: _fcdiv   ( divisor - fcdiv)
+   dup 64 u< not if
+      ( too big - round up and divide by 8)  7 + 3 >>
+      ( set "divide by 8" bit)  "40 or
+  then ;
+
+( For most uses: clock speed is in kilohertz.)
+: khz>fcdiv  ( clock-in-khz - fcdiv)
+   199 + 200 /   _fcdiv ;
+
+( For more resolution: clock speed is input in hundreds of hertz, or
+  hectahertz.)
+: hhz>fcdiv  ( clock-in-hhz - fcdiv)
+   1999 +  2000 /  _fcdiv ;
+
+
+( Interrupt vectors and handlers.)
+variable vector-offset  ( 0 if vectors not relocated)
+: reloc-vector  ( offset - offset')
+   dup \l Vreset = if ^ then  ( reset doesn't get relocated)
+   vector-offset @ +a ;
+
+meta
+: handler  ( vector-offset)
+   reloc-vector  \m here swap  image-!  __asm ;
+
+forth
+
+
 -- from interact (end) ----------------------------------------------------------
+-- start ARM meta copy ----------------------------------------------------------
 
 .ifdef later-gator
 
@@ -671,6 +679,7 @@ meta-compiler
 : +loop   ( src dest)     p, (+loop)  \m >mark  \m <resolve  \mc then ;
 forth
 
+
 ( Making [ and ] work, finally.)
 variable saved-state      ( interpreter mode we came from)
 variable which-literal    ( the kind of literal to make when ] executes)
@@ -701,4 +710,5 @@ meta-compiler
 : ;    \mc ^  __meta ;
 
 forth
+
 .then ( later-gator)
