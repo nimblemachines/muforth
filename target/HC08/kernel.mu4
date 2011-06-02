@@ -7,8 +7,6 @@ loading HC08 Forth kernel
 
 __meta
 
-target
-
 ( Stack ops.)
 macro _drop  2 # aix  ;m
 
@@ -91,6 +89,8 @@ litop xor
 
 
 ( Relational operators.)
+label relop-start
+
 code 0=
    tl lda  th ora  1 # sub ( Z -> C)  ( fall thru)  ;c
 
@@ -122,6 +122,8 @@ relop <
  code <
    compare c  < if  sec  makeflag j  ( true)  then
                     clc  makeflag j  ( false)  ;c
+
+label relop-end
 
 
 ( Basic double-length - 32-bit - support.)
@@ -243,6 +245,64 @@ code (next)
    3 ,s lda  1 # sub  3 ,s sta
    2 ,s lda  0 # sbc  2 ,s sta
    3 ,s ora  1 # sub ( Z -> C)  rts  ;c
+
+
+{
+
+( Control structures.)
+
+( If the last compiled call was to a relational operator, it left a flag
+  value on the stack [-1 true, 0 false], and set the carry flag accordingly
+  [carry is SET for true]. In order to test this truth value, compile a
+  "carry SET if" clause, which will compile a branch if carry CLEAR. Like
+  all tests and jumps, the sense of the branch is opposite that of the
+  test.
+
+  If we didn't just call a relop, compile code to test the top of the
+  stack, and compile a "0!= if" clause, which will compile a branch if NOT
+  zero.
+
+  In both cases, if passed-in pop? param is true, compile code to pop the
+  stack right before compiling the branch.)
+
+forth
+: ?pop   if  code{  2 # aix }  then ;
+: ?relop  ( pop?)
+   called  \l relop-start  \l relop-end  within
+                        if  ?pop  code{  CS  if } ^  then
+   code{  tl lda  th ora }  ?pop  code{  0!= if } ;
+
+meta-compiler
+: =if   ( - src)   0 ?relop ;
+: if    ( - src)  -1 ?relop ;
+: then  ( src)          code{  then } ;  ( resets last-code)
+: else  ( src0 - src1)  code{  else } ;
+
+: begin   ( - dest)     code{  begin } ;
+: =until  ( dest -)  \mc =if  \a <resolve ;
+: until   ( dest -)   \mc if  \a <resolve ;
+: again   ( dest -)     code{  again } ;
+: =while  ( dest - src dest)  \mc =if  swap ;
+: while   ( dest - src dest)   \mc if  swap ;
+: repeat  ( src dest -)   \mc again  \mc then ;
+
+.ifdef notyet
+( n for .. next         goes n times; 64 Ki if n=0 )
+( n ?for .. next then   goes n times; 0 if n=0 )
+
+: for     ( - dest)      p,  (for)            \mc begin ;
+: ?for    ( - src dest)  p, (?for)  \m >mark  \mc begin ;
+: next    ( dest -)      p, (next)  \m >mark  \m <resolve ;
+
+( do, loop, +loop)
+: do      ( - src dest)   p, (do)     \m >mark  \mc begin ;
+: loop    ( src dest)     p, (loop)   \m >mark  \m <resolve  \mc then ;
+: +loop   ( src dest)     p, (+loop)  \m >mark  \m <resolve  \mc then ;
+.then
+forth
+
+}
+
 
 .ifdef loop-tests
 ram
