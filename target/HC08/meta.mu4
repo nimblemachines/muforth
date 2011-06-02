@@ -40,35 +40,22 @@ mode __inline-asm
                                             number ;
 mode __meta
 
-( __meta-colon is for compiling new words that are part of the meta-compiler.
-  __meta-colon is to __meta as __inline-asm is to __asm.)
 
--:  ."  (compiling a meta colon word)" ;
--:
-     .compiler. find  if  execute  ^  then
-         .meta. find  if  ,        ^  then
-       .labels. find  if  ,        ^  then  ( equates are in .labels.)
-        .forth. find  if  ,        ^  then  ( utility words in .forth.)
-                                            number literal ;
-mode __meta-colon
+( Support for looking back at previously compiled code.)
+variable last-code  ( pointer to beginning of last snippet of code)
+: code!   \m here  last-code ! ;
+
+compiler
+: code{   compile code!  __inline-asm ;
+: }       -] ;  ( exit inline assembler mode and restart colon compiler)
 
 
-( XXX Are these useful??)
-( Define useful colon compilers:
-      meta:  for defining new target defining words!
-  compiler:  for defining meta-compiler words)
-
+( Make it easy to make assembler macros.)
 meta
-
-: meta:           current preserve  meta            :  __meta-colon ;
-: host-compiler:  current preserve       compiler   :  __meta-colon ;
-: meta-compiler:  current preserve  meta-compiler   :  __meta-colon ;
+: macro           current preserve       assembler  :  __inline-asm ;
 
 forth
-
-
-
-: macro           current preserve       assembler  :  __inline-asm ;
+: macro   \m macro ;
 
 
 .ifdef threaded
@@ -139,15 +126,6 @@ macro dt0  5 ,x ;  ( double top, lsb)
 macro dt1  4 ,x ;
 macro dt2  3 ,x ;
 macro dt3  2 ,x ;  ( double top, msb)
-
-
-( Support for looking back at previously compiled code.)
-variable last-code  ( pointer to beginning of last snippet of code)
-: code!   \m here  last-code ! ;
-compiler
-: code{   compile code!  __inline-asm ;
-: }       -] ;  ( exit inline assembler mode and restart colon compiler)
-forth
 
 
 -- ------------------------------------------------------------------------
@@ -228,9 +206,6 @@ forth
    dup "cd = if ( jsr ext)  "cc ( jmp ext)  replace ^  then
    2drop  0 ;
 
-meta-compiler
-: ^   tail? if ^ then  code{  rts } ;
-
 forth
 : ?retreat  ( f)  if  last-code @  org ^  then ;
 : lit?   last-code @  image-c@ "af ( aix) =  dup ?retreat ;
@@ -274,28 +249,34 @@ meta
 : code    \m name  __asm ;
 : :       \m name  __target-colon ;
 
-: __host  \ [ ;  ( return to host forth mode)
-: __meta  __meta ;
+: -]   __target-colon ;
+:  ]   \m literal  \m -] ;
 
 ( For forward references)
 : forward    "100 \a ) \a jmp  \m label ;
 : resolve>>  ( src)  \m here  swap 2 -  image-! ;
 
-meta-compiler
-: [   __meta ;
-: ;   \mc ^  __meta  ( return to interpretation) ;
+: '  .target. chain' execute ;  ( target words are constants!)
 
-compiler
-: ;m   \ ^  __meta ;     ( exit macro compilation and return to meta-compiler)
+: __host  \ [ ;  ( return to host forth mode)
+: {    \m __host ;  ( useful for bracketing a few  host forth words)
+
+forth
+: }    __meta ;  ( return to meta)
+: \l  .labels. chain' execute ;
 
 assembler
 : ;c   __meta ;
 
+meta-compiler
+: [   __meta ;
+: ^   tail? if ^ then  code{  rts } ;
+: ;   \mc ^  \mc [ ;  ( return to meta)
 
-meta
-: '  .target. chain' execute ;  ( target words are constants!)
+compiler
+: ;m   \ ^  __meta ;     ( exit macro compilation and return to meta-compiler)
+
 forth
-: \l  .labels. chain' execute ;
 
 
 ( Alloting RAM space to variables.)
@@ -371,11 +352,6 @@ forth
 -- start ARM meta copy ----------------------------------------------------------
 
 .ifdef later-gator
-
-meta
-: {    \ [ ;  ( escape back to the host forth)
-forth
-: }    __meta ;  ( return to meta)
 
 
 
