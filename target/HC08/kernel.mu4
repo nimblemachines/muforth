@@ -210,17 +210,6 @@ label #(do)  -- for test code
    xh lda  th sbc  4 ,s sta   ( index = start-delta)
    _r j  ( Move last to R. This has to be a _jump_!!)  ;c
 
-code i
-   ( Push index + delta of inner do loop.)
-   3 ,s lda  5 ,s add  xl sta  2 ,s lda  4 ,s adc
-label push-result
-   -2 # aix  th sta  rts  ;c
-
-code j
-   ( Push index + delta of second enclosing do loop.)
-   7 ,s lda  9 ,s add  xl sta  6 ,s lda  8 ,s adc
-   push-result j  ;c
-
 ( Note: caller has to do 4 # ais after calling (loop or (+loop)
  code (+loop)  ( incr)
 litop (+loop)
@@ -235,11 +224,20 @@ code (loop)
    ( Add one to index; overflow means we've crossed threshold)
    xh clr  1 # lda  ( load constant 1)  #(+loop) j  ;c
 
+code i
+   ( Push index + delta of inner do loop.)
+   3 ,s lda  5 ,s add  xl sta  2 ,s lda  4 ,s adc
+label push-result
+   -2 # aix  th sta  rts  ;c
+
+code j
+   ( Push index + delta of second enclosing do loop.)
+   7 ,s lda  9 ,s add  xl sta  6 ,s lda  8 ,s adc
+   push-result j  ;c
+
 ( for, next)
 -- code (for)  ( this is just >r, right?)
 
-( XXX change if I decide to have tests only set CC and _not_ create a value
-  on the stack represeting the flag.)
 code (next)
    ( Decrement count on S stack.)
    3 ,s lda  1 # sub  3 ,s sta
@@ -293,12 +291,12 @@ meta-compiler
 : for     ( - dest)      p,  (for)            \mc begin ;
 : ?for    ( - src dest)  p, (?for)  \m >mark  \mc begin ;
 : next    ( dest -)      p, (next)  \m >mark  \m <resolve ;
+.then
 
 ( do, loop, +loop)
-: do      ( - src dest)   p, (do)     \m >mark  \mc begin ;
-: loop    ( src dest)     p, (loop)   \m >mark  \m <resolve  \mc then ;
-: +loop   ( src dest)     p, (+loop)  \m >mark  \m <resolve  \mc then ;
-.then
+: do      ( - src dest)   code{  -4 # ais }  \mc (do)  \mc begin ;
+: loop    ( src dest)     code{  \t (loop) c }  code{  CS until  4 # ais } ;
+: +loop   ( src dest)           \mc (+loop)     code{  CS until  4 # ais } ;
 forth
 
 }
