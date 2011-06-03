@@ -199,6 +199,30 @@ label stall
 
 .then
 
+( IN requests will return NAK.)
+label nak-in
+   .a clr  in-control ) sta  rts  ;c
+
+label cut-and-run
+   nak-in c  ( don't send status IN until we return!)
+   2 # ais  ( skip return from process-usb)  .h pul  rti  ;c
+
+label vendor-request
+   bRequest ) lda
+   ( 00)  read-memory          0!= until
+   ( 01)  write-memory  .a dec 0!= until
+   ( 02)  cut-and-run   .a dec 0!= until
+   ( 03)  read-sp       .a dec 0!= until
+.ifdef in-ram
+   ( unknown, fall thru)
+
+label stall
+   EPCTL0 1 bset ( STALL)  rts  ;c
+
+.else
+   ( unknown) stall j  ;c
+.then
+
 ( Set address is a bit tricky. We can't set the address immediately. The
   USB spec says that at every stage of a control transfer the device
   address must remain constant.  Before the set-address command we are at
@@ -220,26 +244,6 @@ label finish-control-write
    match-data1 # lda  in-control ) sta
    expect-setup-token j  ;c
 
-label cut-and-run
-   finish-control-write c
-   2 # ais  ( skip return from process-usb)  .h pul  rti  ;c
-
-label vendor-request
-   bRequest ) lda
-   ( 00)  read-memory          0!= until
-   ( 01)  write-memory  .a dec 0!= until
-   ( 02)  cut-and-run   .a dec 0!= until
-   ( 03)  read-sp       .a dec 0!= until
-.ifdef in-ram
-   ( unknown, fall thru)
-
-label stall
-   EPCTL0 1 bset ( STALL)  rts  ;c
-
-.else
-   ( unknown) stall j  ;c
-.then
-
 .ifndef in-ram
 
 label standard-request
@@ -251,9 +255,6 @@ label standard-request
 
 .then
 
-( IN requests will return NAK.)
-label nak-in
-   .a clr  in-control ) sta  rts  ;c
 
 ( Receipt of SETUP has set out-control's data toggle to 0. Set in-control's
   as well.)
@@ -294,6 +295,7 @@ label setup-or-out-token
    ( memcount non-zero; expect more data.)
    prepare-next-out j  ;c
 
+
 ( An IN token is either part of a data stage of a control read, or it is
   the status stage of a control write. Status IN's are always zero bytes
   long; sometimes the last IN of the data stage is also zero bytes long -
@@ -320,6 +322,7 @@ label in-token
 label nak-in-expect-setup
    nak-in c  ( further IN's will return NAK)
    expect-setup-token j  ;c
+
 
 ( XXX To convert process-usb into an interrupt handler, jumps to
   setup-or-out-token, in-token, and nak-in-expect-setup should really be
@@ -353,7 +356,6 @@ label finish-config
    in-buffer >bufaddr # lda  in-bufaddr ) sta
    out-buffer >bufaddr # lda  out-bufaddr ) sta
 
-   nak-in-expect-setup c
    01 # CTL ) mov          -- enable USB module
    45 # USBCTL0 ) mov      -- turn on pullup, vreg, and PHY
    begin  INTSTAT 0 bset?  until  ( wait for USBRSTF)
@@ -377,6 +379,8 @@ label emulated-swi
    ( jsr/bsr has already pushed PC)
    .x psh  .a psh  tpa ( flags to A)  .a psh  sei
    .h psh
+   finish-control-write c  ( ready status IN; also prepare for SETUP)
+
 .ifdef usb-debug-via-serial
    begin  process-serial c
           process-usb c      again  ;c
