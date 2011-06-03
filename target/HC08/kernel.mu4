@@ -30,21 +30,21 @@ code swap  ( a b - b a)
    tl lda  xh sta  sl lda  tl sta  xh lda  sl sta  rts  ;c
 
 ( Return stack ops.)
-label _r  ( move to R; needs to be room above return address)
+code r!  ( move to R; needs to be room above return address)
    th lda  2 ,s sta  tl lda  3 ,s sta  ' drop j  ;c
 
-label r_  ( copy from R; needs to be value above return address)
+code r@  ( copy from R; needs to be value above return address)
    2 ,s lda  xh sta  3 ,s lda  push-lit j  ;c
 
-( >r aka push will _compile_ -2 # ais, then call to _r )
-( r> aka pop will _compile_ call to r_, then 2 # ais )
+( >r aka push will _compile_ -2 # ais, then call to r! )
+( r> aka pop will _compile_ call to r@, then 2 # ais )
 
 code -rot  ( a b c - c a b)
    here 2 +a c  ( call rot, then fall thru)  ;c
 
 code rot   ( a b c - b c a)
    -- : rot  >r swap  r< swap ;
-   -2 # ais  _r c  ' swap c  r_ c  2 # ais  ' swap j  ;c
+   -2 # ais  ' r! c  ' swap c  ' r@ c  2 # ais  ' swap j  ;c
 
 
 ( Unary ops.)
@@ -208,7 +208,7 @@ label #(do)  -- for test code
            tl sub  5 ,s sta
    th lda  "80 # eor  th sta  ( delta = "8000 + limit)
    xh lda  th sbc  4 ,s sta   ( index = start-delta)
-   _r j  ( Move last to R. This has to be a _jump_!!)  ;c
+   ' r! j  ( Move last to R. This has to be a _jump_!!)  ;c
 
 ( Note: caller has to do 4 # ais after calling (loop or (+loop)
  code (+loop)  ( incr)
@@ -235,8 +235,14 @@ code j
    7 ,s lda  9 ,s add  xl sta  6 ,s lda  8 ,s adc
    push-result j  ;c
 
-( for, next)
--- code (for)  ( this is just >r, right?)
+
+( for, ?for, next)
+
+( Pop the stack if top is zero; state of Z flag reflects top of stack.
+  Currently used as set up for ?for.)
+
+code ?zero
+   tl lda  th ora  0= if  2 # aix  then  rts  ( Z set)  ;c
 
 code (next)
    ( Decrement count on S stack.)
@@ -284,14 +290,12 @@ meta-compiler
 : while   ( dest - src dest)   \mc if  swap ;
 : repeat  ( src dest -)   \mc again  \mc then ;
 
-.ifdef notyet
 ( n for .. next         goes n times; 64 Ki if n=0 )
 ( n ?for .. next then   goes n times; 0 if n=0 )
 
-: for     ( - dest)      p,  (for)            \mc begin ;
-: ?for    ( - src dest)  p, (?for)  \m >mark  \mc begin ;
-: next    ( dest -)      p, (next)  \m >mark  \m <resolve ;
-.then
+: for     ( - dest)      code{  -2 # ais  \t r! c }  \mc begin ;
+: ?for    ( - src dest)  code{  \t ?zero  c  0!= if }  \mc for ;
+: next    ( dest -)      code{  \t (next) c }   code{  CS until  2 # ais } ;
 
 ( do, loop, +loop)
 : do      ( - src dest)   code{  -4 # ais }  \mc (do)  \mc begin ;
@@ -300,55 +304,6 @@ meta-compiler
 forth
 
 }
-
-
-.ifdef loop-tests
-ram
-code do+  ( limit index)
-   -4 # ais  ' (do) c
-   begin  ' i c  ' (loop) c  CS until
-    4 # ais  rts  ;c
-
-code do-  ( limit index)
-   -4 # ais  ' (do) c
-   begin  ' i c  -1 # lda  xh sta  #(+loop) c  CS until
-    4 # ais  rts  ;c
-
-code dodo
-   -- 4 0 do   16 0 do  i j xor  loop  4 +loop ;
-   xh clr   4 # lda  push-lit c
-   xh clr   0 # lda  -4 # ais  #(do) c  begin
-   xh clr  16 # lda  push-lit c
-   xh clr   0 # lda  -4 # ais  #(do) c  begin
-   ' i c  ' j c  ' xor c
-    4 # lda  xh clr  #(+loop) c  CS until  4 # ais
-                     ' (loop) c  CS until  4 # ais
-   rts  ;c
-
-code for
-   -2 # ais  _r c
-   begin  r_ c  ' (next) c  CS until
-    2 # ais  rts  ;c
-
-flash
-.then
-
-.ifdef test-literals
-ram
-( Test load-literal)
-hex
-
-0 load-literal
-0ca load-literal
-0ff load-literal
-0ff00 load-literal
-5555 load-literal
-0134 load-literal
-0babe load-literal
-
-decimal
-flash
-.then
 
 
 .ifdef toy-multiply
