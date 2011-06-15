@@ -1,0 +1,312 @@
+( This file is part of muFORTH: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2011 David Frech. All rights reserved, and all wrongs
+  reversed. (See the file COPYRIGHT for details.)
+
+loading HCS08 BDM over USB support (host)
+
+( Host-side - ie PC - code to drive the BDM-over-USB implementation in
+  target/HC08/bdm-usb-core.mu4)
+
+( This will initially support S08 devices, but once things are factored
+  better, it will support ColdfireV1 devices as well.)
+
+( NOTE: Before loading this file, load an S08 variant device file. This
+  code requires several of the register defines, and needs to know where to
+  find the clock trim register.)
+
+hex
+
+( BDM over USB supports the following commands:
+ 20 Bye - escape back to byteloader
+ 21 Execute - write bytes to target & read result
+ 22 Result  - get result bytes that were read from target by Execute
+ 23 Hold BKGD pin low
+ 24 Hold BKGD pin high
+ 25 Set BDM rate to 4M
+ 26 Set BDM rate to 8M
+ 27 Sync pulse; return two byte count)
+
+: simple-usb   ( bmRequestType bRequest)  0 0 0 0  usb ;
+
+: b.Bye      40 20  simple-usb ;
+: b.BkgdLow  40 23  simple-usb ;
+: b.BkgdHiZ  40 24  simple-usb ;
+: b.Clock4M  40 25  simple-usb ;
+: b.Clock8M  40 26  simple-usb ;
+
+8 buffer bdm-buf  ( at most we will write 8 bytes and read 4)
+
+: b.Execute  ( #write #expect)  2push
+             40 21 0 pop pop  bdm-buf  usb ;
+
+: b.Result   ( #expect)  push
+            0c0 22 0 0 pop  bdm-buf  usb ;
+
+: b.Sync    0c0 27 0 0 2    bdm-buf  usb  bdm-buf c@  bdm-buf 1+ c@  hilo> ;
+
+variable bp  ( buffer pointer)
+: chat!  ( reset buf pointer)  bdm-buf bp ! ;
+: send   ( byte)      bp @  c!  1 bp +! ;
+: recv   ( - byte)    bp @  c@  1 bp +! ;
+: #send  ( #bytes)    bp @  bdm-buf - ;
+
+: expect  ( #expect)  #send over b.Execute  b.Result  chat! ;
+
+: Send1    chat!  send ;
+: Send2    chat!  send send ;
+: Send3    chat!  send send send ;
+: Send4    chat!  send send send send ;
+: Expect0  0 expect ;
+: Expect1  1 expect  recv ;
+: Expect2  2 expect  recv recv ;
+
+
+.ifdef newer
+: Send1     21 send  send ;
+: SendNext  22 send  send ;
+: Send2    Send1  SendNext ;
+: Send3    Send2  SendNext ;
+: Send4    Send3  SendNext ;
+
+: RecvNext  23 send  recv ;
+: Expect0   24 send  recv drop ;
+: Expect1   25 send  recv ;
+: Expect2   26 send  recv  RecvNext ;
+.then
+
+( Non-intrusive)
+: b.Background                                90 Send1  Expect0 ;
+: b.WriteByte     ( byte a)           >lohi  0c0 Send4  Expect0 ;
+: b.WriteByteS    ( byte a - status)  >lohi  0c1 Send4  Expect1 ;
+: b.WriteControl  ( status)                  0c4 Send2  Expect0 ;
+: b.ReadByte      ( a - byte)         >lohi  0e0 Send3  Expect1 ;
+: b.ReadByteS     ( a - status byte)  >lohi  0e1 Send3  Expect2 ;
+: b.ReadStatus    ( - status)                0e4 Send1  Expect1 ;
+
+( Active - must be in "active BDM" mode to use.)
+: b.Go           08 Send1  Expect0 ;
+: b.Trace        10 Send1  Expect0 ;
+: b.ReadA        68 Send1  Expect1 ;
+: b.ReadCC       69 Send1  Expect1 ;
+: b.ReadPC       6b Send1  Expect2  hilo> ;
+: b.ReadHX       6c Send1  Expect2  hilo> ;
+: b.ReadSP       6f Send1  Expect2  hilo>  1+ ( normalised!) ;
+: b.ReadNext     70 Send1  Expect1 ; ( inc HX, then read byte)
+: b.ReadNextS    71 Send1  Expect2 ; ( inc HX, read status, read byte)
+
+: b.WriteA               48 Send2  Expect0 ;
+: b.WriteCC              49 Send2  Expect0 ;
+: b.WritePC       >lohi  4b Send3  Expect0 ;
+: b.WriteHX       >lohi  4c Send3  Expect0 ;
+: b.WriteSP   1-  >lohi  4f Send3  Expect0 ; ( normalised!)
+: b.WriteNext            50 Send2  Expect0 ; ( inc HX, write byte)
+: b.WriteNextS           51 Send2  Expect1 ; ( inc HX, write byte, read status)
+
+comment Commands
+d = delay 16 BDM cycles
+r = read one byte
+w = write one byte
+
+Non-intrusive
+=============
+Background   90 d
+ReadStatus   e4 r
+WriteControl c4 w
+ReadByte     e0 w w d r    -- write addr, read byte
+ReadByteS    e1 w w d r r  -- write addr, read status, read byte
+ReadLast     e8 r r        -- read status, read last byte read
+WriteByte    c0 w w w d
+WriteByteS   c1 w w w d r  -- write addr, write byte, read status
+ReadBkpt     e2 r r
+WriteBkpt    c2 w w
+
+Active mode
+===========
+Go           08 d
+Trace        10 d
+ReadA        68 d r
+ReadCC       69 d r
+ReadPC       6b d r r
+ReadHX       6c d r r
+ReadSP       6f d r r
+ReadNext     70 d r         -- inc HX, then read byte
+ReadNextS    71 d r r       -- inc HX, read status, read byte
+WriteA       48 w d
+WriteCC      49 w d
+WritePC      4b w w d
+WriteHX      4c w w d
+WriteSP      4f w w d
+WriteNext    50 w d         -- inc HX, write byte
+WriteNextS   51 w d r       -- inc HX, write byte, read status
+
+comment Commands
+
+
+( BDM versions of interact operations)
+
+( Since WriteNext and ReadNext _pre-increment_, let's subtract one when we
+  set the address, and add one when we read it.)
+: b.SetAddr           -1 +a  b.WriteHX ;
+: b.GetAddr  b.ReadHX  1 +a ;
+
+( XXX should be a limited number of tries)
+: b.RunWait  b.Go  begin  b.ReadStatus  40 and until ;
+
+: b.setup-chunk  ( 'target len buffer - len)
+   p!  swap b.SetAddr ;
+
+: b.ReadChunk    ( 'target len buffer)
+   b.setup-chunk  for  b.ReadNext c&  next ;
+
+: b.WriteChunk   ( 'target len buffer)
+   b.setup-chunk  for  c* b.WriteNext  next ;
+
+( Order of regs in memory: H CC A X PC)
+: b.GetRegs  ( buf - sp)  p!
+   b.ReadHX >lohi ( X H) c&  b.ReadCC c&  b.ReadA c& ( X) c&
+   b.ReadPC >lohi c& c&  b.ReadSP ;
+
+: b.SetRegs  ( buf)  p!
+   c* ( H)  c* b.WriteCC  c* b.WriteA  c* ( H X ) hilo> b.WriteHX
+   c* c* hilo> b.WritePC ;
+
+: b.FlashChunk   ( 'target len buffer cmd - status)
+   ." b.FlashChunk NYI"
+   2drop 2drop  "0c0 ( status) ;
+
+: b.VerifyChunk   ( 'target len - flag)
+   over image+ b.setup-chunk
+   for  b.ReadNext c*  xor  if  image-p@ 1- u.  then  next ;
+
+: ResetSP
+   @ram #ram +  b.WriteSP ;
+
+( Bollocks! Even this is different between variants. The JS/JM/SH uses two bits
+  to select which kind of watchdog; setting both to zero is required to
+  disable it. It looks like it's safe to write both bits 7 and 6 to zero to
+  disable the dog on the parts I've looked at...
+
+  It looks like newer parts are using this more sophisticated watchdog.
+  Rather than just write to a memory location, you have to write 55 then
+  AA.)
+
+: NoWatchdog
+   \l SOPT1 b.ReadByte  3f and  \l SOPT1 b.WriteByte ;
+
+( I've decided we shouldn't do this. It's too complicated. Not only do
+  different parts use different clocks - ICG, ICS, MCG - but even the parts
+  that have ICS put the registers in different places! So ICSTRM is _not_
+  always at 003a.
+
+  How about instead we simply leave the part untrimmed, in its BDIV=2 state
+  - running at half speed - and set FCDIV so that no matter what, its value
+  makes sense.
+
+  Using a divisor of 25 seems safe. The untrimmed speed of the DCO should
+  fall between 16M and 20M, putting the bus clock between 4M and 5M. A
+  divisor of 25 puts the flash clock into the range of 160k to 200k, which
+  is perfect.
+
+  But this is specific to the QG! I need a table of values somewhere...
+
+  Another approach is to have the device file set TRIM to ICSTRM, ICGTRM,
+  MCGTRM. I still need to know what each part's POR bus clock speed and BDM
+  clock are... put these into the device file!)
+
+( Trim internal oscillator to factory setting; on QG parts this is 31.25k,
+  which results in 16M FLL frequency; this is divided by two to give a
+  default BDM freq of 8M, and divided by two again - because of reset BDIV
+  setting - to give a reset bus clock of 4M.)
+
+: TrimOsc
+   0ffaf ( factory trim) b.ReadByte  \l TRIM b.WriteByte ;
+
+( Set FCDIV to correspond to bus clock at power-on-reset. As an added
+  bonus, we don't subtract one from the divisor, so it's one bigger than it
+  needs to be; this gives us a bit of cushion in case the factory trim has
+  the clock running fast. In the case of QG parts - 4M bus clock out of POR
+  - this puts the Flash clock at 190k instead of 200k.)
+
+: SetFCDIV
+   \l FCDIV b.ReadByte  80 and if ^ then  ( already set)
+   [ \l POR-bus-clock  khz>fcdiv ]  ( divide freq by 200k, rounding up)
+   \l FCDIV b.WriteByte ;
+
+(  If trim found in flash, trim oscillator and also set FCDIV. If not found,
+  print a message and leave everything alone.)
+
+: SetupClock
+   0ffaf ( factory trim) b.ReadByte  0ff = if
+   ." 
+Trim in flash is 0ff; didn't set TRIM or FCDIV. You have to do this by hand.
+"  ^  then
+   TrimOsc  SetFCDIV ;
+
+comment misguided
+( Based on what we get back from b.Sync, match BDM clock)
+( XXX - this is currently based on 908's 4.608M clock)
+: MatchBDMClock
+   b.Sync 70 - 21 u< if  ( within +-"10 of 80 - running at 4M)
+      b.Clock4M ^ then
+   b.Clock8M ;
+
+: FastBusClock
+   ( assume osc trimmed)
+   MatchBDMClock
+   \l ICSC2 b.ReadByte  3f and ( clear BDIV)  \l ICSC2 b.WriteByte
+   b.Clock8M ;
+
+comment misguided
+
+( Get target into a known, safe state. Chat code will have done this for
+  itself at reset, so this is only necessary for BDM targets.)
+
+( Since we are flashing - even via BDM - by executing code from RAM, we
+  have to initialise the chip first.)
+
+: b.Hi
+   SetupClock ( trim & fcdiv)  NoWatchdog  ResetSP
+   hi ( copy ram flash routine) ;
+
+: pwr  b.BkgdLow  ." power cycle S08, then press a key..."  key drop
+       b.BkgdHiZ   b.Sync u.  b.Sync u.  b.ReadStatus dup u.
+       0c8 = if  b.Hi  then ;
+
+( Get start address of BDM code.)
+variable bdm-ram-start  ( filled in by loaded code)
+: bdm-start  ( - a)
+   .ifdef bdm-in-ram   bdm-ram-start @ ( S08, ram version)
+               .else   0fc00           ( S08, flash version)  .then ;
+
+decimal
+
+
+: bdm
+   bdm-start pc!  _run  ( start bdm chat loop)
+
+   ( Wire our versions into the interact code.)
+   ['] b.RunWait is t.RunWait
+   ['] b.Go is t.Run  ( keeping b.Go since it's a BDM command name)
+   ['] b.GetRegs is t.GetRegs
+   ['] b.SetRegs is t.SetRegs
+   ['] b.SetAddr is t.SetAddr
+   ['] b.GetAddr is t.GetAddr
+   ['] b.ReadNext is t.Read
+   ['] b.WriteNext is t.Write
+   ['] b.ReadChunk is t.ReadChunk
+   ['] b.WriteChunk is t.WriteChunk
+   ['] b.FlashChunk is t.FlashChunk
+   ['] b.VerifyChunk is t.VerifyChunk
+
+   ( We'd like to set BDM clock from Sync pulse, but it doesn't seem to
+     work. A hack is to set it instead from the chip defs that we load.)
+   \l POR-bus-clock #4000 = if  b.Clock4M  else  b.Clock8M  then
+
+   +chat  pwr ;
+
+( Handy shortcuts - esp for testing.)
+: s  b.Sync u. ;
+: t  b.Trace  GetRegs .r ;
+: w  b.WriteByte ;
+: r  b.ReadByte ;
