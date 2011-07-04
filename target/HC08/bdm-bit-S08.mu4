@@ -28,6 +28,8 @@ __meta
 
 aka PTAD  PortA
 aka PTADD DirA
+aka PTBD  PortB
+aka PTBDD DirB
 
 ( We are using PortA0 [TPMCH0] for everything.
 
@@ -48,6 +50,20 @@ label BdmHiZ
    PortA 0 bset   ( before tri-stating, briefly drive high)
    DirA 0 bset
    DirA 0 bclr    ( tri-state A0)
+   rts  ;c
+
+
+( The BDM nReset pin is connected to PB0.)
+
+label ResetLow
+   PortB 0 bclr
+   DirB 0 bset
+   rts  ;c
+
+label ResetHiZ
+   PortB 0 bset   ( before tri-stating, briefly drive high)
+   DirB 0 bset
+   DirB 0 bclr    ( tri-state B0)
    rts  ;c
 
 
@@ -365,6 +381,45 @@ label SetRx1_8M
    rts  ;c
 
 
+-- ------------------------------------------------------------------------
+-- Host 24M, Target 16M
+-- ------------------------------------------------------------------------
+(
+  16M target      24M host
+  =========       ========
+     4               6
+    10              15
+    13              19.5
+)
+
+label SetTx1_16M
+   MakeJmp bsr  -- pushes address of following code onto stack!
+
+( Send one bit via BDM, from A0)
+   ( 6~ start bit; hold for 20~)
+   PortA 0 bclr              ( rfwpp  - drive start bit)
+   0 ,x tst                  ( rfp    )
+   PortA ) sta               ( wpp    - drive data bit)
+   0 ,x tst                  ( rfp    )
+   0 ,x tst                  ( rfp    )
+   0 ,x tst                  ( rfp    )
+   PortA 0 bset              ( rfwpp  - drive stop bit)
+   rts  ;c
+
+label SetRx1_16M
+   MakeJmp bsr  -- pushes address of following code onto stack!
+
+( Recv one bit via BDM, into A0)
+   ( 6~ start bit; sample at 15~)
+   DirA 0 bset               ( rfwpp  - drive start bit)
+   nop                       ( p      )
+   DirA 0 bclr               ( rfwpp  - tri-state BKGD)
+   0 ,x tst                  ( rfp    )
+   0 ,x tst                  ( rfp    )
+   PortA ) lda               ( rpp    - sample bit)
+   rts  ;c
+
+
 .else  ( 9.216M host)
 
 
@@ -528,6 +583,7 @@ label SyncWait  -- clobbers A
    .a decz?  until  then  rts  ;c
 
 label SyncPulse
+   TPMC0SC ) clr        -- take pin from timer
    08 # TPMSC ) mov     -- start timer; clock from bus clock
    BdmHiZ ) jsr         -- start in a known state
    BdmDriveLow ) jsr
