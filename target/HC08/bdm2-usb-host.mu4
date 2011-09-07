@@ -1,0 +1,56 @@
+( This file is part of muFORTH: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2011 David Frech. All rights reserved, and all wrongs
+  reversed. (See the file COPYRIGHT for details.)
+
+loading HCS08 BDM-over-USB transport v2 (host)
+
+( Host-side - ie PC - code to drive the BDM-over-USB implementation in
+  target/HC08/bdm2-usb.mu4.)
+
+( NOTE: Before loading this file, load an S08 variant device file. This
+  code requires several of the register defines, and needs to know where to
+  find the clock trim register.)
+
+hex
+
+-- : usb  ( bmRequest bRequest wValue wIndex wLength 'buffer)
+
+( Commands)
+: u.Result  ( #expect)  push
+            0c0 20   0 0 pop  ubuf  usb ;
+
+: u.Bdm     ( #write #expect)  2push
+             40 21 pop 0 pop  ubuf  usb ;
+
+: control-write  create ,  ( command)
+                 does> @  40 swap  ( bmReq bReq)  0 0 0 0  usb ;
+
+00 control-write b.Bye  ( End session, return to chat command loop)
+22 control-write u.Sync
+23 control-write b.BkgdLow
+24 control-write b.BkgdHiZ
+25 control-write b.ResetLow
+26 control-write b.ResetHiZ
+27 control-write b.Clock4M
+28 control-write b.Clock8M
+29 control-write b.Clock16M
+
+
+( Core commands that generate BDM traffic. These no longer overlap with the
+  chat commands. Start instead with 20 hex - 32 decimal. Anything < 20 will
+  exit the BDM loop and return to chat.)
+
+-- : b.Idle ;
+
+( For S08 targets, we send up to four bytes, and expect up to two.)
+: Send1    !ubuf  b> ;
+: Send2    Send1  b> ;
+: Send3    Send2  b> ;
+: Send4    Send3  b> ;
+
+: Expect0   #ubuf 0 u.Bdm ;
+: Expect1   #ubuf 1 u.Bdm  1 u.Result  ubuf c@ ;
+: Expect2   #ubuf 2 u.Bdm  2 u.Result  !ubuf b< b< ;
+
+: b.Sync    u.Sync  2 u.Result  !ubuf w< ;
