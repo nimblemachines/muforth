@@ -26,10 +26,10 @@
 #include <linux/usbdevice_fs.h>
 
 /* change to match your system! */
-#define USB_ROOT1 "/dev/bus/usb"
-#define USB_ROOT2 "/proc/bus/usb"
+#define USB_ROOT1 "/proc/bus/usb"
+#define USB_ROOT2 "/dev/bus/usb"
 
-#define USB_PATH_MAX (strlen(USB_ROOT2)+16)
+#define USB_PATH_MAX (strlen(USB_ROOT1)+16)
 
 struct match
 {
@@ -52,7 +52,7 @@ static int foreach_dirent(char *path, usb_match_fn fn, struct match *pmatch)
     struct dirent *pde;
 
     pdir = opendir(path);
-    if (pdir == NULL) return -1;
+    if (pdir == NULL) return -2;
 
     while ((pde = readdir(pdir)) != NULL)
     {
@@ -85,7 +85,6 @@ static int match_device(char *dev, struct match *pmatch)
     int count;
 
     fd = open(dev, O_RDONLY);
-
     if (fd == -1) return -1;
 
     count = read(fd, &dev_desc, USB_DT_DEVICE_SIZE);
@@ -119,7 +118,8 @@ void mu_usb_find_device()
     /* Enumerate USB device tree, looking for a match */
     matched = foreach_dirent(USB_ROOT1, enumerate_devices, &match);
 
-    if (matched == 0)
+    /* If nothing found, or opendir error, try the other bus */
+    if (matched == 0 || matched == -2)
         matched = foreach_dirent(USB_ROOT2, enumerate_devices, &match);
 
     if (matched < 0) return abort_strerror();
