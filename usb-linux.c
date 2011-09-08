@@ -1,4 +1,3 @@
-
 /*
  * This file is part of muFORTH: http://muforth.nimblemachines.com/
  *
@@ -12,6 +11,7 @@
 
 #include "muforth.h"
 
+#include <ctype.h>          /* isdigit */
 #include <sys/types.h>
 #include <dirent.h>         /* opendir, readdir */
 
@@ -25,8 +25,11 @@
 #include <linux/usb/ch9.h>
 #include <linux/usbdevice_fs.h>
 
-#define USB_ROOT "/dev/bus/usb"      /* change to match your system! */
-#define USB_PATH_MAX (strlen(USB_ROOT)+16)
+/* change to match your system! */
+#define USB_ROOT1 "/dev/bus/usb"
+#define USB_ROOT2 "/proc/bus/usb"
+
+#define USB_PATH_MAX (strlen(USB_ROOT2)+16)
 
 struct match
 {
@@ -53,7 +56,8 @@ static int foreach_dirent(char *path, usb_match_fn fn, struct match *pmatch)
 
     while ((pde = readdir(pdir)) != NULL)
     {
-        if (pde->d_name[0] != '.')
+        /* bus and device entry names are 3 decimal digits */
+        if (isdigit(pde->d_name[0]))
         {
             char *subpath;
             int matched;
@@ -113,13 +117,16 @@ void mu_usb_find_device()
     match.idProduct = TOP;
 
     /* Enumerate USB device tree, looking for a match */
-    matched = foreach_dirent(USB_ROOT, enumerate_devices, &match);
+    matched = foreach_dirent(USB_ROOT1, enumerate_devices, &match);
+
+    if (matched == 0)
+        matched = foreach_dirent(USB_ROOT2, enumerate_devices, &match);
 
     if (matched < 0) return abort_strerror();
 
     if (matched == 0)
     {
-        /* no match found */
+        /* No match found */
         DROP(1);
         TOP = 0;
     }
