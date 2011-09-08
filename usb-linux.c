@@ -41,8 +41,7 @@ typedef int (*usb_match_fn)(char *, struct match *);    /* filepath, match_data 
 
 /*
  * Returns
- *   0 if directory exhausted
- *  -1 if error
+ *   0 if directory exhausted or error
  *  >0 if match found
  */
 static int foreach_dirent(char *path, usb_match_fn fn, struct match *pmatch)
@@ -52,7 +51,9 @@ static int foreach_dirent(char *path, usb_match_fn fn, struct match *pmatch)
     struct dirent *pde;
 
     pdir = opendir(path);
-    if (pdir == NULL) return -2;
+
+    /* Return no match if directory couldn't be opened. */
+    if (pdir == NULL) return 0;
 
     while ((pde = readdir(pdir)) != NULL)
     {
@@ -119,7 +120,7 @@ void mu_usb_find_device()
     matched = foreach_dirent(USB_ROOT1, enumerate_devices, &match);
 
     /* If nothing found, or opendir error, try the other bus */
-    if (matched == 0 || matched == -2)
+    if (matched == 0)
         matched = foreach_dirent(USB_ROOT2, enumerate_devices, &match);
 
     if (matched < 0) return abort_strerror();
