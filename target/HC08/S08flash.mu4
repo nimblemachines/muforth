@@ -46,42 +46,30 @@ __meta
 
 h @  ( save memory region)
 
-zram
+1 xvar flash-command
 
-( Target code to write to and erase the Flash. By "pasting in" different
-  values for flash-command and flash-status, it's possible to do regular
-  byte programming, burst programming, or page/mass erase.
+ram
+here 0100 xor .if ." Flash routine not at 0100 hex" .then
+flash-command 0ff xor .if ." flash-command not at 00ff hex" .then
 
-  A note on timing: according to Freescale docs there should be _at least_
-  four bus cycles between the write to FSTAT that starts the command, and
-  the first test of FSTAT for command completion and error status. Based
-  on this code and the machine-cycle diagrams shown, there are four cycles
-  between the two.
+( Target code to write to and erase the Flash. The routine loads the flash
+  command to execute from zram - from the variable called flash-command. By
+  setting flash-command to different values, it's possible to do regular
+  byte programming, or page/mass erase. Burst programming requires a
+  slightly different test for completion.
 
-  Ending this with "bgnd" works, but only because we get lucky. In chat
-  mode bgnd causes a reset, but since that simply re-starts the chat
-  protocol it's almost like executing an SWI. Of course, if we're executing
-  the chat code from RAM, then we _don't_ get lucky. We reset into an empty
-  last page, and now we've lost the trim, and the chip is also now secure,
-  and it's a pain to unsecure it!)
+  The USB code uses this same routine, and requires that the flash-command
+  byte be in the zero page, which is why it reads the flash command from a
+  variable, rather than having the host "paste" it into the code; this way
+  the code can start in non-zero-page RAM.)
 
 label flash-byte
    0 ,x sta   ( store byte into Flash array)
-label flash-command
-   0 # lda  FCMD ) sta  80 # lda  FSTAT ) sta  .a lsr
+   flash-command ) lda  FCMD ) sta  80 # lda  FSTAT ) sta  .a lsr
    begin  FSTAT ) bit  0!= until 
 label flash-exit
    rts   ;c   ( Gets rewritten every time we run flash-setup. If flashing)
               ( via BDM, this will get rewritten to a bgnd instruction.)
-
-ram
-
-label flash-byte-usb
-   ( This routine is prefixed by code that does the 0 ,x sta and lda imm;
-     the nop is replaced by the flash command byte.)
-   nop  FCMD ) sta  80 # lda  FSTAT ) sta  .a lsr
-   begin  FSTAT ) bit  0!= until  rts  ;c
-
 
 h !  ( restore memory region)
 

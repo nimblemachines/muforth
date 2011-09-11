@@ -98,7 +98,6 @@ out-buffer 5 + equ wIndexHi
 out-buffer 6 + equ wLength
 out-buffer 7 + equ wLengthHi
 
-2 xvar write-byte
 1 xvar bufptr  ( offset into IN or OUT buffer)
 1 xvar memcount
 2 xvar memptr
@@ -163,12 +162,23 @@ label expect-out-token  ( expect OUT or SETUP, really)
    CTL 5 bclr ( TSUSPEND off - resume processing)
    rts  ;c
 
+.ifdef too-clever-self-modifying-code
+
 label write-memory
    0f781 # ldhx  ( 0 ,x sta  rts)
-   wIndex ) lda  0!= if  0a6 # ldx ( lda imm)  write-byte 2 + ) sta  then
-   write-byte ) sthx
+   wIndex ) lda  0!= if  0a6 # ldx ( lda imm)  flash-command 1+ ) sta  then
+   flash-byte ) sthx
    parse-address-length c
    setup-address-length c  ( fall thru)
+
+.else
+
+label write-memory
+   wIndex ) lda  flash-command ) sta
+   parse-address-length c
+   setup-address-length c  ( fall thru)
+
+.then
 
 label prepare-next-out
    ( toggle DATA0/1)  out-control # ldhx  toggle c
@@ -274,6 +284,13 @@ label setup-token
 
 .then
 
+( write-byte either simply copies a byte to memory - if flash-command is
+  zero - or runs the flash code if flash-command is non-zero.)
+label write-byte
+   flash-command ) tst
+   0= if  0 ,x sta  rts  then
+   flash-byte j  ;c
+
 label setup-or-out-token
    out-control ) lda  3c # and  34 # cmpne?  setup-token  until
    ( OUT)
@@ -285,7 +302,7 @@ label setup-or-out-token
    ( copy data)  .a psh  bufptr ) clr
    begin
       .h clr  bufptr ) ldx  out-buffer ,x lda  .x inc  bufptr ) stx
-      memptr ) ldhx  write-byte ) jsr  1 # aix  memptr ) sthx
+      memptr ) ldhx  write-byte c  1 # aix  memptr ) sthx
       memcount ) dec
    0 ,s decz? until  .a pul
 
