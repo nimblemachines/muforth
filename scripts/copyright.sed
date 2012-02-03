@@ -2,6 +2,6 @@
 
 # note that in Forth code we can't include the (c) because of the parens!
 /Copyright.*David Frech/ {
-s/-200./-2011/
-s/-2010/-2011/
+s/-200./-2012/
+s/-2011/-2012/
 }
