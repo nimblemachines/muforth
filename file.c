@@ -1,7 +1,7 @@
 /*
  * This file is part of muFORTH: http://muforth.nimblemachines.com/
  *
- * Copyright (c) 2002-2011 David Frech. All rights reserved, and all wrongs
+ * Copyright (c) 2002-2012 David Frech. All rights reserved, and all wrongs
  * reversed. (See the file COPYRIGHT for details.)
  */
 
@@ -167,7 +167,7 @@ void mu_close_file()
  */
 void mu_read_file()     /* fd - addr len */
 {
-    char *p;
+    char *p = NULL;
     struct stat s;
     int fd;
 
@@ -178,11 +178,19 @@ void mu_read_file()     /* fd - addr len */
         close(fd);
         return abort_strerror();
     }
-    p = (char *) mmap(0, s.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
-    if (p == MAP_FAILED)
+
+    /* If size of file is zero, don't try to mmap; it will fail and error
+     * out. Instead, simply return a buffer starting at address 0, of
+     * length 0.
+     */
+    if (s.st_size != 0)
     {
-        close(fd);
-        return abort_strerror();
+        p = (char *) mmap(0, s.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
+        if (p == MAP_FAILED)
+        {
+            close(fd);
+            return abort_strerror();
+        }
     }
 
     DROP(-1);

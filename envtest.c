@@ -1,7 +1,7 @@
 /*
  * This file is part of muFORTH: http://muforth.nimblemachines.com/
  *
- * Copyright (c) 2002-2011 David Frech. All rights reserved, and all wrongs
+ * Copyright (c) 2002-2012 David Frech. All rights reserved, and all wrongs
  * reversed. (See the file COPYRIGHT for details.)
  */
 
@@ -41,7 +41,7 @@ int main(int argc, char *argv[])
         else if (quot == -1 && rem == -3)
             printf("#define DIVISION_IS_SYMMETRIC\n");
         else
-            printf("#error \"Wow. Division Is broken.\"\n");
+            printf("#error \"Wow. Division is broken.\"\n");
     }
 
 #ifdef TEST_CELL_SIZE
