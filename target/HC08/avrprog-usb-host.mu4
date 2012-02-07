@@ -1,0 +1,40 @@
+( This file is part of muFORTH: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2012 David Frech. All rights reserved, and all wrongs
+  reversed. (See the file COPYRIGHT for details.)
+
+loading AVR SPI programmer (host)
+
+( Host-side code to drive the AVR programmer code in
+  target/HC08/avrprog-usb-core.mu4.)
+
+hex
+
+-- : usb  ( bmRequest bRequest wValue wIndex wLength 'buffer)
+
+( Since we're using wValue and wIndex to pass an array of four bytes, we
+  need an easy way to assemble the two word values -- little-endian! --
+  from two bytes.)
+
+: >usbword   ( b0 b1 - w)  8 <<  + ;
+: >setup   ( b0 b1 b2 b3 - wValue wIndex)
+   >usbword push  >usbword pop ;
+
+( Commands)
+: avr.Result   0c0 20   0 0     4 ubuf  usb  !ubuf b< b< b< b< ;
+: avr.Execute   ( b0 b1 b2 b3)  >setup 2push
+                40 21   2pop    4 ubuf  usb ;
+
+: control-write
+   create ,  ( bRequest)
+   does> @   40 swap  0 0 0 0  usb ;
+
+00  control-write  avr.Bye  ( End session, return to chat command loop)
+22  control-write  avr.ResetLow
+23  control-write  avr.ResetHigh
+24  control-write  avr.SlowClock  ( 250k)
+25  control-write  avr.FastClock  ( 2M)
+
+: avr   ( b0 b1 b2 b3 - r0 r1 r2 r3)  avr.Execute  avr.Result ;
+
+: prog  "fa00 pc! _run ;

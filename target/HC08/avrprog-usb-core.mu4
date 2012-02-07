@@ -1,0 +1,243 @@
+( This file is part of muFORTH: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2012 David Frech. All rights reserved, and all wrongs
+  reversed. (See the file COPYRIGHT for details.)
+
+loading AVR SPI programmer (core)
+
+( Check for compatibility with device.)
+.reg EPCTL0 .not .if
+   z" Selected device doesn't support USB."  abort
+.then
+
+__meta
+
+( Support for programming Atmel's 8-bit AVR family, using my JS16 as a
+  USB-based programmer.
+
+  Because we want to be independent of the USB byteloader code, we have to
+  re-implement a lot of that code: the command dispatch table, and the
+  basic handling of SETUP, IN, and OUT tokens. But code to enumerate the
+  device, and the device descriptors, are *not* repeated here. We only
+  implement the "vendor specific" requests required to do BDM.)
+
+hex
+
+10 constant buflen0  ( buffer length, and hence max packet size, for endpoint 0)
+
+1860 equ 'usb            ( USB RAM origin; buffer descriptors live here)
+1880 equ 'usb-buffers    ( endpoint RAM from here to 195f)
+
+__host
+
+: >bufaddr  ( buffer - bufaddr)
+   dup 0f and if  error" endpoint buffer must be on a 16-byte boundary"  then
+   \l 'usb -  2 >> ;
+
+__meta
+
+( Buffer descriptor control byte to match _any_ SETUP transaction, or an IN
+  or OUT transaction with a DATA1 packet.)
+0c8 equ match-data1
+
+( USB buffer descriptors)
+1860 equ in-control
+1861 equ in-count
+1862 equ in-bufaddr
+1863 equ out-control
+1864 equ out-count
+1865 equ out-bufaddr
+
+'usb-buffers            equ in-buffer
+'usb-buffers buflen0 +  equ out-buffer
+
+( Useful aliases for buffer addresses - for control requests.)
+out-buffer 0 + equ bmRequestType
+out-buffer 1 + equ bRequest
+out-buffer 2 + equ wValue
+out-buffer 3 + equ wValueHi
+out-buffer 4 + equ wIndex
+out-buffer 5 + equ wIndexHi
+out-buffer 6 + equ wLength
+out-buffer 7 + equ wLengthHi
+
+( Create a forward jump at the start of the flash sector.)
+forward avr-prog-loop
+
+aka PTAD  PortA
+aka PTADD DirA
+
+label ResetHigh
+      PortA 4 bset
+      DirA 4 bset
+      rts  ;c
+
+label ResetLow
+      PortA 4 bclr
+      DirA 4 bset
+      rts  ;c
+
+label InitSPI
+   %0101_0000 # ( cpol=0, cpha=0, enable spi, master mode) SPIC1 ) mov
+   00 # ( 8-bit mode, /SS disable, separate pins) SPIC2 ) mov
+   ( fall thru)
+
+label SlowClock
+      -- 53 # SPIBR ) mov  ( 24M / 6 / 16 = 250k)  rts  ;c
+      55 # SPIBR ) mov  ( 24M / 6 / 64 = 62.5k)  rts  ;c
+
+label FastClock
+      50 # SPIBR ) mov  ( 24M / 6 /  2 = 2M)  rts  ;c
+
+1 xvar expected   ( count of bytes to read via BDM from target)
+
+label avr-write-commands  ( all are control writes)
+   ( 22) ResetLow           .a dec  0!= until
+   ( 23) ResetHigh          .a dec  0!= until
+   ( 24) SlowClock ( 250k)  .a dec  0!= until
+   ( 25) FastClock ( 2M)    .a dec  0!= until
+
+   ( unknown, fall thru)
+
+label stall
+   EPCTL0 1 bset ( STALL)  rts  ;c
+
+( execute-avr-cmd has already queued up the target's response in the IN
+  buffer. We just need to ready the buffer descriptor. Assume that wLength
+  is the correct read count. It will always be less than one packet.)
+
+label read-result
+   wLength ) lda
+   ( fall thru)
+
+label prepare-in
+   in-count ) sta
+   match-data1 # lda  in-control ) sta
+   ( fall thru)
+
+( Get ready to receive another SETUP token. Expect OUT or SETUP, really.)
+label expect-setup-token
+   match-data1 # lda  out-control ) sta
+   buflen0 # lda  out-count ) sta
+   CTL 5 bclr ( TSUSPEND off - resume processing)
+   rts  ;c
+
+( Return NAK on IN.)
+label nak-in
+   .a clr  in-control ) sta  rts  ;c
+
+label SpiTx  ( Sends char in A; returns recvd char in A)
+   begin  SPIS 5 ( xmit empty)  bset? until  SPIDL ) sta
+   begin  SPIS 7 ( recvr full)  bset? until  SPIDL ) lda  rts  ;c
+
+( Instruction payload -- 4 bytes -- is in the SETUP packet, starting at
+  wValue. It uses the wValue and wIndex fields. Bytes returned by the AVR
+  are stored in the IN buffer for later retrieval by read-result.)
+
+label execute-avr-cmd
+   .x clr  .h clr
+   begin  wValue ,x lda  SpiTx c  in-buffer ,x sta  .x inc
+          4 # cpx  0= until
+   ( fall thru)
+
+( Prepare to return status - a zero-length IN transaction. Also be ready to
+  accept another SETUP even if it would mean abandoning the current
+  transfer. This is what the USB spec says we have to do.)
+
+label finish-control-write
+   ( Setup IN status stage)
+   .a clr  prepare-in j  ( zero-length DATA1 transaction)  ;c
+
+label setup-token
+   nak-in c
+
+( NOTE: Command numbers are all given in HEX.)
+( assume vendor request)
+   bRequest ) lda
+   20 # sub   ( BDM commands start at 20 hex; anything below that, we exit)
+   u< if  ( 00 - 1f Bye)  2 # ais  ( skip return from process-usb)  rts  then
+
+   ( 20 Result)   read-result               0!= until
+   ( 21 Execute)  execute-avr-cmd   .a dec  0!= until
+
+   avr-write-commands c  ( these are all control writes, so ...)
+   finish-control-write j  ;c
+
+label setup-or-out-token
+   out-control ) lda  3c # and  34 # cmpne?  setup-token  until
+
+.ifdef avr-using-OUT
+
+   ( OUT token)
+   ( If last OUT was zero-length, it was a status transaction for a
+     control read, so get ready for a new SETUP.)
+   out-count ) lda  0= if  expect-setup-token j  then
+
+   ( Otherwise, we've got a data payload. Write bytes to target via BDM,
+     delay, and then read target response.)
+
+   .a psh ( count)  out-buffer # ldhx
+   begin  BdmTx c  0 ,s decz? until  .a pul
+
+   ( After writing bytes via BDM, delay. For an S08 target we should delay
+    16 target cycles; for a CFv1 target, 32 cycles. To satisfy both, we'll
+    delay 32 cycles. Since we're running BDM at 24m on USB, we could be 6x
+    faster than 4M target, so delay 32*6 of *our* cycles.)
+
+   #32 6 * 4 / # lda  begin .a decz? until  ( 4~ per loop)
+
+   ( Now read the target's response via BDM and copy it into the USB IN
+     buffer. We've stashed the expected count in the variable expected.)
+
+   expected ) tst  0!= if  in-buffer # ldhx
+      begin  BdmRx c  expected ) decz? until
+   then
+
+   ( All done! Queue up status IN token.)
+   finish-control-write j  ;c
+
+.else
+
+   ( Assume OUT was a status transaction for a control read, so get ready
+     for a new SETUP.)
+
+   expect-setup-token j  ;c
+
+.then
+
+( An IN token is either the data stage of a control read, or the status
+  stage of a control write. Status IN's are always zero bytes long.)
+
+label in-token
+   ( INs will *always* be less than max packet length.)
+   ( fall thru)
+label nak-in-expect-setup
+   nak-in c  ( further IN's will return NAK)
+   expect-setup-token j  ;c
+
+( XXX To convert process-usb into an interrupt handler, jumps to
+  setup-or-out-token, in-token, and nak-in-expect-setup should really be
+  _calls_; we should handle all the flags that are set all at once, rather
+  than only one per call. Also, interrupt flags - like TOKDNEF and STALLF -
+  should be cleared after being handled.)
+
+label process-usb
+   INTSTAT 3 bset? if ( TOKDNEF)
+      STAT ) lda  INTSTAT 3 bset  ( ack TOKDNEF)
+      0f8 # and  setup-or-out-token 0!= until
+       08 # cmpne?  in-token  until
+      ( not EP0; ignore)  ( fall thru)
+   then
+   INTSTAT 7 bset? if ( STALLF)
+      EPCTL0 1 bclr ( remove EPSTALL)
+      INTSTAT 7 bset  ( ack STALL)
+      nak-in-expect-setup j  ( get ready to receive SETUP)
+   then
+   rts  ;c
+
+\l avr-prog-loop resolve>>  ( jump at start of Flash points here)
+label main-loop
+   ResetHigh c  ( drive /RESET high)
+   InitSPI c    ( setup SPI interface)
+   finish-control-write c  ( ready status IN; also prepare for SETUP)
+   begin  process-usb c  again  ;c
