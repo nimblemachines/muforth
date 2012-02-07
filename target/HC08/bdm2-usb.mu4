@@ -3,16 +3,20 @@
   Copyright 2002-2012 David Frech. All rights reserved, and all wrongs
   reversed. (See the file COPYRIGHT for details.)
 
-
-loading HCS08 BDM-over-USB transport v2 (core)
+loading HCS08 BDM-over-USB transport (core)
 
 __meta
 
 ( Support for Freescale's S08 Background Debug Mode - or BDM.)
 
-( This is "version 2" which means I re-imagined it to be more like the
-  byteloader protocol, where the target is never waiting for more than one
-  byte.)
+( This code will support talking to both S08 and ColdFire V1 cores via
+  BDM over USB.
+
+  Because we want to be independent of the USB byteloader code, we have to
+  re-implement a lot of that code: the command dispatch table, and the
+  basic handling of SETUP, IN, and OUT tokens. But code to enumerate the
+  device, and the device descriptors, are *not* repeated here. We only
+  implement the "vendor specific" requests required to do BDM.)
 
 ( This file also requires the S08 bit routines, found in bdm-bit-S08.mu4.)
 
@@ -56,15 +60,7 @@ out-buffer 5 + equ wIndexHi
 out-buffer 6 + equ wLength
 out-buffer 7 + equ wLengthHi
 
-2 xvar write-byte  ( unused in this code, but alloc space for it.)
-1 xvar expect-count   ( count of bytes to read via BDM from target)
-
-( Get ready to receive another SETUP token. Expect OUT or SETUP, really.)
-label expect-setup-token
-   match-data1 # lda  out-control ) sta
-   buflen0 # lda  out-count ) sta
-   CTL 5 bclr ( TSUSPEND off - resume processing)
-   rts  ;c
+1 xvar expected   ( count of bytes to read via BDM from target)
 
 label bdm-write-commands  ( all are control writes)
    .a decz? if  ( 22 SyncPulse)
@@ -100,7 +96,7 @@ label bdm-write-commands  ( all are control writes)
       SetTx1_8M j
    then
 
-.ifdef bdm-16m-target
+.labels. .contains SetRx1_16M .if
    .a decz? if  ( 29 Set16M)
       BdmRx1 # ldhx
       SetRx1_16M c
@@ -108,23 +104,43 @@ label bdm-write-commands  ( all are control writes)
    then
 .then
 
-   ( Unknown)  ( do nothing at all!)  rts  ;c
+   ( unknown, fall thru)
 
-( Prepare to return status - a zero-length IN transaction. Also be ready to
-  accept another SETUP even if it would mean abandoning the current
-  transfer. This is what the USB spec says we have to do.)
+label stall
+   EPCTL0 1 bset ( STALL)  rts  ;c
 
-label finish-control-write
-   ( Setup IN status stage)
-   .a clr  ( zero-length DATA1 transaction)
+( Handling the OUT associated with execute-bdm has already queued up the
+  target's response in the IN buffer. We just need to ready the buffer
+  descriptor. Assume that wLength is the correct read count. It will always
+  be less than one packet.)
+
+label read-result
+   wLength ) lda
+   ( fall thru)
+
 label prepare-in
    in-count ) sta
    match-data1 # lda  in-control ) sta
-   expect-setup-token j  ;c
+   ( fall thru)
+
+( Get ready to receive another SETUP token. Expect OUT or SETUP, really.)
+label expect-setup-token
+   match-data1 # lda  out-control ) sta
+   buflen0 # lda  out-count ) sta
+   CTL 5 bclr ( TSUSPEND off - resume processing)
+   rts  ;c
 
 ( Return NAK on IN.)
 label nak-in
    .a clr  in-control ) sta  rts  ;c
+
+( Write count is in wLength; expected read count is in wIndex. We ignore
+  wLength, and assume that the values to write will fit in one packet, and
+  simply use the out-count as the write count.)
+
+label execute-bdm
+   wIndex ) lda  expected ) sta
+   expect-setup-token j  ;c
 
 label setup-token
    nak-in c
@@ -135,51 +151,57 @@ label setup-token
    20 # sub   ( BDM commands start at 20 hex; anything below that, we exit)
    u< if  ( 00 - 1f Bye)  2 # ais  ( skip return from process-usb)  rts  then
 
-   0= if  ( 20 Result - either of Transaction or SyncPulse)
-      wLength ) lda  prepare-in j
-   then
-
-   .a decz? if  ( 21 Transaction)
-      ( We can get the write count from the length of the OUT buffer, but we need
-        to specify the read count in the SETUP transaction.)
-      ( expect count in wValue)  wValue ) lda  expect-count ) sta
-      expect-setup-token j
-   then
+   ( 20 Result)   read-result          0!= until
+   ( 21 Execute)  execute-bdm   .a dec 0!= until
 
    bdm-write-commands c  ( these are all control writes, so ...)
-   finish-control-write j  ;c
+   ( fall thru)
+
+( Prepare to return status - a zero-length IN transaction. Also be ready to
+  accept another SETUP even if it would mean abandoning the current
+  transfer. This is what the USB spec says we have to do.)
+
+label finish-control-write
+   ( Setup IN status stage)
+   .a clr  prepare-in j  ( zero-length DATA1 transaction)  ;c
 
 label setup-or-out-token
    out-control ) lda  3c # and  34 # cmpne?  setup-token  until
-   ( OUT)
+
+   ( OUT token)
    ( If last OUT was zero-length, it was a status transaction for a
      control read, so get ready for a new SETUP.)
    out-count ) lda  0= if  expect-setup-token j  then
 
-   ( Otherwise, we've got a data payload, so do a BDM transaction with the
-     target, writing the bytes from the OUT buffer to the chip, and then
-     reading expect-count bytes _from_ the chip and putting them into the IN
-     buffer.)
+   ( Otherwise, we've got a data payload. Write bytes to target via BDM,
+     delay, and then read target response.)
 
-   ( write data via BDM)  .a psh  out-buffer # ldhx
+   .a psh ( count)  out-buffer # ldhx
    begin  BdmTx c  0 ,s decz? until  .a pul
 
-   ( Delay a bit - we're supposed to wait 16 target BDM cycles after
-     writing and before reading. Instruction overhead between here and
-     driving BKGD is at least 16 host cycles. Since we're running BDM at
-     24m on USB, we could be 6x faster than 4M target.)
-   10 # lda  begin  0 ,x tst  .a decz? until  ( 7~ x 16 iterations)
+   ( After writing bytes via BDM, delay. For an S08 target we should delay
+    16 target cycles; for a CFv1 target, 32 cycles. To satisfy both, we'll
+    delay 32 cycles. Since we're running BDM at 24m on USB, we could be 6x
+    faster than 4M target, so delay 32*6 of *our* cycles.)
 
-   ( read response via BDM)  expect-count ) tst  0!= if  in-buffer # ldhx
-   begin  BdmRx c  expect-count ) decz? until  then
+   #32 6 * 4 / # lda  begin .a decz? until  ( 4~ per loop)
 
-   ( set up status IN)
+   ( Now read the target's response via BDM and copy it into the USB IN
+     buffer. We've stashed the expected count in the variable expected.)
+
+   expected ) tst  0!= if  in-buffer # ldhx
+      begin  BdmRx c  expected ) decz? until
+   then
+
+   ( All done! Queue up status IN token.)
    finish-control-write j  ;c
 
 ( An IN token is either the data stage of a control read, or the status
   stage of a control write. Status IN's are always zero bytes long.)
 
 label in-token
+   ( INs will *always* be less than max packet length.)
+   ( fall thru)
 label nak-in-expect-setup
    nak-in c  ( further IN's will return NAK)
    expect-setup-token j  ;c
