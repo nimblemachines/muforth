@@ -21,7 +21,8 @@ hex
    >usbword push  >usbword pop ;
 
 ( Commands)
-: avr.Result   0c0 20   0 0     4 ubuf  usb  !ubuf b< b< b< b< ;
+: avr.Result   0c0 20   0 0     4 ubuf  usb ;
+
 : avr.Execute   ( b0 b1 b2 b3)  >setup 2push
                 40 21   2pop    4 ubuf  usb ;
 
@@ -35,6 +36,26 @@ hex
 24  control-write  avr.SlowClock  ( 250k)
 25  control-write  avr.FastClock  ( 2M)
 
-: avr   ( b0 b1 b2 b3 - r0 r1 r2 r3)  avr.Execute  avr.Result ;
+: avr   ( b0 b1 b2 b3)  avr.Execute  avr.Result ;
 
-: prog  "fa00 pc! _run ;
+: avr2  ( b0 b1 b2 b3 - r2)  ( do command; return second-to-last byte of response)
+   avr  ubuf 2 + c@ ;
+
+: avr3  ( b0 b1 b2 b3 - r3)  ( do command; return last byte of response)
+   avr  ubuf 3 + c@ ;
+
+: prog  ( enable programming)
+   0fa00 pc! _run
+   10 for  avr.ResetLow  0ac 53 0 0 avr2  53 = if  pop drop ^ then
+           avr.ResetHigh  next
+   ." Couldn't enable serial programming" ;
+
+: sig  ( - s0 s1 s2)
+   30 0 0 0 avr3
+   30 0 1 0 avr3
+   30 0 2 0 avr3 ;
+
+: fuses  ( - fuse hfuse efuse)
+   50 0 0 0 avr3
+   58 8 0 0 avr3
+   50 8 0 0 avr3 ;
