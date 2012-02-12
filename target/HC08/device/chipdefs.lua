@@ -1,7 +1,14 @@
 -- Be careful of pasted in endashes and ligatures! fl really got me...
--- To convert endashes to normal (double) dashes, do this (in Vim):
+-- To convert en- and em-dashes to normal (double) dashes, do this (in Vim):
 -- :set encoding=utf-8
--- :%s/\%u2014/--/g
+-- :%s/\%u2013/--/g  ( en-dash)
+-- :%s/\%u2014/--/g  ( em-dash)
+-- and for common ligatures, do these:
+-- :%s/\%ufb00/ff/g
+-- :%s/\%ufb01/fi/g
+-- :%s/\%ufb02/fl/g
+-- :%s/\%ufb03/ffi/g
+-- :%s/\%ufb04/ffl/g
 
 -- On the datasheet, QD4 swaps Virq and Vlvd! Is this possible, or a mistake?
 -- Check in CW and see...
