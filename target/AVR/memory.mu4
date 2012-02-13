@@ -7,35 +7,86 @@ loading AVR memory image
 
 ( Space for compiling into. AVRs can get big; for now let's limit ourselves
   to 64k address space. Since the program space is word-addressed, this
-  means 32k words.)
+  means 32k words.
 
-64 Ki constant #image  ( this is as big as it can get!)
+  XXX: We should really define this in a device/xxx file that gets loaded
+  _before_ this one.)
+
+64 Ki constant #image
 #image buffer 'image
-: |+  'image + ;
 
--:  |+ c@ ;                                  is |c@
--:  dup |c@ ( low)  swap 1+ |c@ 8 << or ;    is |@
-2 |cell !  ( size of cell)
+: wrap   [ #image 1- ] and ;
+: +a  ( a1 a2 - sum)  +  wrap ;  ( add and wrap to 16bit address)
 
-: |c!  |+ c! ;
-: |!  ( w a)  push  dup r@ |c!  8 >> pop 1+ |c! ;
+: image+  ( target - host)  wrap  'image + ;
+: image-  ( host - target)        'image -  wrap ;
+
+( DEBUG: Define show-comma to show code as it's compiled.)
+.ifdef show-comma
+: .debug-comma  dup  .h8_ ;
+.else
+: .debug-comma ;
+.then
+
+( DEBUG: Define show-c! to show writes to image.)
+.ifdef show-c!
+: .debug-c!   cr  ( byte addr)  2dup .hcell_  .h8 ;
+.else
+: .debug-c! ;
+.then
+
+: image-c@             image+ c@ ;
+: image-c!  .debug-c!  image+ c! ;
+
+( AVRs are little-endian.)
+: image-!  ( w a)  push  >hilo  r@ ( lo) image-c!  pop 1+ ( hi) image-c! ;
+: image-@  ( a - w)  dup image-c@ ( lo)  swap 1+ image-c@ ( hi)  lohi> ;
+
+: image-p!  image+ p! ;
+: image-p@         p@ image- ;
+
+: target-*   ( - cell)  c* c* lohi> ;  ( little-endian 16-bit word)
+
+: >image  ['] image-p!  is |p!
+          ['] image-p@  is |p@
+          [']       c*  is |c*
+          ['] target-*  is |cell*
+                         2 |cell !  ( size of cell) ;
+>image
 
 ( Dictionary operators.)
-variable |h	( image dictionary pointer)
+variable h   ( image dictionary pointer pointer; points to one of:)
+   2variable 'ram     ( ram pointer, origin)
+   2variable 'flash   ( flash pointer, origin)
 
-: |aligned  1 + -2 and ;
-: |align  |h @ |aligned |h ! ;
+: ram     'ram    h ! ;
+: flash   'flash  h ! ;
+: in-flash?  h @  'flash = ;
+: in-ram?    in-flash? not ;
+: org    ( a) ( set dict pointer)  h @  ! ;
 
-: |here  ( - a)  |h @  ;
-: |c,    ( ch)   |here |c!  1 |h +!  ;
-: |,     ( n)    |align  dup |c,  8 >> |c, ;
-                         ( little-endian! is this right for AVR?)
-: |#     ( - n)  |here |+  'image -  ;  ( return the number of bytes in image)
+meta
+( XXX alignment policy? Should , always align? Should allot? Should we even
+  have two spaces? We will never, in this architecture, want to , or c,
+  into ram; we will only need "ram here" and "ram allot".)
+
+: here  ( - a)  h @ @ ;
+: aligned  1+  -2 and ;
+: align    \m here \m aligned  org ;
+: allot ( n)    h @ +! ;
+: c,    ( ch)   .debug-comma  \m here image-c!  1 \m allot ;
+: ,     ( w)    ( \m align)  >hilo  \m c, ( lo)  \m c, ( hi) ;
+
+forth
+( return the origin & number of bytes in region)
+: region  ( 'region - a u)  2@  ( origin ptr)  over - ;
 
 ( Initialization.)
-: wipe      'image  #image  ( erase)   "55  fill  ;
-: org   ( buffer len org)  nip nip  ( for now)  |h ! ;
+: wipe   'image  #image  ( erase)   "ff  fill ;
 
-wipe  'image #image  0  org
+: ram!      ( ram-origin)  dup 'ram   2!  ( set ptr and origin to origin) ;
+: flash!  ( flash-origin)  dup 'flash 2!  ( set ptr and origin to origin) ;
 
-
+( Erase image, default origins: ram to @ram, and flash to @flash.)
+( XXX FIXME KLUDGE)  0 constant @flash
+wipe  @ram ram!  @flash flash!
