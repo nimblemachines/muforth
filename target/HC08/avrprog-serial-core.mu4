@@ -1,0 +1,105 @@
+( This file is part of muFORTH: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2012 David Frech. All rights reserved, and all wrongs
+  reversed. (See the file COPYRIGHT for details.)
+
+loading AVR SPI-over-serial programmer (core)
+
+__meta
+
+( Support for programming Atmel's 8-bit AVR family, using a
+  serial-connected S08QE or QG as a programmer.)
+
+( The style of this code was inspired by chat3.mu4. It's really just an
+  experiment to see if the style that I wrote the USB chat firmware in
+  works in this context too. The main difference is that the original chat
+  code was a big loop, where the USB "loop" was a subroutine - which meant
+  that to return the "top" from any piece of code all you do is _return_. And
+  using tail calls, it's easy to code in a Forth-like style that is very
+  efficient.)
+
+hex
+
+( Create a forward jump at the start of the flash sector.)
+forward avr-prog-loop
+
+aka PTAD  PortA
+aka PTADD DirA
+aka PTBD  PortB
+aka PTBDD DirB
+
+label ResetHigh
+      PortB 5 bset
+      DirB 5 bset
+      rts  ;c
+
+label ResetLow
+      PortB 5 bclr
+      DirB 5 bset
+      rts  ;c
+
+( QE and QG parts have been trimmed to run at 9.216M so they can
+  accuratedly generate 115200 bps clock. We have to use slightly strange
+  dividers to get close to 250k -- slow SPI clock -- and 2M -- fast SPI
+  clock.)
+
+label InitSPI
+   %0101_0000 # ( cpol=0, cpha=0, enable spi, master mode) SPIC1 ) mov
+   00 # ( 8-bit mode, /SS disable, separate pins) SPIC2 ) mov
+   %0010_1100 # lda  PTBDS ) sta ( high drive on SCK, /SS, and MOSI)
+   ( fall thru)
+
+label SlowClock
+      42 # SPIBR ) mov  ( 9.216M / 5 / 8 = 230k)  rts  ;c
+      -- 44 # SPIBR ) mov  ( 9.216M / 5 / 32 = 57.6k)  rts  ;c
+
+label FastClock
+      20 # SPIBR ) mov  ( 9.216M / 3 / 2 = 1.536M)  rts  ;c
+
+label get-byte  ( returns char in A)
+   begin  SCIS1 5 ( recvr full)  bset? until
+   SCID ) lda  rts  ;c
+
+label put-byte  ( transmits char in A)
+   begin  SCIS1 7 ( xmit empty)  bset? until
+   SCID ) sta  rts  ;c
+
+label SpiTx  ( Sends char in A; returns recvd char in A)
+   begin  SPIS 5 ( xmit empty)  bset? until  SPID ) sta
+   begin  SPIS 7 ( recvr full)  bset? until  SPID ) lda  rts  ;c
+
+label execute-avr-cmd
+   4 # lda  .a psh  ( count)
+   begin   get-byte c  SpiTx c  put-byte c  0 ,s decz? until  .a pul
+   rts  ;c
+
+( Commands:
+0-1f  Bye        - exit AVR prog code and return to chat loop
+  21  Execute    - execute AVR programming command, send result
+  22  ResetLow   - drive target /RESET low
+  23  ResetHigh  - drive target /RESET high
+  24  SlowClock  - set SPI clock to ~250k
+  25  FastClock  - set SPI clock to ~2M
+)
+
+label process-serial
+   SCIS1 5 ( recvr full)  bclr? if  rts  then  ( nothing to do)
+   SCID ) lda  ( command)
+
+   ( NOTE: Command numbers are all given in HEX.)
+   21 # sub   ( AVR prog commands start at 21 hex; anything below that, we exit)
+   u< if  ( 00 - 20 Bye)  2 # ais  ( skip return from process-serial)  rts  then
+
+   ( 21 Execute)  execute-avr-cmd            0!= until
+   ( 22)          ResetLow           .a dec  0!= until
+   ( 23)          ResetHigh          .a dec  0!= until
+   ( 24)          SlowClock ( 250k)  .a dec  0!= until
+   ( 25)          FastClock ( 2M)    .a dec  0!= until
+
+   ( unknown command)   rts  ;c
+
+\l avr-prog-loop resolve>>  ( jump at start of Flash points here)
+label main-loop
+   ResetHigh c  ( drive /RESET high)
+   InitSPI c    ( setup SPI interface)
+   begin  process-serial c  again  ;c
