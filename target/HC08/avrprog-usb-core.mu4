@@ -64,6 +64,8 @@ out-buffer 7 + equ wLengthHi
 ( Create a forward jump at the start of the flash sector.)
 forward avr-prog-loop
 
+.ifdef S08JS
+
 aka PTAD  PortA
 aka PTADD DirA
 
@@ -82,6 +84,30 @@ label InitSPI
    00 # ( 8-bit mode, /SS disable, separate pins) SPIC2 ) mov
    %0001_1100 # lda  PTADS ) sta ( high drive on SCK, /SS, and MOSI)
    ( fall thru)
+
+.else .def S08JM16 .def S08JM60 .or .if
+
+aka PTED  PortE
+aka PTEDD DirE
+
+label ResetHigh
+      PortE 7 bset
+      DirE 7 bset
+      rts  ;c
+
+label ResetLow
+      PortE 7 bclr
+      DirE 7 bset
+      rts  ;c
+
+label InitSPI
+   %0101_0000 # ( cpol=0, cpha=0, enable spi, master mode) SPIC1 ) mov
+   00 # ( 8-bit mode, /SS disable, separate pins) SPIC2 ) mov
+   %1110_0000 # lda  PTEDS ) sta ( high drive on SCK, /SS, and MOSI)
+   ( fall thru)
+
+.else  z" Unsupported SPI"  abort
+.then .then
 
 label SlowClock
       53 # SPIBR ) mov  ( 24M / 6 / 16 = 250k)  rts  ;c
@@ -126,6 +152,10 @@ label expect-setup-token
 ( Return NAK on IN.)
 label nak-in
    .a clr  in-control ) sta  rts  ;c
+
+( The JS and JM parts -- the USB parts that this code is going to run on --
+  both have 16-bit-capable SPI ports, so we specify SPIDL instead of SPID
+  for the SPI data register.)
 
 label SpiTx  ( Sends char in A; returns recvd char in A)
    begin  SPIS 5 ( xmit empty)  bset? until  SPIDL ) sta
