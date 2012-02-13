@@ -1,0 +1,68 @@
+( This file is part of muFORTH: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2012 David Frech. All rights reserved, and all wrongs
+  reversed. (See the file COPYRIGHT for details.)
+
+loading AVR SPI-over-serial programmer (host)
+
+( Host-side code to drive the AVR programmer code in
+  target/HC08/avrprog-serial-core.mu4.)
+
+hex
+
+4 buffer avrbuf  ( for returned values)
+variable avrptr  ( pointer into avrbuf)
+
+: !avrbuf  avrbuf avrptr ! ;
+: +avrptr  1 avrptr +! ;
+
+: b>  ( byte)    avrptr @  c!  +avrptr ;
+-- : b<  ( - byte)  avrptr @  c@  +avrptr ;
+
+( Commands)
+: avr.Execute   ( b3 b2 b1 b0)
+   !avrbuf
+   21 send
+   4 for  send  recv  b>  next ;
+
+: avr.Bye  ( End session, return to chat command loop)  00 send ;
+: avr.ResetLow   22 send ;
+: avr.ResetHigh  23 send ;
+: avr.SlowClock  ( 250k)  24 send ;
+: avr.FastClock  ( 2M)    25 send ;
+
+( XXX Convert from order used in USB code -- in order -- to reverse order,
+  and then excecute AVR command.)
+: avr   ( b0 b1 b2 b3)   swap  2swap  swap  ( b3 b2 b1 b0)  avr.Execute ;
+
+: avr2  ( b0 b1 b2 b3 - r2)  ( do command; return second-to-last byte of response)
+   avr  avrbuf 2 + c@ ;
+
+: avr3  ( b0 b1 b2 b3 - r3)  ( do command; return last byte of response)
+   avr  avrbuf 3 + c@ ;
+
+: prog  ( enable programming)
+.ifdef in-ram
+   0112 c.SetPC c.Run  ( run from ram - loads right after flash routine)
+.else
+   0fa00 c.SetPC c.Run
+.then
+   10 for  avr.ResetLow  0ac 53 0 0 avr2  53 = if  pop drop ^ then
+           avr.ResetHigh  next
+   ." Couldn't enable serial programming" ;
+
+: unprog  ( disable programming)
+   avr.ResetHigh  avr.Bye ;
+
+: sig  ( - s0 s1 s2)
+   30 0 0 0 avr3
+   30 0 1 0 avr3
+   30 0 2 0 avr3 ;
+
+: fuses  ( - fuse hfuse efuse)
+   50 0 0 0 avr3
+   58 8 0 0 avr3
+   50 8 0 0 avr3 ;
+
+: lock  ( - lock)
+   58 0 0 0 avr3 ;
