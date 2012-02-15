@@ -107,20 +107,41 @@ comment Commands
    c* ( H)  c* b.WriteCC  c* b.WriteA  c* ( H X ) hilo> b.WriteHX
    c* c* hilo> b.WritePC ;
 
-( We've already written the byte, so jump to lda # command)
+.ifdef bdm-flash-no-ram
+
+( Let's do this over BDM again, instead of running a ram routine. Warning:
+  doing it this way is *really* slow!)
+
+variable bdm-flash-command
 : b.flash-byte  ( byte)
-   b.WriteNext  \l flash-command b.WritePC  b.RunWait ;
+   b.WriteNext  bdm-flash-command @  \l FCMD b.WriteByte
+   80 \l FSTAT b.WriteByte
+   begin  \l FSTAT b.ReadByte  40 and  until ;
 
 : b.FlashChunk   ( 'target len buffer cmd - status)
+   bdm-flash-command !
    30 \l FSTAT b.WriteByte  ( clear flash errors)
-   \l flash-command 1+  b.WriteByte
-   82 ( bgnd) \l flash-exit  b.WriteByte
    b.setup-chunk  for  c* b.flash-byte  next
    \l FSTAT b.ReadByte  ( return flash status) ;
 
+.else  ( bdm-flash-using-ram)
+
+( We've already written the byte, so jump to lda command)
+: b.flash-byte  ( byte)
+   b.WriteNext  b.RunWait ;
+
+: b.FlashChunk   ( 'target len buffer cmd - status)
+   30 \l FSTAT b.WriteByte  ( clear flash errors)
+       ( cmd) \l flash-command  b.WriteByte
+   \l do-flash-command b.WritePC
+   b.setup-chunk  for  c* b.flash-byte  next
+   \l FSTAT b.ReadByte  ( return flash status) ;
+
+.then
+
 : b.VerifyChunk   ( 'target len - flag)
    over image+ b.setup-chunk
-   for  b.ReadNext c*  xor  if  image-p@ 1- u.  then  next ;
+   for  b.ReadNext c*  xor  if  image-p@ -1 +a u.  then  next ;
 
 : ResetSP
    @ram #ram +  b.WriteSP ;
@@ -210,11 +231,17 @@ comment misguided
 
 : b.Hi
    SetupClock ( trim & fcdiv)  NoWatchdog  ResetSP
-   hi ( copy ram flash routine) ;
+   \l flash-byte  \l flash-end  over -  put-region
+   82 ( bgnd) \l flash-exit  b.WriteByte ;
+
+   -- hi ( copy ram flash routine)
+   -- broken because chat copies to
+   -- connected device and resets pointer to show that the target is synced
+   -- with host) ;
 
 : try-clock
    b.ReadStatus dup u.  0c8 = if  b.Hi  -1 ^  then  0 ;
-   
+
 : pwr  b.BkgdLow  ." power cycle S08, then press a key..."  key drop
        b.BkgdHiZ   b.Sync u.  b.Sync u.
        b.Clock4M try-clock  if ^ then

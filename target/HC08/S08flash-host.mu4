@@ -79,19 +79,15 @@ forth
    0ffac 14  ( 0ffac - 0ffcf)  program-row  ( trims and security bytes)
    0ffc0 40  ( 0ffc0 - 0ffff)  program-row  ( vectors) ;
 
-( The only correct semantics for blank? are that when we are about to
-  program the _first_ byte of a page, we check the entire page & erase it
-  if necessary.)
+( When we are about to program the _first_ row of a page, we erase the
+  page. If it's the last page of the flash, we save the trims, erase the
+  page, and then flash the vectors and trims.)
 
 : erased  ( 'target)
    dup [ /page 1- ] and  if  drop ^  then  ( do nothing if not first byte)
-   dup blank?  if  drop ^  then
    dup last-page? if  ( erasing last page)
-      save-trims  erase-page  flash-vectors  ^  then  ( normal case)
+      save-trims  erase-page  flash-vectors  ^  then
    erase-page ;
-
-( For each row check if blank, erase if necessary, then copy rows over
-  to buffer and program them!)
 
 : row  ( 'target len - 'target+len)
    2dup + push  over erased  program-row  pop ;
@@ -103,9 +99,14 @@ forth
 : flash-image   'flash region ( a u)   flash-region ;
 
 ( XXX This is a bit of a hack, but seems to work.)
-: slow-verify   'flash region ( a u)
+: slow-verify-region
    over t.SetAddr  swap image-p!
-   for  c* t.Read  xor  if  image-p@ 1- u.  then  next ;
+   for  c* t.Read  xor  if  image-p@ -1 +a u.  then  next ;
+
+: slow-verify
+   'flash region ( a len)      slow-verify-region  ( program image)
+   0ffac 14  ( 0ffac - 0ffcf)  slow-verify-region  ( trims and security bytes)
+   0ffc0 40  ( 0ffc0 - 0ffff)  slow-verify-region  ( vectors) ;
 
 ( Fast verify! Using chunked reads.)
 ( We use the USB ram region of the image as a read buffer: 1860-1960. This
@@ -116,6 +117,11 @@ forth
 
 ( Do 128 bytes at a time. I can't read 256 at a time using USB.)
 
-: verify   'flash region ( a len)
+: verify-region
    80 /mod  ( r q)  swap push  ?for  80 verify-chunk  next  then
                        pop  =if  ( rem) verify-chunk  drop ^  then  2drop ;
+
+: verify
+   'flash region ( a len)      verify-region  ( program image)
+   0ffac 14  ( 0ffac - 0ffcf)  verify-region  ( trims and security bytes)
+   0ffc0 40  ( 0ffc0 - 0ffff)  verify-region  ( vectors) ;
