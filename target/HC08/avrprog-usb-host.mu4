@@ -20,28 +20,33 @@ hex
    lohi> push  lohi> pop ;
 
 ( Commands)
-: avr.Result   0c0 20   0 0     4 ubuf  usb ;
+: avr.Read    ( b0 b1 b2 b3)  >setup 2push
+               0c0 20   2pop    4 ubuf  usb ;
 
-: avr.Execute   ( b0 b1 b2 b3)  >setup 2push
-                40 21   2pop    4 ubuf  usb ;
+: avr.Write   ( b0 b1 b2 b3)  >setup 2push
+                40 20   2pop    0 0     usb ;
+
+: avr.BulkRead   ( cmd ahi alo toggle buf len)  2push  >setup 2push
+               0c0 21   2pop   pop pop  usb ;
+
+: avr.BulkWrite  ( cmd ahi alo toggle buf len)  2push  >setup 2push
+                40 22   2pop   pop pop  usb ;
 
 : control-write
    create ,  ( bRequest)
    does> @   40 swap  0 0 0 0  usb ;
 
 00  control-write  avr.Bye  ( End session, return to chat command loop)
-22  control-write  avr.ResetLow
-23  control-write  avr.ResetHigh
-24  control-write  avr.SlowClock  ( 250k)
-25  control-write  avr.FastClock  ( 2M)
-
-: avr   ( b0 b1 b2 b3)  avr.Execute  avr.Result ;
+23  control-write  avr.ResetLow
+24  control-write  avr.ResetHigh
+25  control-write  avr.SlowClock  ( 250k)
+26  control-write  avr.FastClock  ( 2M)
 
 : avr2  ( b0 b1 b2 b3 - r2)  ( do command; return second-to-last byte of response)
-   avr  ubuf 2 + c@ ;
+   avr.Read  ubuf 2 + c@ ;
 
 : avr3  ( b0 b1 b2 b3 - r3)  ( do command; return last byte of response)
-   avr  ubuf 3 + c@ ;
+   avr.Read  ubuf 3 + c@ ;
 
 : prog  ( enable programming)
 .ifdef in-ram
@@ -68,3 +73,102 @@ hex
 
 : lock  ( - lock)
    58 0 0 0 avr3 ;
+
+
+( XXX quick and dirty test to read chip -- assuming 168)
+#64 Ki buffer image
+variable p  ( target address)
+
+: image-p  p @  image + ;
+: image,  ( b)  image-p  c!  1 p +! ;
+: pw  ( p, as word pointer)  p @  u2/ ;
+: addr   ( - word-addr-hi word-addr-lo)  pw  >hilo ;
+-- : avr3  drop  cr  rot u. swap u. u.  00 ;
+
+: w,  >hilo  image, image, ;
+: fill-image
+   p off
+   0  #32 Ki for  dup w,  2 +  next  drop ;
+
+: erase-image
+   p off
+   #32 Ki for  0 w,  next ;
+
+: read-chip
+   erase-image
+   p off
+   prog  avr.FastClock
+   [ #512 #64 / ] for  ( program pages)
+      #64 for  ( page of 64 words)
+         20  addr  0  avr3  image,  ( read flash lo byte)
+         28  addr  0  avr3  image,  ( read flash hi byte)
+      next  char . emit
+   next
+   unprog ;
+
+: read-chip-fast
+   erase-image
+   p off
+   prog  avr.FastClock
+   [ 8 Ki #64 / ] for  ( program pages)
+      [ #128 #16 / ] for  ( page of 64 words -- 128 bytes -- in 16 byte chunks) 
+         20  addr  8  image-p  #16  avr.BulkRead
+         #16 p +!
+      next  char . emit
+   next
+   unprog ;
+
+: read-eeprom
+   erase-image
+   p off
+   prog  avr.FastClock
+   [ #512 #16 / ] for  ( 512 bytes in 16 byte chunks)
+      0a0  addr  0  image-p  #16  avr.BulkRead
+      #16 p +!
+      char . emit
+   next
+   unprog ;
+
+: blank?
+   p off  0ff
+   #16 Ki for
+      image-p c@  1 p +!  and
+   next ;
+
+( Write 8k words to 168 chip; each instruction word gets its address as a
+  value. Makes for an easy test.)
+
+40 constant w/page  ( words per page -- mega168)
+
+0 .if
+: avr.BulkWrite  ( cmd ahi alo toggle buf len)  drop
+   cr  2push  rot u. swap u. u.  pop u.  pop u. ." bulkwrite" ;
+.then
+
+: lo-addr   0  pw  [ w/page 1- ] and ;
+: hi-addr   pw  [ w/page negate ] and  w/page -  >hilo ;
+
+( NOTE: this programming command is *not* available on the mega8515. You
+  have to simply delay instead.)
+: ?busy
+   begin  0f0 0 0 0 avr3  1 and  0= until ;
+
+: erase
+   0ac 80 0 0 avr.Write  ( erase chip)  ?busy ;
+
+: prog-test
+   fill-image
+   prog  avr.FastClock
+   erase
+   p off
+   [ 8 Ki #64 / ] for  ( program pages)
+      [ #128 #16 / ] for  ( page of 64 words -- 128 bytes -- in 16 byte chunks)
+         40  lo-addr  8  image-p  #16  avr.BulkWrite
+         -- lo-addr  cr  swap u. u.
+         #16 p +!
+      next
+      4c  hi-addr  0  avr.Write  ?busy
+      hi-addr  cr  swap u. u.  ." page"
+      -- char . emit
+   next
+   unprog ;
