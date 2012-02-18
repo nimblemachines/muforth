@@ -116,26 +116,37 @@ label SlowClock
 label FastClock
       50 # SPIBR ) mov  ( 24M / 6 /  2 = 2M)  rts  ;c
 
-1 xvar expected   ( count of bytes to read via BDM from target)
-
 label avr-write-commands  ( all are control writes)
-   ( 22) ResetLow           .a dec  0!= until
-   ( 23) ResetHigh          .a dec  0!= until
-   ( 24) SlowClock ( 250k)  .a dec  0!= until
-   ( 25) FastClock ( 2M)    .a dec  0!= until
+   ( 23) ResetLow           .a dec  0!= until
+   ( 24) ResetHigh          .a dec  0!= until
+   ( 25) SlowClock ( 250k)  .a dec  0!= until
+   ( 26) FastClock ( 2M)    .a dec  0!= until
 
    ( unknown, fall thru)
 
 label stall
    EPCTL0 1 bset ( STALL)  rts  ;c
 
-( execute-avr-cmd has already queued up the target's response in the IN
-  buffer. We just need to ready the buffer descriptor. Assume that wLength
-  is the correct read count. It will always be less than one packet.)
+( The JS and JM parts -- the USB parts that this code is going to run on --
+  both have 16-bit-capable SPI ports, so we specify SPIDL instead of SPID
+  for the SPI data register.)
 
-label read-result
-   wLength ) lda
-   ( fall thru)
+label SpiTx  ( Sends char in A; returns recvd char in A)
+   begin  SPIS 5 ( xmit empty)  bset? until  SPIDL ) sta
+   begin  SPIS 7 ( recvr full)  bset? until  SPIDL ) lda  rts  ;c
+
+( I put these here so they are closer to the code that uses them.)
+4 xvar avr-cmd-saved
+
+( wValue and following bytes have the following meaning:
+  avr-cmd  addr-hi  addr-lo  dummy/toggle)
+
+wValue      equ avr-cmd
+avr-cmd 2 + equ addr-lo
+avr-cmd 3 + equ toggle
+
+avr-cmd-saved 2 + equ addr-lo-saved
+avr-cmd-saved 3 + equ toggle-saved
 
 label prepare-in
    in-count ) sta
@@ -149,27 +160,19 @@ label expect-setup-token
    CTL 5 bclr ( TSUSPEND off - resume processing)
    rts  ;c
 
-( Return NAK on IN.)
-label nak-in
-   .a clr  in-control ) sta  rts  ;c
-
-( The JS and JM parts -- the USB parts that this code is going to run on --
-  both have 16-bit-capable SPI ports, so we specify SPIDL instead of SPID
-  for the SPI data register.)
-
-label SpiTx  ( Sends char in A; returns recvd char in A)
-   begin  SPIS 5 ( xmit empty)  bset? until  SPIDL ) sta
-   begin  SPIS 7 ( recvr full)  bset? until  SPIDL ) lda  rts  ;c
-
 ( Instruction payload -- 4 bytes -- is in the SETUP packet, starting at
   wValue. It uses the wValue and wIndex fields. Bytes returned by the AVR
   are stored in the IN buffer for later retrieval by read-result.)
 
-label execute-avr-cmd
+label single-avr-cmd
    .x clr  .h clr
-   begin  wValue ,x lda  SpiTx c  in-buffer ,x sta  .x inc
+   begin  avr-cmd ,x lda  SpiTx c  in-buffer ,x sta  .x inc
           4 # cpx  0= until
-   ( fall thru)
+
+   bmRequestType ) lda  40 # and  0!= if  ( read)
+      wLength ) lda  prepare-in j  then
+
+   ( otherwise write, so fall thru)
 
 ( Prepare to return status - a zero-length IN transaction. Also be ready to
   accept another SETUP even if it would mean abandoning the current
@@ -178,6 +181,36 @@ label execute-avr-cmd
 label finish-control-write
    ( Setup IN status stage)
    .a clr  prepare-in j  ( zero-length DATA1 transaction)  ;c
+
+label bulk-read
+  .h clr  .h psh  ( bulkptr)
+   wLength ) lda  .a psh  ( repeat wLength times)
+   begin
+      .x clr
+
+      ( resend command, addr, and dummy bytes)
+      begin  avr-cmd ,x lda  SpiTx c  .x inc  4 # cpx  0= until
+
+      ( put last byte returned into in-buffer)
+      1 ,s ldx  in-buffer ,x sta  .x inc  1 ,s stx
+
+      ( toggle cmd byte and incr addr-lo if toggled back to 0)
+      toggle ) lda  avr-cmd ) eor  avr-cmd ) sta
+      toggle ) and  0= if  addr-lo ) lda  .a inc  addr-lo ) sta  then
+
+   0 ,s decz? until  2 # ais  ( pop repeat count and bulkptr)
+   txa  ( in-count to a)
+   prepare-in j  ;c
+
+label bulk-write
+   ( Save avr command for later use -- when OUT arrives.)
+   avr-cmd ) ldhx  avr-cmd-saved ) sthx
+   avr-cmd 2 + ) ldhx  avr-cmd-saved 2 + ) sthx
+   expect-setup-token j  ( wait for OUT or new SETUP)  ;c
+
+( Return NAK on IN.)
+label nak-in
+   .a clr  in-control ) sta  rts  ;c
 
 label setup-token
    nak-in c
@@ -188,8 +221,9 @@ label setup-token
    20 # sub   ( BDM commands start at 20 hex; anything below that, we exit)
    u< if  ( 00 - 1f Bye)  2 # ais  ( skip return from process-usb)  rts  then
 
-   ( 20 Result)   read-result               0!= until
-   ( 21 Execute)  execute-avr-cmd   .a dec  0!= until
+   ( 20 Single)   single-avr-cmd      0!= until  ( can be read or write!)
+   ( 21 Read)     bulk-read   .a dec  0!= until
+   ( 22 Write)    bulk-write  .a dec  0!= until
 
    avr-write-commands c  ( these are all control writes, so ...)
    finish-control-write j  ;c
@@ -197,44 +231,34 @@ label setup-token
 label setup-or-out-token
    out-control ) lda  3c # and  34 # cmpne?  setup-token  until
 
-.ifdef avr-using-OUT
-
    ( OUT token)
    ( If last OUT was zero-length, it was a status transaction for a
      control read, so get ready for a new SETUP.)
    out-count ) lda  0= if  expect-setup-token j  then
 
-   ( Otherwise, we've got a data payload. Write bytes to target via BDM,
-     delay, and then read target response.)
+   ( Otherwise, we've got a bulk write data payload. Write bytes to target
+     via SPI, by repeating single byte write commands. Be careful about
+     toggling the command byte for program memory reads and writes.)
 
-   .a psh ( count)  out-buffer # ldhx
-   begin  BdmTx c  0 ,s decz? until  .a pul
+   .h clr  .h psh  ( bulkptr)
+   .a psh  ( repeat out-count times)
+   begin
+      .x clr
 
-   ( After writing bytes via BDM, delay. For an S08 target we should delay
-    16 target cycles; for a CFv1 target, 32 cycles. To satisfy both, we'll
-    delay 32 cycles. Since we're running BDM at 24m on USB, we could be 6x
-    faster than 4M target, so delay 32*6 of *our* cycles.)
+      ( resend command & addr bytes)
+      begin  avr-cmd-saved ,x lda  SpiTx c  .x inc  3 # cpx  0= until
 
-   #32 6 * 4 / # lda  begin .a decz? until  ( 4~ per loop)
+      ( send byte from out-buffer)
+      1 ,s ldx  out-buffer ,x lda  SpiTx c  .x inc  1 ,s stx
 
-   ( Now read the target's response via BDM and copy it into the USB IN
-     buffer. We've stashed the expected count in the variable expected.)
+      ( toggle cmd byte and incr addr-lo if toggled back to 0)
+      toggle-saved ) lda  avr-cmd-saved ) eor  avr-cmd-saved ) sta
+      toggle-saved ) and  0= if  addr-lo-saved ) inc  ( in zpage!)  then
 
-   expected ) tst  0!= if  in-buffer # ldhx
-      begin  BdmRx c  expected ) decz? until
-   then
+   0 ,s decz? until  2 # ais
 
    ( All done! Queue up status IN token.)
    finish-control-write j  ;c
-
-.else
-
-   ( Assume OUT was a status transaction for a control read, so get ready
-     for a new SETUP.)
-
-   expect-setup-token j  ;c
-
-.then
 
 ( An IN token is either the data stage of a control read, or the status
   stage of a control write. Status IN's are always zero bytes long.)
