@@ -95,12 +95,6 @@ comment Commands
 : b.setup-chunk  ( 'target len buffer - len)
    p!  swap b.SetAddr ;
 
-: b.ReadChunk    ( 'target len buffer)
-   b.setup-chunk  for  b.ReadNext c&  next ;
-
-: b.WriteChunk   ( 'target len buffer)
-   b.setup-chunk  for  c* b.WriteNext  next ;
-
 ( It's a bummer to have to have this ifdef here, but otherwise splitting up
   the serial and USB code for doing fast chunked reads and writes gets way
   too complicated. We need to have, eg, b.SetAddr defined for both
@@ -120,7 +114,7 @@ comment Commands
   firmware checks for this, and does nothing. This means that we cannot use
   repeat = 0 to mean repeat = 256.)
 
-: b.ReadChunkFast    ( 'target len buffer)
+: b.ReadChunk    ( 'target len buffer)
    b.setup-chunk
    #16 /mod ( r q)  ?for  #16 read-usb-buffer  next  then
                        ( rem) read-usb-buffer ;
@@ -133,10 +127,19 @@ comment Commands
   firmware checks for this, and does nothing. This means that we cannot use
   repeat = 0 to mean repeat = 256.)
 
-: b.WriteChunkFast   ( 'target len buffer)
+: b.WriteChunk   ( 'target len buffer)
+   -- cr ." write-chunk "  rot dup u. rot dup u. rot dup u.
    b.setup-chunk
    #16 /mod ( r q)  ?for  #16 write-usb-buffer  next  then
                        ( rem) write-usb-buffer ;
+
+.else
+
+: b.ReadChunk    ( 'target len buffer)
+   b.setup-chunk  for  b.ReadNext c&  next ;
+
+: b.WriteChunk   ( 'target len buffer)
+   b.setup-chunk  for  c* b.WriteNext  next ;
 
 .then
 
@@ -168,15 +171,18 @@ variable bdm-flash-command
 
 .else  ( bdm-flash-using-ram)
 
-( We've already written the byte, so jump to lda command)
-: b.flash-byte  ( byte)
-   b.WriteNext  b.RunWait ;
-
 : b.FlashChunk   ( 'target len buffer cmd - status)
    30 \l FSTAT b.WriteByte  ( clear flash errors)
-       ( cmd) \l flash-command  b.WriteByte
-   \l do-flash-command b.WritePC
-   b.setup-chunk  for  c* b.flash-byte  next
+   ( cmd) \l flash-command  b.WriteByte
+   \l flash-row b.WritePC
+   push ( buffer)
+   dup ( len) \l flash-count b.WriteByte
+
+   ( copy buffer to ram just after the flash-row routine)
+   \l flash-end  ( rambuf)  dup b.WriteSP  ( 'target len rambuf)
+   swap ( len)  pop  b.WriteChunk  ( clobbers HX)
+   ( 'target)  b.WriteHX
+   b.RunWait  ( flash the buffer)
    \l FSTAT b.ReadByte  ( return flash status) ;
 
 .then
@@ -270,7 +276,7 @@ comment misguided
 : b.Hi
    SetupClock ( trim & fcdiv)  NoWatchdog  ResetSP
    \l flash-byte  \l flash-end  over -  put-region
-   82 ( bgnd) \l flash-exit  b.WriteByte ;
+   9d ( nop) \l flash-exit  b.WriteByte ;
 
    -- hi ( copy ram flash routine)
    -- broken because chat copies to
@@ -319,13 +325,8 @@ decimal
    ['] b.GetAddr is t.GetAddr
    ['] b.ReadNext is t.Read
    ['] b.WriteNext is t.Write
-.ifdef usb-target
-   ['] b.ReadChunkFast is t.ReadChunk
-   ['] b.WriteChunkFast is t.WriteChunk
-.else
    ['] b.ReadChunk is t.ReadChunk
    ['] b.WriteChunk is t.WriteChunk
-.then
    ['] b.FlashChunk is t.FlashChunk
 
    ( We'd like to set BDM clock from Sync pulse, but it doesn't seem to
