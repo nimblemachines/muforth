@@ -203,18 +203,26 @@ label finish-control-write
    ( Setup IN status stage)
    .a clr  prepare-in j  ( zero-length DATA1 transaction)  ;c
 
-( Handle a control read request involving a BDM command.)
-label bdm-read
-   in-buffer # ldhx
-   repeated ) lda  .a psh  begin
-      bdm-cmd ) lda  bdm-send-a c  ( write cmd byte)
-      bdm-turn-delay c  ( delay between write and read)
-      size ) lda  bdm-read-buf c  ( read target response into buf at HX)
-   0 ,s decz? until  .a pul  ( do several times, for ReadNext)
+( Handle a control read request involving a BDM command.
+  
+  We also handle a special case -- to make the host-side code easier to
+  write and this code more foolproof: we test for repeated = 0, and simply
+  set up zero-length IN if it is.)
 
-   ( assumes one data packet per control req, and assumes host sent the
-     correct length!)
-   wLength ) lda  prepare-in j  ;c
+label bdm-read
+   repeated ) lda  0!= if
+      in-buffer # ldhx
+     .a psh  begin
+         bdm-cmd ) lda  bdm-send-a c  ( write cmd byte)
+         bdm-turn-delay c  ( delay between write and read)
+         size ) lda  bdm-read-buf c  ( read target response into buf at HX)
+      0 ,s decz? until  .a pul  ( do several times, for ReadNext)
+
+      ( assumes one data packet per control req, and assumes host sent the
+        correct length!)
+      wLength ) lda
+   then
+   prepare-in j  ;c
    
 ( Handle a general write request. There is a special case: if the size is
   zero, there is no data to write other than the command byte, so we can
@@ -222,14 +230,20 @@ label bdm-read
   will never arrive.
 
   If size is non-zero, we save the contents of the SETUP packet so it's
-  available when we get the data buffer as an OUT.)
+  available when we get the data buffer as an OUT.
+
+  We also handle a special case -- to make the host-side code easier to
+  write and this code more foolproof: we test for repeated = 0, and do
+  nothing if it is.)
 
 label bdm-write
-   ( Save cmd and other metadata for later handling.)
-   bdm-cmd ) ldhx  bdm-cmd-saved ) sthx  ( save first two bytes)
-   bdm-cmd 2 + ) ldhx  bdm-cmd-saved 2 + ) sthx  ( save next two bytes)
+   repeated ) lda  0!= if
+      ( Save cmd and other metadata for later handling.)
+      bdm-cmd ) ldhx  bdm-cmd-saved ) sthx  ( save first two bytes)
+      bdm-cmd 2 + ) ldhx  bdm-cmd-saved 2 + ) sthx  ( save next two bytes)
 
-   size ) lda   0!= handle-out until ( no data payload -- just send the command)
+      size ) lda   0!= handle-out until ( no data payload -- just send the command)
+   then
    expect-setup-token j  ;c
 
 label setup-token

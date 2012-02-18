@@ -89,6 +89,9 @@ comment Commands
 ( XXX should be a limited number of tries)
 : b.RunWait  b.Go  begin  b.ReadStatus  40 and until ;
 
+( setup, read, and write chunks. These work for *both* serial and USB,
+  though they are very slow over USB.)
+
 : b.setup-chunk  ( 'target len buffer - len)
    p!  swap b.SetAddr ;
 
@@ -97,6 +100,45 @@ comment Commands
 
 : b.WriteChunk   ( 'target len buffer)
    b.setup-chunk  for  c* b.WriteNext  next ;
+
+( It's a bummer to have to have this ifdef here, but otherwise splitting up
+  the serial and USB code for doing fast chunked reads and writes gets way
+  too complicated. We need to have, eg, b.SetAddr defined for both
+  versions, but it gets defined in *this* file, so we define the serial and
+  USB words separately *before* loading this file. Ugh.)
+
+.ifdef usb-target
+
+( Currently we can only read or write 16 bytes at a time. Our chunk might
+  be bigger, so we have to break it up.)
+
+: read-usb-buffer  ( len)
+   cr ." rd-usb-buf "  p@ u.  dup u.
+   70 over 1   p@  u.BdmRead  p@ +  p! ;
+
+( NOTE: This code can generate a write with a repeat count of 0. The
+  firmware checks for this, and does nothing. This means that we cannot use
+  repeat = 0 to mean repeat = 256.)
+
+: b.ReadChunkFast    ( 'target len buffer)
+   b.setup-chunk
+   #16 /mod ( r q)  ?for  #16 read-usb-buffer  next  then
+                       ( rem) read-usb-buffer ;
+
+: write-usb-buffer  ( len)
+   cr ." wr-usb-buf "  p@ u.  dup u.
+   50 over 1 0  p@  u.BdmWrite  p@ +  p! ;
+
+( NOTE: This code can generate a write with a repeat count of 0. The
+  firmware checks for this, and does nothing. This means that we cannot use
+  repeat = 0 to mean repeat = 256.)
+
+: b.WriteChunkFast   ( 'target len buffer)
+   b.setup-chunk
+   #16 /mod ( r q)  ?for  #16 write-usb-buffer  next  then
+                       ( rem) write-usb-buffer ;
+
+.then
 
 ( Order of regs in memory: H CC A X PC)
 : b.GetRegs  ( buf - sp)  p!
@@ -281,8 +323,13 @@ decimal
    ['] b.GetAddr is t.GetAddr
    ['] b.ReadNext is t.Read
    ['] b.WriteNext is t.Write
+.ifdef usb-target
+   ['] b.ReadChunkFast is t.ReadChunk
+   ['] b.WriteChunkFast is t.WriteChunk
+.else
    ['] b.ReadChunk is t.ReadChunk
    ['] b.WriteChunk is t.WriteChunk
+.then
    ['] b.FlashChunk is t.FlashChunk
    ['] b.VerifyChunk is t.VerifyChunk
 
