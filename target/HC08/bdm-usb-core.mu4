@@ -60,19 +60,6 @@ out-buffer 5 + equ wIndexHi
 out-buffer 6 + equ wLength
 out-buffer 7 + equ wLengthHi
 
-( For read requests the following are passed in the SETUP packet:)
-     wValue equ bdm-cmd   ( byte code of BDM command)
-bdm-cmd 1 + equ repeated  ( how many reads to do)
-bdm-cmd 2 + equ size      ( size of each read)
-
-( For write requests we have to save the values from the SETUP packet into
-  RAM variables.)
-
-4 xvar bdm-cmd-saved
-bdm-cmd-saved 1 + equ repeated-saved
-bdm-cmd-saved 2 + equ size-saved
-bdm-cmd-saved 3 + equ expected
-
 label bdm-write-commands  ( all are control writes)
    .a decz? if  ( 24 BkgdLow)
       BdmDriveLow j
@@ -115,11 +102,14 @@ label bdm-write-commands  ( all are control writes)
 label stall
    EPCTL0 1 bset ( STALL)  rts  ;c
 
+label toggle-data  ( HX points to EP buffer control byte)
+   0 ,x lda  40 # and ( data0/1)  match-data1 # eor  0 ,x sta  rts  ;c
+
 ( This is a control read.)
 label sync-pulse
-      in-buffer # ldhx  ( point HX at start of IN buffer)
-      SyncPulse c
-      ( fall thru)
+   in-buffer # ldhx  ( point HX at start of IN buffer)
+   SyncPulse c
+   ( fall thru)
 
 ( read-result is only used to read the result of hybrid write/read
   commands, such as ReadByte, ReadByteWS, WriteByteWS, and WriteNextWS.
@@ -132,29 +122,76 @@ label read-result
    wLength ) lda
    ( fall thru)
 
-label prepare-in
+( Enter with in-count in A)
+label prepare-fixed-in
    in-count ) sta
-   match-data1 # lda  in-control ) sta
    ( fall thru)
 
-( Get ready to receive another SETUP token. Expect OUT or SETUP, really.)
+label prepare-in  ( in-count has already been set)
+   ( toggle DATA0/1)  in-control # ldhx  toggle-data c  ( fall thru)
+
+( Get ready to receive another SETUP token.)
 label expect-setup-token
    match-data1 # lda  out-control ) sta
+   ( fall thru)
+
+( Jump here if out-control has already been toggled.)
+label expect-out-token  ( expect OUT or SETUP, really)
    buflen0 # lda  out-count ) sta
    CTL 5 bclr ( TSUSPEND off - resume processing)
    rts  ;c
 
-( Return NAK on IN.)
-label nak-in
-   .a clr  in-control ) sta  rts  ;c
+( Prepare to return status - a zero-length IN transaction. Also be ready to
+  accept another SETUP even if it would mean abandoning the current
+  transfer. This is what the USB spec says we have to do.)
+
+label finish-control-write
+   ( Setup IN status stage)
+   .a clr  in-count ) sta  ( zero-length DATA1 transaction)
+   match-data1 # lda  in-control ) sta
+   expect-setup-token j  ;c
+
+( xvars are allocated from high memory to low; so first one defined is at
+  the highest memory location.)
+
+1 xvar expected
+1 xvar size
+1 xvar bdm-cmd
+
+1 xvar total-count  ( loaded from wLength)
+
+( The following parameters are passed in the SETUP packet:
+  bdm-cmd  size  expected  wLength
+
+  bdm-cmd is the one-byte command to send to the target; passed in wValue;
+
+  size is the byte count to read or write per transaction; passed in
+        wIndexLo;
+
+  expected is 0 for reads, and for writes is the count of bytes we expect
+        to see back from the target; only useful when size = wLength
+        passed in wIndexHi;
+
+  wLength is the length of the whole control request; could be more than
+  one IN or OUT buffer full.
+)
+
+label save-command
+   wLength ) lda  total-count ) sta
+   wValue ) lda   bdm-cmd ) sta
+   wIndex ) ldhx  size ) sthx
+   rts  ;c
 
 ( After writing bytes via BDM, delay. For an S08 target we should delay
  16 target cycles; for a CFv1 target, 32 cycles. To satisfy both, we'll
  delay 32 cycles. Since we're running BDM at 24m on USB, we could be 6x
  faster than 4M target, so delay 32*6 of *our* cycles.)
 
-label bdm-turn-delay
-   #32 6 * 4 / # lda  begin .a decz? until  ( 4~ per loop)  rts  ;c
+( Macro? it's only 4 bytes. Putting into the code twice takes 8 bytes;
+  putting in as a subr takes 5, plus 2*2 or 2*3 to call it...)
+
+macro bdm-turn-delay
+   #32 6 * 4 / # lda  begin .a decz? until  ( 4~ per loop)  ;m
 
 ( We need to read multiple bytes, both in bdm-read and in the OUT buffer
   handler -- to read the expected response. Enter with HX pointing to a
@@ -171,38 +208,6 @@ label bdm-read-buf
 label bdm-send-a
    pshhx  .a psh  tsx  BdmTx c  .a pul  pulhx  rts  ;c
 
-label handle-out
-   ( Do several writes per control request! repeated tells how many.
-     For each transaction, send the bdm-command, send #written bytes. We
-     read the response only once, at the end.)
-
-   out-buffer # ldhx
-   repeated-saved ) lda  .a psh  begin
-      bdm-cmd-saved ) lda  bdm-send-a c  ( write BDM cmd byte)
-      size-saved ) lda  0!= if  .a psh ( write count)
-         begin  BdmTx c  0 ,s decz? until  .a pul
-      then
-   0 ,s decz? until  .a pul  ( loop on transactions)
-
-   ( Delay after write before reading.)
-   bdm-turn-delay c
-
-   ( Now read the target's response via BDM and copy it into the USB IN
-     buffer. We've stashed the expected count in the variable expected.)
-
-   expected ) lda  0!= if  in-buffer # ldhx  bdm-read-buf c  then
-
-   ( All done! Queue up status IN token.)
-   ( fall thru)
-
-( Prepare to return status - a zero-length IN transaction. Also be ready to
-  accept another SETUP even if it would mean abandoning the current
-  transfer. This is what the USB spec says we have to do.)
-
-label finish-control-write
-   ( Setup IN status stage)
-   .a clr  prepare-in j  ( zero-length DATA1 transaction)  ;c
-
 ( Handle a control read request involving a BDM command.
   
   We also handle a special case -- to make the host-side code easier to
@@ -210,41 +215,46 @@ label finish-control-write
   set up zero-length IN if it is.)
 
 label bdm-read
-   repeated ) lda  0!= if
-      in-buffer # ldhx
-     .a psh  begin
-         bdm-cmd ) lda  bdm-send-a c  ( write cmd byte)
-         bdm-turn-delay c  ( delay between write and read)
-         size ) lda  bdm-read-buf c  ( read target response into buf at HX)
-      0 ,s decz? until  .a pul  ( do several times, for ReadNext)
+   save-command c
+   ( fall thru)
 
-      ( assumes one data packet per control req, and assumes host sent the
-        correct length!)
-      wLength ) lda
-   then
+( Read data from chip and copy into IN buffer.)
+label prepare-next-in
+   total-count ) lda  0!=  prepare-fixed-in  until
+   buflen0 # cmp  u>= if  ( whole packet)  buflen0 # lda  then
+   in-count ) sta
+   in-buffer # ldhx
+   .a psh  begin
+      bdm-cmd ) lda  bdm-send-a c  ( write cmd byte)
+      bdm-turn-delay  ( delay between write and read)
+      size ) lda  bdm-read-buf c  ( read target response into buf at HX)
+      0 ,s lda  size ) sub  0 ,s sta
+   0= until  .a pul
+   total-count ) lda  in-count ) sub  total-count ) sta
    prepare-in j  ;c
-   
-( Handle a general write request. There is a special case: if the size is
-  zero, there is no data to write other than the command byte, so we can
+
+( Handle a general write request. There is a special case: if the wLength
+  is zero, there is no data to write other than the command byte, so we can
   send the command right now and not wait for a later OUT packet ... which
   will never arrive.
 
   If size is non-zero, we save the contents of the SETUP packet so it's
-  available when we get the data buffer as an OUT.
-
-  We also handle a special case -- to make the host-side code easier to
-  write and this code more foolproof: we test for repeated = 0, and do
-  nothing if it is.)
+  available when we get the data in OUT buffers.)
 
 label bdm-write
-   repeated ) lda  0!= finish-control-write until
+   wLength ) lda  0= if  ( just send the bdm-command)
+      wValue ) lda  ( load bdm-cmd from SETUP packet)
+      bdm-send-a c  ( write cmd byte)
+      finish-control-write j
+   then
 
    ( Save cmd and other metadata for later handling.)
-   bdm-cmd ) ldhx  bdm-cmd-saved ) sthx  ( save first two bytes)
-   bdm-cmd 2 + ) ldhx  bdm-cmd-saved 2 + ) sthx  ( save next two bytes)
+   save-command c
+   expect-setup-token j  ( wait for OUT or new SETUP) ;c
 
-   size ) lda   0!= handle-out until ( no data payload -- just send the command)
-   expect-setup-token j  ;c
+( Return NAK on IN.)
+label nak-in
+   .a clr  in-control ) sta  rts  ;c
 
 label setup-token
    nak-in c
@@ -274,14 +284,50 @@ label setup-or-out-token
    ( Otherwise, we've got a data payload. Write bytes to target via BDM,
      delay, and then read target response.)
 
-   handle-out j  ;c
+   ( Do several writes per control request! For each transaction, send the
+     bdm-command, send size bytes. Keep doing this until we run out of bytes.
+     We read the response only once, at the end.)
 
-( An IN token is either the data stage of a control read, or the status
-  stage of a control write. Status IN's are always zero bytes long.)
+   out-buffer # ldhx
+   .a psh  ( out-count)
+   begin
+      bdm-cmd ) lda  bdm-send-a c  ( write BDM cmd byte)
+      size ) lda  .a psh ( write count)
+      begin  BdmTx c  0 ,s decz? until  .a pul
+      bdm-turn-delay  ( delay after write)
+      0 ,s lda  size ) sub  0 ,s sta
+   0= until  .a pul
+
+   total-count ) lda  out-count ) sub  total-count ) sta
+
+   ( If total-count zero, we've received all the data. Now read the
+     target's response via BDM and copy it into the USB IN buffer, and then
+     queue up a status IN token.)
+
+   0= if
+      expected ) lda  0!= if  in-buffer # ldhx  bdm-read-buf c  then
+
+      ( All done! Queue up status IN token.)
+      finish-control-write j
+  then
+
+   ( total-count non-zero; expect more data.)
+   ( toggle DATA0/1)  out-control # ldhx  toggle-data c
+   expect-out-token j  ;c
+
+( An IN token is either part of a data stage of a control read, or it is
+  the status stage of a control write. Status IN's are always zero bytes
+  long; sometimes the last IN of the data stage is also zero bytes long -
+  see copy-to-in for details.
+
+  The upshot is that if the last packet wasn't full we should expect no
+  more IN transactions.)
 
 label in-token
-   ( INs will *always* be less than max packet length.)
+   ( If last IN was a full packet, ready some more data.)
+   in-count ) lda  buflen0 # cmp  0= if  prepare-next-in j  then
    ( fall thru)
+
 label nak-in-expect-setup
    nak-in c  ( further IN's will return NAK)
    expect-setup-token j  ;c

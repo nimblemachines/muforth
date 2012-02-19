@@ -20,28 +20,22 @@ hex
    cr  6 for  u.  next ;
 .then
 
-( Since we're using wValue and wIndex to pass an array of four bytes, we
-  need an easy way to assemble the two word values -- little-endian! --
-  from two bytes.)
-
-: >setup   ( cmd repeat size expect - wValue wIndex)
-   lohi> push  lohi> pop ;
+( For u.BdmRead and u.BdmWrite, cmd is passed in wValue; size in wIndexLo;
+  and expect in wIndexHi.)
 
 ( Commands)
 : u.Result  ( #expect)  push  ( fetch BDM result)
    0c0 20  0 0   pop  pad  usb ;
 
-: u.BdmRead    ( cmd repeat size buffer)
-   push ( buffer)
-   2dup * push ( len)  ( len = repeat * size)
-   0 ( expect)  >setup 2push
-   0c0 21  2pop  pop pop  usb ;
+: u.BdmRead    ( cmd size len buffer)
+   2push ( len buffer)
+   2push ( cmd size)
+   0c0 21  2pop  2pop  usb ;
 
-: u.BdmWrite   ( cmd repeat size expect buffer)
-   push ( buffer)
-   -rot  2dup * push ( len) rot  ( len = repeat * size)
-    >setup 2push
-    40 22  2pop  pop pop  usb ;
+: u.BdmWrite   ( cmd size expect len buffer)
+   2push ( len buffer)
+   lohi> 2push
+    40 22  2pop  2pop  usb ;
 
 : u.Sync    0c0 23  0  0  2 pad  usb ;
 
@@ -100,17 +94,17 @@ variable bdm-cmd
    =if  ( expecting *something*, so read or write-then-read)
       #chat if  ( we're writing too, so write-then-read)
          push ( #expect)
-         bdm-cmd @  1  #chat  r@  pad  u.BdmWrite
+         bdm-cmd @  #chat  r@  over  pad  u.BdmWrite
          pop ( #expect)  u.Result  !chat  ^
       then
 
       ( control read)
-      bdm-cmd @  1  rot ( expect)  pad  u.BdmRead  !chat  ^
+      bdm-cmd @  swap ( expect) dup  pad  u.BdmRead  !chat  ^
    then
    drop  ( 0)
 
    ( control write)
-   bdm-cmd @  1  #chat  0  pad  u.BdmWrite ;
+   bdm-cmd @  #chat  0  over  pad  u.BdmWrite ;
 
 : Expect0   0 expect ;
 : Expect1   1 expect  b< ;
