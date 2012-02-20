@@ -10,11 +10,17 @@ loading AVR SPI-over-serial programmer (host)
 
 hex
 
-: !chat  <# ;  ( init hld)
+: !chat   <# ;  ( init hld)
+: b>   hld @  c!  1 hld +! ;
 
 ( Commands)
-: avr.Execute   ( b3 b2 b1 b0)
-   !chat  21 send  4 for  send  recv hold  next ;
+
+( Send 4 bytes over SPI; receive 4 back, save in pad)
+: avr.Read   ( b0 b1 b2 b3)
+   swap  2swap  swap  ( b3 b2 b1 b0)
+   !chat  21 send  4 for  send  recv b>  next ;
+
+: avr.Write  ( b0 b1 b2 b3)  avr.Read ;
 
 : avr.Bye  ( End session, return to chat command loop)  00 send ;
 : avr.ResetLow   22 send ;
@@ -22,38 +28,30 @@ hex
 : avr.SlowClock  ( 250k)  24 send ;
 : avr.FastClock  ( 2M)    25 send ;
 
-( XXX Convert from order used in USB code -- in order -- to reverse order,
-  and then excecute AVR command.)
-: avr   ( b0 b1 b2 b3)   swap  2swap  swap  ( b3 b2 b1 b0)  avr.Execute ;
+( The serial version of the AVR programmer code doesn't have bulk read and
+  write commands built-in, unlike the USB version. The higher-level code
+  expects them, so let's make compatibility shims.)
 
-: avr2  ( b0 b1 b2 b3 - r2)  ( do command; return second-to-last byte of response)
-   avr  hld @  1+ c@ ;
+( XXX Add the real thing to the serial code?)
 
-: avr3  ( b0 b1 b2 b3 - r3)  ( do command; return last byte of response)
-   avr  hld @     c@ ;
+( XXX Finish this implementation and test it!)
 
-: prog  ( enable programming)
+variable avr-toggle
+variable avr-cmd
+: setup-bulk   ( cmd ahi alo toggle buf len - len)
+   push ( len)  p!  avr-toggle !  lohi>  lohi>  avr-cmd !  pop ( len) ;
+
+: avr.BulkRead   ( cmd ahi alo toggle buf len)
+   error" not implemented"
+   setup-bulk  ?for  next  then ;
+
+: avr.BulkWrite  ( cmd ahi alo toggle buf len)
+   error" not implemented"
+   setup-bulk  ?for  next  then ;
+
+: avr.Hello  ( start the AVR programming firmware on the connected device)
 .ifdef in-ram
    0112 c.SetPC c.Run  ( run from ram - loads right after flash routine)
 .else
    0fa00 c.SetPC c.Run
-.then
-   10 for  avr.ResetLow  0ac 53 0 0 avr2  53 = if  pop drop ^ then
-           avr.ResetHigh  next
-   ." Couldn't enable serial programming" ;
-
-: unprog  ( disable programming)
-   avr.ResetHigh  avr.Bye ;
-
-: sig  ( - s0 s1 s2)
-   30 0 0 0 avr3
-   30 0 1 0 avr3
-   30 0 2 0 avr3 ;
-
-: fuses  ( - fuse hfuse efuse)
-   50 0 0 0 avr3
-   58 8 0 0 avr3
-   50 8 0 0 avr3 ;
-
-: lock  ( - lock)
-   58 0 0 0 avr3 ;
+.then ;
