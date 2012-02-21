@@ -41,7 +41,7 @@ asm-fields
 : .r  ( reg)  ." r"  radix preserve  decimal  u. ;
 : .i  ( imm)   .h8_ ;
 : .a  ( addr)  .hcell_ ;
-: .ioa  ( io-addr)  .h8_ ;  ( XXX add 20?)
+: .ioa  ( io-addr)  20 +  .hcell_ ;
 : .o  ( offset) .h8_ ; 
 
 ( Extracting various fields.)
@@ -72,7 +72,7 @@ asm-fields
    dup 7 and  over 7 >> 18 and or  over 8 >> 20 and or  ( op offset) .o
    dup 8 and if  ." ,y" ^  then  ." ,z" ;
 
-: .data-space    Rd .r  ( XXX fetch next word)  .a ;
+: .data-space    Rd .r  |cell* .a ;
 
 : .stack-reg    Rd .r ;
 
@@ -83,31 +83,33 @@ asm-fields
 : .1op    .stack-reg ;
 
 ( Too bad the bits aren't in a slightly different order. ;-)
-: .sreg-bit    dup 7 and  z" CZNVSHTI" +  c@ emit ;
+: .sreg-bit    dup 7 and  z" CZNVSHTI" +  c@ emit  space ;
 
 : .sreg-setclear    4 >>  .sreg-bit ;
 
 : .long-branch
    dup 1 and  over 3 >> 3e and or  10 <<  ( high word)
-   ( XXX fetch next) or  .a ;
+   |cell* or  2*  dup ea !  .a ;
 
 : .immw
    dup 4 >>  3 and  2*  #24 +  .r  ( high reg pair)
    00r  swap 2 >> 30 and or ( konst) .i ;
 
 : .iobit
-   dup 3 >> 1f and .ioa  ( address)  ( XXX add 20?)
+   dup 3 >> 1f and .ioa  ( address)
    B3 u. ;
 
-: .io    Rd .r  00r  over 5 >> 30 and or .ioa ;  ( XXX add 20?)
+: .io    Rd .r  00r  over 5 >> 30 and or .ioa ;
+
+: >dest  ( word-offset)  2* ( byte-offset) |p@ +a  dup ea !  .a ;
 
 : .rel-branch
-   dup 0fff and  dup 800 and if  -1000 +  then  ( sign extend)  2* ( word offset)
-   p +  .a ;
+   dup 0fff and  dup 800 and if  -1000 +  then  ( sign extend)
+   >dest ;
 
 : .sreg-branch
    .sreg-bit  dup  3 >>  7f and  dup 40 and if  -80 +  then  ( sign extend)
-   p +  .a ;
+   >dest ;
 
 : .sreg-mov    Rd .r  .sreg-bit ;
 
@@ -135,7 +137,7 @@ assembler
 forth
 
 
-: slice  ( op - op)
+: shred  ( op - op)
 ( All the instructions!)
         0000 exact  nop
 
@@ -240,7 +242,18 @@ forth
 .. fe00 fa00 match  bst  .sreg-mov
 
 .. fe00 fc00 match  sbrc  .regbit
-.. fe00 fe00 match  sbrc  .regbit
+.. fe00 fe00 match  sbrs  .regbit
+
+.. .op *unimplemented*
 
 ( That's all folks!)
 ;
+
+( Support for interactive disassembly.)
+: i-skip  ( a - a' 0)  drop  |p@  0 ;
+
+( The workhorse.)
+: 1dis  ( a)
+   dup .addr  dup 2/ .a  .nesting space
+   |p!  |cell*  ( op)  dup .hcell_  space
+   shred  drop ;

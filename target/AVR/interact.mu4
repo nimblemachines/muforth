@@ -1,0 +1,89 @@
+( This file is part of muFORTH: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2012 David Frech. All rights reserved, and all wrongs
+  reversed. (See the file COPYRIGHT for details.)
+
+loading AVR interaction
+
+variable chatting
+
+: +chat  chatting on ;
+
+.ifdef not-yet
+
+: t.ReadW  ( - word)         t.Read  ( hi)  t.Read  ( lo)  hilo> ;
+: t.WriteW  ( word)   >lohi  t.Write ( hi)  t.Write ( lo) ;
+
+: >chat  ['] t.SetAddr  is |p!
+         ['] t.GetAddr  is |p@
+         ['] t.Read     is |c*
+         ['] t.ReadW    is |cell*
+                         2 |cell !  ( size of cell) ;
+
+.else
+
+: >chat  >image ;
+
+.then
+
+( Set |@ and |c@ to _some_ form of target fetch. Prefer to get bytes from
+  target if we're connected. This word is useful so we can set an initial
+  state for target's  du  and  dis  so that inspect won't crash when it
+  runs |@ to get a default ea.)
+
+: >target  chatting @ if  >chat ^  then  >image ;
+
+
+( Define our own key bindings for memory dumping and disassembly. We'll
+  default to host bindings if there isn't one in our array. This way we
+  only have to define the "delta" between host and target behaviours.)
+
+128 array avr-seekeys
+
+( Default key action is to run host key code)
+host-seekeys avr-seekeys  128 cells cmove
+
+avr-seekeys 'seekeys !    ( switch over to our bindings)
+
+( Dump one line of memory from target image.)
+: 1dump  ( a)
+   hex-bytes
+   >image
+   dup _addr  dup .chars
+   dup .addr  dup .hex-bytes
+   dup _addr  dup .hex-cells
+   drop ;
+
+: dumping
+   16 skip !
+   ['] skip+  advance!
+   ['] skip-  retreat!
+   ['] 1dump  inspect! ;
+
+: disasming
+   2 skip !
+   ['] i-skip  advance!
+   ['] skip-   retreat!
+   ['] 1dis    inspect! ;
+
+key: d  ( a - a 0)   dumping  0 ;
+key: i  ( a - a 0)   disasming  0 ;
+
+( Interactive)
+
+( make an alias so we can still get to it)
+: du-host  -1 addr-mask !  dumping  du ;
+
+: du  ( a - a')
+   avr-seekeys 'seekeys !    ( switch over to our bindings)
+   >target
+   "0ffff addr-mask !
+   dumping
+   ['] 1dump  inspect ;
+
+: dis  ( a - a')
+   avr-seekeys 'seekeys !    ( switch over to our bindings)
+   >target
+   "0ffff addr-mask !
+   disasming
+   ['] 1dis    inspect ;
