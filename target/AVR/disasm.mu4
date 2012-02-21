@@ -1,0 +1,246 @@
+( This file is part of muFORTH: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2012 David Frech. All rights reserved, and all wrongs
+  reversed. (See the file COPYRIGHT for details.)
+
+loading AVR disassembler
+
+hex
+
+( Words to compile the instruction table.
+  ..  acts like 'then'
+  match and exact compile a test and a zbranch, followed by code to print
+     the opcode name)
+
+( mask op and test against match; if no match exit from _caller_)
+: (match)   ( op mask match - op f)  push  over and  pop = ;
+
+( exact match)
+: (exact)  ( op match)  over = ;
+
+compiler
+: ..   compile ^  \ then ;
+: match  ( - src)  compile (match)  \ if  \ .op ;
+: exact  ( - src)  compile (exact)  \ if  \ .op ;
+
+forth
+
+comment asm-fields
+: T3  ( bit op - bits)    swap  07 and  4 << or ;
+: Rd  ( reg op - bits)    swap  1f and  4 << or ;
+: I5  ( io op - bits)     swap  1f and  3 << or ;
+: S7  ( off op - bits)    swap  7f and  3 << or ;
+: Rs  ( reg op - bits)    over  10 and  5 << or  swap 0f and  or ;
+: I6  ( io op - bits)     over  30 and  5 << or  swap 0f and  or ;
+: K8  ( const op - bits)  over 0f0 and  4 << or  swap 0f and  or ;
+: K6  ( const op - bits)  over  30 and  2 << or  swap 0f and  or ;
+: K3  ( bit op - bits)    swap  07 and  or ;
+asm-fields
+
+( Standard ways of printing different "types".)
+: .r  ( reg)  ." r"  radix preserve  decimal  u. ;
+: .i  ( imm)   .h8_ ;
+: .a  ( addr)  .hcell_ ;
+: .ioa  ( io-addr)  .h8_ ;  ( XXX add 20?)
+: .o  ( offset) .h8_ ; 
+
+( Extracting various fields.)
+: 00r  ( op - op reg)  dup 0f and ;
+: 0r0  ( op - op reg)  dup 4 >>  0f and ;
+: B3  ( op - op bit#)  dup 07 and ;
+: Rd  ( op - op reg)   dup 4 >>  1f and ;
+: Rs  ( op - op reg)   dup 0f and  over 5 >>  10 and  or ;
+: hi  ( reg - reg)     0f and  10 + ;
+: K8  ( op - op k)     dup 4 >> 0f0 and  over 0f and  or ;
+
+( Helpers to print out operands. They all take op and all leave op on the
+  stack.)
+
+: .reg-pair  00r 2* .r  0r0 2* .r ;
+
+: .mul-reg   Rs hi .r  Rd hi .r ;
+
+: .r-top  ( reg)  7 and #24 + .r ;
+: .mul-top   dup .r-top  dup 4 >> .r-top ;
+ 
+: .2op    Rs .r  Rd .r ;
+
+: .imm    Rd hi .r  K8 .i ;
+
+: .ea-offset
+   Rd .r  ( XXX which side should register be on??)
+   dup 7 and  over 7 >> 18 and or  over 8 >> 20 and or  ( op offset) .o
+   dup 8 and if  ." ,y" ^  then  ." ,z" ;
+
+: .data-space    Rd .r  ( XXX fetch next word)  .a ;
+
+: .stack-reg    Rd .r ;
+
+: .index
+   Rd .r
+   dup 0f and 2*  z" **z+-z**z z+******y+-y**x x+-x**" +  2 type ;
+
+: .1op    .stack-reg ;
+
+( Too bad the bits aren't in a slightly different order. ;-)
+: .sreg-bit    dup 7 and  z" CZNVSHTI" +  c@ emit ;
+
+: .sreg-setclear    4 >>  .sreg-bit ;
+
+: .long-branch
+   dup 1 and  over 3 >> 3e and or  10 <<  ( high word)
+   ( XXX fetch next) or  .a ;
+
+: .immw
+   dup 4 >>  3 and  2*  #24 +  .r  ( high reg pair)
+   00r  swap 2 >> 30 and or ( konst) .i ;
+
+: .iobit
+   dup 3 >> 1f and .ioa  ( address)  ( XXX add 20?)
+   B3 u. ;
+
+: .io    Rd .r  00r  over 5 >> 30 and or .ioa ;  ( XXX add 20?)
+
+: .rel-branch
+   dup 0fff and  dup 800 and if  -1000 +  then  ( sign extend)  2* ( word offset)
+   p +  .a ;
+
+: .sreg-branch
+   .sreg-bit  dup  3 >>  7f and  dup 40 and if  -80 +  then  ( sign extend)
+   p +  .a ;
+
+: .sreg-mov    Rd .r  .sreg-bit ;
+
+: .regbit    Rd .r  B3 u. ;
+
+( And so we can find it using our table creation primitives, let's define a
+  curious assembler mnemonic:)
+assembler
+: *unimplemented* ;
+
+( Until we implement these in the assembler:)
+: mul ;
+: muls ;
+: mulsu ;
+: fmul ;
+: fmuls ;
+: fmulsu ;
+: lds ;
+: sts ;
+: lpm ;
+
+( Until we have a better way to print out conditional branches:)
+: brbs ;
+: brbc ;
+forth
+
+
+: slice  ( op - op)
+( All the instructions!)
+        0000 exact  nop
+
+.. ff00 0100 match  movw  .reg-pair
+
+.. ff00 0200 match  muls  .mul-reg
+
+.. ff88 0300 match  mulsu  .mul-top
+.. ff88 0308 match  mulsu  .mul-top
+.. ff88 0380 match  mulsu  .mul-top
+.. ff88 0388 match  mulsu  .mul-top
+
+.. fc00 0400 match  cpc  .2op
+.. fc00 0800 match  sbc  .2op
+.. fc00 0c00 match  add  .2op
+
+.. fc00 1000 match  cpse .2op
+.. fc00 1400 match  cp   .2op
+.. fc00 1800 match  sub  .2op
+.. fc00 1c00 match  adc  .2op
+
+.. fc00 2000 match  and  .2op
+.. fc00 2400 match  eor  .2op
+.. fc00 2800 match  or   .2op
+.. fc00 2c00 match  mov  .2op
+
+.. f000 3000 match  cpi  .imm
+.. f000 4000 match  sbci .imm  ( should subtracts also show additive version?)
+.. f000 5000 match  subi .imm
+.. f000 6000 match  ori  .imm 
+.. f000 7000 match  andi .imm
+
+( First, the special cases of load and store.)
+.. d200 8000 match  ld  .ea-offset
+.. d200 8200 match  st  .ea-offset
+
+.. fe0f 9000 match  lds  .data-space  ( XXX lds not in assembler)
+.. fe0f 9200 match  sts  .data-space
+
+( Note: no stm versions of these two instructions!)
+.. fe0f 9004 match  lpm  ( z)   .index  ( XXX lpm not in asm)
+.. fe0f 9005 match  lpm  ( z+)  .index
+
+.. fe0f 900f match  pop  .stack-reg
+.. fe0f 920f match  push .stack-reg
+
+( The remaining load and store.)
+.. fe00 9000 match  ld  .index
+.. fe00 9200 match  st  .index
+
+.. fe0f 9400 match  com  .1op
+.. fe0f 9401 match  neg  .1op
+.. fe0f 9402 match  swap .1op
+.. fe0f 9403 match  inc  .1op
+.. fe0f 9404 match  *unimplemented*
+.. fe0f 9405 match  asr  .1op
+.. fe0f 9406 match  lsr  .1op
+.. fe0f 9407 match  ror  .1op
+
+..      9409 exact  ijmp
+..      9509 exact  icall
+
+..      9508 exact  ret
+..      9518 exact  reti
+..      9588 exact  sleep
+..      95a8 exact  wdr
+..      95c8 exact  lpm
+
+.. ff8f 9408 match  bset  .sreg-setclear
+.. ff8f 9488 match  bclr  .sreg-setclear
+
+.. fe0f 940a match  dec  .1op
+.. fe0f 940b match  *unimplemented*
+
+.. fe0e 940c match  jmp  .long-branch
+.. fe0e 940e match  call .long-branch
+
+.. ff00 9600 match  adiw  .immw
+.. ff00 9700 match  sbiw  .immw
+
+.. ff00 9800 match  cbi   .iobit
+.. ff00 9900 match  sbic  .iobit
+.. ff00 9a00 match  sbi   .iobit
+.. ff00 9b00 match  sbis  .iobit
+
+.. fc00 9c00 match  mul  .2op
+
+--      a000 matches ld/st with offset (see d200 8x00)
+
+.. f800 b000 match  in   .io
+.. f800 b800 match  out  .io
+
+.. f000 c000 match  rjmp  .rel-branch
+.. f000 d000 match  rcall .rel-branch
+
+.. f000 e000 match  ldi  .imm
+
+.. fc00 f000 match  brbs  .sreg-branch
+.. fc00 f400 match  brbc  .sreg-branch
+
+.. fe00 f800 match  bld  .sreg-mov
+.. fe00 fa00 match  bst  .sreg-mov
+
+.. fe00 fc00 match  sbrc  .regbit
+.. fe00 fe00 match  sbrc  .regbit
+
+( That's all folks!)
+;
