@@ -13,11 +13,13 @@ hex
 : !chat   <# ;  ( init hld)
 : b>   hld @  c!  1 hld +! ;
 
+: shuffle  ( b0 b1 b2 b3 - b3 b2 b1 b0)  swap  2swap  swap ;
+
 ( Commands)
 
 ( Send 4 bytes over SPI; receive 4 back, save in pad)
 : avr.Read   ( b0 b1 b2 b3)
-   swap  2swap  swap  ( b3 b2 b1 b0)
+   shuffle
    !chat  21 send  4 for  send  recv b>  next ;
 
 : avr.Write  ( b0 b1 b2 b3)  avr.Read ;
@@ -28,30 +30,27 @@ hex
 : avr.SlowClock  ( 250k)  24 send ;
 : avr.FastClock  ( 2M)    25 send ;
 
-( The serial version of the AVR programmer code doesn't have bulk read and
-  write commands built-in, unlike the USB version. The higher-level code
-  expects them, so let's make compatibility shims.)
-
-( XXX Add the real thing to the serial code?)
-
-( XXX Finish this implementation and test it!)
-
-variable avr-toggle
-variable avr-cmd
-: setup-bulk   ( cmd ahi alo toggle buf len - len)
-   push ( len)  p!  avr-toggle !  lohi>  lohi>  avr-cmd !  pop ( len) ;
+: setup-bulk   ( avr-cmd ahi alo toggle buf len cmd - len)
+   2push ( len cmd)  p!
+   shuffle  pop send ( cmd)  4 for  send  next
+   pop ( len)  dup send ;
 
 : avr.BulkRead   ( cmd ahi alo toggle buf len)
-   error" not implemented"
-   setup-bulk  ?for  next  then ;
+   p preserve
+   26 setup-bulk   ?for  recv c&  next  then ;
 
 : avr.BulkWrite  ( cmd ahi alo toggle buf len)
-   error" not implemented"
-   setup-bulk  ?for  next  then ;
+   p preserve
+   27 setup-bulk   ?for  c* send  next  then ;
+
+: await  ( a u)
+   p preserve
+   swap p!  for  c* recv  xor if  error" Wrong firmware"  then  next ;
 
 : avr.Hello  ( start the AVR programming firmware on the connected device)
 .ifdef in-ram
    0112 c.SetPC c.Run  ( run from ram - loads right after flash routine)
 .else
    0fa00 c.SetPC c.Run
-.then ;
+.then
+   " AVRp1" await  ( match signature) ;
