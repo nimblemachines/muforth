@@ -1,0 +1,43 @@
+( This file is part of muFORTH: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2012 David Frech. All rights reserved, and all wrongs
+  reversed. (See the file COPYRIGHT for details.)
+
+loading AVR chat-over-serial (host)
+
+( Host-side code to drive the AVR chat code in
+  target/HC08/avrchat-serial-core.mu4.)
+
+hex
+
+: !chat   <# ;  ( init hld)
+: b>   hld @  c!  1 hld +! ;
+
+( Commands)
+
+( Commands:
+0-2f  Bye        - exit AVR chat code and return to chat loop
+  30  Start      - send START bit
+  31  Stop       - send STOP bit
+  32  Send       - send data byte, return ACK/NACK
+  33  Recv       - receive data byte, send ACK/NACK
+)
+
+: iic-start  30 send ;
+: iic-stop   31 send ;
+: iic-send  ( b - ack)  32 send  send  recv ;
+: iic-recv  ( ack - b)  33 send  send  recv ;
+
+: iic-bye  0 send ;
+
+: await  ( a u)
+   p preserve
+   swap p!  for  c* recv  xor if  error" Wrong firmware"  then  next ;
+
+: iic-hello  ( start the AVR chat firmware on the connected device)
+.ifdef in-ram
+   0112 c.SetPC c.Run  ( run from ram - loads right after flash routine)
+.else
+   0f800 c.SetPC c.Run
+.then
+   " AVRc1" await  ( match signature) ;
