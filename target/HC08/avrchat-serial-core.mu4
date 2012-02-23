@@ -34,7 +34,9 @@ label id
   IIC clock of 384k.)
 
 label InitIIC
-   %0000_0010 # ( mul=1, ICR=02: /24, sda hold 8~) IICF ) mov
+   IICS 1 bset  ( clr IICIF)  ( clear lingering flags)
+   -- %0000_0010 # ( mul=1, ICR=02: /24, sda hold 8~) IICF ) mov
+   19 # ( mul=1, ICR=19: /96, sda hold 9~) IICF ) mov
    80 # IICC ) mov  ( enable IIC module)
    %0000_1100 # lda  PTADS ) sta ( high drive on SCL and SDA, A3, A2)
    rts  ;c
@@ -54,8 +56,16 @@ label signon
    rts  ;c
 
 label start-bit
-   begin  IICS 5 ( bus busy)  bclr? until
-   IICC 5 ( MST) bset  rts  ;c
+   -- begin  IICS 5 ( bus busy)  bclr? until
+   IICC 5 ( MST) bset
+   IICS ) lda  ( return status)
+   put-serial j  ;c
+
+label restart-bit
+   -- begin  IICS 5 ( bus busy)  bclr? until
+   IICC 2 ( RSTA) bset
+   IICS ) lda  ( return status)
+   put-serial j  ;c
 
 label stop-bit
    IICC 5 ( MST) bclr  rts  ;c
@@ -73,9 +83,6 @@ label put-iic
    put-serial j  ;c
 
 label get-iic
-   IICC 3 ( TXAK) bclr
-   get-serial c  ( this is our ACK bit)
-   .a ror  ( ACK -> C)  CS if  IICC 3 bset  then
    IICC 4 ( TX) bclr
    IICD ) lda  ( dummy read to begin receive)
    -- begin  IICS 7 ( TCF)  bset? until  ( transfer complete)
@@ -83,12 +90,20 @@ label get-iic
    IICD ) lda  ( get character)
    put-serial j  ;c
 
+label get-iic-ack
+   IICC 3 ( TXAK) bclr  ( ACK slave)  get-iic j  ;c
+
+label get-iic-nack
+   IICC 3 ( TXAK) bset  ( NACK slave)  get-iic j  ;c
+
 ( Commands:
 0-2f  Bye        - exit AVR chat code and return to chat loop
   30  Start      - send START bit
-  31  Stop       - send STOP bit
-  32  Send       - send data byte, return ACK/NACK
-  33  Recv       - receive data byte, send ACK/NACK
+  31  Restart    - send RESTART bit
+  32  Stop       - send STOP bit
+  33  Send       - send data byte, return ACK/NACK
+  34  RecvAck    - receive data byte, send ACK
+  35  RecvNack   - receive data byte, send NACK
 )
 
 label process-serial
@@ -99,10 +114,12 @@ label process-serial
    30 # sub   ( AVR chat commands start at 30 hex; anything below that, we exit)
    u< if  ( 00 - 2f Bye)  2 # ais  ( skip return from process-serial)  rts  then
 
-   ( 30 Start)      start-bit          0!= until
-   ( 31 Stop)       stop-bit   .a dec  0!= until
-   ( 32 SendByte)   put-iic    .a dec  0!= until
-   ( 33 RecvByte)   get-iic    .a dec  0!= until
+   ( 30 Start)      start-bit              0!= until
+   ( 31 Restart)    restart-bit    .a dec  0!= until
+   ( 32 Stop)       stop-bit       .a dec  0!= until
+   ( 33 SendByte)   put-iic        .a dec  0!= until
+   ( 34 RecvAck)    get-iic-ack    .a dec  0!= until
+   ( 35 RecvNack)   get-iic-nack   .a dec  0!= until
 
    ( unknown command)   rts  ;c
 

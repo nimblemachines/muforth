@@ -13,31 +13,46 @@ hex
 : !chat   <# ;  ( init hld)
 : b>   hld @  c!  1 hld +! ;
 
-( Commands)
 
 ( Commands:
 0-2f  Bye        - exit AVR chat code and return to chat loop
   30  Start      - send START bit
-  31  Stop       - send STOP bit
-  32  Send       - send data byte, return ACK/NACK
-  33  Recv       - receive data byte, send ACK/NACK
+  31  Restart    - send RESTART bit
+  32  Stop       - send STOP bit
+  33  Send       - send data byte, return ACK/NACK
+  34  RecvAck    - receive data byte, send ACK
+  35  RecvNack   - receive data byte, send NACK
 )
-
-: iic-start  30 send ;
-: iic-stop   31 send ;
-: iic-send  ( b - ack)  32 send  send  recv ;
-: iic-recv  ( ack - b)  33 send  send  recv ;
-
-: iic-bye  0 send ;
 
 : await  ( a u)
    p preserve
    swap p!  for  c* recv  xor if  error" Wrong firmware"  then  next ;
 
-: iic-hello  ( start the AVR chat firmware on the connected device)
+: -iic  0 send ;
+: +iic  ( start the AVR chat firmware on the connected device)
 .ifdef in-ram
    0112 c.SetPC c.Run  ( run from ram - loads right after flash routine)
 .else
    0f800 c.SetPC c.Run
 .then
    " AVRc1" await  ( match signature) ;
+
+: iic-send  ( b - ack)  33 send  send  recv  u. ;
+
+( Some shorthands)
+: S   ( start)  30 send  recv drop ;
+: PS  ( restart)  31 send  recv drop ;
+: P   ( stop)   32 send ;
+: Aw  ( addr+write)  0fe iic-send ;
+: Ar  ( addr+read)   0ff iic-send ;
+: W   ( write)  iic-send ;
+: Ra  ( read)   34 send  recv ;  ( read and ACK)
+: Rn  ( read)   35 send  recv ;  ( read and NACK)
+
+: cmd  ( cmd)   S  Aw  W ;
+
+: z!   ( addr)             >hilo  10 cmd  W  W  P ;
+: z&   ( b)    ( write data mem)  11 cmd  W     P ;
+: z*   ( - b)  ( read data mem)   12 cmd        PS  Ar  Rn  P ;
+: zp*  ( - b)  ( read prog mem)   13 cmd        PS  Ar  Rn  P ;
+: zgo                             14 cmd        P ;
