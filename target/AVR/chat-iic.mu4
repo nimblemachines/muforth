@@ -1,0 +1,182 @@
+( This file is part of muFORTH: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2012 David Frech. All rights reserved, and all wrongs
+  reversed. (See the file COPYRIGHT for details.)
+
+loading AVR chat-over-IIC
+
+__meta
+
+hex
+
+comment %%
+
+Commands for a simple client debug stub for talking to an AVR chip over IIC.
+
+         sends                             returns
+  ======================          ========================
+  SetAddr  <lo>  <hi>              nothing
+  ReadData                         <byte>
+  WriteData  <byte>                nothing
+  ReadProgram                      <byte>
+  Go                               nothing
+
+  ReadData, WriteData read and write data memory -- including the general
+        registers, stack pointer, all the i/o registers, and all the RAM.
+
+  ReadProgram reads program memory (flash)
+
+  SetAddr sets the address to be used for reading & writing memory
+
+  Go execute code from the address set by SetAddr
+%%
+
+%0001_000 2* equ slave-addr
+7 equ TWINT  ( bit#)  ( ack after all other actions)
+6 equ TWEA   ( bit#)  ( enable receipt of slave address)
+2 equ TWEN   ( bit#)
+
+1 TWINT <<
+1 TWEA  << or
+1 TWEN  << or equ tw-reset
+
+
+comment %%
+
+Status codes for slave receive mode:
+
+  60  own addr+write received and ACKed
+  68  as above, but lost arbitration first
+  70  general call addr received and ACKed
+  78  as above, but lost arbitration first
+  80  prev addressed with own address; data byte recvd and ACKed
+  88  as above, NACKed
+  90  prev addressed with general call; data byte recvd and ACKed
+  98  as above, NACKed
+  a0  STOP or repeated START received while in slave receive mode
+
+  Status codes for slave transmit mode:
+
+  a8  own addr+read received and ACKed
+  b8  data byte xmitted and ACKed
+  c0  as above, but NACKed
+  c8  last byte xmitted (TWEA=0), ACKed
+%%
+
+flash
+4 org  ( skip reset vector)
+
+__host
+
+assembler
+: lds  ( addr reg)  \a ld  swap \a $ ;
+: sts  ( addr reg)  \a st  swap \a $ ;
+forth
+
+__meta
+
+comment register-use
+
+  r16 -- 10 hex -- is used for checking and passing around TWI status
+  r17 -- 11 hex -- is used solely for acknowledging TWINT bit
+  r24 -- 18 hex -- is used for data bytes
+  r30/31 -- aka z -- is used to point to memory
+
+register-use
+
+label init-twi
+   slave-addr 10 ldi  10 st TWAR $  ( set address)
+   ( fall thru)
+
+( Ack TWINT. Make sure TWEA and TWEN also set.)
+label ack-twint
+   tw-reset 11 ldi  11 st TWCR $  ret  ;c
+
+( Wait for TWINT; read status; mask prescaler bits; return in r16)
+label wait-twint
+   begin  10 ld TWCR $  TWINT 10 sbrs  rjmp ( again)
+   10 ld TWSR $  0f8 10 andi  ret  ;c
+
+label restart
+   0 pop  0 pop  ret  ;c
+
+label read-byte
+   wait-twint rcall
+   80 10 cpi  0= not if  restart rjmp  then  ( restart protocol)
+   TWDR 18 lds  ack-twint rjmp  ;c
+
+( If we only ever write single bytes, then we should check for a8 status,
+  and expect the host to NACK the byte. For writing multiple bytes, we need
+  to accept both a8 and b8.)
+
+label write-byte
+   wait-twint rcall
+   0a8 10 cpi  0= not if  restart rjmp  then  ( NACK will restart protocol)
+   TWDR 18 sts  ack-twint rjmp  ;c
+
+( Command routines.)
+label set-addr
+   read-byte rcall  18 zl mov
+   read-byte rcall  18 zh mov  ret  ;c
+
+label write-data
+   read-byte rcall  18 st z+  ret  ;c
+
+( Don't tail-call convert read-data and write-data! We need to actually _nest_
+  our calls to read-byte and write-byte so there is an address on the R stack
+  for them to pop in case of error!)
+
+label read-data
+   18 ld z+    write-byte rcall  ret  ;c
+
+label read-program
+   18 ld pmz+  write-byte rcall  ret  ;c
+
+label go  ijmp  ;c
+
+( Dispatch.)
+label process
+   wait-twint rcall
+   60 10 cpi  0= not if  ret  then  ( addressed as slave)
+   ack-twint rcall
+   read-byte rcall  ( cmd)
+
+   10 18 cpi  set-addr      0= not until
+   11 18 cpi  write-data    0= not until
+   12 18 cpi  read-data     0= not until
+   13 18 cpi  read-program  0= not until
+   14 18 cpi  go            0= not until
+
+   ( unknown... restart!)
+   ret  ;c
+
+label delay
+   11 clr
+   begin
+      10 clr
+      begin  10 dec  0= until
+   11 dec  0= until
+   ret  ;c
+
+label blink
+   \m here  2 +  rcall
+   ( fall thru)
+
+label toggle
+   0ff 10 ldi  PINB 10 out  PINC 10 out  PIND 10 out  ( toggle all pins!)
+   delay rjmp  ;c
+
+label blinky
+   0ff 10 ldi  PORTB 10 out  PORTC 10 out  PORTD 10 out
+   0ff 10 ldi   DDRB 10 out   DDRC 10 out   DDRD 10 out
+   8 13 ldi  begin  blink rcall  delay rcall  13 dec  0= until  ret  ;c
+
+RESET handler
+   @ram #ram + 1- >hilo
+   10 ldi  SPL 10 out
+   10 ldi  SPH 10 out
+
+   -- init-twi rcall  ( use default slave address: 1111_111)
+   blinky rcall
+   begin  ack-twint rcall
+          process rcall    again  ;c
