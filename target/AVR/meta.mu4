@@ -1,0 +1,662 @@
+( This file is part of muFORTH: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2012 David Frech. All rights reserved, and all wrongs
+  reversed. (See the file COPYRIGHT for details.)
+
+loading AVR Meta-compiler (main)
+
+( The various token consumers for each mode.)
+
+-:  ."  (assembling)"  ;
+-:
+    .assembler. find  if  execute  ^  then
+       .labels. find  if  execute  ^  then  ( equates are in .labels.)
+         .meta. find  if  execute  ^  then
+        .forth. find  if  execute  ^  then  ( utility words in .forth.)
+                                            number ;
+mode __asm
+
+-:  ."  (compiling inlne assembler)"  ;
+-:
+    .assembler. find  if  ,        ^  then  ( find assembler's if/then etc)
+     .compiler. find  if  execute  ^  then  ( need } and ; to exit this mode)
+       .labels. find  if  ,        ^  then  ( equates are in .labels.)
+         .meta. find  if  ,        ^  then
+        .forth. find  if  ,        ^  then  ( utility words in .forth.)
+                                            number literal ;
+mode __inline-asm
+
+( The meta-interpreter. We're in this mode when we're building the target
+  image, and when in between [ and ] when running the target colon
+  compiler.)
+
+-:  ."  (meta)"  ;
+-:
+         .meta. find  if  execute  ^  then
+       .labels. find  if  execute  ^  then  ( equates are in .labels.)
+        .forth. find  if  execute  ^  then
+                                            number ;
+mode __meta
+
+
+( Make it easy to check if a device register has been defined. If device
+  equates move to somewhere other than .labels., update this too.)
+compiler
+: .reg   .labels. \ .contains ;
+forth
+: .reg   \ .reg ;
+
+
+( Support for looking back at previously compiled code.)
+variable last-code  ( pointer to beginning of last snippet of code)
+: code!   \m here  last-code ! ;
+
+compiler
+: asm{                   __inline-asm ;  ( don't reset last-code)
+: code{   compile code!  __inline-asm ;  ( reset last-code)
+: }       -] ;  ( exit inline assembler mode and restart colon compiler)
+
+
+( Make it easy to make assembler macros.)
+meta
+: macro           current preserve       assembler  :  __inline-asm ;
+: label   \m here  equ  __asm ;  ( equ creates a constant in .labels.)
+: __host  \ [ ;  ( return to host forth mode)
+
+forth
+: vector,  ( vector# dest)  ( compile jmp or rjmp to handler)
+   swap  #flash  16 Ki u< not if
+     ( use jmp)  2* org  \a jmp   ^  then
+     ( use rjmp)    org  \a rjmp ;
+
+meta
+: handler  ( vector#)
+   \m here dup push  vector,  pop org  __asm ;
+
+forth
+: macro   \m macro ;
+
+
+( So, let's get to work, defining some macros that will be useful either in
+  programming in assembler but in a forth "style", or in writing an actual
+  forth kernel.)
+
+( On AVR the top 8 registers, when taken in pairs, make 4 16-bit registers,
+  the top three pairs being useful as pointers. Atmel defines them as
+  follows:
+
+  X = r27:r26
+  Y = r29:r28
+  Z = r31:r30
+
+  I'm going to call r25:r24 W and use it as top, keeping all the pointer
+  registers free for other uses. This is not a problem since using movw it's
+  possible to set any of the pointer pairs from W in one cycle.
+
+  Also, since Y can be accessed post-increment, pre-decrement, and with an
+  offset, let's use it as the data stack pointer.)
+
+assembler
+: ;c   __meta ;
+
+24 constant tl  ( top low)
+25 constant th  ( top high)
+26 constant xl
+27 constant xh
+28 dup constant yl   constant sl  ( stack pointer low)
+29 dup constant yh   constant sh  ( stack pointer high)
+30 constant zl
+31 constant zh
+forth
+
+( Basic stack macros.)
+macro dpush  ( reg)  st -y ;
+macro dpop   ( reg)  ld y+ ;
+
+( These should be passed an even number!)
+macro dpushw  ( pair)  dup  1+ dpush  dpush ;
+macro dpopw   ( pair)  dup  dpop  1+ dpop ;
+
+( Also push words -- register pairs -- onto system stack.)
+macro pushw  ( pair)  dup  1+ push  push ;  ( assembler's push!)
+macro popw   ( pair)  dup  pop  1+ pop ;    ( .. and pop!)
+
+
+-- ------------------------------------------------------------------------
+-- Literal loading.
+-- ------------------------------------------------------------------------
+
+( Since we can load immediate data only into the top 16 registers, let's
+  set aside the pair r23:r22 to hold literal values.)
+
+assembler
+22 constant il  ( immediate low)
+23 constant ih  ( immediate high)
+forth
+
+: load-literal  ( n)
+   >hilo  code{  il ldi  ih ldi } ;
+
+( With a literal in il and ih, push it onto the D stack.)
+macro push-literal   il dpushw ;
+
+( Pop top of D stack into il and ih, just as if they were loaded by
+  load-literal. This is used to make versions of binary operations that
+  work either with true literals, or with a value sitting on the D stack.)
+
+macro pop-literal   il dpopw ;
+
+.ifdef only-made-it-this-far  ( XXX please move this!!)
+
+meta
+: literal  ( n)  code{  load-literal }
+                 code{  push-literal } ;
+
+: compile,  ( target-cfa)  code{  c }  ( compile call) ;
+
+forth
+
+( Since address 0 is in the i/o register range, we will never jsr there, so
+  we can return 0 as "no call found".)
+: called  ( - dest-addr)
+   last-code @  dup image-c@  ( op)
+   dup "ad = if ( bsr)  drop  dup 1+ image-c@ ( offset)  sext  2 + +a ^ then
+   dup "bd = if ( jsr dir)  drop  1+ image-c@ ^  then
+   dup "cd = if ( jsr ext)  drop  1+ image-@  ^  then
+   2drop  0 ;
+
+: replace  ( addr jsr-op jmp-op - -1)
+   rot image-c!  drop  -1 ;
+
+( If last code compiled was a call, rewrite it to a jump and return true;
+  else return false.)
+
+: tail?  ( - f)
+   last-code @  dup image-c@  ( op)
+   dup "ad = if ( bsr)      "20 ( bra)      replace ^  then
+   dup "bd = if ( jsr dir)  "bc ( jmp dir)  replace ^  then
+   dup "cd = if ( jsr ext)  "cc ( jmp ext)  replace ^  then
+   2drop  0 ;
+
+meta-compiler
+: ^   tail? if ^ then  code{  rts } ;
+
+forth
+: ?retreat  ( f)  if  last-code @  org ^  then ;
+: lit?   last-code @  image-c@ "af ( aix) =  dup ?retreat ;
+
+: _litop  current preserve  meta-compiler  create  __asm
+          does>  lit?  if  cell+  then  @  \m compile, ;
+
+meta
+: litop
+   _litop
+      \m here  ( stack entry point)  ,
+      code{  pop-literal }
+      \m here  ( literal entry point)  , ;
+
+: relop
+   _litop
+      \m here  ( literal entry point)
+      code{  push-literal }
+      \m here  ( stack entry point)  ,  , ;
+
+forth
+
+( Finally, we have the definition of the target colon compiler.)
+
+-:  ."  (compiling a target word)"  ;
+-:  .meta-compiler. find  if  execute  ^  then
+           .target. find  if  execute  \m compile, ^  then
+                                                 number  \m literal ;
+mode __target-colon
+
+
+( Create a new target name. A target word is defined as a _constant_ equal
+  to its code field address.)
+
+meta
+: label   \m here  equ  __asm ;  ( equ creates a constant in .labels.)
+: name    \m here  current preserve  target  constant ;
+: code    \m name  __asm ;
+: :       \m name  __target-colon ;
+
+: -]   __target-colon ;
+:  ]   \m literal  \m -] ;
+
+( For forward references)
+: forward    "100 \a ) \a jmp  \m label ;
+: resolve>>  ( src)  \m here  swap 2 -  image-! ;
+
+: '  .target. chain' execute ;  ( target words are constants!)
+
+: __host  \ [ ;  ( return to host forth mode)
+: {    \m __host ;  ( useful for bracketing a few  host forth words)
+
+forth
+: }    __meta ;  ( return to meta)
+: \l  .labels. chain' execute ;
+
+assembler
+: ;c   __meta ;
+
+meta-compiler
+: [   __meta ;
+: ;   \mc ^  \mc [ ;  ( return to meta)
+
+compiler
+: ;m   \ ^  __meta ;     ( exit macro compilation and return to meta-compiler)
+
+forth
+
+
+( Alloting RAM space to variables.)
+( XXX Should I assume space for stack? Things are bad _before_ we've come
+  to the actual end of RAM...)
+
+: ?zpage  if error" No available zero-page ram" then ;
+
+meta
+: var   ( bytes)
+   'ram @  dup equ  +  dup 'ram ! ( allot)
+   @ram #ram +  swap u<  if error" No available ram"  then ;
+
+: zvar  ( bytes)
+   'zram @  dup equ  +  dup 'zram ! ( allot)
+   'xram @ swap u< ?zpage ;
+
+: xvar  ( bytes)
+   'xram @  swap -  dup equ  dup 'xram ! ( allot)
+   'zram @ u< ?zpage ;
+
+forth
+
+( Utility macros.)
+macro pshhx  .x psh  .h psh         ;
+macro pulhx          .h pul  .x pul ;
+
+
+( Calculation of FCDIV - flash clock divider [sic]
+
+  FCDIV = ceil[busclock/200k] - 1
+
+  We leave off the - 1 to slow the flash a bit. Insurance against our clock
+  being a bit fast... better to have the flash clock run a bit slow than
+  too fast.
+
+  We're trying the divide the bus clock down to between 150kHz and 200kHz,
+  to drive the flash programming machinery. We need to calculate a divider
+  that works. One caveat: if the calculated value is > 63, set a bit that
+  first divides the bus clock by 8 before dividing by our divider
+  [actually, our divider + 1].)
+
+: _fcdiv   ( divisor - fcdiv)
+   dup 64 u< not if
+      ( too big - round up and divide by 8)  7 + 3 >>
+      ( set "divide by 8" bit)  "40 or
+  then ;
+
+( For most uses: clock speed is in kilohertz.)
+: khz>fcdiv  ( clock-in-khz - fcdiv)
+   199 + 200 /   _fcdiv ;
+
+( For more resolution: clock speed is input in hundreds of hertz, or
+  hectahertz.)
+: hhz>fcdiv  ( clock-in-hhz - fcdiv)
+   1999 +  2000 /  _fcdiv ;
+
+
+( Interrupt vectors and handlers.)
+variable vector-offset  ( 0 if vectors not relocated)
+: reloc-vector  ( offset - offset')
+   dup \l Vreset = if ^ then  ( reset doesn't get relocated)
+   vector-offset @ +a ;
+
+meta
+: handler  ( vector-offset)
+   reloc-vector  \m here swap  image-!  __asm ;
+
+forth
+
+
+-- from interact (end) ----------------------------------------------------------
+-- start ARM meta copy ----------------------------------------------------------
+
+.ifdef later-gator
+
+
+
+( Forward references for fundamental words.)
+
+labels
+
+( These are pointers to target CODE words.)
+variable (branch)
+variable (0branch)
+variable (=0branch)
+variable (for)
+variable (?for)
+variable (next)
+variable (do)
+variable (loop)
+variable (+loop)
+-- variable lit
+variable ^
+-- variable (")
+-- variable type
+-- variable (;code@)   ( for target-resident defining words)
+
+forth
+
+( looks up a label or forward-reference variable, and executes it to push
+  its value or address)
+
+: lookup  ( look up next token as forward-ref variable or label)
+   .labels. chain' execute ( get addr) ;
+
+( Fetch value of variable on stack - a primitive - and compile it if
+  defined, and complain if not yet defined.)
+
+: (p,)  ( var)  @  =if  \m a,  ^  then  error" primitive not yet defined" ;
+
+compiler
+
+( p, is a helper word that makes writing compiling words easier. It is used
+  to compile a target primitive into a target word. But it doesn't do all
+  the work at once. p, runs at the compile time of the compiling word. In
+  that phase it consumes a token from the input, assumes it is a variable
+  for a forward-referenced primitive, and compiles it; then it compiles
+  (p,) ( which will do the rest of the work at the -run-time- of the
+  compiling word!)
+
+: p,   .labels. \chain  compile (p,) ;
+
+forth
+
+
+( Looking up and changing values of target words.)
+meta
+: '   ( - target-cfa)  .target. chain' ;
+: addr   \m '  \m cell+ ;  ( find word, skip cfa, return pfa)
+: value  \m addr  \m @ ;   ( find word, skip cfa, read out value)
+: is  ( target-cfa)    \m addr  \m ! ;
+
+
+( Compile a linked name field into the target image.)
+
+( The distinction between last and last-code is a bit subtle. last captures
+  the cfa of the last word defined, no matter what kind of word it was.
+  last-code captures the cfa of code fields that have a "bl" instruction
+  compiled there, and that can be possibly "repointed" by a later ;code or
+  does>. Keeping them separate makes me feel better.)
+
+forth
+
+variable last        ( cfa of last word defined)
+variable last-code   ( for ;code and does> to fix up)
+2variable last-link  ( address of vocab, link to newest word)
+
+meta
+
+-- : show   last-link 2@ ! ( finally link in last word) ;
+
+( code, doesn't bother to compile a bl since we're doing to patch the code
+  field later. We just need to make room and to set last-code so patch can
+  find us.)
+
+: code,   \m here last-code !  ( make a code field)  0 \m , ;
+
+: token,  ( a u)  dup 1+ \m aligned  \m allot  ( room for name+len+padding)
+          dup \m here 1- \m c! ( len)  \m here over 1+ -  image+ swap cmove ;
+
+( called from metac to fix up the target image variables .forth. and
+  .compiler. to point to the most recent names in the parallel host
+  dictionaries, .target. and .target-compiler. resp.
+
+  It looks up the following target chain name and stores the link field from
+  the host.)
+
+: parallels  ( host-chain)  >parallel @  \m addr  dup reloc  \m ! ;
+
+: 'link   current @  >parallel ;
+: link,   \m here  \m 'link  dup  @  \m z,  !  ( last-link 2! ) ;
+
+( name, creates a name, compiling the name string and a link field.)
+
+: name,  ( a u)  \m token,  \m link, ;
+
+: literal    p, lit  \m ,  ;  ( make a target literal)
+: aliteral   p, lit  \m a, ;  ( make a target address literal,
+                                which is relocated!)
+
+meta-compiler
+: [']  \m '  \m aliteral ;
+meta
+
+.meta. chain' literal  'target-literal !  ( patch colon compiler)
+            ' number   'target-number  !  ( ditto - use host's number)
+
+: assemble     pair off  __asm ;  ( init and run assembler)
+
+: equ   current preserve  labels  constant ;
+
+
+( name creates a name -both- in the host's .target. chain, and in the
+  actual target memory image.
+
+  On the host, in .target., name creates a word that compiles itself into
+  the target image. At create time, this target word captures \m here - the
+  target cfa - and makes a "constant" out of it. At runtime, it fetches the
+  constant and compiles it, as a relocated value, into the target
+  dictionary [image].)
+
+: name   token  2dup \m name,  ( compile name into image)
+         (create)  ( NOTE: uses current unchanged)
+         \m here  dup ,  last !  ( create constant, and set last)
+         does> @ ( target-cfa)  ( compile itself!)  \m a, ;
+
+: label     \m here  \m equ ;
+: code      \m name  \m assemble ;
+: new       \m name  \m code, ;  ( for words with code fields)
+
+( implements looks up a forward-reference variable and stores the address
+  of the last cfa there.)
+
+: implements  last @  \f lookup  ! ;
+
+
+( Support for making new defining words.)
+forth
+( (patch) ( rewrites the bl instruction at cfa to call to 'code.)
+: (patch)   ( 'code cfa)  tuck >branch-offset  "eb000000 or ( op)
+            swap \m ! ;
+
+: patch   last-code @  (patch) ;
+
+( This word, which is followed inline by a target code address, patches the
+  code field of the last last word compiled with a bl to the inline target address. It
+  essentially "repoints" previously defined words - defined by create,
+  variable, constant, etc - to point to new code. It gets -compiled- indirectly
+  by both ;calls and does>.)
+
+: (;code@)   pop @  patch ;
+
+
+( <;code> is used to switch from compiling -host- code [that will later run
+  on the host, and build the target word] to compiling -target- code, that
+  will run when words defined by this defining word later execute. In order
+  to connect the two worlds, and to be able to patch up code fields to
+  point to this newly-defined behaviour, <;code> captures the target's
+  "here" value. Remember, we are about to start compiling target code at
+  "here".
+
+  <;code> runs at the compile time of a defining word, but it leaves it up
+  to its caller - ;calls or does> - to change the interpreter mode.)
+
+: <;code>   compile (;code@)  \m here  , ;
+
+
+compiler
+-- : does>   <;code>  save-lr  \m dodoes @ \a bl  \m -] ( start meta-colon) ;
+: ;code   <;code>  \m assemble ( start assembler) ;
+
+meta-compiler
+( ;calls is like ;code, but it is for creating target-resident defining
+  words that correspond to the defining words that were already defined in
+  the meta-compiler.
+
+  The issue is that the compilation of the defining word into the
+  meta-compiler already assembled the target machine code for this class of
+  word - whether docolon, dovar, doconst, or dodoes. We don't want to
+  repeat the code, so when we compile target-resident versions of the
+  defining words - : variable constant etc - we want to -refer- to the
+  previously assembled machine code, rather than assemble it again.
+
+  Thus this word is called ;calls rather than the more "usual" ;code,
+  because it is not followed by machine code, but instead by a -label- that
+  points to machine code.
+
+  Under the hood, it is the same as the metacompiler's ;code: both compile
+  -their version of- the word (;code@) ( which is followed by an inline
+  constant, which is the address of machine code - docolon, dovar, etc.
+  (;code@) ( patches the code field of the most-recently-defined word to
+  point to this machine code. It's simple - it just takes a lot of words to
+  explain!)
+
+: ;calls   p, (;code@)  \f lookup  \m a,  __meta ;
+
+forth
+
+( It's nice to know where a code field is pointing. Actually this takes the
+  address of any b or bl instruction and shows its destination - with some
+  junk in the high-order bits that can be ignored.)
+
+: >code  ( a code-field)  2 +  2 <<  + ; 
+
+meta
+
+: .code  ( a)  dup \m @  >code  u. ;
+
+forth
+
+: field-width  #field @ cells ;
+
+: picky-type  ( a u)  ( print only "letter" characters)
+   ?for  dup 1+  swap c@  >letter emit  next  then  drop ;
+
+( Right justify in field of width #field @ * 4)
+: |_field_cell|   ( a u)  #field @ cells  over -  spaces  picky-type ;
+
+( Print a name from a cell value.)
+: .name-cfa  ( cfa)  ( cell is cfa; print its name)
+   \m cell-  image+ link>name  field-width  min  |_field_cell| ;
+
+: .name-code-field  ( a+ bl-to-code - a+)
+   ( bl-to-code is the contents of a code field; follow bl and print name!)
+   over cell- swap >code .hex-cell  ( don't have code names yet)
+   ;
+
+( The address passed is one past the address from which n was fetched.)
+: .image-name  ( a+ n - a+)
+   dup #image    u< if  .name-cfa   ^  then
+   dup "eb000000 u< if  drop field-width spaces   ^  then
+   ( prob chars, not an address)  .name-code-field ;
+
+' .image-name is .name  ( hook into memory dumper)
+
+assembler
+: ;c   __meta ;
+
+
+( Compiling strings.)
+meta
+( Compile a counted string without a zero terminator.)
+( Length is a cell, not a byte!)
+: string,  ( a u)  dup \m , ( len - cell!)
+           \m here  over \m allot  \m align
+           image+ swap cmove ;
+
+meta-compiler
+: "    p, (")   ( compile (")
+       char " parse  ( a u)  \m string,  ( compile the counted string) ;
+
+: ."   \mc "    ( compile string)
+       p, type  ( compile type) ;
+
+
+( Control structures.)
+
+( Resolve a forward or backward jump, from src to dest.)
+( When using absolute branch addresses, this is easy: just store dest at src.)
+
+( NOTE: when using absolute addresses for branches, we must mark them as
+  needing relocation, so we use a, . If instead we used relative branch
+  addresses we should use , .)
+
+meta
+: <resolve  ( dest src)  \m ! ;
+: >resolve  ( src dest)  swap  \m <resolve ;
+: >mark   \m here  0 \m a, ;  ( mark addresss as relocating!!)
+
+meta-compiler
+: =if   ( - src)        p, (=0branch)  \m >mark ;
+: if    ( - src)        p,  (0branch)  \m >mark ;
+: then  ( src)          \m here \m >resolve ;
+: else  ( src0 - src1)  p,   (branch)  \m >mark
+                        swap  \mc then ;
+
+: begin   ( - dest)  \m here ;
+: =until  ( dest -)  \mc =if  \m <resolve ;
+: until   ( dest -)   \mc if  \m <resolve ;
+: again   ( dest -)  p, (branch)  \m >mark  \m <resolve ;
+: =while  ( dest - src dest)  \mc =if  swap ;
+: while   ( dest - src dest)   \mc if  swap ;
+: repeat  ( src dest -)   \mc again  \mc then ;
+
+( n for .. next         goes n times; 4 billion+ if n=0 )
+( n ?for .. next then   goes n times; 0 if n=0 )
+
+: for     ( - dest)      p,  (for)            \mc begin ;
+: ?for    ( - src dest)  p, (?for)  \m >mark  \mc begin ;
+: next    ( dest -)      p, (next)  \m >mark  \m <resolve ;
+
+( do, loop, +loop)
+: do      ( - src dest)   p, (do)     \m >mark  \mc begin ;
+: loop    ( src dest)     p, (loop)   \m >mark  \m <resolve  \mc then ;
+: +loop   ( src dest)     p, (+loop)  \m >mark  \m <resolve  \mc then ;
+forth
+
+
+( Making [ and ] work, finally.)
+variable saved-state      ( interpreter mode we came from)
+variable which-literal    ( the kind of literal to make when ] executes)
+
+meta
+
+: -]   saved-state @  state ! ;  ( return to saved state)
+:  ]   \m -]  which-literal @execute ;
+
+forth
+
+: _[   ( 'literal)
+        state @  saved-state !    ( so we know how to get back)
+        which-literal !           ( so ] knows how to make a literal)
+        __meta ;                  ( switch to __meta, not to host forth)
+
+( Now define the different ways of leaving a colon compiler.)
+
+( "Fix" host forth's [ and ; so they return to __meta)
+compiler
+: [          ['] literal  _[ ;   ( when we return, make a host literal)
+: ;    \ ^   __meta ;
+: [']  \m '  literal ;
+
+meta-compiler
+: [    'target-literal @  _[ ;   ( when we return, make a target literal)
+: ^    p, ^  ;   ( compile target's ^ - EXIT)
+: ;    \mc ^  __meta ;
+
+forth
+
+.then ( later-gator)
+.then ( only this far)
