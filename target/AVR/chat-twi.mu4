@@ -97,9 +97,6 @@ label wait-twint
    begin  10 ld TWCR $  TWINT 10 sbrs  rjmp ( again)
    10 ld TWSR $  0f8 10 andi  ret  ;c
 
-label wait-twint-and-ack
-   wait-twint rcall  ack-twint rjmp  ;c
-
 label read-byte
    wait-twint rcall
    80 10 cpi  restart  0= until  ( restart protocol)
@@ -111,35 +108,51 @@ label read-byte
   second, that we were addressed as slave+read. We have to watch for, and
   ack, both.
 
-  If we wanted to send multiple bytes back to the master, this would be
-  even more complicated, since only the _first_ byte sent would look for
-  and match status a0, and the later bytes would be acked with a b8 instead
-  of a8.)
+  If we want to send multiple bytes back to the master, we have to look for
+  and accept both a8 - addressed as slave+read - and b8 - byte transmitted
+  and ACKed. Our caller can sit in a loop since the host will NACK the last
+  byte, and we'll get a c0 status, and restart.)
+
+label expect-start
+   wait-twint rcall
+   0a0 10 cpi  restart  0= until  ( we should see START/RESTART)
+   ack-twint rcall
+   ( fall thru)
+
+( Returns to caller if either we were just addressed, or the last byte
+  written was ACKed by the master.)
+
+label write-another?
+   wait-twint rcall
+   0e8 10 andi  0a8 10 cpi  restart  0= until  ( match a8 and b8)  ret  ;c
+
+( After sending byte and acking interrupt, wait for ACK/NACK and only
+  return to caller if ok to send another byte.)
 
 label write-byte
-   wait-twint-and-ack rcall
-   0a0 10 cpi  restart  0= until  ( we should see START/RESTART)
-   wait-twint rcall
-   0a8 10 cpi  restart  0= until  ( then slave+read)
-   TWDR 18 sts  ack-twint rjmp  ;c
+   TWDR 18 sts  ack-twint rcall  write-another? rjmp  ;c
 
 ( Command routines.)
+( On reads, keep streaming bytes from memory to TWI, as long as last byte
+  was ACKed.)
+
+label read-data
+   expect-start rcall
+   begin  18 ld z+    write-byte rcall  again  ;c
+
+label read-program
+   expect-start rcall
+   begin  18 ld pmz+  write-byte rcall  again  ;c
+
 label set-addr
    read-byte rcall  18 zl mov
    read-byte rcall  18 zh mov  ret  ;c
 
+( On writes, keep streaming bytes from TWI into memory, until read-byte
+  gets something other than an 80 status.)
+
 label write-data
-   read-byte rcall  18 st z+  ret  ;c
-
-( Don't tail-call convert read-data and write-data! We need to actually _nest_
-  our calls to read-byte and write-byte so there is an address on the R stack
-  for them to pop in case of error!)
-
-label read-data
-   18 ld z+    write-byte rcall  ret  ;c
-
-label read-program
-   18 ld pmz+  write-byte rcall  ret  ;c
+   read-byte rcall  18 st z+  write-data rjmp  ;c
 
 ( Clear TWEA so we NACK our address while executing code. Do this without
   resetting TWINT again.)
@@ -150,7 +163,8 @@ label go
 
 ( Dispatch.)
 label process
-   wait-twint-and-ack rcall
+   wait-twint rcall
+   ack-twint rcall
    60 10 cpi  process  0= until  ( wait til addressed as slave)
    read-byte rcall  ( cmd)
 
