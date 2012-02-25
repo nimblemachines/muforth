@@ -84,8 +84,8 @@ comment register-use
 
 register-use
 
-label init-twi
-   slave-addr 10 ldi  10 st TWAR $  ( set address)
+label restart  ( pop one return, ack int, then return)
+   0 pop  0 pop
    ( fall thru)
 
 ( Ack TWINT. Make sure TWEA and TWEN also set.)
@@ -97,21 +97,30 @@ label wait-twint
    begin  10 ld TWCR $  TWINT 10 sbrs  rjmp ( again)
    10 ld TWSR $  0f8 10 andi  ret  ;c
 
-label restart
-   0 pop  0 pop  ret  ;c
+label wait-twint-and-ack
+   wait-twint rcall  ack-twint rjmp  ;c
 
 label read-byte
    wait-twint rcall
-   80 10 cpi  0= not if  restart rjmp  then  ( restart protocol)
+   80 10 cpi  restart  0= until  ( restart protocol)
    TWDR 18 lds  ack-twint rjmp  ;c
 
-( If we only ever write single bytes, then we should check for a8 status,
-  and expect the host to NACK the byte. For writing multiple bytes, we need
-  to accept both a8 and b8.)
+( This is a bit tricky! Since the host had to send a new transaction for
+  the read, on the first byte we're going to see _two_ interrupts: first,
+  that while addressed as a slave receiver we got a STOP or RESTART; and
+  second, that we were addressed as slave+read. We have to watch for, and
+  ack, both.
+
+  If we wanted to send multiple bytes back to the master, this would be
+  even more complicated, since only the _first_ byte sent would look for
+  and match status a0, and the later bytes would be acked with a b8 instead
+  of a8.)
 
 label write-byte
+   wait-twint-and-ack rcall
+   0a0 10 cpi  restart  0= until  ( we should see START/RESTART)
    wait-twint rcall
-   0a8 10 cpi  0= not if  restart rjmp  then  ( NACK will restart protocol)
+   0a8 10 cpi  restart  0= until  ( then slave+read)
    TWDR 18 sts  ack-twint rjmp  ;c
 
 ( Command routines.)
@@ -132,13 +141,17 @@ label read-data
 label read-program
    18 ld pmz+  write-byte rcall  ret  ;c
 
-label go  ijmp  ;c
+( Clear TWEA so we NACK our address while executing code. Do this without
+  resetting TWINT again.)
+
+label go
+   TWCR 10 lds  1 TWEA << invert 10 andi  TWCR 10 sts
+   ijmp  ;c
 
 ( Dispatch.)
 label process
-   wait-twint rcall
-   60 10 cpi  0= not if  ret  then  ( addressed as slave)
-   ack-twint rcall
+   wait-twint-and-ack rcall
+   60 10 cpi  process  0= until  ( wait til addressed as slave)
    read-byte rcall  ( cmd)
 
    10 18 cpi  set-addr      0= not until
@@ -176,7 +189,7 @@ RESET handler
    10 ldi  SPL 10 out
    10 ldi  SPH 10 out
 
-   -- init-twi rcall  ( use default slave address: 1111_111)
    blinky rcall
-   begin  ack-twint rcall
-          process rcall    again  ;c
+
+   ack-twint rcall
+   begin  process rcall  again  ;c
