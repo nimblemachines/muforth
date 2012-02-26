@@ -1,0 +1,60 @@
+( This file is part of muFORTH: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2012 David Frech. All rights reserved, and all wrongs
+  reversed. (See the file COPYRIGHT for details.)
+
+loading TWI chat over USB (host)
+
+( Host-side code to drive the TWI chat code in
+  target/HC08/twi-chat-usb-core.mu4.)
+
+hex
+
+-- : usb  ( bmRequest bRequest wValue wIndex wLength 'buffer)
+
+( Commands:
+0-3f  Bye        - exit chat code and return to chat loop
+  40  Read       - send cmd, receive data bytes
+  41  ReadAcks   - read back collected ACKs
+  42  Write      - send cmd, data bytes, collect ACKS
+)
+
+( Control reads)
+: twi.Read  ( cmd slave len buf)  2push  2push
+   0c0 40  2pop  2pop  usb ;
+
+: twi.ReadAcks  ( len buf)  2push
+   0c0 41   0 0  2pop  usb ;
+
+( Control writes)
+: twi.Write  ( cmd slave len buf)  2push  2push
+    40 42  2pop  2pop  usb ;
+
+: twi.Bye  40 0  0 0  0 0  usb ;
+
+: twi.Hello  ( start the TWI chat firmware on the connected device)
+   0f400 u.SetPC u.Run ;
+
+
+( A simple buffer for chatty communication protocols. Words for putting
+  values into a buffer -- at pad -- and taking them out again.)
+
+: !chat  <# ;
+: #chat  hld @  pad - ;
+: +hld   1 hld +! ;
+
+: b>  ( byte)    hld @  c!  +hld ;
+: b<  ( - byte)  hld @  c@  +hld ;
+
+( The following is test code to talk to my simple "debug stub" running on
+  an Atmel AVR.)
+
+: avr-read   ( len cmd)  07f ( slave)  rot pad  twi.Read ;
+: avr-write  ( len cmd)  07f           rot pad  twi.Write ;
+
+( Goofy names to try this out.)
+: z!   ( addr)  !chat  >hilo  b> b>       2  10 avr-write ;
+: z&   ( b)    ( write data mem)  pad c!  1  11 avr-write ;
+: z*   ( - b)  ( read data mem)           1  12 avr-read  pad c@ ;
+: zp*  ( - b)  ( read prog mem)           1  13 avr-read  pad c@ ;
+: zgo                                     0  14 avr-write ;

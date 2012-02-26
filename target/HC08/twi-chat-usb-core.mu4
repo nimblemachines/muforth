@@ -3,17 +3,15 @@
   Copyright 2002-2012 David Frech. All rights reserved, and all wrongs
   reversed. (See the file COPYRIGHT for details.)
 
-loading TWI over USB (core)
+loading TWI chat over USB (core)
 
 __meta
 
 hex
 
 ( Support for chatting with slave devices over TWI, using my JS16 as a
-  USB-based TWI master. This code exports very low-level aspects of the
-  communication, allowing the host to script sending and receiving of bits
-  and bytes with a lot of control. It's very inefficient, though. It's
-  intented for experimentation.)
+  USB-based TWI master. The difference between this and twi-usb is that
+  this is more high-level. That code is more for experimentation.)
 
 ( Ok, so I'm giving up in frustration. I've been beaten, for the first
   time, by a piece of s08 hardware - in this case, the i2c peripheral. Not
@@ -88,7 +86,6 @@ out-buffer 7 + equ wLengthHi
 ( Create a forward jump at the start of the flash sector.)
 forward twi-loop
 
-
 ( Port pins.)
 
 ( SCL is connected to PTA7/TxD, pin 20.
@@ -144,41 +141,66 @@ label recv-bit      Q  D/  Q  C/  Q  D@  Q  C\   rts  ;c
 label restart-bit   Q  D/  Q  C/                 ( fall thru)
 label start-bit                      H      D\    H    C\  rts  ;c
 
+( Byte to send in A. Send MSB first. Return ACK bit in A.)
+( Since delays clobber X, lets save and restore it here.)
+label send-byte
+   .x psh  ( protect from delay)
+   .a psh  ( byte to send)
+   8 # lda  .a psh  ( bit count)
+   begin  1 ,s rol  send-bit c  0 ,s decz? until  2 # ais
+   recv-bit c  .a clr  .a rol ( ACK into LSB)
+   .x pul ( restore)  rts  ;c
 
-( XXX no-ops - but could set a count register for the bit delays.)
-label SlowClock
-label FastClock
-      rts  ;c
+( Enter with ACK bit in A. Read byte from slave into A. Send ACK.)
+( Since delays clobber X, lets save and restore it here.)
+label recv-byte
+   .x psh  ( protect from delay)
+   .a psh ( ACK)
+   .a psh ( byte accumulator)
+   8 # lda  .a psh  ( bit count)
+   begin  recv-bit c  1 ,s rol  0 ,s decz? until
+   2 ,s ror ( ACK -> C)  send-bit c  1 ,s lda  ( byte)  3 # ais
+   .x pul ( restore)  rts  ;c
 
-label twi-write-commands  ( all are control writes)
-   ( 32) start-bit    .a dec  0!=  until
-   ( 33) restart-bit  .a dec  0!=  until
-   ( 34) stop-bit     .a dec  0!=  until
+1 zvar total-count
 
-   ( 35) SlowClock ( 100k)  .a dec  0!= until
-   ( 36) FastClock ( 400k)  .a dec  0!= until
+label toggle-control  ( HX points to EP buffer control byte)
+   0 ,x lda  40 # and ( data0/1)  match-data1 # eor  0 ,x sta  rts  ;c
 
-   ( unknown, fall thru)
-
-label stall
-   EPCTL0 1 bset ( STALL)  rts  ;c
-
-label read-one-byte
-   1 # lda
+( Read data from chip and copy into IN buffer.)
+label prepare-next-in
+   total-count ) lda  0!= if  ( still data to read)
+      .h clr  .x clr  ( bufptr)
+      buflen0 # cmp  u>= if  ( whole packet)  buflen0 # lda  then
+      .a psh  begin
+         .a clr  total-count ) dec  0= if  .a inc  then  ( ACK)
+         recv-byte c
+         in-buffer ,x sta  .x inc
+      0 ,s decz? until  .a pul
+      txa  ( in-count to a)
+      total-count ) tst  0= if  stop-bit c  then
+   then
    ( fall thru)
 
 ( Enter with in-count in A)
-label prepare-in
+label prepare-fixed-in
    in-count ) sta
-   match-data1 # lda  in-control ) sta
-   ( fall thru)
+   ( toggle DATA0/1)  in-control # ldhx  toggle-control c  ( fall thru)
 
 ( Get ready to receive another SETUP token.)
-label expect-setup-token  ( expect OUT or SETUP, really)
+label expect-setup-token
    match-data1 # lda  out-control ) sta
+   ( fall thru)
+
+( Jump here if out-control has already been toggled.)
+label expect-out-token  ( expect OUT or SETUP, really)
    buflen0 # lda  out-count ) sta
    CTL 5 bclr ( TSUSPEND off - resume processing)
    rts  ;c
+
+label finish-twi-write
+   stop-bit c
+   ( fall thru)
 
 ( Prepare to return status - a zero-length IN transaction. Also be ready to
   accept another SETUP even if it would mean abandoning the current
@@ -186,22 +208,39 @@ label expect-setup-token  ( expect OUT or SETUP, really)
 
 label finish-control-write
    ( Setup IN status stage)
-   .a clr  ( zero-length DATA1 transaction)
-   prepare-in j  ;c
+   .a clr  in-count ) sta  ( zero-length DATA1 transaction)
+   match-data1 # lda  in-control ) sta
+   expect-setup-token j  ;c
 
-( Byte to send in wValue. Send MSB first. Return ACK bit in IN buffer.)
-label send-byte
-   8 # lda  .a psh  wValue ) lda
-   begin  .a rol  send-bit c  0 ,s decz? until  .a pul
-   recv-bit c  .a clr  .a rol ( ACK into LSB)  in-buffer ) sta
-   read-one-byte j  ;c
+( wValue is twi-cmd and wIndex is slave-addr.)
 
-( Read byte from slave into IN buffer; use wValue - lsb - as ACK value.)
-label recv-byte
-   8 # lda  .a psh
-   begin  recv-bit c  .a rol  0 ,s decz? until  in-buffer ) sta
-   .a pul  wValue ) lda  .a ror ( LSB -> C)  send-bit c
-   read-one-byte j  ;c
+( XXX is slave addr as sent to us shifted left already?)
+( Code as written currently says NO.)
+( XXX this should really check ACK bits!)
+label send-command
+   wLength ) lda  total-count ) sta
+   start-bit c
+   wIndex ) lda  .a lsl ( slave addr + write)  send-byte c
+   wValue ) lda  ( twi-cmd)  send-byte j  ;c
+
+label bulk-write
+   send-command c  ( save wLength, send START, slave addr+write, cmd)
+   wLength ) lda  0!=  finish-twi-write  until
+   expect-setup-token j  ( wait for OUT or new SETUP)  ;c
+
+( Don't start talking to the slave at all for 0-length reads. It would just
+  break things.)
+
+label bulk-read
+   wLength ) lda  0!=  prepare-fixed-in  until
+   send-command c  ( save wLength, send START, slave addr+write, cmd)
+   restart-bit c
+   wIndex ) lda  .a lsl  .a inc  ( slave addr + read)  send-byte c
+   prepare-next-in j  ;c
+
+( Read last IN buffer of ACK bits from chip.)
+label read-acks
+   wLength ) lda  prepare-fixed-in j  ;c
 
 ( Return NAK on IN.)
 label nak-in
@@ -210,32 +249,61 @@ label nak-in
 label setup-token
    nak-in c
 
+( NOTE: Command numbers are all given in HEX.)
 ( assume vendor request)
    bRequest ) lda
-   30 # sub   ( BDM commands start at 20 hex; anything below that, we exit)
-   u< if  ( 00 - 2f Bye)  2 # ais  ( skip return from process-usb)  rts  then
+   40 # sub   ( TWI commands start at 40 hex; anything below that, we exit)
+   u< if  ( 00 - 3f Bye)  2 # ais  ( skip return from process-usb)  rts  then
 
-   ( Control reads)
-   ( 30) recv-byte          0!=  until
-   ( 31) send-byte  .a dec  0!=  until
+   ( 40 Read)              0!=   bulk-read   until
+   ( 41 ReadAcks)  .a dec  0!=   read-acks   until
+   ( 42 Write)     .a dec  0!=   bulk-write  until
 
-   twi-write-commands c  ( these are all control writes, so ...)
-   finish-control-write j  ;c
+   ( unknown, fall thru)
+
+label stall
+   EPCTL0 1 bset ( STALL)  rts  ;c
 
 label setup-or-out-token
    out-control ) lda  3c # and  34 # cmpne?  setup-token  until
 
    ( OUT token)
-   ( We're not using data buffers, so any OUTs are status transactions for
-     control reads. The only thing to do is to get ready for a new SETUP.) 
-   expect-setup-token j  ;c
+   ( If last OUT was zero-length, it was a status transaction for a
+     control read, so get ready for a new SETUP.)
+   out-count ) lda  0= if  expect-setup-token j  then
+
+   ( Otherwise, we've got a bulk write data payload. Write bytes to slave
+     via TWI. Put ACK bit into in-buffer, just in case the host wants to
+     read it back - though it'll only see the ACK bits of the last OUT.)
+
+   .h clr  .x clr  ( bufptr)
+   .a psh  ( repeat out-count times)
+   begin
+      ( send byte from out-buffer)
+      ( XXX logical OR all the ACK bits?)
+      out-buffer ,x lda  send-byte c  ( send byte, recv ACK bit)
+       in-buffer ,x sta  .x inc  total-count ) dec  ( affects Z)
+   0 ,s decz? until  .a pul
+
+   ( If total-count zero, we've received all the data; send STOP bit and
+     queue up status IN token.)
+   0= if  finish-twi-write j  then
+
+   ( total-count non-zero; expect more data.)
+   ( toggle DATA0/1)  out-control # ldhx  toggle-control c
+   expect-out-token j  ;c
 
 ( An IN token is either part of a data stage of a control read, or it is
   the status stage of a control write. Status IN's are always zero bytes
-  long. In this case, we only ever read one buffer, so simply get ready for
-  another SETUP.)
+  long; sometimes the last IN of the data stage is also zero bytes long -
+  see copy-to-in for details.
+
+  The upshot is that if the last packet wasn't full we should expect no
+  more IN transactions.)
 
 label in-token
+   ( If last IN was a full packet, ready some more data.)
+   in-count ) lda  buflen0 # cmp  0= if  prepare-next-in j  then
    ( fall thru)
 
 label nak-in-expect-setup
