@@ -9,22 +9,38 @@ variable chatting
 
 : +chat  chatting on ;
 
-.ifdef not-yet
+( A copy of what we hope the current memory pointer on the target is. We
+  update it when we do operations that are post-increment on the target.)
 
-: t.ReadW  ( - word)         t.Read  ( hi)  t.Read  ( lo)  hilo> ;
-: t.WriteW  ( word)   >lohi  t.Write ( hi)  t.Write ( lo) ;
+variable _z
 
-: >chat  ['] t.SetAddr  is |p!
-         ['] t.GetAddr  is |p@
-         ['] t.Read     is |c*
-         ['] t.ReadW    is |cell*
-                         2 |cell !  ( size of cell) ;
+: _z!        ( a)  dup _z !  z! ;
+: _z@        ( - a)    _z @ ;  ( does _not_ talk to target)
 
-.else
+: _z*        ( - b)  1 _z +!  z* ;       ( data memory)
+: _zcell*    ( - w)  2 _z +!  zcell* ;   ( data memory)
+: _zp*       ( - b)  1 _z +!  zp* ;      ( program memory)
+: _zpcell*   ( - w)  2 _z +!  zpcell* ;  ( program memory)
 
-: >chat  >image ;
+( Don't set the memory fetch words; we need to specify program or data!)
+( XXX need these for image? setting >data for image is meaningless!)
 
-.then
+: >chat-data
+         ['] _z*      is |c*
+         ['] _zcell*  is |cell* ;
+
+: >chat-prog
+         ['] _zp*      is |c*
+         ['] _zpcell*  is |cell* ;
+
+: >chat  ['] _z!  is |p!
+         ['] _z@  is |p@
+                   2 |cell !  ( size of cell)
+
+         ['] >chat-data  is >data
+         ['] >chat-prog  is >prog
+
+         >prog  ( default) ;
 
 ( Set |@ and |c@ to _some_ form of target fetch. Prefer to get bytes from
   target if we're connected. This word is useful so we can set an initial
@@ -45,45 +61,68 @@ host-seekeys avr-seekeys  128 cells cmove
 
 avr-seekeys 'seekeys !    ( switch over to our bindings)
 
-( Dump one line of memory from target image.)
+( Dump one line of memory from target program memory.)
 : 1dump  ( a)
    hex-bytes
-   >image
+   >image    >prog  dup .addr  dup .hex-cells
+   chatting @ if
+      >chat  >prog  dup _addr  dup .hex-cells
+   then
+   drop ;
+
+( In the strange case that we switch to dumping data via the 'a' key, but
+  don't happen to be connected to a target, we'll get "deadbeef" to remind
+  us.)
+
+: 1dump-data  ( a)
+   hex-bytes
+   >target >data
    dup _addr  dup .chars
    dup .addr  dup .hex-bytes
    dup _addr  dup .hex-cells
    drop ;
 
 : dumping
-   16 skip !
+   16 see-skip !
    ['] skip+  advance!
    ['] skip-  retreat!
    ['] 1dump  inspect! ;
 
+: dumping-data
+   dumping
+   ['] 1dump-data  inspect! ;
+
+( XXX Always disassemble from image memory?)
 : disasming
-   2 skip !
+   >image >prog
+   2 see-skip !
    ['] i-skip  advance!
    ['] skip-   retreat!
    ['] 1dis    inspect! ;
 
 key: d  ( a - a 0)   dumping  0 ;
+key: a  ( a - a 0)   dumping-data  0 ;
 key: i  ( a - a 0)   disasming  0 ;
 
 ( Interactive)
 
 ( make an alias so we can still get to it)
-: du-host  -1 addr-mask !  dumping  du ;
+: du-host  -1 see-addr-mask !  dumping  du ;
 
 : du  ( a - a')
    avr-seekeys 'seekeys !    ( switch over to our bindings)
-   >target
-   "0ffff addr-mask !
-   dumping
-   ['] 1dump  inspect ;
+   "0ffff see-addr-mask !
+   dumping  inspect ;
+
+: da  ( a - a')  ( dump DAta)
+   chatting @ 0= if error" no connected target - no data memory available"  then
+   avr-seekeys 'seekeys !    ( switch over to our bindings)
+   "0ffff see-addr-mask !
+   dumping-data  inspect ;
 
 : dis  ( a - a')
    avr-seekeys 'seekeys !    ( switch over to our bindings)
-   >target
-   "0ffff addr-mask !
-   disasming
-   ['] 1dis    inspect ;
+   "0ffff see-addr-mask !
+   disasming  inspect ;
+
+: chat  +chat  >chat  twi.Hello ;
