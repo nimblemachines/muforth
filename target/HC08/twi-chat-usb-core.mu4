@@ -104,11 +104,13 @@ label init-pins
 label half-cycle-delay
    here 2 + c  ( fall thru)
 
-.ifdef 400k-twi  1 .else  ( 100k)  #11  .then   constant delay-count
+( Count of 10 yields 103k; 1 yields 315k. ;-)
+.ifdef 400k-twi  1 .else  ( 100k)  #10  .then   constant delay-count
 
+( Save and restore X around the loop so callers don't have to worry.)
 label quarter-cycle-delay
-   delay-count # ldx
-   begin  .x decz? until  rts  ;c
+   .x psh  delay-count # ldx
+   begin  .x decz? until  .x pul  rts  ;c
 
 ( Since the slave can hold SCL low to give it more processing time, we need
   to be careful when letting SCL go high. We should only start our delay
@@ -142,25 +144,20 @@ label restart-bit   Q  D/  Q  C/                 ( fall thru)
 label start-bit                      H      D\    H    C\  rts  ;c
 
 ( Byte to send in A. Send MSB first. Return ACK bit in A.)
-( Since delays clobber X, lets save and restore it here.)
 label send-byte
-   .x psh  ( protect from delay)
    .a psh  ( byte to send)
    8 # lda  .a psh  ( bit count)
    begin  1 ,s rol  send-bit c  0 ,s decz? until  2 # ais
-   recv-bit c  .a clr  .a rol ( ACK into LSB)
-   .x pul ( restore)  rts  ;c
+   recv-bit c  .a clr  .a rol ( ACK into LSB)  rts  ;c
 
 ( Enter with ACK bit in A. Read byte from slave into A. Send ACK.)
-( Since delays clobber X, lets save and restore it here.)
 label recv-byte
-   .x psh  ( protect from delay)
    .a psh ( ACK)
    .a psh ( byte accumulator)
    8 # lda  .a psh  ( bit count)
    begin  recv-bit c  1 ,s rol  0 ,s decz? until
    2 ,s ror ( ACK -> C)  send-bit c  1 ,s lda  ( byte)  3 # ais
-   .x pul ( restore)  rts  ;c
+   rts  ;c
 
 1 zvar total-count
 
@@ -216,11 +213,15 @@ label finish-control-write
 
 ( XXX is slave addr as sent to us shifted left already?)
 ( Code as written currently says NO.)
-( XXX this should really check ACK bits!)
+( XXX all send-byte's should really check ACK bits!)
+
+label slave+write
+   start-bit c
+   wIndex ) lda  .a lsl ( slave addr + write)  send-byte j  ;c
+
 label send-command
    wLength ) lda  total-count ) sta
-   start-bit c
-   wIndex ) lda  .a lsl ( slave addr + write)  send-byte c
+   slave+write c
    wValue ) lda  ( twi-cmd)  send-byte j  ;c
 
 label bulk-write
@@ -242,6 +243,13 @@ label bulk-read
 label read-acks
    wLength ) lda  prepare-fixed-in j  ;c
 
+( Ping slave. Just send START bit, slave address+write, and STOP bit, and
+  return the value of the ACK bit.)
+
+label ping-slave
+   slave+write c  ( returns ACK in A)  stop-bit c
+   in-buffer ) sta  1 # lda  prepare-fixed-in j  ;c
+
 ( Return NAK on IN.)
 label nak-in
    .a clr  in-control ) sta  rts  ;c
@@ -258,6 +266,7 @@ label setup-token
    ( 40 Read)              0!=   bulk-read   until
    ( 41 ReadAcks)  .a dec  0!=   read-acks   until
    ( 42 Write)     .a dec  0!=   bulk-write  until
+   ( 43 Ping)      .a dec  0!=   ping-slave  until
 
    ( unknown, fall thru)
 
