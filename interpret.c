@@ -34,6 +34,11 @@ static cell lineno = 1;
 
 int parsed_lineno;          /* captured with first character of token */
 struct string parsed;       /* for errors */
+struct string skipped;      /* whitespace skipped before token */
+
+/* whitespace _after_ token */
+static int trailing_delimiter;  /* delimiter character, if any */
+static int trailing_length;     /* length is 1 or 0 */
 
 /* Push lineno variable */
 void mu_push_line()
@@ -62,14 +67,37 @@ void mu_push_end()
     PUSH_ADDR(&end);
 }
 
-static void mu_return_token(char *last, int trailing)
+void mu_push_parsed()
+{
+    PUSH((addr) parsed.data);
+    PUSH(parsed.length);
+}
+
+void mu_push_skipped()
+{
+    PUSH((addr) skipped.data);
+    PUSH(skipped.length);
+}
+
+void mu_push_trailing()  /* ( -- 0 | delim 1) */
+{
+    if (trailing_length != 0)
+        PUSH(trailing_delimiter);
+    PUSH(trailing_length);
+}
+
+static void mu_return_token(char *last, int consumed_delim, int delim)
 {
     /* Get address and length of the token */
     parsed.data = first;
     parsed.length = last - first;
 
+    /* Save trailing delimiter as a pseudo-token: character and length */
+    trailing_delimiter = delim;
+    trailing_length = consumed_delim;
+
     /* Account for characters processed, return token */
-    first = last + trailing;
+    first = last + consumed_delim;
 
     DROP(-2);
     ST1 = (addr) parsed.data;
@@ -84,11 +112,16 @@ static void mu_return_token(char *last, int trailing)
 /* Skip leading whitespace */
 static void skip()
 {
+    /* Record skipped whitespace as if it's a token */
+    skipped.data = first;
+
     while (first < end && isspace(*first))
     {
         if (*first == '\n') lineno++;
         first++;
     }
+
+    skipped.length = first - skipped.data;
 }
 
 /*
@@ -98,24 +131,26 @@ static void skip()
 static void mu_scan(int delim)
 {
     char *last;
+    char c;
 
     /* capture lineno that token begins on */
     parsed_lineno = lineno;
 
     for (last = first; last < end; last++)
     {
-        if (*last == '\n') lineno++;
-        if (delim == *last
-            || (delim == ' ' && isspace(*last)))
+        c = *last;
+        if (c == '\n') lineno++;
+        if (delim == c
+            || (delim == ' ' && isspace(c)))
         {
             /* found trailing delimiter; consume it */
-            mu_return_token(last, 1);
+            mu_return_token(last, 1, c);
             return;
         }
     }
 
     /* ran out of text; don't consume trailing */
-    mu_return_token(last, 0);
+    mu_return_token(last, 0, 0);
 }
 
 void mu_token()  /* -- start len */
@@ -223,12 +258,6 @@ void mu_compiler_lbracket()
 void mu_minus_rbracket()
 {
     state = &forth_compiler;
-}
-
-void mu_push_parsed()
-{
-    PUSH((addr) parsed.data);
-    PUSH(parsed.length);
 }
 
 static void muboot_show_stack()
