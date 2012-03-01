@@ -126,3 +126,62 @@ key: i  ( a - a 0)   disasming  0 ;
    disasming  inspect ;
 
 : chat  +chat  >chat  twi.Hello ;
+
+: copy-ram ;  ( XXX no-op)
+: runwait  zgo  begin  "7f twi.Ping  0= until ;
+
+@ram #ram + 2 - constant go-pc
+
+compiler
+: \tv  ( target value)  .target. chain' >value literal ;
+
+meta
+: r0  \tv SPL z!  zcell*  1+ ;  ( bottom of target's R stack)
+: s0  \m r0  64 - ;  ( bottom of target's D stack; room for 32 values on R)
+: sp!  ( target-sp)    \a y z!  zcell& ;
+: sp@  ( - target-sp)  \a y z!  zcell* ;
+: pc!  ( target-cfa)   go-pc z!  2/ zcell& ;
+: top!  \a t z!  zcell& ;
+: top@  \a t z!  zcell* ;
+
+: cell   2  ;
+: cell/  2/ ;
+: cells  2* ;
+: depth  \m s0 \m sp@ -  \m cell/ ;  ( depth of actual stack, not incl top)
+: u.  u. ;
+: .  . ;
+: .s  .s ;
+: du   du ;
+: dis  dis ;
+
+forth
+: stack>  ( "push" stack to target)
+   depth 0= if  "cafe \m top!  \m s0 \m sp!  ^  then
+   \m top!
+   depth 7 min  ( more than that would be silly)
+   \m s0 over \m cells -  dup \m sp! ( top of D stack)  z!
+   ?for  zcell&  next  then  ( copy each cell as a word to D stack) ;
+
+: stack<  ( "pop" stack from target)
+   \m depth 0 max 7 min  ( more than that would be silly)  =if
+   \m sp@ z!  dup ( depth)
+   for  zcell*  pop 2push  next  ( starting with top, push to R)
+   for  2pop push  next  ( pop from R to reverse order)  0  then
+   drop  \m top@ ;
+
+( XXX Should we try to automatically connect to target?)
+: remote  ( cfa)  ( execute target word on stack)
+   chatting @ 0= if  error" not connected to target"  then
+   copy-ram  \m pc!  stack>  runwait  stack< ;
+
+
+( Interacting with a chatty, connected target.)
+
+-:  ."  (interacting with target)"  ;
+-:
+      .meta. find  if  execute  ^  then
+    .target. find  if  >value  remote  ^  then
+.ifdef no-number                                complain ;
+.else                                           number ;
+.then
+mode __target

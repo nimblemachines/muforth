@@ -45,23 +45,10 @@ mode __meta
 -:  ."  (compiling a target word)"  ;
 -:
     .meta-compiler. find  if  execute  ^  then
+              .lex. find  if  execute  ^  then  ( comments and conditional compilation)
            .target. find  if  execute  ^  then  ( self-compiling!)
                                                 number  compile-literal ;
 mode __target-colon
-
-( Interacting with a chatty, connected target.)
-
-defer remote ( target-cfa)
--:  error" not connected to a target device" ;  is remote
-
--:  ."  (interacting with target)"  ;
--:
-      .meta. find  if  execute  ^  then
-    .target. find  if  >value  remote  ^  then
-.ifdef no-number                                complain ;
-.else                                           number ;
-.then
-mode __target
 
 
 : tag!  ( tag-byte)  \m here  image-c! ;
@@ -174,11 +161,11 @@ variable push-lit
 : push-literal   push-lit @  asm{  c } ;
 )
 
-( Pop top of D stack into lit and lith just as if they were loaded by
+( Pop top of D stack into k and kh just as if they were loaded by
   load-literal. This is used to make versions of binary operations that
   work either with true literals, or with a value sitting on the D stack.)
 
-: pop-literal   asm{  t dpopw } ;
+: pop-literal   asm{  k dpopw } ;
 
 
 ( Tag bits: K J C L
@@ -241,13 +228,13 @@ meta
 : litop
    _litop
       \m here  ( stack entry point)  ,
-      asm{  pop-literal }
+      pop-literal
       \m here  ( literal entry point)  , ;
 
 : relop
    _litop
       \m here  ( literal entry point)
-      asm{  push-literal }
+      push-literal
       \m here  ( stack entry point)  ,  , ;
 
 forth
@@ -316,6 +303,21 @@ compiler
 : .reg   .target. \ .contains ;
 forth
 : .reg   \ .reg ;
+
+( Since we want to be able to get the most basic kernel words - stack
+  operations and 16-bit math - with an rjmp, let's replicate the core every
+  8k.)
+
+( XXX to be able to check if code is running into the kernel, I need to
+  know the boundaries. So kstart and kend will need to be variables that
+  get filled in when the kernel gets defined.)
+
+: replicate-kernel  ( kstart kend)
+   image+ swap  image+ swap  over -  ( start len)
+   #flash 0 do
+      2dup  over i + ( dest)  swap cmove
+   [ 8 Ki ] +loop  2drop ;
+
 
 .ifdef later-gator  ( XXX move me!!)
 
