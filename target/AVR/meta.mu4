@@ -3,14 +3,14 @@
   Copyright 2002-2012 David Frech. All rights reserved, and all wrongs
   reversed. (See the file COPYRIGHT for details.)
 
-loading AVR Meta-compiler (main)
+loading AVR meta-compiler (main)
 
 ( The various token consumers for each mode.)
 
 -:  ."  (assembling)"  ;
 -:
     .assembler. find  if  execute  ^  then
-       .labels. find  if  execute  ^  then  ( equates are in .labels.)
+       .target. find  if  >value   ^  then  ( equates, labels, and target words)
          .meta. find  if  execute  ^  then
         .forth. find  if  execute  ^  then  ( utility words in .forth.)
                                             number ;
@@ -20,7 +20,6 @@ mode __asm
 -:
     .assembler. find  if  ,        ^  then  ( find assembler's if/then etc)
      .compiler. find  if  execute  ^  then  ( need } and ; to exit this mode)
-       .labels. find  if  ,        ^  then  ( equates are in .labels.)
          .meta. find  if  ,        ^  then
         .forth. find  if  ,        ^  then  ( utility words in .forth.)
                                             number literal ;
@@ -33,48 +32,48 @@ mode __inline-asm
 -:  ."  (meta)"  ;
 -:
          .meta. find  if  execute  ^  then
-       .labels. find  if  execute  ^  then  ( equates are in .labels.)
+       .target. find  if  >value   ^  then  ( equates, labels, and target words)
         .forth. find  if  execute  ^  then
                                             number ;
 mode __meta
 
+( XXX move these back to after target literal and target compilation - call
+  are defined, and remote is defined, resp)
 
-( Make it easy to check if a device register has been defined. If device
-  equates move to somewhere other than .labels., update this too.)
+( The target colon compiler.)
+
+-:  ."  (compiling a target word)"  ;
+-:
+    .meta-compiler. find  if  execute  ^  then
+           .target. find  if  execute  ^  then  ( self-compiling!)
+                                                number  compile-literal ;
+mode __target-colon
+
+( Interacting with a chatty, connected target.)
+
+defer remote ( target-cfa)
+-:  error" not connected to a target device" ;  is remote
+
+-:  ."  (interacting with target)"  ;
+-:
+      .meta. find  if  execute  ^  then
+    .target. find  if  >value  remote  ^  then
+.ifdef no-number                                complain ;
+.else                                           number ;
+.then
+mode __target
+
+
+: tag!  ( tag-byte)  \m here  image-c! ;
+: tag@               \m here  image-c@ ;
+: notag  0 tag! ;
+
+( Support for inline asm in any colon word.
+  NOTE: compiles code to reset tag to 0 when colon word is later executed.)
+
 compiler
-: .reg   .labels. \ .contains ;
-forth
-: .reg   \ .reg ;
-
-
-( Support for looking back at previously compiled code.)
-variable last-code  ( pointer to beginning of last snippet of code)
-: code!   \m here  last-code ! ;
-
-compiler
-: asm{                   __inline-asm ;  ( don't reset last-code)
-: code{   compile code!  __inline-asm ;  ( reset last-code)
-: }       -] ;  ( exit inline assembler mode and restart colon compiler)
-
-
-( Make it easy to make assembler macros.)
-meta
-: macro           current preserve       assembler  :  __inline-asm ;
-: label   \m here  equ  __asm ;  ( equ creates a constant in .labels.)
-: __host  \ [ ;  ( return to host forth mode)
-
-forth
-: vector,  ( vector# dest)  ( compile jmp or rjmp to handler)
-   swap  #flash  16 Ki u< not if
-     ( use jmp)  2* org  \a jmp   ^  then
-     ( use rjmp)    org  \a rjmp ;
-
-meta
-: handler  ( vector#)
-   \m here dup push  vector,  pop org  __asm ;
-
-forth
-: macro   \m macro ;
+: asm{   __inline-asm ;  ( start assembler)
+: }      compile notag  -] ;  ( exit assembler mode and restart colon compiler)
 
 
 ( So, let's get to work, defining some macros that will be useful either in
@@ -94,148 +93,199 @@ forth
   possible to set any of the pointer pairs from W in one cycle.
 
   Also, since Y can be accessed post-increment, pre-decrement, and with an
-  offset, let's use it as the data stack pointer.)
+  offset, let's use it as the data stack pointer.
+
+  Since we can load immediate data only into the top 16 registers, let's
+  set aside the pair r23:r22 to hold literal values.
+
+  Since we want a multitasker, we should keep the user pointer in a
+  register pair as well. It doesn't have to be immediate-loadable, so let's
+  call it r14, r15.)
+
 
 assembler
-: ;c   __meta ;
-
-24 constant tl  ( top low)
+( 0 and 1 used by mul instructions)
+ 2 constant g0  ( general purpose scratch - low)
+ 3 constant g1
+ 4 constant g2
+ 5 constant g3
+( XXX do we need more than this?
+( 6-13 free)
+14 constant u   ( user pointer low, or the pair)
+15 constant uh  ( user pointer high)
+16 constant h0
+17 constant h1
+18 constant h2
+19 constant h3
+( 20 free)
+( 21 free)
+22 constant lit   ( literal -- immediate -- low, or the pair)
+23 constant lith  ( literal high)
+   ( XXX call lit k and kh? for konstant?)
+22 constant k   ( literal -- immediate -- low, or the pair)
+22 constant kl  ( literal -- immediate -- low, or the pair)
+23 constant kh  ( literal high)
+24 constant t   ( top low, or the pair)
+24 constant tl  ( top low, or the pair)
 25 constant th  ( top high)
-26 constant xl
+-- 26 constant x   ( XXX conflicts with assembler; should change its x to ,x and require offset of 0)
+26 constant xl  ( XXX conflicts with assembler; should change its x to ,x and require offset of 0)
 27 constant xh
-28 dup constant yl   constant sl  ( stack pointer low)
-29 dup constant yh   constant sh  ( stack pointer high)
+28 dup constant y    constant s   ( data stack pointer low, or the pair)
+28 dup constant yl   constant sl  ( data stack pointer low, or the pair)
+29 dup constant yh   constant sh  ( data stack pointer high)
+30 constant z
 30 constant zl
 31 constant zh
 forth
 
 ( Basic stack macros.)
-macro dpush  ( reg)  st -y ;
-macro dpop   ( reg)  ld y+ ;
+: dpush  ( reg)  asm{  st -y } ;  ( XXX switch when I fix asm)
+: dpop   ( reg)  asm{  ld y+ } ;
 
 ( These should be passed an even number!)
-macro dpushw  ( pair)  dup  1+ dpush  dpush ;
-macro dpopw   ( pair)  dup  dpop  1+ dpop ;
+: dpushw  ( pair)  asm{  dup  1+ dpush  dpush } ;
+: dpopw   ( pair)  asm{  dup  dpop  1+ dpop } ;
 
 ( Also push words -- register pairs -- onto system stack.)
-macro pushw  ( pair)  dup  1+ push  push ;  ( assembler's push!)
-macro popw   ( pair)  dup  pop  1+ pop ;    ( .. and pop!)
+: pushw  ( pair)  asm{  dup  1+ push  push } ;  ( assembler's push!)
+: popw   ( pair)  asm{  dup  pop  1+ pop } ;    ( .. and pop!)
+
+( Macros that make sense for Forth:)
+: <dup>   asm{  t dpushw } ;  ( push top onto D stack)
+: <drop>  asm{  t dpopw } ;   ( pop top of D stack into top)
 
 
 -- ------------------------------------------------------------------------
 -- Literal loading.
 -- ------------------------------------------------------------------------
 
-( Since we can load immediate data only into the top 16 registers, let's
-  set aside the pair r23:r22 to hold literal values.)
-
-assembler
-22 constant il  ( immediate low)
-23 constant ih  ( immediate high)
 forth
 
 : load-literal  ( n)
-   >hilo  code{  il ldi  ih ldi } ;
+   >hilo  asm{  k ldi  kh ldi } ;
 
-( With a literal in il and ih, push it onto the D stack.)
-macro push-literal   il dpushw ;
+( With a literal in k and kh push it onto the D stack.)
+( XXX push-literal should be a routine!)
+: push-literal   asm{  t dpushw  k t movw } ;
 
-( Pop top of D stack into il and ih, just as if they were loaded by
+( something like this:
+variable push-lit
+: push-literal   push-lit @  asm{  c } ;
+)
+
+( Pop top of D stack into lit and lith just as if they were loaded by
   load-literal. This is used to make versions of binary operations that
   work either with true literals, or with a value sitting on the D stack.)
 
-macro pop-literal   il dpopw ;
+: pop-literal   asm{  t dpopw } ;
 
-.ifdef only-made-it-this-far  ( XXX please move this!!)
 
-meta
-: literal  ( n)  code{  load-literal }
-                 code{  push-literal } ;
+( Tag bits: K J C L
+  K = 1 if literal loaded
+  J = 1 if jump
+  C = 1 if call
+  L = 1 if long - 2 word - jump or call)
 
-: compile,  ( target-cfa)  code{  c }  ( compile call) ;
+-- ------------------------------------------------------------------------
+-- Smart jump and call, tail call elimination
+-- ------------------------------------------------------------------------
+
+assembler
+: c  ( dest)  ( smart call - compile rcall if possible, otherwise call)
+   "1000 inrange? if  \a rcall  %010 tag! ^  then  \a call  %011 tag! ;
+
+: j  ( dest)  ( smart jmp - compile rjmp if possible, otherwise jmp)
+   "1000 inrange? if  \a rjmp   %100 tag! ^  then  \a jmp   %101 tag! ;
 
 forth
-
-( Since address 0 is in the i/o register range, we will never jsr there, so
-  we can return 0 as "no call found".)
-: called  ( - dest-addr)
-   last-code @  dup image-c@  ( op)
-   dup "ad = if ( bsr)  drop  dup 1+ image-c@ ( offset)  sext  2 + +a ^ then
-   dup "bd = if ( jsr dir)  drop  1+ image-c@ ^  then
-   dup "cd = if ( jsr ext)  drop  1+ image-@  ^  then
-   2drop  0 ;
-
-: replace  ( addr jsr-op jmp-op - -1)
-   rot image-c!  drop  -1 ;
 
 ( If last code compiled was a call, rewrite it to a jump and return true;
   else return false.)
 
+: replace  ( addr toggle)
+   over  image-@  xor  swap  image-! ;
+
+: retag  ( oldtag newtag - f)  tag!  drop  -1 ;
+
 : tail?  ( - f)
-   last-code @  dup image-c@  ( op)
-   dup "ad = if ( bsr)      "20 ( bra)      replace ^  then
-   dup "bd = if ( jsr dir)  "bc ( jmp dir)  replace ^  then
-   dup "cd = if ( jsr ext)  "cc ( jmp ext)  replace ^  then
-   2drop  0 ;
+   tag@ dup  %010 = if  ( short call)
+   \m here 2 -  "1000 replace  %100 retag  ^  then
+        dup  %011 = if  ( long call)
+   \m here 4 -  "0002 replace  %101 retag  ^  then
+   drop  0 ;
 
 meta-compiler
-: ^   tail? if ^ then  code{  rts } ;
+: ^   tail? if ^ then  asm{  ret } ;
+
+meta
+: compile,  ( target-cfa)  \a c  ( compile call) ;
+: literal  ( n)  load-literal  push-literal  %1000 tag! ;
+
+.meta. chain' literal  is compile-literal  ( fixup forward ref)
 
 forth
-: ?retreat  ( f)  if  last-code @  org ^  then ;
-: lit?   last-code @  image-c@ "af ( aix) =  dup ?retreat ;
+( XXX when push-literal becomes a call, this will be short to uncompile,
+  but could still be 4 bytes - if call r.t. rcall.)
+: lit?   ( f)
+   tag@ %1000 = dup if  -6 \m allot ( uncompile lit push)  notag  then ;
 
 : _litop  current preserve  meta-compiler  create  __asm
           does>  lit?  if  cell+  then  @  \m compile, ;
+
+( XXX testing)
+meta-compiler
+: xx  lit? . ;  ( test backing up over literals)
 
 meta
 : litop
    _litop
       \m here  ( stack entry point)  ,
-      code{  pop-literal }
+      asm{  pop-literal }
       \m here  ( literal entry point)  , ;
 
 : relop
    _litop
       \m here  ( literal entry point)
-      code{  push-literal }
+      asm{  push-literal }
       \m here  ( stack entry point)  ,  , ;
 
 forth
 
-( Finally, we have the definition of the target colon compiler.)
 
--:  ."  (compiling a target word)"  ;
--:  .meta-compiler. find  if  execute  ^  then
-           .target. find  if  execute  \m compile, ^  then
-                                                 number  \m literal ;
-mode __target-colon
-
-
-( Create a new target name. A target word is defined as a _constant_ equal
-  to its code field address.)
+( Interrupt vectors and handlers.)
+: vector,  ( vector# dest)  ( compile jmp or rjmp to handler)
+   swap  #flash  16 Ki u< if
+     ( use rjmp)    org  \a rjmp  ^  then
+     ( use jmp)  2* org  \a jmp ;
 
 meta
-: label   \m here  equ  __asm ;  ( equ creates a constant in .labels.)
-: name    \m here  current preserve  target  constant ;
+: handler  ( vector#)  \m here  dup push  vector,  pop org  __asm ;
+
+
+( Create a new target names. A name is a target word which is defined as a
+  _constant_ equal to its code field address, and which compiles itself
+  when executed.)
+
+: name    \m here  equ  does> @  \m compile, ;
 : code    \m name  __asm ;
 : :       \m name  __target-colon ;
+: label   \m here  equ  __asm ;  ( equ creates a constant in .target.)
 
 : -]   __target-colon ;
-:  ]   \m literal  \m -] ;
+:  ]   \m literal  \m -] ;  ( XXX smart literal from ARM meta?)
 
 ( For forward references)
-: forward    "100 \a ) \a jmp  \m label ;
-: resolve>>  ( src)  \m here  swap 2 -  image-! ;
+: forward    rjmp, ( src)  equ ;
+: resolve    ( src)  \m here  \a resolve> ;
 
-: '  .target. chain' execute ;  ( target words are constants!)
+: '  .target. chain' >value ;  ( fetch target word's constant value)
 
-: __host  \ [ ;  ( return to host forth mode)
-: {    \m __host ;  ( useful for bracketing a few  host forth words)
+: __host   \ [ ;  ( return to host forth mode)
+: {        \m __host ;  ( useful for bracketing a few  host forth words)
 
 forth
 : }    __meta ;  ( return to meta)
-: \l  .labels. chain' execute ;
 
 assembler
 : ;c   __meta ;
@@ -250,81 +300,26 @@ compiler
 forth
 
 
-( Alloting RAM space to variables.)
-( XXX Should I assume space for stack? Things are bad _before_ we've come
-  to the actual end of RAM...)
-
-: ?zpage  if error" No available zero-page ram" then ;
-
+( Alloting RAM space to variables. This does not create true Forth
+  variables with executable code!)
+( XXX keep?)
 meta
 : var   ( bytes)
    'ram @  dup equ  +  dup 'ram ! ( allot)
    @ram #ram +  swap u<  if error" No available ram"  then ;
 
-: zvar  ( bytes)
-   'zram @  dup equ  +  dup 'zram ! ( allot)
-   'xram @ swap u< ?zpage ;
-
-: xvar  ( bytes)
-   'xram @  swap -  dup equ  dup 'xram ! ( allot)
-   'zram @ u< ?zpage ;
-
 forth
 
-( Utility macros.)
-macro pshhx  .x psh  .h psh         ;
-macro pulhx          .h pul  .x pul ;
-
-
-( Calculation of FCDIV - flash clock divider [sic]
-
-  FCDIV = ceil[busclock/200k] - 1
-
-  We leave off the - 1 to slow the flash a bit. Insurance against our clock
-  being a bit fast... better to have the flash clock run a bit slow than
-  too fast.
-
-  We're trying the divide the bus clock down to between 150kHz and 200kHz,
-  to drive the flash programming machinery. We need to calculate a divider
-  that works. One caveat: if the calculated value is > 63, set a bit that
-  first divides the bus clock by 8 before dividing by our divider
-  [actually, our divider + 1].)
-
-: _fcdiv   ( divisor - fcdiv)
-   dup 64 u< not if
-      ( too big - round up and divide by 8)  7 + 3 >>
-      ( set "divide by 8" bit)  "40 or
-  then ;
-
-( For most uses: clock speed is in kilohertz.)
-: khz>fcdiv  ( clock-in-khz - fcdiv)
-   199 + 200 /   _fcdiv ;
-
-( For more resolution: clock speed is input in hundreds of hertz, or
-  hectahertz.)
-: hhz>fcdiv  ( clock-in-hhz - fcdiv)
-   1999 +  2000 /  _fcdiv ;
-
-
-( Interrupt vectors and handlers.)
-variable vector-offset  ( 0 if vectors not relocated)
-: reloc-vector  ( offset - offset')
-   dup \l Vreset = if ^ then  ( reset doesn't get relocated)
-   vector-offset @ +a ;
-
-meta
-: handler  ( vector-offset)
-   reloc-vector  \m here swap  image-!  __asm ;
-
+( Make it easy to check if a device register has been defined. If device
+  equates move to somewhere other than .target. update this too.)
+compiler
+: .reg   .target. \ .contains ;
 forth
+: .reg   \ .reg ;
 
+.ifdef later-gator  ( XXX move me!!)
 
--- from interact (end) ----------------------------------------------------------
 -- start ARM meta copy ----------------------------------------------------------
-
-.ifdef later-gator
-
-
 
 ( Forward references for fundamental words.)
 
@@ -659,4 +654,3 @@ meta-compiler
 forth
 
 .then ( later-gator)
-.then ( only this far)

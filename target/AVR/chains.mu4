@@ -3,7 +3,7 @@
   Copyright 2002-2012 David Frech. All rights reserved, and all wrongs
   reversed. (See the file COPYRIGHT for details.)
 
--- loading AVR Meta-compiler (chains)
+-- loading AVR meta-compiler (chains)
 
 forth  decimal
 
@@ -11,62 +11,51 @@ forth  decimal
 
 ( .meta. is where meta-compiler specific words go - esp if they would
   otherwise shadow a host word of the same name. @ is a good example - the
-  meta version write into the target image, using a local, image-relative
+  meta version writes into the target image, using a local, image-relative
   address. .meta. contains special versions of : to compile macros [though
   I'm thinking of deprecating or removing this] and to define new defining
   words during target compilation. It will also, once the kernel starts
   loading, contain a : that compiles target colon words!
 
+  .meta. also contains any chip equates or other constants that are needed
+  at compile or interact time, but do not have an executable representation
+  on the target.
+
   .assembler. contains definitions of instructions, registers, addressing
   modes, and words to build control structures. It is searched when
   building code words, and also when compiling macros.
 
-  .labels. contains any labels defined during assembly - these are
-  constants - and also a handful of variables that refer to key pieces of
-  target infrastructure that won't get defined until the kernel is loaded.
-  Having these as forward-reference variables allows us to write the
-  metacompiler using variable references; compilation of the kernel will
-  patch these with actual addresses of target code.
+  .target. contains all the words that have an executable representation on
+  the target, and all labels and chip equates - which are mostly the
+  addresses of i/o registers on the selected device. Words in target are
+  constants, but depending on their type - code, colon, equ, label, etc -
+  they may also have a special behaviour attached. For example, executable
+  words - code and colon words, eg - compile themselves.
 
-  Labels used to be in .meta. but having them separate is cleaner and
-  safer.
+  But since we often want simply the constant, and not the special
+  behaviour, many token consumers will use >value instead of execute. >value
+  fetches the constant value from the body of a create'd word.
 
-  .meta-compiler. is like .compiler. but for the -target- colon compiler.
+  .meta-compiler. is like .compiler. but for the _target_ colon compiler.
   This will contain target versions of [ ; if then begin while etc. It is
   sealed since we don't want to get any host words by accident.)
 
 sealed .meta.           ( the `meta' version of .forth.)
 sealed .meta-compiler.  ( the `meta' version of .compiler.)
 sealed .assembler.      ( the host-resident target assembler)
-sealed .labels.         ( labels & forward reference variables for target)
+sealed .target.         ( the target words)
 sealed .lex.            ( comments and conditional interpretation)
-
-( Chains created with parallel have an extra field, which points directly
-  into the meta-compiled image at the names compiled there, rather than
-  linking to the names in muFORTH's dictionary.)
-
-: parallel  sealed  0 , ( parallel link field) ;
-: >parallel   ( suffix - 'link)  suffix>link cell+  ( parallel link field) ;
-
-
-parallel .target.           ( the target words - like `forth' on the host)
-parallel .target-compiler.  ( the target-resident compiler words -
-                              .target-compiler. is to .target.
-                                 as  .compiler. is to .forth. )
 
 : meta                        .meta. definitions ;
 : meta-compiler      .meta-compiler. definitions ;
 : assembler              .assembler. definitions ;
-: labels                    .labels. definitions ;
-: lex                          .lex. definitions ;
 : target                    .target. definitions ;
-: target-compiler  .target-compiler. definitions ;
+: lex                          .lex. definitions ;
 
 compiler
 : \m   ( compile from meta)                        .meta. \chain ;
 : \mc  ( compile from meta-compiler)      .meta-compiler. \chain ;
 : \a   ( compile from assembler)              .assembler. \chain ;
-: \l   ( compile from labels)                    .labels. \chain ;
 : \t   ( compile from target)                    .target. \chain ;
 forth
 
