@@ -24,8 +24,8 @@ comment
 hex
 
 forth
--- : op,  \m , ;
- : op,  ( compile)  dup \m ,  ( and print)  .b  cr ;
+: op,  \m , ;
+-- : op,  ( compile)  dup \m ,  ( and print)  .b  cr ;
 
 comment
 ==========================================================================
@@ -174,15 +174,55 @@ assembler
 ( Indexed load & store.)
 ( X can be post-inc, pre-dec, offset by 0. Y & Z can be post-inc, pre-dec,
   and offset by 0-63.)
+
+.ifdef prefix-ldst
+
 forth
-: ld/st           ( Rd)  constant does> @  (  Rd op)  Rd ;
-: ix       (     op+Rd)  constant does> @  (     op ix)      or op, ;
-: ix_off   ( op+Rd off)  constant does> @  ( op off ix)   U6 or op, ;
-: ix_data  ( op+Rd a16)  constant does> @  ( op a16 ix)  rot or op, op, ;
+: ld/st  ( ix Rd)  constant does> @  ( ix Rd op)  Rd or op, ;
+
+: ix          ( - ix)  constant ;
+: ix_off   ( u6 - ix)  constant does> @  ( u6 op)  U6 ;
+
+: stk             ( Rd)  constant does> @      ( Rd op)  Rd op, ;
+: ix_data     ( a16 Rd)  constant does> @  ( a16 Rd op)  Rd op, op, ;
 
 assembler
-8000 ld/st ld  ( Rd - bits)
-8200 ld/st st  ( Rd - bits)
+8000 ld/st ld  ( ix Rd)
+8200 ld/st st  ( ix Rd)
+
+0000 ix_off  ,z   ( u6 - ix)
+0008 ix_off  ,y   ( u6 - ix)
+1001 ix       z+
+1002 ix      -z
+1004 ix     pmz  ( prog mem)
+1005 ix     pmz+ ( prog mem)
+1009 ix       y+
+100a ix      -y
+100c ix       x@  ( to distinguish from the _register_ x)
+100d ix       x+
+100e ix      -x
+
+900f stk pop   ( Rd)
+920f stk push  ( Rd)
+
+( Factory mnemonics for ld/st data space:)
+9000 ix_data lds  ( a16 Rd)
+9200 ix_data sts  ( a16 Rd)
+
+.else  ( postfix ld/st)
+
+forth
+: ld/st           ( Rd)  constant does> @  ( Rd op)  Rd ;
+
+: ix       ( op+Rd)      constant does> @  ( op     ix)      or op, ;
+: ix_off   ( op+Rd off)  constant does> @  ( op off ix)   U6 or op, ;
+
+: stk             ( Rd)  constant does> @      ( Rd op)  Rd op, ;
+: ix_data     ( a16 Rd)  constant does> @  ( a16 Rd op)  Rd op, op, ;
+
+assembler
+8000 ld/st ld  ( Rd - op)
+8200 ld/st st  ( Rd - op)
 
 ( Alternate syntax)
 : <-  \a ld ;
@@ -191,20 +231,24 @@ assembler
 ( suffixes - these do the action)
 0000 ix_off  ,z   ( op+Rd u6)
 0008 ix_off  ,y   ( op+Rd u6)
-1000 ix_data  $   ( op+Rd a16)  ( data space - compiles op then following addr)
 1001 ix       z+
 1002 ix      -z
 1004 ix     pmz  ( prog mem)
 1005 ix     pmz+ ( prog mem)
 1009 ix       y+
 100a ix      -y
-100c ix       x  ( XXX: should this be x@ or something?)
+100c ix       x@  ( to distinguish from the _register_ x)
 100d ix       x+
 100e ix      -x
-100f ix     stk  ( for push and pop!)
 
-: push  ( Rd)  \a st \a stk ;
-: pop   ( Rd)  \a ld \a stk ;
+900f stk pop   ( Rd)
+920f stk push  ( Rd)
+
+( Factory mnemonics for ld/st data space:)
+9000 ix_data lds  ( a16 Rd)
+9200 ix_data sts  ( a16 Rd)
+
+.then
 
 ( wi - word immed. pppp pppp kkdd kkkk. dd=0..3 -> r24,26,28,30)
 forth
