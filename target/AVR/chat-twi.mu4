@@ -71,10 +71,11 @@ flash
 
 comment register-use
 
-  r16 -- 10 hex -- is used for checking and passing around TWI status
-  r17 -- 11 hex -- is used solely for acknowledging TWINT bit
-  r24 -- 18 hex -- is used for data bytes
+  r26/27 -- aka x -- is used for status and data bytes
   r30/31 -- aka z -- is used to point to memory
+
+  These are registers that are considered "scratch" by the meta-compiler's
+  conventions.
 
 register-use
 
@@ -84,17 +85,17 @@ label restart  ( pop one return, ack int, then return)
 
 ( Ack TWINT. Make sure TWEA and TWEN also set.)
 label ack-twint
-   tw-reset 11 ldi  TWCR 11 sts  ret  ;c
+   tw-reset xh ldi  TWCR xh sts  ret  ;c
 
-( Wait for TWINT; read status; mask prescaler bits; return in r16)
+( Wait for TWINT; read status; mask prescaler bits; return in xl)
 label wait-twint
-   begin  TWCR 10 lds  TWINT 10 sbrs  rjmp ( again)
-   TWSR 10 lds  0f8 10 andi  ret  ;c
+   begin  TWCR xl lds  TWINT xl sbrs  again
+   TWSR xl lds  0f8 xl andi  ret  ;c
 
 label read-byte
    wait-twint rcall
-   80 10 cpi  restart  0= until  ( restart protocol)
-   TWDR 18 lds  ack-twint rjmp  ;c
+   80 xl cpi  restart  0= until  ( restart protocol)
+   TWDR xl lds  ack-twint rjmp  ;c
 
 ( This is a bit tricky! Since the host had to send a new transaction for
   the read, on the first byte we're going to see _two_ interrupts: first,
@@ -109,7 +110,7 @@ label read-byte
 
 label expect-start
    wait-twint rcall
-   0a0 10 cpi  restart  0= until  ( we should see START/RESTART)
+   0a0 xl cpi  restart  0= until  ( we should see START/RESTART)
    ack-twint rcall
    ( fall thru)
 
@@ -118,13 +119,13 @@ label expect-start
 
 label write-another?
    wait-twint rcall
-   0e8 10 andi  0a8 10 cpi  restart  0= until  ( match a8 and b8)  ret  ;c
+   0e8 xl andi  0a8 xl cpi  restart  0= until  ( match a8 and b8)  ret  ;c
 
 ( After sending byte and acking interrupt, wait for ACK/NACK and only
   return to caller if ok to send another byte.)
 
 label write-byte
-   TWDR 18 sts  ack-twint rcall  write-another? rjmp  ;c
+   TWDR xl sts  ack-twint rcall  write-another? rjmp  ;c
 
 ( Command routines.)
 ( On reads, keep streaming bytes from memory to TWI, as long as last byte
@@ -132,51 +133,51 @@ label write-byte
 
 label read-data
    expect-start rcall
-   begin  18 ld z+    write-byte rcall  again  ;c
+   begin  xl ld z+    write-byte rcall  again  ;c
 
 label read-program
    expect-start rcall
-   begin  18 ld pmz+  write-byte rcall  again  ;c
+   begin  xl ld pmz+  write-byte rcall  again  ;c
 
 label set-addr
-   read-byte rcall  18 zl mov
-   read-byte rcall  18 zh mov  ret  ;c
+   read-byte rcall  xl zl mov
+   read-byte rcall  xl zh mov  ret  ;c
 
 ( On writes, keep streaming bytes from TWI into memory, until read-byte
   gets something other than an 80 status.)
 
 label write-data
-   read-byte rcall  18 st z+  write-data rjmp  ;c
+   begin  read-byte rcall  xl st z+  again  ;c
 
 ( Clear TWEA so we NACK our address while executing code. Do this without
   resetting TWINT again.)
 
 label go
-   TWCR 10 lds  1 TWEA << invert 10 andi  TWCR 10 sts
+   TWCR xl lds  1 TWEA << invert xl andi  TWCR xl sts
    ijmp  ;c
 
 ( Dispatch.)
 label process
    wait-twint rcall
    ack-twint rcall
-   60 10 cpi  process  0= until  ( wait til addressed as slave+write)
+   60 xl cpi  process  0= until  ( wait til addressed as slave+write)
    read-byte rcall  ( cmd)
 
-   10 18 cpi  set-addr      0= not until
-   11 18 cpi  read-program  0= not until
-   12 18 cpi  read-data     0= not until
-   13 18 cpi  write-data    0= not until
-   14 18 cpi  go            0= not until
+   10 xl cpi  set-addr      0= not until
+   11 xl cpi  read-program  0= not until
+   12 xl cpi  read-data     0= not until
+   13 xl cpi  write-data    0= not until
+   14 xl cpi  go            0= not until
 
    ( unknown... restart!)
    ret  ;c
 
 label delay
-   11 clr
+   zh clr
    begin
-      10 clr
-      begin  10 dec  0= until
-   11 dec  0= until
+      zl clr
+      begin  zl dec  0= until
+   zh dec  0= until
    ret  ;c
 
 label blink
@@ -184,18 +185,19 @@ label blink
    ( fall thru)
 
 label toggle
-   0ff 10 ldi  PINB 10 out  PINC 10 out  PIND 10 out  ( toggle all pins!)
+   0ff xl ldi  PINB xl out  PINC xl out  PIND xl out  ( toggle all pins!)
    delay rjmp  ;c
 
+( XXX uses r16 so we can load it from the host to test go command!)
 label blinky
-   0ff 10 ldi  PORTB 10 out  PORTC 10 out  PORTD 10 out
-   0ff 10 ldi   DDRB 10 out   DDRC 10 out   DDRD 10 out
-   8 13 ldi  begin  blink rcall  delay rcall  13 dec  0= until  ret  ;c
+   0ff xl ldi  PORTB xl out  PORTC xl out  PORTD xl out
+   0ff xl ldi   DDRB xl out   DDRC xl out   DDRD xl out
+   8 10 ldi  begin  blink rcall  delay rcall  10 dec  0= until  ret  ;c
 
 RESET handler
    @ram #ram + 1- >hilo
-   10 ldi  SPL 10 out
-   10 ldi  SPH 10 out
+   xl ldi  SPL xl out
+   xl ldi  SPH xl out
 
    blinky rcall
 
