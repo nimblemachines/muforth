@@ -152,9 +152,16 @@ label write-data
 ( Clear TWEA so we NACK our address while executing code. Do this without
   resetting TWINT again.)
 
+@ram #ram + ( ramend)
+2 - dup equ go-pc
+2 -     equ go-x
+
 label go
    TWCR xl lds  1 TWEA << invert xl andi  TWCR xl sts
-   ijmp  ;c
+   -- ijmp  ;c
+   ( host has set z via set-addr cmd!)
+   go-pc xl lds  go-pc 1+ xh lds  xl push  xh push  ( big-endian!)
+   go-x  xl lds  go-x 1+ xh lds  ret  ;c
 
 ( Dispatch.)
 label process
@@ -168,9 +175,20 @@ label process
    12 xl cpi  read-data     0= not until
    13 xl cpi  write-data    0= not until
    14 xl cpi  go            0= not until
+   15 xl cpi  0= if  restart         rjmp  then
 
    ( unknown... restart!)
    ret  ;c
+
+( The only way to exit is for called code to pop the R stack!)
+label chat-loop
+   ack-twint rcall
+   begin  process rcall  again  ;c
+
+label chat-entry  ( callable from other code!)
+   z pushw  x pushw
+   chat-loop rcall
+   x popw  z popw  ret  ;c
 
 label delay
    zh clr
@@ -195,11 +213,11 @@ label blinky
    8 10 ldi  begin  blink rcall  delay rcall  10 dec  0= until  ret  ;c
 
 RESET handler
-   @ram #ram + 1- >hilo
+   go-x 1-  ( stack bottom)  >hilo
    xl ldi  SPL xl out
    xl ldi  SPH xl out
 
-   blinky rcall
+   begin  blinky rcall  chat-entry rcall  again  ;c
 
-   ack-twint rcall
-   begin  process rcall  again  ;c
+label testme
+   z 2 movw  x 4 movw  ( so we can see the registers)  ret  ;c
