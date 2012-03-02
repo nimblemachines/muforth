@@ -50,7 +50,17 @@ code invert
    tl com  th com  ret  ;c
 
 code negate
-   tl neg  begin  g0 g0 eor  th g0 sbc  g0 th mov  ret  ;c
+   tl neg  g0 g0 eor  th g0 sbc  g0 th mov  ret  ;c
+
+code 2*
+   tl tl add  th th adc  ret  ;c
+
+code 2/
+   th asr  begin  tl ror  ret  ;c
+
+code u2/
+   th lsr  again  ;c
+
 
 0 .if
 code dnegate
@@ -61,7 +71,7 @@ code dnegate
 
 ( Binary ops.)
 code -
-   ' negate c  ( fall thru)  ;c
+   negate rcall  ( fall thru)  ;c
 
 code  +
 litop +     kl tl add  kh th adc  ret  ;c
@@ -75,7 +85,70 @@ litop or    kl tl or   kh th or   ret  ;c
 code  xor
 litop xor   kl tl eor  kh th eor  ret  ;c
 
+( Fetch and store.)
+code @   ( addr - w)
+   t z movw
+label @-common
+   tl ld z+  th ld z+  ret  ;c
+
+code c@  ( addr - b)
+   t z movw
+label c@-common
+   tl ld z+  th clr  ret  ;c
+
+code !   ( w addr)
+   t z movw  <drop>
+label !-common
+   tl st z+  th st z+  drop rjmp  ;c
+
+code c!  ( b addr)
+   t z movw  <drop>
+label c!-common
+   tl st z+            drop rjmp  ;c
+
+( XXX need to combine; fetch and store, literal versions.)
+code @lit   ( - w)  ( addr in k)
+   <dup>  k z movw  @-common rjmp  ;c
+
+code c@lit  ( - b)  ( addr in k)
+   <dup>  k z movw  c@-common rjmp  ;c
+
+code !lit   ( w)  ( addr in k)
+   k z movw  !-common rjmp  ;c
+
+code c!lit  ( b)  ( addr in k)
+   k z movw  c!-common rjmp  ;c
+
+( Tests and compares.)
+code 0=
+   th tl or  1 tl subi ( Z -> C)
+label makeflag  ( C -> -1; NC -> 0)
+   tl tl sbc ( C -> 0ff)  tl th mov  ret  ;c
+
+code 0<
+   th th add ( N -> C)  makeflag rjmp  ;c
+
+( XXX Need stack and literal versions...)
+label do-compare
+   k dpopw  tl kl sub  th kh sbc ( k - t)  ret  ;c
+
+code u<
+   do-compare rcall ( k - t)  makeflag rjmp  ;c
+
+code <
+   do-compare rcall ( k - t)
+   < if .C bset  makeflag rjmp  then
+        .C bclr  makeflag rjmp  ;c
+
 label kend  ;c
+
+( Program memory fetch, word and byte.)
+( XXX any point in having literal versions?)
+code pm@   ( addr - w)
+   t z movw  tl ld pmz+  th ld pmz+  ret  ;c
+
+code pmc@  ( addr - b)
+   t z movw  tl ld pmz+  th clr  ret  ;c
 
 kstart kend replicate-kernel
 
@@ -84,3 +157,11 @@ kstart kend replicate-kernel
 : d1   "00f0 and ;
 : d2   "0f00 and ;
 : d3   "f000 and ;
+
+: fetching
+   [ "005d  load-literal -]  @lit
+   [ "005f  load-literal -]  c@lit
+   "cafe  [ "0010  load-literal -]  !lit
+   "be  [ "0012  load-literal -]  c!lit
+   "ba  [ "0013  load-literal -]  c!lit
+;
