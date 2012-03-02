@@ -14,7 +14,7 @@ code dup  ( a - a a)
    t dpushw  ret  ;c
 
 code over  ( a b - a b a)
-   kl ld 0 ,y  kh ld 1 ,y  ( fall thru)
+   0 ,y kl ld  1 ,y kh ld  ( fall thru)
 
 label push-literal
    t dpushw  k t movw  ret  ;c
@@ -89,22 +89,22 @@ litop xor   kl tl eor  kh th eor  ret  ;c
 code @   ( addr - w)
    t z movw
 label @-common
-   tl ld z+  th ld z+  ret  ;c
+   z+ tl ld  z+ th ld  ret  ;c
 
 code c@  ( addr - b)
    t z movw
 label c@-common
-   tl ld z+  th clr  ret  ;c
+   z+ tl ld  th clr  ret  ;c
 
 code !   ( w addr)
    t z movw  <drop>
 label !-common
-   tl st z+  th st z+  drop rjmp  ;c
+   z+ tl st  z+ th st  drop rjmp  ;c
 
 code c!  ( b addr)
    t z movw  <drop>
 label c!-common
-   tl st z+            drop rjmp  ;c
+   z+ tl st            drop rjmp  ;c
 
 ( XXX need to combine; fetch and store, literal versions.)
 code @lit   ( - w)  ( addr in k)
@@ -142,15 +142,46 @@ code <
 
 label kend  ;c
 
+kstart kend replicate-kernel
+
 ( Program memory fetch, word and byte.)
 ( XXX any point in having literal versions?)
 code pm@   ( addr - w)
-   t z movw  tl ld pmz+  th ld pmz+  ret  ;c
+   t z movw  pmz+ tl ld  pmz+ th ld  ret  ;c
 
 code pmc@  ( addr - b)
-   t z movw  tl ld pmz+  th clr  ret  ;c
+   t z movw  pmz+ tl ld  th clr  ret  ;c
 
-kstart kend replicate-kernel
+( Multitasker!
+
+  User area is pretty small and simple: one byte status, one byte offset to
+  bottom of D stack; 2 byte link to next task; 2 byte saved D stack pointer.
+
+  Offset  Field   Size  Comments
+  ======  ======  ====  ===================================
+  0       ustatus  1     0 means stopped; !0 means running
+  1       ubot     1     offset subtracted from u to get to d stack bottom
+  2       ulink    2     pointer to next task
+  4       utop     2     pointer to top of D stack)
+
+0 equ ustatus
+1 equ ubot
+2 equ ulink
+4 equ utop
+
+code pause  ( yield?)
+   t dpushw  ( push top)
+   .I bclr   SPL tl lds   SPH th lds   .I bset   t dpushw  ( push rsp)
+   u z movw   utop ,z yl st   utop 1+ ,z yh st  ( save dsp in user area)
+
+   ( look for another task to run)
+   begin   ulink ,z ul ld   ulink 1+ ,z uh ld  ( load user ptr from link)
+           u z movw   ustatus ,z tl ld   tl tst   0= not until
+
+   ( found a task; load it and go!)
+   utop ,z yl ld   utop 1+ ,z yh ld  ( get dsp from user area)
+   t dpopw   .I bclr   SPL tl sts   SPH th sts   .I bset  ( pop rsp)
+   t dpopw  ( pop top)   ret  ;c
 
 ( XXX test code)
 : d0   "000f and ;
