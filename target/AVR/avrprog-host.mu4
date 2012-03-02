@@ -54,30 +54,31 @@ hex
 : paddr   ( - word-addr-hi word-addr-lo)  pw  >hilo ;
 
 ( Read just the first few kb of the chip. This is _really_ slow, and is
-  mostly here to test that fast code does the right thing.)
+  mostly here to test that the fast code does the right thing. Both
+  versions print a . for every 128 bytes read.)
 
 : read-chip-slowly
    wipe
    0 image-p!
    +prog  avr.FastClock
-   [ 2 Ki #64 / ] for  ( program pages)
-      #64 for  ( page of 64 words)
+   [ 1 Ki #64 / ] for
+      #64 for  ( 64 words, 128 bytes)
          20  paddr  0  avr3  image,  ( read flash lo byte)
          28  paddr  0  avr3  image,  ( read flash hi byte)
       next  char . emit
    next
    -prog ;
 
-( We don't need to read the chip by pages, and in fact this would fail for
-  the mega644, since the page size is 256 bytes, but my USB code will break
-  if asked for a buffer this size! So let's always read 128 byte chunks
-  instead.)
+( We read the chip in chunks, but the buffer size does not need to match
+  the flash page size, and in fact this would fail for the mega644, since
+  the page size is 256 bytes, but my USB code will break if asked for a
+  buffer this size! So let's always read 128 byte chunks instead.)
 
 : read-chip
    wipe
    0 image-p!
    +prog  avr.FastClock
-   [ #flash #128 / ] for  ( program pages)
+   [ #flash #128 / ] for
       20  paddr  8  p@  #128  avr.BulkRead
       #128 p +!
       char . emit
@@ -100,12 +101,12 @@ hex
    0 image-p!
    0ff  #image for  c*  next ;
 
-( Clean up last page of image. Meta-compiler can leave junk lying around
-  that is technically not part of the image - after \m here. But because
-  it's in the image it gets flashed to the chip. By erasing the end of the
-  last page of the image we can make things a bit cleaner.)
+( Clean up the last page of the image. Meta-compiler can leave junk lying
+  around that is technically not part of the image - after \m here. But
+  because it's in the image it gets flashed to the chip. By erasing the end
+  of the last page of the image we can make things a bit cleaner.)
 
-: clean-image
+: cleanup-image
    'flash @  dup [ b/page 1- ] + ( round up)  [ b/page negate ] and ( end)
    over -  push  image+  pop  "ff  fill ;
 
@@ -122,7 +123,7 @@ b/page 2/  constant w/page
 
 : prog
    radix preserve  hex
-   clean-image  ( get rid of cruft left behind by meta-compiler)
+   cleanup-image  ( get rid of cruft left behind by meta-compiler)
    +prog  avr.FastClock
    erase-chip
    'flash region  swap image-p!  ( len)
