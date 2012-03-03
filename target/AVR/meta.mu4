@@ -10,8 +10,8 @@ loading AVR meta-compiler (main)
 -:  ."  (assembling)"  ;
 -:
     .assembler. find  if  execute  ^  then
-       .target. find  if  >value   ^  then  ( equates, labels, and target words)
-         .meta. find  if  execute  ^  then
+      .equates. find  if  execute  ^  then
+         .meta. find  if  execute  ^  then  ( labels are in .meta.)
         .forth. find  if  execute  ^  then  ( utility words in .forth.)
                                             number ;
 mode __asm
@@ -20,7 +20,8 @@ mode __asm
 -:
     .assembler. find  if  ,        ^  then  ( find assembler's if/then etc)
      .compiler. find  if  execute  ^  then  ( need } and ; to exit this mode)
-         .meta. find  if  ,        ^  then
+      .equates. find  if  ,        ^  then
+         .meta. find  if  ,        ^  then  ( labels are in .meta.)
         .forth. find  if  ,        ^  then  ( utility words in .forth.)
                                             number literal ;
 mode __inline-asm
@@ -31,24 +32,11 @@ mode __inline-asm
 
 -:  ."  (meta)"  ;
 -:
-         .meta. find  if  execute  ^  then
-       .target. find  if  >value   ^  then  ( equates, labels, and target words)
+         .meta. find  if  execute  ^  then  ( labels are in .meta.)
+      .equates. find  if  execute  ^  then
         .forth. find  if  execute  ^  then
                                             number ;
 mode __meta
-
-( XXX move these back to after target literal and target compilation - call
-  are defined, and remote is defined, resp)
-
-( The target colon compiler.)
-
--:  ."  (compiling a target word)"  ;
--:
-    .meta-compiler. find  if  execute  ^  then
-              .lex. find  if  execute  ^  then  ( comments and conditional compilation)
-           .target. find  if  execute  ^  then  ( self-compiling!)
-                                                number  compile-literal ;
-mode __target-colon
 
 
 : tag!  ( tag-byte)  \m here  image-c! ;
@@ -207,9 +195,8 @@ meta
 : compile,  ( target-cfa)  \a c  ( compile call) ;
 : literal  ( n)  load-literal  push-literal  %1000 tag! ;
 
-.meta. chain' literal  is compile-literal  ( fixup forward ref)
-
 forth
+
 ( XXX when push-literal becomes a call, this will be short to uncompile,
   but could still be 4 bytes - if call r.t. rcall.)
 : lit?   ( f)
@@ -249,6 +236,16 @@ meta
 
 forth
 
+( Finally, we have the definition of the target colon compiler.)
+
+-:  ."  (compiling a target word)"  ;
+-:  .meta-compiler. find  if  execute  ^  then
+              .lex. find  if  execute  ^  then  ( comments and conditional compilation)
+           .target. find  if  execute  \m compile, ^  then
+          .equates. find  if  execute  \m literal  ^  then  ( chip equates create literals)
+                               number  \m literal ;
+mode __target-colon
+
 
 ( Interrupt vectors and handlers.)
 : vector,  ( vector# dest)  ( compile jmp or rjmp to handler)
@@ -264,10 +261,10 @@ meta
   _constant_ equal to its code field address, and which compiles itself
   when executed.)
 
-: name    \m here  equ  does> @  \m compile, ;
+: name    \m here  current preserve  target constant ;
 : code    \m name  __asm ;
 : :       \m name  __target-colon ;
-: label   \m here  equ  __asm ;  ( equ creates a constant in .target.)
+: label   \m here  current preserve  meta constant  __asm ;
 
 : -]   __target-colon ;
 :  ]   \m literal  \m -] ;  ( XXX smart literal from ARM meta?)
@@ -276,7 +273,7 @@ meta
 : forward    rjmp, ( src)  equ ;
 : resolve    ( src)  \m here  \a resolve> ;
 
-: '  .target. chain' >value ;  ( fetch target word's constant value)
+: '  .target. chain' execute ;  ( get target word's constant value)
 
 : __host   \ [ ;  ( return to host forth mode)
 : {        \m __host ;  ( useful for bracketing a few  host forth words)
