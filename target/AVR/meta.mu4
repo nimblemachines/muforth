@@ -39,16 +39,29 @@ mode __inline-asm
 mode __meta
 
 
-: tag!  ( tag-byte)  \m here  image-c! ;
-: tag@               \m here  image-c@ ;
+( Tags tell the meta-compiler what kind of special code, if any, was just
+  compiled. Currently used to identify literals and calls, for simple
+  peephole optimisations.
+
+  We store the tag byte at \m here, ones-complemented, so that a tag byte
+  of 0 - no tag - looks like an empty image byte - 0ff.)
+
+: tag!  ( tag-byte)  "0ff xor  \m here image-c! ;
+: tag@                         \m here image-c@  "0ff xor ;
 : notag  0 tag! ;
 
-( Support for inline asm in any colon word.
-  NOTE: compiles code to reset tag to 0 when colon word is later executed.)
+( We also want to cleanly uncompile code, so instead of simply backing up h
+  and leaving the cruft - instructions and tags - behind, let's back up and
+  "uncompile" the code, leaving behind untagged code.)
 
+: uncompile  ( #words)
+   notag
+   \m here  swap  for  -2 +a  -1 ( 0ffff) over  image-!  next  org ;
+
+( Support for inline asm in any colon word.)
 compiler
 : asm{   __inline-asm ;  ( start assembler)
-: }      compile notag  -] ;  ( exit assembler mode and restart colon compiler)
+: }      -] ;  ( exit assembler mode and restart colon compiler)
 
 
 ( So, let's get to work, defining some macros that will be useful either in
@@ -89,7 +102,7 @@ assembler
 14 constant u   ( user pointer low, or the pair)
 14 constant ul  ( user pointer low)
 15 constant uh  ( user pointer high)
-16 constant h0
+16 constant h0  ( general purpose scratch - high)
 17 constant h1
 18 constant h2
 19 constant h3
@@ -154,11 +167,10 @@ variable push-lit
 : pop-literal   asm{  k dpopw } ;
 
 
-( Tag bits: K J C L
-  K = 1 if literal loaded
-  J = 1 if jump
-  C = 1 if call
-  L = 1 if long - 2 word - jump or call)
+( Tags used:)
+1 constant $rcall  ( $ suggests price tag ;-)
+2 constant $call
+3 constant $lit
 
 -- ------------------------------------------------------------------------
 -- Smart jump and call, tail call elimination
@@ -166,10 +178,11 @@ variable push-lit
 
 assembler
 : c  ( dest)  ( smart call - compile rcall if possible, otherwise call)
-   "1000 inrange? if  \a rcall  %010 tag! ^  then  \a call  %011 tag! ;
+   "1000 inrange? if  \a rcall  $rcall tag! ^  then
+                       \a call   $call tag! ;
 
 : j  ( dest)  ( smart jmp - compile rjmp if possible, otherwise jmp)
-   "1000 inrange? if  \a rjmp   %100 tag! ^  then  \a jmp   %101 tag! ;
+   "1000 inrange? if  \a rjmp ^  then  \a jmp ;
 
 forth
 
@@ -179,13 +192,13 @@ forth
 : replace  ( addr toggle)
    over  image-@  xor  swap  image-! ;
 
-: retag  ( oldtag newtag - f)  tag!  drop  -1 ;
+: untag  ( oldtag - f)  drop  notag  -1 ;
 
 : tail?  ( - f)
-   tag@ dup  %010 = if  ( short call)
-   \m here 2 -  "1000 replace  %100 retag  ^  then
-        dup  %011 = if  ( long call)
-   \m here 4 -  "0002 replace  %101 retag  ^  then
+   tag@ dup  $rcall = if  ( short call)
+   \m here 2 -  "1000 replace  untag  ^  then
+        dup  $call = if   ( long call)
+   \m here 4 -  "0002 replace  untag  ^  then
    drop  0 ;
 
 meta-compiler
@@ -193,21 +206,18 @@ meta-compiler
 
 meta
 : compile,  ( target-cfa)  \a c  ( compile call) ;
-: literal  ( n)  load-literal  push-literal  %1000 tag! ;
+: literal  ( n)  load-literal  push-literal  $lit tag! ;
 
 forth
 
 ( XXX when push-literal becomes a call, this will be short to uncompile,
   but could still be 4 bytes - if call r.t. rcall.)
+
 : lit?   ( f)
-   tag@ %1000 = dup if  -6 \m allot ( uncompile lit push)  notag  then ;
+   tag@ $lit = dup if  3 uncompile ( lit push)  then ;
 
 : _litop  current preserve  meta-compiler  create
           does>  lit?  if  cell+  then  @  \m compile, ;
-
-( XXX testing)
-meta-compiler
-: xx  lit? . ;  ( test backing up over literals)
 
 meta
 : litbinop
