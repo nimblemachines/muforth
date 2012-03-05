@@ -1,0 +1,60 @@
+( This file is part of muFORTH: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2012 David Frech. All rights reserved, and all wrongs
+  reversed. (See the file COPYRIGHT for details.)
+
+( Support for creating a histogram of the _static_ usage of Forth words in
+  a body of code.
+
+  I created the corpus.mu4 file as follows:
+  find . -name "*.mu4" -exec echo ld-histo {} \; > lib/corpus.mu4
+
+  Create the histogram using the following command:
+  $ ./muforth -f lib/histo.mu4 bye > counts
+
+  To see the counts:
+  $ cat counts | sort -nr
+)
+
+
+sealed .counters.  ( word counters)
+: counters  .counters. definitions ;
+
+sealed .lex.
+: lex  .lex. definitions ;
+
+lex
+: comment  comment ;
+: (   \f ( ;
+: --  \f -- ;
+
+forth
+
+' nope
+-:
+        .lex. find if  execute ^  then  ( skip comments!)
+   .counters. find if  execute  ( self-incrementing!)  ^  then
+    (create) 1 ,    ( count this appearance!)
+    does>  1 swap +! ;  ( do the increment)
+mode __histo
+
+: histo-file  ( z")
+   open-file-ro ( fd)  dup on-exit close-file
+   state preserve  __histo
+   current preserve  counters
+   read-file ( a u)  evaluate ;
+
+: ld-histo  token, histo-file ;
+
+( Print count then name - make it easy for unix sort ;-)
+: .count  ( 'suffix)
+   suffix>link  dup  cr
+   cell+ ( link>code)  >body @  ( get count)  u.
+   link>name  type ;
+
+: .counts   .counters.  ( 'suffix)
+  begin  suffix>link @  =while  dup .count  repeat  drop ;
+
+ld lib/corpus.mu4
+decimal
+>stdout  .counts  >stderr
