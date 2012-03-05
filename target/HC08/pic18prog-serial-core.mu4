@@ -1,0 +1,236 @@
+( This file is part of muFORTH: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2012 David Frech. All rights reserved, and all wrongs
+  reversed. (See the file COPYRIGHT for details.)
+
+loading PIC18 programmer over serial (core)
+
+__meta
+
+hex
+
+( Support for programming PIC18 parts over ICSP, using a serial-connected
+  S08QE or QG as a programmer. I need a 3v device for this! So I can't use
+  my JS16 - until I set it up with an external 3/3.3v regulator!)
+
+.ifndef S08QG
+  z" This code will only run properly on an S08QG part."  abort
+.then
+
+( The style of this code was inspired by chat3.mu4. It's really just an
+  experiment to see if the style that I wrote the USB chat firmware in
+  works in this context too. The main difference is that the original chat
+  code was a big loop, where the USB "loop" was a subroutine - which meant
+  that to return the "top" from any piece of code all you do is _return_.
+  And using tail calls, it's easy to code in a Forth-like style that is
+  very efficient.)
+
+hex
+
+( Create a forward jump at the start of the flash sector.)
+forward pic18-prog-loop
+
+( Our signature.)
+label id
+   char P c,  char 1 c,  char 8 c,  ( PIC18 architecture)
+   char p c,                        ( programming)
+   char 1 c,                        ( version 1)
+
+label recv-serial-byte  ( returns char in A)
+   begin  SCIS1 5 ( recvr full)  bset? until
+   SCID ) lda  rts  ;c
+
+label send-serial-byte  ( transmits char in A)
+   begin  SCIS1 7 ( xmit empty)  bset? until
+   SCID ) sta  rts  ;c
+
+( Return a signature of who we are and what we're doing.)
+label signon
+   .h clr  .x clr
+   begin  id ,x lda  send-serial-byte c  .x inc  5 # cpx  0= until
+   rts  ;c
+
+( Port pins.)
+
+( PIC18     QG8            JS16
+  ===================================
+  PGC    PTB2, pin 10   PTA3, pin 11
+  PGD    PTB3, pin 9    PTA2, pin 10
+  /MCLR  PTB5, pin 7    PTA4, pin 12
+  PGM    PTB4, pin 8    PTA1, pin 9
+)
+
+label init-pins
+   .a clr  PTBD ) sta   ( set pins low)
+   .a com  PTBDD ) sta  ( set them for output)
+   %0011_1100 # lda  PTBDS ) sta  ( set high drive)  rts  ;c
+
+( The building blocks.)
+
+comment %% delay-times
+
+  In HX is a _negated_ 16-bit delay count. We negate the count and
+  count _up_ to make it easier to know when to increment the high half.
+  Remember that inc and dec affect V, N, and Z, but not C.
+
+  I _could_ put it on R stack. Delay would skip over ret address and decr
+  2,s and 3,s.
+
+  Delay time is 9n + (9n/256) + 18 ( pshes, ais, call+ret) cycles
+              = 9n(1 + 1/256) + 18
+              = 9n(257/256) + 18
+
+  QE and QG parts have been trimmed to run at 9.216M so they can
+  accuratedly generate 115200 bps clock.
+
+  At 9.216M, to delay 1ms, n = (9216 - 18) * 256 / (9*257) = 1018
+           to delay 100us, n = (922 - 18) * 256 / (9*257) = 100
+
+%%
+
+label delay
+   .h psh  .x psh
+   begin  begin  1 ,s inc  ( lo)  0= until  0 ,s inc  0= until
+   2 # ais  rts ;c
+
+decimal
+
+label 1ms
+   -1018 # ldhx  delay j  ;c
+
+label 100us
+   -100 # ldhx  delay j  ;c
+
+hex
+
+( Now for some spiffy macros that let us define the bit send and receive
+  words so that they look like timing diagrams!)
+
+macro D/  PTBD 3 bset   ;m
+macro D\  PTBD 3 bclr   ;m
+
+macro C/  PTBD 2 bset   ;m
+macro C\  PTBD 2 bclr   ;m
+
+label drive-d  ( drive value of C onto bus)
+   PTBDD 3 bset  ( redrive PGD)
+   CS if  D/  rts  then
+          D\  rts  ;c
+
+macro D@  PTBD 3 bset? if then  ( sets C with pin value!)  ;m
+macro D!  drive-d c    ;m
+
+label send-bit    C/  D!  C\   rts  ;c
+label recv-bit    C/  D@  C\   rts  ;c
+
+( 4-bit command to send in A. Send LSB first.)
+label send-icsp-cmd
+   .a psh  ( byte to send)
+   4 # lda  .a psh  ( bit count)
+   begin  1 ,s ror  send-bit c  0 ,s decz? until
+   2 # ais  rts  ;c
+
+( Byte to send in A. Send LSB first.)
+label send-icsp-byte
+   .a psh  ( byte to send)
+   8 # lda  .a psh  ( bit count)
+   begin  1 ,s ror  send-bit c  0 ,s decz? until
+   2 # ais  rts  ;c
+
+( Read byte from chip into A.)
+label recv-icsp-byte
+   PTBDD 3 bclr  ( undrive PGD)
+   .a psh  ( byte accumulator)
+   8 # lda  .a psh  ( bit count)
+   begin  recv-bit c  1 ,s ror  0 ,s decz? until
+   1 ,s lda  2 # ais
+   rts  ;c
+
+( PGM high, delay, then /MCLR high.)
+label enter-prog-mode
+   PTBD 4 bset  100us c  ( only need to delay 2us)
+   PTBD 5 bset
+   rts  ;c
+
+( /MCLR low, then PGM low.)
+label exit-prog-mode
+   PTBD 5 bclr   PTBD 4 bclr
+   rts  ;c
+
+.ifdef notyet
+
+( Save these so we can repeat an SPI command without having to be driven by
+  serial port traffic.)
+
+1 zvar avr-cmd
+1 zvar addr-hi
+1 zvar addr-lo
+1 zvar toggle
+1 zvar count
+
+( Receive avr-cmd, addr-lo, addr-hi, toggle, and count via serial)
+label setup-command
+   .h clr  .x clr
+   begin   get-byte c  avr-cmd ,x sta  .x inc  5 # cpx  0= until  rts  ;c
+
+label send-command
+   .h clr  .x clr
+   begin   avr-cmd ,x lda  SpiTx c  .x inc  3 # cpx  0= until
+
+   ( toggle cmd byte and incr addr-lo if toggled back to 0)
+   toggle ) lda  avr-cmd ) eor  avr-cmd ) sta
+   toggle ) and  0= if  addr-lo ) inc  ( in zpage!)  then
+   rts  ;c
+
+label bulk-read
+   setup-command c
+   begin
+      send-command c
+      SpiTx c  ( send dummy, recv byte)  put-byte c  ( send back via serial)
+   count ) decz? until  rts  ;c
+
+label bulk-write
+   setup-command c
+   begin
+      send-command c
+      get-byte c  ( get serial byte)  SpiTx c  ( send via SPI)
+   count ) decz? until  rts  ;c
+
+.then
+
+label simple-read
+   recv-serial-byte c  send-icsp-cmd c
+   .a clr  send-icsp-byte c  ( send dummy byte)
+   recv-icsp-byte c    send-serial-byte j  ;c
+
+label simple-write
+   recv-serial-byte c  send-icsp-cmd c
+   recv-serial-byte c  send-icsp-byte c
+   recv-serial-byte c  send-icsp-byte j  ;c
+
+( Commands:
+0-1f  Bye        - exit PIC18 prog code and return to chat loop
+  20  Read       - send 4-bit command, send dummy byte, read 1 byte
+  21  Write      - send 4-bit command, send 2 bytes
+)
+
+label process-serial
+   SCIS1 5 ( recvr full)  bclr? if  rts  then  ( nothing to do)
+   SCID ) lda  ( command)
+
+   ( NOTE: Command numbers are all given in HEX.)
+   20 # sub   ( prog commands start at 20 hex; below that, we exit)
+   u< if  ( 00 - 1f Bye)  2 # ais  ( skip return from process-serial)
+      exit-prog-mode j  then
+
+   ( 20)  simple-read            0!= until
+   ( 21)  simple-write   .a dec  0!= until
+
+   ( unknown command)   rts  ;c
+
+\l pic18-prog-loop resolve>>  ( jump at start of Flash points here)
+label main-loop
+   init-pins c  ( set up port pins)
+   enter-prog-mode c
+   signon c     ( tell who we are and what we're doing)
+   begin  process-serial c  again  ;c
