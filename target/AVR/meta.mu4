@@ -39,12 +39,21 @@ mode __inline-asm
 mode __meta
 
 
+-- ------------------------------------------------------------------------
+-- Peephole optimiser tags
+-- ------------------------------------------------------------------------
+
 ( Tags tell the meta-compiler what kind of special code, if any, was just
   compiled. Currently used to identify literals and calls, for simple
   peephole optimisations.
 
   We store the tag byte at \m here, ones-complemented, so that a tag byte
   of 0 - no tag - looks like an empty image byte - 0ff.)
+
+( Tags used:)
+1 constant $rcall  ( $ suggests price tag ;-)
+2 constant $call
+3 constant $lit
 
 : tag!  ( tag-byte)  "0ff xor  \m here image-c! ;
 : tag@                         \m here image-c@  "0ff xor ;
@@ -58,10 +67,15 @@ mode __meta
    notag
    \m here  swap  for  -2 +a  -1 ( 0ffff) over  image-!  next  org ;
 
+-- ------------------------------------------------------------------------
+-- Macros defining register convention and stack operations
+-- ------------------------------------------------------------------------
+
 ( Support for inline asm in any colon word.)
 compiler
 : asm{   __inline-asm ;  ( start assembler)
 : }      -] ;  ( exit assembler mode and restart colon compiler)
+assembler
 
 
 ( So, let's get to work, defining some macros that will be useful either in
@@ -91,7 +105,6 @@ compiler
   call it r14, r15.)
 
 
-assembler
 ( 0 and 1 used by mul instructions)
  2 constant g0  ( general purpose scratch - low)
  3 constant g1
@@ -143,34 +156,32 @@ forth
 
 
 -- ------------------------------------------------------------------------
--- Literal loading.
+-- Replicated core kernel, so we can use rcall/rjmp
 -- ------------------------------------------------------------------------
 
-forth
+( Since we want to be able to get the most basic kernel words - stack
+  operations and 16-bit math - with an rjmp, let's replicate the core every
+  8k.)
 
-: load-literal  ( n)
-   >hilo  asm{  k ldi  kh ldi } ;
+2variable kcore  ( boundaries of core kernel)
 
-( With a literal in k and kh push it onto the D stack.)
-( XXX push-literal should be a routine!)
-: push-literal   asm{  t dpushw  k t movw } ;
+( Returns true if dest is either within the replicated kernel or close
+  enough to reach with an rcall or rjmp.)
 
-( something like this:
-variable push-lit
-: push-literal   push-lit @  asm{  c } ;
-)
+: kshort?  ( dest - dest f)
+   dup  kcore 2@ within ( dest within replicated core)  if  -1 ^  then
+   "1000 inrange? ;
 
-( Pop top of D stack into k and kh just as if they were loaded by
-  load-literal. This is used to make versions of binary operations that
-  work either with true literals, or with a value sitting on the D stack.)
+( After defining the basic words, the kernel definition file calls us with
+  the boundaries.)
 
-: pop-literal   asm{  k dpopw } ;
-
-
-( Tags used:)
-1 constant $rcall  ( $ suggests price tag ;-)
-2 constant $call
-3 constant $lit
+: replicate-kernel  ( kstart kend)
+   2dup  kcore 2!
+   over - ( len)  push
+   image+  ( start)  pop
+   #flash 0 do
+      2dup  over i + ( dest)  swap cmove
+   [ 8 Ki ] +loop  2drop ;
 
 -- ------------------------------------------------------------------------
 -- Smart jump and call, tail call elimination
@@ -178,11 +189,11 @@ variable push-lit
 
 assembler
 : c  ( dest)  ( smart call - compile rcall if possible, otherwise call)
-   "1000 inrange? if  \a rcall  $rcall tag! ^  then
-                       \a call   $call tag! ;
+   kshort? if  \a rcall  $rcall tag! ^  then
+                \a call   $call tag! ;
 
 : j  ( dest)  ( smart jmp - compile rjmp if possible, otherwise jmp)
-   "1000 inrange? if  \a rjmp ^  then  \a jmp ;
+   kshort? if  \a rjmp ^  then  \a jmp ;
 
 forth
 
@@ -206,15 +217,47 @@ meta-compiler
 
 meta
 : compile,  ( target-cfa)  \a c  ( compile call) ;
-: literal  ( n)  load-literal  push-literal  $lit tag! ;
 
 forth
+
+-- ------------------------------------------------------------------------
+-- Literal loading.
+-- ------------------------------------------------------------------------
+
+: load-literal  ( n)
+   >hilo  asm{  k ldi  kh ldi } ;
+
+( With a literal in k and kh push it onto the D stack.)
+( XXX push-literal should be a routine!)
+: push-literal   asm{  t dpushw  k t movw } ;
+
+( something like this:
+variable push-lit
+: push-literal   push-lit @  asm{  c } ;
+)
 
 ( XXX when push-literal becomes a call, this will be short to uncompile,
   but could still be 4 bytes - if call r.t. rcall.)
 
+: unpush-literal  3 uncompile ;  ( back up over 2 pushes and movw)
+
+meta
+: literal  ( n)  load-literal  push-literal  $lit tag! ;
+
+forth
+
+-- ------------------------------------------------------------------------
+-- Support for special literal versions of binops, relops, and memory ops
+-- ------------------------------------------------------------------------
+
+( Pop top of D stack into k and kh just as if they were loaded by
+  load-literal. This is used to make versions of binary operations that
+  work either with true literals, or with a value sitting on the D stack.)
+
+: pop-literal   asm{  k dpopw } ;
+
 : lit?   ( f)
-   tag@ $lit = dup if  3 uncompile ( lit push)  then ;
+   tag@ $lit = dup if  unpush-literal  then ;
 
 : _litop  current preserve  meta-compiler  create
           does>  lit?  if  cell+  then  @  \m compile, ;
@@ -321,44 +364,18 @@ compiler
 forth
 : .reg   \ .reg ;
 
-( Since we want to be able to get the most basic kernel words - stack
-  operations and 16-bit math - with an rjmp, let's replicate the core every
-  8k.)
 
-( XXX to be able to check if code is running into the kernel, I need to
-  know the boundaries. So kstart and kend will need to be variables that
-  get filled in when the kernel gets defined.)
+.ifdef later-gator
 
-: replicate-kernel  ( kstart kend)
-   image+ swap  image+ swap  over -  ( start len)
-   #flash 0 do
-      2dup  over i + ( dest)  swap cmove
-   [ 8 Ki ] +loop  2drop ;
-
-
-.ifdef later-gator  ( XXX move me!!)
-
--- start ARM meta copy ----------------------------------------------------------
-
-( Forward references for fundamental words.)
-
-labels
-
+( Forward references for control structure implementation words.)
 ( These are pointers to target CODE words.)
-variable (branch)
-variable (0branch)
-variable (=0branch)
+meta
 variable (for)
 variable (?for)
 variable (next)
 variable (do)
 variable (loop)
 variable (+loop)
--- variable lit
-variable ^
--- variable (")
--- variable type
--- variable (;code@)   ( for target-resident defining words)
 
 forth
 
@@ -366,12 +383,13 @@ forth
   its value or address)
 
 : lookup  ( look up next token as forward-ref variable or label)
-   .labels. chain' execute ( get addr) ;
+   .meta. chain' execute ( get addr) ;
 
 ( Fetch value of variable on stack - a primitive - and compile it if
   defined, and complain if not yet defined.)
 
-: (p,)  ( var)  @  =if  \m a,  ^  then  error" primitive not yet defined" ;
+: (p,)  ( var)
+   @  =if  \m compile,  ^  then  error" primitive not yet defined" ;
 
 compiler
 
@@ -383,7 +401,7 @@ compiler
   (p,) ( which will do the rest of the work at the -run-time- of the
   compiling word!)
 
-: p,   .labels. \chain  compile (p,) ;
+: p,   .meta. \chain  compile (p,) ;  ( XXX \ \m ?)
 
 forth
 
@@ -412,37 +430,6 @@ variable last-code   ( for ;code and does> to fix up)
 
 meta
 
--- : show   last-link 2@ ! ( finally link in last word) ;
-
-( code, doesn't bother to compile a bl since we're doing to patch the code
-  field later. We just need to make room and to set last-code so patch can
-  find us.)
-
-: code,   \m here last-code !  ( make a code field)  0 \m , ;
-
-: token,  ( a u)  dup 1+ \m aligned  \m allot  ( room for name+len+padding)
-          dup \m here 1- \m c! ( len)  \m here over 1+ -  image+ swap cmove ;
-
-( called from metac to fix up the target image variables .forth. and
-  .compiler. to point to the most recent names in the parallel host
-  dictionaries, .target. and .target-compiler. resp.
-
-  It looks up the following target chain name and stores the link field from
-  the host.)
-
-: parallels  ( host-chain)  >parallel @  \m addr  dup reloc  \m ! ;
-
-: 'link   current @  >parallel ;
-: link,   \m here  \m 'link  dup  @  \m z,  !  ( last-link 2! ) ;
-
-( name, creates a name, compiling the name string and a link field.)
-
-: name,  ( a u)  \m token,  \m link, ;
-
-: literal    p, lit  \m ,  ;  ( make a target literal)
-: aliteral   p, lit  \m a, ;  ( make a target address literal,
-                                which is relocated!)
-
 meta-compiler
 : [']  \m '  \m aliteral ;
 meta
@@ -450,24 +437,7 @@ meta
 .meta. chain' literal  'target-literal !  ( patch colon compiler)
             ' number   'target-number  !  ( ditto - use host's number)
 
-: assemble     pair off  __asm ;  ( init and run assembler)
-
 : equ   current preserve  labels  constant ;
-
-
-( name creates a name -both- in the host's .target. chain, and in the
-  actual target memory image.
-
-  On the host, in .target., name creates a word that compiles itself into
-  the target image. At create time, this target word captures \m here - the
-  target cfa - and makes a "constant" out of it. At runtime, it fetches the
-  constant and compiles it, as a relocated value, into the target
-  dictionary [image].)
-
-: name   token  2dup \m name,  ( compile name into image)
-         (create)  ( NOTE: uses current unchanged)
-         \m here  dup ,  last !  ( create constant, and set last)
-         does> @ ( target-cfa)  ( compile itself!)  \m a, ;
 
 : label     \m here  \m equ ;
 : code      \m name  \m assemble ;
@@ -488,10 +458,10 @@ forth
 : patch   last-code @  (patch) ;
 
 ( This word, which is followed inline by a target code address, patches the
-  code field of the last last word compiled with a bl to the inline target address. It
-  essentially "repoints" previously defined words - defined by create,
-  variable, constant, etc - to point to new code. It gets -compiled- indirectly
-  by both ;calls and does>.)
+  code field of the last last word compiled with a bl to the inline target
+  address. It essentially "repoints" previously defined words - defined by
+  create, variable, constant, etc - to point to new code. It gets
+  -compiled- indirectly by both ;calls and does>.)
 
 : (;code@)   pop @  patch ;
 
@@ -514,115 +484,27 @@ compiler
 -- : does>   <;code>  save-lr  \m dodoes @ \a bl  \m -] ( start meta-colon) ;
 : ;code   <;code>  \m assemble ( start assembler) ;
 
-meta-compiler
-( ;calls is like ;code, but it is for creating target-resident defining
-  words that correspond to the defining words that were already defined in
-  the meta-compiler.
-
-  The issue is that the compilation of the defining word into the
-  meta-compiler already assembled the target machine code for this class of
-  word - whether docolon, dovar, doconst, or dodoes. We don't want to
-  repeat the code, so when we compile target-resident versions of the
-  defining words - : variable constant etc - we want to -refer- to the
-  previously assembled machine code, rather than assemble it again.
-
-  Thus this word is called ;calls rather than the more "usual" ;code,
-  because it is not followed by machine code, but instead by a -label- that
-  points to machine code.
-
-  Under the hood, it is the same as the metacompiler's ;code: both compile
-  -their version of- the word (;code@) ( which is followed by an inline
-  constant, which is the address of machine code - docolon, dovar, etc.
-  (;code@) ( patches the code field of the most-recently-defined word to
-  point to this machine code. It's simple - it just takes a lot of words to
-  explain!)
-
-: ;calls   p, (;code@)  \f lookup  \m a,  __meta ;
-
-forth
-
-( It's nice to know where a code field is pointing. Actually this takes the
-  address of any b or bl instruction and shows its destination - with some
-  junk in the high-order bits that can be ignored.)
-
-: >code  ( a code-field)  2 +  2 <<  + ; 
-
-meta
-
-: .code  ( a)  dup \m @  >code  u. ;
-
-forth
-
-: field-width  #field @ cells ;
-
-: picky-type  ( a u)  ( print only "letter" characters)
-   ?for  dup 1+  swap c@  >letter emit  next  then  drop ;
-
-( Right justify in field of width #field @ * 4)
-: |_field_cell|   ( a u)  #field @ cells  over -  spaces  picky-type ;
-
-( Print a name from a cell value.)
-: .name-cfa  ( cfa)  ( cell is cfa; print its name)
-   \m cell-  image+ link>name  field-width  min  |_field_cell| ;
-
-: .name-code-field  ( a+ bl-to-code - a+)
-   ( bl-to-code is the contents of a code field; follow bl and print name!)
-   over cell- swap >code .hex-cell  ( don't have code names yet)
-   ;
-
-( The address passed is one past the address from which n was fetched.)
-: .image-name  ( a+ n - a+)
-   dup #image    u< if  .name-cfa   ^  then
-   dup "eb000000 u< if  drop field-width spaces   ^  then
-   ( prob chars, not an address)  .name-code-field ;
-
-' .image-name is .name  ( hook into memory dumper)
-
 assembler
 : ;c   __meta ;
 
 
-( Compiling strings.)
-meta
-( Compile a counted string without a zero terminator.)
-( Length is a cell, not a byte!)
-: string,  ( a u)  dup \m , ( len - cell!)
-           \m here  over \m allot  \m align
-           image+ swap cmove ;
+-- ------------------------------------------------------------------------
+-- Control structures.
+-- ------------------------------------------------------------------------
+
+: <test>               asm{  tl th or ( test) } ;
+: <zbranch>  ( - src)  asm{  0= not if } ;
 
 meta-compiler
-: "    p, (")   ( compile (")
-       char " parse  ( a u)  \m string,  ( compile the counted string) ;
-
-: ."   \mc "    ( compile string)
-       p, type  ( compile type) ;
-
-
-( Control structures.)
-
-( Resolve a forward or backward jump, from src to dest.)
-( When using absolute branch addresses, this is easy: just store dest at src.)
-
-( NOTE: when using absolute addresses for branches, we must mark them as
-  needing relocation, so we use a, . If instead we used relative branch
-  addresses we should use , .)
-
-meta
-: <resolve  ( dest src)  \m ! ;
-: >resolve  ( src dest)  swap  \m <resolve ;
-: >mark   \m here  0 \m a, ;  ( mark addresss as relocating!!)
-
-meta-compiler
-: =if   ( - src)        p, (=0branch)  \m >mark ;
-: if    ( - src)        p,  (0branch)  \m >mark ;
-: then  ( src)          \m here \m >resolve ;
-: else  ( src0 - src1)  p,   (branch)  \m >mark
-                        swap  \mc then ;
+: =if   ( - src)  <test>          <zbranch> ;
+: if    ( - src)  <test>  <drop>  <zbranch> ;
+: then  ( src)          \a then ;
+: else  ( src0 - src1)  \a else ;
 
 : begin   ( - dest)  \m here ;
-: =until  ( dest -)  \mc =if  \m <resolve ;
-: until   ( dest -)   \mc if  \m <resolve ;
-: again   ( dest -)  p, (branch)  \m >mark  \m <resolve ;
+: =until  ( dest -)  \mc =if  \a <resolve ;
+: until   ( dest -)   \mc if  \a <resolve ;
+: again   ( dest -)  \a again ;
 : =while  ( dest - src dest)  \mc =if  swap ;
 : while   ( dest - src dest)   \mc if  swap ;
 : repeat  ( src dest -)   \mc again  \mc then ;
@@ -630,6 +512,11 @@ meta-compiler
 ( n for .. next         goes n times; 4 billion+ if n=0 )
 ( n ?for .. next then   goes n times; 0 if n=0 )
 
+meta
+: <resolve  ." unimplemented" ;
+: >mark  \m <resolve ;
+
+meta-compiler
 : for     ( - dest)      p,  (for)            \mc begin ;
 : ?for    ( - src dest)  p, (?for)  \m >mark  \mc begin ;
 : next    ( dest -)      p, (next)  \m >mark  \m <resolve ;
@@ -640,6 +527,9 @@ meta-compiler
 : +loop   ( src dest)     p, (+loop)  \m >mark  \m <resolve  \mc then ;
 forth
 
+-- ------------------------------------------------------------------------
+-- Switching interpreter modes
+-- ------------------------------------------------------------------------
 
 ( Making [ and ] work, finally.)
 variable saved-state      ( interpreter mode we came from)
@@ -672,4 +562,4 @@ meta-compiler
 
 forth
 
-.then ( later-gator)
+.then
