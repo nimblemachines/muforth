@@ -182,7 +182,9 @@ Vreset handler
    -- watchdog.
    SOPT1 ) lda  3f # and  SOPT1 ) sta
 
-.ifdef 24m  ( JS/JM running 48M PLL)
+   .ifdef 24m
+
+      .reg MCGTRM .if  ( JS/JM running 48M PLL)
 
    ( Set up the xtal oscillator and PLL. For USB we need a 48M clock - 24M
      bus clock. Getting there takes a few steps...)
@@ -224,6 +226,47 @@ Vreset handler
    -- Lastly, set BDIV to /1
    MCGC2 6 bclr
 
+      .else  ( 24m ICS - QE32 probably)
+
+   ( Set up the xtal oscillator and FLL for 48M clock - 24M bus clock.
+     Getting there takes a few steps...)
+
+   %01_11_0110 # ICSC2 ) mov  ( keep BDIV at /2, start ext osc)
+   -- wait for osc to start (OSCINIT)
+   begin  ICSSC 1  bset? until
+   -- switch! making sure to change RDIV at the same time
+   %00_010_000 # ICSC1 ) mov
+
+         .ifdef bit-by-bit
+
+   -- Wait until we've switched to EREF
+   begin  ICSSC 4 bclr?  until  ( IREFST=0)
+
+   -- Then switch multiplier to high range...
+   %10_0_0_0000 # ICSSC ) mov
+
+   -- and wait until we've switched
+   begin  begin  ICSSC 7 bset?  until
+                 ICSSC 6 bclr?  until  ( DRST=10)
+
+         .else  ( all at once)
+
+   -- Switch multiplier to high range
+   %10_0_0_0000 # ICSSC ) mov
+
+   -- Wait until we've switched clocks
+   begin  ICSSC ) lda  %1101_0000 # and  ( mask DRST and IREFST)
+          %1000_0000 # cmp  0= until  ( DRST=10, IREFST=0)
+
+         .then
+
+   -- Lastly, set BDIV to /1
+   ICSC2 6 bclr
+
+      .then  ( QE32)
+
+   ( Both these cases run @ 24m, so set FCDIV and baud rate accordingly.)
+
    #24000 khz>fcdiv  # lda   FCDIV ) sta
 
    -- Configure SCI for 115200 bps
@@ -233,7 +276,7 @@ Vreset handler
                        ( yields 115200 from 24M bus clock)
    0c # SCIC2 ) mov    ( enable rcvr, xmitter)
 
-.else .ifdef 4.9152m
+   .else .ifdef 4.9152m
 
    -- Let's try switching on the xtal osc.
    %01_11_0110 # ICSC2 ) mov  ( keep BDIV at /2, start ext osc)
@@ -253,7 +296,7 @@ Vreset handler
                      ( yields 38400 from 9.8304M bus clock)
    0c # SCIC2 ) mov  ( enable rcvr, xmitter)
 
-.else .ifdef 9.8304m
+   .else .ifdef 9.8304m
 
    -- Let's try switching on the xtal osc.
    %00_11_0110 # ICSC2 ) mov  ( BDIV to /1 from /2, start ext osc)
@@ -273,9 +316,10 @@ Vreset handler
                       ( yields 38400 from 9.8304M bus clock)
    0c # SCIC2 ) mov   ( enable rcvr, xmitter)
 
-.else  ( configure ICS or MCG, depending on device)
+   .else  ( configure ICS or MCG, depending on device)
 
-.labels. .contains ICSTRM .if
+      .labels. .contains ICSTRM .if
+
    -- Configure ICS (internal clock source)
    -- We're staying in FEI mode, but we're going to trim the internal
    -- reference so that our bus clock is 9.216M - a nice multiplier for
@@ -283,17 +327,19 @@ Vreset handler
    -- I've put my own trim values into the chips @ FFAD (for 9.216M).
 
    0ffad ) lda   ICSTRM ) sta
+   -- 0ffad ) lda   0b0 ) sta  ( abstain from setting TRIM; to see QE factory)
 
    ICSC2 ) clr   ( switch BDIV to /1 from /2)
 
-.else    -- JS or JM part with MCG
+      .else    -- JS or JM part with MCG
+
    -- Adjust registers and values for the JS & JM parts, which use a different
    -- clock generator (MCG instead of ICS), and run twice as fast.
 
    0ffad ) lda   MCGTRM ) sta
    -- leave BDIV/2 set; MCG runs 2x as fast as QG's ICS
 
-.then  ( ICS vs MCG)
+      .then  ( ICS vs MCG)
 
    #9216 khz>fcdiv  # lda   FCDIV ) sta
 
@@ -303,7 +349,7 @@ Vreset handler
                      ( yields 115200 from 9.216M bus clock)
    0c # SCIC2 ) mov  ( enable rcvr, xmitter)
 
-.then  .then  .then  ( xtal vs internal osc)
+   .then  .then  .then  ( xtal vs internal osc)
 
 .ifdef so-that-worked
    -- UART test
