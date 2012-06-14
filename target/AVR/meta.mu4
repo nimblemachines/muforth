@@ -304,13 +304,37 @@ mode __target-colon
 
 
 ( Interrupt vectors and handlers.)
+: big-vectors?   #flash  16 Ki u< not ;
+: vector-info    ( vector# - big? addr)
+   big-vectors? tuck  if  4 * ^  then  2* ;
+
+: application-start   \eq LAST_VECTOR 1+ vector-info  nip ;
+
 : vector,  ( vector# dest)  ( compile jmp or rjmp to handler)
-   swap  #flash  16 Ki u< if
-     ( use rjmp)    org  \a rjmp  ^  then
-     ( use jmp)  2* org  \a jmp ;
+   swap  vector-info org  if  \a jmp  ^  then  \a rjmp ;
+
+( Fetch "smashed" version of vector; logical and the bits together if it's
+  a two-word - big - vector.)
+
+: vector-bits@  ( vector# - bits)
+   vector-info  dup image-@  rot if
+      ( large)  swap  2 + image-@  and  ^  then
+      ( small)  nip ;
+
+( Return true if vector has _not_ been set.)
+: unvectored?  ( vector# - f)
+   vector-bits@  "0ffff = ;
 
 meta
-: handler  ( vector#)  2*  \m here  dup push  vector,  pop org  __asm ;
+: handler  ( vector#)  \m here  dup push  vector,  pop org  __asm ;
+
+( Set all unset vectors to point to this vector - usually RESET.)
+: default-handler  ( vector#)
+   \m handler  ( force it, in case it's been set already)
+   ( then set all unset handlers to this address)
+   0  \eq LAST_VECTOR 1+  for
+      dup unvectored? if  dup  \m handler  ( set it)  then  1+  next
+   drop ;
 
 
 ( Create a new target names. A name is a target word which is defined as a
