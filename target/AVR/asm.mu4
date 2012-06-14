@@ -265,11 +265,13 @@ assembler
 9700 wi sbiw  ( subiw)
 
 ( iobit - set/clear bit in io space - pppp pppp aaaa abbb)
-( These can address 0-31 in io space.)
+( These can address 0-1f in io space - 20 to 3f in data space.)
 forth
+: within-io?  ( addr op limit - io op flag)
+   push  swap 20 -  tuck pop u< ;
+
 : check-io  ( addr op limit - io op)
-   push  swap 20 -
-   tuck pop u<  not if error" io address out of range" then ;
+   within-io? not if error" io address out of range" then ;
 
 : iobit  ( bit io)  constant does> @  ( bit io op)  20 check-io  I5 K3 op, ;
 assembler
@@ -279,15 +281,19 @@ assembler
 9b00 iobit sbis  ( skip if bit io set)
 
 ( io - pppp piid dddd iiii)
-( These address 0-63 in io space.)
+( These address 0-3f in io space - 20 to 5f in data space.)
 ( But the addresses that we give them are data space, *not* io space.)
 forth
-: io     ( addr Rd)   constant does> @  (  addr Rd op)
-   Rd  40 check-io  I6 op, ;
+: io     ( io-addr Rd)   constant does> @  (  io-addr Rd op)
+   Rd  I6 op, ;
 
+( These are call with addresses that have already checked and are within
+  the io window - 0 to 3f.)
+b000 io _in    ( Rd <- io[i])
+b800 io _out   ( Rd -> io[i])
 assembler
-b000 io in    ( Rd <- io[i])
-b800 io out   ( Rd -> io[i])
+: in   ( addr Rd)  40 within-io? if  _in  ^  then  \a lds ;
+: out  ( addr Rd)  40 within-io? if  _out ^  then  \a sts ;
 
 ( rel jump and call - pppp kkkk kkkk kkkk)
 c000 rjmp rjmp
