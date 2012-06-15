@@ -48,6 +48,15 @@ if [ "$os" = "Linux" ]; then
         cflags="${cflags} -m32"
         ldflags="${ldflags} -m32"
     fi
+    # Try to guess a device to use for serial targets
+    if [ ! -c serial-target ]; then
+        for term in USB0 ACM0 S0; do
+            dev=/dev/tty$term
+            if [ -c $dev ]; then
+                ln -s $dev serial-target
+            fi
+        done
+    fi
 fi
 
 # Figure out which version of sed we're running, so we can properly specify
