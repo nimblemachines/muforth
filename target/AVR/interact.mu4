@@ -7,6 +7,15 @@ loading AVR interaction
 
 variable chatting
 
+( XXX Don't define chat words unless there is support in a connected
+  device. Right now if no USB device is plugged in, the serial host code is
+  loaded, which is currently behind the times and doesn't support chatting
+  with AVR devices. Until this gets fixed, conditionally compile the chat
+  code. At least this way it's still possible to compile and either program
+  over serial or write the image to a hex file.)
+
+.ifdef z!  ( support for setting the target's Z memory pointer)
+
 : +chat  chatting on ;
 
 ( A copy of what we hope the current memory pointer on the target is. We
@@ -41,6 +50,87 @@ variable _z
          ['] >chat-prog  is >prog
 
          >prog  ( default) ;
+
+: chat  +chat  >chat  twi.Hello ;
+
+: copy-ram ;  ( XXX no-op)
+: runwait  zgo  begin  "7f twi.Ping  0= until ;
+
+@ram #ram + 2 - constant go-pc
+
+meta
+: r0  \eq SPL z!  zcell*  1+ ;  ( bottom of target's R stack)
+: s0  \m r0  64 - ;  ( bottom of target's D stack; room for 32 values on R)
+: sp!  ( target-sp)    \a y z!  zcell& ;
+: sp@  ( - target-sp)  \a y z!  zcell* ;
+: pc!  ( target-cfa)   go-pc z!  2/ zcell& ;
+: top!  \a t z!  zcell& ;
+: top@  \a t z!  zcell* ;
+
+: cell   2  ;
+: cell/  2/ ;
+: cells  2* ;
+: depth  \m s0 \m sp@ -  \m cell/ ;  ( depth of actual stack)
+: u.  u. ;
+: .  . ;
+: .s  .s ;
+
+
+( The semantics of moving cells to and from the target stack are a bit
+  complicated.
+
+  When the target stack is empty, s0 = sp, and the top register contains
+  garbage.
+
+  When the target stack isn't empty, the distance between s0 and sp is
+  2*depth, but the bottom-most cell is garbage, and top is valid.)
+
+forth
+: stack>  ( "push" stack to target)
+   depth 0= if  "cafe \m top!  \m s0 \m sp!  ^  then
+   \m top!
+   depth 7 min  ( more than that would be silly)
+   \m s0 over 1+ \m cells -  dup \m sp! ( top of D stack)  z!
+   ?for  zcell&  next  then  ( copy each cell as a word to D stack)
+   "cafe zcell& ( push bottom) ;
+
+: stack<  ( "pop" stack from target)
+   \m depth 0 max 8 min  ( more than that would be silly)  =if
+   \m sp@ z!  1- dup ( depth, excluding top)  =if
+   for  zcell*  pop 2push  next  ( starting with top, push to R)
+   for  2pop push  next  ( pop from R to reverse order)
+   0 0  then  2drop  \m top@  0  then  drop ;
+
+( XXX Should we try to automatically connect to target?)
+: remote  ( cfa)  ( execute target word on stack)
+   chatting @ 0= if  error" not connected to target"  then
+   copy-ram  \m pc!  stack>  runwait  stack< ;
+
+
+( Interacting with a chatty, connected target.)
+
+-:  ."  (interacting with target)"  ;
+-:
+      .meta. find  if  execute          ^  then  ( labels are in .meta.)
+    .target. find  if  execute  remote  ^  then
+   .equates. find  if  execute          ^  then
+.ifdef no-number                                 complain ;
+.else                                            number ;
+.then
+mode __target
+
+( for testing)
+: r  ( ioaddr)       z!  z* ; 
+: w  ( byte ioaddr)  z!  z& ;
+
+
+.else  ( NO CONNECTED CHAT TARGET!)
+
+: chat  error" No connected chat-capable target." ;
+: >chat ;
+
+.then
+
 
 ( Set |@ and |c@ to _some_ form of target fetch. Prefer to get bytes from
   target if we're connected. This word is useful so we can set an initial
@@ -125,75 +215,8 @@ key: i  ( a - a 0)   disasming  0 ;
    "0ffff see-addr-mask !
    disasming  inspect ;
 
-: chat  +chat  >chat  twi.Hello ;
-
-: copy-ram ;  ( XXX no-op)
-: runwait  zgo  begin  "7f twi.Ping  0= until ;
-
-@ram #ram + 2 - constant go-pc
-
 meta
-: r0  \eq SPL z!  zcell*  1+ ;  ( bottom of target's R stack)
-: s0  \m r0  64 - ;  ( bottom of target's D stack; room for 32 values on R)
-: sp!  ( target-sp)    \a y z!  zcell& ;
-: sp@  ( - target-sp)  \a y z!  zcell* ;
-: pc!  ( target-cfa)   go-pc z!  2/ zcell& ;
-: top!  \a t z!  zcell& ;
-: top@  \a t z!  zcell* ;
-
-: cell   2  ;
-: cell/  2/ ;
-: cells  2* ;
-: depth  \m s0 \m sp@ -  \m cell/ ;  ( depth of actual stack)
-: u.  u. ;
-: .  . ;
-: .s  .s ;
 : du   du ;
 : dis  dis ;
 
-( The semantics of moving cells to and from the target stack are a bit
-  complicated.
-
-  When the target stack is empty, s0 = sp, and the top register contains
-  garbage.
-
-  When the target stack isn't empty, the distance between s0 and sp is
-  2*depth, but the bottom-most cell is garbage, and top is valid.)
-
 forth
-: stack>  ( "push" stack to target)
-   depth 0= if  "cafe \m top!  \m s0 \m sp!  ^  then
-   \m top!
-   depth 7 min  ( more than that would be silly)
-   \m s0 over 1+ \m cells -  dup \m sp! ( top of D stack)  z!
-   ?for  zcell&  next  then  ( copy each cell as a word to D stack)
-   "cafe zcell& ( push bottom) ;
-
-: stack<  ( "pop" stack from target)
-   \m depth 0 max 8 min  ( more than that would be silly)  =if
-   \m sp@ z!  1- dup ( depth, excluding top)  =if
-   for  zcell*  pop 2push  next  ( starting with top, push to R)
-   for  2pop push  next  ( pop from R to reverse order)
-   0 0  then  2drop  \m top@  0  then  drop ;
-
-( XXX Should we try to automatically connect to target?)
-: remote  ( cfa)  ( execute target word on stack)
-   chatting @ 0= if  error" not connected to target"  then
-   copy-ram  \m pc!  stack>  runwait  stack< ;
-
-
-( Interacting with a chatty, connected target.)
-
--:  ."  (interacting with target)"  ;
--:
-      .meta. find  if  execute          ^  then  ( labels are in .meta.)
-    .target. find  if  execute  remote  ^  then
-   .equates. find  if  execute          ^  then
-.ifdef no-number                                 complain ;
-.else                                            number ;
-.then
-mode __target
-
-( for testing)
-: r  ( ioaddr)       z!  z* ; 
-: w  ( byte ioaddr)  z!  z& ;
