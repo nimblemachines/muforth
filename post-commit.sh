@@ -7,6 +7,5 @@
 echo "Generating commit.mu4"
 
 sha=`git rev-parse --verify HEAD`
-cat <<EOF > commit.mu4
-: git-commit  " $sha" ;
-EOF
+
+echo ": git-commit  \" $sha\" ;" > commit.mu4

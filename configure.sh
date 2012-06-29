@@ -124,9 +124,13 @@ Enjoy muFORTH!
 EOF
 
 # Lastly, if using git, configure post-commit and post-checkout scripts to
-# generate a muforth file that defines the current git commit.
+# generate a muforth file that defines the current git commit. If not using
+# git, create a "fake" git-commit that pushes 0. We can check, in banner,
+# which we have.
 
 if [ -d .git ]; then
     install -m 755 post-commit.sh .git/hooks/post-commit
     install -m 755 post-commit.sh .git/hooks/post-checkout
+else
+    echo ": git-commit 0 ;" > commit.mu4
 fi

@@ -39,12 +39,6 @@ void mu_push_build_time()
 void mu_tty_width()  { TOP = 80; }  /* fd -- width */
 #endif
 
-void mu_push_build_commit()
-{
-    PUSH_ADDR(GIT_COMMIT);
-    PUSH(strlen(GIT_COMMIT));
-}
-
 static void mu_start_up()
 {
     PUSH_ADDR("warm");       /* push the token "warm" */
