@@ -132,5 +132,5 @@ if [ -d .git ]; then
     install -m 755 post-commit.sh .git/hooks/post-commit
     install -m 755 post-commit.sh .git/hooks/post-checkout
 else
-    echo ": git-commit 0 ;" > commit.mu4
+    echo ": muforth-commit 0 ;" > commit.mu4
 fi

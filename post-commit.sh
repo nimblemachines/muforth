@@ -8,4 +8,4 @@ echo "Generating commit.mu4"
 
 sha=`git rev-parse --verify HEAD`
 
-echo ": git-commit  \" $sha\" ;" > commit.mu4
+echo ": muforth-commit  \" $sha\" ;" > commit.mu4
