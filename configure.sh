@@ -23,6 +23,7 @@ if [ -d .git ]; then
     echo "Installing post-commit and post-checkout hooks."
     install -m 755 post-commit.sh .git/hooks/post-commit
     install -m 755 post-commit.sh .git/hooks/post-checkout
+    sh post-commit.sh
 else
     echo ": muforth-commit 0 ;" > commit.mu4
 fi
@@ -152,4 +153,3 @@ Once it builds successfully, run it like this:
 Enjoy muFORTH!
 
 EOF
-
