@@ -1,0 +1,98 @@
+( This file is part of muFORTH: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2012 David Frech. All rights reserved, and all wrongs
+  reversed. (See the file COPYRIGHT for details.)
+
+ld target/common/16bit.mu4
+
+loading ARM Thumb16 assembler
+
+hex
+
+: assembler ;
+: 4#  # # # # ;
+: __  char _ hold ;
+: debug-show   dup  radix preserve  binary  <# 4# __ 4# __ 4# __ 4# #>  cr  type ;
+
+( Quick n dirty)
+#64 Ki buffer image
+variable h        ( offset relative to start of image)
+variable 'region  ( target address of start of image)
+
+( Cortex-M constants - true for M0, M3, and M4?)
+
+2000_0000 constant @ram
+0080_0000 constant @flash
+
+: image+   image + ;
+: image-   image - ;
+
+: ram    @ram   'region ! ;
+: flash  @flash 'region ! ;
+: org    'region @ -  image+  h ! ;
+: here   h @  image- ;
+
+: c,   h @  c!  1 h +! ;
+: h,   >hilo  c,  c,  ;
+-- :  ,   >hilo  c,  >hilo  c,  h, ;  ( crashes!!)
+: op,  debug-show  h, ;
+
+: reg   create  ( regnum)  ,  does> @  2000_0000 ( regtype) ;
+assembler
+#15 reg pc
+#14 reg lr
+#13 reg sp
+  7 reg r7
+  6 reg r6
+  5 reg r5
+  4 reg r4
+  3 reg r3
+  2 reg r2
+  1 reg r1
+  0 reg r0
+
+1000_0000 constant #   ( imm - imm immtype)
+
+forth
+
+( When all three registers are specified - Rm, Rn, and Rd, the fields are
+  as follows:
+
+  m m m | n n n | d d d
+)
+
+: ?reg  ( reg type op - op reg)
+   push  2000_0000 = not if  error" expected a register"  then
+   pop swap  ;
+
+: r00  ( reg regtype op)  ?reg  07 and  6 <<  or ;
+: 0r0  ( reg regtype op)  ?reg  07 and  3 <<  or ;
+: 00r  ( reg regtype op)  ?reg  07 and        or ;
+
+: ?imm  ( imm type op - op imm)
+   push  # = not if  error" expected immediate value"  then
+   pop swap  ;
+
+( Immediate fields)
+: i5  ( imm immtype op)  ?imm  1f and  6 <<  or ;
+: i3  ( imm immtype op)  ?imm  07 and  6 <<  or ;
+: i8  ( imm immtype op)  ?imm  0ff and       or ;
+
+( From here on out, i3/5/8 and Rm/n/d mean immediate value or register with
+  type on top.)
+
+: sh-imm  #11 <<  constant  does> @  ( i5 Rm Rd op)  00r  0r0  i5  op, ;
+
+assembler
+0 sh-imm lsl
+1 sh-imm lsr
+2 sh-imm asr
+
+forth
+
+( tests)
+ram
+@ram org  ( RAM start)
+4 # r5 r7 lsl
+8 # r3 r2 lsr
+#31 # r4 r0 asr
