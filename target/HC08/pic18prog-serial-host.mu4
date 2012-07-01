@@ -1,0 +1,93 @@
+( This file is part of muFORTH: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2012 David Frech. All rights reserved, and all wrongs
+  reversed. (See the file COPYRIGHT for details.)
+
+loading PIC18 programmer over serial (host)
+
+( Host-side code to drive the PIC18 programmer code in
+  target/HC08/pic18prog-serial-core.mu4.)
+
+hex
+
+( Commands)
+
+: pic.Bye  ( End session, return to chat command loop)  00 send ;
+
+: pic.Read   ( cmd - b1)     20 send  send  recv ;
+: pic.Write  ( b1 b0 cmd)    21 send  send  send  send ;
+
+: await  ( a u)
+   p preserve
+   swap p!  for  c* recv  xor if  error" Wrong firmware"  then  next ;
+
+: pic.Hello  ( start the AVR programming firmware on the connected device)
+.ifdef in-ram
+   0112 c.SetPC c.Run  ( run from ram - loads right after flash routine)
+.else
+   0f600 c.SetPC c.Run
+.then
+   " P18p1" await  ( match signature) ;
+
+comment %%
+  Chip commands:
+  0000  execute core instruction
+  0010  read tablat
+  1000  tblrd*
+  1001  tblrd*+  ( read, post-increment)
+  1010  tblrd*-  ( read, post-decrement)
+  1011  tblrd+*  ( read, pre-increment)
+  1100  tblwr*        ( write)
+  1101  tblwr*+2      ( write, post-increment by 2)
+  1110  tblwrprog*+2  ( write, post-increment by 2, start prog)
+  1111  tblwrprog     ( write, start programming)
+%%
+
+: core  ( lo hi)  swap  00 pic.Write ;  ( execute core instruction)
+: lit   ( byte)     0e ( movlw)  core ;
+: load  ( freg)     50 ( movf)   core ;
+: store ( freg)     6e ( movwf)  core ;
+: bset  ( freg bit)  2* 80 +  ( bsf)  core ;
+: bclr  ( freg bit)  2* 90 +  ( bsf)  core ;
+: nop   0 0  core ;
+
+( Useful addresses:)
+0ff8 constant pu  ( aka TBLPTRU)
+0ff7 constant ph  ( aka TBLPTRH)
+0ff6 constant pl  ( aka TBLPTRL)
+0ff5 constant memdata ( aka TABLAT)
+
+( Using FSR0 to access data memory.)
+0fef constant x@    ( aka INDF0)
+0fee constant x@+   ( aka POSTINC0)
+0fed constant x@-   ( aka POSTDEC0)
+0fec constant x+@   ( aka PREINC0)
+0feb constant x@+w  ( aka PLUSW0)
+0fea constant xh    ( aka FSR0H)
+0fe9 constant xl    ( aka FSR0L)
+
+0fa6 constant eecon   ( aka EECON1)
+
+( eecon bits:)
+0 constant rd
+1 constant wr
+2 constant wren
+3 constant wrerr
+4 constant free
+6 constant cfgs
+7 constant eepgd
+
+: eeset  ( bit)  eecon swap  bset ;
+: eeclr  ( bit)  eecon swap  bclr ;
+
+: set-addr
+   >hilo  lit  pl store
+   >hilo  lit  ph store
+          lit  pu store ;
+
+: !x  ( data-addr)  ( set X pointer - aka FSR0)
+   >hilo  lit  xl store  lit  xh store ;
+
+( I've chosen these names badly... ;-)
+: x+   x@+ load  memdata store  nop  2 pic.Read ;
+: r+  ( read, post inc)  9 pic.Read ;
