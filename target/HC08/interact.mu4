@@ -10,69 +10,109 @@
 loading HC08 Interaction (common)
 
 
-( Hex output, from lib/see.mu4)
-: .h8_   .h8 space ;
-: .hcell_  .hcell space ;
-
-: >lohi  ( w - lo hi)  dup "0ff and  swap 8 u>> ;
-: hilo>  ( hi lo - w)  swap  8 << or ;
-
-( Recv from, send to target.)
-: _send  tty-target  >emit ;
-: _recv  tty-target  <key ;
-: flush  tty-target  tty-iflush ;
-
 comment chat-commands
 
   Simple and unified interaction layer.
-  
+
   The interaction "plumbing" - whether chat-monitor, chat, or BDM - will
   implement the following commands:
 
-  GetRegs  - get all registers
-  SetRegs  - set all registers
+  GetRegs  - get all registers into a local buffer
+  SetRegs  - set all registers from a local buffer
   SetAddr  - set memory address for subsequent Read and Write commands
   Read     - read a single byte from memory, increment pointer
   Write    - write a single byte to memory, increment pointer
-  Go       - start executing
-  Run      - same as Go, but also wait for target to finish
+  Run      - start executing
+  RunWait  - same as Run, but also wait for target to finish
              and resume chatting
 
 comment chat-commands
 
-defer t.GetRegs
-defer t.SetRegs
+defer t.GetRegs  ( buf - sp)
+defer t.SetRegs  ( buf)
 defer t.SetAddr  ( a)
+defer t.GetAddr  ( - a)
 defer t.Read     ( - byte)
 defer t.Write    ( byte)
-defer t.Go
+defer t.ReadChunk    ( 'target len buffer)
+defer t.WriteChunk   ( 'target len buffer)
+defer t.FlashChunk   ( 'target len buffer cmd)
 defer t.Run
+defer t.RunWait
+defer t.Id  ( return chip id)
+
+( We keep a local copy of the target's registers in the same order as they
+  appear in an exception frame.
+
+  The order, low to high: H CC A X PCH PCL)
+
+6 buffer chat-frame  ( local copy of SWI stack frame)
+variable chat-sp     ( current value of target's SP)
+
+: GetRegs   chat-frame t.GetRegs  chat-sp ! ;
+: SetRegs   chat-frame t.SetRegs ;
+
+( These index into our local chat-frame, _not_ into target memory!)
+: reg  ( offset)  constant  does> @  chat-frame + ;  ( self-index)
+00 reg .H
+01 reg .CC
+02 reg .A
+03 reg .X
+04 reg .PC
+04 reg .PCH
+05 reg .PCL
+
+( These are handy.)
+: pc!  >lohi  .PCH c!  .PCL c! ;
+: hx!  >lohi    .H c!    .X c! ;
+: hx@           .H c@    .X c@  hilo> ;
+
+: .bits8  binary  <# # # # # # # # # #> type ;
+: w@  ( a - w)  dup c@ 8 <<  swap 1+ c@ or ;
+
+: .b  ( a)  c@  .h8_ ;
+: .w  ( a)  w@  .hcell_ ;
+
+: .regs
+   radix preserve
+   cr  ." V--HINZC  A  H  X   SP   PC"
+   cr  .CC c@ .bits8 space  .A .b  .H .b  .X .b  chat-sp @ .hcell_  .PC .w ;
+
+-- : .x  ( like .s)  .X c@ du ;
+
+: put-chunk  ( 'target len - 'target+len)
+   -- cr ." put-chunk "  2dup swap u. u.
+   2dup + push  over image+  t.WriteChunk  pop ;
+
+: put-region  ( a len)
+   -- cr ." put-region "  2dup swap u. u.
+   256 /mod ( r q)  swap push  ?for   256 put-chunk  next  then
+                         pop  =if  ( rem) put-chunk  drop ^  then  2drop ;
+
+: put  ( 'ram)  ( copy code to target)
+   dup 2@ ( 'ram from to)  u< if
+      dup 2@  over - ( from count)  put-region
+      dup @ ( to)  swap cell+ ! ( set from = to) ^
+   then  drop ;
+
+: copy-ram
+   'zram put  ( crashes if connected chip has different @ram from target)
+    'ram put ;
+
+: hi   copy-ram  GetRegs .regs ;
 
 variable chatting
 
-6 buffer chat-frame  ( local copy of SWI stack frame)
-variable chat-sp   ( current value of target's SP)
-variable chat-hx   ( current HX pointer for indexed reads and writes)
-chat-hx off
+: +chat  chatting on ;
 
-: +wrap  ( a n - a+n fitting in 16 bits)  +  "0ffff and ;
-: match-hx?  ( a - f)  chat-hx @ = ; 
-: update-hx  ( a +a)  +wrap chat-hx ! ;
-: setup-hx  ( a)  dup match-hx?  over 1 update-hx  if drop ^ then  t.SetAddr ;
+: t.ReadW  ( - word)         t.Read  ( hi)  t.Read  ( lo)  hilo> ;
+: t.WriteW  ( word)   >lohi  t.Write ( hi)  t.Write ( lo) ;
 
-: chat-c@  ( a - byte)  setup-hx  t.Read ;
-: chat-c!  ( byte a)    setup-hx  t.Write ;
-
-: chat-@  ( a - word)  chat-c@ ( hi)  t.Read ( lo)  hilo> ;
-: chat-!  ( word a)    >lohi  rot chat-c! ( hi)  t.Write ( lo) ;
-
-: _chat  ( initialise)
-   chatting on
-   t.GetRegs  0 t.SetAddr  chat-hx off ( so they match!) ;
-
-: >chat   ['] chat-c@  is  |c@
-          ['] be-w@    is  |@
-          2 |cell !  ( size of cell) ;
+: >chat  ['] t.SetAddr  is |p!
+         ['] t.GetAddr  is |p@
+         ['] t.Read     is |c*
+         ['] t.ReadW    is |cell*
+                         2 |cell !  ( size of cell) ;
 
 ( Set |@ and |c@ to _some_ form of target fetch. Prefer to get bytes from
   target if we're connected. This word is useful so we can set an initial
@@ -102,115 +142,134 @@ hc08-seekeys 'seekeys !    ( switch over to our bindings)
    then
    drop ( a) ;
 
-key: d  ( a - a 0)  ['] skip+  advance!
-                    ['] skip-  retreat!
-                    ['] 1dump  inspect!  0 ;
+: dumping
+   16 see-skip !
+   ['] skip+  advance!
+   ['] skip-  retreat!
+   ['] 1dump  inspect! ;
 
-key: i  ( a - a 0)  ['] i-skip  advance!
-                    ['] 0       retreat!
-                    ['] 1dis    inspect!  0 ;
+: disasming
+   ['] i-skip  advance!
+   ['] 0       retreat!
+   ['] 1dis    inspect! ;
+
+key: d  ( a - a 0)   dumping  0 ;
+key: i  ( a - a 0)   disasming  0 ;
 
 ( Interactive)
-meta
-: du  ( a - a')    hc08-seekeys 'seekeys !    ( switch over to our bindings)
-                   >target
-                   ['] skip+  advance!
-                   ['] skip-  retreat!
-                   ['] 1dump  inspect ;
+( make an alias so we can still get to it)
+: du-host  -1 see-addr-mask !  dumping  du ;
 
-: dis  ( a - a')   hc08-seekeys 'seekeys !    ( switch over to our bindings)
-                   >target
-                   ['] i-skip  advance!
-                   ['] 0       retreat!
-                   ['] 1dis    inspect ;
-forth
+: du  ( a - a')
+   hc08-seekeys 'seekeys !    ( switch over to our bindings)
+   >target
+   "0ffff see-addr-mask !
+   dumping  inspect ;
 
-( We keep a local copy of the target's registers in the same order as they
-  appear in an exception frame.
+: dis  ( a - a')
+   hc08-seekeys 'seekeys !    ( switch over to our bindings)
+   >target
+   "0ffff see-addr-mask !
+   disasming  inspect ;
 
-  The order, low to high: H CC A X PCH PCL)
-
-( These index into our local chat-frame, _not_ into target memory!)
-: reg  ( offset)  constant  does> @  chat-frame + ;  ( self-index)
-00 reg .H
-01 reg .CC
-02 reg .A
-03 reg .X
-04 reg .PC
-04 reg .PCH
-05 reg .PCL
-
-: .bits8  radix @ push  binary  <# # # # # # # # # #> type  pop radix ! ;
-: w@  ( a - w)  ( like chat-@ above, but local)  dup c@ 8 <<  swap 1+ c@ or ;
-
-: .b  ( a)  c@ .h8_ ;
-: .w  ( a)  w@  .hcell_ ;
-
-: .regs
-   cr  ." V--HINZC  A  H  X   SP   PC"
-   cr  .CC c@ .bits8 space  .A .b  .H .b  .X .b  chat-sp @ .hcell_  .PC .w ;
-
-( These are handy.)
-: pc!  >lohi  .PCH c!  .PCL c! ;
-: hx!  >lohi  .H c!  .X c! ;
-
-( Useful utilities)
-: c@+  ( a - a+1 b)  dup 1+  swap c@ ;
-: c!+  ( b a - a+1)  tuck  c!  1+ ;
-
-: put  ( from to)  ( copy code to target)
-   2dup u< if  over - ( from count)  over t.SetAddr  swap  |+  swap
-   for  c@+ t.Write  next  drop  ^  then  2drop ;
-
-hex
-
-outside
-: equ  ( make a constant in .outside.)
-  current preserve  outside constant ;
-
-assembler
-: label   |here  \o equ ;
-: ;c   __outside ;
-
-compiler
-: ;m   \ ^  __outside ;  ( to exit from macro compilation)
-
-outside
-: ram  ram ;
-: flash  flash ;
-: org  org ;
-: code   \a label  __asm ;
-: macro  current preserve  assembler :  __macro ;
-: var   |ram @  \o equ  |ram +! ( allot) ;
-
-( For forward references)
-: forward    "100 \a ) \a jmp  \a label ;
-: resolve>>  ( src)  |here  swap 2 -  |! ;
-
-: .or   or ;
-: .x  ( like .s)  .X c@ du ;
-
-variable reset
-variable swi
-: vector  ( a)  |here  swap !  __asm ;
-
-.ifdef emulated-swi
-: __swi  ( compile my version instead!)  \o swi @  \a ) \a jsr ;
-.else
-: __swi  ( compile the real thing)  \a swi ;
-.then
 
 forth
 : .r   .regs ;
-: hi   @ram  |ram @  put  \o reset @  pc!  .regs ;
 
-( XXX change this!)
-: chat-run  t.SetRegs  t.Run  t.GetRegs ;
+: _runwait  SetRegs  t.RunWait  GetRegs ;
+: _run      SetRegs  t.Run ;  ( don't wait for target)
 
-: go   chat-run  .regs ;
+: runwait   _runwait  .regs ;
+: call  pc!  runwait ;
+
+: 'reset   \l Vreset image-@ ;
+: reset    'reset  call ;
+: go       'reset  pc!  _run ;  ( when the code you're calling doesn't speak
+                                  the same protocol as running code)
 
 
-: call  pc!  go ;
-: run   \o reset @   call ;
+( Getting ready to test interactively - time for a real meta-compiler!)
 
-: \o  .outside. chain' execute ;
+.ifdef threaded
+
+__meta
+
+2 zvar ip  ( interpretation pointer; _pre_incremented)
+2 zvar rp  ( return stack pointer; also _pre_incremented)
+2 zvar up  ( user pointer; I hope to have multi-tasking support!)
+
+( These are for communication, but not for standalone targets.)
+2 zvar s0  ( data stack pointer - bottom)
+2 zvar sp  ( data stack pointer - top)
+
+__host
+
+0 constant #scratch  ( number of "scratch" bytes on top of target stack)
+
+meta
+: s0  chat-sp @ ;    ( bottom of target's D stack)
+: r0  \m s0  64 - ;  ( bottom of target's R stack; room for 32 values on D)
+: sp!  ( target-sp)    \l sp t.SetAddr t.WriteW ;
+: sp@  ( - target-sp)  \l sp t.SetAddr t.ReadW ;
+
+( XXX Use chat-sp as bottom of stack; swi frame is above it. Push data
+  stack values below chat-sp. Target stub will do -6 # ais to set initial
+  stack, and 6 # ais before returning to monitor - and to host. A kludge,
+  but not being able to set the target SP, this is what we can do.
+
+  Except that doesn't work. It sets SP to the stack _bottom_ not to the
+  top.)
+
+.else
+
+( NOTE: top cell of target stack is _scratch_ - so allocate it but don't
+  copy it back and forth.)
+
+2 constant #scratch  ( number of "scratch" bytes on top of target stack)
+
+meta
+: r0  chat-sp @ ;    ( bottom of target's R stack)
+: s0  \m r0  64 - ;  ( bottom of target's D stack; room for 32 values on R)
+: sp!  ( target-sp)    #scratch -  hx! ;
+: sp@  ( - target-sp)              hx@  #scratch + ;
+
+.then  ( not threaded)
+
+: cell   2  ;
+: cell/  2/ ;
+: cells  2* ;
+: depth  \m s0 \m sp@ -  \m cell/ ;
+: u.  u. ;
+: .  . ;
+: .s  .s ;
+: du   du ;
+: dis  dis ;
+
+forth
+: stack>  ( "push" stack to target)
+   depth 8 min  ( more than that would be silly)
+   \m s0 over \m cells -  dup \m sp! ( top of D stack) t.SetAddr
+   ?for  t.WriteW  next  then  ( copy each cell as a word to D stack) ;
+
+( XXX should this set hx when done?)
+: stack<  ( "pop" stack from target)
+   \m depth 0 max 8 min  ( more than that would be silly)  =if
+   \m sp@ t.SetAddr  dup ( depth)
+   for  t.ReadW  pop 2push  next  ( starting with top, push to R)
+   for  2pop push  next  ( pop from R to reverse order)  ^  then  drop ;
+
+( XXX Should we try to automatically connect to target?)
+: remote  ( cfa)  ( execute target word on stack)
+   chatting @ 0= if  error" not connected to target"  then
+   copy-ram  pc!  stack>  runwait  stack< ;
+
+
+-:  ."  (interacting with target)"  ;
+-:
+      .meta. find  if  execute  ^  then
+    .labels. find  if  execute  remote  ^  then
+    .target. find  if  execute  remote  ^  then
+.ifdef no-number  complain ; .else
+                                                 number ;
+.then
+mode __target

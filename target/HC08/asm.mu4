@@ -9,14 +9,10 @@ loading HC08 assembler
 
 forth
 
-hex  ( it rules!)
+hex
 
--- defer b,  ( so other code can decide how and where code gets assembled)
-          ( XXX: is this necessary? |c! is already deferred...)
--- : b,  .h cr  1 |allot ( so branches will be righter) ;
--- : w,  ( w)  dup 8 u>> b,  b, ;  ( big endian!)
-: b,  |c, ;
-: w,  |, ;
+: b,  \m c, ;
+: w,  \m , ;
 
 : ill   error" illegal addressing mode" ;
 
@@ -59,8 +55,8 @@ d0 constant ix2  9ed0 constant sp2
 e0 constant ix1  9ee0 constant sp1
 f0 constant ix
 
-: u8?  ( u - flag)       100 u< ;  ( if unsigned value fits in 8 bits)
-: s8?  ( n - flag)  80 + 100 u< ;  ( if signed value fits into 8 bits)
+: u8?  ( u - flag)  100 u< ;  ( if unsigned value fits in 8 bits)
+: s8?  ( n - flag)  80 + u8? ;  ( if signed value fits in 8 bits)
 
 assembler
 : )   ( a - a op)  dup u8? if dir ^ then  ext ;
@@ -70,6 +66,8 @@ assembler
                1+  dup u8? if sp1 ^ then  sp2 ;
 : ,x  ( offset - offset op)
    =if ( nonzero)  dup u8? if ix1 ^ then  ix2 ^ then  ( 0) ix ;
+
+: ,x+   \a ,x ;
 
 40 constant .a
 50 constant .x
@@ -86,7 +84,7 @@ forth
 assembler
 80 inh rti
 81 inh rts
-82 inh bgnd  ( XXX but only for S08 - runtime check? or .def S08 ??)
+82 inh bgnd  ( S08 only)
 83 inh swi
 84 inh tap
 85 inh tpa
@@ -113,6 +111,14 @@ assembler
 9d inh nop
 ( 9e - prebyte for SP indexing, and fancy indexed modes for S08 ld/st/cphx)
 9f inh txa
+
+( skip is lda imm, but without the immediate! It eats the following byte;
+  good for skipping single-byte instructions under certain circumstances!
+  And you have to be willing to sacrifice A. I could also define a skipx,
+  but since we're using HX as the stack pointer, I bet its usefulness would
+  be limited.)
+
+0a6 inh skip  
 
 
 comment 1ops-and-2ops
@@ -158,7 +164,7 @@ forth
 assembler
 00 1op neg
 forth
-01 1op cmpne?  ( was _cbeq ) ( sorta special: ix means ix+)
+01 1op _cbeq  ( we handle .a imm and .x imm specially)
 assembler
 ( 02 - mul, div, nsa, daa)
   42 inh mul
@@ -181,10 +187,54 @@ forth
 0f 1op _clr  ( so we can deal with .h clr special case)
 assembler
 
+
 ( 1ops with special cases.)
+
+( cbeq is a funny instruction. It's encoded _mostly_ like a 1op, except
+  that the cbeqa and cbeqx [inherent] variants are actually _immediate_
+  instructions. Also, the ix and ix1 variants are _post-increment_. To make
+  things still crazier, it is a conditional _branch_ instruction, and like
+  all conditional branches we have to rename it, changing the sense of its
+  condition, to work better with if/while/until.
+
+  So we rename it in the following way:
+
+     cbeq  -> <ea> cmpne?    -- <ea> one of: dir, ix1, ix, sp1
+     cbeqa -> xx # cmpne?    -- immediate A
+     cbeqx -> xx # cpxne?    -- immediate X, analogous to cmp/cpx
+
+  We handle the immediate versions specially and then hand off to the 1op
+  _cbeq to handle the other addressing modes.)
+
+: cmpne?  ( cbeq, cbeqa)
+   dup imm = if  drop  41 b, b, ^ then
+   _cbeq ;
+
+: cpxne?  ( cbeqx)
+   dup imm = if  drop  51 b, b, ^ then
+   ill ;
+
 : clr  dup \a .h = if  drop _clrh ^ then  _clr ;
+
 : ldhx   dup imm = if  drop  45 b, w, ^ then
-             dir = if  drop  55 b, b, ^ then  ill ;
+         dup dir = if  drop  55 b, b, ^ then
+         dup ext = if  drop  32 b, w, ^ then     ( S08 only)
+         dup ix  = if 2drop  9eae w, ^ then      ( S08 only)
+         dup ix1 = if  drop  9ece w, b, ^ then   ( S08 only)
+         dup ix2 = if  drop  9ebe w, w, ^ then   ( S08 only)
+         dup sp1 = if  drop  9efe w, b, ^ then   ( S08 only)
+         ill ;
+
+: sthx   dup dir = if  drop  35 b, b, ^ then
+         dup ext = if  drop  96 b, w, ^ then     ( S08 only)
+         dup sp1 = if  drop  9eff w, b, ^ then   ( S08 only)
+         ill ;
+
+: cphx   dup imm = if  drop  65 b, w, ^ then
+         dup dir = if  drop  75 b, b, ^ then
+         dup ext = if  drop  3e b, w, ^ then     ( S08 only)
+         dup sp1 = if  drop  9ef3 w, b, ^ then   ( S08 only)
+         ill ;
 
 forth
 : 2op  constant does> @  ( ea op)  or  dup op,  ea, ;
@@ -240,10 +290,12 @@ forth
 assembler
 10 bit bset  ( XXX: all these bitops should _require_ a dir parameter)
 11 bit bclr
+
 ( Note: these two are _branches_; they compile their opcode and
   memory address but not the branch offset. if, while, or until finishes.
   Also, because we are using these with control structure words, their
   senses have to be complemented.)
+
 01 bit bset?  ( renamed! these need to make sense with if/while/until)
 00 bit bclr?
 
@@ -346,36 +398,35 @@ assembler
   branches leave a fixup offset pointing just _past_ the byte to be fixed
   up.)
 
-forth
-: resolve>  ( src dest)
+assembler
+: >resolve  ( src dest)
    over -  dup s8? not if . error" relative branch out of range" then
-   swap 1-  |c! ;
+   swap 1-  image-c! ;
 
 ( XXX should compile a long branch if necessary; in case of conditionals,
   compile a short branch with the inverse condition _over_ the long branch
   backward.)
 
-: <resolve  ( dest src)  swap resolve> ;
+: <resolve  ( dest src)  swap  \a >resolve ;
 
-assembler
-: if      ( - src)  0 b, ( offset)  |here ;
-: then    ( src)  |here  resolve> ;
+: if      ( - src)  0 b, ( offset)  \m here ;
+: then    ( src)  \m here  \a >resolve ;
 : else    ( src1 - src2)  20 b, ( bra)  \a if  swap  \a then ;
 
-: begin   ( - dest)       |here ;
-: until   ( bit dest)                \a if  <resolve ;
+: begin   ( - dest)       \m here ;
+: until   ( bit dest)                   \a if  \a <resolve ;
 : again   ( dest)         20 b, ( bra)  \a until ;
 : while   ( bit dest - src dest)     \a if  swap ;
 : repeat  ( src dest)                \a again  \a then ;
 
 ( Special case: short branch to subroutine; looks just like a short branch.)
-( XXX - should compile jsr if necessary)
+( XXX DEPRECATED bsr should be replaced by j )
 : bsr  ( dest)  0ad b, ( bsr)  \a until ;
 
 ( Smart jump and call.)
 forth
 : rel8?  ( dest - offset flag)
-   |here 2 + ( just past 2 byte branch)  -  dup s8? ;
+   \m here 2 + ( just past 2 byte branch)  -  dup s8? ;
 
 : rel,  ( dest offset op)  b, b, drop ;
 
@@ -387,13 +438,3 @@ assembler
    dup rel8? if  0ad ( bsr)  rel, ^  then  drop  \a ) \a jsr ;
 
 forth
-
-( What's left?
-  * cbeq
-  * mov
-  * ldhx, sthx, cphx - dir & imm
-  * hcs08 special forms for ldhx, sthx, cphx 
-  Notes:
-  * cbeq dbnz and brset/brclr are misnamed now, since we're using them with
-  if/while/until. What to do about this?
-  )

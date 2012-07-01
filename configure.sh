@@ -38,12 +38,25 @@ ldflags=""
 # there - it's just rather _pointless_ ;-).
 
 if [ "$os" = "Darwin" ]; then
+    archobjs="usb-darwin.o"
     cflags="${cflags} -m32 -mdynamic-no-pic -arch i386 -arch ppc"
-    ldflags="${ldflags} -m32 -arch i386 -arch ppc"
+    ldflags="${ldflags} -m32 -arch i386 -arch ppc -framework CoreFoundation -framework IOKit"
 fi
-if [ "$os" = "Linux" -a "$cpu" = "x86_64" ]; then
-    cflags="${cflags} -m32"
-    ldflags="${ldflags} -m32"
+if [ "$os" = "Linux" ]; then
+    archobjs="usb-linux.o"
+    if [ "$cpu" = "x86_64" ]; then
+        cflags="${cflags} -m32"
+        ldflags="${ldflags} -m32"
+    fi
+    # Try to guess a device to use for serial targets
+    if [ ! -c serial-target ]; then
+        for term in USB0 ACM0 S0; do
+            dev=/dev/tty$term
+            if [ -c $dev ]; then
+                ln -s $dev serial-target
+            fi
+        done
+    fi
 fi
 
 # Figure out which version of sed we're running, so we can properly specify
@@ -61,6 +74,14 @@ EOF
   sedext="-E"
 fi
 
+# Now, put all our variables into an "architecture-specific" make file.
+cat <<EOT > arch.mk
+SEDEXT=     ${sedext}
+ARCH_C=     ${cflags}
+ARCH_LD=    ${ldflags}
+ARCHOBJS=   ${archobjs}
+EOT
+
 # fix up use of sed in scripts/do_sed.sh
 sed ${sedext} \
   -e "s/%sedext%/${sedext}/g" \
@@ -70,7 +91,7 @@ chmod 755 scripts/do_sed.sh
 # Figure out which version of make we're using (most likely GNU or BSD) and
 # set up an appropriate Makefile.
 
-if [ "${gnu}" = "yes" ] || 
+if [ "${gnu}" = "yes" ] ||
    ([ "${bsd}" != "yes" ] &&
     make --version 2> /dev/null | grep -q "GNU Make"); then
   cat <<EOF
@@ -84,9 +105,6 @@ Then run your BSD make.
 
 EOF
   sed ${sedext} \
-    -e "s/%sedext%/${sedext}/g" \
-    -e "s/%archcflags%/${cflags}/g" \
-    -e "s/%archldflags%/${ldflags}/g" \
     -f scripts/make.sed \
     -f scripts/gnu-make.sed \
     -e 's/^### Makefile/### GNU Makefile/' Makefile.in > Makefile
@@ -101,9 +119,6 @@ Then type "gmake" instead of "make".
 
 EOF
   sed ${sedext} \
-    -e "s/%sedext%/${sedext}/g" \
-    -e "s/%archcflags%/${cflags}/g" \
-    -e "s/%archldflags%/${ldflags}/g" \
     -f scripts/make.sed \
     -e 's/^### Makefile/### BSD Makefile/' Makefile.in > Makefile
 fi

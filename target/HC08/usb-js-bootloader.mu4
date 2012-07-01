@@ -1,0 +1,61 @@
+( This file is part of muFORTH: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2012 David Frech. All rights reserved, and all wrongs
+  reversed. (See the file COPYRIGHT for details.)
+
+loading HCS08 JS8/16 ROM bootloader support
+
+( See AN3958 for details on the USB protocol.
+  http://cache.freescale.com/files/microcontrollers/doc/app_note/AN3958.pdf)
+
+hex
+
+variable buf
+
+: usb  ( bmRequest bRequest wValue wIndex wLength 'buffer)
+   usb-js-bootloader  usb-request ;
+
+( Vendor requests supported by the device:)
+
+: u.Program  ( 'target len)  over image+ ( buffer) push  2push
+   40 61 2pop 2dup + 1- swap ( 'target last len)  pop  usb ;
+
+: u.Erase  ( mass erase)
+   40 63 0 0 0  buf  usb ;
+
+: u.Reset
+   40 68 0 0 0  buf  usb ;
+
+: u.CheckCRC
+   40 69 0 0 0  buf  usb ;
+
+: u.Result  ( - result-byte)
+  0c0 6f 0 0 1  buf  usb  buf c@ ;
+
+: check  u.Result dup 01 xor if u. error" flash command failed" then  drop ;
+
+20 constant /row  ( JS bootloader can only handle 32 bytes at a time)
+
+( Lame! Their firmware barfs if you immediately send a Result request after
+  a Program request - even though the docs for the bootloader _claim_ that
+  it only returns a status IN when absolutely done... So we're putting in a
+  4ms sleep between program and check result. It takes about 1.5ms to
+  program 32 bytes, and I know they verify each byte, so triple it. Should
+  be plenty, no?)
+
+: 4ms  0 #4000000 nanosleep ;
+ 
+: row  ( 'target len - 'target+len)
+   cr  ." Programming "  2dup swap u. u.
+   2dup + push  u.Program  4ms  check  pop ;
+
+: flash-region  ( a len)
+   /row /mod  ( r q)  swap push  ?for   /row row  next  then
+                            pop  =if  ( rem) row  drop ^  then  2drop ;
+
+: flash-image
+   cr ." Erasing"  u.Erase check
+   'flash region ( a u)  flash-region
+   0ffac 14 flash-region  ( trims and security bits)
+   0ffc0 40 flash-region  ( vectors)
+   cr ." Resetting device"  u.Reset ;

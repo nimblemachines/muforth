@@ -7,150 +7,511 @@ loading HC08 Forth kernel
 
 __meta
 
-target
-
--- ------------------------------------------------------------------------
--- Stack layout
--- ------------------------------------------------------------------------
-
-( To make use of literals easier, we keep one "scratch" byte allocated on
-  the D stack, at 0,x. Below this is top, and below that, second. Like
-  this:
-
-     |      |      |
-     +------+------+
-  3  |  sl  |  sh  |  4   second
-     +------+------+
-  1  |  tl  |  th  |  2   top
-     +------+------+
-            |  xh  |  0   scratch high
-            +------+                          
-
-  An odd feature of this arrangement is that the data stack is
-  little-endian, so we cannot use 16-bit instructions - like ldhx - to
-  access it.)
-
-macro sh  4 ,x  ;m
-macro sl  3 ,x  ;m
-macro th  2 ,x  ;m
-macro tl  1 ,x  ;m
-macro xh  0 ,x  ;m
-
-
--- ------------------------------------------------------------------------
--- Literal loading.
---
--- The low half is put into A, the high half into xh - 0,x, on the data
--- stack.
---
--- If high half and low half are equal and non-zero,
---    half # lda  xh sta  ( 3 bytes)
--- Otherwise:
---
--- High half:
--- If hi =  0, xh clr          ( 1 byte)
--- If hi =  1, xh clr  xh inc  ( 2 bytes)
--- If hi = -1, xh clr  xh dec  ( 2 bytes)
--- Otherwise, #hi lda  xh sta  ( 3 bytes)
---
--- Low half:
--- If lo = 0,  .a clr   ( 1 byte)
--- Otherwise,  #lo lda  ( 2 bytes)
--- ------------------------------------------------------------------------
-
-macro dpop  ( puts tl into A, th into xh)
-   tl lda  2 # aix  ( th -> xh)  ;m
-
-( XXX inline? It's four bytes, so it's longer than a call..)
-code invert
-   tl com  th com  rts  ;c
-
-code negate
-   tl neg  .a clr  th sbc  th sta  rts  ;c
-
-( Binary ops.)
-code -
-   negate c  ( fall thru)
-
-label +   dpop
-label +_imm     tl add  tl sta
-        xh lda  th adc  th sta  rts  ;c
-
-code  and   dpop
-label and_imm     tl and  tl sta
-          xh lda  th and  th sta  rts  ;c
-
-code  or   dpop
-label or_imm     tl ora  tl sta
-         xh lda  th ora  th sta  rts  ;c
-
-code  xor   dpop
-label xor_imm     tl eor  tl sta
-          xh lda  th eor  th sta  rts  ;c
-
-( Flags and tests.)
-code 0=
-   tl lda  th ora  1 # sub ( Z -> C)  ( fall thru)
-
-label makeflag  ( C -> -1, NC -> 0)
-   .a clr  0 # sbc  tl sta  th sta  rts  ;c
-
-code 0<
-   th lda  .a rol ( N -> C)  makeflag j  ;c
-
-
-( XXX u< and < have to use u> and > to get the correct results...)
-
-code  u<   dpop
-label u<_imm    tl sub
-        xh lda  th sbc
-   ( order of subtract backwards, so use u> )
-   u> if  sec makeflag j  then
-          clc makeflag j  ;c
-
-code  <    dpop
-label <_imm     tl sub
-        xh lda  th sbc
-   ( order of subtract backwards, so use > )
-   > if  sec makeflag j  then
-         clc makeflag j  ;c
-
-code dpush  ( assumes lo in A, hi in xh)
-   -2 # aix ( xh -> th)  tl sta  rts  ;c
-
 ( Stack ops.)
+macro _drop  2 # aix  ;m
+
 code dup  ( a - a a)
-   th lda  xh sta  tl lda  dpush j  ;c
+   th lda  xh sta  tl lda  ( fall through)
+
+label push-lit
+   push-literal  rts  ;c
 
 code over  ( a b - a b a)
-   sh lda  xh sta  sl lda  dpush j  ;c
-
-macro drop  2 # aix  ;m
+   sh lda  xh sta  sl lda  push-lit j  ;c
 
 code nip  ( a b - b)
-   tl lda  sl sta  th lda  sh sta  ( top -> sec)
-   drop  rts  ;c
+   tl lda  sl sta  th lda  sh sta  ( top -> sec)  ( fall through)  ;c
+
+code drop
+   _drop  rts  ;c
 
 code swap  ( a b - b a)
    th lda  xh sta  sh lda  th sta  xh lda  sh sta
    tl lda  xh sta  sl lda  tl sta  xh lda  sl sta  rts  ;c
 
 ( Return stack ops.)
-code _r  ( move to R; needs to be room above return address)
-   th lda  2 ,s sta  tl lda  3 ,s sta  drop  rts  ;c
+code r!  ( move to R; needs to be room above return address)
+   th lda  2 ,s sta  tl lda  3 ,s sta  ' drop j  ;c
 
-code r_  ( move from R; needs to be value above return address)
-   2 ,s lda  xh sta  3 ,s lda  dpush j  ;c
+code r@  ( copy from R; needs to be value above return address)
+   2 ,s lda  xh sta  3 ,s lda  push-lit j  ;c
 
-( >r aka push will _compile_ -2 # ais, then call to _r )
-( r> aka pop will _compile_ call to r_, then 2 # ais )
+( >r aka push will _compile_ -2 # ais, then call to r! )
+( r> aka pop will _compile_ call to r@, then 2 # ais )
 
--- code -rot  ( a b c - c a b)  rot c  ( fall thru)
--- : rot   ( a b c - b c a)  push  swap  pop  swap ;
+code -rot  ( a b c - c a b)
+   here 2 +a c  ( call rot, then fall thru)  ;c
 
-code -rot  |here 2 +a c  ( call rot, then fall thru)
-label rot
-   -2 # ais  _r c  swap c  r_ c  2 # ais  swap j  ;c
+code rot   ( a b c - b c a)
+   -- : rot  >r swap  r< swap ;
+   -2 # ais  ' r! c  ' swap c  ' r@ c  2 # ais  ' swap j  ;c
+
+
+( Unary ops.)
+code invert
+   tl com  th com  rts  ;c
+
+code negate
+   tl neg  begin  .a clr  th sbc  th sta  rts  ;c
+
+code dnegate
+   sl neg         .a clr  sh sbc  sh sta
+                  .a clr  tl sbc  tl sta  again  ;c
+
+
+( Binary ops.)
+code -
+   ' negate c  ( fall thru)  ;c
+
+( litop compiles two entry points: the first expects both values on the
+  stack; the second expects the top value as a literal, in A and xh.
+  Between the two entry points litop compiles  pop-literal  .)
+
+ code +
+litop +
+           tl add  tl sta
+   xh lda  th adc  th sta  rts  ;c
+
+ code and
+litop and
+           tl and  tl sta
+   xh lda  th and  th sta  rts  ;c
+
+ code or
+litop or
+           tl ora  tl sta
+   xh lda  th ora  th sta  rts  ;c
+
+ code xor
+litop xor
+           tl eor  tl sta
+   xh lda  th eor  th sta  rts  ;c
+
+
+( Relational operators.)
+label relop-start
+
+code 0=
+   tl lda  th ora  1 # sub ( Z -> C)  ( fall thru)  ;c
+
+label makeflag  ( C -> -1, NC -> 0)
+   .a clr  0 # sbc  tl sta  th sta  rts  ;c
+
+code 0<
+   th lsl ( N -> C)  makeflag j  ;c
+
+label compare  ( subtract top from second, but don't save the result)
+   sl lda  tl sub  sh lda  th sbc  2 # aix  rts  ;c
+
+( u< and < require that we first push literal values; there is no
+  "shortcut" like with the other 2ops, because the values are in the wrong
+  order!)
+
+( relops are like litops, but have their entry points swapped, with
+  different code in between.
+
+( relop compiles two entry points: the first expects the top value as a
+  literal, in A and xh; the second expects both values on the stack.
+  Between the two entry points litop compiles  push-literal  .)
+
+relop u<
+ code u<
+   compare c  makeflag j  ;c
+
+relop <
+ code <
+   compare c  < if  sec  makeflag j  ( true)  then
+                    clc  makeflag j  ( false)  ;c
+
+label relop-end
+
+
+( Basic double-length - 32-bit - support.)
+code d-
+   ' dnegate c  ( fall thru)  ;c
+
+code d+
+   ds0 lda  dt0 add  ds0 sta
+   ds1 lda  dt1 adc  ds1 sta
+   ds2 lda  dt2 adc  ds2 sta
+   ds3 lda  dt3 adc  ds3 sta  4 # aix  rts  ;c
+
+( Shifts.)
+code 2*
+   tl lsl  th rol  rts  ;c
+
+code 2/
+   th asr  tl ror  rts  ;c
+
+code u2/
+   th lsr  tl ror  rts  ;c  ( I could share ror with 2/, but is it worth it?)
+
 
 ( Memory access.)
 
+( Loading HX from the D stack this way requires that it be big-endian,
+  which in turn requires having two bytes of scratch space.
+
+  th ldhx : 3 bytes, 5~
+  We could also do this:
+     th lda [ H]  tl ldx  .a psh  .h pul  : 6 bytes, 11~  not great!!
+)
+
+code c@  ( a - byte)
+   pshhx  th ldhx  0 ,x lda  pulhx
+   th clr  tl sta  rts  ;c
+
+code c!  ( byte a)
+   sl lda
+   pshhx  th ldhx  0 ,x sta  pulhx
+   4 # aix  rts  ;c
+
+code @  ( a - word)
+   -2 # ais  ( room for hi byte; also so push-constant can call fetch)
+   pshhx  th ldhx
+label fetch        0 ,x lda ( hi)  2 ,s sta
+                   1 ,x lda ( lo)            pulhx
+   tl sta  .a pul  th sta  1 # ais  rts  ;c
+
+code !  ( word a)
+   sh lda  .a psh  sl lda
+   pshhx  th ldhx            1 ,x sta ( lo)
+                   2 ,s lda  0 ,x sta ( hi)  pulhx
+   .a pul  4 # aix  rts  ;c
+
+
+( Common support - threaded- or ;code-style - for constants.)
+label push-constant  ( - word)
+   -2 # aix
+   pshhx  2 ,s ldhx  fetch j  ;c
+
+
+( do, loop, +loop)
+
+( do/loop stack frame on S:
+
+     |       |       |
+     +-------+-------+
+  4  |  ixh  |  ixl  |  5   index == 8000 + start-limit to 8000
+     +-------+-------+
+  2  |  deh  |  del  |  3   delta == 8000 + limit
+     +-------+-------+
+  0  |  rah  |  ral  |  1   return address
+     +-------+-------+
+)
+
+
+( Note: caller has to do -4 # ais before calling (do)
+ code (do)   ( limit start)
+litop (do)
+label #(do)  -- for test code
+           tl sub  5 ,s sta
+   th lda  "80 # eor  th sta  ( delta = "8000 + limit)
+   xh lda  th sbc  4 ,s sta   ( index = start-delta)
+   ' r! j  ( Move last to R. This has to be a _jump_!!)  ;c
+
+( Note: caller has to do 4 # ais after calling (loop or (+loop)
+ code (+loop)  ( incr)
+litop (+loop)
+label #(+loop)  -- for test code, and (loop)
+   ( Add incr to index; overflow means we've crossed threshold)
+   ( Be careful: sta clears V bit!)
+           5 ,s add  5 ,s sta
+   xh lda  4 ,s adc  .a psh  tpa .a rol ( V -> C)
+   .a pul  4 ,s sta  rts  ;c
+
+code (loop)
+   ( Add one to index; overflow means we've crossed threshold)
+   xh clr  1 # lda  ( load constant 1)  #(+loop) j  ;c
+
+code i
+   ( Push index + delta of inner do loop.)
+   3 ,s lda  5 ,s add  xl sta  2 ,s lda  4 ,s adc
+label push-result
+   -2 # aix  th sta  rts  ;c
+
+code j
+   ( Push index + delta of second enclosing do loop.)
+   7 ,s lda  9 ,s add  xl sta  6 ,s lda  8 ,s adc
+   push-result j  ;c
+
+
+( for, ?for, next)
+
+( Pop the stack if top is zero; state of Z flag reflects top of stack.
+  Currently used as set up for ?for.)
+
+code ?zero
+   tl lda  th ora  0= if  2 # aix  then  rts  ( Z set)  ;c
+
+code (next)
+   ( Decrement count on S stack.)
+   3 ,s lda  1 # sub  3 ,s sta
+   2 ,s lda  0 # sbc  2 ,s sta
+   3 ,s ora  1 # sub ( Z -> C)  rts  ;c
+
+
+{
+
+( Control structures.)
+
+( If the last compiled call was to a relational operator, it left a flag
+  value on the stack [-1 true, 0 false], and set the carry flag accordingly
+  [carry is SET for true]. In order to test this truth value, compile a
+  "carry SET if" clause, which will compile a branch if carry CLEAR. Like
+  all tests and jumps, the sense of the branch is opposite that of the
+  test.
+
+  If we didn't just call a relop, compile code to test the top of the
+  stack, and compile a "0!= if" clause, which will compile a branch if NOT
+  zero.
+
+  In both cases, if passed-in pop? param is true, compile code to pop the
+  stack right before compiling the branch.)
+
+forth
+: ?pop   if  code{  2 # aix }  then ;
+: ?relop  ( pop?)
+   called  \l relop-start  \l relop-end  within
+                        if  ?pop  code{  CS  if } ^  then
+   code{  tl lda  th ora }  ?pop  code{  0!= if } ;
+
+meta-compiler
+: =if   ( - src)   0 ?relop ;
+: if    ( - src)  -1 ?relop ;
+: then  ( src)          code{  then } ;  ( resets last-code)
+: else  ( src0 - src1)  code{  else } ;
+
+: begin   ( - dest)     code{  begin } ;
+: =until  ( dest -)  \mc =if  \a <resolve ;
+: until   ( dest -)   \mc if  \a <resolve ;
+: again   ( dest -)     code{  again } ;
+: =while  ( dest - src dest)  \mc =if  swap ;
+: while   ( dest - src dest)   \mc if  swap ;
+: repeat  ( src dest -)   \mc again  \mc then ;
+
+( n for .. next         goes n times; 64 Ki if n=0 )
+( n ?for .. next then   goes n times; 0 if n=0 )
+
+: for     ( - dest)      code{  -2 # ais  \t r! c }  \mc begin ;
+: ?for    ( - src dest)  code{  \t ?zero  c  0!= if }  \mc for ;
+: next    ( dest -)      code{  \t (next) c }   code{  CS until  2 # ais } ;
+
+( do, loop, +loop)
+: do      ( - src dest)   code{  -4 # ais }  \mc (do)  \mc begin ;
+: loop    ( src dest)     code{  \t (loop) c }  code{  CS until  4 # ais } ;
+: +loop   ( src dest)           \mc (+loop)     code{  CS until  4 # ais } ;
+forth
+
+}
+
+
+.ifdef toy-multiply
+
+( For fun, multiply-by-shifting. So I can compare with multiply using the
+  built-in 8x8->16 instruction.)
+
+code umul  ( u8_multiplier u8_multiplicand - u16)
+   9 # lda
+label umul_n
+   .a psh ( count)
+   begin
+      sl ror ( shift mer right; low bit into C)
+   0 ,s decz? if  .a pul  2 # aix  rts  then
+      sh lda ( accum hi)  CS if  tl add ( multiplicand)  then
+      .a ror  sh sta ( shift accum)
+   again  ;c
+
+code smul  ( s8_multiplier u8_multiplicand - s16)
+   7 # lda  umul_n c  ( it pops the stack, so change offsets)
+   tl lda ( multiplier)  .a lsr ( lo bit into C)
+   xh lda ( accum hi)  CS if  xl sub ( multiplicand)  then
+   .a ror  th sta ( shift accum)  tl ror ( shift multiplier)  rts  ;c
+
+.then  ( toy multiply)
+
+( Correct version)
+code um*  ( umer umcand - uprodlo uprodhi)
+   ( Move multiplicand to S and zero accumulator)
+   16 # lda ( loop count)  .a psh
+   tl lda  .a psh  th lda  .a psh  tl clr  th clr
+   sl lda ( multiplier)
+   begin
+      .a lsr ( lo bit into C)  .a clr
+      CS if  1 ,s lda ( mcand lo)        tl add ( accum lo)  tl sta
+             0 ,s lda ( mcand hi)  then  th adc ( accum hi)
+
+      ( Now shift right, carry, accum, and mer, high to low)
+      .a ror  th sta  tl ror  sh ror  sl lda  .a ror  sl sta
+   2 ,s decz? until  3 # ais  rts  ;c
+
+( Also correct!)
+code um*2  ( umer umcand - uprodlo uprodhi)
+   ( Move multiplicand to S and zero accumulator)
+   17 # lda ( loop count)  .a psh
+   tl lda  .a psh  th lda  .a psh  tl clr  th clr
+   begin
+      sh ror  sl ror ( rotate mer right 1 bit into C)
+   2 ,s decz? if  3 # ais  rts  then
+      .a clr
+      CS if  1 ,s lda ( mcand lo)        tl add ( accum lo)  tl sta
+             0 ,s lda ( mcand hi)  then  th adc ( accum hi)
+
+      ( Now shift carry & accum right 1 bit, high to low)
+      .a ror  th sta  tl ror
+   again  ;c
+
+( Works, and only takes one jump per loop instead of two.)
+code um*3  ( umer umcand - uprodlo uprodhi)
+   ( Move multiplicand to S and zero accumulator)
+   17 # lda ( loop count)  .a psh
+   tl lda  .a psh  th lda  .a psh  tl clr  th clr
+forward prime-pump
+   begin
+      .a clr
+      CS if  1 ,s lda ( mcand lo)        tl add ( accum lo)  tl sta
+             0 ,s lda ( mcand hi)  then  th adc ( accum hi)
+
+      ( Now shift carry & accum right 1 bit, high to low)
+      .a ror  th sta  tl ror
+prime-pump resolve>>
+      sh ror  sl ror ( rotate mer right 1 bit into C)
+   2 ,s decz? until  3 # ais  rts  ;c
+
+( What about using the chip? The above routines clock in at about 760~!
+  Ouch. How fast can we go using the chip's 8x8 multiply?
+
+  Unfortunately it uses the X register, so we can't do this on the X stack.
+  We have to move everything to S or zram, do the multiply, and then move
+  back. Even so, can it be worse that the - arguably simple and elegant -
+  loop above?
+
+  Stack layout:)
+
+macro s_sl   8 ,s  ;m -- sl
+macro s_sh   7 ,s  ;m -- sh
+macro s_tl   6 ,s  ;m -- tl
+macro s_th   5 ,s  ;m -- th
+macro s_p0   4 ,s  ;m -- prod0 - lsb
+macro s_p1   3 ,s  ;m -- prod1
+macro s_p2   2 ,s  ;m -- prod2
+macro s_p3   1 ,s  ;m -- prod3 - msb
+        --   0 ,s  ;m -- saved X
+
+code um*4  ( umer umcand - uprodlo uprodhi)
+   ( Move everything to S)
+   sl lda  .a psh  sh lda  .a psh  tl lda  .a psh  th lda  .a psh
+   ( Room for result - on S)  -4 # ais
+   ( We need it for mul, so push X)  .x psh
+             s_sh ldx  mul ( th*sh)  s_p2 sta  s_p3 stx
+   s_tl lda  s_sl ldx  mul ( tl*sl)  s_p0 sta  s_p1 stx
+   s_tl lda  s_sh ldx  mul ( tl*sh)
+   s_p1 add  s_p1 sta  txa  s_p2 adc  s_p2 sta  CS if  s_p3 inc  then
+   s_th lda  s_sl ldx  mul ( th*sl)
+   s_p1 add  s_p1 sta  txa  s_p2 adc  s_p2 sta
+                               .x pul  .a pul ( s_p3)  0 # adc
+   ( Move result back to X stack)
+   th sta  .a pul  tl sta  .a pul  sh sta  .a pul  sl sta
+   4 # ais  rts  ;c
+
+( Another version using mov ,x+ to move values between X stack and zram
+  scratch space. For every ",s" in the above code we save a byte and a
+  cycle by switching to zram - direct - accesses.
+
+  Scratch space layout - low to high memory, unlike stack picture above:)
+
+1 zvar x_p3   -- prod3 - msb
+1 zvar x_p2   -- prod2
+1 zvar x_p1   -- prod1
+1 zvar x_p0   -- prod0 - lsb
+1 zvar x_th   -- th
+1 zvar x_tl   -- tl
+1 zvar x_sh   -- sh
+1 zvar x_sl   -- sl
+
+code um*5  ( umer umcand - uprodlo uprodhi)
+   ( Move everything to zpage and push X)
+   #scratch # aix  ( so HX points _at_ th)
+   ( We need it for mul, so push X - when it points to tl)
+   0 ,x  x_th ) mov  .x psh  0 ,x  x_tl ) mov
+   0 ,x  x_sh ) mov          0 ,x  x_sl ) mov
+
+   x_th ) lda  x_sh ) ldx  mul ( th*sh)  x_p2 ) sta  x_p3 ) stx
+   x_tl ) lda  x_sl ) ldx  mul ( tl*sl)  x_p0 ) sta  x_p1 ) stx
+   x_tl ) lda  x_sh ) ldx  mul ( tl*sh)
+   x_p1 ) add  x_p1 ) sta  txa  x_p2 ) adc  x_p2 ) sta  CS if  x_p3 ) inc  then
+   x_th ) lda  x_sl ) ldx  mul ( th*sl)
+   x_p1 ) add  x_p1 ) sta  txa  x_p2 ) adc  x_p2 ) sta  x_p3 ) lda  0 # adc
+
+   ( Move result back to X stack)
+   .x pul  ( points to tl)
+   x_p2 ) 0 ,x mov  x_p1 ) 0 ,x mov  x_p0 ) 0 ,x mov
+   #scratch 4 + negate # aix  th sta  rts  ;c
+
+( "Short" multiply: 16x16->16. Much faster and still useful.)
+code *
+   ( Move everything to zpage and push X)
+   #scratch # aix  ( so HX points _at_ th)
+   ( We need it for mul, so push X - when it points to sl)
+   0 ,x  x_th ) mov          0 ,x  x_tl ) mov
+   0 ,x  x_sh ) mov  .x psh  0 ,x  x_sl ) mov
+
+   x_tl ) lda  x_sl ) ldx  mul ( tl*sl)  x_p0 ) sta  x_p1 ) stx
+   x_tl ) lda  x_sh ) ldx  mul ( tl*sh)  x_p1 ) add  x_p1 ) sta
+   x_th ) lda  x_sl ) ldx  mul ( th*sl)  x_p1 ) add
+
+   ( Move result back to X stack)
+   .x pul  ( points to sl)  x_p0 ) 0 ,x mov
+   #scratch 2 + negate # aix  th sta  rts  ;c
+
+
+( Now, to tackle _divide_.)
+
+( First, the bit-by-bit shift-and-subtract method.
+
+  This is essentially the reverse of the multipy's add-and-shift - as you
+  would expect. However, with multiply we get lucky: for every one bit in
+  the multiplier, we add the multiplicand into an accumulator, and then
+  immediately shift both the accumulator and the multiplier together, one
+  bit to the right. Our add produces 17-bits but we immediately shift the
+  generated carry in at the left, so we don't have to save it.
+
+  With divide we don't get so lucky. We first shift _left_, creating a
+  17-bit value - including the carry bit. We then test to see if
+  subtracting the divisor causes underflow; if it does _not_, we actually
+  do the subtract, put a 1 into the space that shifting created [in the
+  lowest bit of the quotient] and then shift left again. The trouble is
+  that we do the shift from low to high, generating a carry - which we have
+  to save somewhere - and then do the compare, again starting with the less
+  significant byte. So we con't optimise the way we can with multiply, and
+  the code is clumsier than I would like.)
+
+( NOTE 1: Unlike the published fig-FORTH code for u/, which calculates the
+  division of a 31-bit unsigned dividend by a 16-bit unsigned divisor, I
+  want to do a full 32-bit division. Leaving off that high-order bit allows
+  an optimisation: they only have to subtract from 16 bits instead of 17,
+  so things can be simpler.)
+
+( NOTE 2: the order of the results is _opposite_ that of fig-FORTH and
+  FORTH-83! I think I understand why they want to have the quotient on
+  top - it's "more significant" - but in the shift-and-subtract method the
+  quotient naturally ends up in the _lower_ half of the result.
+
+  In the 6502 assembler source for fig-FORTH's u/ the high and low halves
+  of the dividend are swapped before entering the loop. This is how they
+  end up with quot and rem in the right order at the end.)
+
+( Dividend is in sh:sl:s3:s2
+  Divisor  is in th:tl)
+
+code um/mod  ( ud u - uquot urem)
+   16 # lda  .a psh ( loop count)
+   begin
+      ds2 lsl  ds3 rol  sl rol  sh rol  .a clr  .a rol ( C -> A)  .a psh ( save)
+       sl lda   tl sub  sh lda  th sbc  .a pul  0 # sbc  ( compare)
+      u>= if ( no borrow: do subtract, shift 1 bit into lsb)
+        ds2 inc ( shift in 1)
+         sl lda  tl sub  sl sta
+         sh lda  th sbc  sh sta  then
+   0 ,s decz? until  .a pul
+   2 # aix  rts  ;c

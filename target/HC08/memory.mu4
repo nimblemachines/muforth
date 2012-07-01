@@ -18,52 +18,106 @@ loading HC08 memory image
 
 64 Ki constant #image
 #image buffer 'image
-: |+  'image + ;
 
-: image-c@  |+ c@ ;
+: wrap   [ #image 1- ] and ;
+: +a  ( a1 a2 - sum)  +  wrap ;  ( add and wrap to 16bit address)
 
-( HC08s are big-endian, like all Motorola/Freescale processors!)
-: be-w@     dup |c@ ( hi) 8 <<  swap 1+ |c@ ( lo)  or ;
+: image+  ( target - host)  wrap  'image + ;
+: image-  ( host - target)        'image -  wrap ;
 
-: >image   ['] image-c@  is  |c@
-           ['] be-w@     is  |@
-           2 |cell !  ( size of cell) ;
->image
-
-: |c!  |+ c! ;
-: |!  ( w a)  push  dup 8 >> r@ ( hi) |c!  pop 1+ ( lo) |c! ;
-
-( Dictionary operators.)
-variable |h   ( image dictionary pointer pointer; points to one of:)
-   2variable |flash   ( flash pointer, origin)
-   2variable |ram     ( ram pointer, origin)
-: ram     |ram    |h ! ;
-: flash   |flash  |h ! ;
-: org    ( a) ( set dict pointer)  |h @  ! ;
-
-0 .if
-( XXX - necessary?)
-: |aligned  1 + -2 and ;
-: |align  |h @ |aligned |h ! ;
+( DEBUG: Define show-comma to show code as it's compiled.)
+.ifdef show-comma
+: .debug-comma  dup  .h8_ ;
+.else
+: .debug-comma ;
 .then
 
-( DEBUG: show code as it's compiled)
-: .h  radix preserve  hex <# # # #> type space ;
+( DEBUG: Define show-! to show writes to image.)
+.ifdef show-!
+: .debug-c!   cr  ( byte addr)  2dup .hcell_  .h8 ;
+: .debug-w!   cr  ( word addr)  2dup .hcell_  .hcell ;
+.else
+: .debug-c! ;
+: .debug-w! ;
+.then
 
-: |here  ( - a)  |h @ @ ;
-: |allot ( n)    |h @ +! ;
-: |c,    ( ch)   dup .h  |here |c!  1 |allot ;
-: |,     ( n)    ( |align)  dup 8 >> |c, ( hi)  |c, ( lo) ;
+: image-c@             image+ c@ ;
+: image-c!  .debug-c!  image+ c! ;
 
-( return the origin & number of bytes in region)
-: |region  ( - a u)  |h @   2@  ( origin ptr)  over - ;
+( HC08s are big-endian, like all Motorola/Freescale processors!)
+: image-@  ( a - w)             image+ bew@ ;
+: image-!  ( w a)    .debug-w!  image+ bew! ;
 
-( Initialization.)
-: wipe   'image  #image  ( erase)   "55  fill ;
-: origin!  ( ram-origin flash-origin)
-   dup |flash 2!  dup |ram 2! ( set ptr and origin to origin) ;
+: image-p@         p@ image- ;
+: image-p!  image+ p! ;
 
-( Erase image, default origins to @ram and @flash, resp.)
-wipe  @ram @flash origin!
+: target-*   ( - cell)  c* c* hilo> ;  ( big-endian 16-bit word)
+
+: >image  ['] image-p!  is |p!
+          ['] image-p@  is |p@
+          [']       c*  is |c*
+          ['] target-*  is |cell*
+                         2 |cell !  ( size of cell) ;
+>image
+
+( Dictionary operators.)
+variable h   ( image dictionary pointer pointer; points to one of:)
+   2variable 'xram    ( xram pointer, origin)
+   2variable 'zram    ( zram pointer, origin)
+   2variable 'ram     ( ram pointer, origin)
+   2variable 'flash   ( flash pointer, origin)
+
+: xram    'xram   h ! ;  ( critical variables, zero page)
+: zram    'zram   h ! ;  ( zero page)
+: ram     'ram    h ! ;  ( non-zero page)
+: flash   'flash  h ! ;
+: in-flash?  h @  'flash = ;
+: in-ram?    in-flash? not ;
+: org    ( a) ( set dict pointer)  h @  ! ;
+
+meta
+: here  ( - a)  h @ @ ;
+: allot ( n)    h @ +! ;
+: c,    ( ch)   .debug-comma  \m here image-c!  1 \m allot ;
+: ,     ( n)    ( \m align)  >lohi  \m c, ( hi)  \m c, ( lo) ;
 
 forth
+( return the origin & number of bytes in region)
+: region  ( 'region - a u)  2@  ( origin ptr)  over - ;
+
+( Initialization.)
+: wipe   'image  #image  ( erase)   "ff  fill ;
+
+: xram!    ( xram-origin)  dup 'xram  2!  ( set ptr and origin to origin) ;
+: zram!    ( zram-origin)  dup 'zram  2!  ( set ptr and origin to origin) ;
+: ram!      ( ram-origin)  dup 'ram   2!  ( set ptr and origin to origin) ;
+: flash!  ( flash-origin)  dup 'flash 2!  ( set ptr and origin to origin) ;
+
+( xram is a bit odd. Sometimes we need to set aside a few bytes of zram
+  for flash-based code - like the USB chat and BDM code - and never
+  allocate these bytes to code or variables that we need while doing
+  interactive development.
+
+  My solution is to break the zero-page ram into two spaces: zram and xram.
+  zram is "application" ram, and is allocated bottom up, from the @ram
+  origin. xram is the "system" ram and is allocated top down, from 0100.
+
+  Routines that might be necessary, say for programming flash, are by
+  default placed at the "ram" origin - 0100. In the case of the USB code,
+  we take advantage of this fact, and allow the write memory USB request to
+  specify a wIndex value. 0 means "just copy the byte into memory";
+  non-zero means "run the flash code at 0100 using wIndex as the command
+  byte". This way it is almost trivial to run flash programming and erase
+  commands via USB.
+
+  But having these things be at arbitrary addresses seemed brittle and
+  error-prone. This way they are at least somewhat fixed, and the memory
+  allocation code checks to see if zram runs into xram.
+
+  The best way to use these is to always load the "system" code even if
+  it's already in flash, just so your code "knows" how much xram is
+  allocated.)
+
+( Erase image, default origins: zram to @ram, ram and xram to "100, and
+  flash to @flash.)
+wipe  @ram zram!  "100 dup xram! ram!  @flash flash!

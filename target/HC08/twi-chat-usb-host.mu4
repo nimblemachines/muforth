@@ -1,0 +1,64 @@
+( This file is part of muFORTH: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2012 David Frech. All rights reserved, and all wrongs
+  reversed. (See the file COPYRIGHT for details.)
+
+loading TWI chat over USB (host)
+
+( Host-side code to drive the TWI chat code in
+  target/HC08/twi-chat-usb-core.mu4.)
+
+hex
+
+-- : usb  ( bmRequest bRequest wValue wIndex wLength 'buffer)
+
+( Commands:
+0-3f  Bye        - exit chat code and return to chat loop
+  40  Read       - send cmd, receive data bytes
+  41  ReadAcks   - read back collected ACKs
+  42  Write      - send cmd, data bytes, collect ACKS
+  43  Ping       - send start bit, slave addr, stop, return ACK bit
+)
+
+( Control reads)
+: twi.Read  ( cmd slave len buf)  2push  2push
+   0c0 40  2pop  2pop  usb ;
+
+: twi.ReadAcks  ( len buf)  2push
+   0c0 41   0 0  2pop  usb ;
+
+: twi.Ping  ( slave - ack)  push
+   0c0 43   0 pop  1 pad  usb  pad c@ ;
+
+( Control writes)
+: twi.Write  ( cmd slave len buf)  2push  2push
+    40 42  2pop  2pop  usb ;
+
+: twi.Bye  40 0  0 0  0 0  usb ;
+
+: twi.Hello  ( start the TWI chat firmware on the connected device)
+   0f400 u.SetPC u.Run ;
+
+
+( The following is code to talk to my simple "debug stub" running on an
+  Atmel AVR, using its default slave address, 7f.)
+
+: avr-twi-read   ( len cmd)  7f ( slave)  rot pad  twi.Read ;
+: avr-twi-write  ( len cmd)  7f           rot pad  twi.Write ;
+
+( Because we're using the Z register on the AVR as a memory address
+  pointer, let's prefix these words with 'z'. It's easy to type and sounds cool.)
+
+( Here and elsewhere we use * to mean "fetch byte with post-increment",
+  cell* to mean "fetch cell with post-increment", and & to be the store
+  versions of these)
+
+: z!  ( addr)    pad lew!  2  10 avr-twi-write ;
+: zp*      ( - b)          1  11 avr-twi-read  pad c@ ;    ( program memory)
+: zpcell*  ( - w)          2  11 avr-twi-read  pad lew@ ;  ( program memory)
+: z*       ( - b)          1  12 avr-twi-read  pad c@ ;
+: zcell*   ( - b)          2  12 avr-twi-read  pad lew@ ;
+: z&       ( b)  pad c!    1  13 avr-twi-write ;
+: zcell&   ( b)  pad lew!  2  13 avr-twi-write ;
+: zgo                      0  14 avr-twi-write ;  ( jump to addr in Z)
+: zbye                     0  15 avr-twi-write ;  ( exit from chat)

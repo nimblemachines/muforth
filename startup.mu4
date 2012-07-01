@@ -289,7 +289,7 @@ forth
 ( For comparison, the regular : compiler is defined thus:
 :  :   new <:> -] ; )
 
- 
+
 ( Dictionary structure words. Remember that link fields point to the last
   cell - suffix - of a name, which precedes the link field. Roughly, a
   dictionary entry is the following cell-sized things: suffix, link, code;
@@ -303,14 +303,17 @@ forth
   address.)
 
 : >link   ( 'code - 'link)  cell- ;
+: link>   ( 'link - 'code)  cell+ ;
 : >name   ( 'code - a u)   >link  link>name  ;
 : >body   ( 'code - 'body)  cell+  cell+ ;
+: body>   ( 'body - 'code)  cell-  cell- ;
+: ip>     ( 'ip   - 'code)  cell- ;
 
 
 ( create and does>. Everything old is new again. ;-)
 
 ( 2010-nov-30. After many iterations, I have finally arrived at fig-forth's
-  implementation of create/does>.  The only difference is the names of the
+  implementation of create/does>. The only difference is the names of the
   words.)
 
 ( In fig, there are several kinds of words:
@@ -344,14 +347,14 @@ forth
   defining word].)
 
 
-( last contains the address of the does ip of the last <does> word defined)
+( last-created contains the ip address of the last <does> word defined)
 here 0 ,
-: last  [ ] ;  ( make the variable by hand!)
+: last-created  [ ] ;  ( make the variable by hand!)
 
 ( does> fixes up the does ip of the last <does> word to point to the code
   after "does>" in the caller.)
 
-: does>  pop  last @  ! ;
+: does>  pop  last-created @  ! ;
 
 
 ( The underlying engine for all "create/does>" words. It allocates no data
@@ -362,9 +365,9 @@ here 0 ,
   twice.)
 
 : (create)   ( a u)
-   (new) <does>
-   here last !  0 , ( placeholder for does ip)
-   does> ;
+   (new)  <does>
+   here last-created !  0 , ( placeholder for does ip)
+   does> ;  ( make the does ip point *somewhere*)
 
 ( Everything is defined in terms of `create'.)
 : create   token (create) ;
@@ -437,7 +440,10 @@ no-self-comments
   architecture-specific code!)
 
 variable undeferred  ' nope undeferred !
-: defer  create  undeferred @ ,  does> @execute ;
+variable last-deferred-executed
+
+: defer  create  undeferred @ ,
+         does> dup last-deferred-executed !  @execute ;
 
 ( Syntactic sugar - from Rod Crawford's 4ARM.)
 : now   '  ;
@@ -761,12 +767,16 @@ variable out-channel
 
 variable charbuf  ( for >emit and <key)
 
-( XXX handle #CR and #BS _here_ instead of in separate words?)
-: >emit  ( char channel)
-   1 over >col +!  ( increment column count)
-   swap charbuf c!  @ ( fd)  charbuf 1 write ;
+( >emit writes a char to a file descriptor)
+: >emit  ( char fd)
+   swap charbuf c!  ( fd)  charbuf 1 write ;
 
-: emit   ( char)  out-channel @  >emit ;
+( XXX handle #CR and #BS _here_ instead of in separate words?)
+( >emit+ writes a char to a channel, and increments column count)
+: >emit+  ( char channel)
+   1 over >col +!  ( increment column count)  @ ( fd)  >emit ;
+
+: emit   ( char)  out-channel @  >emit+ ;
 
 ctrl J  constant #LF   --  10
 ctrl M  constant #CR   --  13
@@ -828,7 +838,7 @@ ctrl M  constant #CR   --  13
 ( Since we're putting "thousands" separations in here as well, I thought I
   might increase the size to an over-generous 128 bytes.)
 
-128 allot  here constant pad   ( 64 digits + sign + alignment)
+: pad   here 128 + ;  ( 64 digits + sign + alignment)
 
 variable hld
 : hold   -1 hld +!  hld @ c! ;
@@ -922,7 +932,7 @@ compiler
 ( Interpreted strings. Strings that return an address always get compiled!)
 forth
 : z"  ( - z")   char "  string, ;
-:  "  ( - a c)  \f z" count  ;  ( ANS)
+:  "  ( - a c)  \f z"  count ;  ( ANS)
 : ."    char " parse ( a #)  type  ;  ( not compiled)
 
 ( Words that do something with each word being defined.)
@@ -939,7 +949,7 @@ being-defined -redef
 -: ( a u)   radix preserve hex  [ ' #s >body ] preserve -sep
    out-channel preserve >stderr
    out-channel @ >col @ if cr then
-   depth . current @ ( chain) u. here u.  2dup type cr ;
+   depth 2 - . current @ ( chain) u. here u.  2dup type cr ;
 being-defined -v  ( be verbose)
 -- -v
 
@@ -951,7 +961,8 @@ being-defined -v  ( be verbose)
   undeferred, so that defer'ed words that never get set to anything will
   complain when used.)
 
--:  error" undefined deferred word" ;  undeferred !
+-:  last-deferred-executed @  body> >name type
+    error" called undefined deferred word" ;  undeferred !
 
 
 ( !!!!-------------------- Add changes below this line -------------------!!!!)
@@ -1036,11 +1047,13 @@ compiler
 : .else   eat ;
 : .then   ;
 
-( Consume a token, search .forth., and return only the "found or not" flag.)
-: .def  .forth. token' nip  =if ^ then  nip ;
+( Consume a token, search a chain, and return only the "found or not" flag.)
+: .contains  ( chain - found)  token' nip  =if ^ then  nip ;
+: .def  .forth. \ .contains ;
+: .ndef   \ .def  0= ;
 
-: .ifdef   \ .def      \ .if ;
-: .ifndef  \ .def  0=  \ .if ;
+: .ifdef   \ .def   \ .if ;
+: .ifndef  \ .ndef  \ .if ;
 
 conditional
 ( nesting - nesting exitflag)
@@ -1057,9 +1070,14 @@ forth
 : .then   ;
 
 : .def     \ .def ;
+: .ndef    \ .ndef ;
 : .ifdef   \ .ifdef ;
 : .ifndef  \ .ifndef ;
+: .contains  \ .contains ;
 
+: .and  and ;
+: .or   or ;
+: .not  0= ;
 
 ( IEC standard binary prefixes:
   http://physics.nist.gov/cuu/Units/binary.html)
@@ -1071,7 +1089,7 @@ forth
 
 ( I've left out the SI prefixes:
   http://physics.nist.gov/cuu/Units/prefixes.html)
-  
+
 ( I'm not sure how useful they are for muforth, and I want to prevent the
   possible confusion of using "M" thinking it means 2^20 rather than 10^6.)
 
@@ -1106,7 +1124,7 @@ forth
    radix preserve  decimal  <#  "hold  ( zone)  ||  <hh:mm:ss>  ||  <date>  #> ;
 
 : (short-time")  ( year month mday yday hour min sec 'zone #zone - a #)
-   radix preserve  decimal  <#  2drop ( zone)  <hh:mm>  ||  <date>  #> ; 
+   radix preserve  decimal  <#  2drop ( zone)  <hh:mm>  ||  <date>  #> ;
 
 : (date")  ( year month mday yday hour min sec 'zone #zone - a #)
    radix preserve  decimal  <#  2drop 2drop drop  <date>  #> ;
@@ -1187,38 +1205,55 @@ variable zloading    ( C-string name of file being loaded)
 ( XXX I was hoping to use on-exit to check stack depths, but I can't seem
   to get them to reconcile. More research is indicated. ;-)
 
+( raw-load-file doesn't preserve many settings, so it's useful for loading
+  _settings_ files that will have durable effects on the environment.)
+
+: raw-load-file  ( z")
+   line preserve  1 line !
+   out-channel preserve  >stderr
+   [ ' ?show-stack >body ] preserve  -stack
+   open-file-ro ( fd)  dup on-exit close-file
+   read-file ( a u)  evaluate ;
+
 : load-file  ( z")
    depth  on-exit check-depth
    -- depth  on-exit show-depths
-   dup open-file-ro ( fd)  dup on-exit close-file
-   zloading preserve  swap zloading !
-   line preserve  1 line !
+   zloading preserve  dup zloading !
    radix preserve  decimal
-   out-channel preserve  >stderr
-   [ ' ?show-stack >body ] preserve  -stack
-   read-file ( a u)  evaluate ;
+   state preserve  \ [   ( back to forth!)
+   current preserve  forth
+   raw-load-file ;
 
-( Consumes a token - a filename - and loads it.)
+( Consumes a token - a filename - and loads it, preserving settings.)
 : ld  token, load-file ;
 
+( Ditto, but allows durable changes to settings.)
+: ld!  token, raw-load-file ;
+
+defer load-stats  ( show space consumed, or simply close double parens)
 ( how much dictionary space was consumed?)
-: show-consumed  ( here)
+-: ( show-consumed)  ( here)
    radix preserve  decimal
    out-channel preserve  >stderr
-   here swap - .  ." bytes ))" ;
+   here swap -  space .  ." bytes ))" ;
+: +consumed  [ ] is load-stats ;
 
-( Print some descriptive text and the amount of dictionary space consumed
-  by loading. Consumes and prints the rest of the command line.)
+-: ( dont-show-consumed)  ( here)  drop  ." ))" ;
+: -consumed  [ ] is load-stats ;
+
+( Print some descriptive text and, at end of file, optionally show the
+  amount of dictionary space consumed by loading. Consumes and prints the
+  rest of the command line.)
 
 : loading
    cr ." (( "  #LF parse type  space
-   here  on-exit show-consumed  interpret ;
+   here  on-exit load-stats  interpret ;
 
 ( Define words for use with the conditional compilation words.  No matter
   what chain we are compiling into, define the word in .forth.)
 
 : -d   current preserve  forth  -1 constant ;
-: -f   ( load file)  ld ;
+: -f   ( load file)  ld! ;  ( don't preserve settings!)
 
 
 : settings  ."
@@ -1313,8 +1348,8 @@ Type 'settings' to see a few of muFORTH's tweakable behaviours.
    decimal \ [
    >stderr banner
    1 line !  ( so it's "correct" for interactive!)
-   +stack +sep +case ( defaults - reset these how you like)
-   command-line count  evaluate
+   -consumed +sep +case ( defaults - reset these how you like)
+   -stack  command-line count  evaluate  +stack
    begin  quit  again  [
 
 ( If tty support compiled into muforth, load the memory dumper.)

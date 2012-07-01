@@ -1,0 +1,64 @@
+( This file is part of muFORTH: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2012 David Frech. All rights reserved, and all wrongs
+  reversed. (See the file COPYRIGHT for details.)
+
+loading AVR chat-over-serial (host)
+
+( Host-side code to drive the AVR chat code in
+  target/HC08/avrchat-serial-core.mu4.)
+
+hex
+
+: !chat   <# ;  ( init hld)
+: b>   hld @  c!  1 hld +! ;
+
+
+( Commands:
+0-2f  Bye        - exit AVR chat code and return to chat loop
+  30  Start      - send START bit
+  31  Restart    - send RESTART bit
+  32  Stop       - send STOP bit
+  33  Send       - send data byte, return ACK/NACK
+  34  RecvAck    - receive data byte, send ACK
+  35  RecvNack   - receive data byte, send NACK
+)
+
+: await  ( a u)
+   p preserve
+   swap p!  for  c* recv  xor if  error" Wrong firmware"  then  next ;
+
+: twi.Bye  0 send ;
+: twi.Hello  ( start the AVR chat firmware on the connected device)
+.ifdef in-ram
+   0112 c.SetPC c.Run  ( run from ram - loads right after flash routine)
+.else
+   0f800 c.SetPC c.Run
+.then
+   " AVRc1" await  ( match signature) ;
+
+: iic-send  ( b - ack)  33 send  send  recv  u. ;
+
+( Some shorthands)
+: S   ( start)  30 send  recv drop ;
+: PS  ( restart)  31 send  recv drop ;
+: P   ( stop)   32 send ;
+: Aw  ( addr+write)  0fe iic-send ;
+: Ar  ( addr+read)   0ff iic-send ;
+: W   ( write)  iic-send ;
+: Ra  ( read)   34 send  recv ;  ( read and ACK)
+: Rn  ( read)   35 send  recv ;  ( read and NACK)
+
+: cmd  ( cmd)   S  Aw  W ;
+
+( zp* and zpcell* read from _program_ memory. z* and zcell* read from
+  _data_ memory.)
+
+: z!       ( addr)  >hilo  10 cmd  W  W  P ;
+: zp*      ( - b)          11 cmd        PS  Ar     Rn  P ;
+: zpcell*  ( - w)          11 cmd        PS  Ar  Ra Rn  P  lohi> ;
+: z*       ( - b)          12 cmd        PS  Ar     Rn  P ;
+: zcell*   ( - w)          12 cmd        PS  Ar  Ra Rn  P  lohi> ;
+: z&       ( b)            13 cmd  W     P ;
+: zcell&   ( w)    >hilo   13 cmd  W  W  P ;
+: zgo                      14 cmd        P ;

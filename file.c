@@ -20,39 +20,7 @@
 #include <unistd.h>
 #include <errno.h>
 
-/* if found and readable, return -1
- * if not found or not readable, return 0
- */
-static int readable(char *path)
-{
-    struct stat st;
-    uid_t euid;
-    gid_t egid;
-
-    /* get our effective UID & GID for testing the file permissions */
-    euid = geteuid();
-    egid = getegid();
-
-    if (stat(path, &st) == -1)
-        return 0;   /* failed */
-
-    /* test for user perms */
-    if (st.st_uid == euid && (st.st_mode & 0400))
-        return -1;  /* success */
-
-    /* test for group perms */
-    if (st.st_gid == egid && (st.st_mode & 0040))
-        return -1;  /* success */
-
-    /* test for world (other) perms */
-    if (st.st_mode & 0004)
-        return -1;  /* success */
-
-    /* failed all tests, return false */
-    return 0;
-}
-
-static char *path_prefix(char *src, char *dest, char sep, char *begin)
+char *path_prefix(char *src, char *dest, char sep, char *begin)
 {
     int len;
 
@@ -73,7 +41,9 @@ static char *path_prefix(char *src, char *dest, char sep, char *begin)
 
 static int try_path(char *p)
 {
-    if (p && readable(p)) return -1;
+    struct stat st;
+
+    if (p && (stat(p, &st) == 0)) return -1;
     return 0;
 }
 

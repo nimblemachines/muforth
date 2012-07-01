@@ -18,23 +18,28 @@ decimal
 
 ( We defer these so that, later, the target compiler can possibly read from
   the target, rather than local memory.)
+
 variable |cell
-defer |c@
-defer |@
+defer |p!     ( set memory pointer)
+defer |p@     ( get memory pointer)
+defer |c*     ( read byte, increment)
+defer |cell*  ( read cell, increment)
 
 ( And let's give them defaults, so we can use the memory dumper to explore
   muFORTH and to test out user-raw mode.)
-cell |cell !
-' c@ is |c@
-' @  is |@
 
-( NOTE: These are `backwards' from the words defined in dforth.m4, which are
-  in turn `backwards' from what the rest of the world does. I'm still not sure
-  which I like better. The dforth.m4 style is another of CM's `innovations'
-  in cmForth.)
-: |c@+  ( |a - |a+1 ch)       dup 1+         swap |c@ ;
-: |@+   ( |a - |a+|cell n)    dup |cell @ +  swap |@ ;
+variable p
+: p!     ( addr)    p ! ;
+: p@     ( addr)    p @ ;
+: c*     ( - byte)  p @  dup    1+ p !  c@ ;
+: c&     ( byte)    p @  dup    1+ p !  c! ;
+: cell*  ( - cell)  p @  dup cell+ p !  @ ;  ( host cell size & endianness)
 
+: >host  ['] p!     is |p!
+         ['] p@     is |p@
+         ['] c*     is |c*
+         ['] cell*  is |cell*
+             cell      |cell ! ;  >host
 
 -- ------------------------------------------------------------------------
 -- Call, jump, and return
@@ -70,7 +75,12 @@ variable isp  ( stack pointer - points to next empty space)
 : .o8    octal  <#  # # #  #>  type ;
 : .hcell  hex   <#  |cell @ 2* for # next  #>  type ;
 
-: .addr   cr  ( -16 and)  .hcell  space ;
+( Because these are useful and common.)
+: .h8_   .h8  space ;
+: .o8_   .o8  space ;
+: .hcell_  .hcell  space ;
+
+: .addr   cr  ( -16 and)  .hcell_ ;
 : _addr   cr  drop  |cell @ 2* 1+ spaces ;
 
 comment
@@ -114,12 +124,13 @@ comment
 variable #field  ( width of each byte, rendered)
 
 : .padding   ( a - a)
+   dup |p!  ( set memory address)
    .nesting  dup  15 and  dup  #field @ *  swap 2/ 2/ +  spaces ;
 
 : |_field|   ( width)  #field @  swap -  spaces ;
 
 : #bytes    ( a - a #bytes)  16 over  15 and -  ;  ( 1 .. 16, end on multiple)
-: .spacing  ( a - a) dup 3 and 0= if space then ;  ( every 4th add a space)
+: .spacing  ( a n - a) + dup 3 and 0= if space then ;  ( every 4th add a space)
 
 ( >letter is pickier than >graphic, to make strings easier to read. This is
   America-centric and not very international, which is unfortunate.)
@@ -132,24 +143,28 @@ variable #field  ( width of each byte, rendered)
 : .oct-byte        3 |_field|  .o8 ;
 
 defer .byte
-: .bytes  ( a)       .padding  #bytes for
-   |c@+  .byte  .spacing  next  drop  ;
+: .bytes  ( a)
+   .padding
+   #bytes            for  |c*  .byte        1 .spacing  next  drop ;
 
-defer .cell ( a+ n - a+)
+defer .cell ( a n - a)
 : .cells  ( a)
-   |cell @ negate and  .padding  #bytes |cell @ / for
-   |@+  .cell  .spacing  next  drop  ;
+   |cell @ negate and  .padding
+   #bytes |cell @ /  for  |cell*  .cell  |cell @ .spacing  next  drop ;
 
 .ifdef ARM-see
-defer .name  ( a+ n - a+)  ' drop is .name
+( XXX again, fix this since address is no longer passed on stack)
+defer .name  ( a n - a)  ' drop is .name
 : .names      ( a)  ['] .name     is .cell  .cells ;
 .then
 
-defer decorate-cell  ( a+ n #spaces - a+ n)
+( XXX ARM version will have to change; now a points _at_ rather than
+  after cell.)
+defer decorate-cell  ( a n #spaces - a n)
 ' spaces is decorate-cell
 
 ( Space before a cell = b/cell * [#field - 2] + [b/cell >> 3])
-: .hex-cell   ( a+ n - a+)
+: .hex-cell   ( a n - a)
    |cell @ dup  #field @ 2 - *  swap 3 >> +  decorate-cell  .hcell ;
 
 : .hex-cells  ( a)  ['] .hex-cell is .cell  .cells ;
@@ -219,38 +234,37 @@ defer 1inspect  ( a - a)
 ( XXX inspect will crash if |@ isn't defined, or refers to the target's
   memory rather than the host's.)
 
-: inspect   ( a cfa - a')
-   inspect! ( XXX should preserve?)
+: inspect   ( a - a')
    radix preserve  tty user-raw  tty on-exit cooked
    -- inspect-cleanup on-exit @execute
-   begin  dup |@  ea ! ( set default ea)  dup 1inspect  inspect-key  until ;
+   begin  dup |p! |cell*  ea ! ( default ea)  dup 1inspect  inspect-key  until ;
 
 
 -- ------------------------------------------------------------------------
 -- Default bindings for host.
 -- ------------------------------------------------------------------------
 
-variable skip  ( number of bytes to skip)  16 skip !  ( default to 1 line)
+variable see-skip  ( number of bytes to skip)
+   16 see-skip !  ( default to 1 line)
+
+variable see-addr-mask
+   -1 see-addr-mask !  ( keep all bits by default)
 
 ( advance rounds down to nearest `skip'.)
-: advance  ( a skip - a')  + ( advance)  skip @ negate and ( round)  0 ;
+: advance  ( a skip - a')  + ( advance)  see-addr-mask @ and
+   see-skip @ negate and ( round)  0 ;
 
-: skip+  ( a - a')  skip @         advance ;
-: skip-  ( a - a')  skip @ negate  advance ;
+: skip+  ( a - a')  see-skip @         advance ;
+: skip-  ( a - a')  see-skip @ negate  advance ;
 
 ' skip+  advance!  ( set up key bindings)
 ' skip-  retreat!  ( ditto) 
 
 
 ( Pressing 1 toggles between a skip of |cell - current cell size - and 16.)
-: toggle-skip  skip @  16 = if  |cell @  ^  then  16 ;
+: toggle-skip  see-skip @  16 = if  |cell @  ^  then  16 ;
 
-key: 1  ( a - a 0)  toggle-skip  skip !  0 ;
-
-( Wire memory access to host memory)
-: >host   ['] c@  is  |c@
-          ['] @   is  |@
-          cell |cell !  ( size of cell) ;
+key: 1  ( a - a 0)  toggle-skip  see-skip !  0 ;
 
 ( Default behaviour for host:)
 : 1dump  ( a)
@@ -262,7 +276,7 @@ key: 1  ( a - a 0)  toggle-skip  skip !  0 ;
 : du   ( a - a')  
    host-seekeys 'seekeys !
    >host
-   ['] 1dump  inspect ;
+   ['] 1dump  inspect!  inspect ;
 
 
 ( Batch mode)

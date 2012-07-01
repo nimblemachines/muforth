@@ -1,0 +1,148 @@
+( This file is part of muFORTH: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2012 David Frech. All rights reserved, and all wrongs
+  reversed. (See the file COPYRIGHT for details.)
+
+loading AVR SPI programmer commands (host)
+
+hex
+
+( Having loaded a simple driver that talks to either a serial-connected or
+  USB-connected device that can talk SPI to an AVR target, load the bulk of
+  the commands for talking to the target.)
+
+: avr2  ( b0 b1 b2 b3 - r2)  ( do command; return second-to-last byte of response)
+   avr.Read  pad 2 + c@ ;
+
+: avr3  ( b0 b1 b2 b3 - r3)  ( do command; return last byte of response)
+   avr.Read  pad 3 + c@ ;
+
+: +prog  ( enable programming)
+   avr.Hello
+   4 for  avr.ResetLow  0ac 53 0 0 avr2  53 = if  pop drop ^ then
+           avr.ResetHigh  next
+   ." Couldn't enable serial programming" ;
+
+: -prog  ( disable programming)
+   avr.ResetHigh  avr.Bye ;
+
+: sig  ( - s0 s1 s2)
+   30 0 0 0 avr3
+   30 0 1 0 avr3
+   30 0 2 0 avr3 ;
+
+: fuses  ( - fuse hfuse efuse)
+   50 0 0 0 avr3
+   58 8 0 0 avr3
+   50 8 0 0 avr3 ;
+
+: lock  ( - lock)
+   58 0 0 0 avr3 ;
+
+( NOTE: this programming command is *not* available on the mega8515. You
+  have to simply delay instead.)
+
+: ?busy
+   begin  0f0 0 0 0 avr3  1 and  0= until ;
+
+: erase-chip
+   0ac 80 0 0 avr.Write  ?busy ;
+
+
+: image,  ( b)  p@  c!  1 p +! ;
+: pw      ( p, as word pointer)  image-p@  u2/ ;
+: paddr   ( - word-addr-hi word-addr-lo)  pw  >hilo ;
+
+( Read just the first few kb of the chip. This is _really_ slow, and is
+  mostly here to test that the fast code does the right thing. Both
+  versions print a . for every 128 bytes read.)
+
+: read-chip-slowly
+   wipe
+   0 image-p!
+   +prog  avr.FastClock
+   [ 1 Ki #64 / ] for
+      #64 for  ( 64 words, 128 bytes)
+         20  paddr  0  avr3  image,  ( read flash lo byte)
+         28  paddr  0  avr3  image,  ( read flash hi byte)
+      next  char . emit
+   next
+   -prog ;
+
+( We read the chip in chunks, but the buffer size does not need to match
+  the flash page size, and in fact this would fail for the mega644, since
+  the page size is 256 bytes, but my USB code will break if asked for a
+  buffer this size! So let's always read 128 byte chunks instead.)
+
+: read-chip
+   wipe
+   0 image-p!
+   +prog  avr.FastClock
+   [ #flash #128 / ] for
+      20  paddr  8  p@  #128  avr.BulkRead
+      #128 p +!
+      char . emit
+   next
+   -prog ;
+
+: read-eeprom
+   wipe
+   0 image-p!
+   +prog  avr.FastClock
+   [ #eeprom #128 / ] for  ( 512 bytes in 128 byte chunks)
+      0a0  paddr  0  p@  #128  avr.BulkRead
+      #128 p +!
+      char . emit
+   next
+   -prog ;
+
+( This checks to see if the _image_, not the chip, is blank.)
+: blank?
+   0 image-p!
+   0ff  #image for  c*  next ;
+
+b/page 2/  constant w/page
+
+( lo-addr is the _word_ offset within a flash page.
+  hi-addr is the _word_ address of a flash page.
+
+  Both hi-addr and lo-addr are broken into bytes - big-endian! - to send
+  via SPI to the chip.)
+
+: lo-addr   pw  [ w/page 1- ]      and  >hilo ;
+: hi-addr   pw  [ w/page negate ]  and  >hilo ;
+
+: prog
+   radix preserve  hex
+   +prog  avr.FastClock
+   erase-chip
+   'flash region  swap image-p!  ( len)
+   b/page 1- + ( round up)  b/page / for  ( program pages)
+      cr ." Writing page "  image-p@  u.
+      40  lo-addr  8  p@  b/page  avr.BulkWrite  ( fill page buffer)
+      4c  hi-addr  0              avr.Write  ?busy  ( program page)
+      b/page p +!
+      -- char . emit
+   next
+   -prog ;
+
+( A nice synonym.)
+: flash-image   prog ;
+
+: verify
+   radix preserve  hex
+   +prog  avr.FastClock
+   'flash region  swap image-p!  ( len)
+   #127 +  #128 /  for
+      20  paddr  8  pad  #128  avr.BulkRead
+      pad  #128 for  dup c@  c*  xor  if  image-p@ -1 +a u.  then
+              1+ next  drop
+      char . emit
+   next
+   -prog ;
+
+: save-image
+   token, create-file ( fd)  dup  0 image+  #image  write  close-file ;
+
+: restore-image
+   token, open-file-ro ( fd)  dup  0 image+  #image  read  u.  close-file ;

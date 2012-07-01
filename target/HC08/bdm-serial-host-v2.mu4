@@ -1,0 +1,80 @@
+( This file is part of muFORTH: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2012 David Frech. All rights reserved, and all wrongs
+  reversed. (See the file COPYRIGHT for details.)
+
+loading HCS08 BDM-over-SCI transport v2 (host)
+
+( Host-side - ie PC - code to drive the BDM-over-SCI implementation in
+  target/HC08/bdm2-core.mu4
+
+  This is "version 2" which means I re-imagined it to be more like the
+  byteloader protocol, where the target is never waiting for more than one
+  byte.)
+
+( NOTE: Before loading this file, load an S08 variant device file. This
+  code requires several of the register defines, and needs to know where to
+  find the clock trim register.)
+
+( BDM code on the 908 supports the following commands:
+  0 Bye - escape back to byteloader
+  1 Idle - do nothing; re-sync
+  2 WriteFirst - reset count and pointer, then do WriteNext
+  3 WriteNext - write next byte to buffer, incr count and pointer
+  4 ReadNext - from Sync or BDM
+  5 Write buffered bytes to BDM, read nothing, return junk byte
+  6 ditto, read 1 byte, return it
+  7 ditto, read 2 bytes, return first
+  8 run Sync pulse, return high byte
+  9 Hold BKGD pin low
+ 10 Hold BKGD pin high
+ 11 Tri-state BKGD pin
+ 12 Set BDM rate to 4M
+ 13 Set BDM rate to 8M)
+
+hex
+
+: b.Bye     00 send ;  ( End session, return to chat command loop)
+
+( Core commands that generate BDM traffic. These no longer overlap with the
+  chat commands. Start instead with 20 hex - 32 decimal. Anything < 20 will
+  exit the BDM loop and return to chat.)
+
+: b.Idle    20 send ;
+
+: Send1     21 send  send ;
+: SendNext  22 send  send ;
+: Send2    Send1  SendNext ;
+: Send3    Send2  SendNext ;
+: Send4    Send3  SendNext ;
+
+: RecvNext  23 send  recv ;
+: Expect0   24 send  recv drop ;
+: Expect1   25 send  recv ;
+: Expect2   26 send  recv  RecvNext ;
+
+( Misc commands)
+: b.Sync      27 send  recv  RecvNext  hilo> ;
+: b.BkgdLow   28 send ;
+: b.BkgdHiZ   29 send ;
+: b.Clock4M   2a send ;
+: b.Clock8M   2b send ;
+: b.Clock16M  2c send ;
+
+: await  ( a u)
+   p preserve
+   swap p!  for  c* recv  xor if  error" Wrong firmware"  then  next ;
+
+( Get start address of BDM code.)
+: bdm-start  ( - a)
+   c.Id 0ff = if  0fb00  ( 908, serial, flash version)   ^ then
+
+   .ifdef bdm-in-ram
+                  @ram   ( S08, serial, ram version)
+   .else
+                  0fc00  ( S08, serial, flash version)
+   .then ;
+
+: b.Hello  ( start the BDM firmware on the connected device)
+   bdm-start c.SetPC c.Run
+   " S08b2" await  ( match signature) ;

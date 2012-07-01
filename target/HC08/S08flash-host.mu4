@@ -1,0 +1,141 @@
+( This file is part of muFORTH: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2012 David Frech. All rights reserved, and all wrongs
+  reversed. (See the file COPYRIGHT for details.)
+
+loading HCS08 Flash programming (host)
+
+hex
+
+( S08 Flash memory layout.
+
+  ffac  my FTRIM - trims to 9.216M
+  ffad  my TRIM  - ditto
+  ffae  FTRIM bit - factory trim for 8M
+  ffaf  TRIM byte - ditto
+
+  ffb0 - ffbf    is all about _security_
+  ffb0 - b7   comparison key
+  ffb8 - bc   available
+  ffbd        NVPROT; copied to FPROT at reset
+  ffbe        available
+  ffbf        NVOPT; copied to FOPT at reset
+
+  ffc0 - ffff  Interrupt and reset vectors)
+
+forth
+
+05 constant mBlankCheck
+20 constant mByteProgram
+25 constant mBurstProgram
+40 constant mPageErase
+41 constant mMassErase
+
+#512 constant /page   ( S08 has 512 byte Flash pages - this is erase size)
+ #64 constant /row    ( max size of row to program)
+
+: check-flash-status  ( status)
+   ." FSTAT=" dup u.  
+   30 and if error" flash access or protection violation" then ;
+
+: program-row  ( 'target len)
+   cr ." program-row "  2dup swap u. u.
+   over image+  mByteProgram  t.FlashChunk  check-flash-status ;
+
+: erase-page  ( 'target)
+   cr ." erase-page " dup u.
+   1  over image+  mPageErase  t.FlashChunk  check-flash-status ;
+
+( We use the USB ram region of the image as a read buffer: 1860-1960. This
+  way we don't clobber anything we care about.)
+: blank?  ( addr - flag)
+   cr ." blank? "  dup u.
+   -1  swap  [ /page  40 / ] for  ( do it in chunks of 64)
+      ( sum addr)  dup 40 1860 image+  t.ReadChunk  40 + swap
+      ( addr+ sum)  1860 image-p!  40 for  c* and  next  swap
+      ( sum addr+)  over 0ff xor if  pop drop 2drop  0 ^  then  ( exit early)
+   next  drop  0ff = ;
+
+( If target address is first byte of the last page of flash, return true)
+: last-page?  ( 'target - f)
+   @flash #flash +  /page -  = ;
+
+( On S08, erasing the vectors means erasing the TRIM bytes, the secure
+  bits, and the bootloader. So be careful about re-programming things, esp
+  the TRIMs and the secure bits. Copy from ffac to ffaf.
+
+  In the case that the chip is blank, and we've put trims into the image,
+  don't overwrite these with the FF's from the chip.)
+
+: save-trims  ( save them from the wrecking ball)
+   cr ." save-trims"
+   0ffac dup t.SetAddr  4 for
+      t.Read  dup 0ff xor  if  over image-c!  else  drop  then
+      1+  next  drop ;
+
+( Flash vectors, security bytes, & trims)
+: flash-vectors
+   cr ." flashing vectors, security bytes, and trims"
+   0ffac 14  ( 0ffac - 0ffcf)  program-row  ( trims and security bytes)
+   0ffc0 40  ( 0ffc0 - 0ffff)  program-row  ( vectors) ;
+
+( When we are about to program the _first_ row of a page, we erase the
+  page. If it's the last page of the flash, we save the trims, erase the
+  page, and then flash the vectors and trims.)
+
+: erased  ( 'target)
+   dup [ /page 1- ] and  if  drop ^  then  ( do nothing if not first byte)
+   dup last-page? if  ( erasing last page)
+      save-trims  erase-page  flash-vectors  ^  then
+   erase-page ;
+
+: row  ( 'target len - 'target+len)
+   2dup + push  over erased  program-row  pop ;
+
+: flash-region  ( a len)
+   /row /mod  ( r q)  swap push  ?for   /row row  next  then
+                            pop  =if  ( rem) row  drop ^  then  2drop ;
+
+: flash-image   'flash region ( a u)   flash-region ;
+
+( XXX This is a bit of a hack, but seems to work.)
+: slow-verify-region
+   over t.SetAddr  swap image-p!
+   for  c* t.Read  xor  if  image-p@ -1 +a u.  then  next ;
+
+: slow-verify
+   'flash region ( a len)      slow-verify-region  ( program image)
+   'flash region drop  last-page? if
+   0ffac 14  ( 0ffac - 0ffcf)  slow-verify-region  ( trims and security bytes)
+   0ffc0 40  ( 0ffc0 - 0ffff)  slow-verify-region  ( vectors)
+   then ;
+
+( Fast verify! Using chunked reads.)
+( We use the USB ram region of the image as a read buffer: 1860-1960. This
+  way we don't clobber anything we care about.)
+
+: c@+  ( a - a+1 byte)  dup 1+  swap c@ ;
+
+( Be careful about setting p. Some chunked read implementations use it, so
+  set it *after* doing the read.)
+
+: verify-chunk  ( 'target len - 'target+len)
+   2dup + push
+   2dup  1860 image+ t.ReadChunk
+   ( 'target len)  swap image-p!  ( we'll use c* to read image)
+   ( len)  1860 image+ swap
+   for  c@+ c*  xor  if  image-p@ -1 +a u.  then  next  drop
+   pop ;
+
+( Do 128 bytes at a time. I can't read 256 at a time using USB.)
+
+: verify-region
+   80 /mod  ( r q)  swap push  ?for  80 verify-chunk  next  then
+                       pop  =if  ( rem) verify-chunk  drop ^  then  2drop ;
+
+: verify
+   'flash region ( a len)      verify-region  ( program image)
+   'flash region drop  last-page? if
+   0ffac 14  ( 0ffac - 0ffcf)  verify-region  ( trims and security bytes)
+   0ffc0 40  ( 0ffc0 - 0ffff)  verify-region  ( vectors)
+   then ;

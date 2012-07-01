@@ -124,14 +124,30 @@ void mu_set_termios_speed()
 /* stack: ( fd) */
 void mu_tty_send_break()
 {
-    tcsendbreak(TOP, 0);         /* most implementions ignore the duration */
+    tcsendbreak(TOP, 0);        /* most implementions ignore the duration */
+    DROP(1);
+}
+
+void mu_tty_drain()
+{
+    tcdrain(TOP);               /* drain output */
     DROP(1);
 }
 
 void mu_tty_iflush()
 {
-    tcflush(TOP, TCIFLUSH);          /* drain output, discard input */
+    tcflush(TOP, TCIFLUSH);     /* discard input */
     DROP(1);
+}
+
+/*
+ * Sometimes it's nice to know how many characters are waiting in the input
+ * buffer.
+ */
+void mu_tty_icount()
+{
+    if (ioctl(TOP, FIONREAD, &TOP) == -1)
+        return abort_strerror();
 }
 
 /*

@@ -1,0 +1,247 @@
+( This file is part of muFORTH: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2012 David Frech. All rights reserved, and all wrongs
+  reversed. (See the file COPYRIGHT for details.)
+
+loading HCS08 BDM over USB support (core)
+
+__meta
+
+( Support for Freescale's S08 Background Debug Mode - or BDM.)
+
+( This code will support talking to both S08 and ColdFire V1 cores over
+  BDM. The big difference between this and bdm2-serial-core is that the
+  command loop for this version talks over USB rather than over a serial
+  port connection, and the commands are, perforce, a bit different.
+
+  Because we want to be independent of the USB byteloader code, we have to
+  re-implement a lot that code: the command dispatch table, and the basic
+  handling of SETUP, IN, and OUT tokens. But code to enumerate the device,
+  and the device descriptors, are *not* repeated here. We only implement
+  the "vendor specific" requests required to do BDM.)
+
+hex
+
+( Check for compatibility with device.)
+.labels. .contains USBCTL0 .not .if
+   z" Selected device doesn't support USB."  abort
+.then
+
+10 constant buflen0  ( buffer length, and hence max packet size, for endpoint 0)
+
+1860 equ 'usb            ( USB RAM origin; buffer descriptors live here)
+1880 equ 'usb-buffers    ( endpoint RAM from here to 195f)
+
+__host
+
+: >bufaddr  ( buffer - bufaddr)
+   dup 0f and if  error" endpoint buffer must be on a 16-byte boundary"  then
+   \l 'usb -  2 >> ;
+
+__meta
+
+( Buffer descriptor control byte to match _any_ SETUP, or an OUT with a
+  DATA1 packet.)
+0c8 equ match-data1
+
+( USB buffer descriptors)
+1860 equ in-control
+1861 equ in-count
+1862 equ in-bufaddr
+1863 equ out-control
+1864 equ out-count
+1865 equ out-bufaddr
+
+'usb-buffers            equ in-buffer
+'usb-buffers buflen0 +  equ out-buffer
+
+( Useful aliases for buffer addresses - for control requests.)
+out-buffer 0 + equ bmRequestType
+out-buffer 1 + equ bRequest
+out-buffer 2 + equ wValue
+out-buffer 3 + equ wValueHi
+out-buffer 4 + equ wIndex
+out-buffer 5 + equ wIndexHi
+out-buffer 6 + equ wLength
+out-buffer 7 + equ wLengthHi
+
+1 zvar expected  ( count of bytes expected from BDM target)
+
+
+( Handling the OUT associated with execute-bdm has already queued up the
+  target's response in the IN buffer. We just need to ready the buffer
+  descriptor.)
+
+label read-result
+   expected ) lda
+   ( fall thru)
+
+label prepare-in
+   in-count ) sta
+   ( send DATA1)  match-data1 # lda  in-control ) sta
+   ( fall thru)
+
+( Get ready to receive another SETUP or OUT token.)
+label expect-setup-token
+   match-data1 # lda  out-control ) sta
+   buflen0 # lda  out-count ) sta
+   CTL 5 bclr ( TSUSPEND off - resume processing)
+   rts  ;c
+
+
+( Write count is in wLength; expected read count is in wIndex. We ignore
+  wLength, and assume that the values to write will fit in one packet, and
+  simply use the out-count as the write count.)
+
+label execute-bdm
+   wIndex ) lda  expected ) sta
+   expect-setup-token j  ;c
+
+( Prepare to return status - a zero-length IN transaction. Also be ready to
+  accept another SETUP even if it would mean abandoning the current
+  transfer. This is what the USB spec says we have to do.)
+
+label finish-control-write
+   ( Setup IN status stage)
+   .a clr  prepare-in j  ( zero-length DATA1 transaction)  ;c
+
+label setup-token
+   bRequest ) lda  ( vendor-request)
+   20 # sub   ( BDM commands start at 20 hex)
+   0= if  ( 20 Bye)
+      2 # ais  ( skip return from process-usb)  rts  then
+
+   ( 21 Execute)  execute-bdm   .a dec 0!= until
+   ( 22 Result)   read-result   .a dec 0!= until
+
+   ( 23 BkgdLow)
+   .a decz? if
+      BdmDriveLow c  -- drive BKGD/MS low
+      finish-control-write j
+   then
+
+   ( 24 BkgdHiZ)
+   .a decz? if
+      BdmHiZ c
+      finish-control-write j
+   then
+
+   ( 25 Set4M)
+   .a decz? if
+      BdmRx1 # ldhx
+      SetRx1_4M c
+      SetTx1_4M c
+      finish-control-write j
+   then
+
+   ( 26 Set8M)
+   .a decz? if
+      BdmRx1 # ldhx
+      SetRx1_8M c
+      SetTx1_8M c
+      finish-control-write j
+   then
+
+   ( 27 Sync)
+   .a decz? if
+      in-buffer # ldhx
+      SyncPulse c
+      2 # lda  ( IN count)
+      prepare-in j
+   then
+
+   ( 28 ResetLow)
+   .a decz? if
+      ResetLow c  -- drive nReset low
+      finish-control-write j
+   then
+
+   ( 29 ResetHiZ)
+   .a decz? if
+      ResetHiZ c
+      finish-control-write j
+   then
+
+   ( 2a Set16M)
+   .a decz? if
+      BdmRx1 # ldhx
+      SetRx1_16M c
+      SetTx1_16M c
+      finish-control-write j
+   then
+
+   ( unknown, fall thru)
+
+label stall
+   EPCTL0 1 bset ( STALL)  rts  ;c
+
+label setup-or-out-token
+   out-control ) lda  3c # and  34 # cmpne?  setup-token  until
+
+   ( OUT token)
+   ( If last OUT was zero-length, it was a status transaction for a
+     control read, so get ready for a new SETUP.)
+   out-count ) lda  0= if  expect-setup-token j  then
+
+   ( Otherwise, we've got a data payload. Write bytes to target via BDM,
+     delay, and then read target response.)
+
+   .a psh ( count)  out-buffer # ldhx
+   begin  BdmTx c  0 ,s decz? until  .a pul
+
+   ( After writing bytes via BDM, delay. For an S08 target we should delay
+     16 target cycles; for a CFv1 target, 32 cycles. To satisfy both, we'll
+     delay 32 cycles. We're running at 24M; target could be running as
+     slowly as 4M, so delay 32*6 of *our* cycles.)
+
+   #32 6 * 4 / # lda  begin .a decz? until  ( 4~ per loop)
+
+   ( Now read the target's response via BDM and copy it into the USB IN
+     buffer. We've stashed the expected count in the variable expected.)
+
+   expected ) lda  0!= if  .a psh  in-buffer # ldhx
+      begin  BdmRx c  0 ,s decz? until  .a pul
+   then
+
+   ( All done! Queue up status IN token.)
+   finish-control-write j  ;c
+
+
+( An IN token is either part of a data stage of a control read, or it is
+  the status stage of a control write. Status IN's are always zero bytes
+  long; sometimes the last IN of the data stage is also zero bytes long -
+  see copy-to-in for details.
+
+  The upshot is that if the last packet wasn't full we should expect no
+  more IN transactions.)
+
+label in-token
+   ( INs will *always* be less than max packet length.)
+   ( fall thru)
+
+label nak-in-expect-setup
+   ( IN requests will return NAK.)
+   .a clr  in-control ) sta
+   expect-setup-token j  ;c
+
+label process-usb
+   INTSTAT 3 bset? if ( TOKDNEF)
+      STAT ) lda  INTSTAT 3 bset  ( ack TOKDNEF)
+      0f8 # and  setup-or-out-token 0!= until
+       08 # cmpne?  in-token  until
+      ( not EP0; ignore)  ( fall thru)
+   then
+   INTSTAT 7 bset? if ( STALLF)
+      EPCTL0 1 bclr ( remove EPSTALL)
+      INTSTAT 7 bset  ( ack STALL)
+      nak-in-expect-setup j  ( get ready to receive SETUP)
+   then
+   rts  ;c
+
+\l bdm-chat-loop resolve>>  ( jump at start of Flash points here)
+
+label bdm-loop
+   BdmHiZ c  ( make sure BKGD high and tri-stated)
+   ResetHiZ c  ( ditto nReset)
+   finish-control-write c  ( ACK run command so it doesn't time out)
+   begin  process-usb c  again  ;c

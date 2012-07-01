@@ -1,0 +1,148 @@
+( This file is part of muFORTH: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2012 David Frech. All rights reserved, and all wrongs
+  reversed. (See the file COPYRIGHT for details.)
+
+( Host-side - ie PC - code to drive the BDM-over-SCI implementation in target/HC08/bdm.mu4)
+
+loading HCS08 BDM-over-serial v1 (host)
+
+( BDM code on the 908 supports the following commands:
+  0 Bye - escape back to byteloader
+  1 Copy one byte from SCI to buffer
+  2 ditto, 2 bytes
+  3 ditto, 3 bytes
+  4 ditto, 4 bytes
+  5 Write buffered bytes to BDM, read nothing
+  6 ditto, read 1 byte, write to SCI
+  7 ditto, read 2 bytes, write to SCI
+  8 run Sync pulse, write two byte count to SCI
+  9 Hold BKGD pin low
+ 10 Hold BKGD pin high
+ 11 Tri-state BKGD pin
+ 12 Set BDM rate to 4M
+ 13 Set BDM rate to 8M
+ 14+ Idle)
+
+decimal
+
+( End session, return to chat command loop)
+: b.Bye    00 send  recv drop ( should recv flags from SWI entry) ;
+
+( Core commands that generate BDM traffic)
+: Send1    01 send  send ;
+: Send2    02 send  send send ;
+: Send3    03 send  send send send ;
+: Send4    04 send  send send send send ;
+: Expect0  05 send  recv drop ;
+: Expect1  06 send  recv ;
+: Expect2  07 send  recv recv ;
+
+( Misc commands)
+: b.Sync      08 send  recv recv  hilo> ;
+: b.BkgdLow   09 send ;
+: b.BkgdHigh  10 send ;
+: b.BkgdOff   11 send ;
+: b.Clock4M   12 send ;
+: b.Clock8M   13 send ;
+: b.Idle      14 send ;
+
+hex
+
+( Non-intrusive)
+: b.Background                                90 Send1  Expect0 ;
+: b.WriteByte     ( byte a)           >lohi  0c0 Send4  Expect0 ;
+: b.WriteByteS    ( byte a - status)  >lohi  0c1 Send4  Expect1 ;
+: b.WriteControl  ( status)                  0c4 Send2  Expect0 ;
+: b.ReadByte      ( a - byte)         >lohi  0e0 Send3  Expect1 ;
+: b.ReadByteS     ( a - status byte)  >lohi  0e1 Send3  Expect2 ;
+: b.ReadStatus    ( - status)                0e4 Send1  Expect1 ;
+
+( Active - must be in "active BDM" mode to use.)
+: b.Go           08 Send1  Expect0 ;
+: b.Trace        10 Send1  Expect0 ;
+: b.ReadA        68 Send1  Expect1 ;
+: b.ReadCC       69 Send1  Expect1 ;
+: b.ReadPC       6b Send1  Expect2  hilo> ;
+: b.ReadHX       6c Send1  Expect2  hilo> ;
+: b.ReadSP       6f Send1  Expect2  hilo> ;
+: b.ReadNext     70 Send1  Expect1 ;   -- inc HX, then read byte
+: b.ReadNextS    71 Send1  Expect2 ;   -- inc HX, read status, read byte
+
+: b.WriteA           48 Send2  Expect0 ;
+: b.WriteCC          49 Send2  Expect0 ;
+: b.WritePC   >lohi  4b Send3  Expect0 ;
+: b.WriteHX   >lohi  4c Send3  Expect0 ;
+: b.WriteSP   >lohi  4f Send3  Expect0 ;
+: b.WriteNext        50 Send2  Expect0 ;   -- inc HX, write byte
+: b.WriteNextS       51 Send2  Expect1 ;   -- inc HX, write byte, read status
+
+comment Commands
+d = delay 16 BDM cycles
+r = read one byte
+w = write one byte
+
+Non-intrusive
+=============
+Background   90 d
+ReadStatus   e4 r
+WriteControl c4 w
+ReadByte     e0 w w d r    -- write addr, read byte
+ReadByteS    e1 w w d r r  -- write addr, read status, read byte
+ReadLast     e8 r r        -- read status, read last byte read
+WriteByte    c0 w w w d
+WriteByteS   c1 w w w d r  -- write addr, write byte, read status
+ReadBkpt     e2 r r
+WriteBkpt    c2 w w
+
+Active mode
+===========
+Go           08 d
+Trace        10 d
+ReadA        68 d r
+ReadCC       69 d r
+ReadPC       6b d r r
+ReadHX       6c d r r
+ReadSP       6f d r r
+ReadNext     70 d r         -- inc HX, then read byte
+ReadNextS    71 d r r       -- inc HX, read status, read byte
+WriteA       48 w d
+WriteCC      49 w d
+WritePC      4b w w d
+WriteHX      4c w w d
+WriteSP      4f w w d
+WriteNext    50 w d         -- inc HX, write byte
+WriteNextS   51 w d r       -- inc HX, write byte, read status
+
+comment Commands
+
+variable bdm-hx  ( contains HX + 1, since memory ops pre-increment)
+
+( Update our idea of the BDM's hx; if address matches bdm-hx, return.
+  Otherwise actually set HX over BDM.)
+
+: setup-bdm-hx  ( a)
+   dup bdm-hx @ =  ( test this _before_ we update bdm-hx)
+   over 1 +wrap bdm-hx !  if drop ^ then
+   -1 +wrap b.WriteHX ;
+
+: bdm-c@  ( a - byte)  setup-bdm-hx  b.ReadNext ;
+: bdm-c!  ( byte a)    setup-bdm-hx  b.WriteNext ;
+
+: pwrcycle  b.BkgdLow  ." power cycle S08, then press a key..."  key drop
+            b.BkgdHigh  b.BkgdOff
+            b.Sync u.  b.ReadStatus u. ;
+: bdm
+   0de00 pc! c.Go  ( start bdm chat loop)
+   b.Clock4M   ( assume bus clock of 4M, forced active mode)
+   pwrcycle
+
+   ( Wire our versions into the interact code.)
+   ['] b.Go is chat-run
+   ['] b.ReadSP is chat-get-sp
+   ['] bdm-c@ is chat-c@
+   ['] bdm-c! is chat-c!
+   ['] bdm-c@ is |c@
+   b.ReadSP chat-sp !  0ffff b.WriteHX  bdm-hx off ( so they match!) ;
+
+

@@ -1,0 +1,223 @@
+( This file is part of muFORTH: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2012 David Frech. All rights reserved, and all wrongs
+  reversed. (See the file COPYRIGHT for details.)
+
+loading AVR chat-over-TWI (improved)
+
+( Unlike the related simple version, this one allows streaming reads and
+  writes.)
+
+__meta
+
+hex
+
+comment %%
+
+Commands for a simple client debug stub for talking to an AVR chip over IIC.
+
+         sends            returns
+  =================================
+  SetAddr  <lo>  <hi>     nothing
+  ReadProgram             <byte>
+  ReadData                <byte>
+  WriteData  <byte>       nothing
+  Go                      nothing
+
+  ReadData, WriteData read and write data memory -- including the general
+        registers, stack pointer, all the i/o registers, and all the RAM.
+
+  ReadProgram reads program memory (flash)
+
+  SetAddr sets the address to be used for reading & writing memory
+
+  Go execute code from the address set by SetAddr
+%%
+
+%0001_000 2* equ slave-addr
+7 equ TWINT  ( bit#)  ( ack after all other actions)
+6 equ TWEA   ( bit#)  ( enable receipt of slave address)
+2 equ TWEN   ( bit#)
+
+1 TWINT <<
+1 TWEA  << or
+1 TWEN  << or equ tw-reset
+
+
+comment %%
+
+Status codes for slave receive mode:
+
+  60  own addr+write received and ACKed
+  68  as above, but lost arbitration first
+  70  general call addr received and ACKed
+  78  as above, but lost arbitration first
+  80  prev addressed with own address; data byte recvd and ACKed
+  88  as above, NACKed
+  90  prev addressed with general call; data byte recvd and ACKed
+  98  as above, NACKed
+  a0  STOP or repeated START received while in slave receive mode
+
+  Status codes for slave transmit mode:
+
+  a8  own addr+read received and ACKed
+  b8  data byte xmitted and ACKed
+  c0  as above, but NACKed
+  c8  last byte xmitted (TWEA=0), ACKed
+%%
+
+flash
+4 org  ( skip reset vector)
+
+comment register-use
+
+  r26/27 -- aka x -- is used for status and data bytes
+  r30/31 -- aka z -- is used to point to memory
+
+  These are registers that are considered "scratch" by the meta-compiler's
+  conventions.
+
+register-use
+
+label restart  ( pop one return, ack int, then return)
+   0 pop  0 pop
+   ( fall thru)
+
+( Ack TWINT. Make sure TWEA and TWEN also set.)
+label ack-twint
+   tw-reset xh ldi  TWCR xh sts  ret  ;c
+
+( Wait for TWINT; read status; mask prescaler bits; return in xl)
+label wait-twint
+   begin  TWCR xl lds  TWINT xl sbrs  again
+   TWSR xl lds  0f8 xl andi  ret  ;c
+
+label read-byte
+   wait-twint rcall
+   80 xl cpi  restart  0= until  ( restart protocol)
+   TWDR xl lds  ack-twint rjmp  ;c
+
+( This is a bit tricky! Since the host had to send a new transaction for
+  the read, on the first byte we're going to see _two_ interrupts: first,
+  that while addressed as a slave receiver we got a STOP or RESTART; and
+  second, that we were addressed as slave+read. We have to watch for, and
+  ack, both.
+
+  If we want to send multiple bytes back to the master, we have to look for
+  and accept both a8 - addressed as slave+read - and b8 - byte transmitted
+  and ACKed. Our caller can sit in a loop since the host will NACK the last
+  byte, and we'll get a c0 status, and restart.)
+
+label expect-start
+   wait-twint rcall
+   0a0 xl cpi  restart  0= until  ( we should see START/RESTART)
+   ack-twint rcall
+   ( fall thru)
+
+( Returns to caller if either we were just addressed, or the last byte
+  written was ACKed by the master.)
+
+label write-another?
+   wait-twint rcall
+   0e8 xl andi  0a8 xl cpi  restart  0= until  ( match a8 and b8)  ret  ;c
+
+( After sending byte and acking interrupt, wait for ACK/NACK and only
+  return to caller if ok to send another byte.)
+
+label write-byte
+   TWDR xl sts  ack-twint rcall  write-another? rjmp  ;c
+
+( Command routines.)
+( On reads, keep streaming bytes from memory to TWI, as long as last byte
+  was ACKed.)
+
+label read-data
+   expect-start rcall
+   begin    z+ xl ld  write-byte rcall  again  ;c
+
+label read-program
+   expect-start rcall
+   begin  pmz+ xl ld  write-byte rcall  again  ;c
+
+label set-addr
+   read-byte rcall  xl zl mov
+   read-byte rcall  xl zh mov  ret  ;c
+
+( On writes, keep streaming bytes from TWI into memory, until read-byte
+  gets something other than an 80 status.)
+
+label write-data
+   begin  read-byte rcall  z+ xl st  again  ;c
+
+( Clear TWEA so we NACK our address while executing code. Do this without
+  resetting TWINT again.)
+
+@ram #ram + ( ramend)
+2 - dup equ go-pc
+2 -     equ go-x
+
+label go
+   TWCR xl lds  1 TWEA << invert xl andi  TWCR xl sts
+   -- ijmp  ;c
+   ( host has set z via set-addr cmd!)
+   go-pc xl lds  go-pc 1+ xh lds  xl push  xh push  ( big-endian!)
+   go-x  xl lds  go-x 1+  xh lds  ret  ;c
+
+( Dispatch.)
+label process
+   wait-twint rcall
+   ack-twint rcall
+   60 xl cpi  process  0= until  ( wait til addressed as slave+write)
+   read-byte rcall  ( cmd)
+
+   10 xl cpi  set-addr      0= not until
+   11 xl cpi  read-program  0= not until
+   12 xl cpi  read-data     0= not until
+   13 xl cpi  write-data    0= not until
+   14 xl cpi  go            0= not until
+   15 xl cpi  0= if  restart         rjmp  then
+
+   ( unknown... restart!)
+   ret  ;c
+
+( The only way to exit is for called code to pop the R stack!)
+label chat-loop
+   ack-twint rcall
+   begin  process rcall  again  ;c
+
+label chat-entry  ( callable from other code!)
+   z pushw  x pushw
+   chat-loop rcall
+   x popw  z popw  ret  ;c
+
+label delay
+   zh clr
+   begin
+      zl clr
+      begin  zl dec  0= until
+   zh dec  0= until
+   ret  ;c
+
+label blink
+   \m here  2 +  rcall
+   ( fall thru)
+
+label toggle
+   0ff xl ldi  PINB xl out  PINC xl out  PIND xl out  ( toggle all pins!)
+   delay rjmp  ;c
+
+( XXX uses r16 so we can load it from the host to test go command!)
+label blinky
+   0ff xl ldi  PORTB xl out  PORTC xl out  PORTD xl out
+   0ff xl ldi   DDRB xl out   DDRC xl out   DDRD xl out
+   8 10 ldi  begin  blink rcall  delay rcall  10 dec  0= until  ret  ;c
+
+RESET handler
+   go-x 1-  ( stack bottom)  >hilo
+   xl ldi  SPL xl out
+   xl ldi  SPH xl out
+
+   begin  blinky rcall  chat-entry rcall  again  ;c
+
+label testme
+   z 2 movw  x 4 movw  ( so we can see the registers)  ret  ;c
