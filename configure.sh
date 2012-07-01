@@ -5,10 +5,29 @@
 # Copyright (c) 2002-2012 David Frech. All rights reserved, and all wrongs
 # reversed. (See the file COPYRIGHT for details.)
 
-# This not a GNU configure script! It simply configures the makefile for
-# muforth based on which make you have, and which version you want to
-# build.
+# This not a GNU configure script!
 
+# It configures the makefile for muforth based on which make you have,
+# decides how to tell sed to use extended REs, figures out whether you're
+# running Linux or OSX and configures modules accordingly, and on trees
+# based on Git checkouts, sets up checkout and commit hooks to keep
+# muforth's idea the "current" git commit actually current.
+
+# If using git, configure post-commit and post-checkout scripts to generate
+# a muforth file that defines the current git commit. If not using git,
+# create a "fake" git-commit that pushes 0. We can check, in banner, which
+# we have.
+
+if [ -d .git ]; then
+    echo
+    echo "Installing post-commit and post-checkout hooks."
+    install -m 755 post-commit.sh .git/hooks/post-commit
+    install -m 755 post-commit.sh .git/hooks/post-checkout
+else
+    echo ": muforth-commit 0 ;" > commit.mu4
+fi
+
+# Parse command line args
 while [ "$1" ]; do
   case "$1" in
      gnu)     gnu=yes ;;
@@ -61,6 +80,8 @@ fi
 
 # Figure out which version of sed we're running, so we can properly specify
 # the use of extended (ie, sane) regular expressions.
+
+echo
 
 if sed --version 2> /dev/null | grep -q "GNU"; then
   cat <<EOF
@@ -132,14 +153,3 @@ Enjoy muFORTH!
 
 EOF
 
-# Lastly, if using git, configure post-commit and post-checkout scripts to
-# generate a muforth file that defines the current git commit. If not using
-# git, create a "fake" git-commit that pushes 0. We can check, in banner,
-# which we have.
-
-if [ -d .git ]; then
-    install -m 755 post-commit.sh .git/hooks/post-commit
-    install -m 755 post-commit.sh .git/hooks/post-checkout
-else
-    echo ": muforth-commit 0 ;" > commit.mu4
-fi
