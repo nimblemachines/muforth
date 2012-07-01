@@ -37,7 +37,8 @@ comment
   Rs     s_ssss -> 0000_00s0_0000_ssss  ( source reg)
   I6    ii_iiii -> 0000_0ii0_0000_iiii  ( 6 bit io offset: 0-63)
   I5     i_iiii -> 0000_0000_iiii_i000  ( 5 bit io offset: 0-31)
-  Rh       dddd -> 0000_0000_dddd_0000  ( high regs, 16 to 31)
+  Rhd      dddd -> 0000_0000_dddd_0000  ( dest high regs, 16 to 31)
+  Rhs      ssss -> 0000_0000_0000_ssss  ( source high regs, 16 to 31)
   Rp         dd -> 0000_0000_00dd_0000  ( pointer/pairs, 0=24/25, 1=26/27 etc)
   K8  kkkk_kkkk -> 0000_kkkk_0000_kkkk  ( 8 bit immed data)
   K6    kk_kkkk -> 0000_0000_kk00_kkkk  ( 6 bit immed data - word insns)
@@ -72,8 +73,9 @@ comment
 : Rh? ( reg op - index op)
    swap  #16 - dup 0< if error" only regs 16 to 31 allowed"  then  swap ;
 
-: Rp  ( reg op - bits)  Rp?  Rd ;
-: Rh  ( reg op - bits)  Rh?  Rd ;
+: Rp   ( reg op - bits)  Rp?  Rd ;
+: Rhd  ( reg op - bits)  Rh?  Rd ;
+: Rhs  ( reg op - bits)  Rh?  Rs ;
 
 
 : Ah  ( addr op - lo hibits)
@@ -132,17 +134,18 @@ assembler
 2400 2op eor
 2800 2op or
 2c00 2op mov
+9c00 2op mul
 : tst  dup \a and ;  ( tst == and Rd,Rd)
 : clr  dup \a eor ;  ( clr == eor Rd,Rd)
 
 ( bi - byte immed. pppp kkkk dddd kkkk - r16-31)
 forth
-: bi     ( imm Rh)  constant does> @  ( imm Rh op)  Rh K8 op, ;
+: bi     ( imm Rhd)  constant does> @  ( imm Rhd op)  Rhd K8 op, ;
 assembler
-( No addi, adci, or eori! Interesting.)
-3000 bi cpi  (       Rh - K)         ( cmpi)
-4000 bi sbci ( Rh <- Rh - K - carry) ( subci)
-5000 bi subi ( Rh <- Rh - K)
+( No addi, adci, tsti, or eori! Interesting. And a bit fucked!)
+3000 bi cpi  (        Rhd - K)         ( cmpi)
+4000 bi sbci ( Rhd <- Rhd - K - carry) ( subci)
+5000 bi subi ( Rhd <- Rhd - K)
 6000 bi ori
 7000 bi andi
 e000 bi ldi
@@ -160,6 +163,7 @@ assembler
 9407 1op ror
 940a 1op dec
 : lsl  dup \a add ;  ( lsl == add Rd,Rd)
+: asl  \a lsl ;
 : rol  dup \a adc ;  ( rol == adc Rd,Rd)
 
 ( long jump and call - pppp pppk kkkk pppk, kkkk kkkk kkkk kkkk)
@@ -262,11 +266,13 @@ assembler
 9700 wi sbiw  ( subiw)
 
 ( iobit - set/clear bit in io space - pppp pppp aaaa abbb)
-( These can address 0-31 in io space.)
+( These can address 0-1f in io space - 20 to 3f in data space.)
 forth
+: within-io?  ( addr op limit - io op flag)
+   push  swap 20 -  tuck pop u< ;
+
 : check-io  ( addr op limit - io op)
-   push  swap 20 -
-   tuck pop u<  not if error" io address out of range" then ;
+   within-io? not if error" io address out of range" then ;
 
 : iobit  ( bit io)  constant does> @  ( bit io op)  20 check-io  I5 K3 op, ;
 assembler
@@ -276,15 +282,19 @@ assembler
 9b00 iobit sbis  ( skip if bit io set)
 
 ( io - pppp piid dddd iiii)
-( These address 0-63 in io space.)
+( These address 0-3f in io space - 20 to 5f in data space.)
 ( But the addresses that we give them are data space, *not* io space.)
 forth
-: io     ( addr Rd)   constant does> @  (  addr Rd op)
-   Rd  40 check-io  I6 op, ;
+: io     ( io-addr Rd)   constant does> @  (  io-addr Rd op)
+   Rd  I6 op, ;
 
+( These are call with addresses that have already checked and are within
+  the io window - 0 to 3f.)
+b000 io _in    ( Rd <- io[i])
+b800 io _out   ( Rd -> io[i])
 assembler
-b000 io in    ( Rd <- io[i])
-b800 io out   ( Rd -> io[i])
+: in   ( addr Rd)  40 within-io? if  _in  ^  then  20 u+  \a lds ;
+: out  ( addr Rd)  40 within-io? if  _out ^  then  20 u+  \a sts ;
 
 ( rel jump and call - pppp kkkk kkkk kkkk)
 c000 rjmp rjmp
@@ -413,6 +423,11 @@ assembler
 6 constant .T
 7 constant .I
 
+: sei  \a .I \a bset ;  ( set global interrupt enable bit)
+: cli  \a .I \a bclr ;  ( clear global interrupt enable bit)
+: sec  \a .C \a bset ;  ( set carry)
+: clc  \a .C \a bclr ;  ( clear carry)
+
 : u<  \a .C ;  ( carry set)
 : 0=  \a .Z ;  ( zero  set)
 : 0<  \a .N ;  ( negative set)
@@ -469,8 +484,9 @@ forth
 
 : cjmp,  ( statusbit - src)  f400 xor op,  \m here ;
 
-( Unconditional jmp)
+( Unconditional jmp and call)
 : rjmp,   ( - src)  c000 op,  \m here ;
+: rcall,  ( - src)  d000 op,  \m here ;  ( useful for forward references)
 
 assembler
 ( These are different from the pure Forth ones. Forward conditional branches
@@ -483,6 +499,7 @@ assembler
 
 ( if compiles "branch if bit clr")
 : if      ( bit - src)    cjmp, ;
+: always  ( - src)        rjmp, ;
 : then    ( src)          \m here \a resolve> ;
 : else    ( src1 - src2)  rjmp, swap  \a then ;
 : begin   ( - dest)       \m here ;

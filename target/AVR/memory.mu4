@@ -12,8 +12,27 @@ loading AVR memory image
   XXX: We should really define this in a device/xxx file that gets loaded
   _before_ this one.)
 
-64 Ki constant #image
-#image buffer 'image
+( Memory images should be stored in the dictionary like strings: prefixed
+  by their length. When we push an image, we push the address of its first
+  byte, but the previous cell countains the count, if we want to do bounds
+  checking or address wrapping.)
+
+: make-image  create  ( #bytes)  aligned  dup ,  allot
+         does>  cell+ ( skip count) ;
+
+64 Ki make-image  flash-image
+ 4 Ki make-image  eeprom-image
+
+( bounds is just like count for strings, but I don't want to depend on
+  count's implementation.)
+
+: bounds  ( image - a u)  dup cell- @  ( a u) ; 
+
+variable image  ( image buffer pointer; points to either flash- or eeprom-image)
+( sanity default)  flash-image image !
+
+: #image  image @  cell- @  ( get byte count) ;
+: 'image  image @           ( get address) ;
 
 : wrap   [ #image 1- ] and ;
 : +a  ( a1 a2 - sum)  +  wrap ;  ( add and wrap to 16bit address)
@@ -80,11 +99,13 @@ here "beefdead ,  ( bogus data space value)  constant no-data
 variable h   ( image dictionary pointer pointer; points to one of:)
    2variable 'ram     ( ram pointer, origin)
    2variable 'flash   ( flash pointer, origin)
+   2variable 'ee      ( eeprom pointer, origin)
 
-: ram     'ram    h ! ;
-: flash   'flash  h ! ;
+: ram     'ram     h ! ;  ( XXX reset image or not?)
+: flash   'flash   h !   flash-image   image ! ;
+: eeprom  'ee      h !   eeprom-image  image ! ;
 : in-flash?  h @  'flash = ;
-: in-ram?    in-flash? not ;
+: in-ram?    h @  'ram = ;
 : org    ( a) ( set dict pointer)  h @  ! ;
 
 meta
@@ -100,15 +121,21 @@ meta
 : ,     ( w)    ( \m align)  >hilo  \m c, ( lo)  \m c, ( hi) ;
 
 forth
-( return the origin & number of bytes in region)
-: region  ( 'region - a u)  2@  ( origin ptr)  over - ;
+( return the origin & number of bytes in current region)
+: region  ( - a u)  h @  2@  ( origin ptr)  over - ;
 
 ( Initialization.)
-: wipe   'image  #image  ( erase)   "ff  fill ;
+: erase  ( image)  bounds "ff fill ;
+: wipe   flash-image erase
+         eeprom-image erase ;
 
 : ram!      ( ram-origin)  dup 'ram   2!  ( set ptr and origin to origin) ;
 : flash!  ( flash-origin)  dup 'flash 2!  ( set ptr and origin to origin) ;
+: ee!    ( eeprom-origin)  dup 'ee    2!  ( set ptr and origin to origin) ;
 
 ( Erase image, default origins: ram to @ram, and flash to @flash.)
-( XXX FIXME KLUDGE)  0 constant @flash
-wipe  @ram ram!  @flash flash!  flash  0 org
+( XXX FIXME KLUDGE)  0 constant @flash  0 constant @eeprom
+: clean-slate
+   wipe  @ram ram!  @flash flash!  @eeprom ee!  flash  0 org ;
+
+clean-slate

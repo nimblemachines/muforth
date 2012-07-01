@@ -18,7 +18,7 @@ hex
    avr.Read  pad 3 + c@ ;
 
 : +prog  ( enable programming)
-   avr.Hello
+   avr.Hello  avr.SlowClock
    4 for  avr.ResetLow  0ac 53 0 0 avr2  53 = if  pop drop ^ then
            avr.ResetHigh  next
    ." Couldn't enable serial programming" ;
@@ -26,45 +26,82 @@ hex
 : -prog  ( disable programming)
    avr.ResetHigh  avr.Bye ;
 
+: fast-clock
+.ifndef spi-slow  avr.FastClock
+.else             avr.SlowClock
+.then             ;
+
+( NOTE: this programming command is *not* available on the mega8515. You
+  have to simply delay instead.)
+
+.ifdef mega8515
+
+( 8515 doesn't have wait polling, so we have to delay instead.)
+
+: us  #1000 *  ( ns)  0 swap  nanosleep ;
+
+: wait-fuse     #4500 us ;  ( 4.5ms)
+: wait-flash    #4500 us ;
+: wait-eeprom   #9000 us ;  ( 9ms)
+: wait-erase    #9000 us ;
+
+.else
+
+( Use wait polling.)
+: ?busy
+   begin  0f0 0 0 0 avr3  1 and  0= until ;
+
+: wait-fuse     ;
+: wait-eeprom   ?busy ;
+: wait-flash    ?busy ;
+: wait-erase    ?busy ;
+
+.then
+
 : sig  ( - s0 s1 s2)
    30 0 0 0 avr3
    30 0 1 0 avr3
    30 0 2 0 avr3 ;
 
-: fuses  ( - fuse hfuse efuse)
+variable fuses  ( fuse at byte 0; hfuse @ 1; efuse @ 2)
+
+: read-fuses  ( - fuses = fuse at byte 0; hfuse @ 1; efuse @ 2)
    50 0 0 0 avr3
    58 8 0 0 avr3
-   50 8 0 0 avr3 ;
+   50 8 0 0 avr3  ( fuse hfuse efuse)
+   lohi>  lohi> ;
 
-: lock  ( - lock)
+: prog-fuses
+   fuses @ =if
+      >hilo push  0ac 0a0 0  pop  avr.Write  ( write fuse bits)   wait-fuse
+      >hilo push  0ac 0a8 0  pop  avr.Write  ( write hfuse bits)  wait-fuse
+            push  0ac 0a4 0  pop  avr.Write  ( write efuse bits)  wait-fuse
+   ^ then  drop ;
+
+: read-lock  ( - lock)
    58 0 0 0 avr3 ;
 
-( NOTE: this programming command is *not* available on the mega8515. You
-  have to simply delay instead.)
-
-: ?busy
-   begin  0f0 0 0 0 avr3  1 and  0= until ;
-
 : erase-chip
-   0ac 80 0 0 avr.Write  ?busy ;
+   0ac 80 0 0 avr.Write  wait-erase ;
 
 
 : image,  ( b)  p@  c!  1 p +! ;
 : pw      ( p, as word pointer)  image-p@  u2/ ;
-: paddr   ( - word-addr-hi word-addr-lo)  pw  >hilo ;
+: paddr   ( - addr-hi addr-lo)            image-p@  >hilo ;
+: pwaddr  ( - word-addr-hi word-addr-lo)  pw        >hilo ;
 
 ( Read just the first few kb of the chip. This is _really_ slow, and is
   mostly here to test that the fast code does the right thing. Both
   versions print a . for every 128 bytes read.)
 
-: read-chip-slowly
+: read-flash-slowly
    wipe
    0 image-p!
-   +prog  avr.FastClock
+   +prog  fast-clock
    [ 1 Ki #64 / ] for
       #64 for  ( 64 words, 128 bytes)
-         20  paddr  0  avr3  image,  ( read flash lo byte)
-         28  paddr  0  avr3  image,  ( read flash hi byte)
+         20  pwaddr  0  avr3  image,  ( read flash lo byte)
+         28  pwaddr  0  avr3  image,  ( read flash hi byte)
       next  char . emit
    next
    -prog ;
@@ -74,26 +111,35 @@ hex
   the page size is 256 bytes, but my USB code will break if asked for a
   buffer this size! So let's always read 128 byte chunks instead.)
 
-: read-chip
-   wipe
-   0 image-p!
-   +prog  avr.FastClock
+: read-flash
+   flash-image erase
+   flash  0 image-p!
    [ #flash #128 / ] for
-      20  paddr  8  p@  #128  avr.BulkRead
+      20  pwaddr  8  p@  #128  avr.BulkRead
       #128 p +!
       char . emit
-   next
-   -prog ;
+   next ;
 
 : read-eeprom
-   wipe
-   0 image-p!
-   +prog  avr.FastClock
-   [ #eeprom #128 / ] for  ( 512 bytes in 128 byte chunks)
-      0a0  paddr  0  p@  #128  avr.BulkRead
-      #128 p +!
+   eeprom-image erase
+   eeprom  0 image-p!
+   [ #eeprom 20 / ] for  ( read in 128 byte chunks)
+      0a0  paddr  0  p@  20  avr.BulkRead
+      20 p +!
       char . emit
-   next
+   next ;
+
+: read-eeprom-slowly
+   eeprom-image erase
+   eeprom  0 image-p!  #eeprom for
+      0a0  paddr  0  avr3  image,
+      char . emit
+   next ;
+
+: read-chip
+   h preserve  image preserve
+   +prog  fast-clock
+   read-flash  read-eeprom  read-fuses fuses !
    -prog ;
 
 ( This checks to see if the _image_, not the chip, is blank.)
@@ -112,37 +158,104 @@ b/page 2/  constant w/page
 : lo-addr   pw  [ w/page 1- ]      and  >hilo ;
 : hi-addr   pw  [ w/page negate ]  and  >hilo ;
 
-: prog
-   radix preserve  hex
-   +prog  avr.FastClock
-   erase-chip
-   'flash region  swap image-p!  ( len)
-   b/page 1- + ( round up)  b/page / for  ( program pages)
-      cr ." Writing page "  image-p@  u.
+( NOTE: prog-flash and prog-eeprom are _not_ standalone; they can only be
+  called after prog mode is set and the SPI clock set properly.)
+
+: prog-flash
+   cr  ." Writing flash"
+   flash region  swap image-p!  ( len)
+   b/page 1- + ( round up)  b/page / ?for  ( program flash pages)
+      cr ."    page "  image-p@  u.
       40  lo-addr  8  p@  b/page  avr.BulkWrite  ( fill page buffer)
-      4c  hi-addr  0              avr.Write  ?busy  ( program page)
+      4c  hi-addr  0              avr.Write  wait-flash  ( program page)
       b/page p +!
       -- char . emit
-   next
+   next  then ;
+
+( NOTE: We program eeprom a byte at a time since the 8515 lacks page
+  access. It's also simpler this way to determine whether to program a
+  byte, rather than checking if the entire page is FF.)
+
+: prog-ee-byte
+   image-p@  c*  ( addr byte)
+   dup  0ff =  if  2drop ^  then  ( skip if byte is 0ff)
+   push  0c0  swap >hilo  pop  avr.Write
+   wait-eeprom
+   char . emit ;
+
+: prog-eeprom
+   cr ." Writing eeprom"
+   eeprom region  swap image-p!  ( len)
+   ?for  ( program eeprom bytes)
+      prog-ee-byte
+   next  then ;
+
+: prog
+   radix preserve  hex
+   h preserve  image preserve
+   +prog  fast-clock
+   erase-chip
+   prog-flash  prog-eeprom  prog-fuses
    -prog ;
 
-( A nice synonym.)
-: flash-image   prog ;
+: verify-pad
+   pad  #128 for  dup c@  c*  xor  if  image-p@ -1 +a u.  then
+                  1+ next  drop
+   char . emit ;
+
+( NOTE: verify-flash and verify-eeprom are _not_ standalone; they can only
+  be called after prog mode is set and the SPI clock set properly.)
+
+( We don't just verify what we thought we programmed, but instead verify
+  the entire image, just in case something squirrelly happens - like
+  ghosted bytes - which I'm seeing when writing eeprom!!)
+
+: verify-flash
+   cr  ." Verifying flash "
+   flash  0 image-p!  #flash ( len)
+   #127 +  #128 /  for
+      20  pwaddr  8  pad  #128  avr.BulkRead
+      verify-pad
+   next ;
+
+: verify-eeprom
+   cr  ." Verifying eeprom "
+   eeprom  0 image-p!  #eeprom ( len)
+   #127 +  #128 /  for
+      0a0  paddr  0  pad  #128  avr.BulkRead
+      verify-pad
+   next ;
+
+: verify-fuses
+   cr  ." Verifying fuses "
+   read-fuses  fuses @  2dup = if  2drop ^  then  ( ok)
+   swap u.  u.  ( chip, then saved) ;
 
 : verify
    radix preserve  hex
-   +prog  avr.FastClock
-   'flash region  swap image-p!  ( len)
-   #127 +  #128 /  for
-      20  paddr  8  pad  #128  avr.BulkRead
-      pad  #128 for  dup c@  c*  xor  if  image-p@ -1 +a u.  then
-              1+ next  drop
-      char . emit
-   next
+   h preserve  image preserve
+   +prog  fast-clock
+   verify-flash  verify-eeprom  verify-fuses
    -prog ;
 
 : save-image
-   token, create-file ( fd)  dup  0 image+  #image  write  close-file ;
+   h preserve  image preserve  ( so it gets reset when we're done)
+   token, create-file ( fd)
+   ( header)  dup  " muforth AVR img "  write
+   ( flash)   dup  flash   'image  #image  write
+   ( eeprom)  dup  eeprom  'image  #image  write
+   ( fuses)   dup           fuses  4       write
+   close-file ;
 
-: restore-image
-   token, open-file-ro ( fd)  dup  0 image+  #image  read  u.  close-file ;
+: read-image
+   clean-slate
+   flash  #flash    \m allot ( appear to have filled the flash and eeprom)
+   eeprom  #eeprom  \m allot ( ... so prog and verify will work)
+
+   token, open-file-ro ( fd)
+   ( check header)  dup  pad #16  read  #16 xor if  error" no header"  then
+      " muforth AVR img " pad #16  string= not if  error" not an AVR image"  then
+   ( read flash)   dup  flash   'image  #image  read  u.
+   ( read eeprom)  dup  eeprom  'image  #image  read  u.
+   ( read fuses)   dup           fuses  4       read  u.
+   close-file  flash ( back to normal!) ;

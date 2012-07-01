@@ -67,7 +67,6 @@ Status codes for slave receive mode:
 %%
 
 flash
-4 org  ( skip reset vector)
 
 comment register-use
 
@@ -89,7 +88,18 @@ label ack-twint
 
 ( Wait for TWINT; read status; mask prescaler bits; return in xl)
 label wait-twint
-   begin  TWCR xl lds  TWINT xl sbrs  again
+   begin
+.meta. .contains application-task-hook .if
+      ( caller save the chat registers so application doesn't have to
+        worry about them.)
+      zh push  zl push
+      xh push  xl push  
+      application-task-hook rcall
+      xl pop  xh pop  
+      zl pop  zh pop
+.then
+      TWCR xl lds  TWINT xl sbrs
+   again
    TWSR xl lds  0f8 xl andi  ret  ;c
 
 label read-byte
@@ -158,7 +168,6 @@ label write-data
 
 label go
    TWCR xl lds  1 TWEA << invert xl andi  TWCR xl sts
-   -- ijmp  ;c
    ( host has set z via set-addr cmd!)
    go-pc xl lds  go-pc 1+ xh lds  xl push  xh push  ( big-endian!)
    go-x  xl lds  go-x 1+  xh lds  ret  ;c
@@ -203,21 +212,25 @@ label blink
    ( fall thru)
 
 label toggle
-   0ff xl ldi  PINB xl out  PINC xl out  PIND xl out  ( toggle all pins!)
+   0 PINB sbi  ( toggle B0)
    delay rjmp  ;c
 
 ( XXX uses r16 so we can load it from the host to test go command!)
 label blinky
-   0ff xl ldi  PORTB xl out  PORTC xl out  PORTD xl out
-   0ff xl ldi   DDRB xl out   DDRC xl out   DDRD xl out
+   01 xl ldi  PORTB xl out  ( set B0)  DDRB xl out  ( set B0 as output)
+   30 xl ldi  PORTC xl out  DDRC xl out  ( set up SCL/SDA)
    8 10 ldi  begin  blink rcall  delay rcall  10 dec  0= until  ret  ;c
 
-RESET handler
+RESET default-handler
    go-x 1-  ( stack bottom)  >hilo
    xl ldi  SPL xl out
    xl ldi  SPH xl out
 
-   begin  blinky rcall  chat-entry rcall  again  ;c
+   begin  blinky rcall
+.meta. .contains application-init-hook .if
+          application-init-hook rcall
+.then
+          chat-entry rcall  again  ;c
 
 label testme
    z 2 movw  x 4 movw  ( so we can see the registers)  ret  ;c

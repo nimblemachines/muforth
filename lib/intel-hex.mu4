@@ -7,38 +7,29 @@
 
 ( 2004-jul-07. Taken from target/v25 and massively streamlined.)
 
+.ifndef >hilo
+   ld target/common/16bit.mu4
+.then
+
 loading Intel hex
 
 decimal
-
--- with DOS
-
-64 buffer outbuf
 
 ( Buffer)
 variable buf
 : b,  buf @ c!  1 buf +! ;
 : b!  buf ! ;
 
-( Useful ASCII.)
-.ifndef #LF
-: #LF  [ ctrl J ] ;
-: #CR  [ ctrl M ] ;
-.then
-
-: cr,  .ifdef DOS  #CR b, .then  #LF b, ;
-
 : c@+  ( a - a+ n)  dup 1+  swap c@ ;
 : nyb,   15 and  >digit  b,  ;
-: .byte   dup  4 rshift  nyb,  nyb,  ;
+: .byte   dup  4 >>  nyb,  nyb,  ;
 : >byte   ( sum a byte - sum+ a)  dup .byte  u+  ;
 : >word   ( sum a b1 b2 - sum+ a)  push >byte  pop >byte  ;
                                                     ( sends b1 then b2)
-: >hilo   dup 8 >> 255 and  swap 255 and ;
 : addr    ( sum ta - sum+ ta)  dup >hilo  >word  ;  ( big endian)
 : chunk   ( sum ha # - ha+# sum)   for  c@+  >byte  next  swap  ;
-: check   ( sum)  negate  .byte  cr,  outbuf  buf @  over -  type  ;
-: header  ( n - sum)  outbuf b!  char : b,  dup .byte  ;
+: check   ( sum)  negate  .byte  pad  buf @  over -  type   cr ;
+: header  ( n - sum)  pad b!  char : b,  dup .byte  ;
 : tag     ( sum ta n - sum+n)  >byte  drop  ;
 
       (  : count    vaddr    tag       data      checksum )
@@ -54,10 +45,12 @@ variable buf
         2 header     0 addr  4 tag   swap addr drop   check  ;
 
 : fragment  ( 'host 'target # - 'host+# 'target+#)
-   2dup + push   data  pop ;
+   2dup + push   data   pop ;
 
-: chunks    ( 'host 'target #)  15 + 16 /   ( send whole 16 byte lines)
-   ?for  16 fragment  next  then  2drop  ;
+: chunks    ( 'host 'target #)
+   32 /mod  ( r q)  swap push  ?for  32 fragment  next  then
+                       pop  =if  ( rem) fragment  0  then
+   drop  2drop  end ;
 
 
 0 .if

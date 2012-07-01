@@ -88,6 +88,8 @@ forward twi-loop
 
 ( Port pins.)
 
+.ifdef twi-on-uart
+
 ( SCL is connected to PTA7/TxD, pin 20.
   SDA is connected to PTA6/RxD, pin 19.
 
@@ -96,9 +98,49 @@ forward twi-loop
   drive or not. Note that a DD bit of 1 drives low, and 0 lets line float
   high. So for sending a byte of data, we want to complement it.)
 
+macro SCL-drive  PTADD 7  ;m
+macro SDA-drive  PTADD 6  ;m
+macro SCL-pin    PTAD  7  ;m
+macro SDA-pin    PTAD  6  ;m
+
 label init-pins
-   .a clr  PTAD ) sta  PTADD ) sta  ( set value and drive to 0)
-   0c0 # lda  PTADS ) sta  ( set high drive on the pins)  rts  ;c
+   ( set value and drive to 0)
+   SCL-drive bclr  SCL-pin bclr
+   SDA-drive bclr  SDA-pin bclr
+   PTADS ) lda  0c0 # ora  PTADS ) sta  ( set high drive on the pins)
+   PTAPE ) lda  0c0 # ora  PTAPE ) sta  ( enable pullups on the pins)
+   .a clr  SCIC2 ) sta  ( disable UART rcvr, xmitter)
+   rts  ;c
+
+.else  -- twi-on-bdm (default)
+
+( SCL is connected to the BDM /RESET out, PTB0, pin 4
+  SDA is connected to the BDM BKGD out,   PTA0, pin 8
+
+  Neither pin is ever driven high. They are either driven low, or
+  tri-stated. So we can set the value to 0, and use the direction bits as
+  drive or not. Note that a DD bit of 1 drives low, and 0 lets line float
+  high. So for sending a byte of data, we want to complement it.
+
+  NOTE: For some reason it is not possible to change either slew rate or
+  drive strength on pin B0. So we leave it alone.)
+
+macro SCL-drive  PTBDD 0  ;m
+macro SDA-drive  PTADD 0  ;m
+macro SCL-pin    PTBD  0  ;m
+macro SDA-pin    PTAD  0  ;m
+
+label init-pins
+   ( set value and drive to 0)
+   SCL-drive bclr  SCL-pin bclr
+   SDA-drive bclr  SDA-pin bclr
+   PTADS ) lda  01 # ora  PTADS ) sta  ( set high drive on A0)
+   PTAPE ) lda  01 # ora  PTAPE ) sta  ( enable pullups on A0)
+   -- PTBDS ) lda  01 # ora  PTBDS ) sta  ( set high drive on B0)
+   PTBPE ) lda  01 # ora  PTBPE ) sta  ( enable pullups on B0)
+   rts  ;c
+
+.then
 
 ( The building blocks.)
 label half-cycle-delay
@@ -117,7 +159,7 @@ label quarter-cycle-delay
   after it has risen.)
 
 label c-rising
-   PTADD 7 bclr   begin  PTAD 7 bset? until  rts  ;c  ( clobbers C)
+   SCL-drive bclr   begin  SCL-pin bset? until  rts  ;c  ( clobbers C)
 
 ( Now for some spiffy macros that let us define the bit send and receive
   words so that they look like timing diagrams!)
@@ -125,16 +167,16 @@ label c-rising
 macro Q   quarter-cycle-delay c  ;m
 macro H   half-cycle-delay c     ;m
 
-macro D/  PTADD 6 bclr   ;m
-macro D\  PTADD 6 bset   ;m
+macro D/  SDA-drive bclr   ;m
+macro D\  SDA-drive bset   ;m
 macro C/  c-rising c     ;m
-macro C\  PTADD 7 bset   ;m
+macro C\  SCL-drive bset   ;m
 
 label drive-d  ( drive value of C onto bus)
    CS if  D/  rts  then
           D\  rts  ;c
 
-macro D@  PTAD 6 bset? if then  ( sets C with pin value!)  ;m
+macro D@  SDA-pin bset? if then  ( sets C with pin value!)  ;m
 macro D!  drive-d c    ;m
 
 label stop-bit      Q  D\  Q  C/     H      D/   rts  ( line now idle)  ;c
