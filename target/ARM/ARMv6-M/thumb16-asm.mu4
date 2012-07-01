@@ -30,7 +30,9 @@ variable 'region  ( target address of start of image)
 : ram    @ram   'region ! ;
 : flash  @flash 'region ! ;
 : org    'region @ -  image+  h ! ;
-: here   h @  image- ;
+: #image  h @  image - ;
+: here   #image  'region @ + ;
+
 
 : c,   h @  c!  1 h +! ;
 : h,   >hilo  c,  c,  ;
@@ -65,6 +67,8 @@ forth
    push  2000_0000 = not if  error" expected a register"  then
    pop swap  ;
 
+: reg?  ( type op - type op f)   over  2000_0000 = ;
+
 : r00  ( reg regtype op)  ?reg  07 and  6 <<  or ;
 : 0r0  ( reg regtype op)  ?reg  07 and  3 <<  or ;
 : 00r  ( reg regtype op)  ?reg  07 and        or ;
@@ -90,9 +94,39 @@ assembler
 
 forth
 
+: add-3reg  #9 <<  constant  does> @  ( Rm Rn Rd op)  00r  0r0  r00  op, ;
+assembler
+0c add-3reg addr3
+0d add-3reg subr3
+
+forth
+
+( 3 bit immediate)
+: add-3i  #9 <<  constant  does> @  ( i3 Rn Rd op)  00r  0r0  i3  op, ;
+assembler
+0e add-3i addi3
+0f add-3i subi3
+
+( So we can try to disassemble with objdump, and send to device using
+  stlink.)
+
+( Super-simple raw binary image. No address info is saved!)
+: save-image
+   token, create-file ( fd)
+   dup ( fd)  image  #image  write
+   close-file ;
+
 ( tests)
 ram
 @ram org  ( RAM start)
+
 4 # r5 r7 lsl
 8 # r3 r2 lsr
 #31 # r4 r0 asr
+
+r4 r5 r6 addr3
+r0 r1 r2 subr3
+6 # r5 r6 addi3
+7 # r1 r2 subi3
+
+save-image stmf0-test.img
