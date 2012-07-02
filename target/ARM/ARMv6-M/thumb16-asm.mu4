@@ -175,6 +175,8 @@ forth
 ( ldr pc-imm)
 assembler
 ( XXX same code as op-i8, different base op)
+( ea = align[pc+4] + [i8 << 2]
+  i8 is _unsigned_ - forward offsets only!)
 : ldr-pc-imm   ( offset Rt)  4800  ?reg sh8  i8  op, ;
 forth
 
@@ -193,6 +195,12 @@ assembler
 
 ( ldr/str base+offset)
 ( NOTE: use + not or here!)
+( Depending on size of datum, offset is _scaled_.
+  byte     => *1
+  halfword => *2
+  word     => *4
+  XXX NOTE: need words to check and calculate offsets!)
+
 : ldr-str-imm   #11 <<  6000 +  constant  does> @  ( i5 Rn Rt op)  00r  0r0  i5  op, ;
 assembler
 0 ldr-str-imm str-imm
@@ -205,23 +213,28 @@ forth
 
 ( ldr/str sp-rel)
 ( XXX same code as op-i8, different base op)
+( As above, since we're moving a word-sized datum, i8 is scaled *4.)
 : ldr-str-sp  #11 <<  6000 +  constant  does> @  ( i8 Rt op)  ?reg sh8  i8  op, ;
 assembler
 6 ldr-str-sp str-sp
 7 ldr-str-sp ldr-sp
 
 ( add to pc/sp)
+( i8 is scaled *4)
 ( same structure as ld/st sp offset!)
 8 ldr-str-sp add-pc
 9 ldr-str-sp add-sp
 forth
 
 ( add/sub imm to sp)
+( i8 is scaled *4)
 : sp-offset  7 <<  0b000 or  constant  does> @  ( i7 op)  i7  op, ;
 assembler
 0 sp-offset add-to-sp
 1 sp-offset sub-from-sp
 forth
+
+( 0b100 & 0b300 are cbz - not in ARMv6-M)
 
 ( Sign- and zero-extend)
 ( XXX same code as alu0; just different base opcode)
@@ -235,6 +248,8 @@ forth
 
 ( Push goes here. 8 bit reglist plus lr bit.)
 ( 0b400 + reglist + lr << 8)
+
+( 0b900 & 0bb00 are cbnz - not in ARMv6-M)
 
 ( Byte and halfword reverses)
 ( XXX same code as alu0; just different base opcode)
@@ -254,6 +269,7 @@ assembler
 : bkpt  ( i8)  0be00  i8  op, ;
 
 ( Hints.)
+( 0bfx0 are hints; 0bfxm are IT - when m != 0. Not in ARMv6-M)
 : hint  4 <<  0bf00 or  constant  does> @  op, ;
 -- assembler
 0 hint nop
@@ -263,6 +279,7 @@ assembler
 4 hint sev
 forth
 
+
 ( ldm/stm)
 ( same as op-i8, different base opcode)
 : ldm-stm   constant  does> @  ( reglist Rn op)  ?reg sh8  i8  op, ;
@@ -271,14 +288,44 @@ assembler
 0c800 ldm-stm ldm
 forth
 
+( Conditional branch.)
+( Condition field:
+  0  EQ  Z=1
+  1  NE  Z=0
+  2  CS  C=1   aka HS   NOTE: different from other architectures!
+  3  CC  C=0   aka LO         ARM uses "natural" carry, which = ~borrow
+  4  MI  N=1
+  5  PL  N=0
+  6  VS  V=1
+  7  VC  V=0
+  8  HI  C=1 and Z=0
+  9  LS  C=0 or  Z=1
+ 10  GE  N=V
+ 11  LT  N!=V
+ 12  GT  N=V and Z=0
+ 13  LE  N!=V or Z=1
+ 14  AL  always    NOTE: always and never are NOT encoded in any ARMv6-M
+ 15  ??  never     instruction. Ever.
+
+  b<cond> encoding: 0d000 + <cond> << 8 + offset
+  offset is _signed_ and scaled *2
+  XXX but from what PC?
+)
+
 ( svc and friend(s)
 ( XXX are these _branches_? Like the conditional branch?)
 ( XXX like bkpt)
 : svc-like   constant  does> @  ( i8 op)  i8  op, ;
 assembler
-0de00 svc-like undefined
-0df00 svc-like svc
+0de00 svc-like undefined   ( branch always encoding!)
+0df00 svc-like svc         ( branch never encoding!)
 forth
+
+( Long unconditional branch.)
+( 0e000 + i11 offset: signed and scaled *2. But from what PC?)
+
+( 0e800 - ffff are 32-bit encodings! See ARM/ARMv7/thumb32-asm.mu4 for
+  details!)
 
 ( Save an image that we can try to disassemble with objdump, and send to
   device using stlink.)
