@@ -51,6 +51,11 @@ assembler
 #15 reg pc
 #14 reg lr
 #13 reg sp
+#12 reg r12
+#11 reg r11
+#10 reg r10
+  9 reg r9
+  8 reg r8
   7 reg r7
   6 reg r6
   5 reg r5
@@ -72,11 +77,17 @@ forth
 
 ( These are named to suggest where they would put the 3-bit field if the
   instruction is in octal.)
-: r00  ( reg regtype op)  ?reg  07 and  6 <<  or ;
-: 0r0  ( reg regtype op)  ?reg  07 and  3 <<  or ;
-: 00r  ( reg regtype op)  ?reg  07 and        or ;
+: r00  ( reg regtype op - op')  ?reg  07 and  6 <<  or ;
+: 0r0  ( reg regtype op - op')  ?reg  07 and  3 <<  or ;
+: 00r  ( reg regtype op - op')  ?reg  07 and        or ;
 
-( For building opcodes with 4-bit register field)
+( For building opcodes with 4-bit register field, R.)
+: 0R  ( R -> r0_000_rrr)  ( reg regtype op - op')
+   ?reg  dup 8 and  4 <<  swap  07 and  or or ;
+
+: R0  ( R -> 0r_rrr_000)  ( reg regtype op - op')
+   ?reg  0f and  3 <<  or ;
+
 : ?imm  ( imm type op - op imm)
    push  # = not if  error" expected immediate value"  then
    pop swap  ;
@@ -93,28 +104,29 @@ forth
 ( From here on out, i3/5/8 and Rm/n/d mean immediate value or register with
   type on top.)
 
+( Shift-immed register - low register only!)
 : sh-imm  #11 <<  constant  does> @  ( i5 Rm Rd op)  00r  0r0  i5  op, ;
-
 assembler
 0 sh-imm lsli
 1 sh-imm lsri
 2 sh-imm asri
 forth
 
+( 3 register instructions - low registers only!)
 : add-3reg  #9 <<  constant  does> @  ( Rm Rn Rd op)  00r  0r0  r00  op, ;
 assembler
-0c add-3reg addr3
-0d add-3reg subr3
+0c add-3reg addr3l
+0d add-3reg subr3l
 forth
 
-( 3 bit immediate)
+( 3 bit immediate - low registers only!)
 : add-3i  #9 <<  constant  does> @  ( i3 Rn Rd op)  00r  0r0  i3  op, ;
 assembler
 0e add-3i addi3
 0f add-3i subi3
 forth
 
-( 8 bit immediate)
+( 8 bit immediate - low registers only!)
 : op-i8  #11 <<  constant  does> @  ( i8 Rd op)  ?reg sh8  i8  op, ;
 assembler
 4 op-i8 movi8
@@ -123,8 +135,8 @@ assembler
 7 op-i8 subi8
 forth
 
-( Data processing, low registers)
-: alu0   6 <<  4000 or  dup u. constant  does> @  ( Rm Rdn op)  00r  0r0  op, ;
+( Data processing, low registers only!)
+: alu0   6 <<  4000 or  constant  does> @  ( Rm Rdn op)  00r  0r0  op, ;
 
 assembler
  0 alu0 and
@@ -147,7 +159,17 @@ forth
 
 
 ( 4-bit register)
-: reg4  8 <<  constant  does> @  ( Rm Rdn op)  ;
+: reg4  8 <<  4100 or  constant  does> @  ( Rm Rdn op)  0R  R0  op, ;
+assembler
+0 reg4 addr2
+1 reg4 cmpr2  ( NOTE: high registers _only_!)
+2 reg4 movr2
+forth
+3 reg4 _bx
+assembler
+: bx   ( Rm)  r0 ( Rdn)  _bx ;
+: blx  ( Rm)  r8 ( Rdn)  _bx ;
+forth
 
 ( Save an image that we can try to disassemble with objdump, and send to
   device using stlink.)
@@ -162,18 +184,18 @@ forth
 ram
 @ram org  ( RAM start)
 
-( imm shifts)
+( imm shifts - low regs)
 4 # r5 r7 lsli
 8 # r3 r2 lsri
 #31 # r4 r0 asri
 
-( 3 regs)
-r4 r5 r6 addr3
-r0 r1 r2 subr3
+( 3 regs - low regs)
+r4 r5 r6 addr3l
+r0 r1 r2 subr3l
 6 # r5 r6 addi3
 7 # r1 r2 subi3
 
-( 8-bit imm)
+( 8-bit imm - low regs)
 44 # r6 movi8
 0fc # r1 cmpi8
 33 # r3 addi8
@@ -185,5 +207,10 @@ r7 r2 cmpr
 r1 r4 bic
 
 ( 4-bit reg fields)
+lr r8 addr2
+r3 pc cmpr2
+sp r5 movr2
+lr bx
+r9 blx
 
 save-image stmf0-test.img
