@@ -64,12 +64,6 @@ assembler
 
 forth
 
-( When all three registers are specified - Rm, Rn, and Rd, the fields are
-  as follows:
-
-  m m m | n n n | d d d
-)
-
 : ?reg  ( reg type op - op reg)
    push  2000_0000 = not if  error" expected a register"  then
    pop swap  ;
@@ -82,6 +76,7 @@ forth
 : 0r0  ( reg regtype op)  ?reg  07 and  3 <<  or ;
 : 00r  ( reg regtype op)  ?reg  07 and        or ;
 
+( For building opcodes with 4-bit register field)
 : ?imm  ( imm type op - op imm)
    push  # = not if  error" expected immediate value"  then
    pop swap  ;
@@ -101,17 +96,15 @@ forth
 : sh-imm  #11 <<  constant  does> @  ( i5 Rm Rd op)  00r  0r0  i5  op, ;
 
 assembler
-0 sh-imm lsl
-1 sh-imm lsr
-2 sh-imm asr
-
+0 sh-imm lsli
+1 sh-imm lsri
+2 sh-imm asri
 forth
 
 : add-3reg  #9 <<  constant  does> @  ( Rm Rn Rd op)  00r  0r0  r00  op, ;
 assembler
 0c add-3reg addr3
 0d add-3reg subr3
-
 forth
 
 ( 3 bit immediate)
@@ -119,6 +112,7 @@ forth
 assembler
 0e add-3i addi3
 0f add-3i subi3
+forth
 
 ( 8 bit immediate)
 : op-i8  #11 <<  constant  does> @  ( i8 Rd op)  ?reg sh8  i8  op, ;
@@ -127,11 +121,36 @@ assembler
 5 op-i8 cmpi8
 6 op-i8 addi8
 7 op-i8 subi8
-
 forth
 
-( So we can try to disassemble with objdump, and send to device using
-  stlink.)
+( Data processing, low registers)
+: alu0   6 <<  4000 or  dup u. constant  does> @  ( Rm Rdn op)  00r  0r0  op, ;
+
+assembler
+ 0 alu0 and
+ 1 alu0 eor
+ 2 alu0 lslr
+ 3 alu0 lsrr
+ 4 alu0 asrr
+ 5 alu0 adc
+ 6 alu0 sbc
+ 7 alu0 ror
+ 8 alu0 tst
+ 9 alu0 rsb
+0a alu0 cmpr
+0b alu0 cmn
+0c alu0 orr
+0d alu0 mul
+0e alu0 bic
+0f alu0 mvnr
+forth
+
+
+( 4-bit register)
+: reg4  8 <<  constant  does> @  ( Rm Rdn op)  ;
+
+( Save an image that we can try to disassemble with objdump, and send to
+  device using stlink.)
 
 ( Super-simple raw binary image. No address info is saved!)
 : save-image
@@ -144,9 +163,9 @@ ram
 @ram org  ( RAM start)
 
 ( imm shifts)
-4 # r5 r7 lsl
-8 # r3 r2 lsr
-#31 # r4 r0 asr
+4 # r5 r7 lsli
+8 # r3 r2 lsri
+#31 # r4 r0 asri
 
 ( 3 regs)
 r4 r5 r6 addr3
@@ -159,6 +178,11 @@ r0 r1 r2 subr3
 0fc # r1 cmpi8
 33 # r3 addi8
 23 # r7 subi8
+
+( alu low register)
+r3 r5 tst
+r7 r2 cmpr
+r1 r4 bic
 
 ( 4-bit reg fields)
 
