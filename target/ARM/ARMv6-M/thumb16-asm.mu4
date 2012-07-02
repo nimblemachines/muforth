@@ -96,6 +96,7 @@ forth
 : i5  ( imm immtype op)  ?imm  1f and  6 <<  or ;
 : i3  ( imm immtype op)  ?imm  07 and  6 <<  or ;
 : i8  ( imm immtype op)  ?imm  0ff and       or ;
+: i7  ( imm immtype op)  ?imm   7f and       or ;
 
 ( For instrs with 8-bit immediates. NOTE: needs to be preceded by a _type
   test_ so the order of stack operands is correct.)
@@ -171,6 +172,54 @@ assembler
 : blx  ( Rm)  r8 ( Rdn)  _bx ;
 forth
 
+( ldr pc-imm)
+assembler
+: ldr-pc-imm   ( offset Rt)  4800  ?reg sh8  i8  op, ;
+forth
+
+( ldr/str h/b/sb)
+: ldr-str-ix   9 <<  5000 or  constant  does> @  ( Rm Rn Rt op)  00r  0r0  r00  op, ;
+assembler
+0 ldr-str-ix str-ix
+1 ldr-str-ix strh-ix
+2 ldr-str-ix strb-ix
+3 ldr-str-ix ldrsb-ix
+4 ldr-str-ix ldr-ix
+5 ldr-str-ix ldrh-ix
+6 ldr-str-ix ldrb-ix
+7 ldr-str-ix ldrsh-ix
+
+( ldr/str base+offset)
+( NOTE: use + not or here!)
+: ldr-str-imm   #11 <<  6000 +  constant  does> @  ( i5 Rn Rt op)  00r  0r0  i5  op, ;
+assembler
+0 ldr-str-imm str-imm
+1 ldr-str-imm ldr-imm
+2 ldr-str-imm strb-imm
+3 ldr-str-imm ldrb-imm
+4 ldr-str-imm strh-imm
+5 ldr-str-imm ldrh-imm
+forth
+
+( ldr/str sp-rel)
+: ldr-str-sp  #11 <<  6000 +  constant  does> @  ( i8 Rt op)  ?reg sh8  i8  op, ;
+assembler
+6 ldr-str-sp str-sp
+7 ldr-str-sp ldr-sp
+
+( add to pc/sp)
+( same structure as ld/st sp offset!)
+8 ldr-str-sp add-pc
+9 ldr-str-sp add-sp
+forth
+
+( add/sub imm to sp)
+: sp-offset  7 <<  0b000 or  constant  does> @  ( i7 op)  i7  op, ;
+assembler
+0 sp-offset add-to-sp
+1 sp-offset sub-from-sp
+forth
+
 ( Save an image that we can try to disassemble with objdump, and send to
   device using stlink.)
 
@@ -212,5 +261,35 @@ r3 pc cmpr2
 sp r5 movr2
 lr bx
 r9 blx
+
+( ldr str indexd)
+r0 r1 r2 str-ix
+r3 r4 r5 strh-ix
+r6 r7 r0 strb-ix
+r1 r2 r3 ldrsb-ix
+r4 r5 r6 ldr-ix
+r7 r0 r1 ldrh-ix
+r2 r3 r4 ldrb-ix
+r5 r6 r7 ldrsh-ix
+
+( ldr str base+offset, ie imm)
+20 # r0 r1 str-imm
+33 # r2 r3 ldr-imm
+49 # r4 r5 strb-imm
+53 # r6 r7 ldrb-imm
+67 # r0 r1 strh-imm
+98 # r2 r3 ldrh-imm
+
+( ldr str rel to sp)
+0ae # r0 str-sp
+0dc # r1 ldr-sp
+
+( load reg with pc or sp + offset)
+0ce # r2 add-sp
+0d9 # r3 add-pc
+
+( offset the sp)
+0b4 # add-to-sp
+0c2 # sub-from-sp
 
 save-image stmf0-test.img
