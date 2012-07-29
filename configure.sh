@@ -23,6 +23,7 @@ if [ -d .git ]; then
     echo "Installing post-commit and post-checkout hooks."
     install -m 755 post-commit.sh .git/hooks/post-commit
     install -m 755 post-commit.sh .git/hooks/post-checkout
+    install -m 755 post-commit.sh .git/hooks/post-merge
     sh post-commit.sh
 else
     echo ": muforth-commit 0 ;" > commit.mu4
