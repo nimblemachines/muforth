@@ -20,7 +20,7 @@
 
 if [ -d .git ]; then
     echo
-    echo "Installing post-commit and post-checkout hooks."
+    echo "Installing post-commit, post-checkout, and post-merge hooks."
     install -m 755 post-commit.sh .git/hooks/post-commit
     install -m 755 post-commit.sh .git/hooks/post-checkout
     install -m 755 post-commit.sh .git/hooks/post-merge
