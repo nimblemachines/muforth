@@ -8,11 +8,11 @@
 /* file primitives */
 
 #include "muforth.h"
+#include "version.h"        /* BUILD_DIR */
 
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
-#include <stdlib.h>     /* getenv */
 #include <string.h>     /* memcpy */
 
 /* XXX: for read, write; temporary? */
@@ -39,54 +39,31 @@ char *path_prefix(char *src, char *dest, char sep, char *begin)
     return dest;        /* new beginning */
 }
 
-static int try_path(char *p)
-{
-    struct stat st;
-
-    if (p && (stat(p, &st) == 0)) return -1;
-    return 0;
-}
-
 /*
- * find_file should look for the file (the c-path is a relative path) in
- * the following places, in order:
- *   ./path
- *   $MUFORTH/path
- *   $HOME/muforth/path
- * and nowhere else!
+ * Convert path to an absolute path. If path starts with "/", then return
+ * it unchanged; otherwise, prefix the the muforth build directory to the
+ * path and return that.
  */
-static char* find_file(char *path, char *pathbuf, int bufsize)
+static char* abs_path(char *path, char *pathbuf, int bufsize)
 {
-    char *p;
-
     /* If path is absolute, just return it as is. */
     if (*path == '/') return path;
 
-    /* start with path at end, if it fits! */
+    /* Otherwise, rewrite path as BUILD_DIR/path */
     path = path_prefix(path, pathbuf+bufsize, '\0', pathbuf);
-    if (path == NULL) return NULL;
-
-    /* now, for each prefix, push it onto front of path and try it */
-    /* first, try bare path */
-    if (try_path(path)) return path;
-
-    /* next, try $MUFORTH/path */
-    p = path_prefix(getenv("MUFORTH"), path, '/', pathbuf);
-    if (try_path(p)) return p;
-
-    /* last, try $HOME/muforth/path */
-    p = path_prefix("muforth", path, '/', pathbuf);
-    p = path_prefix(getenv("HOME"), p, '/', pathbuf);
-    if (try_path(p)) return p;
-
-    return NULL;    /* not found */
+    return path_prefix(BUILD_DIR, path, '/', pathbuf);
 }
 
 void mu_create_file()       /* C-string-name - fd */
 {
     int fd;
+    char pathbuf[1024];
+    char *path = abs_path((char *)TOP, pathbuf, 1024);
 
-    fd = open((char *)TOP, O_CREAT | O_TRUNC | O_WRONLY, 0666);
+    if (path == NULL)
+        return abort_zmsg("path too long");
+
+    fd = open(path, O_CREAT | O_TRUNC | O_WRONLY, 0666);
     if (fd == -1)
         return abort_strerror();
 
@@ -97,10 +74,10 @@ static void mu_open_file()     /* C-string-name flags - fd */
 {
     int fd;
     char pathbuf[1024];
-    char *path = find_file((char *)ST1, pathbuf, 1024);
+    char *path = abs_path((char *)ST1, pathbuf, 1024);
 
     if (path == NULL)
-        return abort_zmsg("file not found on search path");
+        return abort_zmsg("path too long");
 
     fd = open(path, TOP);
     if (fd == -1)
