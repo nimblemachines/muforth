@@ -39,10 +39,11 @@ char *path_prefix(char *src, char *dest, char sep, char *begin)
     return dest;        /* new beginning */
 }
 
+#ifndef WITH_CURRENT_DIR
+
 /*
  * Convert path to an absolute path. If path starts with "/", then return
- * it unchanged; otherwise, prefix the the muforth build directory to the
- * path and return that.
+ * it unchanged; otherwise, prefix path with the muforth build directory.
  */
 static char* abs_path(char *path, char *pathbuf, int bufsize)
 {
@@ -53,6 +54,57 @@ static char* abs_path(char *path, char *pathbuf, int bufsize)
     path = path_prefix(path, pathbuf+bufsize, '\0', pathbuf);
     return path_prefix(BUILD_DIR, path, '/', pathbuf);
 }
+
+#else
+
+/*
+ * NOTE: I think this is too complicated, which is why it isn't compiled by
+ * default, but if you really want it, define WITH_CURRENT_DIR and
+ * recompile.
+ *
+ * Convert path to an absolute path.
+ * If path starts with "/", return it unchanged.
+ * If path starts with ".", prefix it with the current directory.
+ * Otherwise, prefix it with the muforth build directory.
+ */
+static char* abs_path(char *path, char *pathbuf, int bufsize)
+{
+    /* If path is absolute, just return it as is. */
+    if (*path == '/') return path;
+
+    {
+        char *p;
+
+        /* Get ready to add a path prefix. */
+        p = path_prefix(path, pathbuf+bufsize, '\0', pathbuf);
+
+        /* If path starts with ".", prepend the current working dir. */
+        if (*path == '.')
+        {
+            char pwd[1024];
+            if (getcwd(pwd, 1024) == NULL) return NULL;
+            return path_prefix(pwd, p, '/', pathbuf);
+        }
+
+        /* Otherwise, rewrite path as BUILD_DIR/path */
+        return path_prefix(BUILD_DIR, p, '/', pathbuf);
+    }
+}
+
+/* For testing. Easiest way to use it:
+ *   pad cwd type
+ */
+void mu_push_cwd()   /* addr - addr count */
+{
+    char *dest = (char *)TOP;
+
+    if (getcwd(dest, 1024) == NULL)
+        PUSH(0);
+    else
+        PUSH(strlen(dest));
+}
+
+#endif  /* WITH_CURRENT_DIR */
 
 void mu_create_file()       /* C-string-name - fd */
 {
