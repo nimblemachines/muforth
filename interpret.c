@@ -260,17 +260,20 @@ void mu_minus_rbracket()
     state = &forth_compiler;
 }
 
+#ifdef DEBUG_STACK
+#define SHOW_STACK muboot_show_stack()
 static void muboot_show_stack()
 {
-#ifdef DEBUG_STACK
     int i;
     fprintf(stderr, "  --");
     for (i = 0; i < 4; i++)
         fprintf(stderr, "  %16llx", (uval)SP[3-i]);
     fprintf(stderr, "\n");
     fflush(stderr);
-#endif
 }
+#else
+#define SHOW_STACK
+#endif
 
 /*
  * This version of interpret is -not- exported to Forth! We are going to
@@ -288,7 +291,7 @@ static void muboot_interpret()
         mu_token();
         if (TOP == 0) break;
         mu_consume();
-        muboot_show_stack();
+        SHOW_STACK;
     }
     DROP(2);
 }
