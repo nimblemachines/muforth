@@ -79,6 +79,18 @@ comment register-use
 
 register-use
 
+label run-application
+.meta. .contains application-task-hook .if
+   ( caller save the chat registers so application doesn't have to worry
+     about them.)
+   z pushw  x pushw
+   application-task-hook rcall
+   x popw  z popw
+.then
+   ret  ;c
+
+.ifdef rxirq  ( interrupt-driven receive)
+
 ( We're going to want to do interrupt-driven receive, so set up the UART RX
   ISR, and an 8-byte ring buffer/queue where we store the received bytes.)
 
@@ -87,6 +99,15 @@ register-use
 1 var qrd     ( index used by task when reading bytes from queue)
 
 #8 var qbuf
+
+( Let's run the UART at 125kb/s. Baud rate divisor = fosc/bps/16 - 1.)
+label uart-init
+   xl clr  qcount xl sts  qwr xl sts  qrd xl sts
+   #8_000 ( fosc = 8M)  #125 /  #16 /  1 - >hilo
+   xl ldi  xh ldi  UBRRH xh out  UBRRL xl out
+   %1001_1000 xl ldi  UCSRB xl out  ( enable RXC interrupt, RX, and TX)
+   ( chip defaults to 8bits, 1stop, no parity at reset)
+   ret  ;c
 
 USART_RXC handler
    x pushw  tl push  SREG xl in  xl push  ( push X, tl, and SREG)
@@ -102,19 +123,10 @@ USART_RXC handler
    ( Restore SREG, pop tl, xl & xh, and exit handler)
    xl pop  SREG xl out  tl pop  x popw  reti  ;c
 
-label run-application
-.meta. .contains application-task-hook .if
-   ( caller save the chat registers so application doesn't have to worry
-     about them.)
-   z pushw  x pushw
-   application-task-hook rcall
-   x popw  z popw
-.then
-   ret  ;c
-
 ( If there is a byte waiting in the queue, fetch it and return. Otherwise,
   call run-application, and then try again.)
 
+label get-cmd
 label uart-read
    begin
       cli  qcount xl lds  xl tst  0< if
@@ -132,19 +144,33 @@ label uart-read
       run-application rcall
    again  ;c
 
+.else  ( polled receive)
+
+( Let's run the UART at 125kb/s. Baud rate divisor = fosc/bps/16 - 1.)
+label uart-init
+   #8_000 ( fosc = 8M)  #125 /  #16 /  1 - >hilo
+   xl ldi  xh ldi  UBRRH xh out  UBRRL xl out
+   %0001_1000 xl ldi  UCSRB xl out  ( enable RX and TX)
+   ( chip defaults to 8bits, 1stop, no parity at reset)
+   ret  ;c
+
+( While waiting, run the application.)
+label get-cmd
+   ( Wait for RXC - receive complete)
+   begin  run-application rcall  7 UCSRA sbis  again
+   UDR xl in  ret  ;c
+
+label uart-read
+   ( Wait for RXC - receive complete)
+   begin  7 UCSRA sbis  again
+   UDR xl in  ret  ;c
+
+.then
+
 label uart-write
    ( Wait for UDRE - data register empty)
    begin  5 UCSRA sbis  again
    UDR xl out  ret  ;c
-
-( Let's run the UART at 125kb/s. Baud rate divisor = fosc/bps/16 - 1.)
-label uart-init
-   xl clr  qcount xl sts  qwr xl sts  qrd xl sts
-   #8_000 ( fosc = 8M)  #125 /  #16 /  1 - >hilo
-   xl ldi  xh ldi  UBRRH xh out  UBRRL xl out
-   %1001_1000 xl ldi  UCSRB xl out  ( enable RXC interrupt, RX, and TX)
-   ( chip defaults to 8bits, 1stop, no parity at reset)
-   ret  ;c
 
 ( Command routines.)
 
@@ -172,7 +198,7 @@ label go
 
 ( Command dispatch.)
 label process
-   uart-read rcall  ( cmd)
+   get-cmd rcall
 
    10 xl cpi  set-addr      0= not until
    11 xl cpi  read-program  0= not until
