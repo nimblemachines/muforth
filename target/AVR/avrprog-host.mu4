@@ -38,8 +38,16 @@ hex
 .else             avr.SlowClock
 .then             ;
 
-( NOTE: this programming command is *not* available on the mega8515. You
-  have to simply delay instead.)
+: sig  ( - s0 s1 s2)
+   30 0 0 0 avr3
+   30 0 1 0 avr3
+   30 0 2 0 avr3 ;
+
+variable fuses  ( fuse at byte 0; hfuse @ 1; efuse @ 2)
+
+( NOTE: wait polling is *not* available on the mega8515. You
+  have to simply delay instead. Also, the 8515 lacks an efuse, so let's
+  reflect that here as well.)
 
 .ifdef mega8515
 
@@ -50,25 +58,25 @@ hex
 : wait-eeprom   #9000 us ;  ( 9ms)
 : wait-erase    #9000 us ;
 
-.else
+( efuse doesn't exist on 8515)
+: read-fuses  ( - fuses = fuse at byte 0; hfuse @ 1)
+   50 0 0 0 avr3
+   58 8 0 0 avr3  ( fuse hfuse)
+   lohi> ;
+
+: write-fuses  ( fuses = fuse at byte 0; hfuse @ 1)
+   >hilo push  0ac 0a0 0  pop  avr.Write  ( write fuse bits)   wait-fuse
+         push  0ac 0a8 0  pop  avr.Write  ( write hfuse bits)  wait-fuse ;
+
+.else  ( everything but the 8515)
 
 ( Use wait polling.)
 : ?busy
    begin  0f0 0 0 0 avr3  1 and  0= until ;
 
-: wait-fuse     ;
 : wait-eeprom   ?busy ;
 : wait-flash    ?busy ;
 : wait-erase    ?busy ;
-
-.then
-
-: sig  ( - s0 s1 s2)
-   30 0 0 0 avr3
-   30 0 1 0 avr3
-   30 0 2 0 avr3 ;
-
-variable fuses  ( fuse at byte 0; hfuse @ 1; efuse @ 2)
 
 : read-fuses  ( - fuses = fuse at byte 0; hfuse @ 1; efuse @ 2)
    50 0 0 0 avr3
@@ -76,12 +84,19 @@ variable fuses  ( fuse at byte 0; hfuse @ 1; efuse @ 2)
    50 8 0 0 avr3  ( fuse hfuse efuse)
    lohi>  lohi> ;
 
+: write-fuses  ( fuses = fuse at byte 0; hfuse @ 1; efuse @ 2)
+   >hilo push  0ac 0a0 0  pop  avr.Write  ( write fuse bits)
+   >hilo push  0ac 0a8 0  pop  avr.Write  ( write hfuse bits)
+         push  0ac 0a4 0  pop  avr.Write  ( write efuse bits) ;
+
+.then
+
 : prog-fuses
-   fuses @ =if
-      >hilo push  0ac 0a0 0  pop  avr.Write  ( write fuse bits)   wait-fuse
-      >hilo push  0ac 0a8 0  pop  avr.Write  ( write hfuse bits)  wait-fuse
-            push  0ac 0a4 0  pop  avr.Write  ( write efuse bits)  wait-fuse
-   ^ then  drop ;
+   fuses @ =if  ( if fuses to program...)
+      dup read-fuses xor if  ( ...and if different from chip's)
+      cr  ." Writing fuses"
+      write-fuses
+   ^ then  then  drop ;
 
 : read-lock  ( - lock)
    58 0 0 0 avr3 ;
@@ -199,8 +214,9 @@ b/page 2/  constant w/page
    radix preserve  hex
    h preserve  image preserve
    +prog  fast-clock
+   prog-fuses
    erase-chip
-   prog-flash  prog-eeprom  prog-fuses
+   prog-flash  prog-eeprom
    -prog ;
 
 : verify-pad
