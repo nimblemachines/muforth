@@ -79,6 +79,12 @@ if [ "$os" = "Linux" ]; then
         done
     fi
 fi
+if [ "$os" = "FreeBSD" ]; then
+    archobjs="usb-freebsd.o"
+    if [ "$cpu" = "amd64" ]; then
+        # nothing changes!
+    fi
+fi
 
 # Figure out which version of sed we're running, so we can properly specify
 # the use of extended (ie, sane) regular expressions.
