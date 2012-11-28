@@ -39,35 +39,35 @@ while [ "$1" ]; do
   shift
 done
 
-# Set cflags and ldflags based on system. Useful for 64-bit Linux and for
+# Set cflags and ldflags based on system. Useful for 64-bit Linux, BSD, and
 # Darwin (OSX).
 
 os=$(uname -s)
 cpu=$(uname -m)
 
 # On 32-bit hosts, silence annoying warnings about _narrowing_ casts (from
-# cell (64-bit) to address (32-bit)), but leave turned on warnings about
-# _widening_ casts (address to cell) so we know where they happen, and can
+# val (64-bit) to cell (32-bit)), but leave turned on warnings about
+# _widening_ casts (cell to val) so we know where they happen, and can
 # specify them as sign-extending (seemingly gcc's default) or not.
 
-cflags="-Wno-int-to-pointer-cast"
+Wnarrowing="-Wno-int-to-pointer-cast "
+cflags=""
 ldflags=""
 
-# On 64-bit hosts, we now default to _forcing_ the compilation of a 32-bit
-# version of muforth. Compiling muforth with 64-bit cells is now left as an
-# exercise for the reader (it's not hard, and all the pieces are still
-# there - it's just rather _pointless_ ;-).
+# On 64-bit hosts, compile a native 64-bit muforth, with everything 64-bits
+# wide. I'd like for muforth to feel exactly the same on all machines,
+# which it now won't, but how to fix this isn't clear.
 
+# Keep Wnarrowing, because -arch ppc causes a 32-bit build!
 if [ "$os" = "Darwin" ]; then
     archobjs="usb-darwin.o"
-    cflags="${cflags} -m32 -mdynamic-no-pic -arch i386 -arch ppc"
-    ldflags="${ldflags} -m32 -arch i386 -arch ppc -framework CoreFoundation -framework IOKit"
+    cflags="-mdynamic-no-pic -arch x86_64 -arch ppc ${cflags}"
+    ldflags="-arch x86_64 -arch ppc -framework CoreFoundation -framework IOKit ${ldflags}"
 fi
 if [ "$os" = "Linux" ]; then
     archobjs="usb-linux.o"
     if [ "$cpu" = "x86_64" ]; then
-        cflags="${cflags} -m32"
-        ldflags="${ldflags} -m32"
+        Wnarrowing=""
     fi
     # Try to guess a device to use for serial targets
     if [ ! -c serial-target ]; then
@@ -82,9 +82,10 @@ fi
 if [ "$os" = "FreeBSD" ]; then
     archobjs="usb-freebsd.o"
     if [ "$cpu" = "amd64" ]; then
-        # nothing changes!
+        Wnarrowing=""
     fi
 fi
+cflags="${Wnarrowing}${cflags}"
 
 # Figure out which version of sed we're running, so we can properly specify
 # the use of extended (ie, sane) regular expressions.
