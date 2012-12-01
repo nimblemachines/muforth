@@ -140,6 +140,14 @@ void mu_usb_find_device()
 
 #endif /* NOTYET!! */
 
+/* XXX this is a dummy version to test out the load size of the AVR and
+ * HC08 build systems. It always returns false. */
+
+/*
+ * usb-find-device (vendor-id product-id -- handle -1 | 0)
+ */
+void mu_usb_find_device()   { DROP(1); TOP = 0; }
+
 /*
  * usb-close ( handle)
  */
