@@ -9,15 +9,15 @@
 #include "version.h"
 
 /* data stack */
-val  stack[STACK_SIZE];
-val  *SP;
+cell  stack[STACK_SIZE];
+cell  *SP;
 
 /* return stack */
-val  rstack[STACK_SIZE];
-val  *RP;
+cell  rstack[STACK_SIZE];
+cell  *RP;
 
-xtk  *IP;   /* instruction pointer */
-xtk   W;    /* on entry, points to the current Forth word */
+xtk_cell  *IP;  /* instruction pointer */
+xtk        W;   /* on entry, points to the current Forth word */
 
 static void init_stacks()
 {

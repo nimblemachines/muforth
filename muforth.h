@@ -11,16 +11,42 @@
 
 #include "env.h"
 
-/* data cells - big enough to hold an address */
-typedef  intptr_t   cell;
-typedef uintptr_t  ucell;
+/* Support for putting 32-bit values into cell (64-bit) sized containers -
+ * for support of 64-bit muFORTH on 32-bit platforms.
+ */
+#ifdef MU_ADDR_32
 
-/* stack cells - "values" - always 64 bits! */
-typedef  int64_t   val;
-typedef uint64_t  uval;
+#ifdef MU_LITTLE_ENDIAN
+/* LE 32 */
+#define CELL_T(type)    struct { type value; uintptr_t padding; }
+#define CELL(value)     { value, 0 }
+
+#else
+/* BE 32 */
+#define CELL_T(type)    struct { uintptr_t padding; type value; }
+#define CELL(value)     { 0, value }
+
+#endif
+
+#define _(cell)         (cell).value
+#define _STAR(pcell)    (pcell)->value
+
+#else  /* 64-bit */
+
+/* These are no-ops for 64-bit. */
+#define CELL_T(type)    type
+#define CELL(value)     (value)
+#define _(cell)         (cell)
+#define _STAR(pcell)    *(pcell)
+
+#endif
+
+/* Every kind of cell - address, data, stack - is 64 bits! */
+typedef  int64_t   cell;
+typedef uint64_t  ucell;
 
 /* address type - for casting */
-typedef intptr_t  addr;   /* intptr_t and uintptr_t are integer types that
+typedef uintptr_t  addr;   /* intptr_t and uintptr_t are integer types that
                              are the same size as a native pointer. Whether
                              this type is unsigned or not will affect how
                              32-bit addresses are treated when pushed onto
@@ -28,14 +54,13 @@ typedef intptr_t  addr;   /* intptr_t and uintptr_t are integer types that
                              unsigned will zero-extend. */
 
 /* dictionary size */
-/* Cells are the native word size. Let's allocate 1M cells - 4MB of heap on
- * 32-bit machines, 8MB on 64-bit. */
+/* Cells are 64 bits. Let's allocate 1M cells - 8MB of heap. */
 #define DICT_CELLS     (1024 * 1024)
 
 /* data stack */
 #define STACK_SIZE  4096
 #define STACK_SAFETY  32
-extern val stack[];
+extern cell stack[];
 #define S0    &stack[STACK_SIZE - STACK_SAFETY]
 #define SMAX  &stack[STACK_SAFETY]
 
@@ -47,24 +72,26 @@ extern val stack[];
 #define ST3   SP[3]
 
 #define DROP(n)  (SP += (n))
-#define PUSH(v)  (*--SP = (val)(v))
+#define PUSH(v)  (*--SP = (cell)(v))
 #define PUSH_ADDR(v)  PUSH((addr)(v))
 #define POP      (*SP++)
 
 /* pointer and cell types */
-typedef void (*code)(void);     /* POINTER to word's machine code */
-typedef code  *xtk;             /* POINTER to code; aka "execution token" */
+typedef void (*code)(void);         /* POINTER to word's machine code */
+typedef CELL_T(code)  code_cell;    /* CELL wrapper of code */
+typedef code_cell    *xtk;          /* POINTER to code; aka "execution token" */
+typedef CELL_T(xtk)   xtk_cell;     /* CELL wrapper of xtk */
 
 /* Forth VM execution registers */
-extern val  *SP;    /* parameter stack pointer */
-extern xtk  *IP;    /* instruction pointer */
-extern xtk   W;     /* on entry, points to the current Forth word */
+extern cell      *SP;   /* parameter stack pointer */
+extern xtk_cell  *IP;   /* instruction pointer */
+extern xtk        W;    /* on entry, points to the current Forth word */
 
 /* return stack */
 /* NOTE: Even on 32-bit platforms the R stack is 64 bits wide! This makes
  * things _much_ simpler, at the expense of a bit more storage. */
-extern val  rstack[];
-extern val  *RP;    /* return stack pointer */
+extern cell  rstack[];
+extern cell  *RP;    /* return stack pointer */
 #define R0  &rstack[STACK_SIZE]
 
 /*
@@ -75,36 +102,34 @@ extern val  *RP;    /* return stack pointer */
  */
 
 /* declare a code field for a word */
-#define CODE(w)  code p_ ## w = &(w);
+#define CODE(w)  code_cell p_ ## w = CELL(&(w));
 
 /* make an execution token from a word's name */
-#define XTK(w)   (&p_ ## w)
+#define XTK(w)    CELL((&p_ ## w))
 
-#define EXECUTE   execute_xtk((xtk)POP)
-#define CALL(x)   (W = (x), (**W)())
-#define NEXT      CALL(*IP++)
-#define BRANCH    (IP = (xtk *)*IP)
+#define EXECUTE   execute_xtk(_STAR(((xtk_cell *)SP++)))
+#define CALL(x)   (W = (x), (*_STAR(W))())
+#define NEXT      CALL(_STAR(IP++))
+#define BRANCH    (IP = (xtk_cell *)_STAR(IP))
 
 #define RDROP(n)  (RP += (n))
-#define RPUSH(n)  (*--RP = (val)(n))
+#define RPUSH(n)  (*--RP = (cell)(n))
 #define RPOP      (*RP++)
 
 #define NEST      RPUSH((addr)IP)
-#define UNNEST    (IP = (xtk *)RPOP)
+#define UNNEST    (IP = (xtk_cell *)RPOP)
 
 #define ALIGN_SIZE  sizeof(cell)
-#define ALIGNED(x)  (((intptr_t)(x) + ALIGN_SIZE - 1) & -(ALIGN_SIZE))
+#define ALIGNED(x)  (((intptr_t)(x) + ALIGN_SIZE - 1) & -ALIGN_SIZE)
 
 /*
  * struct string is a "normal" string: pointer to the first character, and
- * length. However, since these are often sitting on the data stack with
- * the length on top (and therefore at a _lower_ address) let's define it
- * that way.
+ * length.
  */
 struct string
 {
-    size_t length;
     char *data;
+    size_t length;
 };
 
 struct counted_string
@@ -116,7 +141,6 @@ struct counted_string
 extern int parsed_lineno;       /* captured with first character of token */
 extern struct string parsed;    /* for errors */
 
-extern cell  *ph0;     /* pointer to start of heap space */
 extern cell  *ph;      /* ptr to next free byte in heap space */
 
 /* declare common functions */

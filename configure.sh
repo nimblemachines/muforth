@@ -70,6 +70,7 @@ if [ "$os" = "Linux" ]; then
         Wnarrowing=""
     fi
     # Try to guess a device to use for serial targets
+    # XXX Do this for *BSD too?
     if [ ! -c serial-target ]; then
         for term in USB0 ACM0 S0; do
             dev=/dev/tty$term

@@ -43,15 +43,9 @@ int main(int argc, char *argv[])
     }
 
     if (sizeof(intptr_t) == 4)
-    {
-        printf("#define MU_CELL_SHIFT 2\n");
-        printf("#define MU_CELL_BITS  32\n");
-    }
+        printf("#define MU_ADDR_32\n");
     else if (sizeof(intptr_t) == 8)
-    {
-        printf("#define MU_CELL_SHIFT 3\n");
-        printf("#define MU_CELL_BITS  64\n");
-    }
+        printf("#define MU_ADDR_64\n");
     else
         printf("#error. What kind of weird machine is this, anyway?\n");
 

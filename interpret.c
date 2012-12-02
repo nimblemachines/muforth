@@ -21,13 +21,16 @@
 /* interpreter mode */
 struct imode
 {
-    xtk eat;        /* consume one token */
-    xtk prompt;     /* display a mode-specific prompt */
+    xtk_cell eat;       /* consume one token */
+    xtk_cell prompt;    /* display a mode-specific prompt */
 };
 
-static char *start;    /* input source text */
-static char *end;
-static char *first;    /* goes from start to end */
+/* cell versions of char * pointers */
+typedef CELL_T(char *) charptr_cell;
+
+static charptr_cell start;      /* input source text */
+static charptr_cell end;
+static charptr_cell first;      /* goes from start to end */
 
 /* line number - incremented for each newline */
 static cell lineno = 1;
@@ -89,15 +92,15 @@ void mu_push_trailing()  /* ( -- 0 | delim 1) */
 static void mu_return_token(char *last, int consumed_delim, int delim)
 {
     /* Get address and length of the token */
-    parsed.data = first;
-    parsed.length = last - first;
+    parsed.data = _(first);
+    parsed.length = last - _(first);
 
     /* Save trailing delimiter as a pseudo-token: character and length */
     trailing_delimiter = delim;
     trailing_length = consumed_delim;
 
     /* Account for characters processed, return token */
-    first = last + consumed_delim;
+    _(first) = last + consumed_delim;
 
     DROP(-2);
     ST1 = (addr) parsed.data;
@@ -113,15 +116,15 @@ static void mu_return_token(char *last, int consumed_delim, int delim)
 static void skip()
 {
     /* Record skipped whitespace as if it's a token */
-    skipped.data = first;
+    skipped.data = _(first);
 
-    while (first < end && isspace(*first))
+    while (_(first) < _(end) && isspace(*_(first)))
     {
-        if (*first == '\n') lineno++;
-        first++;
+        if (*_(first) == '\n') lineno++;
+        _(first)++;
     }
 
-    skipped.length = first - skipped.data;
+    skipped.length = _(first) - skipped.data;
 }
 
 /*
@@ -136,7 +139,7 @@ static void mu_scan(int delim)
     /* capture lineno that token begins on */
     parsed_lineno = lineno;
 
-    for (last = first; last < end; last++)
+    for (last = _(first); last < _(end); last++)
     {
         c = *last;
         if (c == '\n') lineno++;
@@ -236,13 +239,13 @@ static struct imode forth_interpreter =
 static struct imode forth_compiler =
     { XTK(muboot_compile_token),   XTK(mu_nope) };
 
-static struct imode *state = &forth_interpreter;
+static CELL_T(struct imode *) state = CELL(&forth_interpreter);
 
 
 void mu_consume()
 {
     /* call the current consume function */
-    execute_xtk(state->eat);  
+    execute_xtk(_(_(state)->eat));  
 }
 
 void mu_push_state()
@@ -252,12 +255,12 @@ void mu_push_state()
 
 void mu_compiler_lbracket()
 {
-    state = &forth_interpreter;
+    _(state) = &forth_interpreter;
 }
 
 void mu_minus_rbracket()
 {
-    state = &forth_compiler;
+    _(state) = &forth_compiler;
 }
 
 #ifdef DEBUG_STACK
@@ -308,13 +311,13 @@ void muboot_load_file()    /* c-string-name */
     fd = TOP;
     mu_read_file();
 
-    start = (char *)ST1;
-    end   = (char *)ST1 + TOP;
+    _(start) = (char *)ST1;
+    _(end)   = (char *)ST1 + TOP;
     DROP(2);
 
     /* wait to reset these until just before we evaluate the new file */
     lineno = 1;
-    first = start;
+    _(first) = _(start);
 
     muboot_interpret();
 

@@ -16,10 +16,10 @@
  */
 
 /*
- * Dictionary is kept cell-aligned.
+ * Dictionary is kept cell-aligned. Cells are 64 bits.
  */
-cell  *ph0;     /* pointer to start of heap space */
-cell  *ph;      /* ptr to next free byte in heap space */
+static cell  *ph0;  /* pointer to start of heap space */
+       cell  *ph;   /* ptr to next free byte in heap space */
 
 /*
  * A struct dict_name represents what Forth folks often call a "head" - a
@@ -70,14 +70,12 @@ cell  *ph;      /* ptr to next free byte in heap space */
  * and bug-free code, but how?
  *
  * My solution is a bit weird, but it works rather well. Since I know that
- * there will be at least -one- address cell (on 32-bit machines, 3 bytes
- * and a length; on 64-bit machines, 7 bytes and a length) of name I will
- * define a struct that represents only the last three (or seven)
- * characters of the name, the length, and the link; the previous
- * characters are "off the map" as far as C is concerned, but there is an
- * easy way to address them. (To get to the beginning of a name, take the
- * address of the suffix, add the SUFFIX_LEN (3 or 7), and subtract the
- * length.)
+ * there will be at least -one- cell (7 bytes and a length) of name I will
+ * define a struct that represents only the last seven characters of the
+ * name, the length, and the link; the previous characters are "off the
+ * map" as far as C is concerned, but there is an easy way to address them.
+ * (To get to the beginning of a name, take the address of the suffix, add
+ * the SUFFIX_LEN (7), and subtract the length.)
  *
  * One quirk of this method is that links no longer point to links, and
  * this forced me to restructure some code. In particular,  .forth.  and
@@ -87,15 +85,18 @@ cell  *ph;      /* ptr to next free byte in heap space */
  * vocabs together.)
  */
 
+
 /*
- * On 64-bit machines ALIGN_SIZE is 8. On 32-bit machines, it is 4.
+ * Cells are 64 bits, so ALIGN_SIZE is 8.
  */
 #define SUFFIX_LEN  (ALIGN_SIZE - 1)
+typedef CELL_T(struct dict_name *) link_cell;
+
 struct dict_name
 {
-    char suffix[SUFFIX_LEN];     /* last 3 or 7 characters of name */
-    unsigned char length;        /* 127 max; high bit = hidden */
-    struct dict_name *link;      /* link to preceding dict_name */
+    char suffix[SUFFIX_LEN];    /* last 7 characters of name */
+    unsigned char length;       /* 127 max; high bit = hidden */
+    link_cell link;             /* link to preceding dict_name */
 };
 
 /*
@@ -105,7 +106,7 @@ struct dict_name
 struct dict_entry
 {
     struct dict_name n;
-    code code;
+    code_cell code;
 };
 
 /*
@@ -214,7 +215,7 @@ void mu_find()
      */
     if (length < 128)
     {
-        while ((pde = (struct dict_entry *)pde->n.link) != NULL)
+        while ((pde = (struct dict_entry *)_(pde->n.link)) != NULL)
         {
             /* for speed, don't test anything else unless lengths match */
             if (pde->n.length != length) continue;
@@ -258,7 +259,7 @@ static struct dict_name *new_name(
     pnm->length = length + (hidden ? 128 : 0);
 
     /* set link pointer */
-    pnm->link = link;
+    _(pnm->link) = link;
 
     /* Allot entry */
     ph = (cell *)(pnm + 1);
@@ -278,7 +279,7 @@ static void new_linked_name(
     struct dict_name *pnmHead, char *name, int length)
 {
     /* create new name & link onto front of chain */
-    pnmHead->link = new_name(pnmHead->link, name, length, 0);
+    _(pnmHead->link) = new_name(_(pnmHead->link), name, length, 0);
 }
 
 /* (linked-name)  ( a u chain) */
@@ -307,7 +308,7 @@ static void init_chain(struct dict_name *pchain, struct inm *pinm)
     for (; pinm->name != NULL; pinm++)
     {
         new_linked_name(pchain, pinm->name, strlen(pinm->name));
-        *ph++ = (addr)pinm->code;      /* set code pointer */
+        *ph++ = (addr)pinm->code;   /* set code pointer */
     }
 }
 
