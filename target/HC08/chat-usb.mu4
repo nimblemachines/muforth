@@ -236,7 +236,7 @@ label stall
 
 ( Set address is a bit tricky. We can't set the address immediately. The
   USB spec says that at every stage of a control transfer the device
-  address must remain constant.  Before the set-address command we are at
+  address must remain constant. Before the set-address command we are at
   the default address - 0. We can't change this until after the status
   stage of this control transfer, so we always check when handling a status
   IN if ADDR is still zero; if it is, we set the address _then_.)
@@ -342,29 +342,19 @@ label nak-in-expect-setup
    expect-setup-token j  ;c
 
 
-( XXX To convert process-usb into an interrupt handler, jumps to
-  setup-or-out-token, in-token, and nak-in-expect-setup should really be
-  _calls_; we should handle all the flags that are set all at once, rather
-  than only one per call. Also, interrupt flags - like TOKDNEF and STALLF -
-  should be cleared after being handled.)
-
-label process-usb
-   INTSTAT 3 bset? if ( TOKDNEF)
-      STAT ) lda  INTSTAT 3 bset  ( ack TOKDNEF)
-      0f8 # and  setup-or-out-token 0!= until
-       08 # cmpne?  in-token  until
-      ( not EP0; ignore)  ( fall thru)
-   then
-   INTSTAT 7 bset? if ( STALLF)
-      EPCTL0 1 bclr ( remove EPSTALL)
-      INTSTAT 7 bset  ( ack STALL)
-      nak-in-expect-setup j  ( get ready to receive SETUP)
-   then
-   rts  ;c
-
 .ifndef in-ram
 
 label finish-config
+
+.ifdef usb-debug-via-serial
+   -- Configure SCI for 115200 bps
+
+   SCIBDH ) clr        ( baud rate divisor, high)
+   #13 # SCIBDL ) mov  ( baud rate divisor, low)
+                       ( yields 115200 from 24M bus clock)
+   0c # SCIC2 ) mov    ( enable rcvr, xmitter)
+.then
+
 .ifdef usb-reset
    80 # USBCTL0 ) mov
    begin  USBCTL0 7 bclr?  until
@@ -377,21 +367,40 @@ label finish-config
    01 # CTL ) mov          -- enable USB module
    45 # USBCTL0 ) mov      -- turn on pullup, vreg, and PHY
    begin  INTSTAT 0 bset?  until  ( wait for USBRSTF)
+   ( fall thru)
+
+.then
+
+label after-usb-reset
+   ADDR ) clr
    0ff # INTSTAT ) mov     -- clear all flags
    0d # EPCTL0 ) mov       -- enable ep0 as control endpt
-
-.ifdef usb-debug-via-serial
-   -- Configure SCI for 115200 bps
-
-   SCIBDH ) clr        ( baud rate divisor, high)
-   #13 # SCIBDL ) mov  ( baud rate divisor, low)
-                       ( yields 115200 from 24M bus clock)
-   0c # SCIC2 ) mov    ( enable rcvr, xmitter)
-.then
-
    rts  ;c
 
-.then
+
+( XXX To convert process-usb into an interrupt handler, jumps to
+  setup-or-out-token, in-token, and nak-in-expect-setup should really be
+  _calls_; we should handle all the flags that are set all at once, rather
+  than only one per call. Also, interrupt flags - like TOKDNEF and STALLF -
+  should be cleared after being handled.)
+
+label process-usb
+   INTSTAT 0 bset? if ( USBRSTF - USB bus reset seen)
+      after-usb-reset c
+      nak-in-expect-setup j  ( get ready to receive SETUP)
+   then
+   INTSTAT 3 bset? if ( TOKDNEF)
+      STAT ) lda  INTSTAT 3 bset  ( ack TOKDNEF)
+      0f8 # and  setup-or-out-token 0!= until
+       08 # cmpne?  in-token  until
+      ( not EP0; ignore)  ( fall thru)
+   then
+   INTSTAT 7 bset? if ( STALLF)
+      EPCTL0 1 bclr ( remove EPSTALL)
+      INTSTAT 7 bset  ( ack STALL)
+      nak-in-expect-setup j  ( get ready to receive SETUP)
+   then
+   rts  ;c
 
 label emulated-swi
    ( jsr/bsr has already pushed PC)
