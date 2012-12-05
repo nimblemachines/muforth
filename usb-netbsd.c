@@ -6,12 +6,12 @@
  */
 
 /*
- * FreeBSD (version 8 and later) support for USB devices.
+ * NetBSD & FreeBSD (version 7 and earlier) support for USB devices.
  */
 
 /*
  * FreeBSD's USB support was based directly on NetBSD's until FreeBSD 8.
- * This file supports only the newer FreeBSD USB stack.
+ * This file supports NetBSD and older FreeBSD systems.
  */
 
 #include "muforth.h"
@@ -24,8 +24,6 @@
 #include <unistd.h>         /* read */
 #include <sys/ioctl.h>      /* ioctl */
 #include <dev/usb/usb.h>
-#include <dev/usb/usb_ioctl.h>
-#include <dev/usb/usbdi.h>
 
 #if NOTYET
 
