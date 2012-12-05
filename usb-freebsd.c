@@ -18,91 +18,74 @@
 
 #include "muforth.h"
 
-#include <ctype.h>          /* isdigit */
 #include <sys/types.h>
 #include <dirent.h>         /* opendir, readdir */
-#include <sys/stat.h>       /* open */
-#include <fcntl.h>
-#include <unistd.h>         /* read */
+#include <fcntl.h>          /* open */
+#include <unistd.h>         /* close */
 #include <sys/ioctl.h>      /* ioctl */
 #include <dev/usb/usb.h>
 #include <dev/usb/usb_ioctl.h>
 #include <dev/usb/usbdi.h>
 
-#define USB_PATH_MAX (strlen(USB_ROOT1)+16)
-
-struct match
-{
-    int idVendor;
-    int idProduct;
-};
-
-typedef int (*usb_match_fn)(char *, struct match *);    /* filepath, match_data */
-
 /*
- * Returns
- *   0 if directory exhausted or error
- *  >0 if match found
+ * On FreeBSD 8 (and later) there is a devfs, and USB devices show up as
+ * they are enumerated. Unlike NetBSD and previous versions of FreeBSD, the
+ * ugen devices now contain a _bus_ number, and only refer to endpoint
+ * zero. And in any case they are simply symlinks to the _real_ devices,
+ * which are now in /dev/usb/.
+ *
+ * So let's look there instead. Device names have the form /dev/usb/B.D.E,
+ * where B is a bus number (starting from 0); D is a device number
+ * (starting from 1); and E is an endpoint number, starting from 0.
  */
-static int foreach_dirent(char *path, usb_match_fn fn, struct match *pmatch)
-{
-    char pathbuf[USB_PATH_MAX];
-    DIR *pdir;
-    struct dirent *pde;
 
-    pdir = opendir(path);
+static int enumerate_devices(int idVendor, int idProduct)
+{
+    DIR *usbdir;
+    struct dirent *dev;;
+
+    usbdir = opendir("/dev/usb");
 
     /* Return no match if directory couldn't be opened. */
-    if (pdir == NULL) return 0;
+    if (usbdir == NULL) return 0;
 
-    while ((pde = readdir(pdir)) != NULL)
+    while ((dev = readdir(usbdir)) != NULL)
     {
-        /* bus and device entry names are 3 decimal digits */
-        if (isdigit(pde->d_name[0]))
+        if (dev->d_name[0] == '.') continue;
+        if (dev->d_name[dev->d_namlen - 1] == '0')
         {
-            char *subpath;
-            int matched;
+#define PATHMAX 32
+            char path[PATHMAX];
+            char *devpath;
+            int fd;
+            int res;
+            struct usb_device_descriptor dev_desc;
 
-            /* build path right-to-left */
-            subpath = path_prefix(pde->d_name, pathbuf + USB_PATH_MAX, '\0', pathbuf);
-            subpath = path_prefix(path, subpath, '/', pathbuf);
-            matched = fn(subpath, pmatch);
-            if (matched != 0) return matched;   /* error or match */
+            /* Found endpoint 0 device; build path right-to-left */
+            devpath = path_prefix(dev->d_name, path + PATHMAX, '\0', path);
+            devpath = path_prefix("/dev/usb", devpath, '/', path);
+
+            fd = open(devpath, O_RDONLY);
+            if (fd == -1) continue;
+            res = ioctl(fd, USB_GET_DEVICE_DESC, &dev_desc);
+            close(fd);
+            if (res == -1) continue;
+
+            if (UGETW(dev_desc.idVendor) == idVendor &&
+                UGETW(dev_desc.idProduct) == idProduct)
+            {
+                int timeout = 5000; /* ms */
+                fd = open(devpath, O_RDWR);   /* Re-open read-write */
+                if (fd == -1) return -1;
+                if (ioctl(fd, USB_SET_RX_TIMEOUT, &timeout) == -1)
+                    return -1;
+                if (ioctl(fd, USB_SET_TX_TIMEOUT, &timeout) == -1)
+                    return -1;
+                return fd;
+            }
         }
     }
-    return 0;   /* no match */
-}
-
-static int read_le16(__le16 *pw)
-{
-    __u8 *pb = (__u8 *)pw;
-    return pb[0] + (pb[1] << 8);
-}
-
-static int match_device(char *dev, struct match *pmatch)
-{
-    int fd;
-    struct usb_device_descriptor dev_desc;
-    int count;
-
-    fd = open(dev, O_RDONLY);
-    if (fd == -1) return -1;
-
-    count = read(fd, &dev_desc, USB_DT_DEVICE_SIZE);
-    assert (count == USB_DT_DEVICE_SIZE, "couldn't read device descriptor");
-
-    close(fd);
-
-    if (read_le16(&dev_desc.idVendor) == pmatch->idVendor &&
-        read_le16(&dev_desc.idProduct) == pmatch->idProduct)
-        return open(dev, O_RDWR);   /* Re-open read-write */
-
     return 0;
-}
-
-static int enumerate_devices(char *bus, struct match *pmatch)
-{
-    return foreach_dirent(bus, match_device, pmatch);
 }
 
 /*
@@ -110,18 +93,10 @@ static int enumerate_devices(char *bus, struct match *pmatch)
  */
 void mu_usb_find_device()
 {
-    struct match match;
     int matched;
 
-    match.idVendor = ST1;
-    match.idProduct = TOP;
-
     /* Enumerate USB device tree, looking for a match */
-    matched = foreach_dirent(USB_ROOT1, enumerate_devices, &match);
-
-    /* If nothing found, or opendir error, try the other bus */
-    if (matched == 0)
-        matched = foreach_dirent(USB_ROOT2, enumerate_devices, &match);
+    matched = enumerate_devices(ST1, TOP);
 
     if (matched < 0) return abort_strerror();
 
@@ -162,7 +137,6 @@ void mu_usb_request()
     USETW(req.wValue, SP[4]);
     USETW(req.wIndex, ST3);
     USETW(req.wLength, ST2);
-    /* req.timeout = 4000 /* ms timeout */;
     ucr.ucr_data = (void *)ST1;
     ucr.ucr_addr = 0;
     ucr.ucr_flags = (req.bmRequestType == UT_READ_DEVICE)
