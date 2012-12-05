@@ -81,13 +81,13 @@ if [ "$os" = "Linux" ]; then
     fi
 fi
 if [ "$os" = "FreeBSD" ]; then
-    archobjs="usb-bsd.o"
+    archobjs="usb-netbsd.o usb-freebsd.o"
     if [ "$cpu" = "amd64" ]; then
         Wnarrowing=""
     fi
 fi
 if [ "$os" = "NetBSD" ]; then
-    archobjs="usb-bsd.o"
+    archobjs="usb-netbsd.o usb-freebsd.o"
     if [ "$cpu" = "amd64" ]; then
         Wnarrowing=""
     fi

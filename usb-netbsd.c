@@ -14,93 +14,64 @@
  * This file supports NetBSD and older FreeBSD systems.
  */
 
+#if defined(__NetBSD__) || (__FreeBSD__ < 8)
+
 #include "muforth.h"
 
-#include <ctype.h>          /* isdigit */
-#include <sys/types.h>
-#include <dirent.h>         /* opendir, readdir */
-#include <sys/stat.h>       /* open */
-#include <fcntl.h>
+//#include <sys/types.h>
+#include <fcntl.h>          /* open */
 #include <unistd.h>         /* read */
 #include <sys/ioctl.h>      /* ioctl */
 #include <dev/usb/usb.h>
 
-#if NOTYET
-
-#define USB_PATH_MAX (strlen(USB_ROOT1)+16)
-
-struct match
-{
-    int idVendor;
-    int idProduct;
-};
-
-typedef int (*usb_match_fn)(char *, struct match *);    /* filepath, match_data */
-
 /*
- * Returns
- *   0 if directory exhausted or error
- *  >0 if match found
+ * On NetBSD ugen devices are predefined - there is no devfs. On my system
+ * there are 4 ugens (0 to 3) each with 16 endpoints - 00 to 15. Device
+ * names are of the form "ugenD.EE".
+ *
+ * On FreeBSD 7 (and back to version 5) there is a devfs, and ugen devices
+ * show up as devices are enumerated. The endpoint 0 zero device has the
+ * name "ugenD" (where D starts at 0); other endpoints show up as "ugenD.E"
+ * for endpoints 1 to 9, and presumably as "ugenD.EE" for endpoints 10 to
+ * 15.
  */
-static int foreach_dirent(char *path, usb_match_fn fn, struct match *pmatch)
+
+#ifdef __NetBSD__
+#define UGEN_EP0    "/dev/ugen0.00"
+#else
+#define UGEN_EP0    "/dev/ugen0"
+#endif
+#define UGEN_DEVNUM 9       /* string offset to device number */
+
+static int enumerate_devices(int idVendor, int idProduct)
 {
-    char pathbuf[USB_PATH_MAX];
-    DIR *pdir;
-    struct dirent *pde;
+    usb_device_descriptor_t dev_desc;
+    int fd;
+    int res;
+    int devnum;
+    char dev_ep0[] = UGEN_EP0;
 
-    pdir = opendir(path);
-
-    /* Return no match if directory couldn't be opened. */
-    if (pdir == NULL) return 0;
-
-    while ((pde = readdir(pdir)) != NULL)
+    for (devnum = '0'; devnum < '4'; devnum++)
     {
-        /* bus and device entry names are 3 decimal digits */
-        if (isdigit(pde->d_name[0]))
-        {
-            char *subpath;
-            int matched;
+        dev_ep0[UGEN_DEVNUM] = devnum;
+        fd = open(dev_ep0, O_RDONLY);
+        if (fd == -1) continue;
+        res = ioctl(fd, USB_GET_DEVICE_DESC, &dev_desc);
+        close(fd);
+        if (res == -1) continue;
 
-            /* build path right-to-left */
-            subpath = path_prefix(pde->d_name, pathbuf + USB_PATH_MAX, '\0', pathbuf);
-            subpath = path_prefix(path, subpath, '/', pathbuf);
-            matched = fn(subpath, pmatch);
-            if (matched != 0) return matched;   /* error or match */
+        if (UGETW(dev_desc.idVendor) == idVendor &&
+            UGETW(dev_desc.idProduct) == idProduct)
+        {
+            int timeout = 5000; /* ms */
+            fd = open(dev_ep0, O_RDWR);   /* Re-open read-write */
+            if (fd == -1) return -1;
+            if (ioctl(fd, USB_SET_TIMEOUT, &timeout) == -1)
+                return -1;
+            return fd;
         }
     }
-    return 0;   /* no match */
-}
-
-static int read_le16(__le16 *pw)
-{
-    __u8 *pb = (__u8 *)pw;
-    return pb[0] + (pb[1] << 8);
-}
-
-static int match_device(char *dev, struct match *pmatch)
-{
-    int fd;
-    struct usb_device_descriptor dev_desc;
-    int count;
-
-    fd = open(dev, O_RDONLY);
-    if (fd == -1) return -1;
-
-    count = read(fd, &dev_desc, USB_DT_DEVICE_SIZE);
-    assert (count == USB_DT_DEVICE_SIZE, "couldn't read device descriptor");
-
-    close(fd);
-
-    if (read_le16(&dev_desc.idVendor) == pmatch->idVendor &&
-        read_le16(&dev_desc.idProduct) == pmatch->idProduct)
-        return open(dev, O_RDWR);   /* Re-open read-write */
-
     return 0;
-}
-
-static int enumerate_devices(char *bus, struct match *pmatch)
-{
-    return foreach_dirent(bus, match_device, pmatch);
 }
 
 /*
@@ -108,18 +79,10 @@ static int enumerate_devices(char *bus, struct match *pmatch)
  */
 void mu_usb_find_device()
 {
-    struct match match;
     int matched;
 
-    match.idVendor = ST1;
-    match.idProduct = TOP;
-
     /* Enumerate USB device tree, looking for a match */
-    matched = foreach_dirent(USB_ROOT1, enumerate_devices, &match);
-
-    /* If nothing found, or opendir error, try the other bus */
-    if (matched == 0)
-        matched = foreach_dirent(USB_ROOT2, enumerate_devices, &match);
+    matched = enumerate_devices(ST1, TOP);
 
     if (matched < 0) return abort_strerror();
 
@@ -137,12 +100,37 @@ void mu_usb_find_device()
     }
 }
 
-#endif /* NOTYET!! */
-
-/* XXX this is a dummy version to test out the load size of the AVR and
- * HC08 build systems. It always returns false. */
+/*
+ * usb-close ( handle)
+ */
+void mu_usb_close()
+{
+    mu_close_file();
+}
 
 /*
- * usb-find-device (vendor-id product-id -- handle -1 | 0)
+ * usb-request (bmRequestType bRequest wValue wIndex wLength 'buffer device)
+ * XXX should return actual length of transfer?
  */
-void mu_usb_find_device()   { DROP(1); TOP = 0; }
+void mu_usb_request()
+{
+    struct usb_ctl_request ucr;
+    int fd;
+
+#define req ucr.ucr_request
+    req.bmRequestType = SP[6];
+    req.bRequest = SP[5];
+    USETW(req.wValue, SP[4]);
+    USETW(req.wIndex, ST3);
+    USETW(req.wLength, ST2);
+    ucr.ucr_data = (void *)ST1;
+    ucr.ucr_addr = 0;
+    ucr.ucr_flags = (req.bmRequestType == UT_READ_DEVICE)
+                    ? USBD_SHORT_XFER_OK : 0;
+    fd = TOP;
+    DROP(7);
+
+    if (ioctl(fd, USB_DO_REQUEST, &ucr) == -1) return abort_strerror();
+}
+
+#endif

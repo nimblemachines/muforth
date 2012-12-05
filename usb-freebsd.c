@@ -14,6 +14,8 @@
  * This file supports only the newer FreeBSD USB stack.
  */
 
+#if defined(__FreeBSD__) && (__FreeBSD__ >= 8)
+
 #include "muforth.h"
 
 #include <ctype.h>          /* isdigit */
@@ -26,8 +28,6 @@
 #include <dev/usb/usb.h>
 #include <dev/usb/usb_ioctl.h>
 #include <dev/usb/usbdi.h>
-
-#if NOTYET
 
 #define USB_PATH_MAX (strlen(USB_ROOT1)+16)
 
@@ -139,12 +139,38 @@ void mu_usb_find_device()
     }
 }
 
-#endif /* NOTYET!! */
-
-/* XXX this is a dummy version to test out the load size of the AVR and
- * HC08 build systems. It always returns false. */
+/*
+ * usb-close ( handle)
+ */
+void mu_usb_close()
+{
+    mu_close_file();
+}
 
 /*
- * usb-find-device (vendor-id product-id -- handle -1 | 0)
+ * usb-request (bmRequestType bRequest wValue wIndex wLength 'buffer device)
+ * XXX should return actual length of transfer?
  */
-void mu_usb_find_device()   { DROP(1); TOP = 0; }
+void mu_usb_request()
+{
+    struct usb_ctl_request ucr;
+    int fd;
+
+#define req ucr.ucr_request
+    req.bmRequestType = SP[6];
+    req.bRequest = SP[5];
+    USETW(req.wValue, SP[4]);
+    USETW(req.wIndex, ST3);
+    USETW(req.wLength, ST2);
+    /* req.timeout = 4000 /* ms timeout */;
+    ucr.ucr_data = (void *)ST1;
+    ucr.ucr_addr = 0;
+    ucr.ucr_flags = (req.bmRequestType == UT_READ_DEVICE)
+                    ? USB_SHORT_XFER_OK : 0;
+    fd = TOP;
+    DROP(7);
+
+    if (ioctl(fd, USB_DO_REQUEST, &ucr) == -1) return abort_strerror();
+}
+
+#endif
