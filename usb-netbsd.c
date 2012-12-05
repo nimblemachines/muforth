@@ -19,7 +19,7 @@
 #include "muforth.h"
 
 #include <fcntl.h>          /* open */
-#include <unistd.h>         /* read */
+#include <unistd.h>         /* close */
 #include <sys/ioctl.h>      /* ioctl */
 #include <dev/usb/usb.h>
 

@@ -15,7 +15,7 @@
 #include <sys/types.h>
 #include <dirent.h>         /* opendir, readdir */
 #include <fcntl.h>          /* open */
-#include <unistd.h>         /* read */
+#include <unistd.h>         /* close */
 #include <sys/ioctl.h>      /* ioctl */
 
 #include <linux/usb/ch9.h>
