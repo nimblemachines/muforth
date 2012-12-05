@@ -58,11 +58,12 @@ ldflags=""
 # wide. I'd like for muforth to feel exactly the same on all machines,
 # which it now won't, but how to fix this isn't clear.
 
-# Keep Wnarrowing, because -arch ppc causes a 32-bit build!
+# Keep Wnarrowing, because we might be building a 32-bit executable.
+# But default to whatever Darwin wants to build.
 if [ "$os" = "Darwin" ]; then
     archobjs="usb-darwin.o"
-    cflags="-mdynamic-no-pic -arch x86_64 -arch ppc ${cflags}"
-    ldflags="-arch x86_64 -arch ppc -framework CoreFoundation -framework IOKit ${ldflags}"
+    cflags="-mdynamic-no-pic"
+    ldflags="-framework CoreFoundation -framework IOKit"
 fi
 if [ "$os" = "Linux" ]; then
     archobjs="usb-linux.o"
@@ -80,13 +81,7 @@ if [ "$os" = "Linux" ]; then
         done
     fi
 fi
-if [ "$os" = "FreeBSD" ]; then
-    archobjs="usb-netbsd.o usb-freebsd.o"
-    if [ "$cpu" = "amd64" ]; then
-        Wnarrowing=""
-    fi
-fi
-if [ "$os" = "NetBSD" ]; then
+if [ "$os" = "FreeBSD" -o "$os" = "NetBSD" ]; then
     archobjs="usb-netbsd.o usb-freebsd.o"
     if [ "$cpu" = "amd64" ]; then
         Wnarrowing=""
