@@ -14,12 +14,8 @@
 #include <ctype.h>          /* isdigit */
 #include <sys/types.h>
 #include <dirent.h>         /* opendir, readdir */
-
-#include <sys/stat.h>       /* open */
-#include <fcntl.h>
-
+#include <fcntl.h>          /* open */
 #include <unistd.h>         /* read */
-
 #include <sys/ioctl.h>      /* ioctl */
 
 #include <linux/usb/ch9.h>
