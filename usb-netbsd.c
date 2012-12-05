@@ -18,7 +18,6 @@
 
 #include "muforth.h"
 
-//#include <sys/types.h>
 #include <fcntl.h>          /* open */
 #include <unistd.h>         /* read */
 #include <sys/ioctl.h>      /* ioctl */
