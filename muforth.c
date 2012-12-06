@@ -34,7 +34,7 @@ void mu_push_build_time()
     PUSH(strlen(BUILD_DATE));
 #endif
 }
- 
+
 #ifdef FAKE_TTY_WIDTH
 void mu_tty_width()  { TOP = 80; }  /* fd -- width */
 #endif

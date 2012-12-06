@@ -119,7 +119,7 @@ sed ${sedext} \
   -e "s/%sedext%/${sedext}/g" \
   scripts/do_sed.sh.in > scripts/do_sed.sh
 chmod 755 scripts/do_sed.sh
- 
+
 # Figure out which version of make we're using (most likely GNU or BSD) and
 # set up an appropriate Makefile.
 
