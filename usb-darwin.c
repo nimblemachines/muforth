@@ -220,3 +220,62 @@ void mu_usb_control_request()
     if (ior != kIOReturnSuccess)
         return abort_zmsg("ControlRequest failed");
 }
+
+/*
+ * usb-get-pipe-properties
+ *    (pipe# intf -- direction number transferType maxpacketsize interval)
+ */
+void mu_usb_get_pipe_properties()
+{
+    IOUSBInterfaceInterface **intf = (IOUSBInterfaceInterface **)TOP;
+    IOReturn ior;
+    UInt16 max_packet_size;
+    UInt8 direction;
+    UInt8 number;
+    UInt8 transfer_type;
+    UInt8 interval;
+
+    ior = (*intf)->GetPipeProperties(intf, ST1, &direction, &number, &transfer_type,
+                                     &max_packet_size, &interval);
+    if (ior != kIOReturnSuccess)
+        return abort_zmsg("GetPipeProperties failed");
+
+    DROP(-3);
+    SP[4] = direction;
+    ST3 = number;
+    ST2 = transfer_type;
+    ST1 = max_packet_size;
+    TOP = interval;
+}
+
+/*
+ * usb-read-pipe ( 'buffer size pipe# intf -- #read)
+ */
+void mu_usb_read_pipe()
+{
+    IOUSBInterfaceInterface **intf = (IOUSBInterfaceInterface **)TOP;
+    IOReturn ior;
+    UInt32 size = ST2;
+
+    ior = (*intf)->ReadPipe(intf, ST1, (void *)ST3, &size);
+    if (ior != kIOReturnSuccess)
+        return abort_zmsg("ReadPipe failed");
+
+    DROP(3);
+    TOP = size;     /* count of bytes actually read */
+}
+
+/*
+ * usb-write-pipe ( 'buffer size pipe# intf)
+ */
+void mu_usb_write_pipe()
+{
+    IOUSBInterfaceInterface **intf = (IOUSBInterfaceInterface **)TOP;
+    IOReturn ior;
+
+    ior = (*intf)->WritePipe(intf, ST1, (void *)ST3, ST2);
+    if (ior != kIOReturnSuccess)
+        return abort_zmsg("WritePipe failed");
+
+    DROP(4);
+}

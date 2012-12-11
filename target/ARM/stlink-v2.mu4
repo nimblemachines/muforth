@@ -1,0 +1,59 @@
+( This file is part of muFORTH: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2012 David Frech. All rights reserved, and all wrongs
+  reversed. (See the file COPYRIGHT for details.)
+
+loading Support for ST-LINK/V2 debug interface
+
+hex
+
+0483 3748 0 usb-find-interface  .if
+  ." Found"    constant stlink  .else
+  ." Couldn't find"             .then  ."  ST-LINK/V2"
+
+: uread   ( buf len - #read)  1  stlink  usb-read-pipe ;
+: uwrite  ( buf len)          2  stlink  usb-write-pipe ;
+
+( A simple buffer for chatty communication protocols. Words for putting
+  values into a buffer - at pad - and taking them out again.)
+
+: !chat  <# ;
+: #chat  hld @  pad - ;
+: +hld   1 hld +! ;
+
+( XXX Note: this is different from how I named these in
+  target/HC08/bdm-usb-host.m4. Change those as well?)
+
+: >b  ( byte)    hld @  c!  +hld ;
+: b>  ( - byte)  hld @  c@  +hld ;
+
+( Little-endian 16-bit words.)
+: >w  ( word)    >hilo  >b >b ;
+: w>  ( - word)         b> b>  lohi> ;
+
+: Send1    !chat  >b ;
+: Send2    Send1  >b ;
+: Send3    Send2  >b ;
+
+: expect-check  ( #expect)
+   pad  #chat  uwrite  ( send command)
+   =if  ( expecting something)
+      pad  over ( expect)  uread  !chat
+      -  if  ." expect mismatch"  then  ^
+   then
+   drop ( 0) ;
+
+: expect  ( #expect - #read)
+   pad  #chat  uwrite  ( send command)
+   =if  ( expecting something)
+      pad  swap ( expect)  uread  !chat
+   then ;
+
+: Expect0   0 expect ;
+: Expect1   1 expect  b> ;
+: Expect2   2 expect  b> b> ;
+
+: version  0f1 Send1  6 expect-check  w> w> w> ;
+
+( If you don't do this, the next time around the board wedges... Weird.)
+: done   stlink  usb-close-interface ;
