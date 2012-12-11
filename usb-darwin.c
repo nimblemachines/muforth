@@ -15,34 +15,37 @@
 #include <IOKit/IOCFPlugIn.h>
 #include <IOKit/usb/IOUSBLib.h>
 
+static void add_number_match(CFMutableDictionaryRef matching,
+                             CFStringRef keyRef,
+                             SInt32 value)
+{
+    CFNumberRef numberRef;
+
+    /* Create a CFNumber for the given key and set the value in the dictionary */
+    numberRef = CFNumberCreate(kCFAllocatorDefault, kCFNumberSInt32Type, &value);
+    CFDictionarySetValue(matching, keyRef, numberRef);
+    CFRelease(numberRef);
+}
+
 /*
  * usb-find-device (vendor-id product-id -- handle -1 | 0)
  */
 void mu_usb_find_device()
 {
     CFMutableDictionaryRef matching;
-    CFNumberRef numberRef;
     io_service_t ioService;
     IOCFPlugInInterface **pluginInterface;
     IOUSBDeviceInterface **deviceInterface;
     IOReturn ior;
     SInt32 score;      /* unused */
-    SInt32 idVendor = ST1;
-    SInt32 idProduct = TOP;
 
     /* Match instances of IOUSBDevice and its subclasses */
     matching = IOServiceMatching(kIOUSBDeviceClassName);
     if (matching == NULL) return abort_zmsg("IOServiceMatching returned NULL");
 
-    /* Create a CFNumber for the idVendor and set the value in the dictionary */
-    numberRef = CFNumberCreate(kCFAllocatorDefault, kCFNumberSInt32Type, &idVendor);
-    CFDictionarySetValue(matching, CFSTR(kUSBVendorID), numberRef);
-    CFRelease(numberRef);
-
-    /* Create a CFNumber for the idProduct and set the value in the dictionary */
-    numberRef = CFNumberCreate(kCFAllocatorDefault, kCFNumberSInt32Type, &idProduct);
-    CFDictionarySetValue(matching, CFSTR(kUSBProductID), numberRef);
-    CFRelease(numberRef);
+    /* Match device's VendorID & ProductID. */
+    add_number_match(matching, CFSTR(kUSBVendorID), ST1);
+    add_number_match(matching, CFSTR(kUSBProductID), TOP);
 
     /* Look up our service. We have to release it when we're done. */
     ioService = IOServiceGetMatchingService(kIOMasterPortDefault, matching);
@@ -79,21 +82,21 @@ void mu_usb_find_device()
 }
 
 /*
- * usb-close (handle)
+ * usb-close-device (devhandle)
  */
-void mu_usb_close()
+void mu_usb_close_device()
 {
     IOUSBDeviceInterface **deviceInterface = (IOUSBDeviceInterface **)TOP;
 
-    /* We're done with the device interface. */
+    /* We're done with the device. */
     (*deviceInterface)->Release(deviceInterface);
     DROP(1);
 }
 
 /*
- * usb-request (bmRequestType bRequest wValue wIndex wLength 'buffer device)
+ * usb-device-request (bmRequestType bRequest wValue wIndex wLength 'buffer device)
  */
-void mu_usb_request()
+void mu_usb_device_request()
 {
     IOUSBDevRequest req;
     IOReturn ior;
@@ -109,4 +112,111 @@ void mu_usb_request()
     ior = (*dev)->DeviceRequest(dev, &req);
     if (ior != kIOReturnSuccess)
         return abort_zmsg("DeviceRequest failed");
+}
+
+/*
+ * usb-find-interface (vendor-id product-id interface# -- handle -1 | 0)
+ */
+void mu_usb_find_interface()
+{
+    CFMutableDictionaryRef matching;
+    io_service_t ioService;
+    IOCFPlugInInterface **pluginInterface;
+    IOUSBInterfaceInterface **intfInterface;
+    IOReturn ior;
+    SInt32 score;      /* unused */
+
+    /* Match instances of IOUSBInterface and its subclasses */
+    matching = IOServiceMatching(kIOUSBInterfaceClassName);
+    if (matching == NULL) return abort_zmsg("IOServiceMatching returned NULL");
+
+    /* Match interface's VendorID, ProductID, InterfaceNumber, &
+     * ConfigurationValue. */
+    add_number_match(matching, CFSTR(kUSBVendorID), ST2);
+    add_number_match(matching, CFSTR(kUSBProductID), ST1);
+    add_number_match(matching, CFSTR(kUSBInterfaceNumber), TOP);
+    add_number_match(matching, CFSTR(kUSBConfigurationValue), 1);
+
+    /* Look up our service. We have to release it when we're done. */
+    ioService = IOServiceGetMatchingService(kIOMasterPortDefault, matching);
+    if (ioService == 0)
+    {
+        DROP(2);
+        TOP = 0;
+        return;
+    }
+
+    ior = IOCreatePlugInInterfaceForService(ioService,
+            kIOUSBInterfaceUserClientTypeID,
+            kIOCFPlugInInterfaceID,
+            &pluginInterface,
+            &score);
+
+    if ((ior != kIOReturnSuccess) || (pluginInterface == NULL))
+        return abort_zmsg("IOCreatePlugInInterfaceForService failed");
+
+    /* Use the plugin interface to retrieve the device interface. */
+    ior = (*pluginInterface)->QueryInterface(pluginInterface,
+            CFUUIDGetUUIDBytes(kIOUSBInterfaceInterfaceID),
+            (LPVOID*) &intfInterface);
+
+    /* We're done with the plugin interface. */
+    (*pluginInterface)->Release(pluginInterface);
+
+    if ((ior != kIOReturnSuccess) || (intfInterface == NULL))
+        return abort_zmsg("QueryInterface failed");
+
+    /*
+     * Open the interface. This will instantiate all of its pipes
+     * (endpoints).
+     */
+    ior = (*intfInterface)->USBInterfaceOpen(intfInterface);
+    if (ior != kIOReturnSuccess)
+        return abort_zmsg("USBInterfaceOpen failed");
+
+    /*
+     * Return intfInterface as a handle for further operations on the USB
+     * interface.
+     */
+    DROP(1);
+    ST1 = (addr)intfInterface;
+    TOP = -1;
+}
+
+/*
+ * usb-close-interface (intfhandle)
+ */
+void mu_usb_close_interface()
+{
+    IOUSBInterfaceInterface **intfInterface = (IOUSBInterfaceInterface **)TOP;
+    IOReturn ior;
+
+    /* We're done with the interface. Close it and then release it. */
+    ior = (*intfInterface)->USBInterfaceClose(intfInterface);
+    if (ior != kIOReturnSuccess)
+        return abort_zmsg("USBInterfaceClose failed");
+
+    (*intfInterface)->Release(intfInterface);
+    DROP(1);
+}
+
+/*
+ * usb-control-request (bmRequestType bRequest wValue wIndex wLength 'buffer intf)
+ */
+void mu_usb_control_request()
+{
+    IOUSBDevRequest req;
+    IOReturn ior;
+    IOUSBInterfaceInterface **intf = (IOUSBInterfaceInterface **)TOP;
+
+    req.bmRequestType = SP[6];
+    req.bRequest = SP[5];
+    req.wValue = SP[4];
+    req.wIndex = ST3;
+    req.wLength = ST2;
+    req.pData = (void *)ST1;
+    DROP(7);
+    ior = (*intf)->ControlRequest(intf, 0, &req);
+    if (ior != kIOReturnSuccess)
+        return abort_zmsg("ControlRequest failed");
 }
