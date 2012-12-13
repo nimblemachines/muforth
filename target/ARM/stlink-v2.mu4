@@ -3,6 +3,8 @@
   Copyright 2002-2012 David Frech. All rights reserved, and all wrongs
   reversed. (See the file COPYRIGHT for details.)
 
+.ifndef >hilo  ld target/common/16bit.mu4  .then
+
 loading Support for ST-LINK/V2 debug interface
 
 hex
@@ -17,34 +19,44 @@ hex
 ( A simple buffer for chatty communication protocols. Words for putting
   values into a buffer - at pad - and taking them out again.)
 
-: !chat  <# ;
-: #chat  hld @  pad - ;
-: +hld   1 hld +! ;
+variable cp  ( chat pointer)
+: !chat  pad  cp ! ;
+: #chat  cp @  pad - ;
+: +cp    1 cp +! ;
 
 ( XXX Note: this is different from how I named these in
   target/HC08/bdm-usb-host.m4. Change those as well?)
 
-: >b  ( byte)    hld @  c!  +hld ;
-: b>  ( - byte)  hld @  c@  +hld ;
+: >b  ( byte)    cp @  c!  +cp ;
+: b>  ( - byte)  cp @  c@  +cp ;
 
-( Little-endian 16-bit words.)
-: >w  ( word)    >hilo  >b >b ;
-: w>  ( - word)         b> b>  lohi> ;
+( Little-endian 16-bit values. In the ARM world these are "halfwords".)
+: >h  ( hword)    >hilo  >b >b ;
+: h>  ( - hword)          b> b>  lohi> ;
+
+( Little-endian 32-bit values. In the ARM world these are "words".)
+
+( Split and join halfwords into words.)
+: w>hilo  ( w - hhi hlo)  10 u>>  swap  [ 1 10 << 1- ] and ;
+: lohi>w  ( hlo hhi - w)  10 << or ;
+
+: >w  ( word)    w>hilo  >h >h ;
+: w>  ( - word)           h> h>  lohi>w ;
 
 : Send1    !chat  >b ;
 : Send2    Send1  >b ;
 : Send3    Send2  >b ;
 
-: expect-check  ( #expect)
-   pad  #chat  uwrite  ( send command)
+: expect-check  ( #expect #write)
+   pad  swap  uwrite  ( send command)
    =if  ( expecting something)
       pad  over ( expect)  uread  !chat
       -  if  ." expect mismatch"  then  ^
    then
    drop ( 0) ;
 
-: expect  ( #expect - #read)
-   pad  #chat  uwrite  ( send command)
+: expect  ( #expect #write - #read)
+   pad  swap  uwrite  ( send command)
    =if  ( expecting something)
       pad  swap ( expect)  uread  !chat
    then ;
@@ -53,7 +65,37 @@ hex
 : Expect1   1 expect  b> ;
 : Expect2   2 expect  b> b> ;
 
-: version  0f1 Send1  6 expect-check  w> w> w> ;
+( For sending commands, we want to zero out the buffer - 16 bytes' worth -
+  and then always send 16 bytes. Rather than add new words to do this,
+  let's do it for both data and cmd buffers.)
+
+( Debug)
+: .cmd   cr  pad c@ u.  pad 1+ c@ u. pad 2 + c@ u. ;
+
+: <cmd  pad 10 erase  !chat ;
+: cmd>  ( #expect)  .cmd  10 expect-check ;
+
+: cmd1  ( #expect b0)        <cmd  >b         cmd> ;
+: cmd2  ( #expect b1 b0)     <cmd  >b >b      cmd> ;
+: cmd3  ( #expect b2 b1 b0)  <cmd  >b  >b >b  cmd> ;
+
+: .version  ( bits vid pid)
+   rot  dup 3f and   ." swim version " u.
+   6 u>> dup 3f and  ." jtag version " u.
+   6 u>>             ." stlink version " u.
+   ."  vid "  swap u.  ."  pid " u. ;
+
+: version       6  0f1 cmd1  b> b>  hilo>  ( big-endian!)   h> h> ;
+: current-mode  2  0f5 cmd1  b> ;
+
+( Weird exception: only debug command that requires _three_ bytes.)
+: >swd    0  0a3 20 0f2 cmd3 ;
+
+: dfu>    0  07 0f3 cmd2 ;  ( exit dfu mode)
+
+: dbg  ( #expect subcmd)  0f2 cmd2 ;
+
+: coreid    4  22 dbg  w> ;
 
 ( If you don't do this, the next time around the board wedges... Weird.)
 : done   stlink  usb-close-interface ;
