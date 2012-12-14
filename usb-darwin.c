@@ -122,7 +122,7 @@ void mu_usb_find_interface()
     CFMutableDictionaryRef matching;
     io_service_t ioService;
     IOCFPlugInInterface **pluginInterface;
-    IOUSBInterfaceInterface **intfInterface;
+    IOUSBInterfaceInterface190 **intfInterface;
     IOReturn ior;
     SInt32 score;      /* unused */
 
@@ -157,7 +157,7 @@ void mu_usb_find_interface()
 
     /* Use the plugin interface to retrieve the device interface. */
     ior = (*pluginInterface)->QueryInterface(pluginInterface,
-            CFUUIDGetUUIDBytes(kIOUSBInterfaceInterfaceID),
+            CFUUIDGetUUIDBytes(kIOUSBInterfaceInterfaceID190),
             (LPVOID*) &intfInterface);
 
     /* We're done with the plugin interface. */
@@ -188,7 +188,7 @@ void mu_usb_find_interface()
  */
 void mu_usb_close_interface()
 {
-    IOUSBInterfaceInterface **intfInterface = (IOUSBInterfaceInterface **)TOP;
+    IOUSBInterfaceInterface190 **intfInterface = (IOUSBInterfaceInterface190 **)TOP;
     IOReturn ior;
 
     /* We're done with the interface. Close it and then release it. */
@@ -205,9 +205,9 @@ void mu_usb_close_interface()
  */
 void mu_usb_control_request()
 {
-    IOUSBDevRequest req;
+    IOUSBDevRequestTO req;
     IOReturn ior;
-    IOUSBInterfaceInterface **intf = (IOUSBInterfaceInterface **)TOP;
+    IOUSBInterfaceInterface190 **intf = (IOUSBInterfaceInterface190 **)TOP;
 
     req.bmRequestType = SP[6];
     req.bRequest = SP[5];
@@ -215,10 +215,14 @@ void mu_usb_control_request()
     req.wIndex = ST3;
     req.wLength = ST2;
     req.pData = (void *)ST1;
+    req.noDataTimeout = 1000;
+    req.completionTimeout = 4000;
     DROP(7);
-    ior = (*intf)->ControlRequest(intf, 0, &req);
+    ior = (*intf)->ControlRequestTO(intf, 0, &req);
     if (ior != kIOReturnSuccess)
         return abort_zmsg("ControlRequest failed");
+
+    /* NOTE: req.wLenDone is number of bytes actually transferred! */
 }
 
 /*
@@ -227,7 +231,7 @@ void mu_usb_control_request()
  */
 void mu_usb_get_pipe_properties()
 {
-    IOUSBInterfaceInterface **intf = (IOUSBInterfaceInterface **)TOP;
+    IOUSBInterfaceInterface190 **intf = (IOUSBInterfaceInterface190 **)TOP;
     IOReturn ior;
     UInt16 max_packet_size;
     UInt8 direction;
@@ -253,11 +257,19 @@ void mu_usb_get_pipe_properties()
  */
 void mu_usb_read_pipe()
 {
-    IOUSBInterfaceInterface **intf = (IOUSBInterfaceInterface **)TOP;
+    IOUSBInterfaceInterface190 **intf = (IOUSBInterfaceInterface190 **)TOP;
     IOReturn ior;
     UInt32 size = ST2;
+    UInt8  pipe = ST1;
 
-    ior = (*intf)->ReadPipe(intf, ST1, (void *)ST3, &size);
+    /* data timeout of 1000ms; completion timeout of 4000ms */
+    ior = (*intf)->ReadPipeTO(intf, pipe, (void *)ST3, &size, 1000, 4000);
+    if (ior == kIOReturnAborted)    /* timed out */
+    {
+        (*intf)->ClearPipeStallBothEnds(intf, pipe);
+        return abort_zmsg("ReadPipe timed out");
+    }
+
     if (ior != kIOReturnSuccess)
         return abort_zmsg("ReadPipe failed");
 
@@ -270,10 +282,18 @@ void mu_usb_read_pipe()
  */
 void mu_usb_write_pipe()
 {
-    IOUSBInterfaceInterface **intf = (IOUSBInterfaceInterface **)TOP;
+    IOUSBInterfaceInterface190 **intf = (IOUSBInterfaceInterface190 **)TOP;
     IOReturn ior;
+    UInt8  pipe = ST1;
 
-    ior = (*intf)->WritePipe(intf, ST1, (void *)ST3, ST2);
+    /* data timeout of 1000ms; completion timeout of 4000ms */
+    ior = (*intf)->WritePipeTO(intf, pipe, (void *)ST3, ST2, 1000, 4000);
+    if (ior == kIOReturnAborted)    /* timed out */
+    {
+        (*intf)->ClearPipeStallBothEnds(intf, pipe);
+        return abort_zmsg("WritePipe timed out");
+    }
+
     if (ior != kIOReturnSuccess)
         return abort_zmsg("WritePipe failed");
 
