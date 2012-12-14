@@ -147,7 +147,7 @@ void mu_usb_find_device()
     ioService = IOServiceGetMatchingService(kIOMasterPortDefault, matching);
     if (ioService == 0)
     {
-        DROP(2);
+        DROP(1);
         TOP = 0;
         return;
     }
@@ -184,7 +184,6 @@ void mu_usb_find_device()
      * Return intfInterface as a handle for further operations on the USB
      * interface.
      */
-    DROP(1);
     ST1 = (addr)intfInterface;
     TOP = -1;
 }
