@@ -70,7 +70,9 @@ variable cp  ( chat pointer)
   let's do it for both data and cmd buffers.)
 
 ( Debug)
-: .cmd   cr  pad c@ u.  pad 1+ c@ u. pad 2 + c@ u. ;
+variable spy
+: c@+  ( a - a+1 byte)  dup 1+  swap c@ ;
+: .cmd   spy @ if  cr  pad  8 for  c@+ u.  next  drop  then ;
 
 : <cmd  pad 10 erase  !chat ;
 : cmd>  ( #expect)  .cmd  10 expect-check ;
@@ -79,21 +81,40 @@ variable cp  ( chat pointer)
 : cmd2  ( #expect b1 b0)     <cmd  >b >b      cmd> ;
 : cmd3  ( #expect b2 b1 b0)  <cmd  >b  >b >b  cmd> ;
 
-: .version  ( bits vid pid)
-   rot  dup 3f and   ." swim version " u.
-   6 u>> dup 3f and  ." jtag version " u.
-   6 u>>             ." stlink version " u.
-   ."  vid "  swap u.  ."  pid " u. ;
+( Check vid and pid but don't print them out.)
+: .ver  ( bits vid pid)
+   3748 =  swap 0483 =  and  if  ( matches)
+      radix preserve  decimal
+      dup  #12 u>>  ." ST-LINK v" u.
+             6 u>>  3f and  ."  JTAG v" u.  ^
+   then  ." Weird. Is this an ST-LINKv2?" ;
 
-: version       6  0f1 cmd1  b> b>  hilo>  ( big-endian!)   h> h> ;
-: current-mode  2  0f5 cmd1  b> ;
+: .mode  ( mode#)
+   dup 0=  if  drop  ." DFU"  ^  then
+   dup 1 = if  drop  ." Mass"  ^  then
+   dup 2 = if  drop  ." Debug"  ^  then
+   drop              ." Unknown" ;
 
-( Weird exception: only debug command that requires _three_ bytes.)
-: >swd    0  0a3 20 0f2 cmd3 ;
+: ver       6  0f1 cmd1  b> b>  hilo>  ( big-endian!)   h> h> ;
+: get-mode  2  0f5 cmd1  b> ;
 
 : dfu>    0  07 0f3 cmd2 ;  ( exit dfu mode)
 
 : dbg  ( #expect subcmd)  0f2 cmd2 ;
+
+( Weird exception: only debug command that requires _three_ bytes.)
+: >swd    0  0a3 20 0f2 cmd3 ;
+: swd>    0      21     dbg ;
+
+: tell-mode  ( - mode)
+   get-mode  dup  .mode  ."  mode " ;
+
+: chat  ( connect to device)
+   ver  .ver
+   cr  tell-mode
+   dup  0=  if  drop  ." => "  dfu>  tell-mode  then
+   dup  1 = if  drop  ." => "  >swd  tell-mode  then
+        2 - if  ." Tried, but didn't succeed. "  then ;
 
 : coreid    4  22 dbg  w> ;
 
