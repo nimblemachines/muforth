@@ -12,6 +12,11 @@ hex
 0483 3748 usb-find-device  .if   constant stlink  .else
    ." None found"                                 .then
 
+( On OSX in particular, if you don't do this, the next time around the
+  board wedges... Weird.)
+
+: done   stlink  usb-close ;
+
 : uread   ( buf len - #read)  1  stlink  usb-read ;
 : uwrite  ( buf len)          2  stlink  usb-write ;
 
@@ -60,16 +65,15 @@ variable cp  ( chat pointer)
 : Expect1   1 expect  b> ;
 : Expect2   2 expect  b> b> ;
 
-( For sending commands, we want to zero out the buffer - 16 bytes' worth -
-  and then always send 16 bytes. Rather than add new words to do this,
-  let's do it for both data and cmd buffers.)
-
 ( Debug)
 variable spy
 : c@+  ( a - a+1 byte)  dup 1+  swap c@ ;
 : .cmd   spy @ if
    radix preserve  hex
    cr  pad  8 for  c@+ u.  next  drop  then ;
+
+( For sending commands, we want to zero out the buffer - 16 bytes' worth -
+  and then always send 16 bytes.)
 
 : <cmd   pad 10 erase  !chat ;
 : cmd>   .cmd  pad 10 uwrite ;
@@ -84,36 +88,23 @@ variable spy
       radix preserve  decimal
       dup  #12 u>>  ." ST-LINK/V" u.
              6 u>>  3f and  dup ( jtag-version)  ."  JTAG v" u.  ^
-   then  ." Weird. Is this an ST-LINK/V2?" ;
- 
-: .mode  ( mode#)
-   dup 0=  if  drop  ." DFU"  ^  then
-   dup 1 = if  drop  ." Mass"  ^  then
-   dup 2 = if  drop  ." Debug"  ^  then
-   drop              ." Unknown" ;
+   then
+   drop ( bits)  0 ( jtag version)
+   ." Weird. Is this an ST-LINK/V2?" ;
 
-: ver       0f1 cmd1  6 expect  b> b>  hilo>  ( big-endian!)   h> h> ;
+: ver             0f1 cmd1  6 expect  b> b>  hilo>  ( big-endian!)   h> h> ;
+: dbg  ( subcmd)  0f2 cmd2 ;
+: dfu>         07 0f3 cmd2 ;  ( exit dfu mode)
+: get-mode        0f5 cmd1  2 expect  b> ;
 
+
+( Do this ASAP so we know if we can use v2 debug api commands.)
 ver .ver  #10 > .if  -d apiv2  .then
 
-: get-mode  0f5 cmd1  2 expect  b> ;
 
-: dfu>    07 0f3 cmd2 ;  ( exit dfu mode)
-
-: dbg  ( subcmd)  0f2 cmd2 ;
-
-( Weird exception: only debug command that requires _three_ bytes.)
+( Weird exception: only debug command that requires _three_ command bytes.)
 : >swd    0a3 20 0f2 cmd3 ;
 : swd>        21     dbg ;
-
-: tell-mode  ( - mode)
-   get-mode  dup  .mode  ."  mode " ;
-
-: chat  ( connect to device)
-   cr  tell-mode
-   dup  0=  if  drop  ." => "  dfu>  tell-mode  then
-   dup  1 = if  drop  ." => "  >swd  tell-mode  then
-        2 - if  ." Tried, but didn't succeed. "  then ;
 
 : coreid    22 dbg  4 expect  w> ;
 
@@ -131,5 +122,19 @@ ver .ver  #10 > .if  -d apiv2  .then
 : read-words   ( buf a u)   4 *  07 mem  tuck  uread  ?expect ;
 : write-words  ( buf a u)   4 *  08 mem  uwrite ;
 
-( If you don't do this, the next time around the board wedges... Weird.)
-: done   stlink  usb-close ;
+
+( Say hello.)
+: .mode  ( mode#)
+   dup 0=  if  drop  ." DFU"  ^  then
+   dup 1 = if  drop  ." Mass"  ^  then
+   dup 2 = if  drop  ." Debug"  ^  then
+   drop              ." Unknown" ;
+
+: tell-mode  ( - mode)
+   get-mode  dup  .mode  ."  mode " ;
+
+: chat  ( connect to device)
+   cr  tell-mode
+   dup  0=  if  drop  ." => "  dfu>  tell-mode  then
+   dup  1 = if  drop  ." => "  >swd  tell-mode  then
+        2 - if  ." Tried, but didn't succeed. "  then ;
