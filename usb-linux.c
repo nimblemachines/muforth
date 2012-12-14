@@ -129,7 +129,15 @@ void mu_usb_find_device()
     }
     else
     {
-        /* Matched; return the device's _open_ file descriptor */
+        /*
+         * Found a match; matched has the device's _open_ file descriptor.
+         * Try to claim interface 0.
+         */
+        int intf = 0;
+        if (ioctl(matched, USBDEVFS_CLAIMINTERFACE, &intf) == -1)
+            return abort_strerror();
+
+        /* Return the device's file descriptor */
         ST1 = matched;
         TOP = -1;
     }
@@ -137,29 +145,86 @@ void mu_usb_find_device()
 
 /*
  * usb-close ( handle)
+ *
+ * Release interface 0 and close device.
  */
 void mu_usb_close()
 {
+    int intf = 0;
+    if (ioctl(TOP, USBDEVFS_RELEASEINTERFACE, &intf) == -1)
+        return abort_strerror();
+
     mu_close_file();
 }
 
 /*
- * usb-request (bmRequestType bRequest wValue wIndex wLength 'buffer device)
+ * usb-control (bmRequestType bRequest wValue wIndex wLength 'buffer device - count)
  */
-void mu_usb_request()
+void mu_usb_control()
 {
-    struct usbdevfs_ctrltransfer req;
+    struct usbdevfs_ctrltransfer tr;
     int fd;
+    int count;
 
-    req.bRequestType = SP[6];       /* should be called bmRequestType */
-    req.bRequest = SP[5];
-    req.wValue = SP[4];
-    req.wIndex = ST3;
-    req.wLength = ST2;
-    req.timeout = 4000 /* ms timeout */;
-    req.data = (void *)ST1;
+    tr.bRequestType = SP[6];       /* should be called bmRequestType */
+    tr.bRequest = SP[5];
+    tr.wValue = SP[4];
+    tr.wIndex = ST3;
+    tr.wLength = ST2;
+    tr.timeout = 4000 /* ms timeout */;
+    tr.data = (void *)ST1;
     fd = TOP;
-    DROP(7);
+    DROP(6);
 
-    if (ioctl(fd, USBDEVFS_CONTROL, &req) == -1) return abort_strerror();
+    if ((count = ioctl(fd, USBDEVFS_CONTROL, &tr)) == -1)
+    {
+        TOP = 0;    /* count of bytes transferred */
+        return abort_strerror();
+    }
+    TOP = count;
+}
+
+/*
+ * usb-read ( 'buffer size pipe# intf -- #read)
+ */
+void mu_usb_read()
+{
+    struct usbdevfs_bulktransfer tr;
+    int fd;
+    int nread;
+    uint8_t ep = ST1;
+
+    tr.ep = ep | 0x80;
+    tr.len = ST2;
+    tr.timeout = 4000 /* ms timeout */;
+    tr.data = (void *)ST3;
+    fd = TOP;
+    DROP(3);
+
+    if ((nread = ioctl(fd, USBDEVFS_BULK, &tr)) == -1)
+    {
+        TOP = 0;    /* #read */
+        return abort_strerror();
+    }
+    TOP = nread;
+}
+
+/*
+ * usb-write ( 'buffer size pipe# intf)
+ */
+void mu_usb_write()
+{
+    struct usbdevfs_bulktransfer tr;
+    int fd;
+    uint8_t ep = ST1;
+
+    tr.ep = ep & 0x7f;
+    tr.len = ST2;
+    tr.timeout = 4000 /* ms timeout */;
+    tr.data = (void *)ST3;
+    fd = TOP;
+    DROP(4);
+
+    if (ioctl(fd, USBDEVFS_BULK, &tr) == -1)
+        return abort_strerror();
 }
