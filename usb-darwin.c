@@ -271,14 +271,8 @@ void mu_usb_read()
     UInt32 size = ST2;
     UInt8  pipe = ST1;
 
-    /* data timeout of 1000ms; completion timeout of 4000ms */
-    ior = (*intf)->ReadPipeTO(intf, pipe, (void *)ST3, &size, 1000, 4000);
-    if (ior == kIOUSBTransactionTimeout)
-    {
-        (*intf)->ClearPipeStallBothEnds(intf, pipe);
-        return abort_zmsg("ReadPipe timed out");
-    }
-
+    /* data timeout of 100ms; completion timeout of 400ms */
+    ior = (*intf)->ReadPipeTO(intf, pipe, (void *)ST3, &size, 100, 400);
     if (ior != kIOReturnSuccess)
         return abort_zmsg("ReadPipe failed");
 
@@ -295,14 +289,8 @@ void mu_usb_write()
     IOReturn ior;
     UInt8  pipe = ST1;
 
-    /* data timeout of 1000ms; completion timeout of 4000ms */
-    ior = (*intf)->WritePipeTO(intf, pipe, (void *)ST3, ST2, 1000, 4000);
-    if (ior == kIOUSBTransactionTimeout)
-    {
-        (*intf)->ClearPipeStallBothEnds(intf, pipe);
-        return abort_zmsg("WritePipe timed out");
-    }
-
+    /* data timeout of 100ms; completion timeout of 400ms */
+    ior = (*intf)->WritePipeTO(intf, pipe, (void *)ST3, ST2, 100, 400);
     if (ior != kIOReturnSuccess)
         return abort_zmsg("WritePipe failed");
 
