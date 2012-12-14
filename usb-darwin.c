@@ -273,7 +273,7 @@ void mu_usb_read()
 
     /* data timeout of 1000ms; completion timeout of 4000ms */
     ior = (*intf)->ReadPipeTO(intf, pipe, (void *)ST3, &size, 1000, 4000);
-    if (ior == kIOReturnAborted)    /* timed out */
+    if (ior == kIOUSBTransactionTimeout)
     {
         (*intf)->ClearPipeStallBothEnds(intf, pipe);
         return abort_zmsg("ReadPipe timed out");
@@ -297,7 +297,7 @@ void mu_usb_write()
 
     /* data timeout of 1000ms; completion timeout of 4000ms */
     ior = (*intf)->WritePipeTO(intf, pipe, (void *)ST3, ST2, 1000, 4000);
-    if (ior == kIOReturnAborted)    /* timed out */
+    if (ior == kIOUSBTransactionTimeout)
     {
         (*intf)->ClearPipeStallBothEnds(intf, pipe);
         return abort_zmsg("WritePipe timed out");
