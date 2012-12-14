@@ -102,7 +102,7 @@ static int enumerate_devices(char *bus, struct match *pmatch)
 }
 
 /*
- * usb-find-device (vendor-id product-id -- handle -1 | 0)
+ * usb-find-device (vendor-id product-id -- dev -1 | 0)
  */
 void mu_usb_find_device()
 {
@@ -144,7 +144,7 @@ void mu_usb_find_device()
 }
 
 /*
- * usb-close ( handle)
+ * usb-close ( dev)
  *
  * Release interface 0 and close device.
  */
@@ -158,7 +158,7 @@ void mu_usb_close()
 }
 
 /*
- * usb-control (bmRequestType bRequest wValue wIndex wLength 'buffer device - count)
+ * usb-control (bmRequestType bRequest wValue wIndex wLength 'buffer dev - count)
  */
 void mu_usb_control()
 {
@@ -185,7 +185,7 @@ void mu_usb_control()
 }
 
 /*
- * usb-read ( 'buffer size pipe# intf -- #read)
+ * usb-read ( 'buffer size pipe# dev -- #read)
  */
 void mu_usb_read()
 {
@@ -210,7 +210,7 @@ void mu_usb_read()
 }
 
 /*
- * usb-write ( 'buffer size pipe# intf)
+ * usb-write ( 'buffer size pipe# dev)
  */
 void mu_usb_write()
 {
