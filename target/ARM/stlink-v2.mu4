@@ -72,7 +72,9 @@ variable cp  ( chat pointer)
 ( Debug)
 variable spy
 : c@+  ( a - a+1 byte)  dup 1+  swap c@ ;
-: .cmd   spy @ if  cr  pad  8 for  c@+ u.  next  drop  then ;
+: .cmd   spy @ if
+   radix preserve  hex
+   cr  pad  8 for  c@+ u.  next  drop  then ;
 
 : <cmd  pad 10 erase  !chat ;
 : cmd>  ( #expect)  .cmd  10 expect-check ;
@@ -81,12 +83,16 @@ variable spy
 : cmd2  ( #expect b1 b0)     <cmd  >b >b      cmd> ;
 : cmd3  ( #expect b2 b1 b0)  <cmd  >b  >b >b  cmd> ;
 
+variable apiv2
+: set-api  ( jtag-version)   #10 > if  apiv2 on  then ;
+: api   ( v1 v2 - val)   apiv2 @ if  nip  ^  then  drop ;
+
 ( Check vid and pid but don't print them out.)
 : .ver  ( bits vid pid)
    3748 =  swap 0483 =  and  if  ( matches)
       radix preserve  decimal
       dup  #12 u>>  ." ST-LINK v" u.
-             6 u>>  3f and  ."  JTAG v" u.  ^
+             6 u>>  3f and  dup set-api  ."  JTAG v" u.  ^
    then  ." Weird. Is this an ST-LINKv2?" ;
 
 : .mode  ( mode#)
@@ -103,8 +109,8 @@ variable spy
 : dbg  ( #expect subcmd)  0f2 cmd2 ;
 
 ( Weird exception: only debug command that requires _three_ bytes.)
-: >swd    0  0a3 20 0f2 cmd3 ;
-: swd>    0      21     dbg ;
+: >swd    0 2 api   0a3   20 30 api   0f2 cmd3 ;
+: swd>    0        21              dbg ;
 
 : tell-mode  ( - mode)
    get-mode  dup  .mode  ."  mode " ;
