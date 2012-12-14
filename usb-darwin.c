@@ -27,6 +27,7 @@ static void add_number_match(CFMutableDictionaryRef matching,
     CFRelease(numberRef);
 }
 
+#ifdef WITH_USB_DEVICE
 /*
  * usb-find-device (vendor-id product-id -- handle -1 | 0)
  */
@@ -98,26 +99,29 @@ void mu_usb_close_device()
  */
 void mu_usb_device_request()
 {
-    IOUSBDevRequest req;
+    IOUSBDevRequest tr;
     IOReturn ior;
     IOUSBDeviceInterface **dev = (IOUSBDeviceInterface **)TOP;
 
-    req.bmRequestType = SP[6];
-    req.bRequest = SP[5];
-    req.wValue = SP[4];
-    req.wIndex = ST3;
-    req.wLength = ST2;
-    req.pData = (void *)ST1;
+    tr.bmRequestType = SP[6];
+    tr.bRequest = SP[5];
+    tr.wValue = SP[4];
+    tr.wIndex = ST3;
+    tr.wLength = ST2;
+    tr.pData = (void *)ST1;
     DROP(7);
-    ior = (*dev)->DeviceRequest(dev, &req);
+    ior = (*dev)->DeviceRequest(dev, &tr);
     if (ior != kIOReturnSuccess)
         return abort_zmsg("DeviceRequest failed");
 }
+#endif
 
 /*
- * usb-find-interface (vendor-id product-id interface# -- handle -1 | 0)
+ * usb-find-device (vendor-id product-id -- dev -1 | 0)
+ *
+ * Match vid and pid, and try to open interface 0.
  */
-void mu_usb_find_interface()
+void mu_usb_find_device()
 {
     CFMutableDictionaryRef matching;
     io_service_t ioService;
@@ -130,11 +134,13 @@ void mu_usb_find_interface()
     matching = IOServiceMatching(kIOUSBInterfaceClassName);
     if (matching == NULL) return abort_zmsg("IOServiceMatching returned NULL");
 
-    /* Match interface's VendorID, ProductID, InterfaceNumber, &
-     * ConfigurationValue. */
-    add_number_match(matching, CFSTR(kUSBVendorID), ST2);
-    add_number_match(matching, CFSTR(kUSBProductID), ST1);
-    add_number_match(matching, CFSTR(kUSBInterfaceNumber), TOP);
+    /*
+     * Match interface's VendorID, ProductID, InterfaceNumber, and
+     * ConfigurationValue.
+     */
+    add_number_match(matching, CFSTR(kUSBVendorID), ST1);
+    add_number_match(matching, CFSTR(kUSBProductID), TOP);
+    add_number_match(matching, CFSTR(kUSBInterfaceNumber), 0);
     add_number_match(matching, CFSTR(kUSBConfigurationValue), 1);
 
     /* Look up our service. We have to release it when we're done. */
@@ -184,9 +190,9 @@ void mu_usb_find_interface()
 }
 
 /*
- * usb-close-interface (intfhandle)
+ * usb-close (dev)
  */
-void mu_usb_close_interface()
+void mu_usb_close()
 {
     IOUSBInterfaceInterface190 **intfInterface = (IOUSBInterfaceInterface190 **)TOP;
     IOReturn ior;
@@ -201,33 +207,36 @@ void mu_usb_close_interface()
 }
 
 /*
- * usb-control-request (bmRequestType bRequest wValue wIndex wLength 'buffer intf)
+ * usb-control (bmRequestType bRequest wValue wIndex wLength 'buffer dev - count)
  */
-void mu_usb_control_request()
+void mu_usb_control()
 {
-    IOUSBDevRequestTO req;
+    IOUSBDevRequestTO tr;
     IOReturn ior;
     IOUSBInterfaceInterface190 **intf = (IOUSBInterfaceInterface190 **)TOP;
 
-    req.bmRequestType = SP[6];
-    req.bRequest = SP[5];
-    req.wValue = SP[4];
-    req.wIndex = ST3;
-    req.wLength = ST2;
-    req.pData = (void *)ST1;
-    req.noDataTimeout = 1000;
-    req.completionTimeout = 4000;
-    DROP(7);
-    ior = (*intf)->ControlRequestTO(intf, 0, &req);
-    if (ior != kIOReturnSuccess)
-        return abort_zmsg("ControlRequest failed");
+    tr.bmRequestType = SP[6];
+    tr.bRequest = SP[5];
+    tr.wValue = SP[4];
+    tr.wIndex = ST3;
+    tr.wLength = ST2;
+    tr.pData = (void *)ST1;
+    tr.noDataTimeout = 1000;
+    tr.completionTimeout = 4000;
+    DROP(6);
 
-    /* NOTE: req.wLenDone is number of bytes actually transferred! */
+    ior = (*intf)->ControlRequestTO(intf, 0, &tr);
+    if (ior != kIOReturnSuccess)
+    {
+        TOP = 0;    /* count of bytes transferred */
+        return abort_zmsg("ControlRequest failed");
+    }
+    TOP = tr.wLenDone;
 }
 
+#ifdef WITH_USB_EXTRAS
 /*
- * usb-get-pipe-properties
- *    (pipe# intf -- direction number transferType maxpacketsize interval)
+ * usb-get-pipe-properties (pipe# dev -- direction number transferType maxpacketsize interval)
  */
 void mu_usb_get_pipe_properties()
 {
@@ -251,11 +260,12 @@ void mu_usb_get_pipe_properties()
     ST1 = max_packet_size;
     TOP = interval;
 }
+#endif
 
 /*
- * usb-read-pipe ( 'buffer size pipe# intf -- #read)
+ * usb-read ( 'buffer size pipe# dev -- #read)
  */
-void mu_usb_read_pipe()
+void mu_usb_read()
 {
     IOUSBInterfaceInterface190 **intf = (IOUSBInterfaceInterface190 **)TOP;
     IOReturn ior;
@@ -278,9 +288,9 @@ void mu_usb_read_pipe()
 }
 
 /*
- * usb-write-pipe ( 'buffer size pipe# intf)
+ * usb-write ( 'buffer size pipe# dev)
  */
-void mu_usb_write_pipe()
+void mu_usb_write()
 {
     IOUSBInterfaceInterface190 **intf = (IOUSBInterfaceInterface190 **)TOP;
     IOReturn ior;
