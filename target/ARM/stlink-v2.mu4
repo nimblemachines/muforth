@@ -52,11 +52,11 @@ variable cp  ( chat pointer)
 : Send2    Send1  >b ;
 : Send3    Send2  >b ;
 
-: ?expect  ( #expected #read)
+: ?expected  ( #expected #read)
    2dup  -  if  swap  ." expected "  u.  ." got "  u.  ^  then  2drop ;
 
 : _expect-check  ( #expect)
-   chatbuf over ( expect)  uread  !chat  ?expect ;
+   chatbuf over ( expect)  uread  !chat  ?expected ;
 
 : _expect  ( #expect - #read)
    chatbuf swap  uread  !chat ;
@@ -127,6 +127,9 @@ ver .ver  #10 > .if  -d apiv2  .then
 : step     0a dbg  check ;
 : coreid   22 dbg  w* ;
 
+( Read and check count against expected.)
+: uread-check  ( buf len)  tuck  uread  ?expected ;
+
 ( Memory accesses.)
 : mem  ( a u subcmd - u)   <dbg  swap >w  dup >h  cmd> ;
 
@@ -139,13 +142,29 @@ ver .ver  #10 > .if  -d apiv2  .then
 
 : write8   ( buf a u)   0d mem  uwrite ;
 
-: read32   ( buf a u)   07 mem  tuck  uread  ?expect ;
+( XXX aligned to 32-bit address boundaries, and byte counts?)
+: read32   ( buf a u)   07 mem  uread-check ;
 : write32  ( buf a u)   08 mem  uwrite ;
+
+variable 'target
+variable 'host
+defer doit  ( buf target len)
+: .doit   cr ." chunk "  rot u.  swap u. u. ;
+
+( XXX should we call doit with anything other than len?)
+: chunk  ( len)
+   cr  ." chunk "  'host @ u.  'target @ u.  dup u.
+   push  'host @  'target @  r@  doit  r@ 'host +!  pop 'target +! ;
+
+( XXX order of params?)
+: chunked  ( target len buffer 'code)  is doit  'host !  swap 'target !
+   40 /mod  ( r q)  swap push  ?for  40  chunk  next  then
+                       pop  =if  ( rem)  chunk  ^  then  drop ;
 
 ( XXX write code to read/write by chunks)
 : readregs  ( buf)
    04 dbg  ( read all regs)
-   dup 40 uread .  40 +  40 uread . ;
+   dup 40 uread-check   40 +  14 uread-check ;
 
 
 ( Read and write "debug" registers. What is this?)
@@ -176,4 +195,3 @@ ver .ver  #10 > .if  -d apiv2  .then
 
 : .core-state
    core-state  80 = if  ." running" ^  then  ." halted" ;
-
