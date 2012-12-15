@@ -21,11 +21,12 @@ hex
 : uwrite  ( buf len)          2  stlink  usb-write ;
 
 ( A simple buffer for chatty communication protocols. Words for putting
-  values into a buffer - at pad - and taking them out again.)
+  values into a buffer and taking them out again.)
 
 variable cp  ( chat pointer)
-: !chat  pad  cp ! ;
-: #chat  cp @  pad - ;
+10 buffer chatbuf
+: !chat  chatbuf  cp ! ;
+: #chat  cp @  chatbuf - ;
 : +cp    1 cp +! ;
 
 ( XXX Note: this is different from how I named these in
@@ -51,32 +52,39 @@ variable cp  ( chat pointer)
 : Send2    Send1  >b ;
 : Send3    Send2  >b ;
 
-: ?expect  ( expected read)
+: ?expect  ( #expected #read)
    2dup  -  if  swap  ." expected "  u.  ." got "  u.  ^  then  2drop ;
 
 : _expect-check  ( #expect)
-   pad over ( expect)  uread  !chat  ?expect ;
+   chatbuf over ( expect)  uread  !chat  ?expect ;
 
 : _expect  ( #expect - #read)
-   pad swap  uread  !chat ;
+   chatbuf swap  uread  !chat ;
 
 : expect  _expect-check ;
 
 : Expect1   1 expect  b> ;
 : Expect2   2 expect  b> b> ;
 
+( Commonly expected values. * means to expect it, then fetch it from
+  returned buffer.)
+
+: b*       2 expect  b> ;  ( only interested in low byte)
+: h*       2 expect  h> ;
+: w*       4 expect  w> ;
+
 ( Debug)
 variable spy
 : c@+  ( a - a+1 byte)  dup 1+  swap c@ ;
 : .cmd   spy @ if
    radix preserve  hex
-   cr  pad  8 for  c@+ u.  next  drop  then ;
+   cr  chatbuf  8 for  c@+ u.  next  drop  then ;
 
 ( For sending commands, we want to zero out the buffer - 16 bytes' worth -
   and then always send 16 bytes.)
 
-: <cmd   pad 10 erase  !chat ;
-: cmd>   .cmd  pad 10 uwrite ;
+: <cmd   chatbuf 10 erase  !chat ;
+: cmd>   .cmd  chatbuf 10 uwrite ;
 
 : cmd1  ( b0)        <cmd  >b        cmd> ;
 : cmd2  ( b1 b0)     <cmd  >b >b     cmd> ;
@@ -93,7 +101,7 @@ variable spy
    ." Weird. Is this an ST-LINK/V2?" ;
 
 : ver             0f1 cmd1  6 expect  b> b>  hilo>  ( big-endian!)   h> h> ;
-: dbg  ( subcmd)  0f2 cmd2 ;
+: <dbg      <cmd  0f2 >b  >b ;  ( finish command with cmd>)
 : dfu>         07 0f3 cmd2 ;  ( exit dfu mode)
 : get-mode        0f5 cmd1  2 expect  b> ;
 
@@ -102,25 +110,52 @@ variable spy
 ver .ver  #10 > .if  -d apiv2  .then
 
 
+( For simple two-byte debug commands.)
+: dbg  ( subcmd)  <dbg  cmd> ;
+
 ( Weird exception: only debug command that requires _three_ command bytes.)
 : >swd    0a3 20 0f2 cmd3 ;
 : swd>        21     dbg ;
 
-: coreid    22 dbg  4 expect  w> ;
+: check   b*  80 - if  ." fault returned"  then ;
+: core-state
+           01 dbg  b* ;
+: halt     02 dbg  check ;
+: reg@     ( reg# - value)  05 <dbg  >b ( reg#)      cmd>  w* ;
+: reg!     ( value reg#)    06 <dbg  >b ( reg#)  >w  cmd>  check ;
+: run      09 dbg  check ;
+: step     0a dbg  check ;
+: coreid   22 dbg  w* ;
 
 ( Memory accesses.)
-: mem  ( a u subcmd - u+)
-   <cmd  0f2 >b  ( subcmd) >b  swap >w  dup >h  cmd>
-   1+ -2 and ;
+: mem  ( a u subcmd - u)   <dbg  swap >w  dup >h  cmd> ;
 
-( XXX - try writing multiple bulk buffers for a single transaction.
-  These endpoints can move 64 bytes at a time.)
+( XXX do we even need this? I'm interested in putting instructions into
+  memory, pushing values onto the stack, and read and writing registers. Do
+  I care about byte-granular memory accesses?)
 
-: read-bytes   ( buf a u)   0c mem  tuck  uread  ?expect ;
-: write-bytes  ( buf a u)   0d mem  uwrite ;
+( XXX Write a memory test to see how these actually work, and what happens
+  with unaligned accesses, etc.)
 
-: read-words   ( buf a u)   4 *  07 mem  tuck  uread  ?expect ;
-: write-words  ( buf a u)   4 *  08 mem  uwrite ;
+: write8   ( buf a u)   0d mem  uwrite ;
+
+: read32   ( buf a u)   07 mem  tuck  uread  ?expect ;
+: write32  ( buf a u)   08 mem  uwrite ;
+
+( XXX write code to read/write by chunks)
+: readregs  ( buf)
+   04 dbg  ( read all regs)
+   dup 40 uread .  40 +  40 uread . ;
+
+
+( Read and write "debug" registers. What is this?)
+.ifdef apiv2
+
+( XXX these don't work yet! ReadPipe errors out.)
+: writedebug  ( w a)    35 <dbg  >w >w  cmd>  check ;
+: readdebug   ( a - w)  36 <dbg  >w     cmd>  8 expect  h>  check ;
+
+.then
 
 
 ( Say hello.)
@@ -128,7 +163,7 @@ ver .ver  #10 > .if  -d apiv2  .then
    dup 0=  if  drop  ." DFU"  ^  then
    dup 1 = if  drop  ." Mass"  ^  then
    dup 2 = if  drop  ." Debug"  ^  then
-   drop              ." Unknown" ;
+               drop  ." Unknown" ;
 
 : tell-mode  ( - mode)
    get-mode  dup  .mode  ."  mode " ;
@@ -138,3 +173,7 @@ ver .ver  #10 > .if  -d apiv2  .then
    dup  0=  if  drop  ." => "  dfu>  tell-mode  then
    dup  1 = if  drop  ." => "  >swd  tell-mode  then
         2 - if  ." Tried, but didn't succeed. "  then ;
+
+: .core-state
+   core-state  80 = if  ." running" ^  then  ." halted" ;
+
