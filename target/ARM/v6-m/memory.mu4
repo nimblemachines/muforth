@@ -14,13 +14,26 @@ loading ARMv6-M memory image
   _before_ this one.)
 
 ( Default some memory sizes and origins.)
-( XXX FIXME KLUDGE)  "6000_0000 constant @eeprom
+( XXX FIXME KLUDGE)  "6000_0000 constant @eeprom  2 Ki constant #eeprom
+
+( On most Cortex-M devices, flash starts at 0. STM32 are different; their
+  flash starts at "0800_0000. But since we wrap the addresses, our local
+  image can assume flash starts at 0. But we'll use @flash when setting up
+  the origin for the code that we're compiling.)
 
 .ifndef @flash
-   0 constant @flash  32 Ki constant #flash
+   0 constant @flash
+.then
+.ifndef #flash
+   32 Ki constant #flash
 .then
 
-( On all Cortex-M devices, SRAM starts at "2000_0000.)
+( On all Cortex-M devices, SRAM starts at "2000_0000. Well, mostly. On
+  Freescale's Kinetis K and L series - and maybe others there is SRAM at
+  "2000_0000 but also at the end of the code region, ie at "1fff_f000. For
+  debugging we can simply assume on all devices that there will be SRAM at
+  "2000_0000.)
+
 "2000_0000 constant @ram
 .ifndef #ram
    8 Ki constant #ram
@@ -41,20 +54,29 @@ variable image  ( image buffer pointer)
       dup  ( size)  ,  allot
    does>  image ! ;
 
-256 Ki @flash   make-image  flash-image
- 64 Ki @ram     make-image  ram-image
-  4 Ki @eeprom  make-image  eeprom-image
-
-( sanity default)  flash-image
+( XXX is clamping the size of flash and ram like this going to cause problems?)
+#flash 256 Ki min  0        make-image  flash-image
+#ram    64 Ki min  @ram     make-image  ram-image
+#eeprom  4 Ki min  @eeprom  make-image  eeprom-image
 
 ( Simple but inefficient!)
 : @image  image @  @  ( origin) ;
 : #image  image @  cell+ @  ( get byte count) ;
 : 'image  image @  cell+ cell+  ( get address) ;
 
+( XXX no eeprom right now...)
+: target>image  ( target)  ( find an image based on target addr)
+   0 "2000_0000 within  if  flash-image ^  then  ram-image ;
+
+: host>image  ( host)  ( find an image based on host addr)
+   flash-image  'image  dup #image +  within  if ^ then  ram-image ;
+
 : wrap   #image 1-  and ;
-: image+  ( target - host)  @image -  wrap  'image + ;
-: image-  ( host - target)                  'image -  wrap  @image + ;
+: image+  ( target - host)
+   dup target>image  @image -  wrap  'image + ;
+
+: image-  ( host - target)
+   dup   host>image                  'image -  wrap  @image + ;
 
 ( DEBUG: Define show-comma to show code as it's compiled.)
 .ifdef show-comma
@@ -85,6 +107,7 @@ variable image  ( image buffer pointer)
 : target-*   ( - cell)  c* c* c* c*  0123> ;  ( little-endian 32-bit word)
 
 : >image
+   [ 1 32 <<  1- ]  see-addr-mask !  ( keep only low 32 bits)
    [']       c*  is |c*
    ['] target-*  is |cell*
    ['] image-p!  is |p!
@@ -98,9 +121,9 @@ variable h   ( image dictionary pointer pointer; points to one of:)
    2variable 'flash   ( flash pointer, origin)
    2variable 'ee      ( eeprom pointer, origin)
 
-: ram     'ram     h !   ram-image ;
-: flash   'flash   h !   flash-image ;
-: eeprom  'ee      h !   eeprom-image ;
+: ram     'ram     h ! ;
+: flash   'flash   h ! ;
+: eeprom  'ee      h ! ;
 : in-flash?  h @  'flash = ;
 : in-ram?    h @  'ram = ;
 : org    ( a) ( set dict pointer)  h @  ! ;
@@ -125,8 +148,7 @@ forth
 
 ( Initialization.)
 : fferase  'image #image  "ff fill ;
-: wipe   image preserve
-         flash-image fferase
+: wipe   flash-image fferase
          ram-image fferase
          eeprom-image fferase ;
 
@@ -138,3 +160,11 @@ forth
    wipe  @ram ram!  @flash flash!  @eeprom ee!  flash  @flash org ;
 
 clean-slate
+
+( testing)
+hex
+1111_1111 0 image-!  ( first cell of flash)
+2222_2222 #flash  4 -  image-!  ( last cell)
+
+3333_3333 @ram image-!  ( first cell of ram)
+4444_4444 @ram #ram +  4 -  image-!
