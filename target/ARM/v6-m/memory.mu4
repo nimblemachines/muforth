@@ -1,0 +1,140 @@
+( This file is part of muFORTH: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2012 David Frech. All rights reserved, and all wrongs
+  reversed. (See the file COPYRIGHT for details.)
+
+loading ARMv6-M memory image
+
+( Space for compiling into. ARMs can get big; the biggest devices at this
+  writing have 1MB of flash. For now let's limit ourselves
+  to 256KiB of flash, and 32KiB of RAM. And though not all parts have
+  EEPROM, let's define a space for it anyway.)
+
+( XXX: We should really define this in a device/xxx file that gets loaded
+  _before_ this one.)
+
+( Default some memory sizes and origins.)
+( XXX FIXME KLUDGE)  "6000_0000 constant @eeprom
+
+.ifndef @flash
+   0 constant @flash  32 Ki constant #flash
+.then
+
+( On all Cortex-M devices, SRAM starts at "2000_0000.)
+"2000_0000 constant @ram
+.ifndef #ram
+   8 Ki constant #ram
+.then
+
+: power-of-two?  ( n)
+   begin  dup 1 and 0=  while  u2/  repeat  1 = ;
+
+( Memory images are prefixed by their length and origin - the target
+  address that they start on. When we push an image, we push the address of
+  its first byte, but the previous cells contain the length and origin,
+  if we want to do bounds checking or address wrapping.)
+
+variable image  ( image buffer pointer)
+: make-image
+   create  ( #bytes origin)  ,  dup power-of-two?  0= if
+      error" image size not a power of 2"  then
+      dup  ( size)  ,  allot
+   does>  image ! ;
+
+256 Ki @flash   make-image  flash-image
+ 64 Ki @ram     make-image  ram-image
+  4 Ki @eeprom  make-image  eeprom-image
+
+( sanity default)  flash-image
+
+( Simple but inefficient!)
+: @image  image @  @  ( origin) ;
+: #image  image @  cell+ @  ( get byte count) ;
+: 'image  image @  cell+ cell+  ( get address) ;
+
+: wrap   #image 1-  and ;
+: image+  ( target - host)  @image -  wrap  'image + ;
+: image-  ( host - target)                  'image -  wrap  @image + ;
+
+( DEBUG: Define show-comma to show code as it's compiled.)
+.ifdef show-comma
+: .debug-comma  dup  .h8_ ;
+.else
+: .debug-comma ;
+.then
+
+( DEBUG: Define show-c! to show writes to image.)
+.ifdef show-c!
+: .debug-c!   cr  ( byte addr)  2dup .hcell_  .h8 ;
+: .debug-w!   cr  ( word addr)  2dup .hcell_  .hcell ;
+.else
+: .debug-c! ;
+: .debug-w! ;
+.then
+
+: image-c@             image+ c@ ;
+: image-c!  .debug-c!  image+ c! ;
+
+( ARMs are almost always little-endian.)
+: image-@  ( a - w)           image+  lew@ ;
+: image-!  ( w a)  .debug-w!  image+  lew! ;
+
+: image-p!  image+ p! ;
+: image-p@         p@ image- ;
+
+: target-*   ( - cell)  c* c* c* c*  0123> ;  ( little-endian 32-bit word)
+
+: >image
+   [']       c*  is |c*
+   ['] target-*  is |cell*
+   ['] image-p!  is |p!
+   ['] image-p@  is |p@
+                  4 |cell !  ( size of cell) ;
+>image
+
+( Dictionary operators.)
+variable h   ( image dictionary pointer pointer; points to one of:)
+   2variable 'ram     ( ram pointer, origin)
+   2variable 'flash   ( flash pointer, origin)
+   2variable 'ee      ( eeprom pointer, origin)
+
+: ram     'ram     h !   ram-image ;
+: flash   'flash   h !   flash-image ;
+: eeprom  'ee      h !   eeprom-image ;
+: in-flash?  h @  'flash = ;
+: in-ram?    h @  'ram = ;
+: org    ( a) ( set dict pointer)  h @  ! ;
+
+meta
+( XXX alignment policy? Should , always align? Should allot? Should we even
+  have two spaces? We will never, in this architecture, want to , or c,
+  into ram; we will only need "ram here" and "ram allot".)
+
+: here  ( - a)  h @ @ ;
+: haligned   1+  -2 and ;  ( halfword aligned)
+: halign    \m here \m haligned  org ;
+: aligned   3 +  -4 and ;  ( word aligned)
+: align     \m here \m aligned  org ;
+: allot ( n)    h @ +! ;
+: c,    ( ch)   .debug-comma  \m here image-c!  1 \m allot ;
+: ,     ( w)    ( \m align)  >3210  \m c,  \m c,  \m c,  \m c, ;
+
+forth
+( return the origin & number of bytes in current region)
+: region  ( - a u)  h @  2@  ( origin ptr)  over - ;
+
+( Initialization.)
+: fferase  'image #image  "ff fill ;
+: wipe   image preserve
+         flash-image fferase
+         ram-image fferase
+         eeprom-image fferase ;
+
+: ram!      ( ram-origin)  dup 'ram   2!  ( set ptr and origin to origin) ;
+: flash!  ( flash-origin)  dup 'flash 2!  ( set ptr and origin to origin) ;
+: ee!    ( eeprom-origin)  dup 'ee    2!  ( set ptr and origin to origin) ;
+
+: clean-slate
+   wipe  @ram ram!  @flash flash!  @eeprom ee!  flash  @flash org ;
+
+clean-slate
