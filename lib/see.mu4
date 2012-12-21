@@ -19,7 +19,8 @@ decimal
 ( We defer these so that, later, the target compiler can possibly read from
   the target, rather than local memory.)
 
-variable |cell
+variable |cell  ( size in bytes, of a cell)
+variable |addr  ( size in bytes, of an address)
 defer |p!     ( set memory pointer)
 defer |p@     ( get memory pointer)
 defer |c*     ( read byte, increment)
@@ -44,7 +45,8 @@ variable ea  ( "effective address" - an address to jump or call to)
          ['] c*     is |c*
          ['] cell*  is |cell*
          ['] >ea    is |ea
-             cell      |cell ! ;  >host
+             cell      |cell !
+             cell      |addr ! ;  >host
 
 -- ------------------------------------------------------------------------
 -- Call, jump, and return
@@ -79,14 +81,10 @@ variable isp  ( stack pointer - points to next empty space)
 : .h8     hex   <#    # #  #>  type ;
 : .o8    octal  <#  # # #  #>  type ;
 : .hcell  hex   <#  |cell @ 2* for # next  #>  type ;
+: .haddr  hex   <#  |addr @ 2* for # next  #>  type ;
 
-( Because these are useful and common.)
-: .h8_   .h8  space ;
-: .o8_   .o8  space ;
-: .hcell_  .hcell  space ;
-
-: .addr   cr  ( -16 and)  .hcell_ ;
-: _addr   cr  drop  |cell @ 2* 1+ spaces ;
+: .addr   cr  ( -16 and)  .haddr  space ;
+: _addr   cr  drop  |addr @ 2* 1+ spaces ;
 
 comment
  ====================================================
@@ -250,11 +248,19 @@ defer 1inspect  ( a - a)
 variable see-skip  ( number of bytes to skip)
    16 see-skip !  ( default to 1 line)
 
-variable see-addr-mask
-   -1 see-addr-mask !  ( keep all bits by default)
+( Base the address mask on the size of addresses. |addr better be at least
+  two!!
+
+  NOTE: we calculate this in this oddball way to avoid doing a shift by 64,
+  which is what would happen we calculated the addr-mask on the host. And
+  on my x86_64 machine shifts by 64 are no-ops, so we get a rather bogus
+  mask - all zeroes.)
+
+: see-addr-mask
+   "1_0000  |addr @  2 -  3 << ( *8)  <<  1- ;
 
 ( advance rounds down to nearest `skip'.)
-: advance  ( a skip - a')  + ( advance)  see-addr-mask @ and
+: advance  ( a skip - a')  + ( advance)  see-addr-mask  and
    see-skip @ negate and ( round)  0 ;
 
 : skip+  ( a - a')  see-skip @         advance ;
