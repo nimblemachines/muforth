@@ -1,0 +1,81 @@
+( This file is part of muFORTH: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2012 David Frech. All rights reserved, and all wrongs
+  reversed. (See the file COPYRIGHT for details.)
+
+loading ARM Cortex-M interaction
+
+variable chatting
+
+( XXX Don't define chat words unless there is support in a connected
+  device.)
+
+.ifdef t.chat
+
+: +chat  chatting on ;
+
+: >chat  ['] t.setaddr  is |p!
+         ['] t.getaddr  is |p@
+         ['] t.readb    is |c*
+         ['] t.readw    is |cell*
+                         4 |cell !  ( size of cell) ;
+
+: chat  +chat  >chat  t.chat ;
+
+.else  ( NO CONNECTED CHAT TARGET!)
+
+: chat  error" No connected chat-capable target." ;
+: >chat ;
+
+.then
+
+
+( Define our own key bindings for memory dumping and disassembly. We'll
+  default to host bindings if there isn't one in our array. This way we
+  only have to define the "delta" between host and target behaviours.)
+
+128 array cortex-seekeys
+
+( Default key action is to run host key code)
+host-seekeys cortex-seekeys  128 cells cmove
+
+cortex-seekeys 'seekeys !    ( switch over to our bindings)
+
+( Support for dumping memory)
+: 1dump  ( a)
+   hex-bytes
+   chatting @ if   >chat  else  >image  then
+   dup _addr  dup .chars
+   dup .addr  dup .hex-bytes
+   dup _addr  dup .hex-cells
+   drop ;
+
+: dumping
+   16 see-skip !
+   ['] skip+  advance!
+   ['] skip-  retreat!
+   ['] 1dump  inspect! ;
+
+: disasming
+   ( XXX for now)  dumping ;
+   -- ['] i-skip  advance!
+   -- ['] 0       retreat!
+   -- ['] 1dis    inspect! ;
+
+key: d  ( a - a 0)   dumping  0 ;
+key: i  ( a - a 0)   disasming  0 ;
+
+: >target
+   cortex-seekeys 'seekeys !    ( switch over to our bindings)
+   [ 1 32 << 1- ]  see-addr-mask !
+   ;
+
+( Interactive)
+( make an alias so we can still get to it)
+: du-host  -1 see-addr-mask !  >host  dumping  du ;
+
+: du  ( a - a')
+   >target  dumping  inspect ;
+
+: dis  ( a - a')
+   >target  disasming  inspect ;
