@@ -9,8 +9,9 @@ loading ARM target support:
 
 hex
 
-0483 3748 usb-find-device  .if   constant stlink  .else
-   ." None found"                                 .then
+0483 3748 usb-find-device  .if   constant stlink
+
+( Device found - load support)
 
 ( On OSX in particular, if you don't do this, the next time around the
   board wedges... Weird.)
@@ -190,12 +191,6 @@ defer doit  ( buf target len)
 : tell-mode  ( - mode)
    get-mode  dup  .mode  ."  mode " ;
 
-: chat  ( connect to device)
-   cr  tell-mode
-   dup  0=  if  drop  ." => "  dfu>  tell-mode  then
-   dup  1 = if  drop  ." => "  >swd  tell-mode  then
-        2 - if  ." Tried, but didn't succeed. "  then ;
-
 : .core-state
    core-state  80 = if  ." running" ^  then  ." halted" ;
 
@@ -204,3 +199,26 @@ defer doit  ( buf target len)
    z" muforth-f0.img"  create-file  ( fd)
    0800_0000 800  pad  ['] read32  chunked
    dup  pad 800 write  close-file ;
+
+( The interface for the interact code. Implemented by all debug transports.)
+
+: t.chat  ( connect to device)
+   cr  tell-mode
+   dup  0=  if  drop  ." => "  dfu>  tell-mode  then
+   dup  1 = if  drop  ." => "  >swd  tell-mode  then
+        2 - if  ." Tried, but didn't succeed. "  then ;
+
+variable z
+: t.setaddr  ( target)    z ! ;
+: t.getaddr  ( - target)  z @ ;
+: t.readw    ( - word)          pad  z @  4  read32   4 z +!  pad w@ ;
+: t.writew   ( word)    pad w!  pad  z @  4  write32  4 z +! ;
+
+variable last-word
+: t.readb    ( - byte)
+   z @  3 and  dup 0= if  last-word  z @  4  read32  then
+   last-word +  c@  1 z +! ;
+
+.else  ( no device found)
+   ." None found "
+.then
