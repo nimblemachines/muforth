@@ -4,3 +4,169 @@
   reversed. (See the file COPYRIGHT for details.)
 
 ( Disassemble the v6-m subset of Thumb2 instructions.)
+
+hex
+
+( Words to compile the instruction table.
+  match and exact do masked and exact matches - resp - against the opcode
+  on the stack.
+
+  If a match is found, the cfa following match is executed, and then the
+  word that called match is exited, with a 0 on the stack! This shortcuts
+  any further tests.
+
+  If no match was found, the following cfa is skipped, and the matching
+  continues apace.)
+
+: matched  ( op f - op -1 | op)
+   shunt  ( can't return to our caller)
+   if  pop  @  ( fetch cfa following _caller_)
+       execute ( print instr)  0  ^  then  ( exit from coller's caller!)
+   ( no match)  pop  cell+  push ;
+
+( mask op and test against match)
+: match   ( op mask match - op f)  push  over and  pop =  matched ;
+
+( XXX Currently unused for 16-bit instructions.)
+( exact match)
+: exact  ( op match - op f)  over =  matched ;
+
+( All the op printing words have the stack signature: op - op)
+
+: comma  ." , " ;
+
+: .reg  ( reg)
+   dup 0d u< if  char r emit  u. ^  then
+   0d -  z" splrpc"  2 type ;
+
+: 00r   7 and  .reg ;
+:  Rd          dup         00r ;
+:  Rn          dup  3 u>>  00r ;
+: ,Rn   comma  Rn ;
+: ,Rm   comma  dup  6 u>>  00r ;
+:  Rd8         dup  8 u>>  00r ;
+:  RRdn        dup  4 u>>  8 and  over 7 and  or  .reg ;
+: ,RRm  comma  dup  3 u>> 0f and                  .reg ;
+
+: .r3   Rd  ,Rn  ,Rm ;
+: imm   char # emit  u. ;  ( radix? u. or . ?)
+: ,imm   comma  imm ;
+: i8     dup 0ff and ;
+: ,uoff8  i8  4 *  ,imm ;
+
+( .op3 assumes each string takes 3 bytes)
+: .op3  ( index z")  swap 3 *  +  3 type  4 spaces ;
+
+( .op5 assumes each string takes 5 bytes)
+: .op5  ( index z")  swap 5 *  +  5 type  2 spaces ;
+
+:  80?  dup 7 u>> 1 and ;
+: 200?  dup 9 u>> 1 and ;
+
+: .addsub  ( op 0/1 - op)   z" addsub"  .op3 ;
+
+: .sh-i
+   dup #11 u>>  z" lsllsrasr" .op3  Rd  ,Rn  dup 6 u>> 1f and  ,imm ;
+
+: .add-r3   200? .addsub  .r3 ;
+: .add-i3   200? .addsub  dup 6 u>>  7 and  ,imm ;
+: .mov-i8   dup 8 u>>  3 and  z" movcmpaddsub" .op3  Rd8  i8 ,imm ;
+
+: .alu
+   dup 6 u>> 0f and  z" andeorlsllsrasradcsbcrortstnegcmpcmnorrmulbicmvn" .op3
+   Rd  ,Rn ;
+
+: .bx       dup 7 u>>  1 and  z" bx blx" .op3  Rn ;
+: .add-rh   dup 8 u>>  3 and  z" addcmpmov" .op3  RRdn  ,RRm ;
+
+( XXX show actual address, and maybe contents too?)
+: .ldr-pc   ." ldr    "  Rd8  ." , [ pc"  ,uoff8  ." ]" ;
+
+: .str-r
+   dup 9 u>> 7 and  z" str  strh strb ldrsbldr  ldrh ldrb ldrsh" .op5
+   Rd  ." , ["  Rn  ,Rm  ." ]" ;
+
+: >i5       dup  6 u>>  1f and ;
+: str/ldr   dup #11 u>>  1 and ;
+: .Rn,i     Rd  ." , ["  Rn  ,imm  ." ]" ;
+: .strldr    str/ldr  z" str  ldr  " .op5 ;
+
+: .str-i5    .strldr                       >i5 4 *  .Rn,i ;
+: .strb-i5   str/ldr  z" strb ldrb " .op5  >i5      .Rn,i ;
+: .strh-i5   str/ldr  z" strh ldrh " .op5  >i5 2 *  .Rn,i ;
+
+: .str-sp    .strldr  Rd8  ." , [ sp"  ,uoff8  ." ]" ;
+
+: .add-pc-i8   ." add   "  str/ldr  z"  pc sp" .op3  ,uoff8 ;
+: .add-sp-i7   80?  .addsub  ." sp"  7f and  ,uoff8 ;
+
+: .4way-rr  ( op z" - op)   over 6 u>>  3 and  swap .op5  Rd  ,Rn ;
+: .sxt   z" sxth sxtb uxth uxtb " .4way-rr ;
+: .rev   z" rev  rev16???  revsh" .4way-rr ;
+
+( XXX nicer - print reg names)
+: .regmask  ( op lr/pc - op)  over 0ff and or  ( 16-bit mask)  u. ;
+: .push  80? 0e << ( lr)  .regmask ;
+: .pop   80? 0f << ( pc)  .regmask ;
+
+: .cps    dup 4 u>> 1 and  z" ie id " .op3 ;
+: .bkpt   ." bkpt   "  i8  imm ;
+: .hint   dup 4 u>>  0f and  z" nop  yieldwfe  wfi  sev  ???  ???  ???" .op5 ;
+
+: .stm    str/ldr  z" stmldm" .op3  0 .regmask ;
+: .undef  ." undef  "  i8  imm ;
+: .svc    ." svc    "  i8  imm ;
+
+: .branch-pc  ( hword-offset)   2*  \m here 4 +  +  u. ;
+: .bcond
+   char b emit  z" eq ne cs cc mi pl vs vc hi ls ge lt gt le al nv " .op3
+   i8  dup 80 and if  -100 +  then  .branch-pc ;
+
+: .bra   ." bra    "  dup 7ff and  dup 400 and if  -800 +  then  .branch-pc ;
+
+: shred  ( op - op)
+( All the instructions!)
+
+fc00 1800 match  .add-r3   ( add sub)
+fc00 1c00 match  .add-i3   ( add sub)
+e000 0000 match  .sh-i
+e000 2000 match  .mov-i8   ( mov cmp add sub)
+fc00 4000 match  .alu
+ff07 4700 match  .bx       ( bx blx)
+fc00 4400 match  .add-rh   ( add cmp mov)
+f800 4800 match  .ldr-pc
+f000 5000 match  .str-r    ( str strh strb ldrsb ldr ldrh ldrb ldrsh)
+f000 6000 match  .str-i5   ( str ldr)
+f000 7000 match  .strb-i5  ( strb ldrb)
+f000 8000 match  .strh-i5  ( strh ldrh)
+f000 9000 match  .str-sp   ( str ldr)
+f000 a000 match  .add-pc-i8   ( add pc, add sp)
+ff00 b000 match  .add-sp-i7   ( add to sp, sub from sp)
+ff00 b200 match  .sxt      ( sxth sxtb uxth uxtb)
+fe00 b400 match  .push
+ffef b662 match  .cps      ( cpsie, cpsdi)
+ff00 ba00 match  .rev      ( rev rev16 revsh)
+fe00 bc00 match  .pop
+ff00 be00 match  .bkpt
+ff8f bf00 match  .hint     ( nop yield wfe wfi sev)
+f000 c000 match  .stm      ( stm ldm)
+ff00 de00 match  .undef    ( permanently undefined)
+ff00 df00 match  .svc
+f000 d000 match  .bcond
+f800 e000 match  .bra
+
+( That's all folks!)
+-1  ( no match)
+;
+
+.then
+
+( Support for interactive disassembly.)
+: i-skip  ( a - a' 0)  drop  |p@  0 ;
+
+( The workhorse.)
+: 1dis  ( a)
+   2 |cell !
+   dup .addr  .nesting space
+   |p!  |cell*  ( op)  dup .hcell  space space
+   shred  if  ( no match)  ." ** undecoded instruction **"  then  drop ;
