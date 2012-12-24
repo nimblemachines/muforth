@@ -69,7 +69,7 @@ hex
 ( .op5 assumes each string takes 5 bytes)
 : .op5  ( index z")  swap 5 *  +  5 type  2 spaces ;
 
-: bit@  ( op bit# - op bit)  over swap  u>>  1 and ;
+: bit@  ( op bit# - bit)  u>>  1 and ;
 
 : .addsub  ( op 0/1 - op)   z" addsub"  .op3 ;
 
@@ -77,8 +77,8 @@ hex
 : .sh-i
    z" lsllsrasr???" .4way-i  Rd  ,Rn  dup 6 u>> 1f and  ,imm ;
 
-: .add-r3   9 bit@ .addsub  .r3 ;
-: .add-i3   9 bit@ .addsub  Rd  ,Rn  dup 6 u>>  7 and  ,imm ;
+: .add-r3   dup 9 bit@ .addsub  .r3 ;
+: .add-i3   dup 9 bit@ .addsub  Rd  ,Rn  dup 6 u>>  7 and  ,imm ;
 : .mov-i8   z" movcmpaddsub" .4way-i  Rd8  i8 ,imm ;
 
 : .alu
@@ -116,7 +116,7 @@ hex
 : .str-sp    .strldr  Rd8  ." , [ sp"  ,uoff8  .] ;
 
 : .add-pc-i8   ." add   "  str/ldr  z"  pc sp" .op3  ,uoff8 ;
-: .add-sp-i7   7 bit@  .addsub  ." sp"  7f and  ,uoff8 ;
+: .add-sp-i7   dup 7 bit@  .addsub  ." sp"  7f and  ,uoff8 ;
 
 : .4way-rr  ( op z" - op)   over 6 u>>  3 and  swap .op5  Rd  ,Rn ;
 : .sxt   z" sxth sxtb uxth uxtb " .4way-rr ;
@@ -131,8 +131,8 @@ hex
    repeat  shunt  2drop  ."  }" ;
 
 : .regmask  ( op lr/pc - op)  over 0ff and or  ( 16-bit mask)  .reglist ;
-: .push  ." push   "  8 bit@ 0e << ( lr)  .regmask ;
-: .pop   ." pop    "  8 bit@ 0f << ( pc)  .regmask ;
+: .push  ." push   "  dup 8 bit@ 0e << ( lr)  .regmask ;
+: .pop   ." pop    "  dup 8 bit@ 0f << ( pc)  .regmask ;
 
 : .cps    dup 4 u>> 1 and  z" ie id " .op3 ;
 : .bkpt   ." bkpt   "  i8  imm ;
@@ -150,11 +150,29 @@ hex
 
 : .bra   ." b      "  dup 7ff and  dup 400 and if  -800 +  then  .branch-pc ;
 
+( 32-bit bl. For historical reasons the encoding is really strange. The
+  original Thumb instruction set used _two_ separate instructions to set
+  the high and low halves of the branch displacement. With the addition of
+  32-bit instructions into that same encoding space, the bl instruction has
+  been re-imagined as a 32-bit Thumb instruction with a very odd encoding -
+  and a larger possible displacement than its 16-bit predecessor.)
+
+: .bl  ( op - op)
+   ." bl     "
+   dup           7ff and          ( imm11 in v6-m manual)
+   over #16 u>>  3ff and  #11 <<  ( imm10 ditto)  +
+   over #26 bit@  ( S)  push
+   over #11 bit@  ( J2)  r@ xor  1 xor  #21 << ( I2 ditto)  +
+   over #13 bit@  ( J1)  r@ xor  1 xor  #22 << ( I1 ditto)  +
+   pop ( S)  if  [ 1 #23 << negate ] +  then
+   1- ( compensate for op2 fetch)
+   ( hword offset)  .branch-pc ;
+
 ( Is this a 16-bit instruction?)
 : thumb16?  ( op - f)   f800 and  e800 u< ;
 
-: shred  ( op - op)
-( All the instructions!)
+: shred16  ( op - op)
+( All the 16-bit instructions!)
 
 fc00 1800 match  .add-r3   ( add sub)
 fc00 1c00 match  .add-i3   ( add sub)
@@ -183,12 +201,19 @@ ff00 de00 match  .undef    ( permanently undefined)
 ff00 df00 match  .svc
 f000 d000 match  .bcond
 f800 e000 match  .bra
+-- f800 f000 match  .bl-misc
 
 ( That's all folks!)
--1  ( no match)
-;
+-1  ( no match) ;
 
-.then
+: shred32  ( op - op)
+( All the 32-bit instructions!)
+
+f800_d000 f000_d000 match  .bl
+
+( That's all folks!)
+-1  ( no match) ;
+
 
 ( Support for interactive disassembly.)
 : dis+  ( a - a' 0)  drop  |p@  0 ;
@@ -197,6 +222,8 @@ f800 e000 match  .bra
 ( The workhorse.)
 : 1dis  ( a)
    2 |cell !
-   dup .addr  .nesting space
-   |p!  |cell*  ( op)  dup .hcell  space space
-   shred  if  ( no match)  ." ** undecoded instruction **"  then  drop ;
+   dup .addr  .nesting space  |p!
+             |cell*  ( op)  dup .hcell  space  dup thumb16? if
+                                            6 spaces    shred16  else
+      10 <<  |cell*  ( op2) dup .hcell  space space  +  shred32  then
+   if  ( no match)  ." ** undecoded instruction **"  then  drop ;
