@@ -88,17 +88,10 @@ hex
 : .bx       dup 7 u>>  1 and  z" bx blx" .op3  RRm ;
 : .add-rh   dup 8 u>>  3 and  z" addcmpmov" .op3  RRdn  ,RRm ;
 
-( XXX show actual address, and maybe contents too?)
-( @ from target/image; this is ugly! Do I need non-post-incr fetch? of word
-  and halfword?)
-( XXX Be extra careful of order of preserve and push/pop!)
-: dis-@  ( addr - word)  ( save and restore p and |cell)
-   |cell preserve  4 |cell !  |p@ push  |p!  |cell*  pop |p! ;
-
 ( Address of value to load is offset 4 *  pc 4 + -4 and + )
 : >load-pc  ( word-offset)   4 *  |p@ 2 +  -4 and  + ;
 : .ldr-pc   ." ldr    "  Rd8  ,[  i8 >load-pc  dup .u32  .]
-                              ."  = "  dis-@  .u32 ;
+                              ."  = "  |@  .u32 ;
 
 : .str-r
    dup 9 u>> 7 and  z" str  strh strb ldrsbldr  ldrh ldrb ldrsh" .op5
@@ -219,11 +212,13 @@ f800_d000 f000_d000 match  .bl
 : dis+  ( a - a' 0)  drop  |p@  0 ;
 : dis-  ( a - a' 0)        2 -  0 ;
 
+: op*   ( - op16)  |c* |c*  lohi> ;
+: .op   ( op)   radix preserve hex  <# 4# #> type space ;
+
 ( The workhorse.)
 : 1dis  ( a)
-   2 |cell !
    dup .addr  .nesting space  |p!
-             |cell*  ( op)  dup .hcell  space  dup thumb16? if
-                                            6 spaces    shred16  else
-      10 <<  |cell*  ( op2) dup .hcell  space space  +  shred32  then
+             op*  ( op1) dup .op  dup thumb16? if
+                                6 spaces    shred16  else
+      10 <<  op*  ( op2) dup .op  space  +  shred32  then
    if  ( no match)  ." ** undecoded instruction **"  then  drop ;
