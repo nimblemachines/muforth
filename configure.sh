@@ -55,8 +55,8 @@ cflags=""
 ldflags=""
 
 # On 64-bit hosts, compile a native 64-bit muforth, with everything 64-bits
-# wide. I'd like for muforth to feel exactly the same on all machines,
-# which it now won't, but how to fix this isn't clear.
+# wide. On 32-bit hosts, compile an "emulated" 64-bit muforth - with cells
+# and stacks 64 bits wide, and C pointers "wrapped" in 64-bit cells.
 
 # Keep Wnarrowing, because we might be building a 32-bit executable.
 # But default to whatever Darwin wants to build.
@@ -71,7 +71,8 @@ if [ "$os" = "Linux" ]; then
         Wnarrowing=""
     fi
     # Try to guess a device to use for serial targets
-    # XXX Do this for *BSD too?
+    # XXX Do this for OSX and *BSD too? And match all USB known USB serial
+    # devices?
     if [ ! -c serial-target ]; then
         for term in USB0 ACM0 S0; do
             dev=/dev/tty$term
