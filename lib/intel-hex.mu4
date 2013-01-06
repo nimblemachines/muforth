@@ -8,7 +8,7 @@
 ( 2004-jul-07. Taken from target/v25 and massively streamlined.)
 
 .ifndef >hilo
-   ld target/common/16bit.mu4
+   ld target/common/endian.mu4
 .then
 
 loading Intel hex
@@ -22,34 +22,34 @@ variable buf
 
 : c@+  ( a - a+ n)  dup 1+  swap c@ ;
 : nyb,   15 and  >digit  b,  ;
-: .byte   dup  4 >>  nyb,  nyb,  ;
-: >byte   ( sum a byte - sum+ a)  dup .byte  u+  ;
-: >word   ( sum a b1 b2 - sum+ a)  push >byte  pop >byte  ;
+: .ihbyte   dup  4 >>  nyb,  nyb,  ;
+: ih>byte   ( sum a byte - sum+ a)  dup .ihbyte  u+  ;
+: ih>word   ( sum a b1 b2 - sum+ a)  push ih>byte  pop ih>byte  ;
                                                     ( sends b1 then b2)
-: addr    ( sum ta - sum+ ta)  dup >hilo  >word  ;  ( big endian)
-: chunk   ( sum ha # - ha+# sum)   for  c@+  >byte  next  swap  ;
-: check   ( sum)  negate  .byte  pad  buf @  over -  type   cr ;
-: header  ( n - sum)  pad b!  char : b,  dup .byte  ;
-: tag     ( sum ta n - sum+n)  >byte  drop  ;
+: ihaddr    ( sum ta - sum+ ta)  dup >hilo  ih>word  ;  ( big endian)
+: ihchunk   ( sum ha # - ha+# sum)   for  c@+  ih>byte  next  swap  ;
+: ihcheck   ( sum)  negate  .ihbyte  pad  buf @  over -  type   cr ;
+: ihheader  ( n - sum)  pad b!  char : b,  dup .ihbyte  ;
+: ihtag     ( sum ta n - sum+n)  ih>byte  drop  ;
 
       (  : count    vaddr    tag       data      checksum )
       ( =====================================================)
-: data  ( 'host 'target # - 'host+#)
-      dup header   rot addr  0 tag   -rot chunk       check  ;
-: end   0 header     0 addr  1 tag                    check  ;
+: ihdata  ( 'host 'target # - 'host+#)
+        dup ihheader   rot ihaddr  0 ihtag   -rot ihchunk       ihcheck  ;
+: ihend   0 ihheader     0 ihaddr  1 ihtag                      ihcheck  ;
 
-: seg   ( seg)
-        2 header     0 addr  2 tag   swap addr drop   check  ;
+: ihseg   ( seg)
+          2 ihheader     0 ihaddr  2 ihtag   swap ihaddr drop   ihcheck  ;
 
-: ext   ( ext)
-        2 header     0 addr  4 tag   swap addr drop   check  ;
+: ihext   ( ext)
+          2 ihheader     0 ihaddr  4 ihtag   swap ihaddr drop   ihcheck  ;
 
-: fragment  ( 'host 'target # - 'host+# 'target+#)
-   2dup + push   data   pop ;
+: ihfragment  ( 'host 'target # - 'host+# 'target+#)
+   2dup + push   ihdata   pop ;
 
-: chunks    ( 'host 'target #)
-   32 /mod  ( r q)  swap push  ?for  32 fragment  next  then
-                       pop  =if  ( rem) fragment  0  then
+: ihchunks    ( 'host 'target #)
+   32 /mod  ( r q)  swap push  ?for  32 ihfragment  next  then
+                       pop  =if  ( rem) ihfragment  0  then
    drop  2drop  end ;
 
 
