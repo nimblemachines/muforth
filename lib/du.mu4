@@ -39,27 +39,35 @@ variable p
              cell      |cell !
              cell      |addr ! ;  >host
 
+
 -- ------------------------------------------------------------------------
 -- Call, jump, and return
 -- ------------------------------------------------------------------------
 
-8 array+ istack  ( up to 8 remembered locations)
+( up to 12 remembered locations)
+12 array+ istack-addr  ( saved address)
+12 array+ istack-mode  ( address of word to reset to saved mode)
 variable isp  ( stack pointer - points to next empty space)
 0 isp !
+variable du-set-mode  ( cfa of word to restore du mode)
 
 ( If there is room on the i-stack, push a and make ea the new a. Otherwise,
   drop ea and return a.)
 
 : i-push  ( a ea - ea | a)
-   swap ( ea a - preparing to push a)
-   isp @  dup 8 u<  if  ( room)  dup 1+ isp !  istack !  ^  then
-   ( ea a isp)  drop nip ;
+   isp @  dup 12 u<  if  ( room)  push ( isp)
+      du-set-mode @  r@ istack-mode !  swap ( ea a)  r@ istack-addr !
+      pop 1+ isp !  ^  then
+   ( a ea isp)  2drop ;
 
-( If there is something on the i-stack, pop it and return it as the new a.
-  Otherwise, return a.)
+( If there is something on the i-stack, pop the address, pop and execute
+  the mode cfa if nonzero - to return us to prev mode - and return the new
+  a. Otherwise, return original a.)
 
 : i-pop   ( a - popped | a)
-   isp @      =if  ( not empty)  1- dup isp !  istack @  nip  ^  then
+   isp @  =if  ( not empty)  1- dup isp !  push ( isp)  drop ( a)
+      r@ istack-addr @  ( saved-a)
+     pop istack-mode @ =if execute  ^  then  then  ( saved-a 0)
    ( a isp)  drop ;
 
 : .nesting  isp @  ?for  char > emit  next  space  then  ;
@@ -239,7 +247,7 @@ defer 1inspect  ( a - a)
 
 
 -- ------------------------------------------------------------------------
--- Default bindings for host.
+-- Moving around, aligning addresses.
 -- ------------------------------------------------------------------------
 
 variable skip-by-cell
@@ -266,8 +274,28 @@ variable skip-by-cell
 : skip+  ( a - a' 0)  see-skip         skip-advance ;
 : skip-  ( a - a' 0)  see-skip negate  skip-advance ;
 
-' skip+  advance!  ( set up key bindings)
-' skip-  retreat!  ( ditto) 
+
+-- ------------------------------------------------------------------------
+-- Dump modes - set up key bindings, memory source, moving forward and
+-- backward, and how to display each line. Sets du-set-mode so we can
+-- return to this mode with i-pop.
+-- ------------------------------------------------------------------------
+
+: du-mode
+   create  ( 'keymap addr-mask)  ,
+      ' , ( 'set-memory-source)
+      ' , ( 'advance)  ' , ( 'retreat)  ' , ( 'inspect)
+      ( 'keymap)  ,
+   does>  ( a 'body - a')
+      dup body> du-set-mode !
+      @+ @+ @+ @+ @+ @  ( addr-mask 'set-memory 'advance 'retreat 'inspect 'keymap)
+      ( 'keymap) 'seekeys !  inspect!  retreat!  advance!  ( set-memory)  execute
+      ( addr-mask) and  0 advance ;
+
+
+-- ------------------------------------------------------------------------
+-- Default bindings for host.
+-- ------------------------------------------------------------------------
 
 ( Pressing 1 toggles between skipping by cell and by line of 16 bytes.)
 key: 1  ( a - a 0)  skip-by-cell @  0=  skip-by-cell !  0 skip-advance ;
@@ -280,10 +308,10 @@ key: 1  ( a - a 0)  skip-by-cell @  0=  skip-by-cell !  0 skip-advance ;
    dup .addr  dup .hex-bytes
    dup _addr      .hex-cells ;
 
-: du   ( a - a')
-   >host
-   host-seekeys 'seekeys !
-   ['] 1dump  inspect!  inspect ;
+host-seekeys  cell negate  ( 'keymap mask)  du-mode host-dumping
+   >host  skip+  skip-  1dump
+
+: du   ( a - a')  host-dumping  inspect ;
 
 
 ( Batch mode)
