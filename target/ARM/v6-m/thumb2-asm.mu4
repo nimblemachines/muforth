@@ -17,9 +17,10 @@ hex
 : __  char _ hold ;
 : debug-show   dup  radix preserve  binary  <# 4# __ 4# __ 4# __ 4# #>  cr  type ;
 
-: op,  debug-show  h, ;
+: op,  debug-show  \m h, ;
 
-: reg   create  ( regnum)  ,  does> @  2000_0000 ( regtype) ;
+( Make these create/does words so it's easy to change their behaviour.)
+: reg   constant  ( regnum)  does> @ ;
 assembler
 #15 reg pc
 #14 reg lr
@@ -38,133 +39,150 @@ assembler
   1 reg r1
   0 reg r0
 
-1000_0000 constant #   ( imm - imm immtype)
-
 forth
+: reg?  ( n - f)  1_0000 u< ;
 
-: ?reg  ( reg type op - op reg)
-   push  2000_0000 = not if  error" expected a register"  then
-   pop swap  ;
-
-: reg?  ( type op - type op f)   over  2000_0000 = ;
+: ?reg  ( n op - op reg)
+   over reg? 0=  if  error" expected a register"  then  swap ;
 
 ( These are named to suggest where they would put the 3-bit field if the
   instruction is in octal.)
-: r00  ( reg regtype op - op')  ?reg  07 and  6 <<  or ;
-: 0r0  ( reg regtype op - op')  ?reg  07 and  3 <<  or ;
-: 00r  ( reg regtype op - op')  ?reg  07 and        or ;
+: r00  ( reg op - op')  ?reg  07 and  6 <<  or ;
+: 0r0  ( reg op - op')  ?reg  07 and  3 <<  or ;
+: 00r  ( reg op - op')  ?reg  07 and        or ;
+
+( Like above, but shifted 8 bits left. The octal metaphor doesn't work here!)
+: r000  ( reg op - op')  ?reg  07 and  8 <<  or ;
 
 ( For building opcodes with 4-bit register field, R.)
-: 0R  ( R -> r0_000_rrr)  ( reg regtype op - op')
+: 0R  ( reg op - op')  ( R -> r0_000_rrr)
    ?reg  dup 8 and  4 <<  swap  07 and  or or ;
 
-: R0  ( R -> 0r_rrr_000)  ( reg regtype op - op')
+: R0  ( reg op - op')  ( R -> 0r_rrr_000)
    ?reg  0f and  3 <<  or ;
 
-: ?imm  ( imm type op - op imm)
-   push  # = not if  error" expected immediate value"  then
-   pop swap  ;
+( Register lists (masks)
+: >mask  ( n - 2^n)  1 swap << ;
+
+assembler
+feebfeeb constant {  ( - mark)
+: }    ( mark Rx .. Ry - mask)
+   0 ( mask)   begin  over \a { xor while  ?reg >mask or  repeat  nip
+   0ffff and ;
+
+( Let's allow 16 bits for immediate values. Since Thumb16 immediates can
+  only be 8 bits - but can encode 10-bit values - this should be fine.
+  Let's combine the "type" and value. By checking the 1_0000 bit, we can
+  tell a register operand from an immed operand.)
+
+: #   ( imm - bits)  0ffff and  1_0000 or ;
+forth
+
+: ?imm  ( n op - op imm)
+   over reg?  if  error" expected immediate value"  then  swap 0ffff and ;
+
+( Offsets.)
+: hoff  ( off op - op off/2)  swap  2/ ;
+: woff  ( off op - op off/4)  swap  2 >> ;
 
 ( Immediate fields)
-: i5  ( imm immtype op)  ?imm  1f and  6 <<  or ;
-: i3  ( imm immtype op)  ?imm  07 and  6 <<  or ;
-: i8  ( imm immtype op)  ?imm  0ff and       or ;
-: i7  ( imm immtype op)  ?imm   7f and       or ;
-
-( For instrs with 8-bit immediates. NOTE: needs to be preceded by a _type
-  test_ so the order of stack operands is correct.)
-: sh8  ( op n - op')  8 <<  or ;
-
-( From here on out, i3/5/8 and Rm/n/d mean immediate value or register with
-  type on top.)
+: i5  ( imm op)  swap  1f and  6 <<  or ;
+: i3  ( imm op)  swap  07 and  6 <<  or ;
+: i8  ( imm op)  swap 0ff and        or ;
+: i7  ( imm op)  swap  7f and        or ;
 
 ( Shift-immed register - low register only!)
-: sh-imm  #11 <<  constant  does> @  ( i5 Rm Rd op)  00r  0r0  i5  op, ;
+: sh-imm  constant  does> @  ( i5 Rm Rd op)  00r  0r0  i5  op, ;
 assembler
-0 sh-imm lsli
-1 sh-imm lsri
-2 sh-imm asri
+0000 sh-imm lsli
+0800 sh-imm lsri
+1000 sh-imm asri
 forth
 
 ( 3 register instructions - low registers only!)
-: add-3reg  #9 <<  constant  does> @  ( Rm Rn Rd op)  00r  0r0  r00  op, ;
+: 3reg  constant  does> @  ( Rm Rn Rd op)  00r  0r0  r00  op, ;
 assembler
-0c add-3reg addr3l
-0d add-3reg subr3l
+1800 3reg addr3
+1a00 3reg subr3
 forth
 
 ( 3 bit immediate - low registers only!)
-: add-3i  #9 <<  constant  does> @  ( i3 Rn Rd op)  00r  0r0  i3  op, ;
+: 2reg-i3  constant  does> @  ( i3 Rn Rd op)  00r  0r0  i3  op, ;
 assembler
-0e add-3i addi3
-0f add-3i subi3
+1c00 2reg-i3 addi3
+1e00 2reg-i3 subi3
 forth
 
 ( 8 bit immediate - low registers only!)
-: op-i8  #11 <<  constant  does> @  ( i8 Rd op)  ?reg sh8  i8  op, ;
+: 1reg-i8  constant  does> @  ( i8 Rd op)  r000  i8  op, ;
 assembler
-4 op-i8 movi8
-5 op-i8 cmpi8
-6 op-i8 addi8
-7 op-i8 subi8
+2000 1reg-i8 movi8
+2800 1reg-i8 cmpi8
+3000 1reg-i8 addi8
+3800 1reg-i8 subi8
 forth
 
 ( Data processing, low registers only!)
-: alu0   6 <<  4000 or  constant  does> @  ( Rm Rdn op)  00r  0r0  op, ;
+: 2reg   constant  does> @  ( Rm Rdn op)  00r  0r0  op, ;
 
 assembler
- 0 alu0 and
- 1 alu0 eor
- 2 alu0 lslr
- 3 alu0 lsrr
- 4 alu0 asrr
- 5 alu0 adc
- 6 alu0 sbc
- 7 alu0 ror
- 8 alu0 tst
- 9 alu0 rsb
-0a alu0 cmpr
-0b alu0 cmn
-0c alu0 orr
-0d alu0 mul
-0e alu0 bic
-0f alu0 mvnr
+4000 2reg and
+4040 2reg eor
+4080 2reg lslr
+40c0 2reg lsrr
+4100 2reg asrr
+4140 2reg adc
+4180 2reg sbc
+41c0 2reg ror
+4200 2reg tst
+4240 2reg rsb
+4280 2reg cmpr
+42c0 2reg cmn
+4300 2reg orr
+4340 2reg mul
+4380 2reg bic
+43c0 2reg mvn
 forth
 
 
 ( 4-bit register)
-: reg4  8 <<  4400 or  constant  does> @  ( Rm Rdn op)  0R  R0  op, ;
+: 2anyreg  constant  does> @  ( Rm Rdn op)  0R  R0  op, ;
+: bx       constant  does> @  ( Rm     op)      R0  op, ;
 assembler
-0 reg4 addr2
-1 reg4 cmpr2  ( NOTE: high registers _only_!)
-2 reg4 movr2
+4400 2anyreg addr2
+4500 2anyreg cmpr2  ( NOTE: high registers _only_!)
+4600 2anyreg movr2
+4700 bx   bx
+4780 bx   blx
 forth
-3 reg4 _bx
+
+comment previous-bx
+forth
+4700 2anyreg _bx
 assembler
 : bx   ( Rm)  r0 ( Rdn)  _bx ;
 : blx  ( Rm)  r8 ( Rdn)  _bx ;
 forth
+previous-bx
 
 ( ldr pc-imm)
 assembler
-( XXX same code as op-i8, different base op)
 ( ea = align[pc+4] + [i8 << 2]
   i8 is _unsigned_ - forward offsets only!)
-: ldr-pc-imm   ( offset Rt)  4800  ?reg sh8  i8  op, ;
+: ldr-pc-imm   ( offset Rt)  4800  r000  woff i8  op, ;
 forth
 
 ( ldr/str h/b/sb)
-( XXX same code as add-3reg; different base opcode)
-: ldr-str-ix   9 <<  5000 or  constant  does> @  ( Rm Rn Rt op)  00r  0r0  r00  op, ;
 assembler
-0 ldr-str-ix str-ix
-1 ldr-str-ix strh-ix
-2 ldr-str-ix strb-ix
-3 ldr-str-ix ldrsb-ix
-4 ldr-str-ix ldr-ix
-5 ldr-str-ix ldrh-ix
-6 ldr-str-ix ldrb-ix
-7 ldr-str-ix ldrsh-ix
+5000 3reg str-ix
+5200 3reg strh-ix
+5400 3reg strb-ix
+5600 3reg ldrsb-ix
+5800 3reg ldr-ix
+5a00 3reg ldrh-ix
+5c00 3reg ldrb-ix
+5e00 3reg ldrsh-ix
+forth
 
 ( ldr/str base+offset)
 ( NOTE: use + not or here!)
@@ -174,91 +192,114 @@ assembler
   word     => *4
   XXX NOTE: need words to check and calculate offsets!)
 
-: ldr-str-imm   #11 <<  6000 +  constant  does> @  ( i5 Rn Rt op)  00r  0r0  i5  op, ;
+( XXX NOTE: L bit is bit #11 - 800 hex.)
+: stri    constant  does> @  ( off*4 Rn Rt op)  00r  0r0  woff i5  op, ;
+: strbi   constant  does> @  ( off   Rn Rt op)  00r  0r0  swap i5  op, ;
+: strhi   constant  does> @  ( off*2 Rn Rt op)  00r  0r0  hoff i5  op, ;
 assembler
-0 ldr-str-imm str-imm
-1 ldr-str-imm ldr-imm
-2 ldr-str-imm strb-imm
-3 ldr-str-imm ldrb-imm
-4 ldr-str-imm strh-imm
-5 ldr-str-imm ldrh-imm
+6000 stri str-imm
+6800 stri ldr-imm
+
+7000 strbi strb-imm
+7800 strbi ldrb-imm
+
+8000 strhi strh-imm
+8800 strhi ldrh-imm
 forth
 
 ( ldr/str sp-rel)
 ( XXX same code as op-i8, different base op)
 ( As above, since we're moving a word-sized datum, i8 is scaled *4.)
-: ldr-str-sp  #11 <<  6000 +  constant  does> @  ( i8 Rt op)  ?reg sh8  i8  op, ;
+: ldr-str-sp  constant  does> @  ( i8 Rt op)  r000  woff i8  op, ;
 assembler
-6 ldr-str-sp str-sp
-7 ldr-str-sp ldr-sp
+9000 ldr-str-sp str-sp
+9800 ldr-str-sp ldr-sp
 
 ( add to pc/sp)
 ( i8 is scaled *4)
 ( same structure as ld/st sp offset!)
-8 ldr-str-sp add-pc
-9 ldr-str-sp add-sp
+0a000 ldr-str-sp add-pc
+0a800 ldr-str-sp add-sp
 forth
 
 ( add/sub imm to sp)
 ( i8 is scaled *4)
-: sp-offset  7 <<  0b000 or  constant  does> @  ( i7 op)  i7  op, ;
+: sp-offset  constant  does> @  ( i7 op)  woff  i7  op, ;
 assembler
-0 sp-offset add-to-sp
-1 sp-offset sub-from-sp
+0b000 sp-offset add-to-sp
+0b080 sp-offset sub-from-sp
 forth
 
 ( 0b100 & 0b300 are cbz - not in ARMv6-M)
 
 ( Sign- and zero-extend)
-( XXX same code as alu0; just different base opcode)
-: sex!  6 <<  0b200 or  constant  does> @  ( Rm Rd op)  00r  0r0  op, ;
 assembler
-0 sex! sxth
-1 sex! sxtb
-2 sex! uxth
-3 sex! uxtb
+0b200 2reg sxth
+0b240 2reg sxtb
+0b280 2reg uxth
+0b2c0 2reg uxtb
 forth
+
+: stackop
+   create  ( op 9threg)  >mask ,  ,
+   does> @+ @  ( reglist 9thregmask op)
+      -rot  over and  if  100 or  then  01ff and  or  op, ;
 
 ( Push goes here. 8 bit reglist plus lr bit.)
 ( 0b400 + reglist + lr << 8)
+assembler
+0b400 \a lr stackop push
+forth
+
+: 0op  constant  does> @  op, ;
+assembler
+0b662 0op cpsie
+0b672 0op cpsid
+forth
+
+( 0b700 & 0b800 undefined)
 
 ( 0b900 & 0bb00 are cbnz - not in ARMv6-M)
 
 ( Byte and halfword reverses)
-( XXX same code as alu0; just different base opcode)
-: revs  6 <<  0ba00 or  constant  does> @  ( Rm Rd op)  00r  0r0  op, ;
 assembler
-0 revs rev
-1 revs rev16
-( 2 is ??)
-3 revs revsh
--- forth
+0ba00 2reg rev
+0ba40 2reg rev16
+( 0ba80 is ???)
+0bac0 2reg revsh
+forth
+
+( 0bb00 undefined)
 
 ( Pop goes here. 8 bit reglist plus pc bit.)
 ( 0bc00 + reglist + pc << 8)
+assembler
+0bc00 \a pc stackop pop
+forth
+
+: op-i8   constant  does> @  ( i8 op)  ?imm i8  op, ;
 
 ( Breakpoint)
-( XXX is this a branch?)
-: bkpt  ( i8)  0be00  i8  op, ;
+assembler
+0be00 op-i8 bkpt
+forth
 
 ( Hints.)
 ( 0bfx0 are hints; 0bfxm are IT - when m != 0. Not in ARMv6-M)
-: hint  4 <<  0bf00 or  constant  does> @  op, ;
--- assembler
-0 hint nop
-1 hint yield
-2 hint wfe
-3 hint wfi
-4 hint sev
+assembler
+0bf00 0op nop
+0bf10 0op yield
+0bf20 0op wfe
+0bf30 0op wfi
+0bf40 0op sev
 forth
 
 
 ( ldm/stm)
-( same as op-i8, different base opcode)
-: ldm-stm   constant  does> @  ( reglist Rn op)  ?reg sh8  i8  op, ;
 assembler
-0c000 ldm-stm stm
-0c800 ldm-stm ldm
+( Low 8 registers only!)
+0c000 1reg-i8 stm  ( reglist Rn)
+0c800 1reg-i8 ldm
 forth
 
 ( Conditional branch.)
@@ -281,21 +322,17 @@ forth
  15  ??  never     instruction. Ever.
 
   b<cond> encoding: 0d000 + <cond> << 8 + offset
-  offset is _signed_ and scaled *2
-  XXX but from what PC?
+  offset is _signed_ and scaled *2; offset from pc+4
 )
 
 ( svc and friend(s)
-( XXX are these _branches_? Like the conditional branch?)
-( XXX like bkpt)
-: svc-like   constant  does> @  ( i8 op)  i8  op, ;
 assembler
-0de00 svc-like undefined   ( branch always encoding!)
-0df00 svc-like svc         ( branch never encoding!)
+0de00 op-i8 undefined   ( branch always encoding!)
+0df00 op-i8 svc         ( branch never encoding!)
 forth
 
 ( Long unconditional branch.)
-( 0e000 + i11 offset: signed and scaled *2. But from what PC?)
+( 0e000 + i11 offset: signed and scaled *2. offset from pc+4.)
 
 ( 0e800 - ffff are 32-bit encodings! See ARM/ARMv7/thumb32-asm.mu4 for
   details!)
@@ -309,10 +346,23 @@ forth
    dup ( fd)  image  #image aligned  write
    close-file ;
 
+( XXX for test)
+-:  ."  (assembling)"  ;
+-:
+    .assembler. find  if  execute  ^  then
+      .equates. find  if  execute  ^  then
+         .meta. find  if  execute  ^  then
+        .forth. find  if  execute  ^  then  ( utility words in .forth.)
+                                            number ;
+mode __asm
+
+.ifdef asm-tests
+
 ( tests)
 ram
 @ram org  ( RAM start)
 
+__asm
 ( imm shifts - low regs)
 4 # r5 r7 lsli
 8 # r3 r2 lsri
@@ -406,4 +456,9 @@ r5 r6 r7 ldrsh-ix
 0b4 # add-to-sp
 0c2 # sub-from-sp
 
+__forth
+
+
 save-image stmf0-test.img
+
+.then
