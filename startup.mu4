@@ -17,7 +17,7 @@ token new  (new)
 
 new :
    <:> -]
-      new <:> -]
+      new <:>  nope  -]
    ^ [
 
 : definitions  current !  ^ [
@@ -29,7 +29,8 @@ new :
 : ]   literal -]  ^ [
 
 compiler
-: ;   [  token ^    .forth. find huh?  ]  ,
+: ;   nope
+      [  token ^    .forth. find huh?  ]  ,
       [  token [ .compiler. find huh?     ,  -]  ^ [
 forth
 
@@ -283,20 +284,14 @@ forth
   literal, use  -]  .)
 
 
-( "nameless" colon words.)
-: -:  here <:> -] ;
-
-( For comparison, the regular : compiler is defined thus:
-:  :   new <:> -] ; )
-
-
 ( Dictionary structure words. Remember that link fields point to the last
   cell - suffix - of a name, which precedes the link field. Roughly, a
   dictionary entry is the following cell-sized things: suffix, link, code;
   where suffix is the last 3 [32-bit] or 7 [64-bit] characters of the name,
   followed by its byte-sized length.)
 
-: link>name    ( 'link - a u)  1- dup  c@  tuck -  swap ;
+: link>length  ( 'link - 'len len)  1- dup  c@ ;
+: link>name    ( 'link - a u)  link>length  tuck -  swap ;
 : suffix>link  ( 'suffix - 'link)  cell+ ;
 
 ( These words all assume we're calculating to or from a code field
@@ -389,6 +384,27 @@ here 0 ,
 
 : variable    create  0 , ;
 : 2variable   variable  0 , ;
+
+
+( "nameless" colon words.)
+: -:  here <:>        -] ;
+
+( For comparison, the regular : compiler is defined thus:
+:  :   new <:>  nope  -] ;
+where nope is a placeholder for code to smudge the newly created word.)
+
+( We'd like to hide colon words as they are being created, and show them
+  when they are complete.)
+
+: smudge  ( 'link)  link>length  [ bl 2* 2* ( 128) ]  xor  swap c! ;
+
+variable last-colon  ( the link address of the last colon word defined)
+
+-: current @  suffix>link @  suffix>link  dup last-colon !  smudge ;
+   ( patch into : )     .forth. chain' :  cell+ cell+ cell+  !
+
+-: last-colon @  =if  smudge  0  then  last-colon ! ;
+   ( patch into ; )  .compiler. chain' ;  cell+              !
 
 
 ( To bracket comments in a flexible way. If you've bracketed some text
@@ -972,9 +988,6 @@ being-defined -v  ( be verbose)
 
 ( !!!!-------------------- Add changes below this line -------------------!!!!)
 
-( Undefine a word by setting high bit of length.)
-: undef   current @  chain'  >link 1- ( len)  dup c@  128 or  swap c! ;
-
 : ?hidden  ( 'suffix - counted?)
    suffix>link  dup  1- c@  ( len)  128 and
    if  ( hidden)  drop 0 ^  then  link>name  dup 2 +  typewrap space space  1 ;
@@ -1366,7 +1379,7 @@ Type 'settings' to see a few of muFORTH's tweakable behaviours.
    >stderr  cr  .where  parsed type space  zcount type  cr  unwind ;   'abort !
 
 : quit
-   begin  cr  <stdin  typing evaluate  >stderr  prompt  again  [
+   begin  cr  <stdin  typing evaluate  >stderr  prompt  again ;
    ( infinite loop, until error... )
 
 : warm
@@ -1375,7 +1388,7 @@ Type 'settings' to see a few of muFORTH's tweakable behaviours.
    1 line !  ( so it's "correct" for interactive!)
    -consumed +sep +case +radix ( defaults - reset these how you like)
    -stack  command-line count  evaluate  +stack
-   begin  quit  again  [
+   begin  quit  again ;
 
 ( Identify ourselves.)
 -d  muFORTH
