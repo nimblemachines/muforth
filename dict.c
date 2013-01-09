@@ -289,15 +289,6 @@ void mu_linked_name_()
     DROP(3);
 }
 
-/* (name)  ( link a u hidden - 'suffix) */
-void mu_name_()
-{
-    struct dict_name *pnm = new_name(
-        (struct dict_name *)ST3, (char *)ST2, ST1, TOP);
-    DROP(3);
-    TOP = (addr)pnm;
-}
-
 /*
  * All the words defined by this function are CODE words. Their bodies are
  * defined in C; this routine compiles a code pointer into the dict entry
@@ -327,7 +318,11 @@ void init_dict()
 {
     allocate();
 
-    /* create "hidden" names */
+    /*
+     * Create "hidden" names for the two initial chains. Unlike later
+     * chains, which are create/does words, these use the (hidden) name of
+     * the chain in their bodies, instead of the string "muchain".
+     */
     forth_chain    = new_name(NULL, ".forth.", 7, 1);
     compiler_chain = new_name(NULL, ".compiler.", 10, 1);
 
