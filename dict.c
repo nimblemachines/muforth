@@ -239,9 +239,10 @@ void mu_find()
  * new_name creates a new dictionary (name) entry and returns it
  */
 static struct dict_name *new_name(
-    struct dict_name *link, char *name, int length, int hidden)
+    struct dict_name *link, char *name, int length)
 {
     struct dict_name *pnm;  /* the new name */
+#define hidden 0    /* XXX subject to change! */
 
     assert(ALIGNED(ph) == (intptr_t)ph, "misaligned (new_name)");
 
@@ -279,7 +280,7 @@ static void new_linked_name(
     struct dict_name *pnmHead, char *name, int length)
 {
     /* create new name & link onto front of chain */
-    _(pnmHead->link) = new_name(_(pnmHead->link), name, length, 0);
+    _(pnmHead->link) = new_name(_(pnmHead->link), name, length);
 }
 
 /* (linked-name)  ( a u chain) */
@@ -320,11 +321,11 @@ void init_dict()
 
     /*
      * Create "hidden" names for the two initial chains. Unlike later
-     * chains, which are create/does words, these use the (hidden) name of
-     * the chain in their bodies, instead of the string "muchain".
+     * chains, which are create/does words, these use the name of the chain
+     * in their bodies, instead of the string "muchain".
      */
-    forth_chain    = new_name(NULL, ".forth.", 7, 1);
-    compiler_chain = new_name(NULL, ".compiler.", 10, 1);
+    forth_chain    = new_name(NULL, ".forth.", 7);
+    compiler_chain = new_name(NULL, ".compiler.", 10);
 
     init_chain(forth_chain, initial_forth);
     init_chain(compiler_chain, initial_compiler);
