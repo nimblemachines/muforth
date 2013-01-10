@@ -77,26 +77,36 @@ static cell  *ph0;  /* pointer to start of heap space */
  * (To get to the beginning of a name, take the address of the suffix, add
  * the SUFFIX_LEN (7), and subtract the length.)
  *
- * One quirk of this method is that links no longer point to links, and
- * this forced me to restructure some code. In particular,  .forth.  and
- * .compiler.  (and all other vocab chains) are no longer simply
- * single-celled organisms (variables); they are now fully-fledged struct
- * name's. (One neat advantage to this is that it works well when chaining
- * vocabs together.)
+ * Links still point to links; adjustments are made in a couple of places
+ * to convert a pointer to a link into a pointer to a name entry (struct
+ * dict_name).
+ *
+ *  .forth.  and  .compiler.  (and all other vocab chains) are no longer
+ * simply single-celled organisms (variables); they are now fully-fledged
+ * struct name's. (One neat advantage to this is that it works well when
+ * chaining vocabs together.)
  */
+
+
+/* This is the only way C will let us define a type that points to itself. */
+struct link_field
+{
+    CELL_T(struct link_field *) cell;
+};
+
+typedef struct link_field link_cell;
 
 
 /*
  * Cells are 64 bits, so ALIGN_SIZE is 8.
  */
 #define SUFFIX_LEN  (ALIGN_SIZE - 1)
-typedef CELL_T(struct dict_name *) link_cell;
 
 struct dict_name
 {
     char suffix[SUFFIX_LEN];    /* last 7 characters of name */
     unsigned char length;       /* 127 max; high bit = hidden */
-    link_cell link;             /* link to preceding dict_name */
+    link_cell link;             /* link to preceding link */
 };
 
 /*
@@ -114,8 +124,8 @@ struct dict_entry
  *
  * These are now initialised at dictionary init time by calling new_name().
  */
-static struct dict_name *forth_chain;
-static struct dict_name *compiler_chain;
+static link_cell *forth_chain;
+static link_cell *compiler_chain;
 
 /* bogus C-style dictionary init */
 struct inm          /* "initial name" */
@@ -205,7 +215,8 @@ void mu_find()
 {
     char *token = (char *) ST2;
     cell length = ST1;
-    struct dict_entry *pde = (struct dict_entry *)TOP;
+    struct dict_entry *pde;
+    link_cell *plink = (link_cell *)TOP;
 
     /*
      * Only search if length < 128. This prevents us from matching hidden
@@ -213,8 +224,11 @@ void mu_find()
      */
     if (length < 128)
     {
-        while ((pde = (struct dict_entry *)_(pde->n.link)) != NULL)
+        while ((plink = _(plink->cell)) != NULL)
         {
+            /* convert pointer to link to pointer to suffix */
+            pde = (struct dict_entry *)(plink - 1);
+
             /* for speed, don't test anything else unless lengths match */
             if (pde->n.length != length) continue;
 
@@ -236,8 +250,8 @@ void mu_find()
 /*
  * new_name creates a new dictionary (name) entry and returns it
  */
-static struct dict_name *new_name(
-    struct dict_name *link, char *name, int length)
+static link_cell *new_name(
+    link_cell *link, char *name, int length)
 {
     struct dict_name *pnm;  /* the new name */
 
@@ -257,7 +271,7 @@ static struct dict_name *new_name(
     pnm->length = length;
 
     /* set link pointer */
-    _(pnm->link) = link;
+    _(pnm->link.cell) = link;
 
     /* Allot entry */
     ph = (cell *)(pnm + 1);
@@ -266,24 +280,25 @@ static struct dict_name *new_name(
     fprintf(stderr, "%p %p %.*s\n", pnm, link, length, name);
 #endif
 
-    return pnm;
+    /* Return address of link field */
+    return &pnm->link;
 }
 
 /*
  * new_linked_name creates a new dictionary (name) entry and links it onto
- * the chain represented by pnmHead.
+ * the chain represented by plink.
  */
 static void new_linked_name(
-    struct dict_name *pnmHead, char *name, int length)
+    link_cell *plink, char *name, int length)
 {
     /* create new name & link onto front of chain */
-    _(pnmHead->link) = new_name(_(pnmHead->link), name, length);
+    _(plink->cell) = new_name(_(plink->cell), name, length);
 }
 
 /* (linked-name)  ( a u chain) */
 void mu_linked_name_()
 {
-    new_linked_name((struct dict_name *)TOP, (char *)ST2, ST1);
+    new_linked_name((link_cell *)TOP, (char *)ST2, ST1);
     DROP(3);
 }
 
@@ -292,11 +307,11 @@ void mu_linked_name_()
  * defined in C; this routine compiles a code pointer into the dict entry
  * that points to the C function.
  */
-static void init_chain(struct dict_name *pchain, struct inm *pinm)
+static void init_chain(link_cell *plink, struct inm *pinm)
 {
     for (; pinm->name != NULL; pinm++)
     {
-        new_linked_name(pchain, pinm->name, strlen(pinm->name));
+        new_linked_name(plink, pinm->name, strlen(pinm->name));
         *ph++ = (addr)pinm->code;   /* set code pointer */
     }
 }
