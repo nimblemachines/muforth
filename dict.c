@@ -122,7 +122,9 @@ struct dict_entry
 /*
  * The forth and compiler "vocabulary" chains
  *
- * These are now initialised at dictionary init time by calling new_name().
+ * These are now initialised at dictionary init time by calling new_name()
+ * with the hidden flag true. This way these pseudo-words won't be found by
+ * mu_find() or show up when listed by  word .
  */
 static link_cell *forth_chain;
 static link_cell *compiler_chain;
@@ -254,6 +256,7 @@ static link_cell *new_name(
     link_cell *link, char *name, int length)
 {
     struct dict_name *pnm;  /* the new name */
+#define hidden 0    /* XXX subject to change! */
 
     assert(ALIGNED(ph) == (intptr_t)ph, "misaligned (new_name)");
 
@@ -268,7 +271,7 @@ static link_cell *new_name(
 
     /* copy name string */
     memcpy(pnm->suffix + SUFFIX_LEN - length, name, length);
-    pnm->length = length;
+    pnm->length = length + (hidden ? 128 : 0);
 
     /* set link pointer */
     _(pnm->link.cell) = link;
@@ -332,9 +335,9 @@ void init_dict()
     allocate();
 
     /*
-     * Create name entries for the two initial chains. Unlike later chains,
-     * which are create/does words, these use the name of the chain in
-     * their bodies, instead of the string "muchain".
+     * Create "hidden" names for the two initial chains. Unlike later
+     * chains, which are create/does words, these use the name of the chain
+     * in their bodies, instead of the string "muchain".
      */
     forth_chain    = new_name(NULL, ".forth.", 7);
     compiler_chain = new_name(NULL, ".compiler.", 10);
