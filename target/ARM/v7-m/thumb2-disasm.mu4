@@ -3,4 +3,57 @@
   Copyright 2002-2013 David Frech. All rights reserved, and all wrongs
   reversed. (See the file COPYRIGHT for details.)
 
+hex
+
+( Placeholder for ops that have to be matched, so that following ops don't
+  match, but that are not yet fleshed out.)
+: NYI  ." ** matched but not implemented **" ;
+
+: .undef.w
+   ." undef  "
+   dup         0fff and
+   over #16 u>>  0f and  #12 << +  imm ;
+
+
+( The description of bcond.w in the v7-m architecture manual is incomplete!
+  See ARM v-7ar architecture manual - DDI0406C - p334 for details.
+
+  Offset = sign_ext(S:J2:J1:imm6:imm11:0
+
+  NOTE: though the encoding is very similar to bl and bra.w, the J1 and J2
+  bits are treated differently, and are prepended in a different order as
+  well!)
+
+: .bcond.w
+   dup #22 u>>  .cond
+   dup           7ff and          ( imm11 in v7-ar manual)
+   over #16 u>>   3f and  #11 <<  ( imm6 ditto)  +
+   over #13 bit@  ( J1)   #17 <<  ( J1 ditto)  +
+   over #11 bit@  ( J2)   #18 <<  ( J2 ditto)  +
+   over #26 bit@  ( S)  if  [ 1 #19 << negate ] +  then
+   1- ( compensate for op2 fetch)
+   ( hword offset)  .branch-pc ;
+
+: .bra.w   ." b.w    "  .bl-dest ;
+
 ( Disassemble the v7-m instructions that aren't in v6-m.)
+: shred16-v7m  ( op - op)
+   ( First try the v6-m code.)
+   shred16-v6m  =if  ( matched)  ^  then  drop
+
+   ( All the 16-bit v7m instructions!)
+   0  ( no match) ;
+
+: shred32-v7m  ( op - op)
+   ( First try the v6-m code.)
+   shred32-v6m  =if  ( matched)  ^  then  drop
+
+   ( All the 32-bit v7-m instructions!)
+   fff0_f000 f7f0_a000 match  .undef.w
+   fb80_d000 f380_8000 match  NYI
+   f800_d000 f000_8000 match  .bcond.w
+   f800_d000 f000_9000 match  .bra.w
+   0  ( no match) ;
+
+' shred16-v7m  is shred16
+' shred32-v7m  is shred32
