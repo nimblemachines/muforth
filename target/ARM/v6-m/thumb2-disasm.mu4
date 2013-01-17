@@ -12,7 +12,7 @@ hex
   on the stack.
 
   If a match is found, the cfa following match is executed, and then the
-  word that called match is exited, with a 0 on the stack! This shortcuts
+  word that called match is exited, with a -1 on the stack! This shortcuts
   any further tests.
 
   If no match was found, the following cfa is skipped, and the matching
@@ -21,7 +21,7 @@ hex
 : matched  ( op f - op -1 | op)
    shunt  ( can't return to our caller)
    if  pop  @  ( fetch cfa following _caller_)
-       execute ( print instr)  0  ^  then  ( exit from caller's caller!)
+       execute ( print instr)  -1  ^  then  ( exit from caller's caller!)
    ( no match)  pop  cell+  push ;
 
 ( mask op and test against match)
@@ -142,9 +142,12 @@ hex
 
 ( NOTE: |p is already ahead 2 bytes, so we only need to add 2 more to get pc+4.)
 : .branch-pc  ( hword-offset)   2*  |p@ 2 +  +  dup ea !  .u32 ;
+
+: .cond  ( cc)
+   0f and  z" beqbnebcsbccbmibplbvsbvcbhiblsbgebltbgtblebalbnv" .op3 ;
+
 : .bcond
-   dup 8 u>>  0f and  z" beqbnebcsbccbmibplbvsbvcbhiblsbgebltbgtblebalbnv" .op3
-   i8  dup 80 and if  -100 +  then  .branch-pc ;
+   dup 8 u>>  .cond  i8  dup 80 and if  -100 +  then  .branch-pc ;
 
 : .bra   ." b      "  dup 7ff and  dup 400 and if  -800 +  then  .branch-pc ;
 
@@ -155,8 +158,7 @@ hex
   been re-imagined as a 32-bit Thumb instruction with a very odd encoding -
   and a larger possible displacement than its 16-bit predecessor.)
 
-: .bl  ( op - op)
-   ." bl     "
+: .bl-dest  ( op - op)
    dup           7ff and          ( imm11 in v6-m manual)
    over #16 u>>  3ff and  #11 <<  ( imm10 ditto)  +
    over #26 bit@  ( S)  push
@@ -166,44 +168,46 @@ hex
    1- ( compensate for op2 fetch)
    ( hword offset)  .branch-pc ;
 
+: .bl  ( op - op)   ." bl     "  .bl-dest ;
+
 ( Is this a 16-bit instruction?)
-: thumb16?  ( op - f)   f800 and  e800 u< ;
+: thumb16?  ( op - f)   e800 u< ;
 
-: shred16  ( op - op)
-( All the 16-bit instructions!)
-fc00 1800 match  .add-r3   ( add sub)
-fc00 1c00 match  .add-i3   ( add sub)
-e000 0000 match  .sh-i
-e000 2000 match  .mov-i8   ( mov cmp add sub)
-fc00 4000 match  .alu
-ff07 4700 match  .bx       ( bx blx)
-fc00 4400 match  .add-rh   ( add cmp mov)
-f800 4800 match  .ldr-pc
-f000 5000 match  .str-r    ( str strh strb ldrsb ldr ldrh ldrb ldrsh)
-f000 6000 match  .str-i5   ( str ldr)
-f000 7000 match  .strb-i5  ( strb ldrb)
-f000 8000 match  .strh-i5  ( strh ldrh)
-f000 9000 match  .str-sp   ( str ldr)
-f000 a000 match  .add-pc-i8   ( add pc, add sp)
-ff00 b000 match  .add-sp-i7   ( add to sp, sub from sp)
-ff00 b200 match  .sxt      ( sxth sxtb uxth uxtb)
-fe00 b400 match  .push
-ffef b662 match  .cps      ( cpsie, cpsdi)
-ff00 ba00 match  .rev      ( rev rev16 revsh)
-fe00 bc00 match  .pop
-ff00 be00 match  .bkpt
-ff8f bf00 match  .hint     ( nop yield wfe wfi sev)
-f000 c000 match  .stm      ( stm ldm)
-ff00 de00 match  .undef    ( permanently undefined)
-ff00 df00 match  .svc
-f000 d000 match  .bcond
-f800 e000 match  .bra
--1  ( no match) ;
+: shred16-v6m  ( op - op)
+   ( All the 16-bit v6m instructions!)
+   fc00 1800 match  .add-r3   ( add sub)
+   fc00 1c00 match  .add-i3   ( add sub)
+   e000 0000 match  .sh-i
+   e000 2000 match  .mov-i8   ( mov cmp add sub)
+   fc00 4000 match  .alu
+   ff07 4700 match  .bx       ( bx blx)
+   fc00 4400 match  .add-rh   ( add cmp mov)
+   f800 4800 match  .ldr-pc
+   f000 5000 match  .str-r    ( str strh strb ldrsb ldr ldrh ldrb ldrsh)
+   f000 6000 match  .str-i5   ( str ldr)
+   f000 7000 match  .strb-i5  ( strb ldrb)
+   f000 8000 match  .strh-i5  ( strh ldrh)
+   f000 9000 match  .str-sp   ( str ldr)
+   f000 a000 match  .add-pc-i8   ( add pc, add sp)
+   ff00 b000 match  .add-sp-i7   ( add to sp, sub from sp)
+   ff00 b200 match  .sxt      ( sxth sxtb uxth uxtb)
+   fe00 b400 match  .push
+   ffef b662 match  .cps      ( cpsie, cpsdi)
+   ff00 ba00 match  .rev      ( rev rev16 revsh)
+   fe00 bc00 match  .pop
+   ff00 be00 match  .bkpt
+   ff8f bf00 match  .hint     ( nop yield wfe wfi sev)
+   f000 c000 match  .stm      ( stm ldm)
+   ff00 de00 match  .undef    ( permanently undefined)
+   ff00 df00 match  .svc
+   f000 d000 match  .bcond
+   f800 e000 match  .bra
+   0  ( no match) ;
 
-: shred32  ( op - op)
-( All the 32-bit instructions!)
-f800_d000 f000_d000 match  .bl
--1  ( no match) ;
+: shred32-v6m  ( op - op)
+   ( All the 32-bit v6-m instructions!)
+   f800_d000 f000_d000 match  .bl
+   0  ( no match) ;
 
 ( Support for interactive disassembly.)
 : dis+  ( a - a' 0)  drop  |p@  0 advance  0 ;
@@ -212,6 +216,10 @@ f800_d000 f000_d000 match  .bl
 : op*   ( - op16)  |c* |c*  lohi> ;
 : .op   ( op)   radix preserve hex  <# 4# #> type space ;
 
+( Defer so v7-m code can add more instructions.)
+defer shred16   ' shred16-v6m is shred16
+defer shred32   ' shred32-v6m is shred32
+
 ( The workhorse.)
 : 1dis  ( a)
    dup  ea !  ( default ea: stay put)
@@ -219,4 +227,4 @@ f800_d000 f000_d000 match  .bl
              op*  ( op1) dup .op  dup thumb16? if
                                 6 spaces    shred16  else
       10 <<  op*  ( op2) dup .op  space  +  shred32  then
-   if  ( no match)  ." ** undecoded instruction **"  then  drop  space ;
+   0= if  ( no match)  ." ** undecoded instruction **"  then  drop  space ;
