@@ -3,7 +3,67 @@
   Copyright 2002-2013 David Frech. All rights reserved, and all wrongs
   reversed. (See the file COPYRIGHT for details.)
 
+( Extend the disassembler to include ARM v7-m instructions.)
+
 hex
+
+: dotreg  constant ( shift)
+          does> @  ( op shift - op)  over swap u>>  .reg ;
+
+#16 dotreg Rn
+#12 dotreg Rt
+  8 dotreg Rd
+  0 dotreg Rm
+
+: Rd,  Rd comma ;
+: Rn,  Rn comma ;
+
+: 0n0n  ( n - 0n0n)  ( take 8 bit number; replicate into 32 bits)
+   dup #16 << + ;
+
+: thumb-expand-imm  ( op - op imm32)
+   dup 0ff and  push
+   dup #12 u>> 7 and  over #26 bit@  3 << +  ( hi4)
+   dup 0=  if  drop  pop                     ( 000n)  ^  then
+   dup 1 = if  drop  pop  0n0n               ( 0n0n)  ^  then
+   dup 2 = if  drop  pop  0n0n      8 <<     ( n0n0)  ^  then
+   dup 3 = if  drop  pop  0n0n  dup 8 << +   ( nnnn)  ^  then
+   ( If not 0 to 3, we shift. This part is complicated!)
+   2*  r@ 7 bit@ +  #32 swap -  ( #shifts)
+   pop 80 or  swap << ;
+
+( XXX is this the same for reg-spec'd shift amounts?)
+: .imm-shift  ( op - op)
+   Rm space
+   dup 6 u>>  3 and  over #12 u>>  7 and +  ( imm5 = shift amount)
+   over 4 u>>  3 and  dup 3 u< if  4 * z" lsl lsr asl " + 4 type  imm  ^  then
+   drop ( type)  =if  ." rrx"  drop  ^  then  ." ror "  imm ;
+
+( This is complicated because there are versions of various instructions
+  that don't have an Rd - Rd=1111 - or don't have an Rn - Rn=1111.)
+
+: .tst.w   ." tst    "  Rn, ;
+: .teq.w   ." teq    "  Rn, ;
+: .cmn.w   ." cmn    "  Rn, ;
+: .cmp.w   ." cmp    "  Rn, ;
+
+( XXX should append s when bit set)
+: .mov.w   ." mov    "  Rd, ;
+: .mvn.w   ." mvn    "  Rd, ;
+
+: .alu-op  ( op - op f)
+   01f0_0f00 0010_0f00 match .tst.w  ( and, S=1, Rd=pc)
+   01f0_0f00 0090_0f00 match .teq.w  ( eor, S=1, Rd=pc)
+   01f0_0f00 0110_0f00 match .cmn.w  ( add, S=1, Rd=pc)
+   01f0_0f00 01b0_0f00 match .cmp.w  ( sub, S=1, Rd=pc)
+   01ef_0000 004f_0000 match .mov.w  ( orr, Rn=pc)
+   01ef_0000 006f_0000 match .mvn.w  ( orn, Rn=pc)
+   dup #21 u>> 0f and
+   ( XXX should append s when bit set)
+   z" andbicorrorneor?????????add???adcsbc???subrsb???" .op3  Rd, Rn,  0 ;
+
+: .alu-shifted-reg-imm   .alu-op  drop  .imm-shift ;
+: .alu-modified-imm      .alu-op  drop  thumb-expand-imm  imm ;
 
 ( Placeholder for ops that have to be matched, so that following ops don't
   match, but that are not yet fleshed out.)
@@ -15,7 +75,7 @@ hex
 
 : .stm.w  ( op z" - op)
    over #20 bit@  swap .op5  
-   dup #16 u>> .reg  dup #21 bit@ ( W)  if  char ! emit  then
+   Rn  dup #21 bit@ ( W)  if  char ! emit  then
    comma  .reglist.w ;
 
 : .stmia.w   z" stmialdmia" .stm.w ;
@@ -61,6 +121,8 @@ hex
    shred32-v6m  =if  ( matched)  ^  then  drop
 
    ( All the 32-bit v7-m instructions!)
+   fe00_8000 fa00_0000 match  .alu-shifted-reg-imm
+   fa00_8000 f000_0000 match  .alu-modified-imm
    ffff_0000 e8bd_0000 match  .pop.w
    ffff_0000 e92d_0000 match  .push.w
    ffc0_0000 e880_0000 match  .stmia.w
