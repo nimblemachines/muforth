@@ -7,16 +7,23 @@
 
 hex
 
+( 16 bit instructions.)
+: .cbz   dup #11 bit@  z" cbz  cbnz " .op5  Rd comma
+   dup 3 u>> 1f and  over 9 bit@ 5 << + ( imm6)  .branch-pc ;
+
+( 32 bit instructions.)
+
+( Define words for pulling out the 4-bit register fields.)
 : dotreg  constant ( shift)
-          does> @  ( op shift - op)  over swap u>>  .reg ;
+          does> @  ( op shift - op)  over swap u>>  0f and  .reg ;
 
-#16 dotreg Rn
-#12 dotreg Rt
-  8 dotreg Rd
-  0 dotreg Rm
+#16 dotreg Rn4
+#12 dotreg Rt4
+  8 dotreg Rd4
+  0 dotreg Rm4
 
-: Rd,  Rd comma ;
-: Rn,  Rn comma ;
+: ,Rn4  comma Rn4 ;
+: ,Rm4  comma Rm4 ;
 
 : 0n0n  ( n - 0n0n)  ( take 8 bit number; replicate into 32 bits)
    dup #16 << + ;
@@ -34,7 +41,7 @@ hex
 
 ( XXX is this the same for reg-spec'd shift amounts?)
 : .imm-shift  ( op - op)
-   Rm space
+   ,Rm4 space
    dup 6 u>>  3 and  over #12 u>>  7 and +  ( imm5 = shift amount)
    over 4 u>>  3 and  dup 3 u< if  4 * z" lsl lsr asl " + 4 type  imm  ^  then
    drop ( type)  =if  ." rrx"  drop  ^  then  ." ror "  imm ;
@@ -42,28 +49,27 @@ hex
 ( This is complicated because there are versions of various instructions
   that don't have an Rd - Rd=1111 - or don't have an Rn - Rn=1111.)
 
-: .tst.w   ." tst    "  Rn, ;
-: .teq.w   ." teq    "  Rn, ;
-: .cmn.w   ." cmn    "  Rn, ;
-: .cmp.w   ." cmp    "  Rn, ;
+: .tst.w   ." tst    "  Rn4 ;
+: .teq.w   ." teq    "  Rn4 ;
+: .cmn.w   ." cmn    "  Rn4 ;
+: .cmp.w   ." cmp    "  Rn4 ;
 
-( XXX should append s when bit set)
-: .mov.w   ." mov    "  Rd, ;
-: .mvn.w   ." mvn    "  Rd, ;
+: S.w  ( op - op S)  dup #20 bit@ ;
+
+: .mov.w   ( op - op)
+   S.w  over #21 bit@  z" movmvn" .op3?s  Rd4 ;
 
 : .alu-op  ( op - op f)
    01f0_0f00 0010_0f00 match .tst.w  ( and, S=1, Rd=pc)
    01f0_0f00 0090_0f00 match .teq.w  ( eor, S=1, Rd=pc)
    01f0_0f00 0110_0f00 match .cmn.w  ( add, S=1, Rd=pc)
    01f0_0f00 01b0_0f00 match .cmp.w  ( sub, S=1, Rd=pc)
-   01ef_0000 004f_0000 match .mov.w  ( orr, Rn=pc)
-   01ef_0000 006f_0000 match .mvn.w  ( orn, Rn=pc)
-   dup #21 u>> 0f and
-   ( XXX should append s when bit set)
-   z" andbicorrorneor?????????add???adcsbc???subrsb???" .op3  Rd, Rn,  0 ;
+   01cf_0000 004f_0000 match .mov.w  ( mov/mvn == orr/orn, Rn=pc)
+   S.w  over #21 u>> 0f and ( aluop)
+   z" andbicorrorneor?????????add???adcsbc???subrsb???" .op3?s  Rd4 ,Rn4  0 ;
 
 : .alu-shifted-reg-imm   .alu-op  drop  .imm-shift ;
-: .alu-modified-imm      .alu-op  drop  thumb-expand-imm  imm ;
+: .alu-modified-imm      .alu-op  drop  thumb-expand-imm  ,imm ;
 
 ( Placeholder for ops that have to be matched, so that following ops don't
   match, but that are not yet fleshed out.)
@@ -75,7 +81,7 @@ hex
 
 : .stm.w  ( op z" - op)
    over #20 bit@  swap .op5  
-   Rn  dup #21 bit@ ( W)  if  char ! emit  then
+   Rn4  dup #21 bit@ ( W)  if  char ! emit  then
    comma  .reglist.w ;
 
 : .stmia.w   z" stmialdmia" .stm.w ;
@@ -114,6 +120,7 @@ hex
    shred16-v6m  =if  ( matched)  ^  then  drop
 
    ( All the 16-bit v7m instructions!)
+   f500 b100 match  .cbz  ( cbz cbnz)
    0  ( no match) ;
 
 : shred32-v7m  ( op - op)
