@@ -1,0 +1,58 @@
+( This file is part of muFORTH: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2013 David Frech. All rights reserved, and all wrongs
+  reversed. (See the file COPYRIGHT for details.)
+
+.ifndef >hilo  ld target/common/endian.mu4  .then
+
+loading CMSIS-DAP support (USB debug of Cortex-M devices)
+
+hex
+
+c251 f002 hid-find-device  .if  ( Keil CMSIS-DAP)
+   constant cmsis
+
+ -- hid-read  ( 'buffer size dev - #read)
+ -- hid-write ( 'buffer size dev)
+
+( Device found - load support)
+
+( On OSX in particular, if you don't do this, the next time around the
+  board wedges... Weird.)
+
+-- : done   cmsis  usb-close ;
+
+: uread   ( buf len - #read)  cmsis  hid-read ;
+: uwrite  ( buf len)          cmsis  hid-write ;
+
+( A simple buffer for chatty communication protocols. Words for putting
+  values into a buffer and taking them out again.)
+
+variable cp  ( chat pointer)
+40 buffer chatbuf
+: !chat  chatbuf  cp ! ;
+: #chat  cp @  chatbuf - ;
+: +cp    1 cp +! ;
+
+( XXX Note: this is different from how I named these in
+  target/HC08/bdm-usb-host.m4. Change those as well?)
+
+: >b  ( byte)    cp @  c!  +cp ;
+: b>  ( - byte)  cp @  c@  +cp ;
+
+( Little-endian 16-bit values. In the ARM world these are "halfwords".)
+: >h  ( hword)    >hilo  >b >b ;
+: h>  ( - hword)          b> b>  lohi> ;
+
+( Little-endian 32-bit values. In the ARM world these are "words".)
+: >w  ( word)    >3210  >b >b >b >b ;
+: w>  ( - word)          b> b> b> b>  0123> ;
+
+: led  ( on/off)
+   !chat  01 >b  00 >b  0= 1+ ( nonzero -> 0, zero -> 1)  >b
+   chatbuf  #chat uwrite
+   chatbuf  #64   uread  .  !chat  b>  .  b>  . ;
+
+.else  ." No supported USB devices found."
+
+.then

@@ -13,18 +13,32 @@
 
 #include <CoreFoundation/CoreFoundation.h>
 #include <IOKit/IOCFPlugIn.h>
+
+/* For accessing normal USB devices. */
 #include <IOKit/usb/IOUSBLib.h>
+
+/* For accessing HIDs, such as CMSIS-DAP devices. */
+#include <IOKit/hid/IOHIDManager.h>
+#include <IOKit/hid/IOHIDKeys.h>
+#include <IOKit/hid/IOHIDDevice.h>
+
+/* Factored out for (potential) use in building _immutable_ CFDictionarys. */
+static CFNumberRef number_create(SInt32 value)
+{
+    /* Create a CFNumber for the given value. */
+    return CFNumberCreate(kCFAllocatorDefault, kCFNumberSInt32Type, &value);
+}
 
 static void add_number_match(CFMutableDictionaryRef matching,
                              CFStringRef keyRef,
                              SInt32 value)
 {
-    CFNumberRef numberRef;
+    CFNumberRef numRef;
 
-    /* Create a CFNumber for the given key and set the value in the dictionary */
-    numberRef = CFNumberCreate(kCFAllocatorDefault, kCFNumberSInt32Type, &value);
-    CFDictionarySetValue(matching, keyRef, numberRef);
-    CFRelease(numberRef);
+    /* Create a CFNumber and add to dict at keyRef. */
+    numRef = number_create(value);
+    CFDictionarySetValue(matching, keyRef, numRef);
+    CFRelease(numRef);
 }
 
 #ifdef WITH_USB_DEVICE
@@ -295,4 +309,114 @@ void mu_usb_write()
         return abort_zmsg("WritePipe failed");
 
     DROP(4);
+}
+
+/*
+ * Support for HIDs. Unfortunately, this is a bit different from other USB
+ * devices, so we define separate words for finding and doing i/o on HIDs.
+ */
+#ifdef DEBUG
+#define BUG(s)          fprintf(stderr, s)
+#define BUG2(s1,s2)     fprintf(stderr, s1, s2)
+#else
+#define BUG(s)
+#define BUG2(s1,s2)
+#endif
+
+/*
+ * hid-find-device (vendor-id product-id -- dev -1 | 0)
+ *
+ * Match vid and pid, and return open device.
+ */
+void mu_hid_find_device()
+{
+    IOHIDManagerRef hidmgr;
+    CFMutableDictionaryRef matching;
+    IOReturn ior;
+    CFIndex devcnt;
+    CFSetRef devset;
+    IOHIDDeviceRef dev;         /* pointer to matching device */
+
+    hidmgr = IOHIDManagerCreate(kCFAllocatorDefault, kIOHIDOptionsTypeNone);
+    BUG2("called IOHIDManagerCreate, got %p\n", hidmgr);
+
+    /*
+     * Match device's VendorID and ProductID
+     */
+    matching = CFDictionaryCreateMutable(kCFAllocatorDefault, 0,
+                   &kCFTypeDictionaryKeyCallBacks,
+                   &kCFTypeDictionaryValueCallBacks);
+
+    add_number_match(matching, CFSTR(kIOHIDVendorIDKey), ST1);
+    add_number_match(matching, CFSTR(kIOHIDProductIDKey), TOP);
+    BUG("Created matching dict, added keys\n");
+
+    IOHIDManagerSetDeviceMatching(hidmgr, matching);
+    BUG("called IOHIDManagerSetDeviceMatching\n");
+    ior = IOHIDManagerOpen(hidmgr, kIOHIDOptionsTypeNone);
+    BUG("called IOHIDManagerOpen\n");
+    if (ior != kIOReturnSuccess)
+        return abort_zmsg("IOHIDManagerOpen failed");
+
+    /* Get array of matching devices. */
+    devset = IOHIDManagerCopyDevices(hidmgr);
+    BUG2("called IOHIDManagerCopyDevices, got %p\n", devset);
+
+    if (devset == NULL)
+    {
+        DROP(1);
+        TOP = 0;    /* not found */
+        return;
+    }
+
+    devcnt = CFSetGetCount(devset);
+    BUG("called CFSetGetCount\n");
+
+    if (devcnt > 1) return abort_zmsg("matched too many devices");
+    CFSetGetValues(devset, (const void **)&dev);
+    BUG("called CFSetGetValues\n");
+
+    ior = IOHIDDeviceOpen(dev, kIOHIDOptionsTypeNone);
+    BUG("called IOHIDDeviceOpen\n");
+    if (ior != kIOReturnSuccess)
+        return abort_zmsg("IOHIDDeviceOpen failed");
+
+    ST1 = (addr)dev;
+    TOP = -1;       /* Success! */
+}
+
+/*
+ * hid-read ( 'buffer size dev - #read)
+ */
+void mu_hid_read()
+{
+    IOReturn ior;
+    CFIndex size = ST1;
+
+    ior = IOHIDDeviceGetReport(
+            (IOHIDDeviceRef)TOP, kIOHIDReportTypeInput,
+            (CFIndex)0, (uint8_t *)ST2, &size);
+
+    if (ior != kIOReturnSuccess)
+        return abort_zmsg("GetReport failed");
+
+    DROP(2);
+    TOP = size;     /* count of bytes actually read */
+}
+
+/*
+ * hid-write ( 'buffer size dev)
+ */
+void mu_hid_write()
+{
+    IOReturn ior;
+
+    ior = IOHIDDeviceSetReport(
+            (IOHIDDeviceRef)TOP, kIOHIDReportTypeOutput,
+            (CFIndex)0, (const uint8_t *)ST2, (CFIndex)ST1);
+
+    if (ior != kIOReturnSuccess)
+        return abort_zmsg("SetReport failed");
+
+    DROP(3);
 }
