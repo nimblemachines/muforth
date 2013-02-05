@@ -7,7 +7,128 @@
 
 loading CMSIS-DAP support (USB debug of Cortex-M devices)
 
+-- Thanks are due to ARM for developing this open-source standard. The
+-- specification and reference implementation (!) are at
+-- https://silver.arm.com/browse/CMSISDAP. An account is necessary to
+-- access this.
+
+-- XXX Can multiple DAP commands be packed into a single USB packet (ie,
+-- HID report)?
+
 hex
+
+
+comment CMSIS-DAP-commands
+
+  I have left out a few that I don't think are that interesting - eg, those
+  that concern talking to JTAG-DPs. The only interface this currently works
+  with is the Freedom Board's OpenSDA CMSIS-DAP, which only supports the
+  SW-DP (since the target chip, a Kinetis KL25Z, only _has_ an SW-DP).
+
+  Numbers are in hex.
+
+  DAP.LED
+    > 01 xx yy        xx=00 for Connect, 01 for Running;
+                      NOTE: only Connect implemented on Freedom board
+                      yy=00 for off, 01 for on
+    < 01 00
+
+  DAP.Connect
+    > 02 pp         pp=00 for default, 01 for SWD, 02 for JTAG
+    < 02 pp         pp=00 failed, 01 SWD, 02 JTAG
+
+  DAP.Disconnect
+    > 03
+    < 03 ss         ss=standard status: 00=ok, ff=failed
+
+  DAP.Write_ABORT
+    > 08 xx yy yy yy yy   xx=which device - ignored for SWD
+                          yy=abort register word
+    < 08 ss
+
+  DAP.SWJ_Pins
+    > 10 pp mm dd dd dd dd   pp=pin values to set
+                             mm=mask - which pins to change
+                             dd=delay in us
+                             bit 7 of pp and mm is nRESET
+
+  DAP.SWD_Configure
+    > 13 cc     cc<1:0> = 00 1 cycle turnaround
+                          01 2 cycles
+                          10 3 cycles
+                          11 4 cycles
+                cc<2>   = DataPhase: 0 = do not generate on WAIT/FAULT
+                                     1 = always generate on WAIT/FAULT
+                                         for sticky overrun
+    > 13 ss
+
+  DAP.Transfer_Configure
+    > 04 ii ww ww mm mm    ii = idle cycles after each transfer
+                           ww = # retries after each WAIT response
+                           mm = # rerties for value match
+    < 04 ss
+
+
+  DAP.Transfer
+    > 05 ii nn  rr ..  dd dd dd dd ..
+                          ii = DAP index - ignored for SWD
+                          nn = transfer count: 1 .. 255
+                          rr = sequence of nn transfer requests
+                          dd = sequence of up to nn date words to send with request
+                               transfer data or match value
+
+    Requests have the following format:
+
+       Bit 0: APnDP: 0 = Debug Port (DP), 1 = Access Port (AP).
+       Bit 1: RnW: 0 = Write Register, 1 = Read Register.
+       Bit 2: A2 Register Address bit 2.
+       Bit 3: A3 Register Address bit 3.
+       Bit 4: Value Match (only valid for Read Register):
+              0 = Normal Read Register, 1 = Read Register with Value Match.
+       Bit 5: Match Mask (only valid for Write Register):
+              0 = Normal Write Register, 1 = Write Match Mask (instead of Register).
+
+    < 05 nn rr  dd dd dd dd ..
+                          nn = transfers executed: 1 .. 255
+                          rr = last response from target
+                          dd = data words received from target 
+
+    Responses have the following format:
+
+       Bit 2..0: ACK (Acknowledge): 1 = OK (OK/FAULT for JTAG), 2 = WAIT, 4 = FAULT.
+       Bit 3: 1 = Protocol Error (SWD)
+       Bit 4: 1 = Value Mismatch (Read Register with Value Match)
+
+  DAP.Transfer_Block
+    > 06 ii nn nn rr  dd dd dd dd .. 
+                          ii = DAP index - ignored for SWD
+                          nn = transfer count: 1 .. 65535
+                          rr = transfer request
+
+    Request has the following format:
+
+       Bit 0: APnDP: 0 = DP (Debug Port), 1 = AP (Access Port)
+       Bit 1: RnW: 0 = Write Register, 1 = Read Register
+       Bit 2: A2 := Register Address bit 2
+       Bit 3: A3 := Register Address bit 3
+
+    < 06 nn nn rr  dd dd dd dd ..
+                          nn = transfers executed: 1 .. 65535
+                          rr = last response from target
+                          dd = data words received from target 
+
+    Response has the following format:
+
+       Bit 2..0: ACK (Acknowledge): 1 = OK, OK/FAULT (JTAG), 2 = WAIT, 4 = FAULT
+       Bit 3: Protocol Error (SWD)
+
+  DAP.Transfer_Abort
+    > 07
+    No response, but aborted Transfer or Transfer_Block will respond with
+    information about actually transferred data.
+
+end CMSIS-DAP-commands
+
 
 c251 f002 hid-find-device  .if  ( Keil CMSIS-DAP)
    constant cmsis
@@ -16,11 +137,6 @@ c251 f002 hid-find-device  .if  ( Keil CMSIS-DAP)
  -- hid-write ( 'buffer size dev)
 
 ( Device found - load support)
-
-( On OSX in particular, if you don't do this, the next time around the
-  board wedges... Weird.)
-
--- : done   cmsis  usb-close ;
 
 : uread   ( buf len - #read)  cmsis  hid-read ;
 : uwrite  ( buf len)          cmsis  hid-write ;
