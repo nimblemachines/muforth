@@ -18,8 +18,13 @@
 #include <unistd.h>         /* close */
 #include <sys/ioctl.h>      /* ioctl */
 
+/* Normal USB devices */
 #include <linux/usb/ch9.h>
 #include <linux/usbdevice_fs.h>
+
+/* USB HIDs */
+#include <linux/hidraw.h>
+#include <linux/input.h>
 
 /* change to match your system! */
 #define USB_ROOT1 "/proc/bus/usb"
@@ -34,13 +39,15 @@ struct match
 };
 
 typedef int (*usb_match_fn)(char *, struct match *);    /* filepath, match_data */
+typedef int (*path_ok_fn)(struct dirent *);
 
 /*
  * Returns
  *   0 if directory exhausted or error
  *  >0 if match found
  */
-static int foreach_dirent(char *path, usb_match_fn fn, struct match *pmatch)
+static int foreach_dirent(char *path, path_ok_fn try_path,
+                          usb_match_fn fn, struct match *pmatch)
 {
     char pathbuf[USB_PATH_MAX];
     DIR *pdir;
@@ -53,8 +60,8 @@ static int foreach_dirent(char *path, usb_match_fn fn, struct match *pmatch)
 
     while ((pde = readdir(pdir)) != NULL)
     {
-        /* bus and device entry names are 3 decimal digits */
-        if (isdigit(pde->d_name[0]))
+        /* make sure this is a dirent we care about */
+        if (try_path(pde))
         {
             char *subpath;
             int matched;
@@ -96,9 +103,15 @@ static int match_device(char *dev, struct match *pmatch)
     return 0;
 }
 
+static int is_bus_or_dev(struct dirent *pde)
+{
+    /* bus and device entry names are 3 decimal digits */
+    return isdigit(pde->d_name[0]) ? -1 : 0;
+}
+
 static int enumerate_devices(char *bus, struct match *pmatch)
 {
-    return foreach_dirent(bus, match_device, pmatch);
+    return foreach_dirent(bus, is_bus_or_dev, match_device, pmatch);
 }
 
 /*
@@ -113,11 +126,11 @@ void mu_usb_find_device()
     match.idProduct = TOP;
 
     /* Enumerate USB device tree, looking for a match */
-    matched = foreach_dirent(USB_ROOT1, enumerate_devices, &match);
+    matched = foreach_dirent(USB_ROOT1, is_bus_or_dev, enumerate_devices, &match);
 
     /* If nothing found, or opendir error, try the other bus */
     if (matched == 0)
-        matched = foreach_dirent(USB_ROOT2, enumerate_devices, &match);
+        matched = foreach_dirent(USB_ROOT2, is_bus_or_dev, enumerate_devices, &match);
 
     if (matched < 0) return abort_strerror();
 
@@ -227,4 +240,132 @@ void mu_usb_write()
 
     if (ioctl(fd, USBDEVFS_BULK, &tr) == -1)
         return abort_strerror();
+}
+
+/*
+ * USB HID support.
+ *
+ * Unfortunately, several of the devices we want to talk to - Microchip's
+ * PICKit2/3 and Freescale's Freedom board (running the CMSIS-DAP debug
+ * firmware) - enumerate as HIDs so that they can work under Windows
+ * without special USB drivers.
+ *
+ * For Linux, this means special support. We can't simply match the vid &
+ * pid and open the device as a normal USB device and expect everything to
+ * work... In fact, we can't open the "raw" USB device because the HID
+ * subsystem beat us to it.
+ *
+ * Since these debug devices are not true HIDs, we want to use the _hidraw_
+ * devices. All we need is to be able to send and receive raw reports - the
+ * command and data buffers used by the debug firmware.
+ *
+ * We enumerate /dev/, matching for "hidrawX", and try each of these to see
+ * if the vid & pid match.
+ *
+ * hid-read and hid-write are simply calls to read() and write().
+ */
+
+static int match_hid(char *dev, struct match *pmatch)
+{
+    int fd;
+    struct hidraw_devinfo hid;
+    unsigned int vid, pid;
+
+    fd = open(dev, O_RDONLY);
+    if (fd == -1) return -1;
+
+    
+    if (ioctl(fd, HIDIOCGRAWINFO, &hid) == -1)
+        return -1;
+
+    close(fd);
+
+    /* Linux idiots! Defined these as _signed_ 16-bit ints. */
+    vid = (unsigned short)hid.vendor;
+    pid = (unsigned short)hid.product;
+
+    /* XXX have vendor and product fields been rewritten from USB
+     * endianness (little) to local host's? */ 
+    if (hid.bustype == BUS_USB &&
+        vid == pmatch->idVendor && pid == pmatch->idProduct)
+        return open(dev, O_RDWR);   /* Re-open read-write */
+
+    return 0;
+}
+
+static int is_hidraw(struct dirent *pde)
+{
+    return ((memcmp(pde->d_name, "hidraw", 6) == 0) && isdigit(pde->d_name[6]))
+        ? -1 : 0;
+}
+
+/*
+ * hid-find-device (vendor-id product-id -- dev -1 | 0)
+ */
+void mu_hid_find_device()
+{
+    struct match match;
+    int matched;
+
+    match.idVendor = ST1;
+    match.idProduct = TOP;
+
+    /* Enumerate /dev, looking for hidraw* */
+    matched = foreach_dirent("/dev", is_hidraw, match_hid, &match);
+
+    if (matched < 0) return abort_strerror();
+
+    if (matched == 0)
+    {
+        /* No match found */
+        DROP(1);
+        TOP = 0;
+    }
+    else
+    {
+        /*
+         * Found a match; matched has the device's _open_ file descriptor.
+         * Return it.
+         */
+        ST1 = matched;
+        TOP = -1;
+    }
+}
+
+/*
+ * More Linux idiocy! On read, if HID doesn't use numbered reports, read()
+ * simply returns the report.
+ *
+ * But on _writes_, no matter what, the first byte of the buffer to write
+ * is the report number - 0 if the HID doesn't use numbered reports! So we
+ * have to rebuffer the write. Grrr.
+ *
+ * Hmm... Actually this may not be true. I tried it without the rebuffering
+ * and it seemed to work!
+ */
+
+/*
+ * hid-read ( 'buffer size dev -- #read)
+ */
+void mu_hid_read()
+{
+    cell fd = TOP;      /* 'buffer size dev -- dev 'buffer size */
+    TOP = ST1;
+    ST1 = ST2;
+    ST2 = fd;
+
+    mu_read_carefully();
+}
+
+/*
+ * hid-write ( 'buffer size dev)
+ */
+void mu_hid_write()
+{
+    cell fd = TOP;      /* 'buffer size dev -- dev 'buffer size */
+    TOP = ST1;
+    ST1 = ST2;
+    ST2 = fd;
+
+    mu_write_carefully();
 }
