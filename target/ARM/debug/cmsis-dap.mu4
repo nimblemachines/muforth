@@ -52,6 +52,11 @@ comment CMSIS-DAP-commands
                              dd=delay in us
                              bit 7 of pp and mm is nRESET
 
+  DAP.SWJ_Sequence
+    > 12 nn dd ..       nn = bit count 1 .. 256 (0 encodes 256)
+                        dd = bit data, lsb first
+    < 12 ss
+
   DAP.SWD_Configure
     > 13 cc     cc<1:0> = 00 1 cycle turnaround
                           01 2 cycles
@@ -70,11 +75,11 @@ comment CMSIS-DAP-commands
 
 
   DAP.Transfer
-    > 05 ii nn  rr ..  dd dd dd dd ..
+    > 05 ii nn  rr dd dd dd dd  rr dd dd dd dd ..
                           ii = DAP index - ignored for SWD
                           nn = transfer count: 1 .. 255
-                          rr = sequence of nn transfer requests
-                          dd = sequence of up to nn date words to send with request
+                          rr = transfer request
+                          dd = optional data (word)
                                transfer data or match value
 
     Requests have the following format:
@@ -164,9 +169,15 @@ variable cp  ( chat pointer)
 : >w  ( word)    >3210  >b >b >b >b ;
 : w>  ( - word)          b> b> b> b>  0123> ;
 
+variable spy
+: .chat
+   radix preserve  hex
+   cr  chatbuf  #chat for  c@+ swap u.  next  drop ;
+
 : chat
+   spy @ if  .chat  then
    chatbuf  #chat uwrite
-   chatbuf  #64   uread  drop  !chat  b>  .  b>  . ;
+   chatbuf  #64   uread  drop  !chat  ." -> "  b>  .  b>  . ;
 
 : led  ( on/off)
    !chat  01 >b  00 >b  0= 1+ ( nonzero -> 0, zero -> 1)  >b
@@ -178,21 +189,24 @@ variable cp  ( chat pointer)
 : DAP.SWD_Configure  ( config)
    !chat  13 >b  >b  chat ;
 
+: DAP.Connect_Sequence
+   !chat  12 >b  #72 >b  -1 >w  -1 >w  00 >b  chat ;
+
 : DAP.Transfer_Configure
-   !chat  04 >b  04 >b  ( WAIT retries) 20 >h  ( match retries) 20 >h
+   !chat  04 >b  ( idle cycles) 08 >b  ( WAIT retries) 20 >h  ( match retries) 20 >h
    chat ;
 
-: DAP.Transfer  ( data.. dcount reqs.. rcount)
-   !chat  05 >b  00 >b  dup >b  for  >b  next  ?for  >w  next  then
-   chat ;
+: <xfer  !chat  05 >b  00 ( DAP#) >b  00 ( count placeholder) >b ;
+:  xfer>  ( count) chatbuf 2 + c!  chat ; 
 
 ( XXX testing - now do something!)
+spy on
 1 led
 DAP.Connect
-03 DAP.SWD_Configure
+00 DAP.SWD_Configure
 DAP.Transfer_Configure
-
-( read IDCODE)  0 02 1 DAP.Transfer
+DAP.Connect_Sequence
+( read IDCODE)  <xfer  02 >b  1 xfer>
 0 led
 
 .else  ." No supported USB devices found."
