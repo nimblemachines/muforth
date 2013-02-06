@@ -50,7 +50,15 @@ comment CMSIS-DAP-commands
     > 10 pp mm dd dd dd dd   pp=pin values to set
                              mm=mask - which pins to change
                              dd=delay in us
-                             bit 7 of pp and mm is nRESET
+    Mapping for pp and mm:
+       Bit 0: SWCLK/TCK
+       Bit 1: SWDIO/TMS
+       Bit 2: TDI
+       Bit 3: TDO
+       Bit 5: nTRST
+       Bit 7: nRESET
+
+    < 10 pp                  pp = pin values read from device
 
   DAP.SWJ_Sequence
     > 12 nn dd ..       nn = bit count 1 .. 256 (0 encodes 256)
@@ -149,17 +157,19 @@ c251 f002 hid-find-device  .if  ( Keil CMSIS-DAP)
 ( A simple buffer for chatty communication protocols. Words for putting
   values into a buffer and taking them out again.)
 
-variable cp  ( chat pointer)
-40 buffer chatbuf
-: !chat  chatbuf  cp ! ;
-: #chat  cp @  chatbuf - ;
-: +cp    1 cp +! ;
+variable bp  ( buf pointer)
+40 buffer sendbuf
+40 buffer recvbuf
+: !send  sendbuf  bp !  sendbuf 40 55 fill ;
+: !recv  recvbuf  bp ! ;
+: #send  bp @  sendbuf - ;
+: +bp    1 bp +! ;
 
 ( XXX Note: this is different from how I named these in
   target/HC08/bdm-usb-host.m4. Change those as well?)
 
-: >b  ( byte)    cp @  c!  +cp ;
-: b>  ( - byte)  cp @  c@  +cp ;
+: >b  ( byte)    bp @  c!  +bp ;
+: b>  ( - byte)  bp @  c@  +bp ;
 
 ( Little-endian 16-bit values. In the ARM world these are "halfwords".)
 : >h  ( hword)    >hilo  >b >b ;
@@ -170,44 +180,86 @@ variable cp  ( chat pointer)
 : w>  ( - word)          b> b> b> b>  0123> ;
 
 variable spy
-: .chat
+: .send
    radix preserve  hex
-   cr  chatbuf  #chat for  c@+ swap u.  next  drop ;
+   cr  sendbuf  #send for  c@+ swap u.  next  drop ;
 
-: chat
-   spy @ if  .chat  then
-   chatbuf  #chat uwrite
-   chatbuf  #64   uread  drop  !chat  ." -> "  b>  .  b>  . ;
+: chat  ( - r0 r1)  ( return first two bytes of response)
+   spy @ if  .send  then
+   sendbuf  #send uwrite
+   !recv  recvbuf  #64   uread  drop  b> b> ;
 
-: led  ( on/off)
-   !chat  01 >b  00 >b  0= 1+ ( nonzero -> 0, zero -> 1)  >b
-   chat ;
+: <cmd  ( cmd)  !send  >b ;
+:  cmd>   ( - r1)  sendbuf c@ ( cmd)  push  chat  swap pop xor if
+   error" response didn't match command" then ;
+
+:  check  ( r1)  if  error" DAP_ERROR response"  then ;
+
+: DAP.LED  ( on/off)
+   01 <cmd  00 >b  0= 1+ ( nonzero -> 0, zero -> 1)  >b  cmd> drop ;
 
 : DAP.Connect
-   !chat  02 >b  01 >b  chat ;
+   02 <cmd  01 >b  cmd>  01 xor check ;
 
 : DAP.SWD_Configure  ( config)
-   !chat  13 >b  >b  chat ;
+   13 <cmd  >b  cmd> check ;
 
 : DAP.Connect_Sequence
-   !chat  12 >b  #72 >b  -1 >w  -1 >w  00 >b  chat ;
+   12 <cmd  #72 >b  -1 >w  -1 >w  00 >b  cmd> check ;
 
 : DAP.Transfer_Configure
-   !chat  04 >b  ( idle cycles) 08 >b  ( WAIT retries) 20 >h  ( match retries) 20 >h
-   chat ;
+   04 <cmd  ( idle cycles) 08 >b  ( WAIT retries) 20 >h  ( match retries) 20 >h
+   cmd> check ;
 
-: <xfer  !chat  05 >b  00 ( DAP#) >b  00 ( count placeholder) >b ;
-:  xfer>  ( count) chatbuf 2 + c!  chat ; 
+: <xfer   05 <cmd  00 ( DAP#) >b  00 ( count placeholder) >b ;
+:  xfer>  ( req-count - resp-count)
+   dup push  sendbuf 2 + c!  cmd>  pop xor if
+      error" transactions not completed"  then
+   b> dup 1 = if  drop ." ACK "  ^ then
+      dup 2 = if  drop ." WAIT " ^  then
+      dup 4 = if  drop ." FAULT " ^ then
+      dup 8 = if  drop ." Protocol error " ^ then
+         10 = if  drop ." Value mismatch " then ; 
+
+( Support for reading and writing basic DP and AP registers.)
+: DP.ABORT   ( abort)  08 <cmd   00 >b  >w     cmd> check ;
+: DP.IDCODE  ( - idcode)  <xfer  02 >b      1 xfer>  w> ;
+: _DP.CTRL    ( - ctrl/stat)     06 >b ;  ( NOTE: SELECT[0] must be 0)
+: _DP.SELECT  ( select)          08 >b  >w ;
+
+: select!   ( addr - offset)  <xfer  dup -10 and  _DP.SELECT  _DP.CTRL  0c and ;
+: AP.Read   ( addr - w)  select!  ( offset)  3 +  >b      _DP.CTRL  4 xfer>  w> w> w> ;
+: AP.Write  ( w addr)    select!  ( offset)  1 +  >b  >w  2 xfer> ;
+
+( AHB-AP registers)
+0000_0000 constant AP.CSW
+0000_0004 constant AP.TAR
+(    0008 reserved)
+0000_000c constant AP.DRW
+
+0000_0010 constant AP.BD0
+0000_0014 constant AP.BD1
+0000_0018 constant AP.BD2
+0000_001c constant AP.BD3
+
+0000_00f8 constant AP.ROM
+0000_00fc constant AP.IDR
+
+( For KL25Z:)
+( MDM-AP registers)
+0100_0000 constant MDM.Status
+0100_0004 constant MDM.Control
+0100_00fc constant MDM.IDR
 
 ( XXX testing - now do something!)
-spy on
-1 led
-DAP.Connect
-00 DAP.SWD_Configure
-DAP.Transfer_Configure
-DAP.Connect_Sequence
-( read IDCODE)  <xfer  02 >b  1 xfer>
-0 led
+: hi
+   spy on
+   1 DAP.LED
+   DAP.Connect
+   00 DAP.SWD_Configure  DAP.Transfer_Configure
+   DAP.Connect_Sequence  DP.IDCODE u.
+   0 DAP.LED
+;
 
 .else  ." No supported USB devices found."
 
