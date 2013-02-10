@@ -212,9 +212,12 @@ variable spy
    04 <cmd  ( idle cycles) 04 >b  ( WAIT retries) 80 >h  ( match retries) 80 >h
    cmd> check ;
 
-: <xfer   05 <cmd  00 ( DAP#) >b  00 ( count placeholder) >b ;
-:  xfer>  ( req-count - resp-count)
-   dup push  sendbuf 2 + c!  cmd>  pop xor if
+variable #xfers
+: <xfer   05 <cmd  00 ( DAP#) >b  00 ( count placeholder) >b  #xfers off ;
+: >x  ( xfer)  ( add transfer to sequence)  >b  1 #xfers +! ;
+
+:  xfer>
+   #xfers @  sendbuf 2 + c!  cmd>  #xfers @  xor if
       error" transactions not completed"  then
    b> dup 1 = if  drop ." OK "  ^ then
       dup 2 = if  drop ." WAIT " ^  then
@@ -223,18 +226,36 @@ variable spy
          10 = if  drop ." Value mismatch " then ; 
 
 ( Support for reading and writing basic DP and AP registers.)
+
+( DP.ABORT and DP.IDCODE are self-contained. The remaining DP access words
+  are intended for use inside of a "DAP.Transfer" operation - ie, bracketed
+  by <xfer and xfer>.)
+
 : DP.ABORT   ( abort)  08 <cmd   00 >b  >w     cmd> check ;
-: DP.IDCODE  ( - idcode)  <xfer  02 >b      1 xfer>  w> ;
-: _DP.CTRL    ( ctrl)            04 >b  >w ;  ( NOTE: SELECT[0] must be 0)
-: _DP.STAT    ( - stat)          06 >b ;      ( NOTE: SELECT[0] must be 0)
-: _DP.SELECT  ( select)          08 >b  >w ;
-: _DP.RESEND  ( - word)          0a >b ;
-: _DP.RDBUFF  ( - word)          0e >b ;
+: DP.IDCODE  ( - idcode)  <xfer  02 >x        xfer>  w> ;
 
-: select!   ( addr - offset)  <xfer  dup -10 and  _DP.SELECT  0c and ;
-: AP.Read   ( addr - w)  select!  ( offset)  3 +  >b  _DP.RDBUFF   3 xfer>  w> ;
-: AP.Write  ( w addr)    select!  ( offset)  1 +  >b  >w      2 xfer> ;
+( x is number of xfers so far; incremented each time we add one of the
+  following:)
 
+: _DP.CTRL    ( ctrl)   04 >x  >w  ;  ( NOTE: SELECT[0] must be 0)
+: _DP.STAT              06 >x      ;  ( NOTE: SELECT[0] must be 0)
+: _DP.SELECT  ( sel)    08 >x  >w  ;
+: _DP.RESEND            0a >x      ;
+: _DP.RDBUFF            0e >x      ;
+
+variable last-select  ( "shadow" copy of last value written to SELECT)
+   -1 last-select !  ( reset to something unlikely)
+
+: ?select   ( sel)  dup last-select @ xor if  ( different)
+   dup last-select !  _DP.SELECT  ^  then  drop ;
+: select!   ( addr - ap)  dup -10 and  ?select  0c and  1+ ( APaccess) ;
+
+: AP.Read   ( addr - w)  <xfer  select!  ( ap)  2 +  >x  _DP.RDBUFF  xfer>  w> ;
+: AP.Write  ( w addr)    <xfer  select!  ( ap)       >x  >w          xfer> ;
+
+-- -----------------------------------------------------------------------
+-- These are addresses that go into SELECT.
+-- -----------------------------------------------------------------------
 ( AHB-AP registers)
 0000_0000 constant AP.CSW
 0000_0004 constant AP.TAR
@@ -255,6 +276,9 @@ variable spy
 0100_0004 constant MDM.Control
 0100_00fc constant MDM.IDR
 
+-- -----------------------------------------------------------------------
+-- These are addresses in the chip's memory map.
+-- -----------------------------------------------------------------------
 ( SCS debug registers)
 e000_edf0 constant DHCSR  ( debug halting control/status reg)
 e000_edf4 constant DCRSR  ( debug core register selector reg)
@@ -265,11 +289,10 @@ e000_edfc constant DEMCR  ( debug exception and monitor ctrl reg)
 : hi
    spy on
    1 DAP.LED
-   DAP.Connect
-   00 DAP.SWD_Configure  DAP.Transfer_Configure
+   DAP.Connect  00 DAP.SWD_Configure  DAP.Transfer_Configure
    DAP.Connect_Sequence  DP.IDCODE u.
    -2 DP.ABORT ( clear any error flags)
-   <xfer  0 _DP.SELECT  5000_0000 _DP.CTRL ( pwr up sys & dbg)  2 xfer>
+   <xfer  0 _DP.SELECT  5000_0000 _DP.CTRL ( pwr up sys & dbg)  xfer>
    0 DAP.LED
 ;
 
