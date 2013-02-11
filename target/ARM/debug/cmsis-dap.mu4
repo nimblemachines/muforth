@@ -179,18 +179,24 @@ variable bp  ( buf pointer)
 : >w  ( word)    >3210  >b >b >b >b ;
 : w>  ( - word)          b> b> b> b>  0123> ;
 
+( 16-bit halfword and 32-bit word fetch and store. Little endian.)
+: h@  ( addr - h)  leh@ ;
+: h!  ( h addr)    leh! ;
+: w@  ( addr - w)  lew@ ;
+: w!  ( w addr)    lew! ;
+
 variable spy
 : .send
    radix preserve  hex
    cr  sendbuf  #send for  c@+ swap u.  next  drop ;
 
-: chat  ( - r0 r1)  ( return first two bytes of response)
+: usend-recv  ( - r0 r1)  ( return first two bytes of response)
    spy @ if  .send  then
    sendbuf  #send uwrite
    !recv  recvbuf  #64   uread  drop  b> b> ;
 
 : <cmd  ( cmd)  !send  >b ;
-:  cmd>   ( - r1)  sendbuf c@ ( cmd)  push  chat  swap pop xor if
+:  cmd>   ( - r1)  sendbuf c@ ( cmd)  push  usend-recv  swap pop xor if
    error" response didn't match command" then ;
 
 :  check  ( r1)  if  error" DAP_ERROR response"  then ;
@@ -248,10 +254,12 @@ variable last-select  ( "shadow" copy of last value written to SELECT)
 
 : ?select   ( sel)  dup last-select @ xor if  ( different)
    dup last-select !  _DP.SELECT  ^  then  drop ;
-: select!   ( addr - ap)  dup -10 and  ?select  0c and  1+ ( APaccess) ;
+: select!   ( addr - ap)  dup -10 and  ?select  0c and ;
+: AP.Rd  ( ap - ap')    select!  3 +  >x     ;  ( set AP & RnW bit)
+: AP.Wr  ( w ap - ap')  select!  1+   >x  >w ;  ( set AP only)
 
-: AP.Read   ( addr - w)  <xfer  select!  ( ap)  2 +  >x  _DP.RDBUFF  xfer>  w> ;
-: AP.Write  ( w addr)    <xfer  select!  ( ap)       >x  >w          xfer> ;
+: AP.Read   ( addr - w)  <xfer  AP.Rd  _DP.RDBUFF  xfer>  w> ;
+: AP.Write  ( w addr)    <xfer  AP.Wr              xfer> ;
 
 -- -----------------------------------------------------------------------
 -- These are addresses that go into SELECT.
@@ -285,8 +293,9 @@ e000_edf4 constant DCRSR  ( debug core register selector reg)
 e000_edf8 constant DCRDR  ( debug core register data reg)
 e000_edfc constant DEMCR  ( debug exception and monitor ctrl reg)
 
-( XXX testing - now do something!)
-: hi
+( The interface for the interact code. Implemented by all debug transports.)
+
+: t.chat  ( connect to device)
    spy on
    1 DAP.LED
    DAP.Connect  00 DAP.SWD_Configure  DAP.Transfer_Configure
@@ -295,6 +304,43 @@ e000_edfc constant DEMCR  ( debug exception and monitor ctrl reg)
    <xfer  0 _DP.SELECT  5000_0000 _DP.CTRL ( pwr up sys & dbg)  xfer>
    0 DAP.LED
 ;
+
+( For memory reads. A 16 byte cache line. Invalidated by any memory write
+  debug command, or any other command - run or step, eg - that could
+  conceivably alter memory contents underneath us.)
+
+( XXX use cache-line as recvbuf for transaction?)
+10 buffer cache-line
+variable cache-addr  ( of first byte)
+: -valid   -1 cache-addr ! ;  -valid
+
+( XXX operations that could invalidate the memory cache go here)
+
+( from stlink)
+-- : read32   ( buf a u)   07 mem  uread-check ;
+: read-cache-line  ( 'aligned-target)
+   <xfer  AP.TAR AP.Wr
+          AP.BD0 AP.Rd  AP.BD1 AP.Rd  AP.BD2 AP.Rd  AP.BD3 AP.Rd
+          _DP.RDBUFF
+   xfer>  bp @  cache-line 10 cmove ;
+
+( cached does the memory read caching for us.)
+: cached  ( target - buffer)
+   dup -10 and  ( target aligned)
+   dup  cache-addr @ xor  if  ( not in current cache line)
+      -- dup cache-addr !  cache-line over 10  read32  then
+      dup cache-addr !  dup read-cache-line  then
+   drop ( aligned)
+   0f and  cache-line + ;
+
+( XXX use AP.TAR for z?)
+variable z
+: t.setaddr  ( target)    z ! ;
+: t.getaddr  ( - target)  z @ ;
+: t.readw    ( - word)               z @  cached      4 z +!  w@ ;
+: t.readh    ( - hword)              z @  cached      2 z +!  h@ ;
+: t.readb    ( - byte)               z @  cached      1 z +!  c@ ;
+-- : t.writew   ( word)    pad w!  pad  z @  4  write32  4 z +!  -valid ;
 
 .else  ." No supported USB devices found."
 
