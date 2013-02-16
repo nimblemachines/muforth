@@ -224,7 +224,7 @@ variable #xfers
 
 :  xfer>
    #xfers @  sendbuf 2 + c!  cmd>  #xfers @  xor if
-      error" transactions not completed"  then
+      ." transactions not completed "  then
    b> dup 1 = if  drop ." OK "  ^ then
       dup 2 = if  drop ." WAIT " ^  then
       dup 4 = if  drop ." FAULT " ^ then
@@ -268,9 +268,9 @@ variable last-select  ( "shadow" copy of last value written to SELECT)
 0000_0000 constant AP.CSW
 0000_0004 constant AP.TAR
 (    0008 reserved)
-0000_000c constant AP.DRW
+0000_000c constant AP.DRW  ( Access size depends on CSW.size bits)
 
-0000_0010 constant AP.BD0
+0000_0010 constant AP.BD0  ( Always generates word-sized access)
 0000_0014 constant AP.BD1
 0000_0018 constant AP.BD2
 0000_001c constant AP.BD3
@@ -292,6 +292,17 @@ e000_edf0 constant DHCSR  ( debug halting control/status reg)
 e000_edf4 constant DCRSR  ( debug core register selector reg)
 e000_edf8 constant DCRDR  ( debug core register data reg)
 e000_edfc constant DEMCR  ( debug exception and monitor ctrl reg)
+
+( Defines for AP.CSW)
+0 constant CSW.byte    ( memory bus transaction sizes)
+1 constant CSW.hword
+2 constant CSW.word
+
+ 0 constant CSW.no-incr
+10 constant CSW.single-incr
+20 constant CSW.packed-incr  ( *not* supported on KL25Z!)
+
+37 constant CSW.size-incr-mask
 
 ( The interface for the interact code. Implemented by all debug transports.)
 
@@ -320,7 +331,8 @@ variable cache-addr  ( of first byte)
 -- : read32   ( buf a u)   07 mem  uread-check ;
 : read-cache-line  ( 'aligned-target)
    <xfer  AP.TAR AP.Wr
-          AP.BD0 AP.Rd  AP.BD1 AP.Rd  AP.BD2 AP.Rd  AP.BD3 AP.Rd
+          [ CSW.word CSW.single-incr + 300_0000 + ]  AP.CSW AP.Wr
+          AP.DRW AP.Rd  AP.DRW AP.Rd  AP.DRW AP.Rd  AP.DRW AP.Rd
           _DP.RDBUFF
    xfer>  bp @  cache-line 10 cmove ;
 
@@ -341,6 +353,26 @@ variable z
 : t.readh    ( - hword)              z @  cached      2 z +!  h@ ;
 : t.readb    ( - byte)               z @  cached      1 z +!  c@ ;
 -- : t.writew   ( word)    pad w!  pad  z @  4  write32  4 z +!  -valid ;
+
+( XXX debugging)
+( To and from byte lane(s)
+: a>shift  ( a - #shifts)  3 and 8 * ;
+: >lanes   ( data a - word)       a>shift << ;
+:  lanes>  ( a word - data)  swap a>shift >> ;
+
+: -fault  -2 DP.ABORT ;  ( clear any faults)
+: addr!  ( a - a)  -fault  <xfer  dup AP.TAR AP.Wr ;
+: size!  ( size)   300_0000  or  AP.CSW AP.Wr ;
+: drw@   ( a - result)        AP.DRW  AP.Rd  _DP.RDBUFF  xfer>  w> lanes> ;
+: drw!   ( data a)    >lanes  AP.DRW  AP.Wr              xfer> ;
+
+: rb  ( a - b)  ( read byte from target)   addr!  0 size!  drw@    0ff and ;
+: rh  ( a - h)  ( read hword from target)  addr!  1 size!  drw@  0ffff and ;
+: rw  ( a - w)  ( read word from target)   addr!  2 size!  drw@ ;
+
+: wb  ( b a)  ( write byte to target)   addr!  0 size!  drw! ;
+: wh  ( h a)  ( write hword to target)  addr!  1 size!  drw! ;
+: ww  ( w a)  ( write word to target)   addr!  2 size!  drw! ;
 
 .else  ." No supported USB devices found."
 
