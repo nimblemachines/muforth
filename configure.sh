@@ -34,6 +34,8 @@ while [ "$1" ]; do
   case "$1" in
      gnu)     gnu=yes ;;
      bsd)     bsd=yes ;;
+     force32)   force32=yes ;;
+     force64)   force64=yes ;;
        *) ;;
   esac
   shift
@@ -88,7 +90,16 @@ if [ "$os" = "FreeBSD" -o "$os" = "NetBSD" ]; then
         Wnarrowing=""
     fi
 fi
-cflags="${Wnarrowing}${cflags}"
+
+if [ "$force32" = "yes" ]; then
+    cflags="-m32 -Wno-int-to-pointer-cast ${cflags}"
+    ldflags="-m32 ${ldflags}"
+elif [ "$force64" = "yes" ]; then
+    cflags="-m64 ${cflags}"
+    ldflags="-m64 ${ldflags}"
+else
+    cflags="${Wnarrowing}${cflags}"
+fi
 
 # Figure out which version of sed we're running, so we can properly specify
 # the use of extended (ie, sane) regular expressions.
