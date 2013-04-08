@@ -6,7 +6,7 @@
 # reversed. (See the file COPYRIGHT for details.)
 
 # Build both 32-bit and 64-bit versions of muforth, in case we want to
-# deplay on another machine. But this is *not* a cross-build! The target
+# deploy on another machine. But this is *not* a cross-build! The target
 # machine has to be the same OS as the build machine.
 
 # Make 32-bit version
