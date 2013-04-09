@@ -4,15 +4,11 @@ here
 token current  .forth.  (linked-name)
    <:> -]   (lit)  [  ,  -]  ^ [
 
-token (new)  current @  (linked-name)
+token new  current @  (linked-name)
    <:> -]
+      token
       nope
       current @  (linked-name)
-   ^ [
-
-token new  (new)
-   <:> -]
-      token (new)
    ^ [
 
 new :
@@ -101,6 +97,9 @@ forth
 : rot    >r swap  r> swap ;  ( a b c - b c a)  ( fig!)
 : -rot   swap >r  swap r> ;  ( a b c - c a b)
 : tuck   swap over ;           ( a b - b a b)
+
+( Back up over last token parsed from the input so we can re-parse it.)
+: untoken   parsed drop  first ! ;
 
 ( First, we need compiler versions of ( and char. Since we no longer hide
   words as they are being defined, we need to be careful about how we do
@@ -364,16 +363,14 @@ here 0 ,
   image, since we have to process the token - the name of the new word -
   twice.)
 
-: (create)   ( a u)
-   (new)  <does>
+( Everything is defined in terms of `create'.)
+: create
+   new  <does>
    here last-created !  0 , ( placeholder for does ip)
    does> ;  ( make the does ip point *somewhere*)
 
-( Everything is defined in terms of `create'.)
-: create   token (create) ;
-
-: (constant)  ( con a u)  (create) , ( compile the constant)  does> @ ;
-: constant  token (constant) ;
+: constant  ( value)
+   create , ( compile the constant)  does> @ ;
 
 ( An array with every cell set to a default value.)
 : defarray   ( default cells)  create  ?for dup , next then  drop ;
@@ -417,10 +414,10 @@ where nope is a placeholder for code to hide the newly created colon word.)
   using comment, changing "comment" to "uncomment" will interpret the
   bracketed text - the delimiter becomes a noop.)
 
-: (comment)  ( a u)
+: comment
+   token  ( the comment end token to match)
    begin  2dup token  =while  string= until  2drop ^ then
           2drop 2drop 2drop ;
-: comment  token  (comment) ;
 : uncomment  new <:> \ ^ ;  ( create a noop word)
 
 
@@ -430,7 +427,7 @@ where nope is a placeholder for code to hide the newly created colon word.)
   **foobar** to skip tokens until it comes to a matching **foobar**!!)
 
 comment no-self-comments
-: make-comment  create  does>  body> >name  (comment) ;
+: make-comment  create  does> drop  untoken comment ;
 
 ( Here is one to get you started - good for block comments. It's 75
   characters long:)
@@ -1151,8 +1148,8 @@ forth
 : ."    char " parse ( a #)  type  ;  ( not compiled)
 
 ( Words that do something with each word being defined.)
-( hook into (new) ( by rewriting its first cell!)
-: being-defined  constant  does> @  [ ' (new) cell+ ]  ! ;
+( hook into new by rewriting its second cell!)
+: being-defined  constant  does> @  [ ' new cell+ cell+ ]  ! ;
 
 ( To warn of re-defining a word.)
 -: ( a u)  2dup current @ find if  out-channel preserve  >stderr
