@@ -58,7 +58,9 @@ hex
 : imm   char # emit  (u.) type ;  ( XXX radix? u. or . ?)
 : ,imm   comma  imm ;
 : i8     dup 0ff and ;
-: ,uoff8   i8  4 *  ,imm ;
+: woff>   ( woffset - offset)  2* 2* ;  ( word offset to byte offset)
+: hoff>   ( hoffset - offset)  2* ;  ( halfword offset to byte offset)
+: ,uwoff8   i8  woff>  ,imm ;
 
 ( #op takes an index, a string of ops, and a "width", and prints the op,
   but with *no* trailing whitespace.)
@@ -97,31 +99,34 @@ hex
 : .bx       dup 7 u>>  1 and  z" bx blx" .op3  RRm ;
 : .add-rh   dup 8 u>>  3 and  z" addcmpmov" .op3  RRdn  ,RRm ;
 
-( Address of value to load is offset 4 *  pc 4 + -4 and + )
-: >load-pc  ( word-offset)   4 *  |p@ 2 +  -4 and  +  dup ea ! ;
-: .ldr-pc   ." ldr    "  Rd8  ,[  i8 >load-pc  dup .u32  .]
-                              ."  = "  |@  .u32 ;
+( Address of value to load is: offset pc 4 + -4 and +
+  This calculates what ARM describe as ALIGN[PC, 4].)
+: >load-pc  ( byte-offset - addr)
+   |p@ 2 +  -4 and  + ;
+
+: .ldr-pc   ." ldr    "  Rd8  ,[  i8 woff> >load-pc  dup .u32  .]
+                              ."  = "  |@  dup ea !  .u32 ;
 
 : .str-r
    dup 9 u>> 7 and  z" str  strh strb ldrsbldr  ldrh ldrb ldrsh" .op5
    Rd  ,[  Rn  ,Rm  .] ;
 
 : >i5       dup  6 u>>  1f and ;
-: str/ldr   dup #11 u>>  1 and ;
+: L@        dup #11 bit@ ;
 : .Rn,i     ( op offset - op)   push  Rd  ,[  Rn  pop ,imm  .] ;
-: .strldr    str/ldr  z" str  ldr  " .op5 ;
 
-: .str-i5    .strldr                       >i5 4 *  .Rn,i ;
-: .strb-i5   str/ldr  z" strb ldrb " .op5  >i5      .Rn,i ;
-: .strh-i5   str/ldr  z" strh ldrh " .op5  >i5 2 *  .Rn,i ;
+: .str  ( Lbit)  z" str  ldr  " .op5 ;
+: .str-i5    L@    .str               >i5 woff>  .Rn,i ;
+: .strb-i5   L@  z" strb ldrb " .op5  >i5        .Rn,i ;
+: .strh-i5   L@  z" strh ldrh " .op5  >i5 hoff>  .Rn,i ;
 
-: .str-sp    .strldr  Rd8  ." , [ sp"  ,uoff8  .] ;
+: .str-sp    L@ .str   Rd8  ." , [ sp"  ,uwoff8  .] ;
 
-: .add-pc-i8   ." add    "  Rd8  str/ldr  if
-               ." , sp"  ,uoff8  ^  then
-               ." , pc"  ,uoff8  ."  = "  i8 >load-pc .u32 ;
+: .add-pc-i8   ." add    "  Rd8  L@  if
+               ." , sp"  ,uwoff8  ^  then
+               ." , pc"  ,uwoff8  ."  = "  i8 woff> >load-pc  dup ea !  .u32 ;
  
-: .add-sp-i7   dup 7 bit@  .addsub  ." sp"  7f and  ,uoff8 ;
+: .add-sp-i7   dup 7 bit@  .addsub  ." sp"  7f and  ,uwoff8 ;
 
 : .4way-rr  ( op z" - op)   over 6 u>>  3 and  swap .op5  Rd  ,Rn ;
 : .sxt   z" sxth sxtb uxth uxtb " .4way-rr ;
@@ -143,12 +148,12 @@ hex
 : .bkpt   ." bkpt   "  i8  imm ;
 : .hint   dup 4 u>>  0f and  z" nop  yieldwfe  wfi  sev  ???  ???  ???" .op5 ;
 
-: .stm    str/ldr  z" stmldm" .op3  Rd8 comma  0 .regmask8 ;
+: .stm    L@  z" stmldm" .op3  Rd8 comma  0 .regmask8 ;
 : .undef  ." undef  "  i8  imm ;
 : .svc    ." svc    "  i8  imm ;
 
 ( NOTE: |p is already ahead 2 bytes, so we only need to add 2 more to get pc+4.)
-: .branch-pc  ( hword-offset)   2*  |p@ 2 +  +  dup ea !  .u32 ;
+: .branch-pc  ( hword-offset)   hoff>  |p@ 2 +  +  dup ea !  .u32 ;
 
 : .cond  ( cc)
    0f and  z" beqbnebcsbccbmibplbvsbvcbhiblsbgebltbgtblebalbnv" .op3 ;
