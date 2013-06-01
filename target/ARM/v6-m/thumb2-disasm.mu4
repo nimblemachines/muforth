@@ -30,6 +30,8 @@ hex
 
 ( All the op printing words have the stack signature: op - op)
 
+variable prefetch-pc  ( points to _start_ of current instruction + 4 bytes!!)
+
 ( Useful punctuation.)
 : comma  ." , " ;
 : ,[     ." , [ " ;
@@ -99,10 +101,11 @@ hex
 : .bx       dup 7 bit@        z" bx blx"    .op3         RRm ;
 : .add-rh   dup 8 u>>  3 and  z" addcmpmov" .op3  RRdn  ,RRm ;
 
-( Address of value to load is: offset pc 4 + -4 and +
-  This calculates what ARM describe as ALIGN[PC, 4].)
+( Address of value to load is: pc 4 + -4 and +
+  This calculates what ARM describe as Align[PC, 4] + offset.
+  Remember: prefetch-pc variable holds PC+4!)
 : >load-pc  ( byte-offset - addr)
-   |p@ 2 +  -4 and  + ;
+   prefetch-pc @  -4 and  + ;
 
 : .ldr-pc   ." ldr    "  Rd8  ,[  i8 woff> >load-pc  dup .u32  .]
                               ."  = "  |@  dup ea !  .u32 ;
@@ -125,7 +128,7 @@ hex
 : .add-pc-i8   ." add    "  Rd8  L@  if
                ." , sp"  ,uwoff8  ^  then
                ." , pc"  ,uwoff8  ."  = "  i8 woff> >load-pc  dup ea !  .u32 ;
- 
+
 : .add-sp-i7   dup 7 bit@  .addsub  ." sp"  7f and  ,uwoff8 ;
 
 : .4way-rr  ( op z" - op)   over 6 u>>  3 and  swap .op5  Rd  ,Rn ;
@@ -155,8 +158,7 @@ hex
 : .undef  ." undef  "  i8  imm ;
 : .svc    ." svc    "  i8  imm ;
 
-( NOTE: |p is already ahead 2 bytes, so we only need to add 2 more to get pc+4.)
-: .branch-pc  ( hword-offset)   hoff>  |p@ 2 +  +  dup ea !  .u32 ;
+: .branch-pc  ( hword-offset)   hoff>  prefetch-pc @  +  dup ea !  .u32 ;
 
 : .cond  ( cc)
    0f and  z" beqbnebcsbccbmibplbvsbvcbhiblsbgebltbgtblebalbnv" .op3 ;
@@ -180,7 +182,6 @@ hex
    over #11 bit@  ( J2)  r@ xor  1 xor  #21 << ( I2 ditto)  +
    over #13 bit@  ( J1)  r@ xor  1 xor  #22 << ( I1 ditto)  +
    pop ( S)  if  [ 1 #23 << negate ] +  then
-   1- ( compensate for op2 fetch)
    ( hword offset)  .branch-pc ;
 
 : .bl  ( op - op)   ." bl     "  .bl-dest ;
@@ -238,7 +239,7 @@ defer shred32   ' shred32-v6m is shred32
 ( The workhorse.)
 : 1dis  ( a)
    dup  ea !  ( default ea: stay put)
-   dup .addr  .nesting space  |p!
+   dup .addr  .nesting space  dup |p!  4 + prefetch-pc !
              op*  ( op1) dup .op  dup thumb16? if
                                 6 spaces    shred16  else
       10 <<  op*  ( op2) dup .op  space  +  shred32  then
