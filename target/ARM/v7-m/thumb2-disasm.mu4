@@ -7,6 +7,9 @@
 
 hex
 
+( XXX TODO - put op in a variable so I don't have to worry about where it
+  is on the stack!! It's annoying.)
+
 ( 16 bit instructions.)
 : .cbz   dup #11 bit@  z" cbz  cbnz " .op5  Rd comma
    dup 3 u>> 1f and  over 9 bit@ 5 << + ( imm6)  .branch-pc ;
@@ -14,16 +17,31 @@ hex
 ( 32 bit instructions.)
 
 ( Define words for pulling out the 4-bit register fields.)
-: dotreg  constant ( shift)
-          does> @  ( op shift - op)  over swap u>>  0f and  .reg ;
+: reg4  constant ( shift)
+        does> @  ( op shift - op reg)  over swap u>>  0f and ;
 
-#16 dotreg Rn4
-#12 dotreg Rt4
-  8 dotreg Rd4
-  0 dotreg Rm4
+#16 reg4 Rn4
+#12 reg4 Rt4
+  8 reg4 Rd4
+  0 reg4 Rm4
 
-: ,Rn4  comma Rn4 ;
-: ,Rm4  comma Rm4 ;
+: .Rn4   Rn4 .reg ;
+: .Rt4   Rt4 .reg ;
+: .Rd4   Rd4 .reg ;
+: .Rm4   Rm4 .reg ;
+
+: ,Rn4   comma .Rn4 ;
+: ,Rd4   comma .Rd4 ;
+: ,Rm4   comma .Rm4 ;
+
+: hi-P@  ( op - Pbit)  #24 bit@ ;
+: hi-U@  ( op - Ubit)  #23 bit@ ;
+: hi-W@  ( op - Wbit)  #21 bit@ ;
+: hi-L@  ( op - Lbit)  #20 bit@ ;
+
+: lo-P@  ( op - Pbit)  #10 bit@ ;
+: lo-U@  ( op - Ubit)    9 bit@ ;
+: lo-W@  ( op - Wbit)    8 bit@ ;
 
 : 0n0n  ( n - 0n0n)  ( take 8 bit number; replicate into 32 bits)
    dup #16 << + ;
@@ -49,15 +67,15 @@ hex
 ( This is complicated because there are versions of various instructions
   that don't have an Rd - Rd=1111 - or don't have an Rn - Rn=1111.)
 
-: .tst.w   ." tst    "  Rn4 ;
-: .teq.w   ." teq    "  Rn4 ;
-: .cmn.w   ." cmn    "  Rn4 ;
-: .cmp.w   ." cmp    "  Rn4 ;
+: .tst.w   ." tst    "  .Rn4 ;
+: .teq.w   ." teq    "  .Rn4 ;
+: .cmn.w   ." cmn    "  .Rn4 ;
+: .cmp.w   ." cmp    "  .Rn4 ;
 
 : S.w  ( op - op S)  dup #20 bit@ ;
 
 : .mov.w   ( op - op)
-   S.w  over #21 bit@  z" movmvn" .op3?s  Rd4 ;
+   S.w  over #21 bit@  z" movmvn" .op3?s  .Rd4 ;
 
 : .alu-op  ( op - op f)
    01f0_0f00 0010_0f00 match .tst.w  ( and, S=1, Rd=pc)
@@ -66,7 +84,7 @@ hex
    01f0_0f00 01b0_0f00 match .cmp.w  ( sub, S=1, Rd=pc)
    01cf_0000 004f_0000 match .mov.w  ( mov/mvn == orr/orn, Rn=pc)
    S.w  over #21 u>> 0f and ( aluop)
-   z" andbicorrorneor?????????add???adcsbc???subrsb???" .op3?s  Rd4 ,Rn4  0 ;
+   z" andbicorrorneor?????????add???adcsbc???subrsb???" .op3?s  .Rd4 ,Rn4  0 ;
 
 : .alu-shifted-reg-imm   .alu-op  drop  .imm-shift ;
 : .alu-modified-imm      .alu-op  drop  thumb-expand-imm  ,imm ;
@@ -80,17 +98,12 @@ hex
 : .push.w  ." push   "  .reglist16 ;
 
 : .stm.w  ( op z" - op)
-   over #20 bit@  swap .op5  
-   Rn4  dup #21 bit@ ( W)  if  char ! emit  then
+   over hi-L@  swap .op5
+   .Rn4  dup hi-W@  if  char ! emit  then
    comma  .reglist16 ;
 
 : .stmia.w   z" stmialdmia" .stm.w ;
 : .stmdb.w   z" stmdbldmdb" .stm.w ;
-
-: .undef.w
-   ." undef  "
-   dup         0fff and
-   over #16 u>>  0f and  #12 << +  imm ;
 
 
 ( The description of bcond.w in the v7-m architecture manual is incomplete!
@@ -114,31 +127,218 @@ hex
 
 : .bra.w   ." b      "  .bl-dest ;
 
+: imm1:3:8  ( op - op imm)  ( i:imm3:imm8)
+   dup          0ff and            ( imm8)
+   over #12 u>>   7 and    8 << +  ( imm3)
+   over #26 bit@         #11 << +  ( i) ;
+
+: imm4:1:3:8  ( op - op imm)  ( imm4:i:imm3:imm8)
+   imm1:3:8  over #16 u>>  0f and  #12 << +  ( imm4) ;
+
+( movw and movt)
+: .movw
+   dup #23 bit@  z" movw movt " .op5  .Rd4  imm4:1:3:8  ,imm ;
+
+: pc4?   Rn4 0f = ;
+: .2op-i12   .Rd4  ,Rn4  imm1:3:8  dup ,imm
+             pc4? if  ."  = "  >load-pc .u32  ^  then  drop ;
+
+: .add-i12   ." add    "  .2op-i12 ;
+: .sub-i12   ." sub    "  .2op-i12 ;
+
+: imm3:2  ( op - op imm5)
+   dup    6 u>>  3 and
+   over #12 u>>  7 and  2 << + ;
+
+: .sbfx
+   dup #23 bit@  z" sbfx ubfx" .op5  .Rd4  ,Rn4
+   imm3:2      ,imm  ( #lsb)   dup 1f and                 1+ ,imm  ( #width) ;
+
+: .bitfield
+   imm3:2  dup ,imm  ( #lsb)  over 1f and  ( msb)  swap - 1+ ,imm  ( #width) ;
+
+: .bfi   ." bfi    "  .Rd4  ,Rn4  .bitfield ;
+: .bfc   ." bfc    "  .Rd4        .bitfield ;
+
+: .undef.w
+   ." undef  "
+   dup         0fff and
+   over #16 u>>  0f and  #12 << +  imm ;
+
+
+: .single   Rt4  1 swap << .reglist ;
+: .pop.w-single    ." pop    "   .single ;
+: .push.w-single   ." push   "   .single ;
+
+
+( F8 and F9 - ldr/str - opcodes, if not pc-rel, have three possible formats
+  for the memory operand:
+   - shifted reg - Rm
+   - immed 8, with up/down, add/sub, and writeback/nowb
+   - immed 12 - add only
+  Because of the odd way that strt/ldrt are encoded, the offset immed 8
+  style can only specify negative offsets. Otherwise a strt/ldrt instr is
+  encoded.)
+
+: +-index   ( offset Ubit - offset')   1- if  negate  then ;
+: ,index-imm  ( offset Ubit)   +-index  ,imm ;
+
+: .index-woup   ( Wbit offset Ubit Pbit op)
+   ,[  .Rn4 drop
+   ( P=index) if  ,index-imm  .]
+      ( W=writeback) if  char ! emit  then  ^  then
+   .]  ,index-imm  drop ( Wbit) ;
+
+: .index-i8  ( op - op)
+   i8  ( op offset)  over push ( op)
+   r@ lo-W@  swap  r@ lo-U@  r@ lo-P@  pop ( op Wbit offset Ubit Pbit op)
+   .index-woup ;
+
+: .index-dual-i8  ( op - op)
+   i8 woff>  ( op offset)  over push ( op)
+   r@ hi-W@  swap  r@ hi-U@  r@ hi-P@  pop ( op Wbit offset Ubit Pbit op)
+   .index-woup ;
+
+: ,index-shift   dup 4 u>>  3 and  =if  ." , lsl "  imm  ^  then  drop ;
+: .index-reg   ,[  .Rn4  ,Rm4  ,index-shift  .] ;
+
+: imm12   dup 0fff and ;
+
+: .index-i12   ,[  .Rn4  imm12 ,imm  .] ;
+
+: .index.w
+   dup    hi-U@ if  .index-i12  ^  then
+   dup #11 bit@ if  .index-i8  ^  then
+                    .index-reg ;
+
+: .tbb  ( table branch - tbb and tbh)
+   dup 4 bit@  z" tbbtbh" .op3  .index-reg ;
+
+: .pc-i12
+   imm12  over hi-U@  +-index
+   ,[  >load-pc  dup .u32  .]  ."  = "  |@  dup ea !  .u32 ;
+
+: .pc-dual-i8
+   i8 woff>  over hi-U@  +-index
+   ,[  >load-pc  dup .u32  .]  ."  = "  dup |@ .u32  comma  4 +  |@ .u32 ;
+
+: .index-ex-i8   dup push  .Rt4  i8 woff>  0 swap  1 1  pop .index-woup ;
+: .strex-i8  ( word-offset)   ." strex  "  .Rd4  comma  .index-ex-i8 ;
+: .ldrex-i8  ( word-offset)   ." ldrex  "               .index-ex-i8 ;
+
+: .exbh   ( op z")  over 4 bit@  swap  6 #op space ;
+: .index-exb   dup push  .Rt4  0 0 1 1  pop .index-woup ;
+
+: .strexb    z" strexbstrexh"  .exbh  .Rd4  comma  .index-exb ;
+: .ldrexb    z" ldrexbldrexh"  .exbh               .index-exb ;
+
+( Odd: ldrd with PC offset has to be _executed_ at a PC with the two low
+  bits = 00, otherwise the instruction is unpredictable! NOTE ALSO: We
+  calculate the offset from the PC, _not_ from ALIGN[PC, 4] - ie, load-pc.)
+
+: .ldrd.w-pc  ( word-offset)
+                   ." ldrd   "    .Rt4  ,Rd4  .pc-dual-i8 ;
+
+: .strd.w     ( strd ldrd)
+   dup hi-L@  z" strd ldrd" .op5  .Rt4  ,Rd4  .index-dual-i8 ;
+
+
+: .pld   dup #24 bit@  z" pldpli" .op3 ;
+: .pld-pc      ( pld pli literal - ldrb/ldrsb encoding)
+   .pld  .pc-i12 ;
+
+: .pld.w  ( pld pli - ldrb/ldrsb encoding)
+   .pld  .index.w ;
+
+: .ldr.w-pc
+   dup #21 u>>  3 and  z" ldrb ldrh ldr  ldr??" .op5  .Rt4  .pc-i12 ;
+
+: .ldrs   dup hi-W@  z" ldrsbldrsh" .op5  .Rt4 ;
+: .ldrsb.w-pc  ( ldrsb ldrh)  ( signed literal loads)
+   .ldrs  .pc-i12 ;
+
+(    0     1     2     3     4     5     6     7
+   strb  ldrb  strh  ldrh  str   ldr   inval inval)
+: str.w-op  ( op - op size+load)   dup #20 u>>  7 and ;
+
+: .strt-i8    ( strt strbt strht ldrt ldrbt ldrht)
+   str.w-op  z" strbtldrbtstrhtldrhtstrt ldrt strt?ldrt?" .op5
+   .Rt4  .index-i8 ;
+
+: .ldrsbt-i8  ( ldrsbt ldrsht)
+   dup #21 bit@  z" ldrsbtldrsht" 6 #op  space
+   .Rt4  .index-i8 ;
+
+: .str.w    ( str strb strh ldr ldrb ldrh)
+   str.w-op  z" strb ldrb strh ldrh str  ldr  str??ldr??" .op5
+   .Rt4  .index.w ;
+
+: .ldrsb.w  ( ldrsb ldrsh)
+   .ldrs  .index.w ;
+
+: *unimplemented*  ." *unimplemented*" ;
+
+
 ( Disassemble the v7-m instructions that aren't in v6-m.)
 : shred16-v7m  ( op - op)
-   ( First try the v6-m code.)
-   shred16-v6m  =if  ( matched)  ^  then  drop
-
-   ( All the 16-bit v7m instructions!)
+   ( First try the 16-bit v7-m instructions:)
    f500 b100 match  .cbz  ( cbz cbnz)
-   0  ( no match) ;
+
+   ( No match; try the v6-m code.)
+   shred16-v6m ;
 
 : shred32-v7m  ( op - op)
-   ( First try the v6-m code.)
-   shred32-v6m  =if  ( matched)  ^  then  drop
-
-   ( All the 32-bit v7-m instructions!)
-   fe00_8000 ea00_0000 match  .alu-shifted-reg-imm
-   fa00_8000 f000_0000 match  .alu-modified-imm
+   ( First try the 32-bit v7-m instructions:)
    ffff_0000 e8bd_0000 match  .pop.w
    ffff_0000 e92d_0000 match  .push.w
    ffc0_0000 e880_0000 match  .stmia.w
    ffc0_0000 e900_0000 match  .stmdb.w
-   fff0_f000 f7f0_a000 match  .undef.w
+
+   fff0_ffe0 e8d0_f000 match  .tbb  ( tbb tbh)
+
+   fff0_0f00 e850_0f00 match  .ldrex-i8  ( word offset)
+   fff0_0fef e8d0_0f4f match  .ldrexb    ( ldrexb ldrexh - zero offset)
+
+   fff0_0000 e840_0000 match  .strex-i8  ( word offset)
+   fff0_0fe0 e8c0_0f40 match  .strexb    ( strexb strexh - zero offset)
+
+   fe7f_0000 e85f_0000 match  .ldrd.w-pc  ( word offset)
+   fe50_0000 e840_0000 match  .strd.w     ( strd ldrd)
+
+   fe00_8000 ea00_0000 match  .alu-shifted-reg-imm
+   fa00_8000 f000_0000 match  .alu-modified-imm
    fb80_d000 f380_8000 match  NYI
    f800_d000 f000_8000 match  .bcond.w
    f800_d000 f000_9000 match  .bra.w
-   0  ( no match) ;
+   fbf0_8000 f200_0000 match  .add-i12
+   fb70_8000 f240_0000 match  .movw   ( movw movt)
+   fbf0_8000 f2a0_0000 match  .sub-i12
+   ff70_8020 f340_0000 match  .sbfx   ( sbfx ubfx)
+   ffff_8020 f36f_0000 match  .bfc
+   fff0_8020 f360_0000 match  .bfi
+   fff0_f000 f7f0_a000 match  .undef.w
+
+   fe60_0000 f860_0000 match  *unimplemented*  ( size bits = 11)
+
+   fe7f_f000 f81f_f000 match  .pld-pc      ( pld pli literal - ldrb/ldrsb encoding)
+   ff1f_0000 f81f_0000 match  .ldr.w-pc    ( ldr ldrh ldrb)  ( literal loads)
+   ff5f_0000 f91f_0000 match  .ldrsb.w-pc  ( ldrsb ldrsh)  ( signed literal loads)
+
+   fe70_f000 f810_f000 match  .pld.w  ( pld pli - ldrb/ldrsb encoding)
+
+   ffff_0fff f85d_0b04 match  .pop.w-single    ( ldr-i8 encoding)
+   ffff_0fff f84d_0d04 match  .push.w-single   ( str-i8 encoding)
+
+   ( XXX break out the "t" opcodes separately? Or fold into .str.w below?)
+   ff80_0f00 f800_0e00 match  .strt-i8    ( strt strbt strht ldrt ldrbt ldrht)
+   ffd0_0f00 f910_0e00 match  .ldrsbt-i8  ( ldrsbt ldrsht)
+
+   ff00_0000 f800_0000 match  .str.w    ( str strb strh ldr ldrb ldrh)
+   ff50_0000 f910_0000 match  .ldrsb.w  ( ldrsb ldrsh)
+
+   ( No match; try the v6-m code.)
+   shred32-v6m ;
+
 
 ' shred16-v7m  is shred16
 ' shred32-v7m  is shred32
