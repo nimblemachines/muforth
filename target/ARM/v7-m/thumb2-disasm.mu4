@@ -43,12 +43,27 @@ hex
 : lo-U@  ( op - Ubit)    9 bit@ ;
 : lo-W@  ( op - Wbit)    8 bit@ ;
 
+( Extracting various immediate values.)
+: imm1:3,8  ( op - op i:imm3 imm8)
+   dup   #12 u>>  7 and     ( imm3)
+   over  #26 bit@   3 << +  ( i:imm3)
+   over         0ff and     ( imm8) ;
+
+: imm1:3:8  ( op - op i:imm3:imm8)   imm1:3,8  hilo> ;
+
+: imm4:1:3:8  ( op - op imm4:i:imm3:imm8)
+   imm1:3:8  swap Rn4  #12 << ( imm4)  rot + ;
+
+: imm3:2  ( op - op imm5)
+   dup    6 u>>  3 and
+   over #12 u>>  7 and  2 << + ;
+
 : 0n0n  ( n - 0n0n)  ( take 8 bit number; replicate into 32 bits)
    dup #16 << + ;
 
 : thumb-expand-imm  ( op - op imm32)
-   dup 0ff and  push
-   dup #12 u>> 7 and  over #26 bit@  3 << +  ( hi4)
+   imm1:3,8  push ( imm8)
+   ( hi4)
    dup 0=  if  drop  pop                     ( 000n)  ^  then
    dup 1 = if  drop  pop  0n0n               ( 0n0n)  ^  then
    dup 2 = if  drop  pop  0n0n      8 <<     ( n0n0)  ^  then
@@ -60,7 +75,7 @@ hex
 ( XXX is this the same for reg-spec'd shift amounts?)
 : .imm-shift  ( op - op)
    ,Rm4 space
-   dup 6 u>>  3 and  over #12 u>>  7 and +  ( imm5 = shift amount)
+   imm3:2 ( imm5 = shift amount)
    over 4 u>>  3 and  dup 3 u< if  4 * z" lsl lsr asl " + 4 type  imm  ^  then
    drop ( type)  =if  ." rrx"  drop  ^  then  ." ror "  imm ;
 
@@ -126,14 +141,6 @@ hex
 
 : .bra.w   ." b      "  .bl-dest ;
 
-: imm1:3:8  ( op - op imm)  ( i:imm3:imm8)
-   dup          0ff and            ( imm8)
-   over #12 u>>   7 and    8 << +  ( imm3)
-   over #26 bit@         #11 << +  ( i) ;
-
-: imm4:1:3:8  ( op - op imm)  ( imm4:i:imm3:imm8)
-   imm1:3:8  over #16 u>>  0f and  #12 << +  ( imm4) ;
-
 ( movw and movt)
 : .movw
    dup #23 bit@  z" movw movt " .op5  .Rd4  imm4:1:3:8  ,imm ;
@@ -144,10 +151,6 @@ hex
 
 : .add-i12   ." add    "  .2op-i12 ;
 : .sub-i12   ." sub    "  .2op-i12 ;
-
-: imm3:2  ( op - op imm5)
-   dup    6 u>>  3 and
-   over #12 u>>  7 and  2 << + ;
 
 : .sbfx
    dup #23 bit@  z" sbfx ubfx" .op5  .Rd4  ,Rn4
