@@ -41,39 +41,41 @@ variable prefetch-pc  ( points to _start_ of current instruction + 4 bytes!!)
 
 ( Useful punctuation.)
 : comma  ." , " ;
-: ,[     ." , [ " ;
+: .[     ." [ " ;
 : .]     ."  ]" ;
+
+( #op takes an index, a string of ops, and a "width", and prints the op,
+  but with *no* trailing whitespace.)
+: #op  ( index z" width)  push  swap r@ *  +  pop type ;
 
 : .reg  ( reg)
    radix preserve decimal
    0f and  dup 0d u< if  char r emit  (u.) type  ^  then
-   0d - 2*  z" splrpc" +  2 type ;
+   0d - z" splrpc" 2 #op ;
 
 : 4#   # # # # ;
 : .u32  radix preserve hex  <# 4#  char _ hold  4# #> type ;
 
 ( NOTE: Rn shifts by 3; Rm shifts by 6, but RRm shifts by 3 - acts like Rn.)
 : 00r   7 and  .reg ;
-:  Rd          dup         00r ;
-:  Rn          dup  3 u>>  00r ;
-: ,Rn   comma  Rn ;
-: ,Rm   comma  dup  6 u>>  00r ;
-:  Rd8         dup  8 u>>  00r ;
-:  RRdn        dup  4 u>>  8 and  over 7 and  or  .reg ;
-:  RRm         dup  3 u>> 0f and                  .reg ;
-: ,RRm  comma  RRm ;
+: Rd    dup         00r ;
+: Rn    dup  3 u>>  00r ;
+: Rm    dup  6 u>>  00r ;
+: Rd8   dup  8 u>>  00r ;
+: RRdn  dup  4 u>>  8 and  over 7 and  or  .reg ;
+: RRm   dup  3 u>> 0f and                  .reg ;
 
-: .r3   Rd  ,Rn  ,Rm ;
+( Shortcuts)
+: Rd,   Rd comma ;
+: Rn,   Rn comma ;
+: Rd8,  Rd8 comma ;
+
+: .r3   Rd,  Rn,  Rm ;
 : imm   char # emit  (u.) type ;  ( XXX radix? u. or . ?)
-: ,imm   comma  imm ;
 : i8     dup 0ff and ;
 : woff>   ( woffset - offset)  2* 2* ;  ( word offset to byte offset)
 : hoff>   ( hoffset - offset)  2* ;  ( halfword offset to byte offset)
-: ,uwoff8   i8  woff>  ,imm ;
-
-( #op takes an index, a string of ops, and a "width", and prints the op,
-  but with *no* trailing whitespace.)
-: #op  ( index z" width)  push  swap r@ *  +  pop type ;
+: uwoff8   i8  woff>  imm ;
 
 ( _op3 assumes each string takes 3 bytes; adds no following whitespace)
 : _op3  ( index z")  3 #op ;
@@ -95,18 +97,18 @@ variable prefetch-pc  ( points to _start_ of current instruction + 4 bytes!!)
 
 : .4way-i   ( op z" - op)  over #11 u>> 3 and  swap .op3s ;
 : .sh-i
-   z" lsllsrasr???" .4way-i  Rd  ,Rn  dup 6 u>> 1f and  ,imm ;
+   z" lsllsrasr???" .4way-i  Rd,  Rn,  dup 6 u>> 1f and  imm ;
 
 : .add-r3   1 ( S)  over 9 bit@  .addsub  .r3 ;
-: .add-i3   1 ( S)  over 9 bit@  .addsub  Rd  ,Rn  dup 6 u>>  7 and  ,imm ;
-: .mov-i8   z" movcmpaddsub" .4way-i  Rd8  i8 ,imm ;
+: .add-i3   1 ( S)  over 9 bit@  .addsub  Rd,  Rn,  dup 6 u>>  7 and  imm ;
+: .mov-i8   z" movcmpaddsub" .4way-i  Rd8,  i8 imm ;
 
 : .alu
    dup 6 u>> 0f and
-   z" andeorlsllsrasradcsbcrortstnegcmpcmnorrmulbicmvn" .op3s  Rd  ,Rn ;
+   z" andeorlsllsrasradcsbcrortstnegcmpcmnorrmulbicmvn" .op3s  Rd,  Rn ;
 
-: .bx       dup 7 bit@        z" bx blx"    .op3         RRm ;
-: .add-rh   dup 8 u>>  3 and  z" addcmpmov" .op3  RRdn  ,RRm ;
+: .bx       dup 7 bit@        z" bx blx"    .op3              RRm ;
+: .add-rh   dup 8 u>>  3 and  z" addcmpmov" .op3  RRdn comma  RRm ;
 
 ( Address of value to load is: pc 4 + -4 and +
   This calculates what ARM describe as Align[PC, 4] + offset.
@@ -114,32 +116,32 @@ variable prefetch-pc  ( points to _start_ of current instruction + 4 bytes!!)
 : >load-pc  ( byte-offset - addr)
    prefetch-pc @  -4 and  + ;
 
-: .ldr-pc   ." ldr    "  Rd8  ,[  i8 woff> >load-pc  dup .u32  .]
-                              ."  = "  |@  dup set-ea  .u32 ;
+: .ldr-pc   ." ldr    "  Rd8,  .[  i8 woff> >load-pc  dup .u32  .]
+                               ."  = "  |@  dup set-ea  .u32 ;
 
 : .str-r
    dup 9 u>> 7 and  z" str  strh strb ldrsbldr  ldrh ldrb ldrsh" .op5
-   Rd  ,[  Rn  ,Rm  .] ;
+   Rd,  .[  Rn,  Rm  .] ;
 
 : >i5       dup  6 u>>  1f and ;
 : L@        dup #11 bit@ ;
-: .Rn,i     ( op offset - op)   push  Rd  ,[  Rn  pop ,imm  .] ;
+: .Rn,i     ( op offset - op)   push  Rd,  .[  Rn,  pop imm  .] ;
 
 : .str  ( Lbit)  z" str  ldr  " .op5 ;
 : .str-i5    L@    .str               >i5 woff>  .Rn,i ;
 : .strb-i5   L@  z" strb ldrb " .op5  >i5        .Rn,i ;
 : .strh-i5   L@  z" strh ldrh " .op5  >i5 hoff>  .Rn,i ;
 
-: .str-sp    L@ .str   Rd8  ." , [ sp"  ,uwoff8  .] ;
+: .str-sp    L@ .str   Rd8,  ." [ sp, "  uwoff8  .] ;
 
-: .add-pc-i8   ." add    "  Rd8  L@  if
-               ." , sp"  ,uwoff8  ^  then
-               ." , pc"  ,uwoff8  ."  = "  i8 woff> >load-pc  dup set-ea  .u32 ;
+: .add-pc-i8   ." add    "  Rd8,  L@  if
+               ." sp, "  uwoff8  ^  then
+               ." pc, "  uwoff8  ."  = "  i8 woff> >load-pc  dup set-ea  .u32 ;
 
 ( These should *not* have s suffix.)
-: .add-sp-i7   0 ( S)  over 7 bit@  .addsub  ." sp"  7f and  ,uwoff8 ;
+: .add-sp-i7   0 ( S)  over 7 bit@  .addsub  ." sp, "  7f and  uwoff8 ;
 
-: .4way-rr  ( op z" - op)   over 6 u>>  3 and  swap .op5  Rd  ,Rn ;
+: .4way-rr  ( op z" - op)   over 6 u>>  3 and  swap .op5  Rd,  Rn ;
 : .sxt   z" sxth sxtb uxth uxtb " .4way-rr ;
 : .rev   z" rev  rev16???  revsh" .4way-rr ;
 
@@ -162,7 +164,7 @@ variable prefetch-pc  ( points to _start_ of current instruction + 4 bytes!!)
 : .bkpt   ." bkpt   "  i8  imm ;
 : .hint   dup 4 u>>  0f and  z" nop  yieldwfe  wfi  sev  ???  ???  ???  " .op5 ;
 
-: .stm    L@  z" stmldm" .op3  Rd8 comma  0 .regmask8 ;
+: .stm    L@  z" stmldm" .op3  Rd8,  0 .regmask8 ;
 : .undef  ." undef  "  i8  imm ;
 : .svc    ." svc    "  i8  imm ;
 

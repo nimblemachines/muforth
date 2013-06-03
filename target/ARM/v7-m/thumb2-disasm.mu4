@@ -30,9 +30,11 @@ hex
 : .Rd4   Rd4 .reg ;
 : .Rm4   Rm4 .reg ;
 
-: ,Rn4   comma .Rn4 ;
-: ,Rd4   comma .Rd4 ;
-: ,Rm4   comma .Rm4 ;
+: .Rn4,  .Rn4 comma ;
+: .Rt4,  .Rt4 comma ;
+: .Rd4,  .Rd4 comma ;
+
+: ,imm   comma imm ;
 
 : hi-P@  ( op - Pbit)  #24 bit@ ;
 : hi-U@  ( op - Ubit)  #23 bit@ ;
@@ -74,7 +76,7 @@ hex
 
 ( XXX is this the same for reg-spec'd shift amounts?)
 : .imm-shift  ( op - op)
-   ,Rm4 space
+   .Rm4 comma  ( was space)
    imm3:2 ( imm5 = shift amount)
    over 4 u>>  3 and  dup 3 u< if  4 * z" lsl lsr asl " + 4 type  imm  ^  then
    drop ( type)  =if  ." rrx"  drop  ^  then  ." ror "  imm ;
@@ -82,27 +84,27 @@ hex
 ( This is complicated because there are versions of various instructions
   that don't have an Rd - Rd=1111 - or don't have an Rn - Rn=1111.)
 
-: .tst.w   ." tst    "  .Rn4 ;
-: .teq.w   ." teq    "  .Rn4 ;
-: .cmn.w   ." cmn    "  .Rn4 ;
-: .cmp.w   ." cmp    "  .Rn4 ;
+: .tst.w   ." tst    "  .Rn4, ;
+: .teq.w   ." teq    "  .Rn4, ;
+: .cmn.w   ." cmn    "  .Rn4, ;
+: .cmp.w   ." cmp    "  .Rn4, ;
 
 : S.w  ( op - op S)  dup #20 bit@ ;
 
 : .mov.w   ( op - op)
-   S.w  over #21 bit@  z" movmvn" .op3?s  .Rd4 ;
+   S.w  over #21 bit@  z" movmvn" .op3?s  .Rd4, ;
 
-: .alu-op  ( op - op f)
+: .alu-op  ( op - op matched)
    01f0_0f00 0010_0f00 match .tst.w  ( and, S=1, Rd=pc)
    01f0_0f00 0090_0f00 match .teq.w  ( eor, S=1, Rd=pc)
    01f0_0f00 0110_0f00 match .cmn.w  ( add, S=1, Rd=pc)
    01f0_0f00 01b0_0f00 match .cmp.w  ( sub, S=1, Rd=pc)
    01cf_0000 004f_0000 match .mov.w  ( mov/mvn == orr/orn, Rn=pc)
    S.w  over #21 u>> 0f and ( aluop)
-   z" andbicorrorneor?????????add???adcsbc???subrsb???" .op3?s  .Rd4 ,Rn4  0 ;
+   z" andbicorrorneor?????????add???adcsbc???subrsb???" .op3?s  .Rd4,  .Rn4,  0 ;
 
 : .alu-shifted-reg-imm   .alu-op  drop  .imm-shift ;
-: .alu-modified-imm      .alu-op  drop  thumb-expand-imm  ,imm ;
+: .alu-modified-imm      .alu-op  drop  thumb-expand-imm  imm ;
 
 ( Placeholder for ops that have to be matched, so that following ops don't
   match, but that are not yet fleshed out.)
@@ -143,24 +145,24 @@ hex
 
 ( movw and movt)
 : .movw
-   dup #23 bit@  z" movw movt " .op5  .Rd4  imm4:1:3:8  ,imm ;
+   dup #23 bit@  z" movw movt " .op5  .Rd4,  imm4:1:3:8  imm ;
 
 : pc4?   Rn4 0f = ;
-: .2op-i12   .Rd4  ,Rn4  imm1:3:8  dup ,imm
+: .2op-i12   .Rd4,  .Rn4,  imm1:3:8  dup imm
              pc4? if  ."  = "  >load-pc .u32  ^  then  drop ;
 
 : .addw   ." addw   "  .2op-i12 ;
 : .subw   ." subw   "  .2op-i12 ;
 
 : .sbfx
-   dup #23 bit@  z" sbfx ubfx " .op5  .Rd4  ,Rn4
-   imm3:2      ,imm  ( #lsb)   dup 1f and                 1+ ,imm  ( #width) ;
+   dup #23 bit@  z" sbfx ubfx " .op5  .Rd4,  .Rn4,
+   imm3:2      imm  ( #lsb)   dup 1f and                 1+ ,imm  ( #width) ;
 
 : .bitfield
-   imm3:2  dup ,imm  ( #lsb)  over 1f and  ( msb)  swap - 1+ ,imm  ( #width) ;
+   imm3:2  dup imm  ( #lsb)  over 1f and  ( msb)  swap - 1+ ,imm  ( #width) ;
 
-: .bfi   ." bfi    "  .Rd4  ,Rn4  .bitfield ;
-: .bfc   ." bfc    "  .Rd4        .bitfield ;
+: .bfi   ." bfi    "  .Rd4,  .Rn4,  .bitfield ;
+: .bfc   ." bfc    "  .Rd4,         .bitfield ;
 
 : .undef.w
    ." undef  "
@@ -186,7 +188,7 @@ hex
 : ,index-imm  ( offset Ubit)   +-index  ,imm ;
 
 : .index-woup   ( Wbit offset Ubit Pbit op)
-   ,[  .Rn4 drop
+   .[  .Rn4 drop
    ( P=index) if  ,index-imm  .]
       ( W=writeback) if  char ! emit  then  ^  then
    .]  ,index-imm  drop ( Wbit) ;
@@ -202,11 +204,11 @@ hex
    .index-woup ;
 
 : ,index-shift   dup 4 u>>  3 and  =if  ." , lsl "  imm  ^  then  drop ;
-: .index-reg   ,[  .Rn4  ,Rm4  ,index-shift  .] ;
+: .index-reg   .[  .Rn4,  .Rm4  ,index-shift  .] ;
 
 : imm12   dup 0fff and ;
 
-: .index-i12   ,[  .Rn4  imm12 ,imm  .] ;
+: .index-i12   .[  .Rn4,  imm12 imm  .] ;
 
 : .index.w
    dup    hi-U@ if  .index-i12  ^  then
@@ -218,11 +220,11 @@ hex
 
 : .pc-i12
    imm12  over hi-U@  +-index
-   ,[  >load-pc  dup .u32  .]  ."  = "  |@  dup set-ea  .u32 ;
+   .[  >load-pc  dup .u32  .]  ."  = "  |@  dup set-ea  .u32 ;
 
 : .pc-dual-i8
    i8 woff>  over hi-U@  +-index
-   ,[  >load-pc  dup .u32  .]  ."  = "  dup |@ .u32  comma  4 +  |@ .u32 ;
+   .[  >load-pc  dup .u32  .]  ."  = "  dup |@ .u32  comma  4 +  |@ .u32 ;
 
 : .index-ex-i8   dup push  .Rt4  i8 woff>  0 swap  1 1  pop .index-woup ;
 : .strex-i8  ( word-offset)   ." strex  "  .Rd4  comma  .index-ex-i8 ;
@@ -239,10 +241,10 @@ hex
   calculate the offset from the PC, _not_ from ALIGN[PC, 4] - ie, load-pc.)
 
 : .ldrd.w-pc  ( word-offset)
-                   ." ldrd   "    .Rt4  ,Rd4  .pc-dual-i8 ;
+                   ." ldrd   "    .Rt4,  .Rd4,  .pc-dual-i8 ;
 
 : .strd.w     ( strd ldrd)
-   dup hi-L@  z" strd ldrd" .op5  .Rt4  ,Rd4  .index-dual-i8 ;
+   dup hi-L@  z" strd ldrd" .op5  .Rt4,  .Rd4,  .index-dual-i8 ;
 
 
 : .pld   dup #24 bit@  z" pldpli" .op3 ;
@@ -253,9 +255,9 @@ hex
    .pld  .index.w ;
 
 : .ldr.w-pc
-   dup #21 u>>  3 and  z" ldrb ldrh ldr  ldr??" .op5  .Rt4  .pc-i12 ;
+   dup #21 u>>  3 and  z" ldrb ldrh ldr  ldr??" .op5  .Rt4,  .pc-i12 ;
 
-: .ldrs   dup hi-W@  z" ldrsbldrsh" .op5  .Rt4 ;
+: .ldrs   dup hi-W@  z" ldrsbldrsh" .op5  .Rt4, ;
 : .ldrsb.w-pc  ( ldrsb ldrh)  ( signed literal loads)
    .ldrs  .pc-i12 ;
 
@@ -265,15 +267,15 @@ hex
 
 : .strt-i8    ( strt strbt strht ldrt ldrbt ldrht)
    str.w-op  z" strbtldrbtstrhtldrhtstrt ldrt strt?ldrt?" .op5
-   .Rt4  .index-i8 ;
+   .Rt4,  .index-i8 ;
 
 : .ldrsbt-i8  ( ldrsbt ldrsht)
    dup #21 bit@  z" ldrsbtldrsht" 6 #op  space
-   .Rt4  .index-i8 ;
+   .Rt4,  .index-i8 ;
 
 : .str.w    ( str strb strh ldr ldrb ldrh)
    str.w-op  z" strb ldrb strh ldrh str  ldr  str??ldr??" .op5
-   .Rt4  .index.w ;
+   .Rt4,  .index.w ;
 
 : .ldrsb.w  ( ldrsb ldrsh)
    .ldrs  .index.w ;
