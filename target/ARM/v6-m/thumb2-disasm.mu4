@@ -57,13 +57,16 @@ variable prefetch-pc  ( points to _start_ of current instruction + 4 bytes!!)
 : .u32  radix preserve hex  <# 4#  char _ hold  4# #> type ;
 
 ( NOTE: Rn shifts by 3; Rm shifts by 6, but RRm shifts by 3 - acts like Rn.)
-: 00r   7 and  .reg ;
-: Rd    dup         00r ;
-: Rn    dup  3 u>>  00r ;
-: Rm    dup  6 u>>  00r ;
-: Rd8   dup  8 u>>  00r ;
-: RRdn  dup  4 u>>  8 and  over 7 and  or  .reg ;
-: RRm   dup  3 u>> 0f and                  .reg ;
+:  00r   7 and ;
+: .00r   00r  .reg ;
+
+: Rd    dup         .00r ;
+: Rn    dup  3 u>>  .00r ;
+: Rm    dup  6 u>>  .00r ;
+: Rd8@  dup  8 u>>   00r ;
+: Rd8   Rd8@        .reg ;
+: RRdn  dup  4 u>>  8 and  over 00r  or  .reg ;
+: RRm   dup  3 u>> 0f and                .reg ;
 
 ( Shortcuts)
 : Rd,   Rd comma ;
@@ -164,7 +167,14 @@ variable prefetch-pc  ( points to _start_ of current instruction + 4 bytes!!)
 : .bkpt   ." bkpt   "  i8  imm ;
 : .hint   dup 4 u>>  0f and  z" nop  yieldwfe  wfi  sev  ???  ???  ???  " .op5 ;
 
-: .stm    L@  z" stmldm" .op3  Rd8,  0 .regmask8 ;
+: ?ldm-wb  ( op reg - op)
+   dup .reg
+   1 swap <<  over and  0= if  char ! emit  then
+   comma ;
+
+: .ldmia   ." ldmia  "  Rd8@  ?ldm-wb  0 .regmask8 ;
+: .stmia   ." stmia  "  Rd8   ." !, "  0 .regmask8 ;
+
 : .undef  ." undef  "  i8  imm ;
 : .svc    ." svc    "  i8  imm ;
 
@@ -223,7 +233,8 @@ variable prefetch-pc  ( points to _start_ of current instruction + 4 bytes!!)
    fe00 bc00 match  .pop
    ff00 be00 match  .bkpt
    ff8f bf00 match  .hint     ( nop yield wfe wfi sev)
-   f000 c000 match  .stm      ( stm ldm)
+   f800 c000 match  .stmia
+   f800 c800 match  .ldmia
    ff00 de00 match  .undef    ( permanently undefined)
    ff00 df00 match  .svc
    f000 d000 match  .bcond
