@@ -36,14 +36,13 @@ hex
 
 : ,imm   comma imm ;
 
-: hi-P@  ( op - Pbit)  #24 bit@ ;
-: hi-U@  ( op - Ubit)  #23 bit@ ;
-: hi-W@  ( op - Wbit)  #21 bit@ ;
-: hi-L@  ( op - Lbit)  #20 bit@ ;
+: P@  ( op - Pbit)  #24 bit@ ;
+: U@  ( op - Ubit)  #23 bit@ ;
+: W@  ( op - Wbit)  #21 bit@ ;
+: L@  ( op - Lbit)  #20 bit@ ;  ( redefines the 16 bit version)
 
-: lo-P@  ( op - Pbit)  #10 bit@ ;
-: lo-U@  ( op - Ubit)    9 bit@ ;
-: lo-W@  ( op - Wbit)    8 bit@ ;
+: S@  ( op - Sbit)  L@ ;
+
 
 ( Extracting various immediate values.)
 : imm1:3,8  ( op - op i:imm3 imm8)
@@ -89,10 +88,8 @@ hex
 : .cmn.w   ." cmn    "  .Rn4, ;
 : .cmp.w   ." cmp    "  .Rn4, ;
 
-: S.w  ( op - op S)  dup #20 bit@ ;
-
 : .mov.w   ( op - op)
-   S.w  over #21 bit@  z" movmvn" .op3?s  .Rd4, ;
+   dup S@  over #21 bit@  z" movmvn" .op3?s  .Rd4, ;
 
 : .alu-op  ( op - op matched)
    01f0_0f00 0010_0f00 match .tst.w  ( and, S=1, Rd=pc)
@@ -100,7 +97,7 @@ hex
    01f0_0f00 0110_0f00 match .cmn.w  ( add, S=1, Rd=pc)
    01f0_0f00 01b0_0f00 match .cmp.w  ( sub, S=1, Rd=pc)
    01cf_0000 004f_0000 match .mov.w  ( mov/mvn == orr/orn, Rn=pc)
-   S.w  over #21 u>> 0f and ( aluop)
+   dup S@  over #21 u>> 0f and ( aluop)
    z" andbicorrorneor?????????add???adcsbc???subrsb???" .op3?s  .Rd4,  .Rn4,  0 ;
    (  0  1  2  3  4  5  6  7  8  9  a  b  c  d  e  f  )
 
@@ -116,8 +113,8 @@ hex
 : .push.w  ." push   "  .reglist16 ;
 
 : .stm.w  ( op z" - op)
-   over hi-L@  swap .op5
-   .Rn4  dup hi-W@  if  char ! emit  then
+   over L@  swap .op5
+   .Rn4  dup W@  if  char ! emit  then
    comma  .reglist16 ;
 
 : .stmia.w   z" stmialdmia" .stm.w ;
@@ -195,14 +192,14 @@ hex
    .]  ,index-imm  drop ( Wbit) ;
 
 : .index-i8  ( op - op)
-   i8  ( op offset)  over push ( op)
-   r@ lo-W@  swap  r@ lo-U@  r@ lo-P@  pop ( op Wbit offset Ubit Pbit op)
-   .index-woup ;
+   dup push ( op)  i8  ( op offset)
+   r@ 8 bit@ ( W)  swap  r@ 9 bit@ ( U)  r@ #10 bit@ ( P)  pop
+   ( op Wbit offset Ubit Pbit op)  .index-woup ;
 
 : .index-dual-i8  ( op - op)
-   i8 woff>  ( op offset)  over push ( op)
-   r@ hi-W@  swap  r@ hi-U@  r@ hi-P@  pop ( op Wbit offset Ubit Pbit op)
-   .index-woup ;
+   dup push ( op)  i8 woff>  ( op offset)
+   r@ W@           swap  r@ U@           r@ P@  pop
+   ( op Wbit offset Ubit Pbit op)  .index-woup ;
 
 : ,index-shift   dup 4 u>>  3 and  =if  ." , lsl "  imm  ^  then  drop ;
 : .index-reg   .[  .Rn4,  .Rm4  ,index-shift  .] ;
@@ -212,7 +209,7 @@ hex
 : .index-i12   .[  .Rn4,  imm12 imm  .] ;
 
 : .index.w
-   dup    hi-U@ if  .index-i12  ^  then
+         dup U@ if  .index-i12  ^  then
    dup #11 bit@ if  .index-i8  ^  then
                     .index-reg ;
 
@@ -220,11 +217,11 @@ hex
    dup 4 bit@  z" tbbtbh" .op3  .index-reg ;
 
 : .pc-i12
-   imm12  over hi-U@  +-index
+   imm12  over U@  +-index
    .[  >load-pc  dup .u32  .]  ."  = "  |@  dup set-ea  .u32 ;
 
 : .pc-dual-i8
-   i8 woff>  over hi-U@  +-index
+   i8 woff>  over U@  +-index
    .[  >load-pc  dup .u32  .]  ."  = "  dup |@ .u32  comma  4 +  |@ .u32 ;
 
 : .index-ex-i8   dup push  .Rt4  i8 woff>  0 swap  1 1  pop .index-woup ;
@@ -245,7 +242,7 @@ hex
                    ." ldrd   "    .Rt4,  .Rd4,  .pc-dual-i8 ;
 
 : .strd.w     ( strd ldrd)
-   dup hi-L@  z" strd ldrd" .op5  .Rt4,  .Rd4,  .index-dual-i8 ;
+   dup L@  z" strd ldrd" .op5  .Rt4,  .Rd4,  .index-dual-i8 ;
 
 
 : .pld   dup #24 bit@  z" pldpli" .op3 ;
@@ -258,7 +255,7 @@ hex
 : .ldr.w-pc
    dup #21 u>>  3 and  z" ldrb ldrh ldr  ldr??" .op5  .Rt4,  .pc-i12 ;
 
-: .ldrs   dup hi-W@  z" ldrsbldrsh" .op5  .Rt4, ;
+: .ldrs   dup W@  z" ldrsbldrsh" .op5  .Rt4, ;
 : .ldrsb.w-pc  ( ldrsb ldrh)  ( signed literal loads)
    .ldrs  .pc-i12 ;
 
@@ -271,7 +268,7 @@ hex
    .Rt4,  .index-i8 ;
 
 : .ldrsbt-i8  ( ldrsbt ldrsht)
-   dup #21 bit@  z" ldrsbtldrsht" 6 #op  space
+   dup W@  z" ldrsbtldrsht" 6 #op  space
    .Rt4,  .index-i8 ;
 
 : .str.w    ( str strb strh ldr ldrb ldrh)
@@ -282,7 +279,7 @@ hex
    .ldrs  .index.w ;
 
 : .shift-reg.w  ( lsl.w lsr.w asr.w ror.w)
-   S.w  over #21 u>> 3 and  z" lsllsrasrror" .op3?s  .Rd4,  .Rn4,  .Rm4 ;
+   dup S@  over #21 u>> 3 and  z" lsllsrasrror" .op3?s  .Rd4,  .Rn4,  .Rm4 ;
 
 : *unimplemented*  ." *unimplemented*" ;
 
