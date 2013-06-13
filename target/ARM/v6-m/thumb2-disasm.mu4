@@ -98,9 +98,15 @@ variable prefetch-pc  ( points to _start_ of current instruction + 4 bytes!!)
 
 : .addsub  ( op S 0/1 - op)   z" addsub" .op3?s ;
 
+( Shift amounts of 0 - except for lsl #0, which has already been matched as
+  a mov - should print as 32.)
+
+( Shift amount of zero really represents a shift of 32.)
+: sh-imm   ( amount)  dup 0=  #32 and  +  imm ;
+
 : .4way-i   ( op z" - op)  over #11 u>> 3 and  swap .op3s ;
-: .sh-i
-   z" lsllsrasr???" .4way-i  Rd,  Rn,  dup 6 u>> 1f and  imm ;
+: .sh-i5     z" lsllsrasr???" .4way-i  Rd,  Rn,  dup 6 u>> 1f and  sh-imm ;
+: .mov-r   0 z" mov"          .op3s    Rd,  Rn ;
 
 : .add-r3   1 ( S)  over 9 bit@  .addsub  .r3 ;
 : .add-i3   1 ( S)  over 9 bit@  .addsub  Rd,  Rn,  dup 6 u>>  7 and  imm ;
@@ -225,9 +231,10 @@ variable prefetch-pc  ( points to _start_ of current instruction + 4 bytes!!)
 
 : shred16-v6m  ( op - op)
    ( All the 16-bit v6m instructions!)
-   fc00 1800 match  .add-r3   ( add sub)
-   fc00 1c00 match  .add-i3   ( add sub)
-   e000 0000 match  .sh-i
+   ffc0 0000 match  .mov-r    ( really just lsl #0)
+   fc00 1800 match  .add-r3   ( add sub - matches .sh-i5 shift type=11)
+   fc00 1c00 match  .add-i3   ( add sub - matches .sh-i5 shift type=11)
+   e000 0000 match  .sh-i5
    f800 2800 match  .cmp-i8   ( cmp - exception to mov-i8 below)
    e000 2000 match  .mov-i8   ( mov add sub)
    fc00 4000 match  .alu
