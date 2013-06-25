@@ -58,7 +58,7 @@ Status codes for slave receive mode:
   98  as above, NACKed
   a0  STOP or repeated START received while in slave receive mode
 
-  Status codes for slave transmit mode:
+Status codes for slave transmit mode:
 
   a8  own addr+read received and ACKed
   b8  data byte xmitted and ACKed
@@ -70,14 +70,16 @@ flash
 
 comment register-use
 
+  r0/r1              is used for writing flash (via SPM instruction)
   r26/27 -- aka x -- is used for status and data bytes
   r30/31 -- aka z -- is used to point to memory
 
-  These are registers that are considered "scratch" by the meta-compiler's
-  conventions.
+  These are also registers that are considered "scratch" by the
+  meta-compiler's conventions.
 
 register-use
 
+( XXX shouldn't this pop xl ??)
 label restart  ( pop one return, ack int, then return)
    0 pop  0 pop
    ( fall thru)
@@ -90,13 +92,13 @@ label ack-twint
 label wait-twint
    begin
 .meta. .contains application-task-hook .if
-      ( caller save the chat registers so application doesn't have to
-        worry about them.)
-      zh push  zl push
-      xh push  xl push
+      ( Caller save the chat registers so application doesn't have to
+        worry about them. We only care about Z and R0/R1 because we use Z
+        for addresses and might be building up a word value in R0/R1 to
+        write to flash.)
+      z pushw  r0 pushw
       application-task-hook rcall
-      xl pop  xh pop
-      zl pop  zh pop
+      r0 popw  z popw
 .then
       TWCR xl lds  TWINT xl sbrs
    again
@@ -137,6 +139,42 @@ label write-another?
 label write-byte
    TWDR xl sts  ack-twint rcall  write-another? rjmp  ;c
 
+
+.ifdef with-self-prog
+
+( Support for self-programming.)
+
+( Bits in SPMCSR:
+  SPMIE   RWWSB   --      RWWSRE  BLBSET  PGWRT   PGERS   SELFPRGEN
+    7       6      5        4       3       2       1       0        )
+
+label do-spm
+   SREG xh in  cli  SPMCSR xl out  spm  SREG xh out
+   begin  SPMCSR xl in   0 xl sbrc  again  ret  ;c
+
+
+( On word writes, keep streaming bytes from TWI into memory, until
+  read-byte gets something other than an 80 status.)
+
+label write-word
+   begin  read-byte rcall  xl 0 mov  ( low byte to r0)
+          read-byte rcall  xl 1 mov  ( hi byte to r1)
+          %0000_0001 ( SELFPRGEN)  xl ldi  do-spm rcall
+          2 z adiw
+   again  ;c
+
+label erase-page
+   %0000_0011 (  PGERS + SELFPRGEN)  xl ldi  do-spm rjmp  ;c
+
+label program-page
+   %0000_0101 ( RWWSRE + SELFPRGEN)  xl ldi  do-spm rjmp  ;c
+
+label clear-page-buffer
+   %0001_0001 ( RWWSRE + SELFPRGEN)  xl ldi  do-spm rjmp  ;c
+
+.then
+   
+
 ( Command routines.)
 ( On reads, keep streaming bytes from memory to TWI, as long as last byte
   was ACKed.)
@@ -149,6 +187,11 @@ label read-program
    expect-start rcall
    begin  pmz+ xl ld  write-byte rcall  again  ;c
 
+label read-sp
+   expect-start rcall
+   SPL xl in  write-byte rcall
+   SPH xl in  write-byte rjmp  ;c
+
 label set-addr
    read-byte rcall  xl zl mov
    read-byte rcall  xl zh mov  ret  ;c
@@ -159,18 +202,17 @@ label set-addr
 label write-data
    begin  read-byte rcall  z+ xl st  again  ;c
 
+
 ( Clear TWEA so we NACK our address while executing code. Do this without
   resetting TWINT again.)
 
-@ram #ram + ( ramend)
-2 - dup equ go-pc
-2 -     equ go-x
-
 label go
    TWCR xl lds  1 TWEA << invert xl andi  TWCR xl sts
-   ( host has set z via set-addr cmd!)
-   go-pc xl lds  go-pc 1+ xh lds  xl push  xh push  ( big-endian!)
-   go-x  xl lds  go-x 1+  xh lds  ret  ;c
+   x popw  ( throw away process's return address)
+   xl pop  SREG xl out  ( pop status)
+   t popw  x popw  y popw  z popw  ( pop all 4 pointer regs)
+   ret  ;c
+
 
 ( Dispatch.)
 label process
@@ -184,20 +226,31 @@ label process
    12 xl cpi  read-data     0= not until
    13 xl cpi  write-data    0= not until
    14 xl cpi  go            0= not until
-   15 xl cpi  0= if  restart         rjmp  then
+   15 xl cpi  read-sp       0= not until  ( sp points to partial stack frame)
+
+.ifdef with-self-prog
+
+   ( Support for self-programming.)
+   20 xl cpi  0= if  write-word         rjmp  then
+   21 xl cpi  0= if  erase-page         rjmp  then
+   22 xl cpi  0= if  program-page       rjmp  then
+   23 xl cpi  0= if  clear-page-buffer  rjmp  then
+
+.then
 
    ( unknown... restart!)
    ret  ;c
 
-( The only way to exit is for called code to pop the R stack!)
-label chat-loop
+label chat-entry  ( callable from other code!)
+   ( Unless host changes it, stacked PC points to caller - usually interact.)
+   z pushw  y pushw  x pushw  t pushw  ( push all 4 pointer regs)
+   SREG xl in  xl push  ( push status)
+
    ack-twint rcall
    begin  process rcall  again  ;c
 
-label chat-entry  ( callable from other code!)
-   z pushw  x pushw
-   chat-loop rcall
-   x popw  z popw  ret  ;c
+label interact
+   begin  chat-entry rcall  again  ;c
 
 label delay
    zh clr
@@ -215,22 +268,19 @@ label toggle
    0 PINB sbi  ( toggle B0)
    delay rjmp  ;c
 
-( XXX uses r16 so we can load it from the host to test go command!)
 label blinky
    01 xl ldi  PORTB xl out  ( set B0)  DDRB xl out  ( set B0 as output)
    30 xl ldi  PORTC xl out  DDRC xl out  ( set up SCL/SDA)
-   8 10 ldi  begin  blink rcall  delay rcall  10 dec  0= until  ret  ;c
+   8 tl ldi  begin  blink rcall  delay rcall  tl dec  0= until  ret  ;c
 
 RESET default-handler
-   go-x 1-  ( stack bottom)  >hilo
+   @ram #ram + ( ramend)  1-  ( stack bottom)  >hilo
    xl ldi  SPL xl out
    xl ldi  SPH xl out
 
-   begin  blinky rcall
+   blinky rcall
 .meta. .contains application-init-hook .if
-          application-init-hook rcall
+   application-init-hook rcall
 .then
-          chat-entry rcall  again  ;c
 
-label testme
-   z 2 movw  x 4 movw  ( so we can see the registers)  ret  ;c
+   begin  interact rcall  again  ;c
