@@ -303,27 +303,42 @@ forth
 mode __target-colon
 
 
-( Interrupt vectors and handlers.)
-: big-vectors?   #flash  16 Ki u< not ;
-: vector-info    ( vector# - big? addr)
-   big-vectors? tuck  if  4 * ^  then  2* ;
+( For simplicity, let's assume that _all_ or _none_ of the vectors are in
+  the bootloader space. It's possible to move the reset vector
+  independently of the others, but let's assume that we aren't going to!
 
-: application-start   \eq LAST_VECTOR 1+ vector-info  nip ;
+  Second, assume that BOOTSZ bits - in the fuses - are set to the default
+  setting, which sets aside 1/16 to 1/8 of the flash - depending on the
+  device - for the bootloader.)
+
+.ifdef bootloader
+   .ifndef #boot
+      z" The selected device doesn't support a separate bootloader memory space."
+      abort
+   .else
+      #flash #boot -  constant @vectors  ( start of vectors)
+   .then
+.else  ( no bootloader)
+   0  constant @vectors  ( start of vectors)
+.then
+
+
+( Interrupt vectors and handlers.)
+: big-vectors?   [ #flash  16 Ki u< not ] ;
+: *vector  ( vector# - offset)  big-vectors?  if  4 * ^  then  2* ;
+: @vector  ( vector# - addr)  *vector  @vectors + ;
+
+( Calculate the _offset_ past the vectors.)
+: #vectors   [ \eq LAST_VECTOR 1+ *vector ] ;
 
 : vector,  ( vector# dest)  ( compile jmp or rjmp to handler)
-   swap  vector-info org  if  \a jmp  ^  then  \a rjmp ;
+   swap  @vector org  big-vectors? if  \a jmp  ^  then  \a rjmp ;
 
-( Fetch "smashed" version of vector; logical and the bits together if it's
-  a two-word - big - vector.)
+( Return true if vector has _not_ been set. For two-word vectors - on
+  devices with 16Ki and larger flash - assume that if first word - the jmp
+  instruction - is unset that the vector is unset.)
 
-: vector-bits@  ( vector# - bits)
-   vector-info  dup image-@  rot if
-      ( large)  swap  2 + image-@  and  ^  then
-      ( small)  nip ;
-
-( Return true if vector has _not_ been set.)
-: unvectored?  ( vector# - f)
-   vector-bits@  "0ffff = ;
+: unvectored?  ( vector# - f)  @vector  image-@  "0ffff = ;
 
 meta
 : handler  ( vector#)  \m here  dup push  vector,  pop org  __asm ;
@@ -336,6 +351,26 @@ meta
       dup unvectored? if  dup  \m handler  ( set it)  then  1+  next
    drop ;
 
+forth
+
+
+( Now that we know the origins of all the regions and the size and number
+  of the vectors, let's make a word that gives us a clean slate.)
+
+.ifdef bootloader
+: skip-vectors   boot  [ @vectors #vectors + ]  org ;
+.else
+: skip-vectors    app  [ @vectors #vectors + ]  org ;
+.then
+
+: clean-slate
+   wipe  ( erase both flash and eeprom images)
+   0 ee!  @ram ram!  0 app!  @vectors boot! ;
+
+clean-slate  skip-vectors
+
+
+meta
 
 ( Create a new target names. A name is a target word which is defined as a
   _constant_ equal to its code field address, and which compiles itself
@@ -398,7 +433,7 @@ forth
 
 meta
 : string,  ( a u)
-   h preserve  image preserve  flash
+   h preserve  image preserve  app
    \m here image+ swap  ( a image u)  dup \m allot  cmove ;
 
 : sig"   char " parse  \m string, ;

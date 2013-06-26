@@ -85,9 +85,9 @@ variable fuses  ( fuse at byte 0; hfuse @ 1; efuse @ 2)
    lohi>  lohi> ;
 
 : write-fuses  ( fuses = fuse at byte 0; hfuse @ 1; efuse @ 2)
-   >hilo push  0ac 0a0 0  pop  avr.Write  ( write fuse bits)
-   >hilo push  0ac 0a8 0  pop  avr.Write  ( write hfuse bits)
-         push  0ac 0a4 0  pop  avr.Write  ( write efuse bits) ;
+   >hilo push  0ac 0a0 0  pop  avr.Write  ( write fuse bits)   ?busy
+   >hilo push  0ac 0a8 0  pop  avr.Write  ( write hfuse bits)  ?busy
+         push  0ac 0a4 0  pop  avr.Write  ( write efuse bits)  ?busy ;
 
 .then
 
@@ -115,8 +115,7 @@ variable fuses  ( fuse at byte 0; hfuse @ 1; efuse @ 2)
   versions print a . for every 128 bytes read.)
 
 : read-flash-slowly
-   wipe
-   0 image-p!
+   flash-image  erase  0 image-p!
    +prog  fast-clock
    [ 1 Ki #64 / ] for
       #64 for  ( 64 words, 128 bytes)
@@ -132,8 +131,7 @@ variable fuses  ( fuse at byte 0; hfuse @ 1; efuse @ 2)
   buffer this size! So let's always read 128 byte chunks instead.)
 
 : read-flash
-   flash-image erase
-   flash  0 image-p!
+   flash-image  erase  0 image-p!
    [ #flash #128 / ] for
       20  pwaddr  8  p@  #128  avr.BulkRead
       #128 p +!
@@ -141,8 +139,7 @@ variable fuses  ( fuse at byte 0; hfuse @ 1; efuse @ 2)
    next ;
 
 : read-eeprom
-   eeprom-image erase
-   eeprom  0 image-p!
+   eeprom-image  erase  0 image-p!
    [ #eeprom 20 / ] for  ( read in 128 byte chunks)
       0a0  paddr  0  p@  20  avr.BulkRead
       20 p +!
@@ -150,8 +147,8 @@ variable fuses  ( fuse at byte 0; hfuse @ 1; efuse @ 2)
    next ;
 
 : read-eeprom-slowly
-   eeprom-image erase
-   eeprom  0 image-p!  #eeprom for
+   eeprom-image  erase  0 image-p!
+   #eeprom for
       0a0  paddr  0  avr3  image,
       char . emit
    next ;
@@ -178,12 +175,11 @@ b/page 2/  constant w/page
 : lo-addr   pw  [ w/page 1- ]      and  >hilo ;
 : hi-addr   pw  [ w/page negate ]  and  >hilo ;
 
-( NOTE: prog-flash and prog-eeprom are _not_ standalone; they can only be
+( NOTE: prog-region and prog-eeprom are _not_ standalone; they can only be
   called after prog mode is set and the SPI clock set properly.)
 
-: prog-flash
-   cr  ." Writing flash"
-   flash region  swap image-p!  ( len)
+: prog-region
+   region  swap image-p!  ( len)
    b/page 1- + ( round up)  b/page / ?for  ( program flash pages)
       cr ."    page "  image-p@  u.
       40  lo-addr  8  p@  b/page  avr.BulkWrite  ( fill page buffer)
@@ -191,6 +187,13 @@ b/page 2/  constant w/page
       b/page p +!
       -- char . emit
    next  then ;
+
+: prog-flash
+   cr  ." Writing flash (application)"  app  prog-region
+.ifdef bootloader
+   cr  ." Writing flash (bootloader)"  boot  prog-region
+.then
+   ;
 
 ( NOTE: We program eeprom a byte at a time since the 8515 lacks page
   access. It's also simpler this way to determine whether to program a
@@ -213,11 +216,8 @@ b/page 2/  constant w/page
 : prog
    radix preserve  hex
    h preserve  image preserve
-   +prog  fast-clock
-   prog-fuses
-   erase-chip
-   prog-flash  prog-eeprom
-   -prog ;
+   +prog  ( slow-clock)  prog-fuses  -prog
+   +prog  fast-clock  erase-chip  prog-flash  prog-eeprom  -prog ;
 
 : verify-pad
    pad  #128 for  dup c@  c*  xor  if  image-p@ -1 +a u.  then
@@ -233,7 +233,7 @@ b/page 2/  constant w/page
 
 : verify-flash
    cr  ." Verifying flash "
-   flash  0 image-p!  #flash ( len)
+   flash-image  0 image-p!  #flash ( len)
    #127 +  #128 /  for
       20  pwaddr  8  pad  #128  avr.BulkRead
       verify-pad
@@ -241,7 +241,7 @@ b/page 2/  constant w/page
 
 : verify-eeprom
    cr  ." Verifying eeprom "
-   eeprom  0 image-p!  #eeprom ( len)
+   eeprom-image  0 image-p!  #eeprom ( len)
    #127 +  #128 /  for
       0a0  paddr  0  pad  #128  avr.BulkRead
       verify-pad
@@ -263,20 +263,20 @@ b/page 2/  constant w/page
    h preserve  image preserve  ( so it gets reset when we're done)
    token, create-file ( fd)
    ( header)  dup  " muforth AVR img "  write
-   ( flash)   dup  flash   'image  #image  write
-   ( eeprom)  dup  eeprom  'image  #image  write
-   ( fuses)   dup           fuses  4       write
+   ( flash)   dup  flash-image   'image  #image  write
+   ( eeprom)  dup  eeprom-image  'image  #image  write
+   ( fuses)   dup                 fuses  4       write
    close-file ;
 
 : read-image
    clean-slate
-   flash  #flash    \m allot ( appear to have filled the flash and eeprom)
+   app     #flash   \m allot ( appear to have filled the flash and eeprom)
    eeprom  #eeprom  \m allot ( ... so prog and verify will work)
 
    token, open-file-ro ( fd)
    ( check header)  dup  pad #16  read  #16 xor if  error" no header"  then
       " muforth AVR img " pad #16  string= not if  error" not an AVR image"  then
-   ( read flash)   dup  flash   'image  #image  read  u.
-   ( read eeprom)  dup  eeprom  'image  #image  read  u.
-   ( read fuses)   dup           fuses  4       read  u.
-   close-file  flash ( back to normal!) ;
+   ( read flash)   dup  flash-image   'image  #image  read  u.
+   ( read eeprom)  dup  eeprom-image  'image  #image  read  u.
+   ( read fuses)   dup                 fuses  4       read  u.
+   close-file  app ;

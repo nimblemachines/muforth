@@ -66,7 +66,13 @@ Status codes for slave transmit mode:
   c8  last byte xmitted (TWEA=0), ACKed
 %%
 
-flash
+.ifdef bootloader
+   boot
+   .ifdef mega168  0f8dfe0 fuses !  .then
+.else
+   app
+   .ifdef mega168  0f9dfe0 fuses !  .then
+.then
 
 comment register-use
 
@@ -79,9 +85,8 @@ comment register-use
 
 register-use
 
-( XXX shouldn't this pop xl ??)
 label restart  ( pop one return, ack int, then return)
-   0 pop  0 pop
+   x popw
    ( fall thru)
 
 ( Ack TWINT. Make sure TWEA and TWEN also set.)
@@ -140,7 +145,7 @@ label write-byte
    TWDR xl sts  ack-twint rcall  write-another? rjmp  ;c
 
 
-.ifdef with-self-prog
+.ifdef bootloader
 
 ( Support for self-programming.)
 
@@ -150,7 +155,7 @@ label write-byte
 
 label do-spm
    SREG xh in  cli  SPMCSR xl out  spm  SREG xh out
-   begin  SPMCSR xl in   0 xl sbrc  again  ret  ;c
+   begin  SPMCSR xl in  0 xl sbrc  again  ret  ;c
 
 
 ( On word writes, keep streaming bytes from TWI into memory, until
@@ -167,7 +172,7 @@ label erase-page
    %0000_0011 (  PGERS + SELFPRGEN)  xl ldi  do-spm rjmp  ;c
 
 label program-page
-   %0000_0101 ( RWWSRE + SELFPRGEN)  xl ldi  do-spm rjmp  ;c
+   %0000_0101 (  PGWRT + SELFPRGEN)  xl ldi  do-spm rjmp  ;c
 
 label clear-page-buffer
    %0001_0001 ( RWWSRE + SELFPRGEN)  xl ldi  do-spm rjmp  ;c
@@ -208,7 +213,7 @@ label write-data
 
 label go
    TWCR xl lds  1 TWEA << invert xl andi  TWCR xl sts
-   x popw  ( throw away process's return address)
+   x popw  ( throw away top return address)
    xl pop  SREG xl out  ( pop status)
    t popw  x popw  y popw  z popw  ( pop all 4 pointer regs)
    ret  ;c
@@ -228,7 +233,7 @@ label process
    14 xl cpi  go            0= not until
    15 xl cpi  read-sp       0= not until  ( sp points to partial stack frame)
 
-.ifdef with-self-prog
+.ifdef bootloader
 
    ( Support for self-programming.)
    20 xl cpi  0= if  write-word         rjmp  then
@@ -277,6 +282,20 @@ RESET default-handler
    @ram #ram + ( ramend)  1-  ( stack bottom)  >hilo
    xl ldi  SPL xl out
    xl ldi  SPH xl out
+
+.ifdef bootloader
+   ( Move vectors to boot section)
+   ( First set IVCE; then clear IVCE and set IVSEL.)
+   .ifdef mega8515  -- idiots!! this is a different register on 8515.
+   ---GICR     | INT1    INT0    INT2    --      --      --      IVSEL   IVCE    
+   1 xl ldi  GICR xl out
+   2 xl ldi  GICR xl out
+   .else
+   -- MCUCR    | --      BODS    BODSE   PUD     --      --      IVSEL   IVCE    
+   1 xl ldi  MCUCR xl out
+   2 xl ldi  MCUCR xl out
+   .then
+.then
 
    blinky rcall
 .meta. .contains application-init-hook .if

@@ -17,24 +17,18 @@ loading AVR memory image
   byte, but the previous cell countains the count, if we want to do bounds
   checking or address wrapping.)
 
+variable image  ( image buffer pointer; points to either flash- or eeprom-image)
+
 : make-image  create  ( #bytes)  aligned  dup ,  allot
-         does>  cell+ ( skip count) ;
+         does>  cell+ ( skip count)  image ! ;
 
 64 Ki make-image  flash-image
  4 Ki make-image  eeprom-image
 
-( bounds is just like count for strings, but I don't want to depend on
-  count's implementation.)
-
-: bounds  ( image - a u)  dup cell- @  ( a u) ; 
-
-variable image  ( image buffer pointer; points to either flash- or eeprom-image)
-( sanity default)  flash-image image !
-
 : #image  image @  cell- @  ( get byte count) ;
 : 'image  image @           ( get address) ;
 
-: wrap   [ #image 1- ] and ;
+: wrap   #image 1-  and ;
 : +a  ( a1 a2 - sum)  +  wrap ;  ( add and wrap to 16bit address)
 
 : image+  ( target - host)  wrap  'image + ;
@@ -99,14 +93,15 @@ here "beefdead ,  ( bogus data space value)  constant no-data
 ( Dictionary operators.)
 variable h   ( image dictionary pointer pointer; points to one of:)
    2variable 'ram     ( ram pointer, origin)
-   2variable 'flash   ( flash pointer, origin)
+   2variable 'app     ( application flash pointer, origin)
+   2variable 'boot    ( bootloader flash pointer, origin)
    2variable 'ee      ( eeprom pointer, origin)
 
 : ram     'ram     h ! ;  ( XXX reset image or not?)
-: flash   'flash   h !   flash-image   image ! ;
-: eeprom  'ee      h !   eeprom-image  image ! ;
-: in-flash?  h @  'flash = ;
-: in-ram?    h @  'ram = ;
+: app     'app     h !   flash-image  ;
+: boot    'boot    h !   flash-image  ;
+: eeprom  'ee      h !   eeprom-image ;
+
 : org    ( a) ( set dict pointer)  h @  ! ;
 
 meta
@@ -126,17 +121,12 @@ forth
 : region  ( - a u)  h @  2@  ( origin ptr)  over - ;
 
 ( Initialization.)
-: erase  ( image)  bounds "ff fill ;
-: wipe   flash-image erase
-         eeprom-image erase ;
+: erase  'image #image "ff fill ;  ( erases _current_ image)
+: wipe   
+   eeprom-image erase
+   flash-image erase ;  ( leaves flash-image as _current_ image)
 
 : ram!      ( ram-origin)  dup 'ram   2!  ( set ptr and origin to origin) ;
-: flash!  ( flash-origin)  dup 'flash 2!  ( set ptr and origin to origin) ;
+: app!      ( app-origin)  dup 'app   2!  ( set ptr and origin to origin) ;
+: boot!     ( app-origin)  dup 'boot  2!  ( set ptr and origin to origin) ;
 : ee!    ( eeprom-origin)  dup 'ee    2!  ( set ptr and origin to origin) ;
-
-( Erase image, default origins: ram to @ram, and flash to @flash.)
-( XXX FIXME KLUDGE)  0 constant @flash  0 constant @eeprom
-: clean-slate
-   wipe  @ram ram!  @flash flash!  @eeprom ee!  flash  0 org ;
-
-clean-slate

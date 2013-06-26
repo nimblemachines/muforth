@@ -49,7 +49,8 @@ hex
 : avr-sync   begin  7f twi.Ping  0= until ;
 
 ( Because we're using the Z register on the AVR as a memory address
-  pointer, let's prefix these words with 'z'. It's easy to type and sounds cool.)
+  pointer, let's prefix these words with 'z'. It's easy to type and sounds
+  cool.)
 
 ( Here and elsewhere we use * to mean "fetch byte with post-increment",
   cell* to mean "fetch cell with post-increment", and & to be the store
@@ -62,9 +63,23 @@ hex
 : zcell*   ( - w)          2  12 avr-twi-read  pad leh@ ;
 : z&       ( b)  pad c!    1  13 avr-twi-write ;
 : zcell&   ( w)  pad leh!  2  13 avr-twi-write ;
-: zgo                      0  14 avr-twi-write ( jump to addr in Z)
-                                 avr-sync ;
-: zbye                     0  15 avr-twi-write ;  ( exit from chat)
+: zgo                      0  14 avr-twi-write  avr-sync ;
+: zsp@     ( - sp)         2  15 avr-twi-read  pad leh@  3 + ;  ( read target SP)
+
+.ifdef bootloader
+
+( Support for self-programming.)
+: avr-prog-cmd    ( addr cmd)  swap z!  0 swap  avr-twi-write ;
+
+: zpcell&     ( w)  pad leh!  2 20 avr-twi-write ;
+: zerase    ( addr)        21 avr-prog-cmd ;   ( erase flash page)
+: zprog     ( addr)        22 avr-prog-cmd ;   ( program flash page from buf)
+: zclear                 0 23 avr-twi-write ;  ( clear page buffer)
+
+( write a few words to flash page)
+: zing  ( addr)  dup z!  b/page  over + swap  do  i zpcell&  2 +loop ;
+
+.then
 
 ( Standard form for interact - we might also be using the serial chat for
   devices that lack a TWI.)
