@@ -33,6 +33,30 @@ void mu_set_termios()
 }
 
 /*
+ * Support for querying the column width of terminals, and staying updated
+ * (via SIGWINCH) when they change.
+ *
+ * In case the user has redirected stdout to a file, use stderr as the file
+ * descriptor to test.
+ */
+void mu_tty_width()
+{
+    int fd = TOP;
+    struct winsize tty_size;
+
+    if (!isatty(fd))
+    {
+        TOP = 80;   /* default width for file output */
+        return;
+    }
+
+    if (ioctl(fd, TIOCGWINSZ, &tty_size) == -1)
+        return abort_strerror();
+
+    TOP = tty_size.ws_col;
+}
+
+/*
  * I need two "raw" modes: one for human interaction (char by char), and
  * one for interacting with target devices connected via serial port.
  *
@@ -76,6 +100,25 @@ void mu_set_termios_user_raw()
     DROP(1);
 }
 
+#if 0
+/* This is for testing - to see what libc considers raw mode. */
+void mu_raw_termios()
+{
+    struct termios before;
+    struct termios after;
+    int i;
+
+    ioctl(0, TIOCGETA, &before);
+    ioctl(0, TIOCGETA, &after);
+    cfmakeraw(&after);
+
+    for (i = 0; i < 4; i++)
+        STK(-i-1) = ((uint *)&before)[i] ^ ((uint *)&after)[i];
+    DROP(-4);
+}
+#endif
+
+#ifdef TTY_SERIAL
 void mu_set_termios_target_raw()
 {
     struct termios *pti = (struct termios *) TOP;
@@ -149,47 +192,4 @@ void mu_tty_icount()
     if (ioctl(TOP, FIONREAD, &TOP) == -1)
         return abort_strerror();
 }
-
-/*
- * Support for querying the column width of terminals, and staying updated
- * (via SIGWINCH) when they change.
- *
- * In case the user has redirected stdout to a file, use stderr as the file
- * descriptor to test.
- */
-void mu_tty_width()
-{
-    int fd = TOP;
-    struct winsize tty_size;
-
-    if (!isatty(fd))
-    {
-        TOP = 80;   /* default width for file output */
-        return;
-    }
-
-    if (ioctl(fd, TIOCGWINSZ, &tty_size) == -1)
-        return abort_strerror();
-
-    TOP = tty_size.ws_col;
-}
-
-
-#if 0
-/* This is for testing - to see what libc considers raw mode. */
-void mu_raw_termios()
-{
-    struct termios before;
-    struct termios after;
-    int i;
-
-    ioctl(0, TIOCGETA, &before);
-    ioctl(0, TIOCGETA, &after);
-    cfmakeraw(&after);
-
-    for (i = 0; i < 4; i++)
-        STK(-i-1) = ((uint *)&before)[i] ^ ((uint *)&after)[i];
-    DROP(-4);
-}
-#endif
-
+#endif  /* TTY_SERIAL */
