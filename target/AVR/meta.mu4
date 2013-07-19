@@ -47,17 +47,17 @@ mode __meta
   compiled. Currently used to identify literals and calls, for simple
   peephole optimisations.
 
-  We store the tag byte at \m here, ones-complemented, so that a tag byte
-  of 0 - no tag - looks like an empty image byte - 0ff.)
+  We store the tag byte at \m here. No tag is represented by an "empty"
+  image byte - 0ff - _not_ by a tag of zero.)
 
 ( Tags used:)
 1 constant $rcall  ( $ suggests price tag ;-)
 2 constant $call
 3 constant $lit
 
-: tag!  ( tag-byte)  "0ff xor  \m here image-c! ;
-: tag@                         \m here image-c@  "0ff xor ;
-: notag  0 tag! ;
+: tag!  ( tag-byte)  \m here image-c! ;
+: tag@               \m here image-c@ ;
+: notag  "0ff tag! ;
 
 ( We also want to cleanly uncompile code, so instead of simply backing up h
   and leaving the cruft - instructions and tags - behind, let's back up and
@@ -139,16 +139,19 @@ assembler
 forth
 
 ( Basic stack macros.)
+: ?regpair   ( pair)  dup 1 and
+  if  error" got odd register number - not a pair"  then ;
+
 : dpush  ( reg)  asm{  -y  \f swap  st } ;
 : dpop   ( reg)  asm{  y+  \f swap  ld } ;
 
 ( These should be passed an even number!)
-: dpushw  ( pair)  asm{  dup  1+ dpush  dpush } ;
-: dpopw   ( pair)  asm{  dup  dpop  1+ dpop } ;
+: dpushw  ( pair)  ?regpair  asm{  dup  1+ dpush  dpush } ;
+: dpopw   ( pair)  ?regpair  asm{  dup  dpop  1+ dpop } ;
 
 ( Also push words -- register pairs -- onto system stack.)
-: pushw  ( pair)  asm{  dup  1+ push  push } ;  ( assembler's push!)
-: popw   ( pair)  asm{  dup  pop  1+ pop } ;    ( .. and pop!)
+: pushw  ( pair)  ?regpair  asm{  dup  1+ push  push } ;  ( assembler's push!)
+: popw   ( pair)  ?regpair  asm{  dup  pop  1+ pop } ;    ( .. and pop!)
 
 ( Macros that make sense for Forth:)
 : <dup>   asm{  t dpushw } ;  ( push top onto D stack)
@@ -197,13 +200,13 @@ assembler
 
 forth
 
-( If last code compiled was a call, rewrite it to a jump and return true;
-  else return false.)
-
 : replace  ( addr toggle)
    over  image-@  xor  swap  image-! ;
 
 : untag  ( oldtag - f)  drop  notag  -1 ;
+
+( If last code compiled was a call, rewrite it to a jump and return true;
+  else return false.)
 
 : tail?  ( - f)
    tag@ dup  $rcall = if  ( short call)
@@ -225,9 +228,9 @@ forth
 -- ------------------------------------------------------------------------
 
 : load-literal  ( n)
-   >hilo  asm{  k ldi  kh ldi } ;
+   >hilo  asm{  kl ldi  kh ldi } ;
 
-( With a literal in k and kh push it onto the D stack.)
+( With a literal in kl and kh push it onto the D stack.)
 ( XXX push-literal should be a routine!)
 : push-literal   asm{  t dpushw  k t movw } ;
 
@@ -250,14 +253,14 @@ forth
 -- Support for special literal versions of binops, relops, and memory ops
 -- ------------------------------------------------------------------------
 
-( Pop top of D stack into k and kh just as if they were loaded by
+( Pop top of D stack into kl and kh just as if they were loaded by
   load-literal. This is used to make versions of binary operations that
   work either with true literals, or with a value sitting on the D stack.)
 
 : pop-literal   asm{  k dpopw } ;
 
 : lit?   ( f)
-   tag@ $lit = dup if  unpush-literal  then ;
+   tag@ $lit =  dup if  unpush-literal  then ;
 
 : _litop  current preserve  meta-compiler  create
           does>  lit?  if  cell+  then  @  \m compile, ;
@@ -287,7 +290,7 @@ meta
 : litstore
    _litop
       \m here  ( literal entry point)
-      asm{  k z movw  here 8 + rjmp }
+      asm{         k z movw  here 8 + rjmp }
       \m here  ( stack entry point)  ,  , ;
 
 forth
