@@ -185,7 +185,10 @@ variable bp  ( buf pointer)
 : w@  ( addr - w)  lew@ ;
 : w!  ( w addr)    lew! ;
 
+( Whether to spy on traffic to DAP.)
 variable spy
+
+: ?type  spy @ if  type  ^  then  2drop ;
 : .send
    radix preserve  hex
    cr  sendbuf  #send for  c@+ swap u.  next  drop ;
@@ -218,18 +221,27 @@ variable spy
    04 <cmd  ( idle cycles) 04 >b  ( WAIT retries) 80 >h  ( match retries) 80 >h
    cmd> check ;
 
+( Whether to flash the "connect" LED for each transfer.)
+variable led
+
 variable #xfers
-: <xfer   05 <cmd  00 ( DAP#) >b  00 ( count placeholder) >b  #xfers off ;
+: <xfer
+   led @ if  spy @ ( save)  spy off  -1 DAP.LED  spy !  then
+   05 <cmd  00 ( DAP#) >b  00 ( count placeholder) >b  #xfers off ;
+
 : >x  ( xfer)  ( add transfer to sequence)  >b  1 #xfers +! ;
 
 :  xfer>
-   #xfers @  sendbuf 2 + c!  cmd>  #xfers @  xor if
+   #xfers @  sendbuf 2 + c!  cmd>
+   led @ if  spy @ ( save)  spy off  0 DAP.LED  spy !  then
+   #xfers @  xor if
       ." transactions not completed "  then
-   b> dup 1 = if  drop ." OK "  ^ then
-      dup 2 = if  drop ." WAIT " ^  then
-      dup 4 = if  drop ." FAULT " ^ then
-      dup 8 = if  drop ." Protocol error " ^ then
-         10 = if  drop ." Value mismatch " then ; 
+   b> dup 1 = if  drop  " OK "              ?type  ^  then
+      dup 2 = if  drop  " WAIT "            ?type  ^   then
+      dup 4 = if  drop  " FAULT "           ?type  ^  then
+      dup 8 = if  drop  " Protocol error "  ?type  ^  then
+         10 = if  drop  " Value mismatch "  ?type  then ; 
+
 
 ( Support for reading and writing basic DP and AP registers.)
 
@@ -249,34 +261,54 @@ variable #xfers
 : _DP.RESEND            0a >x      ;
 : _DP.RDBUFF            0e >x      ;
 
-variable last-select  ( "shadow" copy of last value written to SELECT)
-   -1 last-select !  ( reset to something unlikely)
 
-: ?select   ( sel)  dup last-select @ xor if  ( different)
-   dup last-select !  _DP.SELECT  ^  then  drop ;
-: select!   ( addr - ap)  dup -10 and  ?select  0c and ;
-: AP.Rd  ( ap - ap')    select!  3 +  >x     ;  ( set AP & RnW bit)
-: AP.Wr  ( w ap - ap')  select!  1+   >x  >w ;  ( set AP only)
+( Create a generic way to keep a "shadow" copy of a register value, and
+  only update the real register if the new value is different from the old
+  shadow value. The shadow value can be read using @, but it should only be
+  changed via punch. Or should the word be called "box" - as in shadow
+  boxing?)
 
-: AP.Read   ( addr - w)  <xfer  AP.Rd  _DP.RDBUFF  xfer>  w> ;
-: AP.Write  ( w addr)    <xfer  AP.Wr              xfer> ;
+: shadow   create  ( 'set-code initial)  ,  , ;
+: punch  ( new-value 'body)
+   push  r@ @  ( shadow)  over xor if  ( different)
+      dup r@ !  pop cell+ @execute  ^
+   then  pop  2drop ;
+
+
+' _DP.SELECT -1  shadow select
+
+: select!   ( sel - reg)  dup -10 and  select punch  0c and ;
+
+( Adds a read or write of an AP register to a transfer.)
+: AP.Rd  ( sel)    select!  3 +  >x     ;  ( set AP & RnW bit)
+: AP.Wr  ( w sel)  select!  1+   >x  >w ;  ( set AP only)
+
+( Generates a transfer made up of a single read AP or write AP - possibly
+  preceded by a SELECT.)
+
+: AP.Read   ( sel - w)  <xfer  AP.Rd  _DP.RDBUFF  xfer>  w> ;
+: AP.Write  ( w sel)    <xfer  AP.Wr              xfer> ;
+
 
 -- -----------------------------------------------------------------------
 -- These are addresses that go into SELECT.
 -- -----------------------------------------------------------------------
 ( AHB-AP registers)
-0000_0000 constant AP.CSW
-0000_0004 constant AP.TAR
+0000_0000 constant AHB.CSW
+0000_0004 constant AHB.TAR
 (    0008 reserved)
-0000_000c constant AP.DRW  ( Access size depends on CSW.size bits)
+0000_000c constant AHB.DRW  ( Access size depends on CSW.size bits)
 
-0000_0010 constant AP.BD0  ( Always generates word-sized access)
-0000_0014 constant AP.BD1
-0000_0018 constant AP.BD2
-0000_001c constant AP.BD3
+( Bank registers. These always generates word-sized accesses, 
+  but require CSW.size bits to be set to word size.)
 
-0000_00f8 constant AP.ROM
-0000_00fc constant AP.IDR
+0000_0010 constant AHB.BD0  ( TAR and -10)
+0000_0014 constant AHB.BD1  ( TAR and -10 + 4)
+0000_0018 constant AHB.BD2  ( TAR and -10 + 8)
+0000_001c constant AHB.BD3  ( TAR and -10 + 0c)
+
+0000_00f8 constant AHB.ROM
+0000_00fc constant AHB.IDR
 
 ( For KL25Z:)
 ( MDM-AP registers)
@@ -293,7 +325,7 @@ e000_edf4 constant DCRSR  ( debug core register selector reg)
 e000_edf8 constant DCRDR  ( debug core register data reg)
 e000_edfc constant DEMCR  ( debug exception and monitor ctrl reg)
 
-( Defines for AP.CSW)
+( Defines for AHB.CSW)
 0 constant CSW.byte    ( memory bus transaction sizes)
 1 constant CSW.hword
 2 constant CSW.word
@@ -330,9 +362,9 @@ variable cache-addr  ( of first byte)
 ( from stlink)
 -- : read32   ( buf a u)   07 mem  uread-check ;
 : read-cache-line  ( 'aligned-target)
-   <xfer  AP.TAR AP.Wr
-          [ CSW.word CSW.single-incr + 300_0000 + ]  AP.CSW AP.Wr
-          AP.DRW AP.Rd  AP.DRW AP.Rd  AP.DRW AP.Rd  AP.DRW AP.Rd
+   <xfer  AHB.TAR AP.Wr
+          [ CSW.word CSW.single-incr + 300_0000 + ]  AHB.CSW AP.Wr
+          AHB.DRW AP.Rd  AHB.DRW AP.Rd  AHB.DRW AP.Rd  AHB.DRW AP.Rd
           _DP.RDBUFF
    xfer>  bp @  cache-line 10 cmove ;
 
@@ -345,7 +377,7 @@ variable cache-addr  ( of first byte)
    drop ( aligned)
    0f and  cache-line + ;
 
-( XXX use AP.TAR for z?)
+( XXX use AHB.TAR for z?)
 variable z
 : t.setaddr  ( target)    z ! ;
 : t.getaddr  ( - target)  z @ ;
@@ -361,10 +393,10 @@ variable z
 :  lanes>  ( a word - data)  swap a>shift >> ;
 
 : -fault  -2 DP.ABORT ;  ( clear any faults)
-: addr!  ( a - a)  -fault  <xfer  dup AP.TAR AP.Wr ;
-: size!  ( size)   300_0000  or  AP.CSW AP.Wr ;
-: drw@   ( a - result)        AP.DRW  AP.Rd  _DP.RDBUFF  xfer>  w> lanes> ;
-: drw!   ( data a)    >lanes  AP.DRW  AP.Wr              xfer> ;
+: addr!  ( a - a)  -fault  <xfer  dup AHB.TAR AP.Wr ;
+: size!  ( size)   300_0000  or  AHB.CSW AP.Wr ;
+: drw@   ( a - result)        AHB.DRW  AP.Rd  _DP.RDBUFF  xfer>  w> lanes> ;
+: drw!   ( data a)    >lanes  AHB.DRW  AP.Wr              xfer> ;
 
 : rb  ( a - b)  ( read byte from target)   addr!  0 size!  drw@    0ff and ;
 : rh  ( a - h)  ( read hword from target)  addr!  1 size!  drw@  0ffff and ;
