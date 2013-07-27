@@ -191,6 +191,7 @@ variable spy
 : ?type  spy @ if  type  ^  then  2drop ;
 : .send
    radix preserve  hex
+   cr  ." sending "  #send u.  ." bytes"
    cr  sendbuf  #send for  c@+ swap u.  next  drop ;
 
 : usend-recv  ( - r0 r1)  ( return first two bytes of response)
@@ -243,15 +244,16 @@ variable #xfers
 : >x  ( xfer)  ( add transfer to sequence)  >b  1 #xfers +! ;
 
 :  xfer>
-   #xfers @  sendbuf 2 + c!  cmd>
-   led @ if  spy @ ( save)  spy off  0 DAP.LED  spy !  then
-   #xfers @  xor if
-      ." transactions not completed "  then
-   b> dup 1 = if  drop  " OK "              ?type          ^  then
-      dup 2 = if  drop  " WAIT "            ?type          ^  then
-      dup 4 = if  drop  " FAULT "           ?type  -fault  ^  then
-      dup 8 = if  drop  " Protocol error "  ?type          ^  then
-         10 = if  drop  " Value mismatch "  ?type             then ;
+   #xfers @  =if  ( do nothing if no xfers queued up)
+      sendbuf 2 + c!  cmd>
+      led @ if  spy @ ( save)  spy off  0 DAP.LED  spy !  then
+      #xfers @  xor if  ." transactions not completed "  then
+      b> dup 1 = if  drop  " OK "              ?type          ^  then
+         dup 2 = if  drop  " WAIT "            ?type          ^  then
+         dup 4 = if  drop  " FAULT "           ?type  -fault  ^  then
+         dup 8 = if  drop  " Protocol error "  ?type          ^  then
+            10 = if  drop  " Value mismatch "  ?type             then
+   then ;
 
 
 : _DP.IDCODE            02 >x      ;
@@ -280,8 +282,12 @@ variable #xfers
 : select!   ( sel - reg)  dup -10 and  select punch  0c and ;
 
 ( Adds a read or write of an AP register to a transfer.)
-: AP.Rd  ( sel)    select!  3 +  >x     ;  ( set AP & RnW bit)
-: AP.Wr  ( w sel)  select!  1+   >x  >w ;  ( set AP only)
+: AP.Rd  ( sel)               select!  3 +  >x     ;  ( set AP and RnW bit)
+: _wr    ( w sel bits)  swap  select!    +  >x  >w ;
+: AP.Wr  ( w sel)                      1    _wr    ;  ( set AP only)
+
+: AP.Match  ( w sel)                  13    _wr    ;  ( Set AP, match, and RnW bits)
+: AP.Mask   ( w sel)                  21    _wr    ;  ( Set AP and mask bits)
 
 ( Generates a transfer made up of a single read AP or write AP - possibly
   preceded by a SELECT.)
@@ -339,6 +345,10 @@ comment %%hardwired%%
 %%hardwired%%
 
 
+: _debugregs
+   300_0002 AHB.CSW AP.Wr  DHCSR AHB.TAR AP.Wr ;
+
+
 ( The interface for the interact code. Implemented by all debug transports.)
 
 : t.chat  ( connect to device)
@@ -348,15 +358,60 @@ comment %%hardwired%%
    <xfer  _DP.IDCODE  xfer>  w>  u.
    -fault
    <xfer  0 _DP.SELECT  5000_0000 _DP.CTRL ( pwr up sys & dbg)  xfer>
-   spy off
+   -- spy off
 ;
 
-: t.halt   complain ;
-: t.run    complain ;
-: t.step   complain ;
+( Add debug key to command bits and store into DHCSR.)
+: dhcsr!   ( value)  <xfer  _debugregs  a05f_0000 +  AHB.DRW AP.Wr  xfer> ;
 
-: t.getregs  ( buf)  complain ;  ( NYI)
-: t.setregs  ( buf)  complain ;
+: t.run    1  ( C_DEBUGEN)           dhcsr! ;
+: t.halt   3  ( C_DEBUGEN + C_HALT)  dhcsr! ;
+: t.step   5  ( C_DEBUGEN + C_STEP)  dhcsr! ;
+
+
+( Instead of reading and writing all regs when we stop and start - a lot of
+  slowish USB traffic - just read and write the regs we care about. We
+  don't keep a local copy of regs.)
+
+: _readreg  ( regindex)
+   AHB.BD1 ( DCRSR) AP.Wr  AHB.BD2 ( DCRDR) AP.Rd ;
+
+: _writereg  ( value regindex)
+   swap  AHB.BD2 ( DCRDR) AP.Wr  1_0000 + AHB.BD1 ( DCRSR) AP.Wr ;
+
+
+: ?xfer_read  ( count - count')  ( after 38 bytes, start a new xfer)
+   1+  38 #send u< if  xfer>  for  w>  next  <xfer  0 ( count)  then ;
+
+( Keeping this till I decide...)
+: t.getregs_lohi  ( regmask - v0 v1 ...)   ( low to high)
+   <xfer  _debugregs  0 0 rot ( regcount regindex regmask)
+      begin  dup 1 and if  over _readreg  2push  ?xfer_read  2pop  then
+      1 u+  u2/  dup 0= until
+   xfer>
+   2drop  ?for  w>  next  then ;  ( read remaining regs from recvbuf)
+
+( This version "interoperates" better with t.setregs.)
+: t.getregs  ( regmask - ... v1 v0)   ( high to low)
+   <xfer  _debugregs  0 14 rot ( regcount regindex regmask)
+      [ 3f 14 - ] <<  ( "left justify" regmask)
+      begin  dup 0< if  over _readreg  2push  ?xfer_read  2pop  then
+      -1 u+  2*  dup 0= until
+   xfer>
+   cr 2dup  u. u.
+   2drop  ?for  w>  next  then ;  ( read remaining regs from recvbuf)
+
+
+: ?xfer_write  ( after 30 bytes, start a new xfer)
+   30 #send u< if  xfer>  <xfer  then ;
+
+: t.setregs  ( ... v1 v0 regmask)  ( high to low)
+   <xfer  _debugregs  0 swap ( regindex regmask)
+      begin  dup 1 and if  push  tuck _writereg  ?xfer_write  pop  then
+      1 u+  u2/  dup 0= until
+   xfer>
+   2drop ;
+
 
 ( XXX add chunking to this? - use generic chunking code from stlink)
 ( XXX These shouldn't be used to transfer more that about 32 bytes of
@@ -396,6 +451,72 @@ comment %%hardwired%%
 : wb  ( b a)  ( write byte to target)   addr!  0 size!  drw! ;
 : wh  ( h a)  ( write hword to target)  addr!  1 size!  drw! ;
 : ww  ( w a)  ( write word to target)   addr!  2 size!  drw! ;
+
+
+.ifdef debugdebug
+( Hacks and such to test out the debug connection.)
+
+: readreg  ( reg-index - value)
+   <xfer  300_0002 AHB.CSW AP.Wr
+          DHCSR AHB.TAR AP.Wr  AHB.BD1 ( DCRSR) AP.Wr
+          1_0000 AHB.BD0 AP.Mask  1_0000 AHB.BD0 AP.Match
+          AHB.BD2 ( DCRDR) AP.Rd  xfer>  w> ;
+
+( XXX Hacks to see how long it takes the S_REGRDY bit to be set. In all my
+  tests it gets set _immediately_.)
+
+: reghack  ( reg-index - DHCSR reg-value)
+   <xfer  300_0002 AHB.CSW AP.Wr
+          DHCSR AHB.TAR AP.Wr  AHB.BD1 ( DCRSR) AP.Wr
+          AHB.BD0 ( DHCSR) AP.Rd
+          AHB.BD0 ( DHCSR) AP.Rd
+          AHB.BD0 ( DHCSR) AP.Rd
+          AHB.BD0 ( DHCSR) AP.Rd
+          AHB.BD0 ( DHCSR) AP.Rd
+          AHB.BD0 ( DHCSR) AP.Rd
+          AHB.BD0 ( DHCSR) AP.Rd
+          AHB.BD0 ( DHCSR) AP.Rd
+          AHB.BD2 ( DCRDR) AP.Rd  xfer>  w> w> w> w>  w> w> w> w>  w> ;
+
+: wreghack  ( value reg-index - DHCSR * 8)
+   <xfer  300_0002 AHB.CSW AP.Wr  DHCSR AHB.TAR AP.Wr
+          swap  AHB.BD2 ( DCRDR) AP.Wr  ( write new register value)
+          1_0000 + AHB.BD1 ( DCRSR) AP.Wr  ( write "command" to write reg)
+          AHB.BD0 ( DHCSR) AP.Rd
+          AHB.BD0 ( DHCSR) AP.Rd
+          AHB.BD0 ( DHCSR) AP.Rd
+          AHB.BD0 ( DHCSR) AP.Rd
+          AHB.BD0 ( DHCSR) AP.Rd
+          AHB.BD0 ( DHCSR) AP.Rd
+          AHB.BD0 ( DHCSR) AP.Rd
+          AHB.BD0 ( DHCSR) AP.Rd  xfer>  w> w> w> w>  w> w> w> w> ;
+
+: __readreg  ( reg# - reg#+1)
+   dup  AHB.BD1 ( DCRSR) AP.Wr  1+  AHB.BD2 ( DCRDR) AP.Rd ;
+
+: __writereg  ( buf reg# - buf+4 reg#+1)
+   push  dup 4 +  swap lew@
+   AHB.BD2 ( DCRDR) AP.Wr  r@ 1_0000 + AHB.BD1 ( DCRSR) AP.Wr
+   pop 1+ ;
+
+: getregs  ( buf)
+   <xfer  _debugregs  xfer>
+
+   0 ( reg#)  <xfer  8 for  __readreg  next  xfer>  push
+   bp @  over  [ 8  2 << ]  cmove
+
+         pop  <xfer  8 for  __readreg  next  xfer>  push
+   bp @  over  [ 8  2 << ] +  [ 8  2 << ]  cmove
+
+         pop  <xfer  5 for  __readreg  next  xfer>  drop
+   bp @  swap  [ 10  2 << ] +  [ 5  2 << ]  cmove ;
+
+: setregs  ( buf)
+   <xfer  _debugregs  xfer>
+   0 ( reg#)  5 for  <xfer   4 for  __writereg  next  xfer>  next
+                     <xfer          __writereg  drop  xfer> ;
+
+.then  ( debugdebug)
 
 .else  ." No supported USB devices found."
 
