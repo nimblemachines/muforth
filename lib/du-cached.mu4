@@ -1,0 +1,383 @@
+( This file is part of muFORTH: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2013 David Frech. All rights reserved, and all wrongs
+  reversed. (See the file COPYRIGHT for details.)
+
+
+( Memory dump. This version has a built-in 16 byte line cache.)
+
+( If tty support compiled into muforth, load the memory dumper.)
+.ifdef get-termios  ( useless without tty support)
+   .ifndef user-raw  ld lib/tty.mu4  .then
+.else
+   z" Need termios support to load memory dumper."  abort
+.then
+
+( Since we read the same 16 byte chunk of target memory - whether over USB,
+  a serial line, or from a local memory image - let's make this a bit more
+  efficient, and stop pushing the caching hack down into each of the targets.
+
+  My initial design of the memory dumping code was based on streaming byte
+  reads from a serially-connected. This was simple and efficient - and
+  required very little code on the target. But now that I'm reading over USB,
+  using control requests, bulk endpoints, or HID reports - it's too
+  inefficent and latent to continue doing "streaming" reads. It makes more
+  sense to read chunks and cache them.
+
+  Curiously, this can be layered onto the existing HC08 serial target very
+  easily, since I can use the ReadChunk command, or - as on the 908 -
+  simulate this using a streaming read. And for USB-connected targets,
+  reading chunks at a time - even as small as 16 bytes - is a big win.)
+
+
+( We defer these so that each target can define its own version.)
+
+variable |cell  ( size in bytes, of a cell)
+variable |addr  ( size in bytes, of an address)
+defer |cell@  ( host-addr - cell)  ( correct size and endianness for target) 
+defer |read   ( buf a u)
+
+
+( For memory reads. A 16 byte cache line. Invalidated by any memory write
+  debug command, or any other command - run or step, eg - that could
+  conceivably alter memory contents underneath us.)
+
+16 buffer du-cache-line
+variable du-cache-addr  ( of first byte)
+: -valid   -1 du-cache-addr ! ;  -valid
+
+: du-cached  ( target - buffer)
+   dup -16 and  ( target aligned)
+   dup  du-cache-addr @ xor  if  ( not in current cache line)
+      dup du-cache-addr !  du-cache-line over 16  |read  then
+   drop ( aligned)
+   15 and  du-cache-line + ;
+
+( Base the address mask on the size of addresses. |addr better be at least
+  one!!
+
+  NOTE: we calculate this in this oddball way to avoid doing a shift by 64,
+  which is what would happen we calculated the addr-mask on the host. And
+  on my x86_64 machine shifts by 64 are no-ops, so we get a rather bogus
+  mask - all zeroes.)
+
+: see-addr-mask
+   1  |addr @  3 << ( *8) 1-  <<  2*  1- ;
+
+( advance rounds to see-addr-mask)
+: advance  ( a offset - a')  + ( advance)  see-addr-mask  and ;
+
+variable p  ( current target address we're dumping/disasming)
+: p@+    ( incr - p)  p @  tuck advance  p ! ;
+: c*     ( - byte)         1 p@+  du-cached      c@ ;
+: c&     ( byte)           1 p@+  du-cached      c! ;
+: cell*  ( - cell)   |cell @ p@+  du-cached  |cell@ ;
+
+
+( And let's give them defaults, so we can use the memory dumper to explore
+  muFORTH and to test out user-raw mode.)
+
+-: ( buf a u)  rot swap  cmove ;
+: >host  [ ]        is |read
+         ['] @      is |cell@
+             cell      |cell !
+             cell      |addr ! ;  >host
+
+
+-- ------------------------------------------------------------------------
+-- Call, jump, and return
+-- ------------------------------------------------------------------------
+
+( up to 12 remembered locations)
+12 array+ istack-addr  ( saved address)
+12 array+ istack-mode  ( address of word to reset to saved mode)
+variable isp  ( stack pointer - points to next empty space)
+0 isp !
+variable du-set-mode  ( cfa of word to restore du mode)
+
+( If there is room on the i-stack, push a and make ea the new a. Otherwise,
+  drop ea and return a.)
+
+: i-push  ( a ea - ea | a)
+   isp @  dup 12 u<  if  ( room)  push ( isp)
+      du-set-mode @  r@ istack-mode !  swap ( ea a)  r@ istack-addr !
+      pop 1+ isp !  ^  then
+   ( a ea isp)  2drop ;
+
+( If there is something on the i-stack, pop the address, pop and execute
+  the mode cfa if nonzero - to return us to prev mode - and return the new
+  a. Otherwise, return original a.)
+
+: i-pop   ( a - popped | a)
+   isp @  =if  ( not empty)  1- dup isp !  push ( isp)  drop ( a)
+      r@ istack-addr @  ( saved-a)
+     pop istack-mode @ =if execute  ^  then  then  ( saved-a 0)
+   ( a isp)  drop ;
+
+: .nesting  isp @  ?for  char > emit  next  space  then  ;
+
+
+-- ------------------------------------------------------------------------
+-- Printing addresses and memory contents
+-- ------------------------------------------------------------------------
+
+: .h8     hex   <#    # #  #>  type ;
+: .o8    octal  <#  # # #  #>  type ;
+: .hcell  hex   <#  |cell @ 2* for # next  #>  type ;
+: .haddr  hex   <#  |addr @ 2* for # next  #>  type ;
+
+: .addr   cr  ( -16 and)  .haddr  space ;
+: _addr   cr  drop  |addr @ 2* 1+ spaces ;
+
+( These are unused by this code but are used by targets.)
+: .h8_     .h8    space ;
+: .hcell_  .hcell space ;
+
+comment
+ ====================================================
+  How much horizontal room does each four bytes take?
+  First, with octal:
+
+   A   \   3   &    A   \   3   &
+  aa  bb  cc  dd   aa  bb  cc  dd
+ 000 000 000 000  000 000 000 000
+    ffff    ffff     ffff    ffff
+        97ffee00         97ffee00
+                 97ffee0097ffee00
+
+  group*(digits + space between)
+    char: 4*(1 + 3) = 16
+     hex: 4*(2 + 2) = 16
+   octal: 4*(3 + 1) = 16     #field = 4
+  word16: 2*(4 + 4) = 16
+  word32: 1*(8 + 8) = 16
+
+  word64: 1*(16 + 17) = 33    special case: needs one more space
+
+  Then, without octal:
+
+  A  \  3  &   A  \  3  &
+ aa bb cc dd  aa bb cc dd
+  ffff  ffff   ffff  ffff
+    97ffee00     97ffee00
+         97ffee0097ffee00
+
+  group*(digits + space between)
+    char: 4*(1 + 2) = 12
+     hex: 4*(2 + 1) = 12     #field = 3
+  word16: 2*(4 + 2) = 12
+  word32: 1*(8 + 4) = 12
+
+  word64: 1*(16 + 9) = 25    special case: needs one more space
+ ====================================================
+
+variable #field  ( width of each byte, rendered)
+
+: .padding   ( a - a)
+   dup  p !  ( set memory address)
+   .nesting  dup  15 and  dup  #field @ *  swap 2/ 2/ +  spaces ;
+
+: |_field|   ( width)  #field @  swap -  spaces ;
+
+: #bytes    ( a - a #bytes)  16 over  15 and -  ;  ( 1 .. 16, end on multiple)
+: .spacing  ( a n - a) + dup 3 and 0= if space then ;  ( every 4th add a space)
+
+( >letter is pickier than >graphic, to make strings easier to read. This is
+  America-centric and not very international, which is unfortunate.)
+
+: >letter   ( ch - ch')  dup letter?   if ^ then  drop bl  ;
+: >graphic  ( ch - ch')  dup graphic?  if ^ then  drop bl  ;
+
+: .char  >graphic  1 |_field|  emit ;
+: .hex-byte        2 |_field|  .h8 ;
+: .oct-byte        3 |_field|  .o8 ;
+
+defer .byte
+: .bytes  ( a)
+   .padding
+   #bytes            for  c*  .byte        1 .spacing  next  drop ;
+
+defer .cell ( a n - a)
+: .cells  ( a)
+   |cell @ negate and  .padding
+   #bytes |cell @ /  for  cell*  .cell  |cell @ .spacing  next  drop ;
+
+.ifdef ARM-see
+( XXX again, fix this since address is no longer passed on stack)
+defer .name  ( a n - a)  ' drop is .name
+: .names      ( a)  ['] .name     is .cell  .cells ;
+.then
+
+( XXX ARM version will have to change; now a points _at_ rather than
+  after cell.)
+defer decorate-cell  ( a n #spaces - a n)
+' spaces is decorate-cell
+
+( Space before a cell = b/cell * [#field - 2] + [b/cell >> 3])
+: .hex-cell   ( a n - a)
+   |cell @ dup  #field @ 2 - *  swap 3 >> +  decorate-cell  .hcell ;
+
+: .hex-cells  ( a)  ['] .hex-cell is .cell  .cells ;
+
+: .chars      ( a)  ['] .char     is .byte  .bytes ;
+: .hex-bytes  ( a)  ['] .hex-byte is .byte  .bytes ;
+: .oct-bytes  ( a)  ['] .oct-byte is .byte  .bytes ;
+
+( Set field-width for bytes so everything lines up nicely.)
+: octal-bytes  4  #field ! ;  ( only for 8080 and pdp-11 !!)
+: hex-bytes    3  #field ! ;
+
+
+-- ------------------------------------------------------------------------
+-- Binding keys to actions
+-- ------------------------------------------------------------------------
+
+( All keys have the following stack signature: a - a' flag; flag is true to
+  quit, false to continue.)
+
+' -1 128 defarray host-seekeys  ( default key action is to push quit flag: -1)
+
+variable 'seekeys  ( an indirect pointer to seekeys array - so host and
+                     target can have different key bindings and behaviours)
+
+host-seekeys 'seekeys !  ( until further notice, use host's key bindings)
+
+: 'key  ( key# - a)  cells  'seekeys @  + ;
+: key!  ( cfa key#)  'key  ! ;
+
+: key:  -:  \f char  key! ;
+
+( XXX could we check here if first keymap - ie 'key @ - is 0 and if so, try
+  host-seekeys? or is that too hard-wired? It's annoying that we have to
+  save the key value in a variable in order to re-index... But I like it
+  better than having all that stuff on the stack!)
+
+: inspect-key  ( a - a' flag)
+   key  dup 128 u< if  'key @execute ^  then  drop  ( key)  -1 ;
+
+: advance!  ( cfa)
+  dup     32 key!  ( these are all synonyms for moving forward)
+  dup char n key!
+  dup    #CR key!
+      char j key! ;
+
+: retreat!  ( cfa)
+  dup char p key!  ( these are all synonyms for moving backward)
+  dup   #DEL key!
+  dup char - key!
+  dup char b key!
+      char k key! ;
+
+
+variable ea  ( "effective address" - an address to jump or call to)
+
+key: r ( return)  ( a - a' 0)        i-pop   0 ;
+key: c ( call)    ( a - a' 0)  ea @  i-push  0 ;
+key: g ( go)      ( a - ea 0)  drop  ea @    0 ;
+
+( For switching inspection modes.)
+defer 1inspect  ( a - a)
+-- variable inspect-cleanup  ' nope  inspect-cleanup !
+
+: inspect!  ( cfa)  is 1inspect ;
+
+( XXX inspect will crash if |@ isn't defined, or refers to the target's
+  memory rather than the host's.)
+
+: inspect   ( a - a')
+   radix preserve  tty user-raw  tty on-exit cooked
+   -- inspect-cleanup on-exit @execute
+   begin  dup 1inspect  inspect-key  until ;
+
+
+-- ------------------------------------------------------------------------
+-- Moving around, aligning addresses.
+-- ------------------------------------------------------------------------
+
+variable skip-by-cell
+: see-skip   skip-by-cell @ if  |cell @  ^  then  16 ;
+
+( skip-advance rounds down to nearest `skip'.)
+: skip-advance  ( a skip - a' 0)
+   advance  see-skip negate and ( round)  0 ;
+
+: skip+  ( a - a' 0)  see-skip         skip-advance ;
+: skip-  ( a - a' 0)  see-skip negate  skip-advance ;
+
+
+-- ------------------------------------------------------------------------
+-- Dump modes - set up key bindings, memory source, moving forward and
+-- backward, and how to display each line. Sets du-set-mode so we can
+-- return to this mode with i-pop.
+-- ------------------------------------------------------------------------
+
+: du-mode
+   create  ( 'keymap addr-mask)  ,
+      ' , ( 'set-memory-source)
+      ' , ( 'advance)  ' , ( 'retreat)  ' , ( 'inspect)
+      ( 'keymap)  ,
+   does>  ( a 'body - a')
+      dup body> du-set-mode !
+      @+ @+ @+ @+ @+ @  ( addr-mask 'set-memory 'advance 'retreat 'inspect 'keymap)
+      ( 'keymap) 'seekeys !  inspect!  retreat!  advance!  ( set-memory)  execute
+      ( addr-mask) and  0 advance ;
+
+
+-- ------------------------------------------------------------------------
+-- Default bindings for host.
+-- ------------------------------------------------------------------------
+
+( Pressing 1 toggles between skipping by cell and by line of 16 bytes.)
+key: 1  ( a - a 0)  skip-by-cell @  0=  skip-by-cell !  0 skip-advance ;
+
+( Default behaviour for host:)
+: 1dump  ( a)
+   dup  p !  cell*  ea !
+   hex-bytes
+   dup _addr  dup .chars
+   dup .addr  dup .hex-bytes
+   dup _addr      .hex-cells ;
+
+host-seekeys  cell negate  ( 'keymap mask)
+   du-mode host-dumping   >host  skip+  skip-  1dump
+
+: du   ( a - a')  host-dumping  inspect ;
+
+
+( Batch mode)
+( Redirect to stdout to make it easier to write output to a file.)
+: dumps   ( start limit)
+   >host
+   out-channel preserve  >stdout
+   radix preserve
+   isp preserve  isp off
+   begin  swap  dup 1dump  16 advance drop  swap  2dup u< 0=  until  2drop ;
+
+
+comment broken_for_native_code
+
+( Below this is very old code, I think inherited from dforth. Here for
+  historio-comic relief only.)
+
+( See.  a grotty little decompiler)
+
+: >dict<   ( a - f) ( within dict)   [ ' unnest ]  here  within  ;
+: -named   dup >dict< if  >name type  0 ^  then  -1  ;
+
+( this word is UNUSED right now.)
+: code?  ( code - name T | body F)
+   forth  begin  @ dup  while  2dup  ( >code)  = until
+   cell+ ( name) nip -1  ^  then  ( 0)  ;
+
+: .ch   ( n - n')   dup "ff and  >letter emit  8 rshift  ;
+: 1see   ( a - a ea)
+   cr  dup .a16   inspect-nesting
+   dup @  dup  .w16 space   dup .ch  .ch  .ch  .ch  drop  space  space
+   -named if  ( 10 u.r) .w16  space  then  ( a)
+   dup |@ cell- ( code)  ( a ea)  ;
+
+' 1see '1see !
+
+: (see)  ( a - a)  ['] 1see  4  inspect  ;
+: see   '  cell-  ( code)   (see)  ;
+broken_for_native_code

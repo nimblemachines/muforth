@@ -200,9 +200,9 @@ variable spy
 
 : <cmd  ( cmd)  !send  >b ;
 :  cmd>   ( - r1)  sendbuf c@ ( cmd)  push  usend-recv  swap pop xor if
-   error" response didn't match command" then ;
+   error" response didn't match command"  then ;
 
-:  check  ( r1)  if  error" DAP_ERROR response"  then ;
+: check  ( r1)  if  error" DAP_ERROR response"  then ;
 
 : DAP.LED  ( on/off)
    01 <cmd  00 >b  0= 1+ ( nonzero -> 0, zero -> 1)  >b  cmd> drop ;
@@ -221,6 +221,17 @@ variable spy
    04 <cmd  ( idle cycles) 04 >b  ( WAIT retries) 80 >h  ( match retries) 80 >h
    cmd> check ;
 
+
+( Support for reading and writing basic DP and AP registers.)
+
+( Unlike all other commands that access DP registers, DP.ABORT is
+  self-contained. The other DP access words are intended for use inside of
+  a "DAP.Transfer" operation - ie, bracketed by <xfer and xfer>.)
+
+: DP.ABORT   ( abort)  08 <cmd   00 >b  >w     cmd> check ;
+: -fault  -2 DP.ABORT ;  ( clear any faults)
+
+
 ( Whether to flash the "connect" LED for each transfer.)
 variable led
 
@@ -236,30 +247,19 @@ variable #xfers
    led @ if  spy @ ( save)  spy off  0 DAP.LED  spy !  then
    #xfers @  xor if
       ." transactions not completed "  then
-   b> dup 1 = if  drop  " OK "              ?type  ^  then
-      dup 2 = if  drop  " WAIT "            ?type  ^   then
-      dup 4 = if  drop  " FAULT "           ?type  ^  then
-      dup 8 = if  drop  " Protocol error "  ?type  ^  then
-         10 = if  drop  " Value mismatch "  ?type  then ; 
+   b> dup 1 = if  drop  " OK "              ?type          ^  then
+      dup 2 = if  drop  " WAIT "            ?type          ^  then
+      dup 4 = if  drop  " FAULT "           ?type  -fault  ^  then
+      dup 8 = if  drop  " Protocol error "  ?type          ^  then
+         10 = if  drop  " Value mismatch "  ?type             then ;
 
 
-( Support for reading and writing basic DP and AP registers.)
-
-( DP.ABORT and DP.IDCODE are self-contained. The remaining DP access words
-  are intended for use inside of a "DAP.Transfer" operation - ie, bracketed
-  by <xfer and xfer>.)
-
-: DP.ABORT   ( abort)  08 <cmd   00 >b  >w     cmd> check ;
-: DP.IDCODE  ( - idcode)  <xfer  02 >x        xfer>  w> ;
-
-( x is number of xfers so far; incremented each time we add one of the
-  following:)
-
+: _DP.IDCODE            02 >x      ;
 : _DP.CTRL    ( ctrl)   04 >x  >w  ;  ( NOTE: SELECT[0] must be 0)
 : _DP.STAT              06 >x      ;  ( NOTE: SELECT[0] must be 0)
 : _DP.SELECT  ( sel)    08 >x  >w  ;
 : _DP.RESEND            0a >x      ;
-: _DP.RDBUFF            0e >x      ;
+: _DP.RDBUFF            0e >x      ;  ( NOTE: CMSIS firmware reads this for us!)
 
 
 ( Create a generic way to keep a "shadow" copy of a register value, and
@@ -286,8 +286,8 @@ variable #xfers
 ( Generates a transfer made up of a single read AP or write AP - possibly
   preceded by a SELECT.)
 
-: AP.Read   ( sel - w)  <xfer  AP.Rd  _DP.RDBUFF  xfer>  w> ;
-: AP.Write  ( w sel)    <xfer  AP.Wr              xfer> ;
+: AP.Read   ( sel - w)  <xfer  AP.Rd  xfer>  w> ;
+: AP.Write  ( w sel)    <xfer  AP.Wr  xfer> ;
 
 
 -- -----------------------------------------------------------------------
@@ -326,6 +326,7 @@ e000_edf8 constant DCRDR  ( debug core register data reg)
 e000_edfc constant DEMCR  ( debug exception and monitor ctrl reg)
 
 ( Defines for AHB.CSW)
+comment %%hardwired%%
 0 constant CSW.byte    ( memory bus transaction sizes)
 1 constant CSW.hword
 2 constant CSW.word
@@ -335,68 +336,58 @@ e000_edfc constant DEMCR  ( debug exception and monitor ctrl reg)
 20 constant CSW.packed-incr  ( *not* supported on KL25Z!)
 
 37 constant CSW.size-incr-mask
+%%hardwired%%
+
 
 ( The interface for the interact code. Implemented by all debug transports.)
 
 : t.chat  ( connect to device)
-   spy on
-   1 DAP.LED
+   spy on  led on
    DAP.Connect  00 DAP.SWD_Configure  DAP.Transfer_Configure
-   DAP.Connect_Sequence  DP.IDCODE u.
-   -2 DP.ABORT ( clear any error flags)
+   DAP.Connect_Sequence
+   <xfer  _DP.IDCODE  xfer>  w>  u.
+   -fault
    <xfer  0 _DP.SELECT  5000_0000 _DP.CTRL ( pwr up sys & dbg)  xfer>
-   0 DAP.LED
+   spy off
 ;
 
-( For memory reads. A 16 byte cache line. Invalidated by any memory write
-  debug command, or any other command - run or step, eg - that could
-  conceivably alter memory contents underneath us.)
+: t.halt   complain ;
+: t.run    complain ;
+: t.step   complain ;
 
-( XXX use cache-line as recvbuf for transaction?)
-10 buffer cache-line
-variable cache-addr  ( of first byte)
-: -valid   -1 cache-addr ! ;  -valid
+: t.getregs  ( buf)  complain ;  ( NYI)
+: t.setregs  ( buf)  complain ;
 
-( XXX operations that could invalidate the memory cache go here)
+( XXX add chunking to this? - use generic chunking code from stlink)
+( XXX These shouldn't be used to transfer more that about 32 bytes of
+  data at a time!)
+( XXX Rewrite these to use TransferBlock?)
 
-( from stlink)
--- : read32   ( buf a u)   07 mem  uread-check ;
-: read-cache-line  ( 'aligned-target)
-   <xfer  AHB.TAR AP.Wr
-          [ CSW.word CSW.single-incr + 300_0000 + ]  AHB.CSW AP.Wr
-          AHB.DRW AP.Rd  AHB.DRW AP.Rd  AHB.DRW AP.Rd  AHB.DRW AP.Rd
-          _DP.RDBUFF
-   xfer>  bp @  cache-line 10 cmove ;
+: t.read   ( buf a u)
+   swap  ( buf u a)
+   <xfer  AHB.TAR  AP.Wr  300_0012  AHB.CSW  AP.Wr
+          dup  2 >> for  AHB.DRW  AP.Rd  next  xfer>
+   bp @ -rot  cmove ;
 
-( cached does the memory read caching for us.)
-: cached  ( target - buffer)
-   dup -10 and  ( target aligned)
-   dup  cache-addr @ xor  if  ( not in current cache line)
-      -- dup cache-addr !  cache-line over 10  read32  then
-      dup cache-addr !  dup read-cache-line  then
-   drop ( aligned)
-   0f and  cache-line + ;
+: t.write  ( buf a u)
+   swap  ( buf u a)
+   <xfer  AHB.TAR  AP.Wr  300_0012  AHB.CSW  AP.Wr
+          2 >> for  dup 4 +  swap lew@  AHB.DRW  AP.Wr  next  xfer>
+   drop ;
 
-( XXX use AHB.TAR for z?)
-variable z
-: t.setaddr  ( target)    z ! ;
-: t.getaddr  ( - target)  z @ ;
-: t.readw    ( - word)               z @  cached      4 z +!  w@ ;
-: t.readh    ( - hword)              z @  cached      2 z +!  h@ ;
-: t.readb    ( - byte)               z @  cached      1 z +!  c@ ;
--- : t.writew   ( word)    pad w!  pad  z @  4  write32  4 z +!  -valid ;
 
-( XXX debugging)
+( XXX The following is mostly intended for debugging the debugger. ;-)
+
 ( To and from byte lane(s)
 : a>shift  ( a - #shifts)  3 and 8 * ;
 : >lanes   ( data a - word)       a>shift << ;
 :  lanes>  ( a word - data)  swap a>shift >> ;
 
-: -fault  -2 DP.ABORT ;  ( clear any faults)
-: addr!  ( a - a)  -fault  <xfer  dup AHB.TAR AP.Wr ;
-: size!  ( size)   300_0000  or  AHB.CSW AP.Wr ;
-: drw@   ( a - result)        AHB.DRW  AP.Rd  _DP.RDBUFF  xfer>  w> lanes> ;
-: drw!   ( data a)    >lanes  AHB.DRW  AP.Wr              xfer> ;
+: addr!  ( a - a)  -fault  <xfer  dup  AHB.TAR AP.Wr ;
+: size!  ( size)         300_0000  or  AHB.CSW AP.Wr ;
+
+: drw@   ( a - result)        AHB.DRW  AP.Rd  xfer>  w> lanes> ;
+: drw!   ( data a)    >lanes  AHB.DRW  AP.Wr  xfer> ;
 
 : rb  ( a - b)  ( read byte from target)   addr!  0 size!  drw@    0ff and ;
 : rh  ( a - h)  ( read hword from target)  addr!  1 size!  drw@  0ffff and ;
