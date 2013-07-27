@@ -191,8 +191,8 @@ variable spy
 : ?type  spy @ if  type  ^  then  2drop ;
 : .send
    radix preserve  hex
-   cr  ." sending "  #send u.  ." bytes"
-   cr  sendbuf  #send for  c@+ swap u.  next  drop ;
+   cr  #send u.  ." # "
+   sendbuf  #send for  c@+ swap u.  next  drop ;
 
 : usend-recv  ( - r0 r1)  ( return first two bytes of response)
    spy @ if  .send  then
@@ -235,10 +235,12 @@ variable spy
 
 ( Whether to flash the "connect" LED for each transfer.)
 variable led
+: ?led  ( flag)
+   led @ if  spy @ ( save)  spy off  swap DAP.LED  spy !  then ;
 
 variable #xfers
 : <xfer
-   led @ if  spy @ ( save)  spy off  -1 DAP.LED  spy !  then
+   -1 ?led
    05 <cmd  00 ( DAP#) >b  00 ( count placeholder) >b  #xfers off ;
 
 : >x  ( xfer)  ( add transfer to sequence)  >b  1 #xfers +! ;
@@ -246,14 +248,15 @@ variable #xfers
 :  xfer>
    #xfers @  =if  ( do nothing if no xfers queued up)
       sendbuf 2 + c!  cmd>
-      led @ if  spy @ ( save)  spy off  0 DAP.LED  spy !  then
+      0 ?led
       #xfers @  xor if  ." transactions not completed "  then
       b> dup 1 = if  drop  " OK "              ?type          ^  then
          dup 2 = if  drop  " WAIT "            ?type          ^  then
          dup 4 = if  drop  " FAULT "           ?type  -fault  ^  then
          dup 8 = if  drop  " Protocol error "  ?type          ^  then
-            10 = if  drop  " Value mismatch "  ?type             then
-   then ;
+            10 = if        " Value mismatch "  ?type          ^  then
+                           " BOGUS return"     ?type          ^
+   then  ( 0) ?led ;
 
 
 : _DP.IDCODE            02 >x      ;
@@ -398,7 +401,6 @@ comment %%hardwired%%
       begin  dup 0< if  over _readreg  2push  ?xfer_read  2pop  then
       -1 u+  2*  dup 0= until
    xfer>
-   cr 2dup  u. u.
    2drop  ?for  w>  next  then ;  ( read remaining regs from recvbuf)
 
 
