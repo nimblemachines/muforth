@@ -18,34 +18,15 @@ variable chatting
 
 : +chat  chatting on ;
 
-( A copy of what we hope the current memory pointer on the target is. We
-  update it when we do operations that are post-increment on the target.)
-
-variable _z
-
-: _z!        ( a)  dup _z !  z! ;
-: _z@        ( - a)    _z @ ;  ( does _not_ talk to target)
-
-: _z*        ( - b)  1 _z +!  z* ;       ( data memory)
-: _zcell*    ( - w)  2 _z +!  zcell* ;   ( data memory)
-: _zp*       ( - b)  1 _z +!  zp* ;      ( program memory)
-: _zpcell*   ( - w)  2 _z +!  zpcell* ;  ( program memory)
-
 ( Don't set the memory fetch words; we need to specify program or data!)
 ( XXX need these for image? setting >data for image is meaningless!)
 
-: >chat-data
-         ['] _z*      is |c*
-         ['] _zcell*  is |cell* ;
+: >chat-data   ['] zread   is |read ;
+: >chat-prog   ['] zpread  is |read ;
 
-: >chat-prog
-         ['] _zp*      is |c*
-         ['] _zpcell*  is |cell* ;
-
-: >chat  ['] _z!  is |p!
-         ['] _z@  is |p@
-                   2 |cell !  ( size of cell)
-                   2 |addr !  ( size of addr)
+: >chat  ['] leh@  is |cell@
+                    2 |cell !  ( size of cell)
+                    2 |addr !  ( size of addr)
 
          ['] >chat-data  is >data
          ['] >chat-prog  is >prog
@@ -53,17 +34,21 @@ variable _z
          >prog  ( default) ;
 
 
+( For reading and writing target cells.)
+: t@  ( addr - h)  push            pad pop 2 zread  pad leh@ ;
+: t!  ( h addr)    push  pad leh!  pad pop 2 zwrite ;
+
 ( chat-entry has pushed an "exception frame" onto the stack.
 
-  The order, low to high: rah ral sreg tl th xl xh yl yh zl zh pch pcl
-                  offset:  <skip>    0  1  2  3  4  5  6  7  8  9  10
+  The order, low to high: rah ral pad sreg tl th xl xh yl yh zl zh pch pcl
+                  offset:  <skip>   0    1  2  3  4  5  6  7  8  9  10  11
 
   rah/ral is the return address to the "process" routine.
   NOTE: PC is pushed big-endian!
 )
 
 variable chat-frame  ( loaded from rp0)
-: treg  ( offset)  constant  does> @  chat-frame @  +  z! ;
+: treg  ( offset - taddr)  constant  does> @  chat-frame @  + ;
 
 ( There is a byte of padding below the SREG to word-align frame.)
  1 treg .SREG
@@ -79,18 +64,30 @@ meta
 : cell   2  ;
 : cell/  2/ ;
 : cells  2* ;
+: cell+  \m cell + ;
 
-: rp0  \eq SPL z!  zcell*  1+ ;      ( bottom of target's R stack)
+( For reading and writing PC values on the stack. Convert a normal address
+  to an "ra" - return address - by shifting right one bit and swapping
+  bytes; ra's are stored big-endian on the stack!
+
+  To convert back, swap bytes and shift left.)
+
+forth
+: >ra   ( a - ra)  \m cell/  >lohi hilo> ;
+:  ra>  ( ra - a)            >lohi hilo>  \m cells ;
+
+meta
+: rp0  \eq SPL  t@  1+ ;             ( bottom of target's R stack)
 : sp0  chat-frame @  -2 and  64 - ;  ( bottom of target's D stack;
                                        room for 32 values on R)
-: sp!  ( target-sp)      .Y  zcell& ;
-: sp@  ( - target-sp)    .Y  zcell* ;
-: top!  ( target-top)    .T  zcell& ;
-: top@  ( - target-top)  .T  zcell* ;
+: sp!  ( target-sp)      .Y  t! ;
+: sp@  ( - target-sp)    .Y  t@ ;
+: top!  ( target-top)    .T  t! ;
+: top@  ( - target-top)  .T  t@ ;
 
 ( PC on R stack is big-endian and is a cell address, not a byte address.)
-: pc!  ( target-cfa)    \m cell/ >lohi  .PC  z& z& ;
-: pc@  ( - target-cfa)                  .PC  z* z*  hilo> \m cells ;
+: pc!  ( target-cfa)    >ra  .PC  t! ;
+: pc@  ( - target-cfa)       .PC  t@  ra> ;
 
 : depth  \m sp0 \m sp@ -  \m cell/ ;  ( depth of actual stack)
 : u.  u. ;
@@ -100,7 +97,7 @@ meta
 forth
 : 2sp  space space ;
 : .b8  binary  <#  # # # #  char _ hold  # # # #  #> type  2sp ;
-: .w   zcell*  .hcell  2sp ;
+: .w   ( addr)  t@  .hcell  2sp ;
 
 -- 005f reg  SREG     | I       T       H       S       V       N       Z       C
 
@@ -108,7 +105,7 @@ forth
    radix preserve
    cr  ." ITHS_VNZC     T     X     Y     Z    SP    PC"
        (  1000_0011  1234  3456  8738  abab  3a00  3b66 )
-   cr  .SREG z* .b8  .T .w  .X .w  .Y .w  .Z .w
+   cr  .SREG t@ .b8  .T .w  .X .w  .Y .w  .Z .w
        chat-frame @ .hcell 2sp  \m pc@ .hcell ;
 
 
@@ -125,21 +122,25 @@ forth
    depth 0= if  "cafe \m top!  \m sp0 \m sp!  ^  then
    \m top!
    depth 7 min  ( more than that would be silly)
-   \m sp0 over 1+ \m cells -  dup \m sp! ( top of D stack)  z!
-   ?for  zcell&  next  then  ( copy each cell as a word to D stack)
-   "cafe zcell& ( push bottom) ;
+   \m sp0 over 1+ \m cells -  dup \m sp! ( top of D stack)  swap
+   ?for  tuck t!  \m cell+  next  then  ( copy each cell as a word to D stack)
+   "cafe swap t! ( push bottom) ;
 
 : stack<  ( "pop" stack from target)
    \m depth 0 max 8 min  ( more than that would be silly)  =if
-   \m sp@ z!  1- dup ( depth, excluding top)  =if
-   for  zcell*  pop 2push  next  ( starting with top, push to R)
-   for  2pop push  next  ( pop from R to reverse order)
-   0 0  then  2drop  \m top@  0  then  drop ;
+      1- ( depth, excluding top)  =if
+         \m sp@ over  ( n sp n)
+         for  dup t@  pop 2push  \m cell+  next  ( starting with top, push to R)
+         drop ( sp)
+         for  2pop push  next  ( pop from R to reverse order)
+         0
+      then  \m top@  swap
+   then  drop ;
 
 ( Get target's hardware SP - ie, forth's return stack ptr - and store into
   chat-frame.)
 
-: get-rp   \m rp0  2 + ( skip ret addr)  chat-frame ! ;
+: get-rp   \m rp0  \m cell+ ( skip ret addr)  chat-frame ! ;
 
 : chat  +chat  >chat  avrchat.Hello  get-rp  .regs ;
 : copy-ram ;  ( XXX no-op)
@@ -166,10 +167,6 @@ forth
 .else                                            number ;
 .then
 mode __target
-
-( for testing)
-: r  ( ioaddr)       z!  z* ; 
-: w  ( byte ioaddr)  z!  z& ;
 
 
 .else  ( NO CONNECTED CHAT TARGET!)

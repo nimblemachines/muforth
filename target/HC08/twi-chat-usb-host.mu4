@@ -43,8 +43,9 @@ hex
 ( The following is code to talk to my simple "debug stub" running on an
   Atmel AVR, using its default slave address, 7f.)
 
-: avr-twi-read   ( len cmd)  7f ( slave)  rot pad  twi.Read ;
-: avr-twi-write  ( len cmd)  7f           rot pad  twi.Write ;
+variable zpad  ( so we don't clobber pad)
+: avr-twi-read   ( len cmd)  7f ( slave)  rot zpad  twi.Read ;
+: avr-twi-write  ( len cmd)  7f           rot zpad  twi.Write ;
 
 : avr-sync   begin  7f twi.Ping  0= until ;
 
@@ -52,28 +53,42 @@ hex
   pointer, let's prefix these words with 'z'. It's easy to type and sounds
   cool.)
 
+: z!  ( addr)  zpad leh!  2  10 avr-twi-write ;
+: zgo                     0  14 avr-twi-write  avr-sync ;
+
+: zsetup  ( buf addr len cmd - cmd slave len buf)
+   rot z!  ( buf len cmd)  rot push  ( len cmd)
+   7f rot  ( cmd slave len)  pop ;
+
+: zpread   ( buf addr len)  11 zsetup  twi.Read ;
+: zread    ( buf addr len)  12 zsetup  twi.Read ;
+: zwrite   ( buf addr len)  13 zsetup  twi.Write ;
+
+.ifdef oldzcmds
 ( Here and elsewhere we use * to mean "fetch byte with post-increment",
   cell* to mean "fetch cell with post-increment", and & to be the store
   versions of these)
 
-: z!  ( addr)    pad leh!  2  10 avr-twi-write ;
-: zp*      ( - b)          1  11 avr-twi-read  pad c@ ;    ( program memory)
-: zpcell*  ( - w)          2  11 avr-twi-read  pad leh@ ;  ( program memory)
-: z*       ( - b)          1  12 avr-twi-read  pad c@ ;
-: zcell*   ( - w)          2  12 avr-twi-read  pad leh@ ;
-: z&       ( b)  pad c!    1  13 avr-twi-write ;
-: zcell&   ( w)  pad leh!  2  13 avr-twi-write ;
-: zgo                      0  14 avr-twi-write  avr-sync ;
+: zp*      ( - b)           1  11 avr-twi-read  zpad c@ ;    ( program memory)
+: zpcell*  ( - w)           2  11 avr-twi-read  zpad leh@ ;  ( program memory)
+: z*       ( - b)           1  12 avr-twi-read  zpad c@ ;
+: zcell*   ( - w)           2  12 avr-twi-read  zpad leh@ ;
+: z&       ( b)  zpad c!    1  13 avr-twi-write ;
+: zcell&   ( w)  zpad leh!  2  13 avr-twi-write ;
+.then
 
 .ifdef bootloader
+
+( XXX bring up to speed with zread/zwrite etc?)
 
 ( Support for self-programming.)
 : avr-prog-cmd    ( addr cmd)  swap z!  0 swap  avr-twi-write ;
 
-: zpcell&     ( w)  pad leh!  2 20 avr-twi-write ;
-: zerase    ( addr)        21 avr-prog-cmd ;   ( erase flash page)
-: zprog     ( addr)        22 avr-prog-cmd ;   ( program flash page from buf)
-: zclear                 0 23 avr-twi-write ;  ( clear page buffer)
+: zpwrite  ( buf addr len)    20 zsetup  twi.Write ;
+: zpcell&  ( w)  zpad leh!  2 20 avr-twi-write ;
+: zerase   ( addr)            21 avr-prog-cmd ;   ( erase flash page)
+: zprog    ( addr)            22 avr-prog-cmd ;   ( program flash page from buf)
+: zclear                    0 23 avr-twi-write ;  ( clear page buffer)
 
 ( write a few words to flash page)
 : zing  ( addr)  dup z!  b/page  over + swap  do  i zpcell&  2 +loop ;
