@@ -348,8 +348,52 @@ comment %%hardwired%%
 %%hardwired%%
 
 
-: _debugregs
-   300_0002 AHB.CSW AP.Wr  DHCSR AHB.TAR AP.Wr ;
+( Support for Kinetis - initially KL25 - Flash programming.)
+4002_0000 constant FSTAT
+4002_0004 constant FCMD     ( cmd:addr<23:0>)
+4002_0008 constant FDATA0   ( varies)
+4002_000c constant FDATA1   ( varies)
+
+: _flashregs
+   300_0002 AHB.CSW AP.Wr  FSTAT AHB.TAR AP.Wr ;
+
+( Even though we only need to write a byte, it's easier and causes way
+  fewer transfers to write the whole word.)
+
+: _fstat!  ( bits)    AHB.BD0 ( FSTAT) AP.Wr ;
+: _fstat@  ( - bits)  AHB.BD0 ( FSTAT) AP.Rd ;
+
+( NOTE: must have done _fstat! before to set CSW properly.)
+( Also: this does its own xfer.)
+: fstat@  ( - bits)   AHB.BD0 ( FSTAT) AP.Read ;
+
+: _fcmd!  ( addr cmd)
+   #24 <<  +  AHB.BD1 ( FCMD) AP.Wr ;
+
+: _fdata0!  ( w)  AHB.BD2 ( FDATA0)  AP.Wr ;
+: _fdata1!  ( w)  AHB.BD3 ( FDATA1)  AP.Wr ;
+
+
+( XXX To test flash programming.)
+( NOTE!! In order to see the effects of programming it is best to _turn
+  off_ the flash caching, by writing the DFCC bit - disable flash
+  controller cache - bit 13 - in MCM_PLACR, at f000_300c. This code doesn't
+  currently do this, which leads to mystifying results. The actions are
+  successful, but the contents of the flash don't immediately reflect this.)
+
+( Reading FSTAT right after erasing shows 00 - it takes longer than a
+  single transfer to erase a block. But reading it in a second transfer
+  yields 80 - in the few tests I've done. Of course it's best just to loop on
+  the value and not assume that it had enough time to finish!)
+
+: erase  ( addr - stat)
+   <xfer  _flashregs  09 _fcmd!  80 _fstat!  xfer>
+   fstat@ ;
+
+( Reading FSTAT right after programming shows 80.)
+: prog  ( w addr - stat)
+   <xfer  _flashregs  06 _fcmd!  _fdata0!  70 _fstat!  80 _fstat!  _fstat@
+   xfer>  w> ;
 
 
 ( The interface for the interact code. Implemented by all debug transports.)
@@ -363,6 +407,9 @@ comment %%hardwired%%
    <xfer  0 _DP.SELECT  5000_0000 _DP.CTRL ( pwr up sys & dbg)  xfer>
    -- spy off
 ;
+
+: _debugregs
+   300_0002 AHB.CSW AP.Wr  DHCSR AHB.TAR AP.Wr ;
 
 ( Add debug key to command bits and store into DHCSR.)
 : dhcsr!   ( value)  <xfer  _debugregs  a05f_0000 +  AHB.DRW AP.Wr  xfer> ;
