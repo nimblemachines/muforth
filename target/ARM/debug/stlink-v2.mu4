@@ -112,15 +112,6 @@ variable spy
 ver .ver  #10 > .if  -d apiv2  .then
 
 
-( For memory reads. A 16 byte cache line. Invalidated by any memory write
-  debug command, or any other command - run or step, eg - that could
-  conceivably alter memory contents underneath us.)
-
-10 buffer cache-line
-variable cache-addr  ( of first byte)
-: -valid   -1 cache-addr ! ;  -valid
-
-
 ( For simple two-byte debug commands.)
 : dbg  ( subcmd)  <dbg  cmd> ;
 
@@ -134,8 +125,8 @@ variable cache-addr  ( of first byte)
 : halt     02 dbg  check ;
 : reg@     ( reg# - value)  05 <dbg  >b ( reg#)      cmd>  w* ;
 : reg!     ( value reg#)    06 <dbg  >b ( reg#)  >w  cmd>  check ;
-: run      09 dbg  check  -valid ;
-: step     0a dbg  check  -valid ;
+: run      09 dbg  check ;
+: step     0a dbg  check ;
 : idcode   22 dbg  w* ;  ( returns IDCODE of SW-DP)
 
 ( Read and check count against expected.)
@@ -151,11 +142,11 @@ variable cache-addr  ( of first byte)
 ( XXX Write a memory test to see how these actually work, and what happens
   with unaligned accesses, etc.)
 
-: write8   ( buf a u)   0d mem  uwrite  -valid ;
+: write8   ( buf a u)   0d mem  uwrite ;
 
 ( XXX aligned to 32-bit address boundaries, and byte counts?)
 : read32   ( buf a u)   07 mem  uread-check ;
-: write32  ( buf a u)   08 mem  uwrite  -valid ;
+: write32  ( buf a u)   08 mem  uwrite ;
 
 variable 'target
 variable 'host
@@ -182,7 +173,7 @@ defer doit  ( buf target len)
 .ifdef apiv2
 
 ( XXX these don't work yet! ReadPipe errors out.)
-: writedebug  ( w a)    35 <dbg  >w >w  cmd>  check  -valid ;
+: writedebug  ( w a)    35 <dbg  >w >w  cmd>  check ;
 : readdebug   ( a - w)  36 <dbg  >w     cmd>  8 expect  h>  check ;
 
 .then
@@ -209,6 +200,7 @@ defer doit  ( buf target len)
    0800_0000 800  pad  ['] read32  chunked
    dup  pad 800 write  close-file ;
 
+
 ( The interface for the interact code. Implemented by all debug transports.)
 
 : t.chat  ( connect to device)
@@ -217,21 +209,9 @@ defer doit  ( buf target len)
    dup  1 = if  drop  ." => "  >swd  tell-mode  then
         2 - if  ." Tried, but didn't succeed. "  then ;
 
-( cached does the memory read caching for us.)
-: cached  ( target - buffer)
-   dup -10 and  ( target aligned)
-   dup  cache-addr @ xor  if  ( not in current cache line)
-      dup cache-addr !  cache-line over 10  read32  then
-   drop ( aligned)
-   0f and  cache-line + ;
+: t.read   ( buf a u)    read32 ;  ( Easy peasy!)
+: t.write  ( buf a u)   write32 ;
 
-variable z
-: t.setaddr  ( target)    z ! ;
-: t.getaddr  ( - target)  z @ ;
-: t.readw    ( - word)               z @  cached      4 z +!  w@ ;
-: t.readh    ( - hword)              z @  cached      2 z +!  h@ ;
-: t.readb    ( - byte)               z @  cached      1 z +!  c@ ;
-: t.writew   ( word)    pad w!  pad  z @  4  write32  4 z +!  -valid ;
 
 .else  ( no device found)
    ." None found "
