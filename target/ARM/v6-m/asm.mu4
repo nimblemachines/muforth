@@ -42,26 +42,22 @@ assembler
   0 reg r0
 
 forth
-: reg?  ( n - f)  1_0000 u< ;
-
-: ?reg  ( n op - op reg)
-   over reg? 0=  if  error" expected a register"  then  swap ;
 
 ( These are named to suggest where they would put the 3-bit field if the
   instruction is in octal.)
-: r00  ( reg op - op')  ?reg  07 and  6 <<  or ;
-: 0r0  ( reg op - op')  ?reg  07 and  3 <<  or ;
-: 00r  ( reg op - op')  ?reg  07 and        or ;
+: r00  ( reg op - op')  07 and  6 <<  or ;
+: 0r0  ( reg op - op')  07 and  3 <<  or ;
+: 00r  ( reg op - op')  07 and        or ;
 
 ( Like above, but shifted 8 bits left. The octal metaphor doesn't work here!)
-: r000  ( reg op - op')  ?reg  07 and  8 <<  or ;
+: r000  ( reg op - op')  07 and  8 <<  or ;
 
 ( For building opcodes with 4-bit register field, R.)
 : 0R  ( reg op - op')  ( R -> r0_000_rrr)
-   ?reg  dup 8 and  4 <<  swap  07 and  or or ;
+   dup 8 and  4 <<  swap  07 and  or or ;
 
 : R0  ( reg op - op')  ( R -> 0r_rrr_000)
-   ?reg  0f and  3 <<  or ;
+   0f and  3 <<  or ;
 
 ( Register lists (masks)
 : >mask  ( n - 2^n)  1 swap << ;
@@ -69,7 +65,7 @@ forth
 assembler
 feebfeeb constant {  ( - mark)
 : }    ( mark Rx .. Ry - mask)
-   0 ( mask)   begin  over \a { xor while  ?reg >mask or  repeat  nip
+   0 ( mask)   begin  over \a { xor while  >mask or  repeat  nip
    0ffff and ;
 
 ( Let's allow 16 bits for immediate values. Since Thumb16 immediates can
@@ -77,15 +73,19 @@ feebfeeb constant {  ( - mark)
   Let's combine the "type" and value. By checking the 1_0000 bit, we can
   tell a register operand from an immed operand.)
 
-: #   ( imm - bits)  0ffff and  1_0000 or ;
+( Mark immediate values by pushing a negative number on top of them. This
+  way we can distinguish between immediate and register values, which are
+  always >= 0.)
+
+: #   ( imm - imm -1)  -1 ;
 forth
 
-: ?imm  ( n op - op imm)
-   over reg?  if  error" expected immediate value"  then  swap 0ffff and ;
+: imm?  ( bits - is-imm)  0< ;
+
 
 ( Offsets.)
-: hoff  ( off op - op off/2)  swap  2/ ;
-: woff  ( off op - op off/4)  swap  2 >> ;
+: hoff  ( off op - off/2 op)  swap  2/    swap ;
+: woff  ( off op - off/4 op)  swap  2 >>  swap ;
 
 ( Immediate fields)
 : i5  ( imm op)  swap  1f and  6 <<  or ;
@@ -95,95 +95,80 @@ forth
 
 ( Shift-immed register - low register only!)
 : sh-imm  constant  does> @  ( i5 Rm Rd op)  00r  0r0  i5  op, ;
-assembler
 0000 sh-imm lsli
 0800 sh-imm lsri
 1000 sh-imm asri
-forth
 
 ( 3 register instructions - low registers only!)
 : 3reg  constant  does> @  ( Rm Rn Rd op)  00r  0r0  r00  op, ;
-assembler
 1800 3reg addr3
 1a00 3reg subr3
-forth
 
 ( 3 bit immediate - low registers only!)
 : 2reg-i3  constant  does> @  ( i3 Rn Rd op)  00r  0r0  i3  op, ;
-assembler
 1c00 2reg-i3 addi3
 1e00 2reg-i3 subi3
-forth
 
 ( 8 bit immediate - low registers only!)
 : 1reg-i8  constant  does> @  ( i8 Rd op)  r000  i8  op, ;
-assembler
 2000 1reg-i8 movi8
 2800 1reg-i8 cmpi8
 3000 1reg-i8 addi8
 3800 1reg-i8 subi8
-forth
 
 ( Data processing, low registers only!)
 : 2reg   constant  does> @  ( Rm Rdn op)  00r  0r0  op, ;
 
-assembler
-4000 2reg and
-4040 2reg eor
 4080 2reg lslr
 40c0 2reg lsrr
 4100 2reg asrr
-4140 2reg adc
-4180 2reg sbc
-41c0 2reg ror
-4200 2reg tst
-4240 2reg rsb
 4280 2reg cmpr
+
+assembler
+4000 2reg ands
+4040 2reg eors
+( lsls, lsrs, asrs, cmp register go here)
+4140 2reg adcs
+4180 2reg sbcs
+41c0 2reg rors
+4200 2reg tst
+4240 2reg negs  ( mov negated)
 42c0 2reg cmn
-4300 2reg orr
-4340 2reg mul
-4380 2reg bic
-43c0 2reg mvn
+4300 2reg orrs
+4340 2reg muls
+4380 2reg bics
+43c0 2reg mvns  ( mov complemented)
 forth
 
 
 ( 4-bit register)
 : 2anyreg  constant  does> @  ( Rm Rdn op)  0R  R0  op, ;
-: bx       constant  does> @  ( Rm     op)      R0  op, ;
-assembler
 4400 2anyreg addr2
 4500 2anyreg cmpr2  ( NOTE: high registers _only_!)
 4600 2anyreg movr2
-4700 bx   bx
-4780 bx   blx
-forth
+4700 2anyreg bx
 
-comment previous-bx
-forth
-4700 2anyreg _bx
 assembler
-: bx   ( Rm)  r0 ( Rdn)  _bx ;
-: blx  ( Rm)  r8 ( Rdn)  _bx ;
+: bx   ( Rm)  \a r0 ( Rdn)  bx ;
+: blx  ( Rm)  \a r8 ( Rdn)  bx ;
 forth
-previous-bx
 
 ( ldr pc-imm)
-assembler
 ( ea = align[pc+4] + [i8 << 2]
   i8 is _unsigned_ - forward offsets only!)
 : ldr-pc-imm   ( offset Rt)  4800  r000  woff i8  op, ;
-forth
 
 ( ldr/str h/b/sb)
-assembler
 5000 3reg str-ix
 5200 3reg strh-ix
 5400 3reg strb-ix
-5600 3reg ldrsb-ix
 5800 3reg ldr-ix
 5a00 3reg ldrh-ix
 5c00 3reg ldrb-ix
-5e00 3reg ldrsh-ix
+
+assembler
+5600 3reg ldrsb  ( these only exist in reg-indexed form)
+5e00 3reg ldrsh
 forth
 
 ( ldr/str base+offset)
@@ -196,9 +181,8 @@ forth
 
 ( XXX NOTE: L bit is bit #11 - 800 hex.)
 : stri    constant  does> @  ( off*4 Rn Rt op)  00r  0r0  woff i5  op, ;
-: strbi   constant  does> @  ( off   Rn Rt op)  00r  0r0  swap i5  op, ;
 : strhi   constant  does> @  ( off*2 Rn Rt op)  00r  0r0  hoff i5  op, ;
-assembler
+: strbi   constant  does> @  ( off   Rn Rt op)  00r  0r0       i5  op, ;
 6000 stri str-imm
 6800 stri ldr-imm
 
@@ -207,13 +191,11 @@ assembler
 
 8000 strhi strh-imm
 8800 strhi ldrh-imm
-forth
 
 ( ldr/str sp-rel)
 ( XXX same code as op-i8, different base op)
 ( As above, since we're moving a word-sized datum, i8 is scaled *4.)
 : ldr-str-sp  constant  does> @  ( i8 Rt op)  r000  woff i8  op, ;
-assembler
 9000 ldr-str-sp str-sp
 9800 ldr-str-sp ldr-sp
 
@@ -222,15 +204,12 @@ assembler
 ( same structure as ld/st sp offset!)
 0a000 ldr-str-sp add-pc
 0a800 ldr-str-sp add-sp
-forth
 
 ( add/sub imm to sp)
 ( i8 is scaled *4)
 : sp-offset  constant  does> @  ( i7 op)  woff  i7  op, ;
-assembler
 0b000 sp-offset add-to-sp
 0b080 sp-offset sub-from-sp
-forth
 
 ( 0b100 & 0b300 are cbz - not in ARMv6-M)
 
@@ -279,7 +258,7 @@ assembler
 0bc00 \a pc stackop pop
 forth
 
-: op-i8   constant  does> @  ( i8 op)  ?imm i8  op, ;
+: op-i8   constant  does> @  ( i8 op)  over imm? if nip then  i8  op, ;
 
 ( Breakpoint)
 assembler
@@ -327,17 +306,95 @@ forth
   offset is _signed_ and scaled *2; offset from pc+4
 )
 
+( 2cond defines both a condition and its complement. NOTE: These compile a
+  conditional branch with the opposite sense than their mnemonic! Ie, u<
+  compiles branch if higher or same.)
+
+( Condition codes compile a conditional branch instruction with zero
+  offset, and push the address of the offset byte.)
+
+: 2cond  ( cond)  8 <<  dup  100 xor ( complement cond)  constant  constant ;
+assembler
+ 0 2cond  0=  0!=
+ 2 2cond  cs  cc
+ 2 2cond  u>= u<
+ 4 2cond  0<  0>=
+ 6 2cond  vs  vc
+ 8 2cond  u>  u<=
+0a 2cond  >=  <
+0c 2cond  >   <=
+forth
+
 ( svc and friend(s)
 assembler
-0de00 op-i8 undefined   ( branch always encoding!)
-0df00 op-i8 svc         ( branch never encoding!)
+0de00 op-i8 undef   ( branch always encoding!)
+0df00 op-i8 svc     ( branch never encoding!)
 forth
+
+( Tests to see if a value fits into a field of a certain bit width.)
+: ufits?  ( value bits - f)     u>>        0= ;   ( unsigned)
+: sfits?  ( value bits - f)   1- >>  1+  2 u< ;   ( signed)
+
+: bad-branch   error" branch offset too large" ;
+
+: branch-offset  ( dest src - offset)
+   4 + ( compensate for prefetch)  -  2/ ;
+
+: offset-fits?  ( offset #bits - masked-offset -1 | offset 0)
+   2dup sfits? if  1 swap << 1-  and  -1 ^  then  drop  0 ;
+
+( Complains if offset doesn't fit.)
+: masked-offset  ( offset #bits - bits)
+   offset-fits?  if ^ then  bad-branch ;
 
 ( Long unconditional branch.)
 ( 0e000 + i11 offset: signed and scaled *2. offset from pc+4.)
+: >bra  ( offset - op)  #11 masked-offset  e000 + ;
+assembler
+: b   ( dest)   \m here  branch-offset  >bra  op, ;
+forth
+
 
 ( 0e800 - ffff are 32-bit encodings! See ARM/ARMv7/thumb32-asm.mu4 for
   details!)
+
+
+( If branching backward, and conditional branch can't reach, change sense
+  of conditional branch to branch forward around an unconditional backward
+  branch.)
+
+meta
+: resolve  ( dest src)
+   push  r@  ( dest src)  branch-offset
+   r@ image-h@  f000 and  d000 = if
+      ( cond branch)  8 offset-fits? if  pop image-c!  ^  then
+      dup 0< if  ( backwards)
+         r@ image-h@  ff00 and  100 xor  pop image-h!
+         1- ( branch back past one more instruction)  >bra  op,  ^
+      then  shunt  bad-branch
+   then
+   ( uncond branch)  >bra  pop image-h! ;
+forth
+
+( Control structure words.)
+assembler
+: always  (      - src)  \m here         e000    op, ;  ( uncond jump)
+: if      ( cond - src)  \m here   swap  d000 +  op, ;  ( cond jump)
+: then    ( src)         \m here   swap  \m resolve ;   ( >resolve)
+: else    ( src - src2)  \a always  swap  \a then ;
+
+: begin   ( - dest)      \m here ;
+: again   ( dest)        \a always  \m resolve ;
+: until   ( dest cond)   \a if      \m resolve ;
+: while   ( dest - src dest)  \a if  swap ;
+: repeat  ( src dest)    \a again  \a then ;
+forth
+
+( Testing)
+assembler
+: ;c   \ [ ;  ( back to forth)  ( should go to __meta, but not defined yet)
+forth
+
 
 ( Save an image that we can try to disassemble with objdump, and send to
   device using stlink.)
