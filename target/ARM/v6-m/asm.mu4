@@ -43,21 +43,29 @@ assembler
 
 forth
 
+( Many of these instructions only allow the use of the low registers - r0
+  to r7. Make sure we're doing the right thing.)
+
+: ?low  ( reg op - op reg)
+   over 8 u< if  swap  ^  then
+   error" only registers r0 to r7 allowed" ;
+
 ( These are named to suggest where they would put the 3-bit field if the
   instruction is in octal.)
-: r00  ( reg op - op')  07 and  6 <<  or ;
-: 0r0  ( reg op - op')  07 and  3 <<  or ;
-: 00r  ( reg op - op')  07 and        or ;
+: r00   ( reg op - op')  ?low  6 <<  or ;
+: 0r0   ( reg op - op')  ?low  3 <<  or ;
+: 00r   ( reg op - op')  ?low        or ;
 
 ( Like above, but shifted 8 bits left. The octal metaphor doesn't work here!)
-: r000  ( reg op - op')  07 and  8 <<  or ;
+: r000  ( reg op - op')  ?low  8 <<  or ;
 
 ( For building opcodes with 4-bit register field, R.)
 : 0R  ( reg op - op')  ( R -> r0_000_rrr)
-   dup 8 and  4 <<  swap  07 and  or or ;
+   over  8 and  4 << or
+   swap 07 and       or ;
 
 : R0  ( reg op - op')  ( R -> 0r_rrr_000)
-   0f and  3 <<  or ;
+   swap  0f and  3 <<  or ;
 
 ( Register lists (masks)
 : >mask  ( n - 2^n)  1 swap << ;
@@ -65,19 +73,15 @@ forth
 assembler
 feebfeeb constant {  ( - mark)
 : }    ( mark Rx .. Ry - mask)
-   0 ( mask)   begin  over \a { xor while  >mask or  repeat  nip
+   0 ( mask)   begin  over \a { xor while  swap >mask or  repeat  nip
    0ffff and ;
-
-( Let's allow 16 bits for immediate values. Since Thumb16 immediates can
-  only be 8 bits - but can encode 10-bit values - this should be fine.
-  Let's combine the "type" and value. By checking the 1_0000 bit, we can
-  tell a register operand from an immed operand.)
 
 ( Mark immediate values by pushing a negative number on top of them. This
   way we can distinguish between immediate and register values, which are
   always >= 0.)
 
 : #   ( imm - imm -1)  -1 ;
+
 forth
 
 : imm?  ( bits - is-imm)  0< ;
@@ -87,11 +91,20 @@ forth
 : hoff  ( off op - off/2 op)  swap  2/    swap ;
 : woff  ( off op - off/4 op)  swap  2 >>  swap ;
 
+( Tests to see if a value fits into a field of a certain bit width.)
+: ufits?  ( value bits - f)     u>>        0= ;   ( unsigned)
+: sfits?  ( value bits - f)   1- >>  1+  2 u< ;   ( signed)
+
 ( Immediate fields)
-: i5  ( imm op)  swap  1f and  6 <<  or ;
-: i3  ( imm op)  swap  07 and  6 <<  or ;
-: i8  ( imm op)  swap 0ff and        or ;
-: i7  ( imm op)  swap  7f and        or ;
+: ifits  ( imm op #bits - op bits)
+   rot swap  ( op imm #bits)  2dup ufits? if  >mask 1-  and  ^  then
+   error" immediate value too large" ;
+
+: i5  ( imm op)  5 ifits  6 <<  or ;
+: i3  ( imm op)  3 ifits  6 <<  or ;
+: i8  ( imm op)  8 ifits        or ;
+: i7  ( imm op)  7 ifits        or ;
+
 
 ( Shift-immed register - low register only!)
 : sh-imm  constant  does> @  ( i5 Rm Rd op)  00r  0r0  i5  op, ;
@@ -153,51 +166,55 @@ assembler
 : blx  ( Rm)  \a r8 ( Rdn)  bx ;
 forth
 
-( ldr pc-imm)
-( ea = align[pc+4] + [i8 << 2]
-  i8 is _unsigned_ - forward offsets only!)
-: ldr-pc-imm   ( offset Rt)  4800  r000  woff i8  op, ;
+: ?index   ( allowed this)
+   u< if  error" indexing type not allowed"  then ;
 
-( ldr/str h/b/sb)
-5000 3reg str-ix
-5200 3reg strh-ix
-5400 3reg strb-ix
-5800 3reg ldr-ix
-5a00 3reg ldrh-ix
-5c00 3reg ldrb-ix
+: sp-or-pc   ( offset Rn ix Rt op)   r000  or  nip  woff i8  op, ;
+
+: do-ldr-pc   ( offset Rn ix Rt 'body)
+   @  3 ?index  ( ix-pc allowed)                     0  sp-or-pc ;
+
+: do-str-sp   ( offset Rn ix Rt 'body)
+   @+ @ swap  2 ?index  ( ix-sp allowed)  800 and ( L)  sp-or-pc ;
+
+: do-str-imm  ( offset ix Rt 'body)
+   @+ cell+ swap  1 ?index  ( ix-imm allowed)
+   @+ push ( op-imm)  00r  or  swap pop ( scale) >>  i5  op, ;
+
+: do-str-reg  ( ix Rt 'body)
+   cell+ @  ( op-reg)  00r  or  op, ;
+
+( For indexing. V6-M only has pre-indexing - no writeback - so there are
+  only two indexing operators:)
 
 assembler
-5600 3reg ldrsb  ( these only exist in reg-indexed form)
-5e00 3reg ldrsh
+: +)   ( offset Rn - offset ... cfa)
+   dup pc = if  4800  ['] do-str-pc  ^  then  ( ix type 3)
+   dup sp = if  9000  ['] do-str-sp  ^  then  ( ix type 2)
+         0  0r0       ['] do-str-imm ;        ( ix type 1)
+
+: r+)  ( Rm Rn - ix cfa)
+         0  0r0  r00  ['] do-str-reg ;        ( ix type 0)
 forth
 
-( ldr/str base+offset)
-( NOTE: use + not or here!)
-( Depending on size of datum, offset is _scaled_.
-  byte     => *1
-  halfword => *2
-  word     => *4
-  XXX NOTE: need words to check and calculate offsets!)
+( One Ring to rule them all?)
+: ring    ( scale op-imm op-reg ix-max)  create  , , , ,
+          ( ... cfa Rt 'body)  does>  rot execute ;
 
-( XXX NOTE: L bit is bit #11 - 800 hex.)
-: stri    constant  does> @  ( off*4 Rn Rt op)  00r  0r0  woff i5  op, ;
-: strhi   constant  does> @  ( off*2 Rn Rt op)  00r  0r0  hoff i5  op, ;
-: strbi   constant  does> @  ( off   Rn Rt op)  00r  0r0       i5  op, ;
-6000 stri str-imm
-6800 stri ldr-imm
+assembler
+( scale op-imm op-reg ix-max)
+    2    6000   5000    2   ring  str
+    2    6800   5800    3   ring  ldr
 
-7000 strbi strb-imm
-7800 strbi ldrb-imm
+    1    8000   5200    1   ring  strh
+    1    8800   5a00    1   ring  ldrh
 
-8000 strhi strh-imm
-8800 strhi ldrh-imm
+    0    7000   5400    1   ring  strb
+    0    7800   5c00    1   ring  ldrb
 
-( ldr/str sp-rel)
-( XXX same code as op-i8, different base op)
-( As above, since we're moving a word-sized datum, i8 is scaled *4.)
-: ldr-str-sp  constant  does> @  ( i8 Rt op)  r000  woff i8  op, ;
-9000 ldr-str-sp str-sp
-9800 ldr-str-sp ldr-sp
+    0       0   5e00    0   ring  ldrsh   ( scale is ignored - ix-reg only)
+    0       0   5600    0   ring  ldrsb
+forth
 
 ( add to pc/sp)
 ( i8 is scaled *4)
@@ -331,17 +348,13 @@ assembler
 0df00 op-i8 svc     ( branch never encoding!)
 forth
 
-( Tests to see if a value fits into a field of a certain bit width.)
-: ufits?  ( value bits - f)     u>>        0= ;   ( unsigned)
-: sfits?  ( value bits - f)   1- >>  1+  2 u< ;   ( signed)
-
 : bad-branch   error" branch offset too large" ;
 
 : branch-offset  ( dest src - offset)
    4 + ( compensate for prefetch)  -  2/ ;
 
 : offset-fits?  ( offset #bits - masked-offset -1 | offset 0)
-   2dup sfits? if  1 swap << 1-  and  -1 ^  then  drop  0 ;
+   2dup sfits? if  >mask 1-  and  -1 ^  then  drop  0 ;
 
 ( Complains if offset doesn't fit.)
 : masked-offset  ( offset #bits - bits)
