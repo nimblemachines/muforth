@@ -61,12 +61,16 @@ forth
 : r000  ( reg op - op')  ?low  8 <<  or ;
 
 ( For building opcodes with 4-bit register field, R.)
+: ?reg  ( reg op - op reg)
+   over 10 u< if  swap  ^  then
+   error" expected a register" ;
+
 : 0R  ( reg op - op')  ( R -> r0_000_rrr)
-   over  8 and  4 << or
-   swap 07 and       or ;
+   ?reg  dup  8 and  4 <<
+        swap 07 and        or  or ;
 
 : R0  ( reg op - op')  ( R -> 0r_rrr_000)
-   swap  0f and  3 <<  or ;
+   ?reg  0f and  3 <<  or ;
 
 ( Register lists (masks)
 : >mask  ( n - 2^n)  1 swap << ;
@@ -415,12 +419,15 @@ forth
 ( There are a bunch of instructions that have multiple forms. Let's
   disentangle those, now that we have defined all the underlying forms.)
 
+( Require 3 op form for i8 version.)
 : adds-ish
    create  ' ,  ' ,  ' ,  ( i8 i3 r3  forms)
-   does>  push  ( Rm Rn Rd | n # Rn Rd | n # Rdn)
-   over  imm? if  nip       pop             @execute  ( i8)  ^  then
-   2 nth imm? if  rot drop  pop cell+       @execute  ( i3)  ^  then
-                            pop cell+ cell+ @execute  ( r3) ;
+   does>  push  ( Rm Rn Rd | n # Rn Rd | n # Rd Rd)
+   2 nth imm? if  rot drop  2dup = if  
+      drop  pop             @execute  ( i8)  ^  then
+            pop cell+       @execute  ( i3)  ^
+   then
+            pop cell+ cell+ @execute  ( r3) ;
 
 : lsls-ish
    create  ' ,  ' ,  ( imm reg  forms)
@@ -450,13 +457,15 @@ lsls-ish  asrs  asri  asrr
                        cmpr2 ;
 
 ( Non s-suffix instructions.)
-: add   ( n # sp Rd | n # pc Rd | n # sp sp | Rm Rdn)
+( Require 3 reg form for non-immediate version.)
+: add   ( n # sp Rd | n # pc Rd | n # sp sp | Rm Rn Rd)
    2 nth imm?  if  rot drop
       dup  \a sp = if  2drop       add-to-sp  ^  then
       over \a pc = if   nip  0a000 load-addr  ^  then
-                        nip  0a800 load-addr  ^
+      over \a sp = if   nip  0a800 load-addr  ^  then
+      error" invalid instruction form"
    then
-   ( otherwise, all regs version)  addr2 ;
+   ( otherwise, all regs version)  0  ?Rdn  drop  addr2 ;
 
 : sub   ( n # sp sp)
    2 nth imm?  if  drop 2drop  negate  add-to-sp  ^  then

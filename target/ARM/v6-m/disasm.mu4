@@ -74,6 +74,7 @@ variable prefetch-pc  ( points to _start_ of current instruction + 4 bytes!!)
 : Rd,   Rd comma ;
 : Rn,   Rn comma ;
 : Rd8,  Rd8 comma ;
+: RRdn,  RRdn comma ;
 
 : .r3   Rd,  Rn,  Rm ;
 : imm   radix preserve  hex  char # emit  (.) type ;  ( XXX radix?)
@@ -107,8 +108,8 @@ variable prefetch-pc  ( points to _start_ of current instruction + 4 bytes!!)
 : sh-imm   ( amount)  dup 0=  #32 and  +  imm ;
 
 : .4way-i   ( op z" - op)  over #11 u>> 3 and  swap .op3s ;
-: .sh-i5     z" lsllsrasr???" .4way-i  Rd,  Rn,  dup 6 u>> 1f and  sh-imm ;
-: .mov-r   0 z" mov"          .op3s    Rd,  Rn ;
+: .sh-i5      z" lsllsrasr???" .4way-i  Rd,  Rn,  dup 6 u>> 1f and  sh-imm ;
+: .mov-r   0  z" mov"          .op3s    Rd,  Rn ;
 
 : .add-r3   1 ( S)  over 9 bit@  .addsub  .r3 ;
 : .add-i3   1 ( S)  over 9 bit@  .addsub  Rd,  Rn,  dup 6 u>>  7 and  imm ;
@@ -116,21 +117,29 @@ variable prefetch-pc  ( points to _start_ of current instruction + 4 bytes!!)
 ( An annoying exception: cmp i8 should _not_ sport a trailing 's'. This is
   the ARM standard; whether it really makes sense is another thing entirely.)
 
+( Another exception: We want to show the add/sub as 3 operand instructions,
+  for consistency.)
+
 : .ri8   Rd8,  i8 imm ;
-: .mov-i8   z" mov???addsub" .4way-i  .ri8 ;
-: .cmp-i8   ." cmp    "               .ri8 ;
+: .add-i8   1 ( S)  over #11 bit@  .addsub   Rd8,  .ri8 ;
+: .mov-i8   0  z" mov"      .op3s  .ri8 ;
+: .cmp-i8      ." cmp    "         .ri8 ;
 
 ( Another annoying exception: like cmp i8, tst, cmp, and cmn reg-reg ops
-  should _not_ sport a trailing 's'.)
+  should _not_ sport a trailing 's'.
+
+  And we want all but tst, negs, cmp, cmn, and mvns to show 3 registers.)
 
 : .alu
-   dup 6 u>> 0f and ( aluop)
-   [  1 8 <<  1 0a << +  1 0b << +  invert  ]  over bit@  ( S)  swap
-   z" andeorlsllsrasradcsbcrortstnegcmpcmnorrmulbicmvn" .op3?s  Rd,  Rn ;
+   dup 6 u>> 0f and ( aluop)  push
+   %1111_0010_1111_1111  r@ bit@  ( S)  r@
+   z" andeorlsllsrasradcsbcrortstnegcmpcmnorrmulbicmvn" .op3?s
    (  0  1  2  3  4  5  6  7  8  9  a  b  c  d  e  f )
+   %0111_0000_1111_1111  pop bit@  ( 3reg)  if  Rd,  then  Rd,  Rn ;
 
-: .bx       dup 7 bit@        z" bx blx"       .op3              RRm ;
-: .add-rh   dup 8 u>>  3 and  z" addcmpmov???" .op3  RRdn comma  RRm ;
+: .add-rh                     ." add    "            RRdn,  RRdn,  RRm ;
+: .cmp-rh   dup 8 u>>  3 and  z" ???cmpmov???" .op3  RRdn,         RRm ;
+: .bx       dup 7 bit@        z" bx blx"       .op3                RRm ;
 
 ( Address of value to load is: pc 4 + -4 and +
   This calculates what ARM describe as Align[PC, 4] + offset.
@@ -161,7 +170,8 @@ variable prefetch-pc  ( points to _start_ of current instruction + 4 bytes!!)
                ." pc, "  woff8  ."  = "  i8 woff> >load-pc  dup set-ea  .u32 ;
 
 ( These should *not* have s suffix.)
-: .add-sp-i7   0 ( S)  over 7 bit@  .addsub  ." sp, "  dup 7f and  woff> imm ;
+: .add-sp-i7   0 ( S)  over 7 bit@  .addsub
+               ." sp, sp, "  dup 7f and  woff> imm ;
 
 : .4way-rr  ( op z" - op)   over 6 u>>  3 and  swap .op5  Rd,  Rn ;
 : .sxt   z" sxth sxtb uxth uxtb " .4way-rr ;
@@ -237,11 +247,13 @@ variable prefetch-pc  ( points to _start_ of current instruction + 4 bytes!!)
    fc00 1800 match  .add-r3   ( add sub - matches .sh-i5 shift type=11)
    fc00 1c00 match  .add-i3   ( add sub - matches .sh-i5 shift type=11)
    e000 0000 match  .sh-i5
-   f800 2800 match  .cmp-i8   ( cmp - exception to mov-i8 below)
-   e000 2000 match  .mov-i8   ( mov add sub)
+   f800 2000 match  .mov-i8
+   f800 2800 match  .cmp-i8
+   f000 3000 match  .add-i8   ( add sub)
    fc00 4000 match  .alu
    ff07 4700 match  .bx       ( bx blx)
-   fc00 4400 match  .add-rh   ( add cmp mov)
+   ff00 4400 match  .add-rh
+   fc00 4400 match  .cmp-rh   ( cmp mov)
    f800 4800 match  .ldr-pc
    f000 5000 match  .str-r    ( str strh strb ldrsb ldr ldrh ldrb ldrsh)
    f000 6000 match  .str-i5   ( str ldr)
