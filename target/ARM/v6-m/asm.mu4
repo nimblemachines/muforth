@@ -46,8 +46,9 @@ forth
 ( Many of these instructions only allow the use of the low registers - r0
   to r7. Make sure we're doing the right thing.)
 
+: low?  ( reg - f)  8 u< ;
 : ?low  ( reg op - op reg)
-   over 8 u< if  swap  ^  then
+   over low? if  swap  ^  then
    error" only registers r0 to r7 allowed" ;
 
 ( These are named to suggest where they would put the 3-bit field if the
@@ -86,7 +87,6 @@ forth
 
 : imm?  ( bits - is-imm)  0< ;
 
-
 ( Offsets.)
 : hoff  ( off op - off/2 op)  swap  2/    swap ;
 : woff  ( off op - off/4 op)  swap  2 >>  swap ;
@@ -96,14 +96,15 @@ forth
 : sfits?  ( value bits - f)   1- >>  1+  2 u< ;   ( signed)
 
 ( Immediate fields)
-: ifits  ( imm op #bits - op bits)
-   rot swap  ( op imm #bits)  2dup ufits? if  >mask 1-  and  ^  then
+: ifits   ( imm op #bits - op bits)
+   rot swap  ( op imm #bits)  2dup ufits?
+   if  >mask 1-  and  ^  then
    error" immediate value out of range" ;
 
-: i5  ( imm op)  5 ifits  6 <<  or ;
-: i3  ( imm op)  3 ifits  6 <<  or ;
-: i8  ( imm op)  8 ifits        or ;
-: i7  ( imm op)  7 ifits        or ;
+: i5  ( imm op - op')  5 ifits  6 <<  or ;
+: i3  ( imm op - op')  3 ifits  6 <<  or ;
+: i7  ( imm op - op')  7 ifits        or ;
+: i8  ( imm op - op')  8 ifits        or ;
 
 
 ( Shift-immed register - low register only!)
@@ -130,38 +131,46 @@ forth
 3800 1reg-i8 subi8
 
 ( Data processing, low registers only!)
-: 2reg   constant  does> @  ( Rm Rdn op)  00r  0r0  op, ;
+: ?Rdn    ( Rm Rn Rd op - Rm Rdn op)
+    over ( Rd)  3 nth ( Rn)  = if  nip  ^  then
+    error" Rd and Rn must be the same" ;
 
-4080 2reg lslr
-40c0 2reg lsrr
-4100 2reg asrr
-4280 2reg cmpr
+: do-2reg   ( Rm Rdn op)   00r  0r0  op, ;
+: 2reg2   constant  does> @  ( Rm Rdn op)          do-2reg ;
+
+( Require 3 operand form, and check Rd == Rn)
+: 2reg3   constant  does> @  ( Rm Rn Rd op)  ?Rdn  do-2reg ;
+
+4080 2reg3 lslr
+40c0 2reg3 lsrr
+4100 2reg3 asrr
+4280 2reg2 cmpr
 
 assembler
-4000 2reg ands
-4040 2reg eors
+4000 2reg3 ands
+4040 2reg3 eors
 ( lsls, lsrs, asrs, cmp register go here)
-4140 2reg adcs
-4180 2reg sbcs
-41c0 2reg rors
-4200 2reg tst
-4240 2reg negs  ( mov negated)
-42c0 2reg cmn
-4300 2reg orrs
-4340 2reg muls
-4380 2reg bics
-43c0 2reg mvns  ( mov complemented)
+4140 2reg3 adcs
+4180 2reg3 sbcs
+41c0 2reg3 rors
+4200 2reg2 tst
+4240 2reg2 negs  ( mov negated)
+42c0 2reg2 cmn
+4300 2reg3 orrs
+4340 2reg3 muls
+4380 2reg3 bics
+43c0 2reg2 mvns  ( mov complemented)
 forth
 
 
 ( 4-bit register)
 : 2anyreg  constant  does> @  ( Rm Rdn op)  0R  R0  op, ;
 4400 2anyreg addr2
-4500 2anyreg cmpr2  ( NOTE: high registers _only_!)
-4600 2anyreg movr2
+4500 2anyreg cmpr2  ( NOTE: at least one high reg!)
 4700 2anyreg bx
 
 assembler
+4600 2anyreg mov   ( only non-s version of mov)
 : bx   ( Rm)  \a r0 ( Rdn)  bx ;
 : blx  ( Rm)  \a r8 ( Rdn)  bx ;
 forth
@@ -218,25 +227,22 @@ forth
 
 ( add to pc/sp)
 ( i8 is scaled *4)
-( same structure as ld/st sp offset!)
-: ldr-str-sp  constant  does> @  ( i8 Rt op)  r000  woff i8  op, ;
-0a000 ldr-str-sp add-pc
-0a800 ldr-str-sp add-sp
+: load-addr  ( i8 Rt op)  r000  woff i8  op, ;
 
 ( add/sub imm to sp)
-( i8 is scaled *4)
-: sp-offset  constant  does> @  ( i7 op)  woff  i7  op, ;
-0b000 sp-offset add-to-sp
-0b080 sp-offset sub-from-sp
+( i7 is scaled *4)
+: offset-sp  ( i7 op)           woff i7  op, ;
+: add-to-sp  ( i7)  dup 0< if  negate  b080  offset-sp  ^  then
+                                       b000  offset-sp ;
 
 ( 0b100 & 0b300 are cbz - not in ARMv6-M)
 
 ( Sign- and zero-extend)
 assembler
-0b200 2reg sxth
-0b240 2reg sxtb
-0b280 2reg uxth
-0b2c0 2reg uxtb
+0b200 2reg2 sxth
+0b240 2reg2 sxtb
+0b280 2reg2 uxth
+0b2c0 2reg2 uxtb
 forth
 
 : stackop
@@ -262,10 +268,10 @@ forth
 
 ( Byte and halfword reverses)
 assembler
-0ba00 2reg rev
-0ba40 2reg rev16
+0ba00 2reg2 rev
+0ba40 2reg2 rev16
 ( 0ba80 is ???)
-0bac0 2reg revsh
+0bac0 2reg2 revsh
 forth
 
 ( 0bb00 undefined)
@@ -372,6 +378,8 @@ forth
 ( 0e800 - ffff are 32-bit encodings! See ARM/ARMv7/thumb32-asm.mu4 for
   details!)
 
+( XXX bl goes here!!)
+
 
 ( If branching backward, and conditional branch can't reach, change sense
   of conditional branch to branch forward around an unconditional backward
@@ -404,22 +412,63 @@ assembler
 : repeat  ( src dest)    \a again  \a then ;
 forth
 
-( Testing)
+( There are a bunch of instructions that have multiple forms. Let's
+  disentangle those, now that we have defined all the underlying forms.)
+
+: adds-ish
+   create  ' ,  ' ,  ' ,  ( i8 i3 r3  forms)
+   does>  push  ( Rm Rn Rd | n # Rn Rd | n # Rdn)
+   over  imm? if  nip       pop             @execute  ( i8)  ^  then
+   2 nth imm? if  rot drop  pop cell+       @execute  ( i3)  ^  then
+                            pop cell+ cell+ @execute  ( r3) ;
+
+: lsls-ish
+   create  ' ,  ' ,  ( imm reg  forms)
+   does>  push  ( Rm Rn Rd | n # Rm Rd)
+   2 nth imm? if  rot drop  pop       @execute  ( imm)  ^  then
+                            pop cell+ @execute  ( reg) ;
+
+assembler
+adds-ish  adds  addi8  addi3  addr3
+adds-ish  subs  subi8  subi3  subr3
+
+lsls-ish  lsls  lsli  lslr
+lsls-ish  lsrs  lsri  lsrr
+lsls-ish  asrs  asri  asrr
+
+: movs   ( Rm Rd | n # Rd)
+   over  imm? if  nip  movi8  ^  then
+                0 -rot lsli ;  ( encode as 0 # Rm Rd lsl)
+
+( cmp has two reg/reg forms: one if both are low regs; the second if either
+  is a high reg.)
+
+: cmp    ( Rn Rm | n # Rn)
+   over  imm? if  nip  cmpi8  ^  then
+   2dup low?  swap low?  and if  ( both low registers)
+                       cmpr   ^  then
+                       cmpr2 ;
+
+( Non s-suffix instructions.)
+: add   ( n # sp Rd | n # pc Rd | n # sp sp | Rm Rdn)
+   2 nth imm?  if  rot drop
+      dup  \a sp = if  2drop       add-to-sp  ^  then
+      over \a pc = if   nip  0a000 load-addr  ^  then
+                        nip  0a800 load-addr  ^
+   then
+   ( otherwise, all regs version)  addr2 ;
+
+: sub   ( n # sp sp)
+   2 nth imm?  if  drop 2drop  negate  add-to-sp  ^  then
+   error" strange sub instruction" ;
+
+forth
+
+( XXX for testing)
 assembler
 : ;c   \ [ ;  ( back to forth)  ( should go to __meta, but not defined yet)
 forth
 
-
-( Save an image that we can try to disassemble with objdump, and send to
-  device using stlink.)
-
-( Super-simple raw binary image. No address info is saved!)
-: save-image
-   token, create-file ( fd)
-   dup ( fd)  image  #image aligned  write
-   close-file ;
-
-( XXX for test)
 -:  ."  (assembling)"  ;
 -:
     .assembler. find  if  execute  ^  then
@@ -428,110 +477,3 @@ forth
         .forth. find  if  execute  ^  then  ( utility words in .forth.)
                                             number ;
 mode __asm
-
-.ifdef asm-tests
-
-( tests)
-ram
-@ram org  ( RAM start)
-
-__asm
-( imm shifts - low regs)
-4 # r5 r7 lsli
-8 # r3 r2 lsri
-#31 # r4 r0 asri
-
-( 3 regs - low regs)
-r4 r5 r6 addr3l
-r0 r1 r2 subr3l
-6 # r5 r6 addi3
-7 # r1 r2 subi3
-
-( 8-bit imm - low regs)
-44 # r6 movi8
-0fc # r1 cmpi8
-33 # r3 addi8
-23 # r7 subi8
-
-( alu low register)
-r3 r5 tst
-r7 r2 cmpr
-r1 r4 bic
-
-( 4-bit reg fields)
-lr r8 addr2
-r3 pc cmpr2
-sp r5 movr2
-lr bx
-r9 blx
-
-r0 bx
-r1 bx
-r2 bx
-r3 bx
-r4 bx
-r5 bx
-r6 bx
-r7 bx
-r8 bx
-r9 bx
-r10 bx
-r11 bx
-r12 bx
-sp bx
-lr bx
-pc bx
-
-r0 blx
-r1 blx
-r2 blx
-r3 blx
-r4 blx
-r5 blx
-r6 blx
-r7 blx
-r8 blx
-r9 blx
-r10 blx
-r11 blx
-r12 blx
-sp blx
-lr blx
-pc blx
-
-( ldr str indexd)
-r0 r1 r2 str-ix
-r3 r4 r5 strh-ix
-r6 r7 r0 strb-ix
-r1 r2 r3 ldrsb-ix
-r4 r5 r6 ldr-ix
-r7 r0 r1 ldrh-ix
-r2 r3 r4 ldrb-ix
-r5 r6 r7 ldrsh-ix
-
-( ldr str base+offset, ie imm)
-20 # r0 r1 str-imm
-33 # r2 r3 ldr-imm
-49 # r4 r5 strb-imm
-53 # r6 r7 ldrb-imm
-67 # r0 r1 strh-imm
-98 # r2 r3 ldrh-imm
-
-( ldr str rel to sp)
-0ae # r0 str-sp
-0dc # r1 ldr-sp
-
-( load reg with pc or sp + offset)
-0ce # r2 add-sp
-0d9 # r3 add-pc
-
-( offset the sp)
-0b4 # add-to-sp
-0c2 # sub-from-sp
-
-__forth
-
-
-save-image stmf0-test.img
-
-.then
