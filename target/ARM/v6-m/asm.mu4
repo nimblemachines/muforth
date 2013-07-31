@@ -9,17 +9,12 @@ loading ARM v6-M Thumb2 assembler
 
 hex
 
-( XXX Idea for solving the postfix S problem: when searching .assembler. ,
-  first search for token; if found, great; if not, and token ends in 's',
-  search again for token with length smaller by one char!
-
-  The opcodes that can end in 's' should be in .assembler. _without_ the 's'.)
-
 : 4#  # # # # ;
 : __  char _ hold ;
 : debug-show   dup  radix preserve  binary  <# 4# __ 4# __ 4# __ 4# #>  cr  type ;
 
 : op,  debug-show  \m h, ;
+: op32,  dup  #16 u>> op,  0ffff and op, ;  ( compile high half then low half)
 
 ( Make these create/does words so it's easy to change their behaviour.)
 : reg   constant  ( regnum)  does> @ ;
@@ -382,7 +377,25 @@ forth
 ( 0e800 - ffff are 32-bit encodings! See ARM/ARMv7/thumb32-asm.mu4 for
   details!)
 
-( XXX bl goes here!!)
+( 32-bit bl. For historical reasons the encoding is really strange. The
+  original Thumb instruction set used _two_ separate instructions to set
+  the high and low halves of the branch displacement. With the addition of
+  32-bit instructions into that same encoding space, the bl instruction has
+  been re-imagined as a 32-bit Thumb instruction with a very odd encoding -
+  and a larger possible displacement than its 16-bit predecessor.)
+
+: bit@  ( mask bit# - bit)  u>>  1 and ;
+
+assembler
+: bl   ( dest)   \m here  branch-offset  #24 masked-offset  f000_d000 ( op)
+   over          7ff and          or  ( imm11 in v6-m manual)
+   over #11 u>>  3ff and  #16 <<  or  ( imm10 ditto)
+   over #23 bit@ ( S)  push
+   over #22 bit@ ( I1)  1 xor  r@ xor  #13 <<  or  ( J1)
+   over #21 bit@ ( I2)  1 xor  r@ xor  #11 <<  or  ( J2)
+   pop ( S)                            #26 <<  or  ( S)
+   nip ( offset)  op32, ;
+forth
 
 
 ( If branching backward, and conditional branch can't reach, change sense
@@ -486,3 +499,21 @@ forth
         .forth. find  if  execute  ^  then  ( utility words in .forth.)
                                             number ;
 mode __asm
+
+
+( Generate all permutations of S, J1, and J2 bits to make sure I'm doing
+  the encoding right. Tested against both my disasm and
+  arm-none-eabi-objdump and got the same results.)
+
+: bl-test
+   [ 1 #24 << negate ]  8 for
+      dup  \m here  4 + +  \a bl
+      [ 1 #22 << ] +  next  drop ;
+
+( Save an image that we can try to disassemble with objdump.)
+
+( Super-simple raw binary image. No address info is saved!)
+: save-image
+   token, create-file ( fd)
+   dup ( fd)  'image  #image aligned  write
+   close-file ;
