@@ -236,7 +236,7 @@ variable spy
 ( Whether to flash the "connect" LED for each transfer.)
 variable led
 : ?led  ( flag)
-   led @ if  spy @ ( save)  spy off  swap DAP.LED  spy !  then ;
+   led @ if  spy @ ( save)  spy off  swap DAP.LED  spy !  ^  then  drop ;
 
 variable #xfers
 : <xfer
@@ -430,13 +430,13 @@ comment %%hardwired%%
    swap  AHB.BD2 ( DCRDR) AP.Wr  1_0000 + AHB.BD1 ( DCRSR) AP.Wr ;
 
 
-: ?xfer_read  ( count - count')  ( after 38 bytes, start a new xfer)
-   1+  38 #send u< if  xfer>  for  w>  next  <xfer  0 ( count)  then ;
+: ?xfer-read-words  ( u - u')  ( after 38 bytes, start a new xfer)
+   1+  38 #send u< if  xfer>  for  w>  next  0 ( count)  <xfer  then ;
 
 ( Keeping this till I decide...)
 : t.getregs_lohi  ( regmask - v0 v1 ...)   ( low to high)
    <xfer  _debugregs  0 0 rot ( regcount regindex regmask)
-      begin  dup 1 and if  over _readreg  2push  ?xfer_read  2pop  then
+      begin  dup 1 and if  over _readreg  2push  ?xfer-read-words  2pop  then
       1 u+  u2/  dup 0= until
    xfer>
    2drop  ?for  w>  next  then ;  ( read remaining regs from recvbuf)
@@ -445,39 +445,59 @@ comment %%hardwired%%
 : t.getregs  ( regmask - ... v1 v0)   ( high to low)
    <xfer  _debugregs  0 14 rot ( regcount regindex regmask)
       [ 3f 14 - ] <<  ( "left justify" regmask)
-      begin  dup 0< if  over _readreg  2push  ?xfer_read  2pop  then
+      begin  dup 0< if  over _readreg  2push  ?xfer-read-words  2pop  then
       -1 u+  2*  dup 0= until
    xfer>
    2drop  ?for  w>  next  then ;  ( read remaining regs from recvbuf)
 
 
-: ?xfer_write  ( after 30 bytes, start a new xfer)
+: ?xfer-write  ( after 30 bytes, start a new xfer)
    30 #send u< if  xfer>  <xfer  then ;
 
 : t.setregs  ( ... v1 v0 regmask)  ( high to low)
    <xfer  _debugregs  0 swap ( regindex regmask)
-      begin  dup 1 and if  push  tuck _writereg  ?xfer_write  pop  then
+      begin  dup 1 and if  push  tuck _writereg  ?xfer-write  pop  then
       1 u+  u2/  dup 0= until
    xfer>
    2drop ;
 
 
-( XXX add chunking to this? - use generic chunking code from stlink)
-( XXX These shouldn't be used to transfer more that about 32 bytes of
-  data at a time!)
-( XXX Rewrite these to use TransferBlock?)
+: xfer-read-buf  ( buf u - buf+4u 0)
+   2 <<  2dup +  ( buf+4u)  -rot  ( buf+4u buf 4u)
+   bp @  -rot  cmove  0 ;
+
+( Unlike with register transfers, we have to worry about the recv buffer
+  filling up long before the xmit buffer does. It takes one byte to request
+  a read from AHB.DRW; but this requires 4 bytes in the recv buffer. By
+  sending lots of reads all at once we exceed the capacity of our recv
+  buffer. So be much more careful: only read 14 words at a time.)
+
+( Another problem! The AHB.TAR register incrementer only affects the bottom
+  bits - on the KL25, it wraps every 1 Ki - so only the low 10 bits are
+  getting incremented! Thus we need to reset TAR every once in a while...)
+
+: ?xfer-read-buf  ( buf u - buf' u')  ( after 14 words, start a new xfer)
+   1+  #14 over = if  xfer>  xfer-read-buf  <xfer  then ;
+
+( Let's be conservative and reset AHB.TAR every 256 bytes.)
+: ?tar  ( a - a+4)
+   4 +  dup 0ff and  0= if  ( rolled over)  dup  AHB.TAR  AP.Wr  then ;
+
+: xfer-setup  ( buf a u - a buf u)
+   <xfer  over  AHB.TAR  AP.Wr  300_0012  AHB.CSW  AP.Wr
+      rot swap ( a buf u) ;
 
 : t.read   ( buf a u)
-   swap  ( buf u a)
-   <xfer  AHB.TAR  AP.Wr  300_0012  AHB.CSW  AP.Wr
-          dup  2 >> for  AHB.DRW  AP.Rd  next  xfer>
-   bp @ -rot  cmove ;
+   xfer-setup
+      0 ( count)  swap  2 >> for  AHB.DRW  AP.Rd
+         ?xfer-read-buf  rot ?tar -rot  next  xfer>
+   xfer-read-buf  2drop  drop ;
 
 : t.write  ( buf a u)
-   swap  ( buf u a)
-   <xfer  AHB.TAR  AP.Wr  300_0012  AHB.CSW  AP.Wr
-          2 >> for  dup 4 +  swap lew@  AHB.DRW  AP.Wr  next  xfer>
-   drop ;
+   xfer-setup
+      2 >> for  dup 4 +  swap lew@  AHB.DRW  AP.Wr
+         ?xfer-write    swap ?tar swap  next  xfer>
+   2drop ;
 
 
 ( XXX The following is mostly intended for debugging the debugger. ;-)
