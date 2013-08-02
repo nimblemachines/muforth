@@ -144,29 +144,41 @@ void mu_usb_find_device()
     {
         /*
          * Found a match; matched has the device's _open_ file descriptor.
-         * Try to claim interface 0.
          */
-        int intf = 0;
-        if (ioctl(matched, USBDEVFS_CLAIMINTERFACE, &intf) == -1)
-            return abort_strerror();
-
-        /* Return the device's file descriptor */
         ST1 = matched;
         TOP = -1;
     }
 }
 
 /*
- * usb-close ( dev)
- *
- * Release interface 0 and close device.
+ * usb-claim-interface  ( interface dev)
  */
-void mu_usb_close()
+void mu_usb_claim_interface()
 {
-    int intf = 0;
+    int intf = ST1;
+    if (ioctl(TOP, USBDEVFS_CLAIMINTERFACE, &intf) == -1)
+        return abort_strerror();
+
+    DROP(2);
+}
+
+/*
+ * usb-release-interface  ( interface dev)
+ */
+void mu_usb_release_interface()
+{
+    int intf = ST1;
     if (ioctl(TOP, USBDEVFS_RELEASEINTERFACE, &intf) == -1)
         return abort_strerror();
 
+    DROP(2);
+}
+
+/*
+ * usb-close ( dev)
+ */
+void mu_usb_close()
+{
     mu_close_file();
 }
 
