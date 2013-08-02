@@ -274,7 +274,6 @@ static int match_hid(char *dev, struct match *pmatch)
     fd = open(dev, O_RDONLY);
     if (fd == -1) return -1;
 
-    
     if (ioctl(fd, HIDIOCGRAWINFO, &hid) == -1)
         return -1;
 
