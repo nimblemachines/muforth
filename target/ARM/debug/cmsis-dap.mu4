@@ -157,9 +157,24 @@ c251 f002 hid-find-device  .if  ( Keil CMSIS-DAP)
 ( A simple buffer for chatty communication protocols. Words for putting
   values into a buffer and taking them out again.)
 
-variable bp  ( buf pointer)
+.ifdef bigxfer  ( 8 buffers each way)
+
+40 8 * buffer 'sendbuf
+40 8 * buffer 'recvbuf
+
+variable whichbuf  ( offset)
+
+: sendbuf   whichbuf @  'sendbuf + ;
+: recvbuf   whichbuf @  'recvbuf + ;
+
+.else  ( single buffer)
+
 40 buffer sendbuf
 40 buffer recvbuf
+
+.then
+
+variable bp  ( buf pointer)
 : !send  sendbuf  bp !  sendbuf 40 55 fill ;
 : !recv  recvbuf  bp ! ;
 : #send  bp @  sendbuf - ;
@@ -498,6 +513,111 @@ comment %%hardwired%%
       2 >> for  dup 4 +  swap lew@  AHB.DRW  AP.Wr
          ?xfer-write    swap ?tar swap  next  xfer>
    2drop ;
+
+
+.ifdef bigxfer
+
+( NOTE!!
+
+  This code _almost_ works! It fails to read the target memory properly,
+  because it is using the count of xfers as a _read count_, but the xfer
+  count includes such things as setting AHB.CSW and AHB.TAR. So it ends up
+  being wrong.
+
+  Also, reading 128 KiB and then doing anything else seg faults, so the
+  code is trampling on the muforth heap somewhere.
+
+  And, worst of all, all this complexity brings the time to read 128 KiB
+  down from 12s to 6.6s. It's just not worth it in any case. Too bad. It was
+  fun to try!)
+
+( Support for "big xfers" - ie, using a chain of 64-byte HID buffers
+  instead of one at a time. For moving lots of memory, the overhead of
+  calling into the OS for each 64 byte buffer, and the USB turnaround
+  overhead is just too high. It took 12 secs to move 128 KiB using a single
+  buffer.
+
+  So we're trying an experiment. It's a bit more complicated, but it's also
+  a fun challenge. ;-)
+
+: ?usbread  ( count)
+   40 xor if  ." USB read too short "  then ;
+
+: bigsend-recv  ( - #bufs)
+   whichbuf @  6 >>  push  whichbuf off
+   'sendbuf r@  for  dup 40 uwrite            40 +  next  drop
+   'recvbuf r@  for  dup 40 uread   ?usbread  40 +  next  drop
+   pop ;
+
+: check-subxfer
+   !recv
+   sendbuf     c@ ( cmd)     b>  xor if  ." ?cmd "  then
+   sendbuf 2 + c@ ( #xfers)  b>  xor if  ." transactions not completed "  then
+   b> dup 1 = if  drop  ( " OK "              ?type  )        ^  then
+      dup 2 = if  drop  " WAIT "            ?type          ^  then
+      dup 4 = if  drop  " FAULT "           ?type  -fault  ^  then
+      dup 8 = if  drop  " Protocol error "  ?type          ^  then
+         10 = if        " Value mismatch "  ?type          ^  then
+                        " BOGUS return"     ?type          ;
+
+: check-bigxfer  ( #bufs)
+   for  check-subxfer  40 whichbuf +!  next
+   whichbuf off ;
+
+: do-bigxfer  ( - #bufs)
+   bigsend-recv  ( #bufs)  dup check-bigxfer ;
+
+: subxfer>  ( - #bufs)  ( end prev sub-xfer, start new sub-xfer)
+   #xfers @  =if  ( do nothing if no xfers queued up)
+      sendbuf 2 + c!  40 whichbuf +!
+      whichbuf @  [ 40 10 * ] = if ( big buffer full)  do-bigxfer  ^  then
+   0  ^
+   then  ( 0) ;
+
+( Just like <xfer but doesn't toggle led.)
+: <subxfer
+   05 <cmd  00 ( DAP#) >b  00 ( count placeholder) >b  #xfers off ;
+
+: <bigxfer   whichbuf off  <subxfer ;
+:  bigxfer>  ( - #bufs)
+   subxfer>  0= if  whichbuf @  if  do-bigxfer  ^  then  then  0 ;
+
+: ?bigxfer-write  ( after 30 bytes, start a new xfer)
+   30 #send u< if  subxfer>  drop  <subxfer  then ;
+
+: read-subxfer  ( destbuf - destbuf')
+   recvbuf 1+ c@ ( #xfers)
+   2 <<  2dup +  ( buf+4u)  -rot  ( buf+4u buf 4u)
+   recvbuf 3 +  -rot  cmove ;
+
+: bigxfer-read   ( buf u #bufs - buf' 0)
+   nip  =if
+      for  read-subxfer  40 whichbuf +!  next
+      whichbuf off  0  ^
+   then  ( 0) ;
+
+: ?bigxfer-read   ( buf u - buf' u')  ( after 14 words, start a new subxfer)
+   1+  #14 over = if  subxfer>  bigxfer-read  <subxfer  then ;
+
+: bigxfer-setup  ( buf a u - a buf u)
+   <bigxfer
+      over  AHB.TAR  AP.Wr  300_0012  AHB.CSW  AP.Wr
+      rot swap ( a buf u) ;
+
+: t.bigread   ( buf a u)
+   bigxfer-setup  ( a buf u)
+      0 ( count)  swap  2 >> for  AHB.DRW  AP.Rd
+         ?bigxfer-read  rot ?tar -rot  next  bigxfer>
+   bigxfer-read
+   2drop  drop ;
+
+: t.bigwrite  ( buf a u)
+   bigxfer-setup  ( a buf u)
+      2 >> for  dup 4 +  swap lew@  AHB.DRW  AP.Wr
+         ?bigxfer-write  swap ?tar swap  next  bigxfer>
+   drop ( #bufs)  2drop ;
+
+.then  ( bigxfer)
 
 
 ( XXX The following is mostly intended for debugging the debugger. ;-)
