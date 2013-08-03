@@ -106,63 +106,61 @@ variable spy
    buf #maxbuf uread
    spy @ if  cr ." < "  buf swap type  then ;
 
-: send-recv
+: send
    spy @ if  cr ." > "  buf #buf type  then
-   buf #buf uwrite  recv ;
+   buf #buf uwrite ;
+
+: send-recv   send  recv ;
 
 : ack?  buf c@  char + = ;
 
-: ?check  ( - n)
+: check?  ( - ok)
    !buf  b> char $ = if
-      0 0 begin  b>  dup char # xor while  +  1 u+  repeat
-      drop  0ff and  hex> = if  ( checksums match?)  2/  !buf +bp  ^  then
-      error" checksum failed"  ^  then
-   error" invalid packet start" ;
+      0  begin  b>  dup char # xor while  +  repeat
+      drop  0ff and  hex> = if  ( checksums match?)  -1  ^  then
+      spy @ if  ." checksum failed "  then  0  ^  then
+   spy @ if  ." invalid packet start "  0  then ;
+
+: ?hexstring>  ( u)
+   #buf 4 - 2/ over ( u)  = if  !buf +bp  hexstring>  ^  then
+   drop  spy @ if  ." size mismatch "  then ;
 
 : <pkt  ( begin a debug packet)
    0buf  !buf  char $ >b ;
 
 : pkt>  ( end a debug packet)
-   -- checksum  char # >b  >hex  0 >b
    checksum2  char # >b  >hex  0 >b
-   begin  send-recv  ack? until
-   ( kludge) recv
-   -- begin  recv  ?start ;
-   ;
+   begin  begin  send-recv  ack? until  recv  check? until ;
 
 : cmd    ( char)    <pkt  >b        pkt> ;
 : cmd,n  ( n char)  <pkt  >b  >num  pkt> ;
 
 compiler
 : <cmd>           \c char  compile cmd ;
-: <cmd,n>   ( n)  \c char  compile cmd,n ;
+: <cmd,n>   ( u)  \c char  compile cmd,n ;
 forth
 
 ( debug)
 spy on
 : r  recv ;
 
-: t.cycle          <cmd>   i ;
-: t.cycles  ( n)   <cmd,n> i ;
-: t.step           <cmd>   s ;
-: t.halt           <cmd>   ? ;
-: t.run            <cmd>   c ;
-: t.go    ( addr)  <cmd,n> c ;
-: t.getregs        <cmd>   g ;
-: t.getreg  ( n)   <cmd,n> p ;
+: t.cycle            <cmd>   i ;
+: t.cycles  ( u)     <cmd,n> i ;
+: t.step             <cmd>   s ;
+: t.halt             <cmd>   ? ;
+: t.run              <cmd>   c ;
+: t.go    ( addr)    <cmd,n> c ;
+: t.getregs          <cmd>   g ;
+: t.getreg  ( - u)   <cmd,n> p  pad 4 ?hexstring>  pad lew@ ;
 
 : t.setreg  ( value n)
    <pkt  char P >b  >num  char = >b  pad lew!  pad 4 >hexstring  pkt> ;
 
 : t.read  ( buf a u)
-   push ( u)
-   <pkt  char m >b  >num  char , >b  r@ >num  pkt>
-   -- !buf +bp  ( should do ?check)
-   ?check  r@ ( u)  = if  pop ( u)  hexstring>  ^  then
-   shunt  error" size mismatch" ;
+   <pkt  char m >b  swap >num  char , >b  dup >num  pkt>  ?hexstring> ;
 
 : t.chat
-   <pkt  " qSupported" >string  pkt> ;
+   <pkt  " qSupported" >string  pkt>  t.halt ;
 
 : pc@   #15 t.getreg ;
 
