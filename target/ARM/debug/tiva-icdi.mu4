@@ -102,7 +102,8 @@ variable bp  ( buf pointer)
 ( Whether to spy on traffic to DAP.)
 variable spy
 
-: recv        buf #maxbuf uread
+: recv
+   buf #maxbuf uread
    spy @ if  cr ." < "  buf swap type  then ;
 
 : send-recv
@@ -110,6 +111,13 @@ variable spy
    buf #buf uwrite  recv ;
 
 : ack?  buf c@  char + = ;
+
+: ?check  ( - n)
+   !buf  b> char $ = if
+      0 0 begin  b>  dup char # xor while  +  1 u+  repeat
+      drop  0ff and  hex> = if  ( checksums match?)  2/  !buf +bp  ^  then
+      error" checksum failed"  ^  then
+   error" invalid packet start" ;
 
 : <pkt  ( begin a debug packet)
    0buf  !buf  char $ >b ;
@@ -149,8 +157,9 @@ spy on
 : t.read  ( buf a u)
    push ( u)
    <pkt  char m >b  >num  char , >b  r@ >num  pkt>
-   !buf +bp  ( should do ?check)
-   pop ( u)  hexstring> ;
+   -- !buf +bp  ( should do ?check)
+   ?check  r@ ( u)  = if  pop ( u)  hexstring>  ^  then
+   shunt  error" size mismatch" ;
 
 : t.chat
    <pkt  " qSupported" >string  pkt> ;
