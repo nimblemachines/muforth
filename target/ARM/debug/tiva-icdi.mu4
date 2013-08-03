@@ -16,11 +16,17 @@ loading Tiva/Stellaris debug support
   endpoint 2 - both 64 byte bulk endpoints - you'll be talking to a
   relatively standard GDB stub.)
 
+( NOTE: In order to have a reasonable conversation with an ICDI-based board
+  you have to do a "qSupported" query first, otherwise all memory reads
+  will return 0, and it will be impossible to stop the core.)
+
 hex
 
 1cbe 00fd usb-find-device  .if  constant icdi
 
 ( Device found - load support)
+
+2 icdi usb-claim-interface
 
 ( On OSX in particular, if you don't do this, the next time around the
   board wedges... Weird.)
@@ -56,7 +62,7 @@ variable bp  ( buf pointer)
 218 constant #maxbuf  ( these are HEX numbers!)
 #maxbuf buffer buf
 
-: 0buf  buf 218 55 fill ;
+: 0buf  buf #maxbuf 55 fill ;
 : !buf  buf bp ! ;
 : #buf  bp @  buf - ;
 : +bp   1 bp +! ;
@@ -98,7 +104,10 @@ variable spy
 
 : recv        buf #maxbuf uread
    spy @ if  cr ." < "  buf swap type  then ;
-: send-recv   buf #buf uwrite  recv ;
+
+: send-recv
+   spy @ if  cr ." > "  buf #buf type  then
+   buf #buf uwrite  recv ;
 
 : ack?  buf c@  char + = ;
 
@@ -108,7 +117,6 @@ variable spy
 : pkt>  ( end a debug packet)
    -- checksum  char # >b  >hex  0 >b
    checksum2  char # >b  >hex  0 >b
-   ( debug)  spy @ if  cr ." > "  buf #buf type  then
    begin  send-recv  ack? until
    -- begin  recv  ?start ;
    ;
@@ -140,6 +148,9 @@ spy on
 : t.read  ( buf a u)
    <pkt  char m >b  swap >num  char , >b  >num  pkt>
    drop ;
+
+: t.chat
+   <pkt  " qSupported" >string  pkt>  r ;
 
 : pc@   #15 t.getreg ;
 
