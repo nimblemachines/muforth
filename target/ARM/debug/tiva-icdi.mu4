@@ -3,6 +3,8 @@
   Copyright 2002-2013 David Frech. All rights reserved, and all wrongs
   reversed. (See the file COPYRIGHT for details.)
 
+ld target/common/endian.mu4
+
 loading Tiva/Stellaris debug support
 
 ( TI won't just come out and say it, but their "ICDI" - in-circuit debug
@@ -27,6 +29,119 @@ hex
 
 : uread   ( buf len - #read)  3  icdi  usb-read ;
 : uwrite  ( buf len)          2  icdi  usb-write ;
+
+( Binary data is sent escaped.)
+: escape-byte  ( b dest - b' dest')
+   char {  over c!  ( escape char)
+   swap  20 xor  swap ;
+
+: ?escape  ( b dest - b' dest')
+   over  char $ = if  escape-byte  ^  then
+   over  char # = if  escape-byte  ^  then
+   over  char { = if  escape-byte     then ;
+
+: ?unescape  ( b src - b' src')
+   over  char { = if  c@+  swap 20 xor  swap  then ;
+
+( Let's size the buffer so we can move 256 bytes at a time. For writing,
+  the buffer will look like this:
+
+  $M2000f000,100:xx ... xx#ss
+
+  The overhead is: 7 punct + 3 len + 8 address = 18 bytes. We need 2 bytes
+  in the buffer for each byte read or written; so 256 * 2 + 18 total. Let's
+  round up our overhead to a multiple of 8.)
+
+variable bp  ( buf pointer)
+218 constant #maxbuf  ( these are HEX numbers!)
+#maxbuf buffer buf
+
+: 0buf  buf 218 55 fill ;
+: !buf  buf bp ! ;
+: #buf  bp @  buf - ;
+: +bp   1 bp +! ;
+
+( XXX Note: this is different from how I named these in
+  target/HC08/bdm-usb-host.m4. Change those as well?)
+
+: >b  ( byte)    bp @  c!  +bp ;
+: b>  ( - byte)  bp @  c@  +bp ;
+
+: >string  ( a u)  tuck  bp @ swap cmove  bp +! ;
+: >num
+   radix preserve  hex  <# #s #>  ( a u)  >string ;
+
+: >nyb      0f and  >digit  >b ;
+: nyb>          b>  digit>  0f and ;  ( hopefully it was actually hex... ;-)
+
+: >hex  ( b)    dup  4 >> >nyb  >nyb ;
+: hex>  ( - b)  nyb> 4 <<       nyb> + ;
+
+: >hexstring  ( a u)
+   ?for  c@+ swap  >hex  next  then  drop ;
+
+: hexstring>  ( u)
+   ?for  hex> emit  next  then ;
+
+: checksum  ( - sum)
+   #buf  1-  ( don't count $)  !buf +bp  ( skip $)
+   0 ( sum)  swap ?for  b> +  next  then  0ff and ;
+
+: sum  ( a u - sum)
+   0 -rot ( sum)  ?for  c@+ push  +  pop  next  then  drop  0ff and ;
+
+: checksum2  ( - sum)
+   buf 1+  ( skip $)  #buf 1-  sum ;
+
+( Whether to spy on traffic to DAP.)
+variable spy
+
+: recv        buf #maxbuf uread
+   spy @ if  cr ." < "  buf swap type  then ;
+: send-recv   buf #buf uwrite  recv ;
+
+: ack?  buf c@  char + = ;
+
+: <pkt  ( begin a debug packet)
+   0buf  !buf  char $ >b ;
+
+: pkt>  ( end a debug packet)
+   -- checksum  char # >b  >hex  0 >b
+   checksum2  char # >b  >hex  0 >b
+   ( debug)  spy @ if  cr ." > "  buf #buf type  then
+   begin  send-recv  ack? until
+   -- begin  recv  ?start ;
+   ;
+
+: cmd    ( char)    <pkt  >b        pkt> ;
+: cmd,n  ( n char)  <pkt  >b  >num  pkt> ;
+
+compiler
+: <cmd>           \c char  compile cmd ;
+: <cmd,n>   ( n)  \c char  compile cmd,n ;
+forth
+
+( debug)
+spy on
+: r  recv ;
+
+: t.cycle          <cmd>   i ;
+: t.cycles  ( n)   <cmd,n> i ;
+: t.step           <cmd>   s ;
+: t.halt           <cmd>   ? ;
+: t.run            <cmd>   c ;
+: t.go    ( addr)  <cmd,n> c ;
+: t.getregs        <cmd>   g ;
+: t.getreg  ( n)   <cmd,n> p ;
+
+: t.setreg  ( value n)
+   <pkt  char P >b  >num  char = >b  pad lew!  pad 4 >hexstring  pkt> ;
+
+: t.read  ( buf a u)
+   <pkt  char m >b  swap >num  char , >b  >num  pkt>
+   drop ;
+
+: pc@   #15 t.getreg ;
 
 .else  ." No supported USB devices found."
 
