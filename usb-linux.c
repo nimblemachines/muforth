@@ -26,11 +26,17 @@
 #include <linux/hidraw.h>
 #include <linux/input.h>
 
-/* change to match your system! */
-#define USB_ROOT1 "/proc/bus/usb"
-#define USB_ROOT2 "/dev/bus/usb"
+/*
+ * The two places USB devices can live. /dev/bus/usb is the "newer" place,
+ * so if it exists and is readable we search it, otherwise we search
+ * /proc/bus/usb.
+ *
+ * NOTE: We only search one or the other!
+ */
+#define USB_ROOT1 "/dev/bus/usb"
+#define USB_ROOT2 "/proc/bus/usb"
 
-#define USB_PATH_MAX (strlen(USB_ROOT1)+16)
+#define USB_PATH_MAX (strlen(USB_ROOT2)+16)
 
 struct match
 {
@@ -40,6 +46,27 @@ struct match
 
 typedef int (*usb_match_fn)(char *, struct match *);    /* filepath, match_data */
 typedef int (*path_ok_fn)(struct dirent *);
+
+/*
+ * Check if a directory exists and is readable.
+ *
+ * Returns
+ *   -1  if path is a directory and is readable
+ *    0  otherwise
+ */
+static int dir_exists(char *path)
+{
+    DIR *pdir;
+
+    pdir = opendir(path);
+
+    /* Return false if directory couldn't be opened. */
+    if (pdir == NULL) return 0;
+
+    /* Ok, just close it and return true. Enumerator will open it again. */
+    closedir(pdir);
+    return(-1);
+}
 
 /*
  * Returns
@@ -70,9 +97,14 @@ static int foreach_dirent(char *path, path_ok_fn try_path,
             subpath = path_prefix(pde->d_name, pathbuf + USB_PATH_MAX, '\0', pathbuf);
             subpath = path_prefix(path, subpath, '/', pathbuf);
             matched = fn(subpath, pmatch);
-            if (matched != 0) return matched;   /* error or match */
+            if (matched != 0)
+            {
+               closedir(pdir);
+               return matched;   /* error or match */
+            }
         }
     }
+    closedir(pdir);
     return 0;   /* no match */
 }
 
@@ -126,10 +158,9 @@ void mu_usb_find_device()
     match.idProduct = TOP;
 
     /* Enumerate USB device tree, looking for a match */
-    matched = foreach_dirent(USB_ROOT1, is_bus_or_dev, enumerate_devices, &match);
-
-    /* If nothing found, or opendir error, try the other bus */
-    if (matched == 0)
+    if (dir_exists(USB_ROOT1))
+        matched = foreach_dirent(USB_ROOT1, is_bus_or_dev, enumerate_devices, &match);
+    else
         matched = foreach_dirent(USB_ROOT2, is_bus_or_dev, enumerate_devices, &match);
 
     if (matched < 0) return abort_strerror();
