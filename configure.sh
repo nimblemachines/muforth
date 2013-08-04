@@ -84,7 +84,6 @@ if [ "$os" = "Linux" ]; then
         done
     fi
     if [ -d /dev/bus/usb ]; then
-        echo "#define DEV_BUS_USB" > usb-devices.h
         cat <<EOF
 
 Your USB devices are mounted on /dev/bus/usb and controlled by udevd.
@@ -94,16 +93,26 @@ EOF
             # Running NixOS! Yippee!
             ./make-nix-config.sh $USER > udev.nix
             cat <<EOF
-It appears that you are one of the few running NixOS. We salute you!
+It appears that you are one of the few intrepid souls running NixOS.
+
+We salute you!
+
 You'll want to take the udev.nix file that was just generated, which
 contains a service definition and a few udev rules, and append it to your
 configuration.nix.
+
+Then do the following as root:
+
+  # udevadm control --reload
+
+(or possibly some other command to tell udevd to reload its rules files;
+'man udev' for the whole story).
 EOF
         else
             ./make-udev-rules.sh $USER > 99-muforth.rules
             cat <<EOF
-A udev rules file has just been generated, which will be of interest
-to you if you want to use USB devices with muFORTH.
+A udev rules file has just been generated, which will be of interest to you
+if you want to use USB devices with muFORTH.
 
 Please do the following as root:
 
@@ -115,7 +124,6 @@ Please do the following as root:
 EOF
         fi
     elif [ -d /proc/bus/usb ]; then
-        echo "#define PROC_BUS_USB" > usb-devices.h
         cat <<EOF
 
 Your USB devices are mounted on /proc/bus/usb and controlled by usbfs.
@@ -123,10 +131,7 @@ If you want to use USB devices with muFORTH you'll want to modify the
 /etc/fstab line that mounts the usbfs to allow regular users to access
 USB device files.
 EOF
-    else
-        echo "#error Where are USB devices on this machine?" > usb-bus.h
     fi
-
 fi
 if [ "$os" = "FreeBSD" -o "$os" = "NetBSD" ]; then
     archobjs="usb-netbsd.o usb-freebsd.o"
