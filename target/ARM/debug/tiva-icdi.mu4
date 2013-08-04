@@ -36,19 +36,6 @@ hex
 : uread   ( buf len - #read)  3  icdi  usb-read ;
 : uwrite  ( buf len)          2  icdi  usb-write ;
 
-( Binary data is sent escaped.)
-: escape-byte  ( b dest - b' dest')
-   char {  over c!  ( escape char)
-   swap  20 xor  swap ;
-
-: ?escape  ( b dest - b' dest')
-   over  char $ = if  escape-byte  ^  then
-   over  char # = if  escape-byte  ^  then
-   over  char { = if  escape-byte     then ;
-
-: ?unescape  ( b src - b' src')
-   over  char { = if  c@+  swap 20 xor  swap  then ;
-
 ( Let's size the buffer so we can move 256 bytes at a time. For writing,
   the buffer will look like this:
 
@@ -89,6 +76,19 @@ variable bp  ( buf pointer)
 : hexstring>  ( a u)
    ?for  hex> over c!  1+  next  then  drop ;
 
+( Binary data is sent escaped.)
+: escape-byte  ( b)
+   char { >b  ( escape char)  20 xor >b ;
+
+: >binary  ( b)
+   dup  char $ = if  escape-byte  ^  then
+   dup  char # = if  escape-byte  ^  then
+   dup  char { = if  escape-byte  ^  then
+   >b ;
+
+: >binarystring  ( a u)
+   ?for  c@+ swap  >binary  next  then  drop ;
+
 : checksum  ( - sum)
    #buf  1-  ( don't count $)  !buf +bp  ( skip $)
    0 ( sum)  swap ?for  b> +  next  then  0ff and ;
@@ -99,16 +99,30 @@ variable bp  ( buf pointer)
 : checksum2  ( - sum)
    buf 1+  ( skip $)  #buf 1-  sum ;
 
-( Whether to spy on traffic to DAP.)
+( Whether to spy on traffic to ICDI.)
 variable spy
+
+: .visible  ( b)
+   dup 80 and if  char + emit  80 xor    then
+   dup  bl u< if  char ^ emit  char @ +  then  emit ;
+
+: bintype  ( a u)
+   ?for  c@+ swap  .visible  next  then  drop ;
 
 : recv
    buf #maxbuf uread
    spy @ if  cr ." < "  buf swap type  then ;
 
 : send
-   spy @ if  cr ." > "  buf #buf type  then
+   spy @ if  cr ." > "  buf #buf bintype  then
    buf #buf uwrite ;
+
+( Running Liunx under VirtualBox showed terrible behaviour on USB reads:
+  instead of handing back _one_ packet with all the data, several smaller
+  reads are returned instead. So we have to piece together the packet,
+  reading until "#xx".)
+
+: smart-recv ;
 
 : send-recv   send  recv ;
 
@@ -156,8 +170,22 @@ spy on
 : t.setreg  ( value n)
    <pkt  char P >b  >num  char = >b  pad lew!  pad 4 >hexstring  pkt> ;
 
+: addr-len  ( a u - u)   swap >num  char , >b  dup >num ;
 : t.read  ( buf a u)
-   <pkt  char m >b  swap >num  char , >b  dup >num  pkt>  ?hexstring> ;
+   <pkt  char m >b  addr-len  pkt>  ?hexstring> ;
+
+( OMFG!! The M command doesn't work! TI's firmware is totally broken. No
+  matter what the input, the first byte is set to 00. Then, the first
+  nybble of the input is skipped, and thus what is stored into memory is
+  shifted by a nybble!
+
+  Crazy that this hasn't been fixed.)
+
+: t.write-broken  ( buf a u)
+   <pkt  char M >b  addr-len  char : >b  >hexstring  pkt> ;
+
+: t.write  ( buf a u)
+   <pkt  char X >b  addr-len  char : >b  >binarystring  pkt> ;
 
 : t.chat
    <pkt  " qSupported" >string  pkt>  t.halt ;
