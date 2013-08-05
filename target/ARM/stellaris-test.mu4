@@ -28,7 +28,34 @@ label load-hword
 label load-word
    0 r0 +) r1 ldr   0 bkpt  ;c
 
+( Core interrupt handlers.)
+label reset       0 bkpt  ;c
+label nmi         0 bkpt  ;c
+label hardfault   0 bkpt  ;c
+label mmfault     0 bkpt  ;c
+label busfault    0 bkpt  ;c
+label usagefault  0 bkpt  ;c
+label svcall      0 bkpt  ;c
+label debugmon    0 bkpt  ;c
+label pendsv      0 bkpt  ;c
+label systick     0 bkpt  ;c
+
+here  2000_0400 org  ( 1 KiB boundary)
+
+label vector-table  @ram #ram + ( SP) ,  reset 1+ ,  ( SP, Reset)
+   nmi 1+ ,  hardfault 1+ ,  mmfault 1+ ,  busfault 1+ ,  usagefault 1+ ,
+   ( reserved)  0 , 0 , 0 , 0 ,
+   svcall 1+ ,  debugmon 1+ ,
+   ( reserved)  0 ,
+   pendsv 1+ ,  systick 1+ ,
+
+org
+
 __host
+
+( SCB - System control block - registers)
+e000_ed00 constant CPUID
+e000_ed08 constant VTOR  ( vector table offset reg - 1 KiB aligned)
 
 ( SCS debug registers)
 e000_edf0 constant DHCSR  ( debug halting control/status reg)
@@ -36,14 +63,26 @@ e000_edf4 constant DCRSR  ( debug core register selector reg)
 e000_edf8 constant DCRDR  ( debug core register data reg)
 e000_edfc constant DEMCR  ( debug exception and monitor ctrl reg)
 
+: copy-chunk  ( a u)
+   over image+ -rot  t.write ;
+
 : copy-ram
-   h preserve  ram  region  ( a u)  over image+ -rot  t.write ;
+   h preserve
+   ram  region  ( a u)  copy-chunk ( code)
+   \m vector-table 40   copy-chunk ;
+
+: t!  ( w a)    swap  pad lew!  pad swap 4 t.write ;
+: t@  ( a - w)                  pad swap 4 t.read  pad lew@ ;
+
+: hi  copy-ram  \m vector-table VTOR t! ;
 
 : runwait
-   copy-ram
    t.run
-   8 for  pad DHCSR 4 t.read  pad lew@  3 and 3 =
-     if  shunt  ^  then  next  t.halt ;
+   8 begin  DHCSR t@
+      dup  0000_0002 and  ( C_HALT)    0= while
+           0008_0000 and  ( S_LOCKUP)  0= while
+   1-  =until
+   then  drop  t.halt  ^  then  2drop ;
 
 : remote  ( ... cfa - ...)  ( remote call of Forth code word)
    ." NYI"   drop ;
@@ -59,9 +98,23 @@ e000_edfc constant DEMCR  ( debug exception and monitor ctrl reg)
 : wh  ( h a)   \m store-hword rx  2drop ;
 : ww  ( w a)   \m store-word rx  2drop ;
 
+( APB aperture addresses for the GPIO ports.)
+4000_4000 constant pa  ( port A)
+4000_5000 constant pb  ( port B)
+4000_6000 constant pc  ( port C)
+4000_7000 constant pd  ( port D)
+4002_4000 constant pe  ( port E)
 4002_5000 constant pf  ( port F)
 
-           0e constant led-mask
+( AHB aperture addresses for the GPIO ports.)
+4005_8000 constant pa-ahb  ( port A)
+4005_9000 constant pb-ahb  ( port B)
+4005_a000 constant pc-ahb  ( port C)
+4005_b000 constant pd-ahb  ( port D)
+4005_c000 constant pe-ahb  ( port E)
+4005_d000 constant pf-ahb  ( port F)
+
+           0e constant led-mask  ( PF1=R, PF2=B, PF3=G)
 led-mask 2 << constant led-addr-mask
 
 : led  ( bits)   led-addr-mask pf + wb ;
@@ -74,7 +127,7 @@ led-mask 2 << constant led-addr-mask
 : grab-pf
    led-mask pf 400 +  wb  ( set GPIODIR bits for LED)
           0 pf 420 +  wb  ( clear GPIOAFSEL to take pin back)
-   0 0 0 led ;
+   0 led ;
 
 ( R G B)
   1 0 0  rgb>  constant red
