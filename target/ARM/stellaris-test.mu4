@@ -1,0 +1,86 @@
+( This file is part of muFORTH: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2013 David Frech. All rights reserved, and all wrongs
+  reversed. (See the file COPYRIGHT for details.)
+
+loading Stellaris test code
+
+__asm
+
+hex
+ram
+
+label store-byte
+   0 r0 +) r1 strb  0 bkpt  ;c
+
+label store-hword
+   0 r0 +) r1 strh  0 bkpt  ;c
+
+label store-word
+   0 r0 +) r1 str   0 bkpt  ;c
+
+label load-byte
+   0 r0 +) r1 ldrb  0 bkpt  ;c
+
+label load-hword
+   0 r0 +) r1 ldrh  0 bkpt  ;c
+
+label load-word
+   0 r0 +) r1 ldr   0 bkpt  ;c
+
+__host
+
+( SCS debug registers)
+e000_edf0 constant DHCSR  ( debug halting control/status reg)
+e000_edf4 constant DCRSR  ( debug core register selector reg)
+e000_edf8 constant DCRDR  ( debug core register data reg)
+e000_edfc constant DEMCR  ( debug exception and monitor ctrl reg)
+
+: copy-ram
+   h preserve  ram  region  ( a u)  over image+ -rot  t.write ;
+
+: runwait
+   copy-ram
+   t.run
+   8 for  pad DHCSR 4 t.read  pad lew@  3 and 3 =
+     if  shunt  ^  then  next  t.halt ;
+
+: remote  ( ... cfa - ...)  ( remote call of Forth code word)
+   ." NYI"   drop ;
+
+: rx  ( r1 r0 cfa - r1 r0)  ( remote call of non-Forth code)
+   pc!  0 reg!  1 reg!  runwait  1 reg@  0 reg@ ;
+
+: rb  ( a - b)   0 swap  \m load-byte rx  drop ;
+: rh  ( a - h)   0 swap  \m load-hword rx  drop ;
+: rw  ( a - w)   0 swap  \m load-word rx  drop ;
+
+: wb  ( b a)   \m store-byte rx  2drop ;
+: wh  ( h a)   \m store-hword rx  2drop ;
+: ww  ( w a)   \m store-word rx  2drop ;
+
+4002_5000 constant pf  ( port F)
+
+           0e constant led-mask
+led-mask 2 << constant led-addr-mask
+
+: led  ( bits)   led-addr-mask pf + wb ;
+
+: rgb>  ( r g b - bits)
+   2 <<  swap 3 << +  swap 2* +  ( mask) ;
+
+: complement   [ 1 1 1 rgb> ]  xor ;
+
+: grab-pf
+   led-mask pf 400 +  wb  ( set GPIODIR bits for LED)
+          0 pf 420 +  wb  ( clear GPIOAFSEL to take pin back)
+   0 0 0 led ;
+
+( R G B)
+  1 0 0  rgb>  constant red
+  0 1 0  rgb>  constant green
+  0 0 1  rgb>  constant blue
+
+  red complement constant cyan
+green complement constant magenta
+ blue complement constant yellow
