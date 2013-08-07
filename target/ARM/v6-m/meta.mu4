@@ -19,7 +19,7 @@ mode __asm
 -:  ."  (compiling inlne assembler)"  ;
 -:
     .assembler. find  if  ,        ^  then  ( find assembler's if/then etc)
-     .compiler. find  if  execute  ^  then  ( need } and ; to exit this mode)
+     .compiler. find  if  execute  ^  then  ( need asm> and ; to exit this mode)
       .equates. find  if  ,        ^  then
          .meta. find  if  ,        ^  then  ( labels are in .meta.)
         .forth. find  if  ,        ^  then  ( utility words in .forth.)
@@ -86,8 +86,8 @@ forth
 
 ( Support for inline asm in any colon word.)
 compiler
-: asm{   __inline-asm ;  ( start assembler)
-: }      -] ;  ( exit assembler mode and restart colon compiler)
+: <asm   __inline-asm ;  ( start assembler)
+: asm>      -] ;  ( exit assembler mode and restart colon compiler)
 assembler
 
 
@@ -106,32 +106,60 @@ assembler
 \a r12 constant u   ( user pointer)
 
 .ifdef native
-\a r5 constant cnt  ( loop count)
+\a r4 constant cnt  ( loop count or scratch)
+\a r5 constant k    ( load konstant register)
 \a r6 constant t
 \a r7 constant s    ( data stack pointer - points at empty slot)
 \a sp constant r    ( return stack pointer)
-: st1   asm{   0 s +) } ;   ( first stack frame slot)
-: st2   asm{   4 s +) } ;   ( second stack frame slot)
-: st3   asm{   8 s +) } ;   ( third stack frame slot)
+: st1   <asm  0 s +)  asm> ;   ( first stack frame slot)
+: st2   <asm  4 s +)  asm> ;   ( second stack frame slot)
+: st3   <asm  8 s +)  asm> ;   ( third stack frame slot)
 
 meta
 
 ( Basic stack macros.)
-: dpush  ( reg)  asm{  st1 t str  4 # s s subs } ;  ( NOTE: clobbers cond codes!)
-: dpop   ( reg)  asm{  4 # s s adds  st1 t ldr } ;  ( ditto)
+: dpush  ( reg)  <asm  4 # s s subs  st1 t str  asm> ;  ( NOTE: clobbers cond codes!)
+: dpop   ( reg)  <asm  st1 t ldr  4 # s s adds  asm> ;  ( ditto!)
 
 ( Macros that make sense for Forth:)
-: <dup>   asm{  t dpush } ;  ( push top onto D stack)
-: <drop>  asm{  t dpop } ;   ( pop top of D stack into top)
-: <nip>   asm{  4 # s s adds } ;  ( XXX cond codes!)
+: <dup>   <asm  t dpush  asm> ;  ( push top onto D stack)
+: <drop>  <asm  t dpop   asm> ;   ( pop top of D stack into top)
+: <nip>   <asm  4 # s s adds  asm> ;  ( XXX cond codes!)
 
 forth
 
-.else .ifdef dtc  ( direct-threaded)
-.else .ifdef itc  ( indirect-threaded)
-.else .ifdef ttc  ( token-threaded)
-.else z" You must define a threading type: native, dtc, itc, or ttc."  abort
-.then .then .then .then
+.else .ifdef token-itc  ( indirect-token-threaded)
+( Nothing here yet)
+.else z" You must define a threading type: native or token-itc." abort
+.then .then
+
+
+-- ------------------------------------------------------------------------
+-- Support for in-line literals (literal pool, ARM-style)
+-- ------------------------------------------------------------------------
+32 array+ lit-values  ( room for 32 literals per word - value)
+32 array+ ldr-addrs   ( room for 32 literals per word - ldr location)
+variable #lits
+
+: +lit    1 #lits +! ;
+: -lit   -1 #lits +! ;
+: lit-value   #lits @  lit-values ;
+: ldr-addr    #lits @  ldr-addrs  ;
+: lit,   ( value reg)  push  lit-value !  \m here ldr-addr !  +lit
+         <asm  0 pc +) \f pop ldr  asm> ;
+
+: nop-align  \m here 2 and if  <asm  nop  asm>  then ;
+: >load-pc   ( a - a')   4 +  -4 and ;
+: rewrite-lit  ( lit#)  #lits !
+   \m here  lit-value @  \m ,  ( 'lit)
+   ldr-addr @  dup >load-pc  ( 'lit 'ldr pc)  rot swap -
+   ( 'ldr offset)  2 >>  over image-@  or  swap image-! ;
+
+: rewrite-lits
+   #lits @ =if
+      nop-align  ( lits have to start on word boundary)
+      begin  1-  dup rewrite-lit  dup 0= until
+   then  drop ;
 
 
 .ifdef later-gator
@@ -166,7 +194,7 @@ forth
    drop  0 ;
 
 meta-compiler
-: ^   tail? if ^ then  asm{  ret } ;
+: ^   tail? if ^ then  <asm  ret  asm> ;
 
 meta
 : compile,  ( target-cfa)  \a c  ( compile call) ;
@@ -178,15 +206,15 @@ forth
 -- ------------------------------------------------------------------------
 
 : load-literal  ( n)
-   >hilo  asm{  kl ldi  kh ldi } ;
+   >hilo  <asm  kl ldi  kh ldi  asm> ;
 
 ( With a literal in kl and kh push it onto the D stack.)
 ( XXX push-literal should be a routine!)
-: push-literal   asm{  t dpushw  k t movw } ;
+: push-literal   <asm  t dpushw  k t movw  asm> ;
 
 ( something like this:
 variable push-lit
-: push-literal   push-lit @  asm{  c } ;
+: push-literal   push-lit @  <asm  c  asm> ;
 )
 
 ( XXX when push-literal becomes a call, this will be short to uncompile,
@@ -207,7 +235,7 @@ forth
   load-literal. This is used to make versions of binary operations that
   work either with true literals, or with a value sitting on the D stack.)
 
-: pop-literal   asm{  k dpopw } ;
+: pop-literal   <asm  k dpopw  asm> ;
 
 : lit?   ( f)
    tag@ $lit =  dup if  unpush-literal  then ;
@@ -234,13 +262,13 @@ meta
 : litfetch
    _litop
       \m here  ( literal entry point)
-      asm{  <dup>  k z movw  here 4 + rjmp }
+      <asm  <dup>  k z movw  here 4 + rjmp }
       \m here  ( stack entry point)  ,  , ;
 
 : litstore
    _litop
       \m here  ( literal entry point)
-      asm{         k z movw  here 8 + rjmp }
+      <asm         k z movw  here 8 + rjmp }
       \m here  ( stack entry point)  ,  , ;
 
 forth
@@ -558,8 +586,8 @@ assembler
 -- Control structures.
 -- ------------------------------------------------------------------------
 
-: <test>               asm{  tl th or ( test) } ;
-: <zbranch>  ( - src)  asm{  0= not if } ;
+: <test>               <asm  tl th or ( test)  asm> ;
+: <zbranch>  ( - src)  <asm  0= not if  asm> ;
 
 meta-compiler
 : =if   ( - src)  <test>          <zbranch> ;
