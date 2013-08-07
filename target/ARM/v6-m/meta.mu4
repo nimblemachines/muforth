@@ -49,37 +49,6 @@ assembler
 forth
 
 
-.ifdef peep
--- ------------------------------------------------------------------------
--- Peephole optimiser tags
--- ------------------------------------------------------------------------
-
-( Tags tell the meta-compiler what kind of special code, if any, was just
-  compiled. Currently used to identify literals and calls, for simple
-  peephole optimisations.
-
-  We store the tag byte at \m here. No tag is represented by an "empty"
-  image byte - 0ff - _not_ by a tag of zero.)
-
-( Tags used:)
-1 constant $rcall  ( $ suggests price tag ;-)
-2 constant $call
-3 constant $lit
-
-: tag!  ( tag-byte)  \m here image-c! ;
-: tag@               \m here image-c@ ;
-: notag  "0ff tag! ;
-
-( We also want to cleanly uncompile code, so instead of simply backing up h
-  and leaving the cruft - instructions and tags - behind, let's back up and
-  "uncompile" the code, leaving behind untagged code.)
-
-: uncompile  ( #words)
-   notag
-   \m here  swap  for  -2 +a  -1 ( 0ffff) over  image-!  next  org ;
-
-.then ( peep)
-
 -- ------------------------------------------------------------------------
 -- Macros defining register convention and stack operations
 -- ------------------------------------------------------------------------
@@ -162,19 +131,31 @@ variable #lits
    then  drop ;
 
 
-.ifdef later-gator
+-- ------------------------------------------------------------------------
+-- Peephole optimiser
+-- ------------------------------------------------------------------------
+( Tags used:)
+1 constant $call  ( $ suggests price tag ;-)
+2 constant $lit1  ( one instruction lit: ldr or movs #)
+3 constant $lit2  ( two instruction lit: movs+mvns or movs+lsls)
+
+: tag!  ( tag)  \m here  image-h! ;
+: tag@          \m here  image-h@ ;
+: notag   -1 tag! ;  ( set to all FFs)
+
+: uncompile  ( #instrs)
+   1+  tag@  $lit2 = -  ( 2 if $lit2; 1 otherwise)
+   notag  -1 \m here  2 + image-!  ( erase literal, if any)
+   \m here  swap  for  -2  -1 ( 0ffff) over  image-h!  next  org ;
 
 -- ------------------------------------------------------------------------
--- Smart jump and call, tail call elimination
+-- Smart jump, and tail call elimination
 -- ------------------------------------------------------------------------
 
 assembler
-: c  ( dest)  ( smart call - compile rcall if possible, otherwise call)
-   kshort? if  \a rcall  $rcall tag! ^  then
-                \a call   $call tag! ;
-
-: j  ( dest)  ( smart jmp - compile rjmp if possible, otherwise jmp)
-   kshort? if  \a rjmp ^  then  \a jmp ;
+: j  ( dest)  ( smart jmp - compile short unconditional branch if possible;
+                otherwise, ldr + bx)
+   ( XXX) ;
 
 forth
 
@@ -187,38 +168,62 @@ forth
   else return false.)
 
 : tail?  ( - f)
-   tag@ dup  $rcall = if  ( short call)
-   \m here 2 -  "1000 replace  untag  ^  then
-        dup  $call = if   ( long call)
-   \m here 4 -  "0002 replace  untag  ^  then
-   drop  0 ;
+   tag@ $call = if  ( call)  ( XXX )  then ;
 
 meta-compiler
-: ^   tail? if ^ then  <asm  ret  asm> ;
+: ^   tail? if ^ then  <asm  lr bx  asm> ;
 
 meta
-: compile,  ( target-cfa)  \a c  ( compile call) ;
+: compile,  ( target-cfa)  \a bl  ( compile call) ;
 
 forth
 
 -- ------------------------------------------------------------------------
--- Literal loading.
+-- Literal loading
 -- ------------------------------------------------------------------------
 
+( Try three ways to load a literal:
+  * movs k, #i8
+  * movs k, #i8; mvns k, k
+  * movs k, #i8; lsls k, k, #n
+  Failing that, use  lit,  to compile an ldr from the literal pool.)
+
 : load-literal  ( n)
-   >hilo  <asm  kl ldi  kh ldi  asm> ;
+   ( Try a simple movs)
+   dup 8 ufits? if  <asm  # k movs  asm>  ^  then
 
-( With a literal in kl and kh push it onto the D stack.)
-( XXX push-literal should be a routine!)
-: push-literal   <asm  t dpushw  k t movw  asm> ;
+   ( Try movs followed by mvns)
+   dup  "ffff_ffff xor
+   dup 8 ufits? if  nip  <asm  # k movs  k k mvns  asm>  ^  then
+   drop ( inverted)
 
-( something like this:
-variable push-lit
-: push-literal   push-lit @  <asm  c  asm> ;
-)
+   ( Try movs followed by lsls)
+   dup push  0 ( shift)  r@
+   begin  u2/  1 u+  dup 8 ufits?  until ( n shifts shifted)
+   2dup swap <<  pop = if  <asm  # k movs  # k k lsls  asm>  drop  ^  then
+   2drop
 
-( XXX when push-literal becomes a call, this will be short to uncompile,
-  but could still be 4 bytes - if call r.t. rcall.)
+   ( No luck. Compile an ldr from literal pool.)
+   \a k lit, ;
+
+( Test)
+: tt  load-literal ;
+0 tt
+"ff tt
+-1 tt
+"ff00_00 tt
+"8c00_0000 tt
+"0108_0000 tt
+"0010_3000 tt
+"ffff_ff01 tt
+"ffff_fe02 tt
+rewrite-lits
+
+
+.ifdef later-gator
+
+( With a literal in the k register push it onto the D stack.)
+: push-literal   <asm  t dpush  k t mov  asm> ;
 
 : unpush-literal  3 uncompile ;  ( back up over 2 pushes and movw)
 
