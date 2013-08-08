@@ -31,7 +31,7 @@ hex
 : exact  ( op match - op f)  over =  matched ;
 
 
-variable prefetch-pc  ( points to _start_ of current instruction + 4 bytes!!)
+variable instr-pc  ( points to _start_ of current instruction)
 
 : set-ea  ( addr)  ( mask bit0 in case we're setting ea from loaded Thumb
                      address or exception vector)
@@ -76,12 +76,19 @@ variable prefetch-pc  ( points to _start_ of current instruction + 4 bytes!!)
 : Rd8,  Rd8 comma ;
 : RRdn,  RRdn comma ;
 
+( For grabbing single bits out of something.)
+: bit@  ( mask bit# - bit)  u>>  1 and ;
+
 : .r3   Rd,  Rn,  Rm ;
 : imm   radix preserve  hex  char # emit  (.) type ;  ( XXX radix?)
 : i8     dup 0ff and ;
 : woff>   ( woffset - offset)  2* 2* ;  ( word offset to byte offset)
 : hoff>   ( hoffset - offset)  2* ;  ( halfword offset to byte offset)
 : woff8   i8  woff>  imm ;
+
+( Fundamental truths about the ARM PC.)
+: >branch-pc  ( pc - branch-pc)  4 + ;
+: >load-pc    ( pc - load-pc)  >branch-pc  -4 and ; ( What ARM call Align[PC,4])
 
 ( _op3 assumes each string takes 3 bytes; adds no following whitespace)
 : _op3  ( index z")  3 #op ;
@@ -139,13 +146,9 @@ variable prefetch-pc  ( points to _start_ of current instruction + 4 bytes!!)
 : .cmp-rh   dup 8 u>>  3 and  z" ???cmpmov???" .op3  RRdn,         RRm ;
 : .bx       dup 7 bit@        z" bx blx"       .op3                RRm ;
 
-( Address of value to load is: pc 4 + -4 and +
-  This calculates what ARM describe as Align[PC, 4] + offset.
-  Remember: prefetch-pc variable holds PC+4!)
-: >load-pc  ( byte-offset - addr)
-   prefetch-pc @  -4 and  + ;
+: load-pc+  ( byte-offset - addr)  instr-pc @  >load-pc  + ;
 
-: .ldr-pc   ." ldr    "  Rd8,  .[  i8 woff> >load-pc  dup .u32  .]
+: .ldr-pc   ." ldr    "  Rd8,  .[  i8 woff> load-pc+  dup .u32  .]
                                ."  = "  |@  dup set-ea  .u32 ;
 
 : .str-r
@@ -165,7 +168,7 @@ variable prefetch-pc  ( points to _start_ of current instruction + 4 bytes!!)
 
 : .add-pc-i8   ." add    "  Rd8,  L@  if
                ." sp, "  woff8  ^  then
-               ." pc, "  woff8  ."  = "  i8 woff> >load-pc  dup set-ea  .u32 ;
+               ." pc, "  woff8  ."  = "  i8 woff> load-pc+  dup set-ea  .u32 ;
 
 ( These should *not* have s suffix.)
 : .add-sp-i7   0 ( S)  over 7 bit@  .addsub
@@ -208,7 +211,8 @@ variable prefetch-pc  ( points to _start_ of current instruction + 4 bytes!!)
 : .undef  ." undef  "  i8  imm ;
 : .svc    ." svc    "  i8  imm ;
 
-: .branch-pc  ( hword-offset)   hoff>  prefetch-pc @  +  dup set-ea  .u32 ;
+: .branch-pc  ( hword-offset)
+   hoff>  instr-pc @  >branch-pc  +  dup set-ea  .u32 ;
 
 : .cond  ( cc)
    0f and  z" beqbnebcsbccbmibplbvsbvcbhiblsbgebltbgtbleb??b??" .op3 ;
@@ -225,14 +229,16 @@ variable prefetch-pc  ( points to _start_ of current instruction + 4 bytes!!)
   been re-imagined as a 32-bit Thumb instruction with a very odd encoding -
   and a larger possible displacement than its 16-bit predecessor.)
 
-: .bl-dest  ( op - op)
+: bl-offset@  ( op - op hword-offset)
    dup           7ff and          ( imm11 in v6-m manual)
    over #16 u>>  3ff and  #11 <<  ( imm10 ditto)  +
    over #26 bit@  ( S)  push
    over #11 bit@  ( J2)  r@ xor  1 xor  #21 << ( I2 ditto)  +
    over #13 bit@  ( J1)  r@ xor  1 xor  #22 << ( I1 ditto)  +
-   pop ( S)  if  [ 1 #23 << negate ] +  then
-   ( hword offset)  .branch-pc ;
+   pop ( S)  if  [ 1 #23 << negate ] +  then ;
+
+: .bl-dest  ( op - op)
+   bl-offset@ ( hword-offset)  .branch-pc ;
 
 : .bl  ( op - op)   ." bl     "  .bl-dest ;
 
@@ -294,7 +300,7 @@ defer shred32   ' shred32-v6m is shred32
 ( The workhorse.)
 : 1dis  ( a)
    dup  set-ea  ( default ea: stay put)
-   dup .addr  .nesting space  dup  p !  4 + prefetch-pc !
+   dup .addr  .nesting space  dup  p !  instr-pc !
              op*  ( op1) dup .op  dup thumb16? if
                                 6 spaces    shred16  else
       10 <<  op*  ( op2) dup .op  space  +  shred32  then

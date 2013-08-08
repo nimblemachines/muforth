@@ -361,20 +361,30 @@ forth
 : bad-branch   error" branch offset too large" ;
 
 : branch-offset  ( dest src - offset)
-   4 + ( compensate for prefetch)  -  2/ ;
+   >branch-pc ( compensate for prefetch)  -  2/ ;
 
 : offset-fits?  ( offset #bits - masked-offset -1 | offset 0)
    2dup sfits? if  >mask 1-  and  -1 ^  then  drop  0 ;
 
-( Complains if offset doesn't fit.)
-: masked-offset  ( offset #bits - bits)
-   offset-fits?  if ^ then  bad-branch ;
+( Short unconditional branch. Long branch - encoded like bl - does not
+  exist in v6-m!)
 
-( Long unconditional branch.)
 ( 0e000 + i11 offset: signed and scaled *2. offset from pc+4.)
-: >bra  ( offset - op)  #11 masked-offset  e000 + ;
+: >bra  ( offset-bits - op)  e000 + ;
+
+( Given an offset, try to create an unconditional short branch. Return a
+  flag describing success or failure.)
+
+: bra?  ( offset - op -1 | offset 0)
+   #11 offset-fits?  if  >bra  -1  ^  then  0 ;
+
+( Given an offset, try to create an unconditional short branch. Abort with
+  an error if branch target out of range.)
+
+: ?bra  ( offset - op)  bra?  if ^ then  bad-branch ;
+
 assembler
-: b   ( dest)   \m here  branch-offset  >bra  op, ;
+: b   ( dest)   \m here  branch-offset  ?bra  op, ;
 forth
 
 
@@ -388,17 +398,26 @@ forth
   been re-imagined as a 32-bit Thumb instruction with a very odd encoding -
   and a larger possible displacement than its 16-bit predecessor.)
 
-: bit@  ( mask bit# - bit)  u>>  1 and ;
+( Given an offset, try to create a branch-and-link instruction. Return a
+  flag describing success or failure.)
 
-assembler
-: bl   ( dest)   \m here  branch-offset  #24 masked-offset  f000_d000 ( op)
+: bl?  ( offset - op -1 | offset 0)
+   #24 offset-fits?  if  f000_d000 ( op)
    over          7ff and          or  ( imm11 in v6-m manual)
    over #11 u>>  3ff and  #16 <<  or  ( imm10 ditto)
    over #23 bit@ ( S)  push
    over #22 bit@ ( I1)  1 xor  r@ xor  #13 <<  or  ( J1)
    over #21 bit@ ( I2)  1 xor  r@ xor  #11 <<  or  ( J2)
    pop ( S)                            #26 <<  or  ( S)
-   nip ( offset)  op32, ;
+   nip ( offset)  -1  ^  then  0 ;
+
+( Given an offset, try to create a branch-and-link instruction. Abort with
+  an error if branch target out of range.)
+
+: ?bl  ( offset - op)  bl?  if ^ then  bad-branch ;
+
+assembler
+: bl   ( dest)   \m here  branch-offset  ?bl  op32, ;
 forth
 
 
@@ -413,15 +432,15 @@ meta
       ( cond branch)  8 offset-fits? if  pop image-c!  ^  then
       dup 0< if  ( backwards)
          r@ image-h@  ff00 and  100 xor  pop image-h!
-         1- ( branch back past one more instruction)  >bra  op,  ^
+         1- ( branch back past one more instruction)  ?bra  op,  ^
       then  shunt  bad-branch
    then
-   ( uncond branch)  >bra  pop image-h! ;
+   ( uncond branch)  ?bra  pop image-h! ;
 forth
 
 ( Control structure words.)
 assembler
-: always  (      - src)  \m here         e000    op, ;  ( uncond jump)
+: always  (      - src)  \m here       0 >bra    op, ;  ( uncond jump)
 : if      ( cond - src)  \m here   swap  d000 +  op, ;  ( cond jump)
 : then    ( src)         \m here   swap  \m resolve ;   ( >resolve)
 : else    ( src - src2)  \a always  swap  \a then ;
