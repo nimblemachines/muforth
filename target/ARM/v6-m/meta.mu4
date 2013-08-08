@@ -118,7 +118,6 @@ variable #lits
          <asm  0 pc +) \f pop ldr  asm> ;
 
 : nop-align  \m here 2 and if  <asm  nop  asm>  then ;
-: >load-pc   ( a - a')   4 +  -4 and ;
 : rewrite-lit  ( lit#)  #lits !
    \m here  lit-value @  \m ,  ( 'lit)
    ldr-addr @  dup >load-pc  ( 'lit 'ldr pc)  rot swap -
@@ -135,46 +134,63 @@ variable #lits
 -- Peephole optimiser
 -- ------------------------------------------------------------------------
 ( Tags used:)
-1 constant $call  ( $ suggests price tag ;-)
-2 constant $lit1  ( one instruction lit: ldr or movs #)
-3 constant $lit2  ( two instruction lit: movs+mvns or movs+lsls)
+1 constant $lit1  ( one instruction lit: ldr or movs #)
+2 constant $lit2  ( two instruction lit: movs+mvns or movs+lsls)
+3 constant $call  ( $ suggests price tag ;-)
 
 : tag!  ( tag)  \m here  image-h! ;
 : tag@          \m here  image-h@ ;
-: notag   -1 tag! ;  ( set to all FFs)
+: notag   -1 tag! ;  ( set to all ff's)
+
+: is-lit-tag?  ( tag - f)  $call u< ;
 
 : uncompile  ( #instrs)
-   1+  tag@  $lit2 = -  ( 2 if $lit2; 1 otherwise)
-   notag  -1 \m here  2 + image-!  ( erase literal, if any)
+   notag
    \m here  swap  for  -2  -1 ( 0ffff) over  image-h!  next  org ;
+
 
 -- ------------------------------------------------------------------------
 -- Smart jump, and tail call elimination
 -- ------------------------------------------------------------------------
 
-assembler
-: j  ( dest)  ( smart jmp - compile short unconditional branch if possible;
-                otherwise, ldr + bx)
-   ( XXX) ;
+( Smart jump: compile short unconditional branch if possible;
+  otherwise, ldr + bx.
 
+  Smart call: compile bl if possible; otherwise, ldr + blx)
+
+assembler
+: j  ( dest)  
+   dup  \m here  branch-offset  bra?  if  op,  drop  ^  then
+   drop  1+ ( thumb!)  \a r0 lit,  <asm  r0 bx  asm> ;
+
+: c  ( dest)  
+   dup  \m here  branch-offset  bl?  if  op32,  drop  ^  then
+   drop  1+ ( thumb!)  \a r0 lit,  <asm  r0 blx  asm> ;
 forth
 
-: replace  ( addr toggle)
-   over  image-@  xor  swap  image-! ;
-
-: untag  ( oldtag - f)  drop  notag  -1 ;
-
 ( If last code compiled was a call, rewrite it to a jump and return true;
-  else return false.)
+  else return false.
+
+  NOTE: 'then' should clobber tag so that  if b then ;  doesn't
+  tail-convert the call to b and neglect to put a  bx lr  at the end of the
+  word!)
+
+( An unusual word that we haven't needed until now!)
+: image-op32@  ( a - op32)
+   dup image-h@ 16 <<  swap 2 + image-h@ + ;
 
 : tail?  ( - f)
-   tag@ $call = if  ( call)  ( XXX )  then ;
+   tag@ $call = if  notag
+      -4 \m allot  \m here  dup >branch-pc
+      swap image-op32@  bl-offset@  ( op offset)  nip
+      hoff>  +  ( dest)  \a j  -1  ^  then
+   0 ;
 
 meta-compiler
 : ^   tail? if ^ then  <asm  lr bx  asm> ;
 
 meta
-: compile,  ( target-cfa)  \a bl  ( compile call) ;
+: compile,  ( target-cfa)  \a bl  ( compile call)  $call tag! ;
 
 forth
 
@@ -188,47 +204,35 @@ forth
   * movs k, #i8; lsls k, k, #n
   Failing that, use  lit,  to compile an ldr from the literal pool.)
 
-: load-literal  ( n)
+: load-literal  ( n - tag)
+   "ffff_ffff and  ( we only care about 32 bits!)
+
    ( Try a simple movs)
-   dup 8 ufits? if  <asm  # k movs  asm>  ^  then
+   dup 8 ufits? if  <asm  # k movs  asm>  $lit1  ^  then
 
    ( Try movs followed by mvns)
    dup  "ffff_ffff xor
-   dup 8 ufits? if  nip  <asm  # k movs  k k mvns  asm>  ^  then
+   dup 8 ufits? if  nip  <asm  # k movs  k k mvns  asm>  $lit2  ^  then
    drop ( inverted)
 
    ( Try movs followed by lsls)
    dup push  0 ( shift)  r@
    begin  u2/  1 u+  dup 8 ufits?  until ( n shifts shifted)
-   2dup swap <<  pop = if  <asm  # k movs  # k k lsls  asm>  drop  ^  then
+   2dup swap <<  pop = if  <asm  # k movs  # k k lsls  asm>  drop  $lit2  ^  then
    2drop
 
    ( No luck. Compile an ldr from literal pool.)
-   \a k lit, ;
-
-( Test)
-: tt  load-literal ;
-0 tt
-"ff tt
--1 tt
-"ff00_00 tt
-"8c00_0000 tt
-"0108_0000 tt
-"0010_3000 tt
-"ffff_ff01 tt
-"ffff_fe02 tt
-rewrite-lits
+   \a k lit,  $lit1 ;
 
 
 .ifdef later-gator
 
-( With a literal in the k register push it onto the D stack.)
-: push-literal   <asm  t dpush  k t mov  asm> ;
-
-: unpush-literal  3 uncompile ;  ( back up over 2 pushes and movw)
+( With a literal loaded into the k register, push it onto the D stack.)
+: push-literal   <asm  <dup>  k t mov  asm> ;
+: unpush-literal  2 uncompile ;  ( back up over push and mov)
 
 meta
-: literal  ( n)  load-literal  push-literal  $lit tag! ;
+: literal  ( n)  load-literal  ( tag)  push-literal  tag! ;
 
 forth
 
@@ -240,13 +244,13 @@ forth
   load-literal. This is used to make versions of binary operations that
   work either with true literals, or with a value sitting on the D stack.)
 
-: pop-literal   <asm  k dpopw  asm> ;
+: pop-literal   <asm  k dpop  asm> ;
 
-: lit?   ( f)
-   tag@ $lit =  dup if  unpush-literal  then ;
+: got-lit?   ( f)
+   tag@ is-lit-tag? =  dup if  unpush-literal  then ;
 
 : _litop  current preserve  meta-compiler  create
-          does>  lit?  if  cell+  then  @  \m compile, ;
+          does>  got-lit?  if  cell+  then  @  \m compile, ;
 
 meta
 ( NOTE: litbinop can only be used for commutative operations, since the
