@@ -11,20 +11,20 @@ forth
 256 Ki constant #image
 #image buffer image
 
-( NOTE: @ and ! assume host & target have same cell size & endianness!)
-: image+  image  +  ;  ( convert relative target address to address inside image)
+( Convert relative target address to address inside image)
+: image+  [ #image 1- ] and  image  +  ;
 
-( Read and write image memory.)
+( Read and write image memory. Assume little-endian ARM!)
 meta
-: @   image+  @ ;
+: @   image+  lew@ ;
 : c@  image+  c@ ;
 .ifdef debug-meta-store
 : !   radix preserve hex
-      fd-out preserve >stderr
+      out-channel preserve >stderr
       cr 2dup u. u.
-      image+  ! ;
+      image+  lew! ;
 .else
-: !   image+  ! ;
+: !   image+  lew! ;
 .then
 : c!  image+  c! ;
 : +!  dup \m @ rot + swap \m ! ;
@@ -64,13 +64,23 @@ forth
 ( Hook our image into the muFORTH memory dumper, and decorate relocated
   cells with a prefix `+'.)
 
-\m cell  |cell !
-.meta. chain' c@  is  |c@
-.meta. chain'  @  is  |@
+( ARM quirk - to disasm loads we want to show the loaded value, so we need
+  to do an "out of sequence" load.)
+
+defer |@  ( fetch cell from image/target)
+
+-: ( buf a u)  swap image+ -rot  cmove ;
+
+: >image   [ .meta. chain' @ ]  is |@       ( ARM only)
+           [ ]       is |read
+           ['] lew@  is |cell@   ( We hope this is a little-endian ARM!)
+                      4 |addr !  ( size of addr)
+                      4 |cell !  ( size of cell) ;
+>image
 
 : decorator  ( reloc? - char)  if  char +  ^  then  bl ;
-: decorate  ( a+ n #spaces - a+ n)
-            1- spaces  over cell- reloc? decorator  emit ;
+: decorate  ( a n #spaces - a n)
+            1- spaces  over reloc? decorator  emit ;
 ' decorate is decorate-cell
 
 

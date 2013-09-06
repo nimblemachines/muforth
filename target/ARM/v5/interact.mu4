@@ -1,0 +1,82 @@
+( This file is part of muFORTH: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2013 David Frech. All rights reserved, and all wrongs
+  reversed. (See the file COPYRIGHT for details.)
+
+loading ARM interaction
+
+( NOTE: This bit of code was copied from target/ARM/v6-m/interact.mu4, but
+  since we don't have "live" chat support for the old ARM target, we'll
+  always get the "no chat support" branch of the conditoinal compilation.)
+
+variable chatting
+
+( XXX Don't define chat words unless there is support in a connected
+  device.)
+
+.ifdef t.chat
+
+: +chat  chatting on ;
+
+( XXX should be simpler? Not using a buffer?)
+-:  ( target - word)  pad swap 4  t.read  pad lew@ ;
+
+: >chat  [ ]         is |@  ( ARM only)
+         ['] t.read  is |read
+         ['] lew@    is |cell@  ( assume little-endian ARM)
+                      4 |addr !  ( size of addr)
+                      4 |cell !  ( size of cell) ;
+
+: chat  +chat  >chat  t.chat ;
+
+: >target
+   chatting @ if   >chat  ^  then  >image ;  ( set up memory access)
+
+.else  ( NO CONNECTED CHAT TARGET!)
+
+: chat  error" No connected chat-capable target." ;
+
+: >target  >image ;
+
+.then
+
+
+( Define our own key bindings for memory dumping and disassembly. We'll
+  default to host bindings if there isn't one in our array. This way we
+  only have to define the "delta" between host and target behaviours.)
+
+128 array arm-seekeys
+
+( Default key action is to run host key code)
+host-seekeys arm-seekeys  128 cells cmove
+
+( XXX again, fix this since address is no longer passed on stack)
+defer .name  ( a n - a)  ' drop is .name
+: .names      ( a)  ['] .name     is .cell  .cells ;
+
+( Support for dumping memory)
+: 1dump  ( a)
+   hex-bytes
+   dup  p !  cell*  -4 and  ea !  ( default ea: fetch cell and round down)
+   dup _addr  dup .chars
+   dup .addr  dup .hex-bytes
+   dup _addr  dup .hex-cells
+   drop ;
+
+arm-seekeys  -4  du-mode dumping    >target  skip+  skip-  1dump  ( a - a')
+arm-seekeys  -4  du-mode disasming  >target  dis+   dis-   1dis   ( a - a')
+
+arm-seekeys 'seekeys !    ( switch over to our bindings)
+
+key: d  ( a - a 0)   dumping    0 ;
+key: i  ( a - a 0)   disasming  0 ;
+
+host-seekeys 'seekeys !  ( back to host bindings)
+
+
+( Interactive)
+( make an alias so we can still get to host's du)
+: _du  du ;
+
+: du  ( a - a')    dumping    inspect ;
+: dis  ( a - a')   disasming  inspect ;

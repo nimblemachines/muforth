@@ -59,11 +59,16 @@ forth
 
 
 ( Warnings.)
+( XXX This is a neat idea, but this code is unused!)
+comment warning-unused
+
 variable 'warning
 : (warn")   ( z")  'warning !  ;
 compiler
 : warn"  \ z"  \ (warn")  ;
 forth
+
+warning-unused
 
 
 ( Masked match.)
@@ -87,7 +92,7 @@ forth
 
 
 : imm   ( insn - imm)
-   dup "ff and ( value)  swap 8 "f extract 2*  ( n rot) rotate  ;
+   dup "ff and ( value)  swap 8 "f extract 2*  ( n rot) rrotate32  ;
 
 : .imm   dup imm  #u.  ;
 
@@ -305,22 +310,33 @@ forth
 : shred  ( a i - a ea)
    dup 25 7 extract  jump
    000_alu      001_alu-imm  010_ldr-str-imm  011_ldr-str-reg-undef
-   100_ldm-stm  101_b-bl     110_ldc-stc      111_swi-mrc-mcr-cdp   [
+   100_ldm-stm  101_b-bl     110_ldc-stc      111_swi-mrc-mcr-cdp   -;
+
+( Support for interactive disassembly. These are needed by interact.mu4.)
+: dis+  ( a - a' 0)   4 advance  0 ;
+: dis-  ( a - a' 0)  -4 advance  0 ;
 
 ( The workhorse.)
-: 1dis  ( a - a ea)
-   radix preserve
-   0 'warning !
+: 1dis  ( a)
+   dup  p !
    dup .addr  .nesting  dup |@ ( a i)  dup .hcell tab  shred  ( - a ea)
-   'warning @  dup if  cr  count type ^  then drop  ;
+   ea !  drop ;
 
-' 1dis '1dis !  ( for mode switching)
-' -1   '1see !  ( quits)
+.ifdef v6-m-reference
 
-( Interactive)
-: dis  ( |a - |a+)  ['] 1dis  cell  inspect  ;
+-- From v6-m/dis.mu4:
+( The workhorse.)
+: 1dis  ( a)
+   dup  set-ea  ( default ea: stay put)
+   dup .addr  .nesting space  dup  p !  instr-pc !
+             op*  ( op1) dup .op  dup thumb16? if
+                                6 spaces    shred16  else
+      10 <<  op*  ( op2) dup .op  space  +  shred32  then
+   0= if  ( no match)  ." ** undecoded instruction **"  then  drop  space ;
+.then
 
 ( Batch mode)
+( XXX use as model for fixed batch mode)
 : disses   ( start limit)
-   inspect-sp off
-   swap  begin  1dis drop  cell+  2dup u<  until  2drop  ;
+   isp off
+   swap  begin  1dis drop  \m cell+  2dup u<  until  2drop  ;
