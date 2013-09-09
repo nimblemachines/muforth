@@ -3,7 +3,7 @@
   Copyright 2002-2013 David Frech. All rights reserved, and all wrongs
   reversed. (See the file COPYRIGHT for details.)
 
-loading Command-line history editing (test)
+loading Command-line history editing
 
 ( Need tty support.)
 .ifndef tty
@@ -32,6 +32,7 @@ EOL?
 
 Cursor movement
 Insert  ESC [ <n> @        <n> is count of blanks to insert; def to 1
+Del     ESC [ <n> P        <n> is count of char to delete; def to 1
 Up      ESC [ <n> A        <n> is rows/colums to move; defaults to 1
 Down    ESC [ <n> B
 Right   ESC [ <n> C
@@ -61,6 +62,7 @@ ansi-sequences
 
 : curs-bol         #CR emit ;
 : curs-to-x        ." ["  radix preserve decimal  (u.) type  char G emit ;
+: curs-eol         ( len idx - len idx)  over 1+ curs-to-x ;
 : curs-ins         ." [@" ;
 : curs-del         ." [P" ;
 : curs-right       ." [C" ;
@@ -88,20 +90,21 @@ variable cl-cur   ( points to cl that we're editing)
 ( We're about to evaluate it; link cl into history)
 
 : cl>history  ( len)
-   here  dup  cl-root @ , ( prev=root.prev)  cl-root , ( next=root)
-   cl-root !  ( root.prev=new)
-   dup @ cell+ ! ( new.prev.next=new)
-   cl swap _string  drop ;
+   =if
+      here  dup  cl-root @ , ( prev=root.prev)  cl-root , ( next=root)
+      cl-root !  ( root.prev=new)
+      dup @ cell+ ! ( new.prev.next=new)
+      cl swap _string  ( z")
+   then  drop ;
 
-: >cl  ( 'cl - len)  ( history>cl ?)
+: >cl  ( 'cl - len)
    [ 3 cells ] +  count  ( a len)  tuck  cl swap  cmove ;
 
 : cl-show  ( len - len idx)
    curs-bol  curs-erase-eol  cl over type  dup ;
 
-( XXX are len and idx unsigned?)
-: cl-left?   ( len idx - len idx flag)  ( can we move left?)   dup 0 > ;
-: cl-right?  ( len idx - len idx flag)  ( can we move right?)   2dup > ;
+: cl-left?   ( len idx - len idx flag)  ( can we move left?)     dup ;
+: cl-right?  ( len idx - len idx flag)  ( can we move right?)   2dup swap u< ;
 
 : cl-left   ( len idx - len idx-1)  curs-left  1- ;
 : cl-right  ( len idx - len idx+1)  curs-right 1+ ;
@@ -121,10 +124,13 @@ variable cl-cur   ( points to cl that we're editing)
 : cl-key-bs   ( len idx - len' idx')  ( ^H or DEL)
    cl-left? if  cl-left  cl-key-del  then ;
 
+: cl-key-home  ( len idx - len idx)  curs-bol  drop 0 ;
+: cl-key-end   ( len idx - len idx)  curs-eol  drop dup ;
+
 : cl-key-ret  ( len idx - a len)  drop  dup cl>history  cl swap  ( evaluate) ;
 
 : cl-key-add  ( len idx ch - len' idx')
-   push  over cl-width 1- < if
+   push  over cl-width 1- u< if
       curs-ins  r@ emit  pop cl-ins  ^  then
    shunt ;
 
@@ -133,15 +139,19 @@ variable cl-cur   ( points to cl that we're editing)
       dup char A = if  ( cursor up)     drop  cl-key-up     ^ then
       dup char B = if  ( cursor down)   drop  cl-key-dn     ^ then
       dup char C = if  ( cursor right)  drop  cl-key-right  ^ then
-          char D = if  ( cursor left)         cl-key-left   ^ then
-      then ;
+      dup char D = if  ( cursor left)   drop  cl-key-left   ^ then
+      digit> dup 10 u< if  key  char ~ = if
+         dup 1 = if  ( Home)  drop  cl-key-home  ^  then
+         dup 4 = if  ( End)   drop  cl-key-end   ^  then
+      then  then  drop
+   then ;
 
 : process-key   ( len idx - len' idx')  key
     dup #ESC =     if  drop  read-esc-seq  0 ^  then
     dup #BS  =
    over #DEL = or  if  drop  cl-key-bs   0 ^  then
     dup ctrl D =   if  drop  cl-key-del  0 ^  then
-    dup #CR  =     if  drop  over  1+ curs-to-x space  -1 ^  then
+    dup #CR  =     if  drop  curs-eol  space  -1 ^  then
     31 over  u<    if        cl-key-add  0 ^  then
    drop  ( default)  0 ;
 
@@ -151,96 +161,3 @@ variable cl-cur   ( points to cl that we're editing)
 
 : interact   tty user-raw  editline  tty cooked ;
 : ii  begin  interact  prompt  =while  cr type cr  repeat  2drop ;
-
-
-( What I started with in 2010...)
-
-1 Ki buffer tib
-
-: march  ( a1 a2 inc)  dup v+ ;
-
-: whiteout ( n)
-   0 do  #BS emit  space  #BS emit  loop ;
-
-: >bol  #CR emit ;  ( no LF)
-: >idx  >bol  dup 0 do  i tib + c@ emit  loop ;
-: >eol  ( len idx)  2dup do  i tib + c@ emit  loop  drop dup ;
-: erase>eol  ( len idx)  2dup do  space  loop  nip dup ;
-
-: >tib  ( len idx a u - u u)  ( put a string into tib; reset len & idx)
-   push ( u)  tib r@ cmove  r@ >idx  ( - len idx u)
-   - spaces  drop  ( if this line shorter, erase end of prev)
-   pop dup ( - len idx) ;
-
-: recall-prev  2drop  " (prev)" >tib ;
-: recall-next  2drop  " (next)" >tib ;
-
-: move-left   ( len idx)
-   dup 0 > if  #BS emit  1-  then ;
-
-: move-right  ( len idx)
-   2dup >  if  tib over + c@ emit  1+  then ;
-
-: read-esc-seq   key
-   char [ = if  key
-      dup char A = if  ( cursor up)     drop  recall-prev  ^ then
-      dup char B = if  ( cursor down)   drop  recall-next  ^ then
-      dup char C = if  ( cursor right)  drop  move-right  ^ then
-          char D = if  ( cursor left)         move-left  ^ then
-      then ;
-
-: do-backspace   =if  2 whiteout  -1 march   then ;
-
-: process-key   ( len idx - len' idx')  key
-    dup #ESC =     if  drop  read-esc-seq  0 ^  then
-    dup #BS  =
-   over #DEL = or  if  drop  do-backspace  0 ^  then
-    dup #CR  =     if  drop  space  -1 ^  then
-   31 over u< if  dup emit  push  tib over +  pop swap c!  1 march  then
-   ( default)  0 ;
-
-: editline  ( a u)  0 0  begin  process-key  until   drop ( idx)  tib swap ;
-
-: interact   tty user-raw   editline  tty cooked ;
-: ii  begin  interact  prompt  =while  cr type cr  repeat ;
-
-: show-key
-   dup #ESC = if  drop  ." <ESC>"  ^  then
-   dup #CR  = if  drop  ." <CR>"   ^  then
-   dup #LF  = if  drop  ." <LF>"   ^  then
-   dup #DEL = if  drop  ." <DEL>"  ^  then
-   dup bl  u< if  char ^ emit  64 xor  then
-   emit ;
-
-: echo
-   tty user-raw
-   begin  key  dup show-key  ctrl C = until
-   tty cooked ;
-
-: verb
-   tty user-raw
-   begin  key  dup emit      ctrl C = until
-   tty cooked ;
-
-( terminal ESC sequences)
-( CSI - see ECMA-48 - means "control sequencer introducer". Go figure. ;-)
-
-: #d   radix preserve  decimal  #s ;
-: <csi    ( ch)  <#  hold ;
-: csi>    char [ hold  ctrl [ hold  #>  type ;
-
-: csi    \f char  constant  does> @  <csi                       csi> ;
-: csi1   \f char  constant  does> @  <csi  #d                   csi> ;
-: csi2   \f char  constant  does> @  <csi  #d  char ; hold  #d  csi> ;
-
-csi1 A move-up  ( n)
-csi1 B move-down  ( n)
-csi1 C move-right  ( n)
-csi1 D move-left  ( n)
-
-csi1 E move-down-cr  ( n)
-csi1 F move-up-cr  ( n)
-
-( XXX change these to use 0-based coordinates?)
-csi1 G move-to-col      ( col)
-csi2 H move-to-row-col  ( row col)
