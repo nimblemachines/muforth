@@ -248,9 +248,6 @@ void mu_write_carefully()   /* fd buffer len */
  * Every system must define the following functions, as a minimum for
  * interactive use:
  *
- *   typing     ( - addr len)
- *              read a line of input from user (console)
- *
  *   write      ( fd addr len)
  *              output a string to "file descriptor" - some platforms can
  *              ignore fd and simply write to the console
@@ -267,15 +264,13 @@ void mu_write_carefully()   /* fd buffer len */
  *
  *   close-file ( fd)
  *              release resources allocated to file
+ *
+ *
+ * Defining the following is optional. If it doesn't exist in C, it will be
+ * defined in Forth, either in a simple form (if no termios support is
+ * available in the system) or in a more sophisticated form with
+ * command-line editing and history (if termios support is available).
+ *
+ *   typing     ( - addr len)
+ *              read a line of input from user (console)
  */
-
-void mu_typing()   /* -- inbuf #read */
-{
-    static char inbuf[1024];
-    DROP(-4);
-    ST3 = (addr)inbuf;
-    ST2 = 0;                /* stdin */
-    ST1 = (addr)inbuf;
-    TOP = 1024;
-    mu_read_carefully();    /* stdin inbuf size -- #read */
-}

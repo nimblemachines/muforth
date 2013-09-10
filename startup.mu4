@@ -541,6 +541,19 @@ create remove  -]  unlink ;   ( remove pushes IP when executed!)
 ( Now some interesting applications.)
 
 -- -----------------------------------------------------------------------
+-- Error trapping
+-- -----------------------------------------------------------------------
+( Simply make a frame so we have a place to unwind to.)
+
+: trap
+   r> ( ra)
+   dup cell- >r  ( re-execute trap!)
+   link nope     ( push cleanup - do nothing!)
+   remove >r     ( normal return - unlink and cleanup)
+   >r ( ra) ;
+
+
+-- -----------------------------------------------------------------------
 -- Fluid binding (dynamically-scoped variables)
 -- -----------------------------------------------------------------------
 ( Restore saved value of a variable.)
@@ -1168,29 +1181,34 @@ defer ?show-radix
 : +radix       [ ]  is ?show-radix ;
 : -radix  now nope  is ?show-radix ;
 
+
+( Toggle-able "stack status" display, showing the top four items on the
+  stack every time ?show-stack is executed.
+
+  This can be executed after a chunk of text is interpreted: the command
+  line, a file that is loaded, etc. With the proper definition I won't need
+  to turn it on and off.)
+
+defer ?show-stack
+
+-:  radix preserve  hex  sep preserve  -sep
+   out-channel preserve >stderr
+   out-channel @ >col @ if cr then  ."   --"
+   0 3 do  i nth  18 u.r  -1 +loop ;
+
+: +stack       [ ]  is ?show-stack ;
+: -stack  now nope  is ?show-stack ;
+
+
 ( show ` Ok', then sub-prompt, then perhaps radix)
 : prompt   ."  Ok"   state @  cell+  @execute  ?show-radix ;
 
 ( set prompt in compile mode)
 -: ."  (compiling)"  'compiler-mode  ;  cell+ !  ( bwa ha ha!)
 
-defer ?show-stack
-
 : ?stack
    depth 0< if  sp-reset  error" tried to pop an empty stack"  then
-   depth [ 4096 64 - ] > if   ." too many items on the stack"  then
-   ?show-stack ;
-
-( Toggle-able "stack status" display, showing the top four items on the
-  stack every time ?stack is executed.)
-
--:  radix preserve  hex  sep preserve  -sep
-   out-channel preserve >stderr
-   out-channel @ >col @ if cr then  ."   --"
-   0 3 do  i nth  18 u.r  -1 +loop  cr ;
-
-: +stack       [ ]  is ?show-stack ;
-: -stack  now nope  is ?show-stack ;
+   depth [ 4096 64 - ] > if   ." too many items on the stack"  then ;
 
 
 ( Forth re-implementation of C interpret; semantics are exactly the same!)
@@ -1238,7 +1256,6 @@ variable zloading    ( C-string name of file being loaded)
    \ [    ( return to host forth...)
    forth  ( ... and compile into .forth. chain)
    out-channel preserve  >stderr
-   [ ' ?show-stack >body ] preserve  -stack
    dup open-file-ro ( fd)  dup on-exit close-file
    read-file ( a u)
    zloading preserve  rot zloading !
@@ -1269,7 +1286,7 @@ defer load-stats  ( show space consumed, or simply close double parens)
 : +consumed  [ ] is load-stats ;
 
 -: ( dont-show-consumed)  ( here)  drop  ." ))" ;
-: -consumed  [ ] is load-stats ;
+: -consumed  [ ] is load-stats ;  -consumed
 
 ( Print some descriptive text and, at end of file, optionally show the
   amount of dictionary space consumed by loading. Consumes and prints the
@@ -1372,19 +1389,30 @@ Type 'settings' to see a few of muFORTH's tweakable behaviours.
    drop ;
 
 -: ( z")
-   >stderr  cr  .where  parsed type space  zcount type  cr  unwind ;   'abort !
+   >stderr  cr  .where  parsed type space  zcount type  unwind ;   'abort !
+
+.ifndef typing  ( if platform provides it, just use that)
+   .ifdef set-termios  ( if fancy tty support available)
+      ld lib/editline.mu4  ( load command-line history/edit support!)
+   .else  ( define the following simple version of typing:)
+
+      1024 buffer inbuf
+      : typing   ( - inbuf #read)  inbuf  0 inbuf 1024 read ;
+
+   .then
+.then
 
 : quit
-   begin  cr  <stdin  typing evaluate  >stderr  prompt  again ;
+   begin  cr  <stdin  typing evaluate  >stderr  prompt  ?show-stack  again ;
    ( infinite loop, until error... )
 
 : warm
    decimal \ [
    >stderr banner
    1 line !  ( so it's "correct" for interactive!)
-   -consumed +sep +case +radix ( defaults - reset these how you like)
-   -stack  command-line count  evaluate  +stack
-   begin  quit  again ;
+   -consumed +sep +case +radix +stack ( defaults - reset these how you like)
+   command-line count  evaluate
+   trap  quit ;
 
 ( Identify ourselves.)
 -d  muFORTH
