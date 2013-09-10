@@ -29,7 +29,7 @@ char *path_prefix(char *src, char *dest, char sep, char *begin)
      * Checking src lets us pass results (say, of getenv) that could be
      * NULL.
      */
-    if (dest == NULL || src == NULL) return NULL;      
+    if (dest == NULL || src == NULL) return NULL;
 
     len = strlen(src);
     if (dest - len - 1 < begin) return NULL;
