@@ -118,7 +118,7 @@ void mu_raw_termios()
 }
 #endif
 
-#ifdef TTY_SERIAL
+#ifdef HAS_SERIAL
 void mu_set_termios_target_raw()
 {
     struct termios *pti = (struct termios *) TOP;
@@ -192,4 +192,4 @@ void mu_tty_icount()
     if (ioctl(TOP, FIONREAD, &TOP) == -1)
         return abort_strerror();
 }
-#endif  /* TTY_SERIAL */
+#endif  /* HAS_SERIAL */

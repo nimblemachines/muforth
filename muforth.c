@@ -27,7 +27,7 @@ static void init_stacks()
 
 void mu_push_build_time()
 {
-#ifdef WITH_TIME
+#ifdef HAS_TIME
     PUSH(BUILD_TIME);
 #else
     PUSH_ADDR(BUILD_DATE);
@@ -35,7 +35,7 @@ void mu_push_build_time()
 #endif
 }
 
-#ifdef FAKE_TTY_WIDTH
+#ifndef HAS_TTY
 void mu_tty_width()  { TOP = 80; }  /* fd -- width */
 #endif
 

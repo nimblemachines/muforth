@@ -5,7 +5,7 @@
 # Copyright (c) 2002-2013 David Frech. All rights reserved, and all wrongs
 # reversed. (See the file COPYRIGHT for details.)
 
-# This not a GNU configure script!
+# This NOT a GNU configure script!
 
 # It configures the makefile for muforth based on which make you have,
 # decides how to tell sed to use extended REs, figures out whether you're
@@ -63,12 +63,13 @@ ldflags=""
 # Keep Wnarrowing, because we might be building a 32-bit executable.
 # But default to whatever Darwin wants to build.
 if [ "$os" = "Darwin" ]; then
-    archobjs="usb-darwin.o"
-    cflags="-mdynamic-no-pic"
+    archobjs="file.o main.o time.o tty.o usb-darwin.o"
+    cflags="-mdynamic-no-pic HAS_TIME -DHAS_TTY"
     ldflags="-framework CoreFoundation -framework IOKit"
 fi
 if [ "$os" = "Linux" ]; then
-    archobjs="usb-linux.o"
+    archobjs="file.o main.o time.o tty.o select.o usb-linux.o"
+    cflags="-DHAS_TIME -DHAS_TTY -DHAS_SERIAL"
     if [ "$cpu" = "x86_64" ]; then
         Wnarrowing=""
     fi
@@ -133,8 +134,10 @@ USB device files.
 EOF
     fi
 fi
+
 if [ "$os" = "FreeBSD" -o "$os" = "NetBSD" ]; then
-    archobjs="usb-netbsd.o usb-freebsd.o"
+    archobjs="file.o main.o time.o tty.o select.o usb-netbsd.o usb-freebsd.o"
+    cflags="-DHAS_TIME -DHAS_TTY -DHAS_SERIAL"
     if [ "$cpu" = "amd64" ]; then
         Wnarrowing=""
     fi
