@@ -81,7 +81,7 @@ ansi-sequences
 : cl-del  ( len idx - len-1 idx)
    -1 u+  2dup - push ( count)  dup cl +  dup 1+ swap pop cmove ;
 
-2 tty-width constant cl-width
+stderr >width @  constant cl-width
 
 create cl-root  here dup , ,  0 ,  ( prev/next point to cl-root, initially)
 
@@ -127,7 +127,10 @@ variable cl-cur   ( points to cl that we're editing)
 : cl-key-home  ( len idx - len idx)  curs-bol  drop 0 ;
 : cl-key-end   ( len idx - len idx)  curs-eol  drop dup ;
 
-: cl-key-ret  ( len idx - a len)  drop  dup cl>history  cl swap  ( evaluate) ;
+: cl-key-ret  ( len idx - addr len)
+   curs-eol  space  drop
+   dup 1+ [ stderr >col ] !
+   dup cl>history  cl swap ;
 
 : cl-key-add  ( len idx ch - len' idx')
    push  over cl-width 1- u< if
@@ -149,14 +152,15 @@ variable cl-cur   ( points to cl that we're editing)
 : process-key   ( len idx - len' idx')  key
     dup #ESC =     if  drop  read-esc-seq  0 ^  then
     dup #BS  =
-   over #DEL = or  if  drop  cl-key-bs   0 ^  then
-    dup ctrl D =   if  drop  cl-key-del  0 ^  then
-    dup #CR  =     if  drop  curs-eol  space  -1 ^  then
-    31 over  u<    if        cl-key-add  0 ^  then
+   over #DEL = or  if  drop  cl-key-bs    0 ^  then
+    dup ctrl D =   if  drop  cl-key-del   0 ^  then
+    dup #CR  =     if  drop  cl-key-ret  -1 ^  then
+    31 over  u<    if        cl-key-add   0 ^  then
    drop  ( default)  0 ;
 
 : editline  ( - addr len)
    cl-root cl-cur !
-   0 0  begin  process-key  until  cl-key-ret ;
+   0 0  begin  process-key  until ;
 
-: typing  ( - addr len)  tty user-raw  editline  tty cooked ;
+: typing  ( - addr len)
+   <stdin  >stderr  tty user-raw  editline  tty cooked ;
