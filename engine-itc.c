@@ -80,9 +80,7 @@ void mu_lit_()  { PUSH(*(cell *)IP++); }
 
 
 /*
- * These are the control structure runtime workhorses. They are static
- * because we don't export them directly to muforth; instead we export
- * words that *compile* them.
+ * These are the control structure runtime workhorses.
  */
 void mu_branch_()            { BRANCH; }
 void mu_equal_zero_branch_() { if (TOP == 0) BRANCH; else IP++; }
