@@ -143,6 +143,14 @@ if [ "$os" = "FreeBSD" -o "$os" = "NetBSD" ]; then
     fi
 fi
 
+if [ "$os" = "DragonFly" ]; then
+    archobjs="file.o main.o time.o tty.o select.o usb-netbsd.o"
+    cflags="-DHAS_TIME -DHAS_TTY -DHAS_SERIAL"
+    if [ "$cpu" = "x86_64" ]; then
+        Wnarrowing=""
+    fi
+fi
+
 if [ "$force32" = "yes" ]; then
     cflags="-m32 -Wno-int-to-pointer-cast ${cflags}"
     ldflags="-m32 ${ldflags}"

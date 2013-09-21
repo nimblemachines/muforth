@@ -6,33 +6,40 @@
  */
 
 /*
- * NetBSD & FreeBSD (version 7 and earlier) support for USB devices.
+ * NetBSD, DragonflyBSD, & FreeBSD (version 7 and earlier) support for USB
+ * devices.
  */
 
 /*
  * FreeBSD's USB support was based directly on NetBSD's until FreeBSD 8.
- * This file supports NetBSD and older FreeBSD systems.
+ * Since DragonFly forked from FreeBSD 4, DragonFly also inherited NetBSD's
+ * USB stack. Thus this file supports NetBSD, DragonFly, and older FreeBSD
+ * systems.
  */
 
-#if defined(__NetBSD__) || (__FreeBSD__ < 8)
+#if defined(__NetBSD__) || defined(__DragonFly__) || (__FreeBSD__ < 8)
 
 #include "muforth.h"
 
 #include <fcntl.h>          /* open */
 #include <unistd.h>         /* close */
 #include <sys/ioctl.h>      /* ioctl */
+#ifdef __DragonFly__
+#include <bus/usb/usb.h>
+#else
 #include <dev/usb/usb.h>
+#endif
 
 /*
  * On NetBSD ugen devices are predefined - there is no devfs. On my system
  * there are 4 ugens (0 to 3) each with 16 endpoints - 00 to 15. Device
  * names are of the form "ugenD.EE".
  *
- * On FreeBSD 7 (and back to version 5) there is a devfs, and ugen devices
- * show up as devices are enumerated. The endpoint 0 zero device has the
- * name "ugenD" (where D starts at 0); other endpoints show up as "ugenD.E"
- * for endpoints 1 to 9, and presumably as "ugenD.EE" for endpoints 10 to
- * 15.
+ * On DragonFly and FreeBSD 7 (and back to version 5) there is a devfs, and
+ * ugen devices show up as devices are enumerated. The endpoint zero device
+ * has the name "ugenD" (where D starts at 0); other endpoints show up as
+ * "ugenD.E" for endpoints 1 to 9, and, presumably, as "ugenD.EE" for
+ * endpoints 10 to 15.
  */
 
 #ifdef __NetBSD__
@@ -100,7 +107,7 @@ void mu_usb_find_device()
 }
 
 /*
- * usb-close ( handle)
+ * usb-close (handle)
  */
 void mu_usb_close()
 {
@@ -108,10 +115,9 @@ void mu_usb_close()
 }
 
 /*
- * usb-request (bmRequestType bRequest wValue wIndex wLength 'buffer device)
- * XXX should return actual length of transfer?
+ * usb-control (bmRequestType bRequest wValue wIndex wLength 'buffer device - count)
  */
-void mu_usb_request()
+void mu_usb_control()
 {
     struct usb_ctl_request ucr;
     int fd;
@@ -127,9 +133,14 @@ void mu_usb_request()
     ucr.ucr_flags = (req.bmRequestType == UT_READ_DEVICE)
                     ? USBD_SHORT_XFER_OK : 0;
     fd = TOP;
-    DROP(7);
+    DROP(6);
 
-    if (ioctl(fd, USB_DO_REQUEST, &ucr) == -1) return abort_strerror();
+    if (ioctl(fd, USB_DO_REQUEST, &ucr) == -1)
+    {
+        TOP = 0;    /* count of bytes transferred */
+        return abort_strerror();
+    }
+    TOP = ucr.ucr_actlen;   /* actual length transferred */
 }
 
 #endif
