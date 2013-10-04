@@ -14,24 +14,24 @@ comment %%
 -- z" /home/david/Chuck/colorForth.dist"
 -- z" /tmp/cf"
 -- 162 mmap-dev /dev/fd0
- r/o  open-file mmap-file swap nip constant |cf
+ open-file-ro read-file  1 Ki - constant #cf  constant |cf
 
-: block  Ki  |cf + ;
+: block  Ki  #cf min  |cf + ;
 
 variable #used ( # of cells in this block)
 : tally  1 #used +! ;  ( count it)
 : ?tally  =if  tally  then ;  ( count it only if non-zero)
 
-: c@+  ( a - a+ byte)  dup 1+  swap c@ ;
-: @+  dup cell+  swap @ ;
-: w@+  c@+ ( hi)  8 <<  swap  c@+ ( lo)  rot + ;
+: lohi>  ( lo hi - h)  8 << or ;
+: beh@+  ( a - h a+2)  ( fetch big-endian 16-bit halfword)
+   c@+ c@+ push  ( hi lo)  swap  lohi>  pop ;
+
 : dot  "8000 and if  char # ^  then  bl ;
 : .16  cr  16 for  dup dot  dup emit emit  2*  next  drop ;
-: .24  cr  24 for  w@+ .16  next ;
+: .24  cr  24 for  beh@+ swap  .16  next ;
 : icon  ( n - a)  48 *  12 block + ;
 -- : icons  ( n first)  icon  swap for  .24  next  drop ;
 
-: =  xor 0= ;
 : done?  tty user-raw  key  tty cooked  char q = ;
 : icons  ( first)
    dup icon begin .24  over space . 1 u+ done? until  drop ;
@@ -63,30 +63,34 @@ comment %%
 : cyan     6 color ;
 : _white   7 color ; ( for white-on-black)
 
--- : white   _white ; ( for character console)
-: white   black ;  ( for xterms and suchlike)
+: white   _white ; ( for character console)
+-- : white   black ;  ( for xterms and suchlike)
 white
 
 ( printing source blocks)
+: lew@+  ( a - w a+4)  ( fetch 32-bit little-endian word)
+   c@+ c@+ c@+ c@+  push  lohi>  lohi>  lohi>  pop ;
+
 variable case
 : lc  z"  rtoeanismcylgfwdvpbhxuq0123456789j-k.z/;:!+@*,?"  case ! ;
 : uc  z"  RTOEANISMCYLGFWDVPBHXUQ0123456789J-K.Z/;:!+@*,?"  case ! ;
 : map  case @ + c@ ;
-: .4  swap 4 << swap  28 >>  7 and ;
-: .5  swap 5 << swap  28 >>  7 and  8 + ;
-: .7  swap 7 << swap  26 >>  31 and 16 + ;
+: |<<  32 << ;  ( shift up to top of 64-bit word)
+: .4  swap 4 << swap  60 >>  7 and ;
+: .5  swap 5 << swap  60 >>  7 and  8 + ;
+: .7  swap 7 << swap  58 >>  31 and 16 + ;
 : unpack  dup  dup 0< if  2*  dup 0< if  .7 ^ then  .5 ^ then  .4 ;
 : 1char  unpack map emit ;
 : chars  begin  dup while  1char  repeat  drop ;
-: .word  lc chars ;
-: .WORD  uc chars ;
-: .Word  uc 1char  .word ;
+: .word  |<<  lc chars ;
+: .WORD  |<<  uc chars ;
+: .Word  |<<  uc 1char  lc chars ;
 
 ( numbers, with auto-radix)
 : .d          radix preserve  decimal  (.) type ;
 : .h  bright  radix preserve  hex     (u.) type ;
 : .radix  "10 and if .h ^ then .d ;
-: .num        push  @+ tally  pop .radix ;
+: .num        push  lew@+ swap  tally  pop .radix ;
 : .short  dup push  2/ 2/ 2/ 2/ 2/  pop .radix ;
 
 ( kinds of words; "xW" names are from cf source - don't blame me!)
@@ -102,7 +106,7 @@ variable case
 : gnW   green .num ;
 : sW   yellow .short ;
 : gsW   green .short ;
-: var  cr magenta .word  @+ tally  dup green .d green .h ;
+: var  cr magenta .word  lew@+ swap  tally  dup green .d green .h ;
                                 ( show value in hex & dec)
 
 : format
@@ -110,24 +114,24 @@ variable case
    ign    wW    nW    rW
     gW   gnW   gsW    mW
     sW  text  Text  TEXT
-   var   ign   ign   ign [
+   var   ign   ign   ign  ;  ( XXX was [ )
 
 ( We'd like to do "256 for ... next" but since two kinds of words - full-
   length numbers and variables - use an extra cell, it doesn't work. They
   read an extra cell each, and we read into the next block. In other words,
-  instead of doing 256 @+'s we do 256+vars+nums.
+  instead of doing 256 lew@+'s we do 256+vars+nums.
 
   We could fix this by going to a more complicated arrangement - essentially
   a state machine, where every type returns a next state. This way normal
   ["single-cell"] words would return the normal "format" state; variables
   and nums would return the state that would complete them. Then we could
-  put the fetching at the top-level and properly do "256 for @+ foo next".
+  put the fetching at the top-level and properly do "256 for lew@+ foo next".
 
   That would be good.)
 
 : .block
   0 #used !
-  block  begin  @+ ?tally format  dup [ 1 Ki 1 - ] and 0= until
+  block  begin  lew@+ swap  ?tally format  dup [ 1 Ki 1 - ] and 0= until
   drop ;
 
 : header  cr cr  ." -*- Block " . ." -*-" cr ;
@@ -135,5 +139,3 @@ variable case
     100 256 */ (.) type ." % full)" ;
 : sh  decimal  dup header  .block  white  footer ;
 : shs  ( n)  begin  dup sh 1+  done? until ;
-
-
