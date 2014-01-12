@@ -2,7 +2,7 @@
 
 # This file is part of muFORTH: http://muforth.nimblemachines.com/
 #
-# Copyright (c) 2002-2013 David Frech. All rights reserved, and all wrongs
+# Copyright (c) 2002-2014 David Frech. All rights reserved, and all wrongs
 # reversed. (See the file COPYRIGHT for details.)
 
 # This NOT a GNU configure script!
