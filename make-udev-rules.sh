@@ -1,5 +1,10 @@
 #!/bin/sh
 
+# This file is part of muFORTH: http://muforth.nimblemachines.com/
+#
+# Copyright (c) 2002-2014 David Frech. All rights reserved, and all wrongs
+# reversed. (See the file COPYRIGHT for details.)
+
 # Create a udev rules file that matches all the USB devices we care about:
 #   0483  - ST-LINK/V2 - for STMicro ARM boards
 #   04d8  - Microchip (why? I forget ;-)
