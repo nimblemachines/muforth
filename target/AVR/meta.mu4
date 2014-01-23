@@ -306,35 +306,28 @@ forth
 mode __target-colon
 
 
-( For simplicity, let's assume that _all_ or _none_ of the vectors are in
-  the bootloader space. It's possible to move the reset vector
-  independently of the others, but let's assume that we aren't going to!
-
-  Second, assume that BOOTSZ bits - in the fuses - are set to the default
-  setting, which sets aside 1/16 to 1/8 of the flash - depending on the
-  device - for the bootloader.)
-
 .ifdef bootloader
    .ifndef #boot
       z" The selected device doesn't support a separate bootloader memory space."
       abort
-   .else
-      #flash #boot -  constant @vectors  ( start of vectors)
    .then
-.else  ( no bootloader)
-   0  constant @vectors  ( start of vectors)
+   ( calculate start of boot space)
+   #flash  #boot  .ifdef bootsz  bootsz >>  .then  -  constant @boot
+.else
+   #flash  constant @boot  ( not used - set it to past end of flash)
 .then
 
 
 ( Interrupt vectors and handlers.)
 : big-vectors?   [ #flash  16 Ki u< not ] ;
 : *vector  ( vector# - offset)  big-vectors?  if  4 * ^  then  2* ;
-: @vector  ( vector# - addr)  *vector  @vectors + ;
+: @vector  ( vector# - addr)  *vector  \m origin  + ;
 
 ( Calculate the _offset_ past the vectors.)
 : #vectors   [ \eq LAST_VECTOR 1+ *vector ] ;
 
 : vector,  ( vector# dest)  ( compile jmp or rjmp to handler)
+   h preserve
    swap  @vector org  big-vectors? if  \a jmp  ^  then  \a rjmp ;
 
 ( Return true if vector has _not_ been set. For two-word vectors - on
@@ -344,7 +337,7 @@ mode __target-colon
 : unvectored?  ( vector# - f)  @vector  image-@  "0ffff = ;
 
 meta
-: handler  ( vector#)  \m here  dup push  vector,  pop org  __asm ;
+: handler  ( vector#)  \m here  vector,  __asm ;
 
 ( Set all unset vectors to point to this vector - usually RESET.)
 : default-handler  ( vector#)
@@ -358,19 +351,16 @@ forth
 
 
 ( Now that we know the origins of all the regions and the size and number
-  of the vectors, let's make a word that gives us a clean slate.)
+  of the vectors, let's make a word that skips the vectors - in the current
+  space! - and one that gives us a clean slate.)
 
-.ifdef bootloader
-: skip-vectors   boot  [ @vectors #vectors + ]  org ;
-.else
-: skip-vectors    app  [ @vectors #vectors + ]  org ;
-.then
+: skip-vectors   \m origin  #vectors +  org ;
 
 : clean-slate
    wipe  ( erase both flash and eeprom images)
-   0 ee!  @ram ram!  0 app!  @vectors boot! ;
+   0 ee!  @ram ram!  0 app!  @boot boot! ;
 
-clean-slate  skip-vectors
+clean-slate
 
 
 meta
