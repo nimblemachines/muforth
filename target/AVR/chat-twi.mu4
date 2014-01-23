@@ -34,7 +34,7 @@ Commands for a simple client debug stub for talking to an AVR chip over IIC.
   Go execute code from the address set by SetAddr
 %%
 
-%0001_000 2* equ slave-addr
+-- %0001_000 2* equ slave-addr
 7 equ TWINT  ( bit#)  ( ack after all other actions)
 6 equ TWEA   ( bit#)  ( enable receipt of slave address)
 2 equ TWEN   ( bit#)
@@ -95,18 +95,16 @@ label ack-twint
 
 ( Wait for TWINT; read status; mask prescaler bits; return in xl)
 label wait-twint
+   ( Caller save the chat registers so application doesn't have to
+     worry about them. We only care about Z and R0/R1 because we use Z
+     for addresses and might be building up a word value in R0/R1 to
+     write to flash.)
+   z pushw  0 pushw
    begin
-.meta. .contains application-task-hook .if
-      ( Caller save the chat registers so application doesn't have to
-        worry about them. We only care about Z and R0/R1 because we use Z
-        for addresses and might be building up a word value in R0/R1 to
-        write to flash.)
-      z pushw  0 pushw
-      application-task-hook rcall
-      0 popw  z popw
-.then
+      application-task-hook c
       TWCR xl lds  TWINT xl sbrs
    again
+   0 popw  z popw
    TWSR xl lds  0f8 xl andi  ret  ;c
 
 label read-byte
@@ -251,6 +249,14 @@ label chat-entry  ( callable from other code!)
 label interact
    begin  chat-entry rcall  again  ;c
 
+label blink
+   \m here  2 +  rcall
+   ( fall thru)
+
+label toggle
+   0 PINB sbi  ( toggle B0)
+   ( fall thru)
+
 label delay
    zh clr
    begin
@@ -258,14 +264,6 @@ label delay
       begin  zl dec  0= until
    zh dec  0= until
    ret  ;c
-
-label blink
-   \m here  2 +  rcall
-   ( fall thru)
-
-label toggle
-   0 PINB sbi  ( toggle B0)
-   delay rjmp  ;c
 
 label blinky
    01 xl ldi  PORTB xl out  ( set B0)  DDRB xl out  ( set B0 as output)
@@ -277,7 +275,7 @@ RESET default-handler
    xl ldi  SPL xl out
    xl ldi  SPH xl out
 
-.ifdef bootloader
+.ifdef bootloader-vectors
    ( Move vectors to boot section)
    ( First set IVCE; then clear IVCE and set IVSEL.)
    .ifdef mega8515  -- idiots!! this is a different register on 8515.
@@ -292,8 +290,7 @@ RESET default-handler
 .then
 
    blinky rcall
-.meta. .contains application-init-hook .if
-   application-init-hook rcall
-.then
+
+   application-init-hook c
 
    begin  interact rcall  again  ;c
