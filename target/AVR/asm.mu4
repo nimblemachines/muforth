@@ -87,6 +87,7 @@ comment
 
 ( Note: dest and src are byte addresses; the relative jump offset is a
   _word_ offset. Also, src points to word _following_ the branch!)
+
 : >offset  ( dest src - offset)  - 2/ ;
 
 ( Computes the jump offset from src to dest; checks if within range;
@@ -98,18 +99,14 @@ comment
    push  dup r@ u2/ +   r@ u< if  pop 1- and  -1 ^ then
                                   pop drop     0 ;
 
-( Conditional jumps - cjmps - have a range of 80. Relative jmps - rjmps
-  have a range of 1000.)
-
-: checkrange  ( offset range - offset | throw)
-   inrange?  if ^ then   error" relative jump out of range" ;
-
-( Called when here points _at_ rjmp/call, not past it, so we fix up
+( Called when here points _at_ rjmp/rcall, not past it, so we fix up
   the offset.)
-: _rjmp  ( dest op)  swap  \m here >offset 1-  1000 checkrange  or op, ;
+: rel12?  ( dest - offset fits?)  \m here >offset 1-  1000 inrange? ;
 
+: too-far   error" relative jump out of range" ;
 ( XXX: fix to generate long call/jmp when necessary)
-: rjmp  ( dest)  constant does> @  ( dest op)  _rjmp ;
+: rjmp  ( dest)  constant does> @  ( dest op)  swap rel12? if  or op,  ^ then
+   too-far ;
 
 assembler
 
@@ -445,11 +442,14 @@ assembler
 
 forth
 
+: checkrange  ( offset range - offset | throw)
+   inrange?  if ^ then   too-far ;
+
 ( Calculate offset encoding for the jmp, by first inspecting the opcode
   to see what kind of jmp it is.)
 
-( src points to word _after_ jmp)  ( this code doesn't work if checkrange
-  calcs its own offset)
+( Conditional jumps - cjmps - have a range of 80. Relative jmps - rjmps
+  have a range of 1000.)
 
 ( checkrange masks the offset to fit into range)
 : offsetbits  ( jmp offset - jmp bits)  over f000 and f000 = if
