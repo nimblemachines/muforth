@@ -143,6 +143,14 @@ label write-byte
    TWDR xl sts  ack-twint rcall  write-another? rjmp  ;c
 
 
+( Address in zh/zl; data to xl; clobbers xh)
+label read-eeprom-byte
+   SREG xh in  ( save interrupt state)  cli
+   EEARH zh out  EEARL zl out  ( set read address)
+   0 ( EERE) EECR sbi  ( set EEPROM read enable bit)  EEDR xl in
+   SREG xh out  ret  ;c
+
+
 .ifdef bootloader
 
 ( Support for self-programming.)
@@ -190,6 +198,10 @@ label read-program
    expect-start rcall
    begin  pmz+ xl ld  write-byte rcall  again  ;c
 
+label read-eeprom
+   expect-start rcall
+   begin  read-eeprom-byte rcall  1 z adiw  write-byte rcall  again  ;c
+
 label set-addr
    read-byte rcall  xl zl mov
    read-byte rcall  xl zh mov  ret  ;c
@@ -224,6 +236,7 @@ label process
    12 xl cpi  read-data     0= not until
    13 xl cpi  write-data    0= not until
    14 xl cpi  go            0= not until
+   15 xl cpi  read-eeprom   0= not until
 
 .ifdef bootloader
 
@@ -290,6 +303,9 @@ RESET default-handler
 .then
 
    blinky rcall
+
+   ( Set TWI slave address from EEPROM)
+   zh clr  zl clr  read-eeprom-byte rcall  1 invert xl andi  TWAR xl out
 
    application-init-hook c
 
