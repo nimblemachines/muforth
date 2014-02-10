@@ -44,6 +44,7 @@ hex
    30 0 2 0 avr3 ;
 
 variable fuses  ( fuse at byte 0; hfuse @ 1; efuse @ 2)
+variable locks  ( lock bits)
 
 ( NOTE: wait polling is *not* available on the mega8515. You
   have to simply delay instead. Also, the 8515 lacks an efuse, so let's
@@ -68,6 +69,12 @@ variable fuses  ( fuse at byte 0; hfuse @ 1; efuse @ 2)
    >hilo push  0ac 0a0 0  pop  avr.Write  ( write fuse bits)   wait-fuse
          push  0ac 0a8 0  pop  avr.Write  ( write hfuse bits)  wait-fuse ;
 
+( Since the datasheet is silent on the topic of how long it takes to
+  program the lock bits, we assume it's the same as writing the fuses.)
+
+: write-locks  ( locks)
+   push  0ac 0e0 0  pop  avr.Write  wait-fuse ;
+
 .else  ( everything but the 8515)
 
 ( Use wait polling.)
@@ -89,6 +96,9 @@ variable fuses  ( fuse at byte 0; hfuse @ 1; efuse @ 2)
    >hilo push  0ac 0a8 0  pop  avr.Write  ( write hfuse bits)  ?busy
          push  0ac 0a4 0  pop  avr.Write  ( write efuse bits)  ?busy ;
 
+: write-locks  ( locks)
+   push  0ac 0e0 0  pop  avr.Write  ?busy ;
+
 .then
 
 : prog-fuses
@@ -98,9 +108,17 @@ variable fuses  ( fuse at byte 0; hfuse @ 1; efuse @ 2)
       write-fuses
    ^ then  then  drop ;
 
-: read-lock  ( - lock)
+: read-locks  ( - locks)
    58 0 0 0 avr3 ;
 
+: prog-locks
+   locks @ =if  ( if locks to program...)
+      dup read-locks xor if  ( ...and if different from chip's)
+      cr  ." Writing lock bits"
+      write-locks
+   ^ then  then  drop ;
+
+( This leaves the fuses alone but resets the lock bits.)
 : erase-chip
    0ac 80 0 0 avr.Write  wait-erase ;
 
@@ -165,7 +183,7 @@ variable pp ( programming pointer - contains a target address)
 : read-chip
    'h preserve  image preserve
    +prog  fast-clock
-   read-flash  read-eeprom  read-fuses fuses !
+   read-flash  read-eeprom  read-fuses fuses !  read-locks locks !
    -prog ;
 
 ( This checks to see if the _image_, not the chip, is blank.)
@@ -226,7 +244,7 @@ b/page 2/  constant w/page
    radix preserve  hex
    'h preserve  image preserve
    +prog  ( slow-clock)  prog-fuses  -prog
-   +prog  fast-clock  erase-chip  prog-flash  prog-eeprom  -prog ;
+   +prog  fast-clock  erase-chip  prog-flash  prog-eeprom  prog-locks  -prog ;
 
 : verify-pad
    pad  #128 for  dup c@  pp*  xor  if  pp @ -1 +a u.  then
@@ -261,11 +279,16 @@ b/page 2/  constant w/page
    read-fuses  fuses @  2dup = if  2drop ^  then  ( ok)
    swap u.  u.  ( chip, then saved) ;
 
+: verify-locks
+   cr  ." Verifying lock bits "
+   read-locks  locks @  2dup = if  2drop ^  then  ( ok)
+   swap u.  u.  ( chip, then saved) ;
+
 : verify
    radix preserve  hex
    'h preserve  image preserve
    +prog  fast-clock
-   verify-flash  verify-eeprom  verify-fuses
+   verify-flash  verify-eeprom  verify-fuses  verify-locks
    -prog ;
 
 : save-image
