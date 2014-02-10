@@ -22,8 +22,14 @@ variable image  ( image buffer pointer; points to either flash- or eeprom-image)
 : make-image  create  ( #bytes)  aligned  dup ,  allot
               does>  cell+ ( skip count)  image ! ;
 
+( Two real images)
 64 Ki make-image  flash-image
  4 Ki make-image  eeprom-image
+
+( And two dummy images)
+ 8 make-image  ram-image   ( to capture accidental c, or , to ram)
+16 make-image  data-image  ( so "da" when not chatting will show something)
+
 
 : #image  image @  cell- @  ( get byte count) ;
 : 'image  image @           ( get address) ;
@@ -58,26 +64,25 @@ variable image  ( image buffer pointer; points to either flash- or eeprom-image)
 : image-!  ( w a)  .debug-w!  image+  leh! ;
 
 
-defer >data ( dump data memory)
 defer >prog ( dump program memory)
-
-here "d0d0dead ,  constant no-data
--: ( buf a u)  ( copy over "dead data" reminder)
-   for  dup 3 and no-data + c@ push  1+ swap  pop over c!  1+ swap  next
-   2drop ;
-
-: >image-data   [ ]  is |read ;  ( nothing useful to show if not chatting)
+defer >data ( dump data memory)
+defer >ee   ( dump eeprom memory)
 
 -: ( buf a u)  swap image+ -rot  cmove ;
-: >image-prog   [ ]  is |read ;  ( read from current image buffer)
+: >image-read   [ ]  is |read ;  ( read from current image buffer)
+
+: >image-prog   >image-read  flash-image ;
+: >image-data   >image-read  data-image ;
+: >image-ee     >image-read  eeprom-image ;
 
 : >image
    ['] leh@  is |cell@
               2 |cell !  ( size of cell)
               2 |addr !  ( size of addr)
 
-   ['] >image-data  is >data
    ['] >image-prog  is >prog
+   ['] >image-data  is >data
+   ['] >image-ee    is >ee
 
    >prog  ( default) ;
 
@@ -90,7 +95,7 @@ variable 'h   ( image dictionary pointer pointer; points to one of:)
    2variable 'boot    ( bootloader flash pointer, origin)
    2variable 'ee      ( eeprom pointer, origin)
 
-: ram     'ram     'h ! ;  ( XXX reset image or not?)
+: ram     'ram     'h !   ram-image    ;
 : app     'app     'h !   flash-image  ;
 : boot    'boot    'h !   flash-image  ;
 : eeprom  'ee      'h !   eeprom-image ;
@@ -124,6 +129,8 @@ forth
 ( Initialization.)
 : erase  'image #image "ff fill ;  ( erases _current_ image)
 : wipe
+   ram-image erase
+   data-image  "d0d0_dead_d0d0_dead dup  'image 2!
    eeprom-image erase
    flash-image erase ;  ( leaves flash-image as _current_ image)
 
