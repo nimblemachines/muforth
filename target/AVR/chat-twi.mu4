@@ -85,9 +85,51 @@ comment register-use
 
 register-use
 
-( Flag byte at end of application space. Return with Z set if app present.)
-label app-present?
-   @boot 1- >hilo  zl ldi  zh ldi  pmz xl ld  55 xl cpi  ret  ;c
+
+( If we have a bootloader, it means that the app part can be present or
+  absent, running or stopped, etc. So we need some space to keep track of
+  the state of the app, and we need some calls that are not relevant for the
+  simpler case of no bootloader.)
+
+.ifdef bootloader
+
+( Below the stack, reserve two bytes to be used as flags for bootloader.)
+
+@ram #ram + ( ramend)  2 -  equ app-running
+           app-running 1-   equ stack-bottom
+
+( Returns Z set if running.)
+( XXX use xl tst instead?)
+label app-running?
+   app-running xl lds  0ff xl cpi  begin begin begin  ret  ;c
+
+label app-start
+   xl clr  app-running xl sts  ( set to false)
+   ( Flag byte at end of application space. Set Z set if app present.)
+   @boot 1- >hilo  zl ldi  zh ldi  pmz xl ld  55 xl cpi  0= until
+   0ff xl ldi  app-running xl sts  ( set to true)
+   application-start-hook j  ;c
+
+label app-stop
+   app-running? rcall  0= until
+   xl clr  app-running xl sts  ( set to false)
+   application-stop-hook j  ;c
+
+label app-run
+   app-running? rcall  0= until  application-run-hook j  ;c
+
+.else  ( no bootloader - app is always present)
+
+@ram #ram + ( ramend)  1-  ( stack bottom)  equ stack-bottom
+
+label app-start
+   application-start-hook j  ;c
+
+label app-run
+   application-run-hook j  ;c
+
+.then
+
 
 label restart  ( pop one return, ack int, then return)
    x popw
@@ -105,8 +147,8 @@ label wait-twint
      write to flash.)
    z pushw  0 pushw
    begin
-      ( Call application task hook, if programmed)
-      app-present? rcall  0= if  application-task-hook c  then
+      ( Call application run hook, if programmed & running)
+      app-run rcall
       TWCR xl lds  TWINT xl sbrs
    again
    0 popw  z popw
@@ -264,6 +306,8 @@ label process
    21 xl cpi  0= if  erase-page         rjmp  then
    22 xl cpi  0= if  program-page       rjmp  then
    23 xl cpi  0= if  clear-page-buffer  rjmp  then
+   24 xl cpi  0= if  app-start          rjmp  then
+   25 xl cpi  0= if  app-stop           rjmp  then
 
 .then
 
@@ -303,7 +347,7 @@ label blinky
    8 tl ldi  begin  blink rcall  delay rcall  tl dec  0= until  ret  ;c
 
 RESET default-handler
-   @ram #ram + ( ramend)  1-  ( stack bottom)  >hilo
+   stack-bottom  >hilo
    xl ldi  SPL xl out
    xl ldi  SPH xl out
 
@@ -317,7 +361,7 @@ RESET default-handler
    ( Set TWI slave address from EEPROM)
    zh clr  zl clr  read-eeprom-byte rcall  1 invert xl andi  TWAR xl out
 
-   ( Call application init hook, if programmed)
-   app-present? rcall  0= if  application-init-hook c  then
+   ( Call application start, if app present)
+   app-start rcall
 
    begin  interact rcall  again  ;c
