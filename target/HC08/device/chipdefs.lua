@@ -1,3 +1,11 @@
+-- This file is part of muFORTH: http://muforth.nimblemachines.com/
+
+-- Copyright 2002-2014 David Frech. All rights reserved, and all wrongs
+-- reversed. (See the file COPYRIGHT for details.)
+
+-- Equates for several S08 variants, "scraped" from Freescale datasheets.
+-- From here we generate muFORTH code!
+
 -- Be careful of pasted in endashes and ligatures! fl really got me...
 -- To convert en- and em-dashes to normal (double) dashes, do this (in Vim):
 -- :set encoding=utf-8
