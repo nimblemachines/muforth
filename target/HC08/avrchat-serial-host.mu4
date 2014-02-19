@@ -36,6 +36,12 @@ hex
 .then
    " AVRc1" await  ( match signature) ;
 
+( Standard form for interact - we might also be using the serial chat for
+  devices that lack a TWI.)
+
+: avrchat.Hello    twi.Hello ;
+
+
 ( Some shorthands)
 : S    ( start)    30 send ;
 : PS   ( restart)  31 send ;
@@ -53,8 +59,8 @@ hex
 : cmd  ( cmd)   S  Aw  W ;
 
 ( Because reads are pipelined - the first one returns junk, and the last
-  byte must be fetched with Re) ( - let's make some shorthands for the initial
-  read, which will always drop its result.)
+  byte must be fetched with Re) ( - let's make some shorthands for the
+  initial read, which will always drop its result.)
 
 : (Ra   Ra drop ;
 : (Rn   Rn drop ;
@@ -70,3 +76,26 @@ hex
 : z&       ( b)            13 cmd  W     P ;
 : zcell&   ( w)    >hilo   13 cmd  W  W  P ;
 : zgo                      14 cmd        P ;
+
+: zcmd   ( buf addr len cmd - len)  rot z!  cmd  swap m ! ;
+
+: R?  ( len - len-1)  1-  =if  Ra ^  then  Rn ;
+
+: zrcmd  constant  does> @  ( buf addr len cmd)
+   over if
+      zcmd  PS  Ar  R? drop  begin  =while  R? m&  repeat  drop  Re) m&  P  ^
+   then  2drop 2drop ;
+
+: zwcmd  constant  does> @  ( buf addr len cmd)
+   over if
+      zcmd  for  m* W  next  P  ^
+   then  2drop 2drop ;
+
+11 zrcmd zpread  ( buf addr len)
+12 zrcmd zread   ( buf addr len)
+13 zwcmd zwrite  ( buf addr len)
+
+15 zrcmd zeread   ( buf addr len)  ( read eeprom)
+16 zwcmd zewrite  ( buf addr len)  ( write eeprom)
+
+( XXX Support for bootloader commands can wait. ;-)
