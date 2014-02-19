@@ -1,0 +1,160 @@
+( This file is part of muFORTH: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2013 David Frech. All rights reserved, and all wrongs
+  reversed. (See the file COPYRIGHT for details.)
+
+loading FRDM-KL25Z test code
+
+__asm
+
+hex
+ram
+
+label store-byte
+   0 r0 +) r1 strb  0 bkpt  ;c
+
+label store-hword
+   0 r0 +) r1 strh  0 bkpt  ;c
+
+label store-word
+   0 r0 +) r1 str   0 bkpt  ;c
+
+label load-byte
+   0 r0 +) r1 ldrb  0 bkpt  ;c
+
+label load-hword
+   0 r0 +) r1 ldrh  0 bkpt  ;c
+
+label load-word
+   0 r0 +) r1 ldr   0 bkpt  ;c
+
+( Core interrupt handlers.)
+label reset       0 bkpt  ;c
+label nmi         0 bkpt  ;c
+label hardfault   0 bkpt  ;c
+label mmfault     0 bkpt  ;c
+label busfault    0 bkpt  ;c
+label usagefault  0 bkpt  ;c
+label svcall      0 bkpt  ;c
+label debugmon    0 bkpt  ;c
+label pendsv      0 bkpt  ;c
+label systick     0 bkpt  ;c
+
+here  2000_0400 org  ( 1 KiB boundary)
+
+label vector-table  @ram #ram + ( SP) ,  reset 1+ ,  ( SP, Reset)
+   nmi 1+ ,  hardfault 1+ ,  mmfault 1+ ,  busfault 1+ ,  usagefault 1+ ,
+   ( reserved)  0 , 0 , 0 , 0 ,
+   svcall 1+ ,  debugmon 1+ ,
+   ( reserved)  0 ,
+   pendsv 1+ ,  systick 1+ ,
+
+org
+
+__host
+
+( SCB - System control block - registers)
+e000_ed00 constant CPUID
+e000_ed08 constant VTOR  ( vector table offset reg - 1 KiB aligned)
+
+: copy-chunk  ( a u)
+   over image+ -rot  t.write ;
+
+: copy-ram
+   h preserve
+   ram  region  ( a u)  copy-chunk ( code)
+   \m vector-table 40   copy-chunk ;
+
+: t!  ( w a)    swap  pad lew!  pad swap 4 t.write ;
+: t@  ( a - w)                  pad swap 4 t.read  pad lew@ ;
+
+: hi  copy-ram  \m vector-table VTOR t! ;
+
+: runwait
+   t.run
+   8 begin  DHCSR t@
+      dup  0000_0002 and  ( C_HALT)    0= while
+           0008_0000 and  ( S_LOCKUP)  0= while
+   1-  =until
+   then  drop  t.halt  ^  then  2drop ;
+
+: remote  ( ... cfa - ...)  ( remote call of Forth code word)
+   ." NYI"   drop ;
+
+: rx  ( r1 r0 cfa - r1 r0)  ( remote call of non-Forth code)
+   pc!  0 reg!  1 reg!  runwait  1 reg@  0 reg@ ;
+
+: rb  ( a - b)   0 swap  \m load-byte rx  drop ;
+: rh  ( a - h)   0 swap  \m load-hword rx  drop ;
+: rw  ( a - w)   0 swap  \m load-word rx  drop ;
+
+: wb  ( b a)   \m store-byte rx  2drop ;
+: wh  ( h a)   \m store-hword rx  2drop ;
+: ww  ( w a)   \m store-word rx  2drop ;
+
+( Things to think about:
+    * clock gating - SCGC5 in SIM module
+    * Signal multiplexing - ALT settings in Port Control Module
+    * BME - bit manipulation engine - since Cortex-M0+ lacks bitband regions
+    * PORT - set pin control bits
+    * GPIO - set data and direction bits
+)
+
+( On FRDM-KL25Z, RGB LED connected as follows:
+  Blue  - PD1/FTM0_CH1
+  Red   - PB18/FTM2_CH0
+  Green - PB19/FTM2_CH1
+)
+
+( Ports have two addresses: one on the APB that is accessible by all
+  masters, and a single-cycle interface that is accessible only by the
+  core.)
+
+( APB base addresses)
+400f_f000 constant porta
+400f_f040 constant portb
+400f_f080 constant portc
+400f_f0c0 constant portd
+400f_f100 constant porte
+
+( Single-cycle base addresses)
+f80f_f000 constant fasta
+f80f_f040 constant fastb
+f80f_f080 constant fastc
+f80f_f0c0 constant fastd
+f80f_f100 constant faste
+
+( Offsets into GPIO space)
+: regoff  ( off)  constant  ( base)  does> @ + ;
+00 regoff pin-out
+04 regoff pin-set
+08 regoff pin-clear
+0c regoff pin-toggle
+10 regoff pin-in
+14 regoff pin-dir
+
+
+           0e constant led-mask  ( PF1=R, PF2=B, PF3=G)
+led-mask 2 << constant led-addr-mask
+
+: led  ( bits)   led-addr-mask pf-ahb + wb ;
+
+: rgb>  ( r g b - bits)
+   2 <<  swap 3 << +  swap 2* +  ( mask) ;
+
+: complement   [ 1 1 1 rgb> ]  xor ;
+
+: grab-pf                       ( port   FE DCBA)
+   ( Set port F to use AHB aperture)  %0010_0000 GPIOBHCTL ww
+   led-mask pf-ahb 400 +  wb  ( set GPIODIR bits for LED)
+          0 pf-ahb 420 +  wb  ( clear GPIOAFSEL to take pin back)
+   0 led ;
+
+( R G B)
+  1 0 0  rgb>  constant red
+  0 1 0  rgb>  constant green
+  0 0 1  rgb>  constant blue
+
+  red complement constant cyan
+green complement constant magenta
+ blue complement constant yellow
