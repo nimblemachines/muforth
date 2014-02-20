@@ -3,10 +3,9 @@
   Copyright 2002-2014 David Frech. All rights reserved, and all wrongs
   reversed. (See the file COPYRIGHT for details.)
 
-loading AVR chat-over-serial (host)
+loading IIC over serial (host)
 
-( Host-side code to drive the AVR chat code in
-  target/HC08/avrchat-serial-core.mu4.)
+( Host-side code to drive the IIC code in target/HC08/iic-serial-core.mu4.)
 
 hex
 
@@ -28,18 +27,13 @@ hex
 .then
 
 : twi.Bye  0 send ;
-: twi.Hello  ( start the AVR chat firmware on the connected device)
+: twi.Hello  ( start the IIC firmware on the connected device)
 .ifdef in-ram
    0112 c.SetPC c.Run  ( run from ram - loads right after flash routine)
 .else
    0f800 c.SetPC c.Run
 .then
-   " AVRc1" await  ( match signature) ;
-
-( Standard form for interact - we might also be using the serial chat for
-  devices that lack a TWI.)
-
-: avrchat.Hello    twi.Hello ;
+   " IICc1" await  ( match signature) ;
 
 
 ( Some shorthands)
@@ -51,12 +45,9 @@ hex
 : Rn   ( read)     35 send  recv ;  ( read and NACK)
 : Re)  ( endread)  36 send  recv ;  ( read last byte)
 
--- : Aw   ( addr+write)  0fe W ;
--- : Ar   ( addr+read)   0ff W ;
-: Aw   ( addr+write)  0b0 W ;
-: Ar   ( addr+read)   0b1 W ;
-
-: cmd  ( cmd)   S  Aw  W ;
+variable iic-slave  0fe iic-slave !  ( default)
+: Aw   ( addr+write)  iic-slave @     W ;
+: Ar   ( addr+read)   iic-slave @ 1+  W ;
 
 ( Because reads are pipelined - the first one returns junk, and the last
   byte must be fetched with Re) ( - let's make some shorthands for the
@@ -64,6 +55,13 @@ hex
 
 : (Ra   Ra drop ;
 : (Rn   Rn drop ;
+
+
+( The following is test code to talk to my simple "debug stub" running on
+  an Atmel AVR.)
+
+( First byte of IIC payload is a chat command.)
+: cmd  ( cmd)   S  Aw  W ;
 
 ( zp* and zpcell* read from _program_ memory. z* and zcell* read from
   _data_ memory.)

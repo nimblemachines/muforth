@@ -3,12 +3,12 @@
   Copyright 2002-2014 David Frech. All rights reserved, and all wrongs
   reversed. (See the file COPYRIGHT for details.)
 
-loading AVR chat-over-serial (core)
+loading IIC over serial (core)
 
 __meta
 
-( Support for simple IIC chat with Atmel's 8-bit AVR family, using a
-  serial-connected S08QE or QG as a master.)
+( Support for translating serial port commands into IIC commands
+  using a serial-connected S08QE or QG as a master.)
 
 ( The style of this code was inspired by chat3.mu4. It's really just an
   experiment to see if the style that I wrote the USB chat firmware in
@@ -21,17 +21,17 @@ __meta
 hex
 
 ( Create a forward jump at the start of the flash sector.)
-forward-jmp avr-chat-loop
+forward-jmp iic-loop
 
-( Our signature.)
+( Return a signature of who we are and what we're doing.)
 label id
-   char A c,  char V c,  char R c,  ( AVR architecture)
-   char c c,                        ( chat)
+   char I c,  char I c,  char C c,  ( IIC)
+   char t c,                        ( test)
    char 1 c,                        ( version 1)
 
 ( QE and QG parts have been trimmed to run at 9.216M so they can
-  accurately generate 115200 bps clock. IIC clock rates are calculated
-  assuming a bus clock of 9.216M.)
+  accurately generate a 115200 bps UART clock. IIC clock rates are
+  calculated assuming a bus clock of 9.216M.)
 
 label InitIIC
    -- 02 # ( mul=1, ICR=02: /24, sda hold 8~) IICF ) mov  ( 384k IIC clock)
@@ -51,7 +51,6 @@ label put-serial  ( transmits char in A)
    begin  SCIS1 7 ( xmit empty)  bset? until
    SCID ) sta  rts  ;c
 
-( Return a signature of who we are and what we're doing.)
 label signon
    .h clr  .x clr
    begin  id ,x lda  put-serial c  .x inc  5 # cpx  0= until
@@ -95,7 +94,7 @@ label get-iic-nack
    IICC 3 ( TXAK) bset  ( NACK slave)  start-iic-recv j  ;c
 
 ( Commands:
-0-2f  Bye        - exit AVR chat code and return to chat loop
+0-2f  Bye        - exit IIC code and return to HC08 chat loop
   30  Start      - send START bit
   31  Restart    - send RESTART bit
   32  Stop       - send STOP bit
@@ -110,7 +109,7 @@ label process-serial
    SCID ) lda  ( command)
 
    ( NOTE: Command numbers are all given in HEX.)
-   30 # sub   ( AVR chat commands start at 30 hex; anything below that, we exit)
+   30 # sub   ( IIC commands start at 30 hex; anything below that, we exit)
    u< if  ( 00 - 2f Bye)  2 # ais  ( skip return from process-serial)  rts  then
 
    ( 30 Start)      start-bit              0!= until
@@ -123,7 +122,7 @@ label process-serial
 
    ( unknown command)   rts  ;c
 
-\l avr-chat-loop resolve>>  ( jump at start of Flash points here)
+\l iic-loop resolve>>  ( jump at start of Flash points here)
 label main-loop
    InitIIC c    ( setup IIC interface)
    signon c     ( tell who we are and what we're doing)

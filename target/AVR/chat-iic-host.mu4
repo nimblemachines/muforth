@@ -1,0 +1,82 @@
+( This file is part of muFORTH: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2014 David Frech. All rights reserved, and all wrongs
+  reversed. (See the file COPYRIGHT for details.)
+
+loading AVR chat over IIC (host)
+
+hex
+
+( The following is code to talk to my simple "debug stub" running on an
+  Atmel AVR, using its default slave address, 0fe. NOTE: Slave addresses
+  are sent shifted left, with LSB = 0.)
+
+( You can find the debug stub's code in target/AVR/chat-iic-core.mu4)
+
+
+variable iic-slave  0fe iic-slave !  ( default)
+                    0b0 iic-slave !  ( testing)
+
+variable zpad  ( so we don't clobber pad)
+: avr-iic-read   ( len cmd)  iic-slave @  rot zpad  iic.Read ;
+: avr-iic-write  ( len cmd)  iic-slave @  rot zpad  iic.Write ;
+
+: avr-sync   begin  iic-slave @  iic.Ping  0= until ;
+
+( Standard form for interact - we might also be using the serial chat for
+  devices that lack an IIC interface.)
+
+: avrchat.Hello    iic.Hello ;
+
+( Because we're using the Z register on the AVR as a memory address
+  pointer, let's prefix these words with 'z'. It's easy to type and sounds
+  cool.)
+
+: z!  ( addr)  zpad leh!  2  10 avr-iic-write ;
+: zgo                     0  14 avr-iic-write  avr-sync ;
+
+: zsetup  ( buf addr len cmd - cmd slave len buf)
+   rot z!  ( buf len cmd)  rot push  ( len cmd)
+   iic-slave @  rot  ( cmd slave len)  pop ;
+
+: zpread   ( buf addr len)  11 zsetup  iic.Read ;   ( read program memory)
+: zread    ( buf addr len)  12 zsetup  iic.Read ;   ( read data memory)
+: zwrite   ( buf addr len)  13 zsetup  iic.Write ;  ( write data memory)
+
+: zeread   ( buf addr len)  15 zsetup  iic.Read ;   ( read eeprom)
+: zewrite  ( buf addr len)  16 zsetup  iic.Write ;  ( write eeprom)
+
+.ifdef oldzcmds
+( Here and elsewhere we use * to mean "fetch byte with post-increment",
+  cell* to mean "fetch cell with post-increment", and & to be the store
+  versions of these)
+
+: zp*      ( - b)           1  11 avr-iic-read  zpad c@ ;    ( program memory)
+: zpcell*  ( - w)           2  11 avr-iic-read  zpad leh@ ;  ( program memory)
+: z*       ( - b)           1  12 avr-iic-read  zpad c@ ;
+: zcell*   ( - w)           2  12 avr-iic-read  zpad leh@ ;
+: z&       ( b)  zpad c!    1  13 avr-iic-write ;
+: zcell&   ( w)  zpad leh!  2  13 avr-iic-write ;
+.then
+
+.ifdef bootloader
+
+( XXX bring up to speed with zread/zwrite etc?)
+
+( Support for self-programming.)
+: avr-prog-cmd    ( addr cmd)  swap z!  0 swap  avr-iic-write ;
+
+: zpwrite  ( buf addr len)    20 zsetup  iic.Write ;
+: zpcell&  ( w)  zpad leh!  2 20 avr-iic-write ;
+: zerase   ( addr)            21 avr-prog-cmd ;   ( erase flash page)
+: zprog    ( addr)            22 avr-prog-cmd ;   ( program flash page from buf)
+: zclear                    0 23 avr-iic-write ;  ( clear page buffer)
+
+( To start and stop the application.)
+: zstart                    0 24 avr-iic-write ;
+: zstop                     0 25 avr-iic-write ;
+
+( write a few words to flash page)
+: zing  ( addr)  dup z!  b/page  over + swap  do  i zpcell&  2 +loop ;
+
+.then

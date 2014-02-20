@@ -3,36 +3,32 @@
   Copyright 2002-2014 David Frech. All rights reserved, and all wrongs
   reversed. (See the file COPYRIGHT for details.)
 
-loading TWI chat over USB (core)
+loading IIC chat over USB (core)
 
 __meta
 
 hex
 
-( Support for chatting with slave devices over TWI, using my JS16 as a
-  USB-based TWI master. The difference between this and twi-usb is that
-  this is more high-level. That code is more for experimentation.)
+( Support for chatting with slave devices over IIC, using my JS16 as a
+  USB-based IIC master. The difference between this and iic-usb-core.mu4 is
+  that this is more high-level. That code is more for experimentation.)
 
 ( Ok, so I'm giving up in frustration. I've been beaten, for the first
-  time, by a piece of s08 hardware - in this case, the i2c peripheral. Not
+  time, by a piece of S08 hardware - in this case, the IIC peripheral. Not
   only is the documentation silent on important issues, but the existing
   app notes - and even a webinar on the Freescale site - do nothing to
   clarify. They just muddy the waters further. And their code makes no
   sense.
 
   After two days of trying to get an S08QG part to talk to an Atmel mega168
-  via I2C, I give up. I'm going to go the bitbang route, which means I can
+  via IIC I give up. I'm going to go the bitbang route, which means I can
   do this over USB, which is actually awesome. I meant to do this anyway -
   I definitely wanted the USB capability - but hesitated to jump into
-  trying to interface a bitbanged I2C with a totally unfamiliar chip... but
-  my failure to get the I2C on the QG working has given me no choice.
+  trying to interface a bitbanged IIC with a totally unfamiliar chip... but
+  my failure to get the IIC on the QG working has given me no choice.
 
   Maybe I should be thankful that my USB part of choice, the S08JS16, lacks
-  a hardware I2C interface. So, with that prelude, here goes.)
-
-( Another point: for some reason the names I2C and IIC bug me. Atmel has
-  chosen to call their implementation a 2-wire interface - TWI. I like
-  that, and I'm going to use it as well.)
+  a hardware IIC interface. So, with that prelude, here goes.)
 
 
 .ifndef S08JS
@@ -84,11 +80,11 @@ out-buffer 6 + equ wLength
 out-buffer 7 + equ wLengthHi
 
 ( Create a forward jump at the start of the flash sector.)
-forward-jmp twi-loop
+forward-jmp iic-chat-loop
 
 ( Port pins.)
 
-.ifdef twi-on-uart
+.ifdef iic-on-uart
 
 ( SCL is connected to PTA7/TxD, pin 20.
   SDA is connected to PTA6/RxD, pin 19.
@@ -112,7 +108,7 @@ label init-pins
    .a clr  SCIC2 ) sta  ( disable UART rcvr, xmitter)
    rts  ;c
 
-.else  -- twi-on-bdm (default)
+.else  -- iic-on-bdm (default)
 
 ( SCL is connected to the BDM /RESET out, PTB0, pin 4
   SDA is connected to the BDM BKGD out,   PTA0, pin 8
@@ -147,7 +143,7 @@ label half-cycle-delay
    here 2 + c  ( fall thru)
 
 ( Count of 10 yields 103k; 1 yields 315k. ;-)
-.ifdef 400k-twi  1 .else  ( 100k)  #10  .then   constant delay-count
+.ifdef 400k-iic  1 .else  ( 100k)  #10  .then   constant delay-count
 
 ( Save and restore X around the loop so callers don't have to worry.)
 label quarter-cycle-delay
@@ -237,7 +233,7 @@ label expect-out-token  ( expect OUT or SETUP, really)
    CTL 5 bclr ( TSUSPEND off - resume processing)
    rts  ;c
 
-label finish-twi-write
+label finish-iic-write
    stop-bit c
    ( fall thru)
 
@@ -251,7 +247,7 @@ label finish-control-write
    match-data1 # lda  in-control ) sta
    expect-setup-token j  ;c
 
-( wValue is twi-cmd and wIndex is slave-addr.)
+( wValue is iic-cmd and wIndex is slave-addr.)
 
 ( Slave addr is sent to us already shifted left, but don't assume the LSB
   is zero!)
@@ -264,11 +260,11 @@ label slave+write
 label send-command
    wLength ) lda  total-count ) sta
    slave+write c
-   wValue ) lda  ( twi-cmd)  send-byte j  ;c
+   wValue ) lda  ( iic-cmd)  send-byte j  ;c
 
 label bulk-write
    send-command c  ( save wLength, send START, slave addr+write, cmd)
-   wLength ) lda  0!=  finish-twi-write  until
+   wLength ) lda  0!=  finish-iic-write  until
    expect-setup-token j  ( wait for OUT or new SETUP)  ;c
 
 ( Don't start talking to the slave at all for 0-length reads. It would just
@@ -302,7 +298,7 @@ label setup-token
 ( NOTE: Command numbers are all given in HEX.)
 ( assume vendor request)
    bRequest ) lda
-   40 # sub   ( TWI commands start at 40 hex; anything below that, we exit)
+   40 # sub   ( IIC commands start at 40 hex; anything below that, we exit)
    u< if  ( 00 - 3f Bye)  2 # ais  ( skip return from process-usb)  rts  then
 
    ( 40 Read)              0!=   bulk-read   until
@@ -324,7 +320,7 @@ label setup-or-out-token
    out-count ) lda  0= if  expect-setup-token j  then
 
    ( Otherwise, we've got a bulk write data payload. Write bytes to slave
-     via TWI. Put ACK bit into in-buffer, just in case the host wants to
+     via IIC. Put ACK bit into in-buffer, just in case the host wants to
      read it back - though it'll only see the ACK bits of the last OUT.)
 
    .h clr  .x clr  ( bufptr)
@@ -338,7 +334,7 @@ label setup-or-out-token
 
    ( If total-count zero, we've received all the data; send STOP bit and
      queue up status IN token.)
-   0= if  finish-twi-write j  then
+   0= if  finish-iic-write j  then
 
    ( total-count non-zero; expect more data.)
    ( toggle DATA0/1)  out-control # ldhx  toggle-control c
@@ -381,8 +377,8 @@ label process-usb
    then
    rts  ;c
 
-\l twi-loop resolve>>  ( jump at start of Flash points here)
+\l iic-chat-loop resolve>>  ( jump at start of Flash points here)
 label main-loop
-   init-pins c    ( setup TWI bitbang interface)
+   init-pins c    ( setup IIC bitbang interface)
    finish-control-write c  ( ready status IN; also prepare for SETUP)
    begin  process-usb c  again  ;c
