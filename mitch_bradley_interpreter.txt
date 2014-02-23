@@ -1,0 +1,413 @@
+
+\ From Sun Forth doc file by Mitch Bradley
+
+Sep 20 21:55 1984  interpreter.doc Page 1
+
+        Yet Another Interpreter Organization
+
+There has been a mild controversy in the Forth community about how to
+implement the text interpreter.  The particular problem is how the
+distinction between compiling and interpreting should be coded.  At least
+three distinct solutions have been advocated over the years.  I propose a
+fourth one, and claim that it is the best solution yet.
+
+[ Additional extract from a Unixnews item from Mitch:
+
+"I have modified the compiler so that it doesn't stop when it hits an
+undefined word; instead, it prints an error message and compiles a
+reference to a word LOSE, whose run time action is to complain and abort.
+This scheme allows the compiler to find all the undefined words in a
+file, without making such errors propagate through all words that
+use the undefined word.
+
+This is especially wonderful in an environment where you can run the
+editor and the forth process simultaneously in separate windows,
+such as inside Gosling's Emacs or in the SunWindows environment." ]
+
+
+FIG-Forth Solution
+
+FIG-Forth used a variable STATE whose value was 0 when interpreting and
+(hex) C0 when compiling.  The interpreter was coded as a single word
+INTERPRET which tested STATE to determine whether to compile or to
+interpret.  Here is the code:
+
+    : INTERPRET ( -- )
+      BEGIN  -FIND
+         IF   STATE @  <
+              IF  CFA , ELSE  CFA EXECUTE  THEN
+         ELSE   HERE NUMBER  DPL @  1+
+              IF   DROP [COMPILE] LITERAL
+              ELSE      [COMPILE] DLITERAL
+              THEN
+         THEN  ?STACK
+      AGAIN
+    ;
+
+The "STATE @ <" phrase is pretty clever (or disgusting, however you wish to
+look at it).  Since the value stored in STATE is (hex) C0 when compiling,
+and since the length byte of a defined word (which is left on the stack by
+-FIND) is in the range (hex) 80-BF for a non-immediate word and in the (hex)
+C0-FF for an immediate word, the "STATE @ <" test manages to return TRUE
+only if the STATE is compiling and the word is not immediate.  This fact is
+not salient to our discussion, but is included here to prevent confusion.
+
+STATE is explicitly tested once inside this loop, but if you look at the
+code for the word LITERAL, it too tests STATE to decide whether to compile
+the number or not.
+
+To switch between compilating and interpreting, Fig-FORTH uses two words [
+and ].  [ is immediate and simply stores 0 into STATE.  ] is not immediate
+and stores (hex) C0 into STATE.  Compilation is typically started with :
+(colon), which is defined something like:
+
+: :
+  <some irrelevant stuff>
+  ] ;CODE 
+  <some assembly language stuff>
+END-CODE
+
+The important point here is that when : executes to define a new word, the ]
+just sets the STATE to compiling, then the ;CODE proceeds to execute.  (The
+purpose of ;CODE is to patch the code field of the word defined by : so that
+it does the appropriate thing for a high-level forth word).  The interpret
+word INTERPRET doesn't notice that STATE is now compiling until the ;CODE
+finishes.
+
+So we see that [ and ] are pretty innocuous; they just change the value of a
+variable.
+
+
+
+
+
+Sep 20 21:55 1984  interpreter.doc Page 2
+
+Poly-FORTH Solution
+
+Forth, Inc. decided that it would be better to have two separate loops for
+the two separate functions of compiling and interpreting.  The compiling
+loop was called ], so ] actually executed the compile loop directly, rather
+than just setting a variable.  This has two subtle side effects.
+
+If you loop at the previous definition of :, and now pretend that instead of
+just setting a variable, ] actually executes the compiler loop, you will see
+that the ;CODE following it doesn't actually get executed until AFTER the
+compiling is finished.  This in itself doesn't cause a problem for :, but
+the use of ] inside programmer-defined words sometimes caused unexpected
+behavior because stuff after the ] would get executed after a bunch of stuff
+had been compiled.
+
+The other subtlety relates to how the loops are terminated.  Note that the
+INTERPRET loop shown above never terminates!  We all know that it really
+does terminate, and the mechanism is pretty kludgey.  What happens is that
+there is a null character at the end of every line of text in the input
+stream, and at the end of every BLOCK of text from mass storage.  The text
+interpreter picks up this null character just like a normal word.  The
+dictionary contains an entry which matches this "null word".  The associated
+code is executed, and it plays around with the return stack in such a way
+that the INTERPRET loop is exited without its ever knowing about it.
+
+The problem with the dual-loop interpreter/compiler is that the end of each
+line of input from the input stream kicks out system out of whichever loop
+it was in.  If the user is attempting to compile a multi-line colon
+definition from the input stream, he must start each line after the first
+with an explicit ], because once the compiler loop is exited at the end of
+the first line, the system doesn't remember that it was compiling.
+
+One key thing to remember is that the compiler loop (which was named [) is
+executed from within the interpreter loop.
+
+Coroutines (Patton/Berkey)
+
+At FORML 83, Bob Berkey presented a paper about using coroutines for the
+interpreter loop and the compiler loop, instead of having the compiler loop
+run inside the interpreter loop.  This means that executing ] kicks out the
+interpreter loop and runs the compiler loop instead; similarly, executing [
+kicks out the compiler loop and runs the interpreter loop instead.  The
+subroutine versions of these loops are present in his scheme, named COMPILER
+and INTERPRETER.
+
+Bob feels that this scheme is more symmetrical than the Poly-FORTH approach,
+and that it eliminates some of the counter-intuitive behavior.
+
+This scheme still requires that multi-line colon definitions compiled from
+the keyboard have a ] at the beginning of each line after the first.
+
+What is Wrong with all this
+
+These different schemes do not at all address what I consider to be the
+fundamental problems with the interpreter/compiler.
+
+Fundamental Problem #1:
+
+The compiler/interpreter has a built-in infinite loop.  This means that you
+can't tell it to just compile one word; once you start it, off it goes, and
+it won't stop until it gets to the end of the line or screen.
+
+
+
+Sep 20 21:55 1984  interpreter.doc Page 3
+
+Fundamental Problem #2:
+
+The reading of the next word from the input stream is buried inside this
+loop.  This means that you can't hand a string representing a word to the
+interpreter/compiler and have it interpret or compile it for you.
+
+Fundamental Problem #3:
+
+The behavior of the interpreter/compiler is hard to change because all the
+behavior is hard-wired into one or two relatively large words.  Changing
+this behavior can be extremely useful for a number of applications, for
+example meta-compiling.
+
+Fundamental Problem #4:
+
+If the interpreter/compiler can't figure out what to do with a word (it's
+not defined and it's not a number), it aborts.  Worse yet, the aborting is
+not done directly from within the loop, but inside NUMBER.  This severly
+limits the usefulness of NUMBER because if the string that NUMBER gets is
+not recognizable as a number, it will abort on you.  (The 83 standard punts
+this issue by not specifying NUMBER, except as an uncontrolled refernece
+word).
+
+Solution:
+
+As I see it, there are several distinct things that are going on inside the
+interpreter/compiler.  A proper factorization of the interpreter/compiler
+into words which each do one thing solves all these problems.
+
+The outermost thing is the loop.  The loop's job is to repetitively get the
+next word from the input stream and do something with it.  The loop should
+terminate when the input stream is exhausted.
+
+: NEW-INTERPRET  (S -- )
+  BEGIN   BL WORD   ( str )
+          MORE?     ( str f )  ( flag true if input stream not exhausted )
+  WHILE
+          "COMPILE
+  REPEAT
+  DROP
+;
+
+The next level down is the "do something with it".  This ought to be a
+separate word so that it may be called by other words which would like to
+compile/interpret a single word.  This layer is here called "COMPILE,
+because it takes a string representing a single word and compiles (or
+interprets) it.  "COMPILE's main job is to decide what kind of word it is
+dealing with.  There are 3 choices.  Either the word is already defined, or
+it is a literal (i.e. a number), or it is neither.
+
+: "COMPILE ( str -- ?? )
+  FIND     ( str 0  |   cfa -1   |   cfa 1 )
+  DUP
+  IF   DO-DEFINED    ( ??  )
+  ELSE DROP          ( str )
+       LITERAL?      ( str false | ?? true )
+       IF    DO-LITERAL        ( ?? )
+       ELSE  DO-UNDEFINED      ( ?? )
+       THEN
+  THEN
+;
+
+
+
+Sep 20 21:55 1984  interpreter.doc Page 4
+
+Finally, at the lowest layer, there is the code which does the appropriate
+thing for each of these three possibilities.  This level is represented by
+the words DO-DEFINED, DO-LITERAL, and DO-UNDEFINED.  It is ONLY at this
+lowest layer that the system cares at all whether it is compiling or
+interpreting.  One of the benefits claimed for the Poly-FORTH scheme is
+speed.  This is due to the elimination of tests of the STATE variable within
+the loop.
+
+Clearly, my scheme has to do something to distinguish between compiling and
+interpreting.  An obvious solution would be to test STATE inside each of
+DO-DEFINED, DO-LITERAL, and DO-UNDEFINED.  This would slow down the system,
+of course.
+
+A more interesting alternative is to make each of DO-DEFINED, DO-LITERAL,
+and DO-UNDEFINED a deferred word. (Deferred words are sometimes called
+execution vectors.  Basically they are like variables which hold the address
+of a word to execute, except that the @ EXECUTE is done automatically)
+
+If these words are deferred, then they can be changed when the system goes
+from compiling to interpreting, and vice versa.
+
+DEFER LITERAL?      ( str -- n true  |  d true  |  str false )
+DEFER DO-DEFINED    ( cfa -1 | cfa 1  -- ?? )
+DEFER DO-LITERAL    ( literal -- ?? )
+DEFER DO-UNDEFINED  ( str -- )
+
+: (LITERAL?  ( str -- str false  | literal true )
+  >R R@ NUMBER?   ( l f )
+  IF    R> DROP  TRUE
+  ELSE  DROP R> FALSE
+  THEN
+;
+' (LITERAL? IS LITERAL?
+: INTERPRET-DO-DEFINED  ( cfa -1 | cfa 1 -- ?? )
+  DROP EXECUTE
+;
+: COMPILE-DO-DEFINED    ( cfa -1 | cfa 1 -- )
+  0> IF   EXECUTE   ( if immediate )
+     ELSE ,         ( if not immediate )
+     THEN
+;
+: INTERPRET-DO-LITERAL ( d -- d | n )
+  DOUBLE? 0= IF DROP THEN
+;
+: COMPILE-DO-LITERAL ( d -- )
+  DOUBLE? IF [COMPILE] DLITERAL ELSE [COMPILE] LITERAL THEN
+;  
+: INTERPRET-DO-UNDEFINED ( str -- )
+    COUNT TYPE ."  ?" CR
+  QUIT
+;
+: COMPILE-DO-UNDEFINED   ( str -- )
+    COUNT TYPE ."  ?" CR
+  COMPILE LOSE
+;
+
+Then [ and ] would be defined as follows:
+
+: [
+  ['] INTERPRET-DO-DEFINED   IS DO-DEFINED
+  ['] INTERPRET-DO-LITERAL   IS DO-LITERAL
+  ['] INTERPRET-DO-UNDEFINED IS DO-UNDEFINED
+
+
+Sep 20 21:55 1984  interpreter.doc Page 5
+
+  STATE OFF
+; IMMEDIATE
+
+: ]
+  ['] COMPILE-DO-DEFINED     IS DO-DEFINED
+  ['] COMPILE-DO-LITERAL     IS DO-LITERAL
+  ['] COMPILE-DO-UNDEFINED   IS DO-UNDEFINED
+  STATE ON
+;
+
+(IS is the word which sets the word to execute for a deferred word.
+
+Executing a deferred word need not be slow.  Deferred word are so useful
+that they should be coded in assembler for speed.  On my system they are
+only very slightly slower than normal colon definitions.
+
+So what?
+
+This may seem to be more complicated than the schemes it replaces.  It
+certainly does have more words.  On the other hand, each word is
+individually easy to understand, and each word does a very specific job, in
+contrast to the old style, which bundles up a lot of different things in one
+big word.  The more explicit factoring gives you a great deal of control
+over the interpreter.
+
+Here are some interesting things you can do with this new scheme:
+
+One of my favorite words, TH (for Temporary Hex):
+
+: TH  ( --word  ?? )
+  BASE @ >R  HEX
+  BL WORD "COMPILE
+  R> BASE !
+; IMMEDIATE
+
+This word temporarily sets the base to hexadecimal, interprets
+a word, and restores the base.  It works for numbers or defined words,
+either interpreting or compiling.
+
+For example:
+
+DECIMAL
+TH 10 .  (system prints-->  16
+10 TH .  (system prints-->  A
+: STRIP-PARITY ( char -- char-without-parity )
+  TH 7F AND
+;
+
+Liberal use of this word markedly reduces the need to switch bases,
+especially in source code, and thus reduces the chance of errors.
+
+Here's a common word that is trivial to implement with this kind of
+interpreter:
+
+: ASCII (  --name  char )
+  BL WORD 1+ C@ ( char )
+  -1 DPL !     \ make sure it's not handled as a double number
+  DO-LITERAL
+;
+
+Here's a word which allows you to make a new name for an old word.  It is a
+smart word, in that when the new word is compiled, the old word will
+
+
+Sep 20 21:55 1984  interpreter.doc Page 6
+
+actually be compiled instead, eliminating any performance penalty.
+Furthermore, it even works for old words that are immediate!  As you will
+see, the vectored "DO-DEFINED" does exactly the thing we want.
+
+: ALIAS  ( -- )     ( Input stream:  new-name old-word )
+  CREATE
+    BL WORD FIND    ( cfa -1 | cfa 1  |  str false )
+    DUP IF
+       , , IMMEDIATE
+    ELSE
+      DROP  ." Can't find "  COUNT TYPE
+    THEN
+  DOES>  2@   ( cfa -1 | cfa 1 )
+   DO-DEFINED
+;
+( Examples )
+ALIAS D@ 2@
+HERE D@   ( actually executes 2@ )
+: FOO HERE D@ ;  ( actually compiles 2@ )
+ALIAS FOREVER  AGAIN
+: LOOP-ALWAYS BEGIN FOREVER ;  ( actually executes AGAIN, which is immediate )
+
+Finally, a really neat way to write keyword-driven translators.  Suppose you
+have some kind of a file that contains a bunch of text.  Interspersed
+throughout the text are keywords that you would like to recognize, and the
+program should do something special when it sees a keyword.  For things that
+aren't keywords, it just writes them out unchanged.  Suppose that the
+keywords are ".PARAGRAPH", ".SECTION", and ".END".
+
+VOCABULARY KEYWORDS DEFINITIONS
+: .PARAGRAPH
+  ( whatever you want to happen when you see paragraph )
+;
+: .SECTION
+  ( whatever you want to happen when you see paragraph )
+;
+: KEYWORDS-DO-UNDEFINED ( STR -- )
+  COUNT TYPE
+;
+: .END
+  ONLY FORTH
+  ['] (LITERAL?              IS  LITERAL?
+  ['] INTERPRET-DO-UNDEFINED IS  DO-UNDEFINED
+;
+ONLY FORTH ALSO KEYWORDS
+: PROCESS-KEYWORDS
+  ['] FALSE                  IS LITERAL?
+  ['] KEYWORDS-DO-UNDEFINED  IS DO-UNDEFINED
+  ONLY KEYWORDS
+;
+
+I have used this technique very successfully to extract specific information
+from data base files produced by a CAD system.  Instead of outputting
+unrecognized words, I actually just ingored them in this application, but
+the technique is the same in either case.
+
+        Mitch Bradley
+        Sun Microsystems, Inc.
+        2550 Garcia Ave.
+        Mountain View, CA 94043
+        (Work) 415/960-3300x314
+        (Home) 415/961-1302
+
+
