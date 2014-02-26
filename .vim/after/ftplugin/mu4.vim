@@ -22,7 +22,7 @@ setlocal textwidth=75
 " t = text (ie, code other than comments)
 " r = put comment start on new lines opened by pressing <Return>
 " o = ditto, on lines opened by o or O
-setlocal formatoptions=rocql
+setlocal formatoptions=cql
 
 " set comment strings
 " s = start comment
@@ -35,4 +35,4 @@ setlocal comments=s:(\ ,m:\ \ ,ex:),b:--
 " anything can be a keyword, let's let Vim know that. @ means all alphanumeric
 " (including international characters); then we add all the printable ASCII,
 " including punctuation.
-setlocal iskeyword=@,!-~
+setlocal iskeyword=@,!-~,^(,^),^-,^_
