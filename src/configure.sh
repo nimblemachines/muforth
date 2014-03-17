@@ -18,15 +18,38 @@
 # create a "fake" git-commit that pushes 0. We can check, in banner, which
 # we have.
 
-if [ -d .git ]; then
+# Useful for scripts, so they know where they are
+top=$(dirname $(pwd))
+
+if [ -d ../.git ]; then
+    # Create the hook script for Git
+    cat <<EOT > /tmp/post-commit.sh
+#/bin/sh
+
+# This file is part of muFORTH: http://muforth.nimblemachines.com/
+#
+# Copyright (c) 2002-2014 David Frech. All rights reserved, and all wrongs
+# reversed. (See the file COPYRIGHT for details.)
+
+# So that we always have an accurate git commit available to Forth code,
+# after commit, checkout or merge generate a muforth file that defines the
+# current commit.
+
+echo "Generating commit.mu4"
+
+sha=\$(git rev-parse --verify HEAD)
+
+echo ": muforth-commit  \" \$sha\" ;" > ${top}/mu/commit.mu4
+EOT
     echo
     echo "Installing post-commit, post-checkout, and post-merge hooks."
-    install -m 755 post-commit.sh .git/hooks/post-commit
-    install -m 755 post-commit.sh .git/hooks/post-checkout
-    install -m 755 post-commit.sh .git/hooks/post-merge
-    sh post-commit.sh
+    install -m 755 /tmp/post-commit.sh ../.git/hooks/post-commit
+    install -m 755 /tmp/post-commit.sh ../.git/hooks/post-checkout
+    install -m 755 /tmp/post-commit.sh ../.git/hooks/post-merge
+    sh /tmp/post-commit.sh
+    rm /tmp/post-commit.sh
 else
-    echo ": muforth-commit 0 ;" > commit.mu4
+    echo ": muforth-commit 0 ;" > ../mu/commit.mu4
 fi
 
 # Parse command line args
@@ -76,11 +99,11 @@ if [ "$os" = "Linux" ]; then
     # Try to guess a device to use for serial targets
     # XXX Do this for OSX and *BSD too? And match all USB known USB serial
     # devices?
-    if [ ! -c serial-target ]; then
+    if [ ! -c ../mu/serial-target ]; then
         for term in USB0 ACM0 S0; do
             dev=/dev/tty$term
             if [ -c $dev ]; then
-                ln -s $dev serial-target
+                ln -s $dev ../mu/serial-target
             fi
         done
     fi
@@ -92,7 +115,7 @@ Your USB devices are mounted on /dev/bus/usb and controlled by udevd.
 EOF
         if [ -f /etc/nixos/configuration.nix ]; then
             # Running NixOS! Yippee!
-            ./make-nix-config.sh $USER > udev.nix
+            ../scripts/make-nix-config.sh $USER > udev.nix
             cat <<EOF
 It appears that you are one of the few intrepid souls running NixOS.
 
@@ -110,7 +133,7 @@ Then do the following as root:
 'man udev' for the whole story).
 EOF
         else
-            ./make-udev-rules.sh $USER > 99-muforth.rules
+            ../scripts/make-udev-rules.sh $USER > 99-muforth.rules
             cat <<EOF
 A udev rules file has just been generated, which will be of interest to you
 if you want to use USB devices with muFORTH.
@@ -184,13 +207,14 @@ SEDEXT=     ${sedext}
 ARCH_C=     ${cflags}
 ARCH_LD=    ${ldflags}
 ARCHOBJS=   ${archobjs}
+MUDIR=      ${top}/mu
 EOT
 
 # fix up use of sed in scripts/do_sed.sh
 sed ${sedext} \
   -e "s/%sedext%/${sedext}/g" \
-  scripts/do_sed.sh.in > scripts/do_sed.sh
-chmod 755 scripts/do_sed.sh
+  ../scripts/do_sed.sh.in > ../scripts/do_sed.sh
+chmod 755 ../scripts/do_sed.sh
 
 # Figure out which version of make we're using (most likely GNU or BSD) and
 # set up an appropriate Makefile.
@@ -209,8 +233,8 @@ Then run your BSD make.
 
 EOF
   sed ${sedext} \
-    -f scripts/make.sed \
-    -f scripts/gnu-make.sed \
+    -f ../scripts/make.sed \
+    -f ../scripts/gnu-make.sed \
     -e 's/^### Makefile/### GNU Makefile/' Makefile.in > Makefile
 else
   cat <<EOF
@@ -223,7 +247,7 @@ Then type "gmake" instead of "make".
 
 EOF
   sed ${sedext} \
-    -f scripts/make.sed \
+    -f ../scripts/make.sed \
     -e 's/^### Makefile/### BSD Makefile/' Makefile.in > Makefile
 fi
 
