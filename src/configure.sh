@@ -254,6 +254,7 @@ fi
 cat <<EOF
 Once it builds successfully, run it like this:
 
+  cd ../mu
   ./muforth
 
 Enjoy muFORTH!
