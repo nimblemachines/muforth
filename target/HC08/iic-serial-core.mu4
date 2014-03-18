@@ -27,7 +27,11 @@ forward-jmp iic-loop
 label id
    char I c,  char I c,  char C c,  ( IIC)
    char t c,                        ( test)
+.ifdef in-ram
+   char X c,                        ( version X - testing)
+.else
    char 1 c,                        ( version 1)
+.then
 
 ( QE and QG parts have been trimmed to run at 9.216M so they can
   accurately generate a 115200 bps UART clock. IIC clock rates are
@@ -39,6 +43,7 @@ label InitIIC
    -- 15 # ( mul=1, ICR=15: /88 sda hold 17~) IICF ) mov  ( 104k IIC clock)
    12 # ( mul=1, ICR=12: /64 sda hold 13~) IICF ) mov  ( 144k IIC clock)
    80 # IICC ) mov  ( enable IIC module)
+   -- ff # IICS ) mov  ( clear all status bits)
    %0000_1100 # lda  PTADS ) sta ( high drive on SCL and SDA, A3, A2)
                      PTAPE ) sta ( pullup enable on SCL and SDA, A3, A2)
    rts  ;c
@@ -74,7 +79,11 @@ label put-iic
    get-serial c
    IICC 4 ( TX) bset  IICD ) sta
    begin  IICS 7 ( TCF)  bset? until  ( transfer complete)
-   IICS ) lda  ( RXAK is bit 0)  put-serial j  ;c
+   -- begin  IICS 1 ( IICIF)  bset? until  ( transfer complete)
+   -- IICS 1 bset
+   IICS ) lda  ( RXAK is bit 0)
+   put-serial j  ;c
+
    ( Return 0ff if got RXAK; 00 otherwise)
    -- .a clr  IICS 0 ( RXAK) bclr? if  .a com  then  put-serial j  ;c
 
@@ -85,6 +94,7 @@ label start-iic-recv
 
 label end-iic-recv
    IICC 4 ( TX) bset  IICD ) lda  ( read last byte; don't start new recv)
+   begin  IICS 7 ( TCF)  bset? until  ( transfer complete)
    put-serial j  ;c
 
 label get-iic-ack
