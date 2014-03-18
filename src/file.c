@@ -8,7 +8,7 @@
 /* file primitives */
 
 #include "muforth.h"
-#include "version.h"        /* BUILD_DIR */
+#include "version.h"        /* MU_DIR */
 
 #include <fcntl.h>
 #include <sys/mman.h>
@@ -50,9 +50,9 @@ static char* abs_path(char *path, char *pathbuf, int bufsize)
     /* If path is absolute, just return it as is. */
     if (*path == '/') return path;
 
-    /* Otherwise, rewrite path as BUILD_DIR/path */
+    /* Otherwise, rewrite path as MU_DIR/path */
     path = path_prefix(path, pathbuf+bufsize, '\0', pathbuf);
-    return path_prefix(BUILD_DIR, path, '/', pathbuf);
+    return path_prefix(MU_DIR, path, '/', pathbuf);
 }
 
 #else
@@ -86,8 +86,8 @@ static char* abs_path(char *path, char *pathbuf, int bufsize)
             return path_prefix(pwd, p, '/', pathbuf);
         }
 
-        /* Otherwise, rewrite path as BUILD_DIR/path */
-        return path_prefix(BUILD_DIR, p, '/', pathbuf);
+        /* Otherwise, rewrite path as MU_DIR/path */
+        return path_prefix(MU_DIR, p, '/', pathbuf);
     }
 }
 

@@ -12,12 +12,12 @@
 # Make 32-bit version
 ./configure.sh force32
 make
-mv muforth muforth32
+mv ../mu/muforth ../mu/muforth32
 
 # Make 64-bit version
 ./configure.sh force64
 make
-mv muforth muforth64
+mv ../mu/muforth ../mu/muforth64
 
 # Make standard version
 ./configure.sh
