@@ -139,16 +139,33 @@ label init-pins
 .then
 
 ( The building blocks.)
+
 label half-cycle-delay
    here 2 + c  ( fall thru)
 
-( Count of 10 yields 103k; 1 yields 315k. ;-)
-.ifdef 400k-iic  1 .else  ( 100k)  #10  .then   constant delay-count
+( These delays assume our JS16 is running at 24M.)
+
+.ifdef fast-iic
+
+( To achieve a 400k IIC clock at 24M means a quarter cycle delay time of
+  24,000,000 / 400,000 / 4 = 15 cycles. Call + rts already takes 11. The
+  following code takes 16, so our IIC clock is 24,000,000 / 64 = 375k.)
+
+label quarter-cycle-delay
+   .x psh  .x pul  rts  ;c
+
+.else  ( .ifndef fast-iic; try for 100k)
+
+( Total delay time, including call and rts: 18 + 4*delaycount. So with
+  count of 10, we have quarter-cycle time of 58 cycles; whole cycle is
+  232, so bit speed is 24,000,000 / 232 = 103k.)
 
 ( Save and restore X around the loop so callers don't have to worry.)
 label quarter-cycle-delay
-   .x psh  delay-count # ldx
+   .x psh  #10 # ldx
    begin  .x decz? until  .x pul  rts  ;c
+
+.then  ( .ifdef fast-iic)
 
 ( Since the slave can hold SCL low to give it more processing time, we need
   to be careful when letting SCL go high. We should only start our delay
