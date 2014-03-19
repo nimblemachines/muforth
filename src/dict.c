@@ -248,19 +248,32 @@ static link_cell *new_name(
     link_cell *link, char *name, int length)
 {
     struct dict_name *pnm;  /* the new name */
+    int prefix_bytes;
 
     assert(ALIGNED(ph) == (intptr_t)ph, "misaligned (new_name)");
 
     length = MIN(length, 255);
 
-    /* Allot space for name + length byte so that suffix is aligned. */
-    pnm = (struct dict_name *)ALIGNED((intptr_t)ph + length - SUFFIX_LEN);
+    /*
+     * Calculate space for the bytes of the name that don't fit into
+     * suffix[]; align to cell boundary.
+     */
+    prefix_bytes = ALIGNED(length - SUFFIX_LEN);
 
-    /* copy name string */
+    /*
+     * Zero name + link + code. While dict started out zeroed, use of pad
+     * could have put all kinds of gunk into it.
+     */
+    memset(ph, 0, prefix_bytes + sizeof(struct dict_entry));
+
+    /* Allot prefix bytes and get a pointer to name struct. */
+    pnm = (struct dict_name *)((intptr_t)ph + prefix_bytes);
+
+    /* Copy name string */
     memcpy(pnm->suffix + SUFFIX_LEN - length, name, length);
     pnm->length = length;
 
-    /* set link pointer */
+    /* Set link pointer */
     _(pnm->link.cell) = link;
 
     /* Allot entry */
