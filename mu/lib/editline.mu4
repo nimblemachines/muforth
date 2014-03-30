@@ -87,14 +87,24 @@ create cl-root  here dup , ,  0 ,  ( prev/next point to cl-root, initially)
 
 variable cl-cur   ( points to cl that we're editing)
 
+( We store command line history at the _end_ of the heap, so we don't
+  interfere with pad, colon definitions in progress, etc. NOTE: We
+  calculate the end of the heap here. This code _must_ be kept in sync with
+  the allocation code in dict.c!)
+
+variable cl-last  ( points to last cl saved; history grows down in memory)
+h0 1 Ki Ki cells +  cl-last !
+
 ( We're about to evaluate it; link cl into history)
 
 : cl>history  ( len)
-   =if
-      here  dup  cl-root @ , ( prev=root.prev)  cl-root , ( next=root)
-      cl-root !  ( root.prev=new)
-      dup @ cell+ ! ( new.prev.next=new)
-      cl swap _string  ( z")
+   =if  push
+      ( Make room: prev, next, count, string, padding)
+      cl-last @  r@  aligned  [ 3 cells ] +  -  dup cl-last !  ( cl-new)
+      cl-root @ over !+ ( prev=root.prev)
+      cl-root   swap !+ ( next=root)  ( cl-new 'count)
+      r@ swap !+  cl swap  pop cmove  ( copy chars)
+      dup cl-root !  ( root.prev=new)  dup @ cell+ ! ( new.prev.next=new)  ^
    then  drop ;
 
 : >cl  ( 'cl - len)
