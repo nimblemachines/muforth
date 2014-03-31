@@ -540,9 +540,89 @@ variable fp    ( the "top" - most recently pushed - frame)
 
 
 create remove  -]  rp@  unlink ;   ( remove pushes IP when executed!)
-
-
 ( Now some interesting applications.)
+
+-- -----------------------------------------------------------------------
+-- Catch and throw
+-- -----------------------------------------------------------------------
+
+( NOTE: These first catch and throw are works-in-progress. I've tested the
+  simple versions below that ignore the other R stack frames, and they work
+  fine. Now to figure out how to combine them into one beautful whole.)
+
+create 'catch  ( create a unique address to identify catch frames)
+: nothrow   shunt  0 ;
+
+( Create a catch frame, then execute the following word. If nothing is
+  throw'n, return 0; otherwise return thrown value.)
+
+: catch
+   r> ( ra)  @+  ( fetch following cfa)
+   'catch >r     ( mark as a catch frame)
+   link nope     ( push cleanup - do nothing!)
+   remove >r     ( normal return - unlink and cleanup)
+   >r ( ra)  execute ;
+
+( If error is non-zero, unwind the R stack to the nearest enclosing catch
+  frame, and return error. Otherwise, drop and return to caller.)
+
+: throw  ( error)
+   =if
+      ( Unwind to nearest catch frame)
+      begin  fp @  =while  unlink  'catch = until  ( XXX)  then  ( YYY)
+   then  drop ;
+
+-- What about first doing catch and throw independently of the other return
+-- stack words, and then trying to combine them?
+
+variable cf   ( catch frame pointer)
+
+
+comment catch-throw-resetting-sp
+
+( NOTE: I decided a while ago that I didn't like the exception handler to
+  muck about with the data stack. It's often nicer to see what was on the
+  stack when something failed - like a filename or file descriptor.
+
+  But for completeness' sake, I have pasted here the versions of catch and
+  throw that save and restore SP.)
+
+: catch
+   r>  @+  >r     ( fetch & skip following cfa)
+   sp@ cell+  >r  ( save SP)
+        cf @  >r  ( push prev catch frame pointer)
+   rp@  cf !      ( now point to this frame)
+   execute
+   r>  cf !       ( restore prev frame pointer)
+   shunt          ( toss saved SP)
+   0 ;
+
+: throw  ( error)
+   =if
+          cf @  rp!  ( unwind to last catch frame)
+      r>  cf !       ( restore prev frame pointer)
+      r>  swap >r    ( fetch saved sp, push error onto R)
+      sp! r>  ^      ( reset D stack, get error)
+   then  drop ;
+
+comment catch-throw-resetting-sp
+
+
+( These don't save or restore SP.)
+: catch
+   r>  @+  >r     ( fetch & skip following cfa)
+        cf @  >r  ( push prev catch frame pointer)
+   rp@  cf !      ( now point to this frame)
+   execute
+   r>  cf !       ( restore prev frame pointer)
+   0 ;
+
+: throw  ( error)
+   =if
+          cf @  rp!  ( unwind to last catch frame)
+      r>  cf !  ^    ( restore prev frame pointer)
+   then  drop ;
+
 
 -- -----------------------------------------------------------------------
 -- Error trapping
@@ -1411,8 +1491,8 @@ Type 'settings' to see a few of muFORTH's tweakable behaviours.
    >stderr banner
    1 line !  ( so it's "correct" for interactive!)
    -consumed +sep +case +radix +stack ( defaults - reset these how you like)
-   command-line count  evaluate
-   trap  quit ;
+   command-line count  catch evaluate drop
+   begin  catch quit  again ;
 
 ( Identify ourselves.)
 -d  muFORTH
