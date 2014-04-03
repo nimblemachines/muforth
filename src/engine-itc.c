@@ -201,6 +201,12 @@ void mu_pop()    { mu_r_from(); }
 /* shunt is shorthand for r> drop */
 void mu_shunt()  { RP++; }
 
+/*
+ * I'm beginning to prefer rdrop, but until I change a bunch of existing
+ * code, let's make it a synonym for shunt.
+ */
+void mu_rdrop()  { mu_shunt(); }
+
 
 #if 0
 /*
