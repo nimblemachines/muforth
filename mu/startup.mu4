@@ -623,7 +623,9 @@ comment catch-throw-resetting-sp
 
 : throw  ( error)
    =if
-          cf @  rp!  ( unwind to last catch frame)
+      cf @           ( unwind to last catch frame)
+      fp @  begin  2dup swap u<  over and  while  unlink  repeat  fp !
+      rp!
       r>  cf !  ^    ( restore prev frame pointer)
    then  drop ;
 
@@ -1308,19 +1310,6 @@ defer ?show-stack
 
 variable zloading    ( C-string name of file being loaded)
 
-( check-depth only prints anything out if depth has changed since the file
-  started loading _and_ zloading is non-zero - ie, we're loading a file.)
-
-: check-depth  ( saved-depth)
-   depth swap -  2 - ( seems to always be 2!)
-      =if  zloading @ =if
-      ."  [ "  zcount type  ." : +depth " .  ." ]" ^  then  drop  then  drop ;
-
-: show-depths  ( saved)   .  depth . ;
-
-( XXX I was hoping to use on-exit to check stack depths, but I can't seem
-  to get them to reconcile. More research is indicated. ;-)
-
 ( raw-load-file doesn't preserve many settings, so it's useful for loading
   _settings_ files that will have durable effects on the environment.
 
@@ -1348,6 +1337,16 @@ variable zloading    ( C-string name of file being loaded)
 
 ( Save radix, state, and current; switch to decimal, host forth, and the
   forth chain; load a file.)
+
+( check-depth only prints anything out if depth has changed since the file
+  started loading _and_ zloading is non-zero - ie, we're loading a file.)
+
+: check-depth  ( saved-depth)
+   depth swap -  3 - ( use show-depths to see the "standard" difference!)
+      =if  zloading @ =if
+      ."  [ "  zcount type  ." : +depth " .  ." ]" ^  then  drop  then  drop ;
+
+: show-depths  ( saved)   depth .  . ;
 
 : load-file  ( z")
    depth  on-exit check-depth
@@ -1473,7 +1472,7 @@ Type 'settings' to see a few of muFORTH's tweakable behaviours.
    drop ;
 
 -: ( z")
-   >stderr  cr  .where  parsed type space  zcount type  unwind ;   'abort !
+   >stderr  cr  .where  parsed type space  zcount type  -1 throw ;   'abort !
 
 .ifndef typing  ( if platform provides it, just use that)
    .ifdef set-termios  ( if fancy tty support available)
@@ -1496,7 +1495,7 @@ Type 'settings' to see a few of muFORTH's tweakable behaviours.
    1 line !  ( so it's "correct" for interactive!)
    -consumed +sep +case +radix +stack ( defaults - reset these how you like)
    command-line count  catch evaluate drop
-   begin  catch quit  again ;
+   begin  catch quit  drop  again ;
 
 ( Identify ourselves.)
 -d  muFORTH
