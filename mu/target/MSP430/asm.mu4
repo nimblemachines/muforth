@@ -1,0 +1,246 @@
+( This file is part of muFORTH: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2014 David Frech. All rights reserved, and all wrongs
+  reversed. (See the file COPYRIGHT for details.)
+
+loading MSP430 assembler
+
+hex
+
+: reg   constant ;
+
+assembler
+( Special-purpose registers)
+0 reg pc
+1 reg sp
+2 reg sr  ( also CG1)
+3 reg r3  ( also CG2)
+
+( General-purpose registers)
+4 reg r4
+5 reg r5
+6 reg r6
+7 reg r7
+
+ 8 reg r8
+ 9 reg r9
+0a reg r10
+0b reg r11
+
+0c reg r12
+0d reg r13
+0e reg r14
+0f reg r15
+forth
+
+( Addressing modes.
+
+  TI's documentation is misleading on this subject. They talk about having
+  seven source and four destination addressing modes. The reality is that
+  there are four source modes, and two dest modes. Period. Using certain
+  registers - sr and pc in particular - yield some special cases, and this is
+  the source of the supposedly "extra" addressing modes. But I think it's
+  healthier to think of them as special cases that result from the semantics
+  of the register used, rather than as separate addressing modes.
+
+  As  Source addressing mode
+  ==  ======================
+  00  Register
+  01  Indexed - 16-bit offset follows
+  10  Indirect register - like Indexed with 0 offset
+  11  Indirect Post-increment
+
+  Ad  Dest addressing mode
+  ==  ====================
+   0  Register
+   1  Indexed - 16-bit offset follows
+              - can "fake" Indirect by using index = 0
+
+  Special cases:
+  
+  As  Reg  Resulting mode
+  ==  ===  ==============
+  01   r2  Absolute address
+  01   pc  PC-relative address
+  11   pc  Immediate mode - 16-bit immediate value follows
+
+  Ad  Reg  Resulting mode
+  ==  ===  ==============
+   1   r2  Absolute address
+   1   pc  PC-relative address
+)
+
+( Constant generators.
+
+  Two registers - r2 and r3 - can be used to generate a small set of
+  constants, obviating the use of a following immediate word or immediate
+  offset.
+
+  As  Reg   Constant
+  ==  ===   ======================
+  00   r2   Normal r2 register mode - for reading and writing Status register
+  01   r2   0 - following index used as absolute address
+  10   r2   4
+  11   r2   8
+
+  00   r3   0
+  01   r3   1
+  10   r3   2
+  11   r3   0ffff, aka -1
+
+  Since r3 always generates constants when used as a source, using it as a
+  destination is a great way to throw away a value. Hence, a good "no-op"
+  instruction is mov r3, r3.
+)
+
+assembler
+: +)    ( offset reg - offset ea)  %01_0000 or ;
+:  )    (        reg -        ea)  %10_0000 or ;
+:  )+   (        reg -        ea)  %11_0000 or ;
+:  &    ( offset     - offset ea)  %01_0010 or ;  ( absolute)
+
+: #   ( imm - ea | n ea)
+   dup  0= if  drop  \a r3        ^  then
+   dup 1 = if  ( 1)  \a r3 \a +)  ^  then  ( 1 dropped on output)
+   dup 2 = if  drop  \a r3 \a )   ^  then
+   0ffff and  0ffff = if  ( -1 or 0ffff)
+                     \a r3 \a )+  ^  then
+   dup 4 = if  drop  \a r2 \a )   ^  then
+   dup 8 = if  drop  \a r2 \a )+  ^  then
+   \a pc \a )+ ;
+forth
+
+
+( Instructions are defined in opcode order, so it's easy to see where 
+  gaps exist. For some reason TI put the the format I instructions _last_
+  in the opcode map.)
+
+
+( 0000 - 0fff: CPUX instructions:
+               mova, cmpa, adda, suba, rrcm, rram, rlam, rrum)
+
+
+( Format II - 1op instructions:
+
+  o o o o  o o o o  o b R R  r r r r    o=op, b=byte, r=reg, R=mode
+)
+: fmt2  constant  does> @
+
+assembler
+1000 fmt2 ror   ( TI call this rrc: "rotate right thru carry")
+1040 fmt2 rorb
+1080 fmt2 swpb  ( swap bytes)
+( 10c0 unimplemented)
+1100 fmt2 asr   ( TI call this rra: "rotate right arithmetically"
+                  b15 -> b15, b15 -> b14, ..., b0 -> Carry)
+1140 fmt2 asrb
+1180 fmt2 sxt
+( 11c0 unimplemented)
+1200 fmt2 push
+1240 fmt2 pushb
+1280 fmt2 call
+( 12c0 unimplemented)
+1300 fmt2 reti
+( 1340 unimplemented - on CPUX this is calla)
+( 1380 unimplemented)
+( 13c0 unimplemented)
+forth
+
+
+( 1400 - 17ff: CPUX instructions:
+               pushma, popma, pushmw, popmw)
+               
+( 1800 - 1fff: CPUX extension words)
+
+
+( Format III - jumps:
+
+  o o o c  c c s d  d d d d  d d d d    o=op, c=cond, s=sign, d=dest offset
+
+  Offset is a signed _word_ offset.
+)
+
+: fmt3  constant  does> @
+
+assembler
+2000 fmt3 jnz
+2400 fmt3 jz
+2800 fmt3 jnc  ( aka jlo - carry is ~borrow)
+2c00 fmt3 jc   ( aka jhs - ditto)
+
+3000 fmt3 jn   ( 0<)
+3400 fmt3 jge  ( >= signed)
+3800 fmt3 jl   ( <  signed)
+3c00 fmt3 jmp
+forth
+
+
+( Format I - 2op instructions:
+
+  o o o o  s s s s  D b S S  d d d d    o=op, b=byte, s=src reg, d=dest reg,
+                                                      S=src mode, D=dest mode
+)
+
+: fmt1  constant  does> @
+
+assembler
+4000 fmt1 mov
+4040 fmt1 movb
+5000 fmt1 add
+5040 fmt1 addb
+6000 fmt1 addc   ( adc?)
+6040 fmt1 addcb
+7000 fmt1 subc   ( sbc? sbb?)
+7040 fmt1 subcb
+
+8000 fmt1 sub
+8040 fmt1 subb
+9000 fmt1 cmp
+9040 fmt1 cmpb
+a000 fmt1 dadd   ( decimal add! can be safely ignored ;-)
+a040 fmt1 daddb
+b000 fmt1 bit
+b040 fmt1 bitb
+
+c000 fmt1 bic
+c040 fmt1 bicb
+d000 fmt1 or   ( TI call this bis: "bit set")
+d040 fmt1 orb  ( aka bisb - berkeley?)
+e000 fmt1 xor
+e040 fmt1 xorb
+f000 fmt1 and
+f040 fmt1 andb
+
+( Synthesised instructions - aka useful macros.)
+( Need some macro help here!! These are too ugly with all the \a's.)
+compiler
+: asm{   __macro ;
+:    }   \ [ ;
+assembler
+-- : macro   XXX ?
+
+: clr   0 # mov ;
+: clrb  0 # movb ;
+: inv   -1 # xor ;  ( com?)
+: invb  -1 # xorb ;
+: pop   sp )+  swap  mov ;
+: popb  sp )+  swap  movb ;  ( SP increments by 2!!)
+: ret   pc pop ; ( !!)
+: nop   r3 dup mov ;  ( 0 # r3 mov)
+: setc  1 # sr or ;
+: setz  2 # sr or ;
+: setn  4 # sr or ;
+: clrc  1 # sr bic ;
+: clrz  2 # sr bic ;
+: clrn  4 # sr bic ;
+
+( XXX lsr can only be implemented as clrc; ror - weird.)
+
+( XXX asl/lsl needs to be synthesised using add; but be careful with
+  post-increment: the second - dest - operand must be negatively-indexed!
+
+  rol can be similarly synthesised using addc.)
+
+forth
+
+( That's all, folks!)
