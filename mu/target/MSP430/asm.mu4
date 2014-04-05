@@ -1,0 +1,310 @@
+( This file is part of muFORTH: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2014 David Frech. All rights reserved, and all wrongs
+  reversed. (See the file COPYRIGHT for details.)
+
+loading MSP430 assembler
+
+hex
+
+-:  ."  (compiling inlne assembler)"  ;
+-:
+    .assembler. find  if  ,        ^  then  ( find assembler's if/then etc)
+     .compiler. find  if  execute  ^  then  ( need } and ; to exit this mode)
+      .equates. find  if  ,        ^  then
+         .meta. find  if  ,        ^  then  ( labels are in .meta.)
+        .forth. find  if  ,        ^  then  ( utility words in .forth.)
+                                            number literal ;
+mode __inline-asm
+
+( Support for inline asm in any colon word.)
+compiler
+: asm{   __inline-asm ;  ( start assembler)
+: }      -] ;  ( exit assembler mode and restart colon compiler)
+forth
+
+: reg   constant ;
+
+assembler
+( Special-purpose registers)
+0 reg pc
+1 reg sp
+2 reg sr  ( also CG1)
+3 reg r3  ( also CG2)
+
+( General-purpose registers)
+4 reg r4
+5 reg r5
+6 reg r6
+7 reg r7
+
+ 8 reg r8
+ 9 reg r9
+0a reg r10
+0b reg r11
+
+0c reg r12
+0d reg r13
+0e reg r14
+0f reg r15
+forth
+
+( Addressing modes.
+
+  TI's documentation is misleading on this subject. They talk about having
+  seven source and four destination addressing modes. The reality is that
+  there are four source modes, and two dest modes. Period. Using certain
+  registers - sr and pc in particular - yield some special cases, and this is
+  the source of the supposedly "extra" addressing modes. But I think it's
+  healthier to think of them as special cases that result from the semantics
+  of the register used, rather than as separate addressing modes.
+
+  As  Source addressing mode
+  ==  ======================
+  00  Register
+  01  Indexed - 16-bit offset follows
+  10  Indirect register - like Indexed with 0 offset
+  11  Indirect Post-increment
+
+  Ad  Dest addressing mode
+  ==  ====================
+   0  Register
+   1  Indexed - 16-bit offset follows
+              - can "fake" Indirect by using index = 0
+
+  Special cases:
+  
+  As  Reg  Resulting mode
+  ==  ===  ==============
+  01   sr  Absolute address
+  01   pc  PC-relative address
+  11   pc  Immediate mode - 16-bit immediate value follows
+
+  Ad  Reg  Resulting mode
+  ==  ===  ==============
+   1   sr  Absolute address
+   1   pc  PC-relative address
+)
+
+( Constant generators.
+
+  Two registers - sr and r3 - can be used to generate a small set of
+  constants, obviating the use of a following immediate word or immediate
+  offset.
+
+  As  Reg   Constant
+  ==  ===   ======================
+  00   sr   Normal sr register mode - for reading and writing Status bits
+  01   sr   0 - following index used as absolute address
+  10   sr   4
+  11   sr   8
+
+  00   r3   0
+  01   r3   1
+  10   r3   2
+  11   r3   0ffff, aka -1
+
+  Since r3 always generates constants when used as a source, using it as a
+  destination is a great way to throw away a value. Hence, a good "no-op"
+  instruction is mov r3, r3.
+)
+
+( Output an immediate or offset word if necessary. There are three
+  interesting cases:
+
+  As  Reg  Resulting mode          Action
+  ==  ===  ==============          ======
+  01   r3  Constant 1              drop word
+  01   xx  Indexed/Abs/PC-rel      output word
+  11   pc  Immediate               output word
+)
+
+( Let's combine offset/immediate and mode/reg info into one word. Makes
+  stack shuffling much simpler.)
+
+: off>ea   ( offset - ea)  0ffff and  8 << ;
+: ea>off   ( ea - offset)             8 u>> ;
+
+: ea>rm    ( ea - reg/mode)  3f and ;
+: ea>reg   ( ea - reg/mode)  0f and ;
+: ea>mode  ( ea - reg/mode)  30 and ;
+
+assembler
+: +)    ( offset reg - ea)  swap off>ea  %01_0000 or  or ;  ( indexed)
+:  )    (        reg - ea)               %10_0000 or ;      ( indirect)
+:  )+   (        reg - ea)               %11_0000 or ;      ( post-increment)
+
+: #   ( imm - ea)
+   0ffff and
+   dup  0= if  drop  asm{  r3     } ^  then
+   dup 1 = if  ( 1)  asm{  r3 +)  } ^  then  ( 1 dropped on output)
+   dup 2 = if  drop  asm{  r3 )   } ^  then
+   dup 0ffff = if  ( -1 or 0ffff)
+               drop  asm{  r3 )+  } ^  then
+   dup 4 = if  drop  asm{  sr )   } ^  then
+   dup 8 = if  drop  asm{  sr )+  } ^  then
+             off>ea  asm{  pc )+  }  or ;
+
+:  &   ( offset - ea)   asm{  sr +)  } ;  ( absolute)
+forth
+
+: off,  ( ea)  ea>off  \m , ;
+: ea,   ( ea)
+   dup asm{   1 #   } = if   drop        ^  then  ( const 1)
+   dup ea>rm  ( ea reg/mode)
+   dup asm{  pc )+  } = if   drop  off,  ^  then  ( immed)
+           ea>mode 10 = if         off,  ^  then  ( indexed)
+   drop ;
+
+: op,   \m , ;
+
+
+( Instructions are defined in opcode order, so it's easy to see where 
+  gaps exist. For some reason TI put the the format I instructions _last_
+  in the opcode map.)
+
+
+( 0000 - 0fff: CPUX instructions:
+               mova, cmpa, adda, suba, rrcm, rram, rlam, rrum)
+
+
+( Format II - 1op instructions:
+
+  o o o o  o o o o  o b R R  r r r r    o=op, b=byte, r=reg, R=mode
+)
+: fmt2  constant  does> @  ( ea op)   over ea>rm or  op,  ea, ;
+
+assembler
+1000 fmt2 ror   ( TI call this rrc: "rotate right thru carry")
+1040 fmt2 rorb
+1080 fmt2 swpb  ( swap bytes)
+( 10c0 unimplemented)
+1100 fmt2 asr   ( TI call this rra: "rotate right arithmetically"
+                  b15 -> b15, b15 -> b14, ..., b0 -> Carry)
+1140 fmt2 asrb
+1180 fmt2 sxt
+( 11c0 unimplemented)
+1200 fmt2 push
+1240 fmt2 pushb
+1280 fmt2 call
+( 12c0 unimplemented)
+1300 fmt2 reti
+( 1340 unimplemented - on CPUX this is calla)
+( 1380 unimplemented)
+( 13c0 unimplemented)
+forth
+
+
+( 1400 - 17ff: CPUX instructions:
+               pushma, popma, pushmw, popmw)
+               
+( 1800 - 1fff: CPUX extension words)
+
+
+( Format III - jumps:
+
+  o o o c  c c s d  d d d d  d d d d    o=op, c=cond, s=sign, d=dest offset
+
+  Offset is a signed _word_ offset.
+)
+
+( Tests to see if a value fits into a field of a certain bit width.)
+: ufits?  ( value bits - f)     u>>        0= ;   ( unsigned)
+: sfits?  ( value bits - f)   1- >>  1+  2 u< ;   ( signed)
+
+: ?joff  ( dest - offset)
+   \m here -  2/  dup #10 sfits? if  [ 1 #10 << 1- ] and  ^ then
+   error" relative jump out of range" ;
+
+: fmt3  constant  does> @  ( dest op)  swap ?joff or  op, ;
+
+assembler
+2000 fmt3 jnz
+2400 fmt3 jz
+2800 fmt3 jnc  ( aka jlo - carry is ~borrow)
+2c00 fmt3 jc   ( aka jhs - ditto)
+
+3000 fmt3 jn   ( 0<)
+3400 fmt3 jge  ( >= signed)
+3800 fmt3 jl   ( <  signed)
+3c00 fmt3 jmp
+forth
+
+
+( Format I - 2op instructions:
+
+  o o o o  s s s s  D b S S  d d d d    o=op, b=byte, s=src reg, d=dest reg,
+                                                      S=src mode, D=dest mode
+)
+
+: ea>src   ( ea - srcbits)
+   dup ea>reg 8 <<  swap  ea>mode  or ;
+
+( For destination effective addresses, convert Indirect to Index by 0.)
+: fix-ea  ( ea - ea')
+   dup ea>mode 20 = if  ( Indirect)  10 -  ( => Indexed by 0)  then ;
+
+: ea>dest  ( ea - destbits)
+   dup ea>mode  dup 20 u< if  3 <<  ( D)  swap ea>reg  or  ^  then
+   error" invalid destination address mode" ;
+
+: fmt1  constant  does> @  ( easrc eadest op)
+   push  fix-ea  swap ( eadest easrc)
+   dup  ea>src   pop or  push
+   over ea>dest  pop or  op,  ea,  ea, ;
+
+assembler
+4000 fmt1 mov
+4040 fmt1 movb
+5000 fmt1 add
+5040 fmt1 addb
+6000 fmt1 addc   ( adc?)
+6040 fmt1 addcb
+7000 fmt1 subc   ( sbc? sbb?)
+7040 fmt1 subcb
+
+8000 fmt1 sub
+8040 fmt1 subb
+9000 fmt1 cmp
+9040 fmt1 cmpb
+a000 fmt1 dadd   ( decimal add! can be safely ignored ;-)
+a040 fmt1 daddb
+b000 fmt1 bit
+b040 fmt1 bitb
+
+c000 fmt1 bic
+c040 fmt1 bicb
+d000 fmt1 or   ( TI call this bis: "bit set")
+d040 fmt1 orb  ( aka bisb - berkeley?)
+e000 fmt1 xor
+e040 fmt1 xorb
+f000 fmt1 and
+f040 fmt1 andb
+
+( Synthesised instructions - aka useful macros.)
+
+: clr   asm{   0 #  \f swap  mov   } ;
+: clrb  asm{   0 #  \f swap  movb  } ;
+: inv   asm{  -1 #  \f swap  xor  } ;  ( com?)
+: invb  asm{  -1 #  \f swap  xorb } ;
+: pop   asm{  sp )+  \f swap  mov  } ;
+: popb  asm{  sp )+  \f swap  movb } ;  ( SP increments by 2!!)
+: ret   asm{  pc pop  } ; ( !!)
+: nop   asm{  0 # r3 mov  } ;
+: setc  asm{  1 # sr or  } ;
+: setz  asm{  2 # sr or  } ;
+: setn  asm{  4 # sr or  } ;
+: clrc  asm{  1 # sr bic  } ;
+: clrz  asm{  2 # sr bic  } ;
+: clrn  asm{  4 # sr bic  } ;
+
+( XXX lsr can only be implemented as clrc; ror - weird.)
+
+( XXX asl/lsl needs to be synthesised using add; but be careful with
+  post-increment: the second - dest - operand must be negatively-indexed!
+
+  rol can be similarly synthesised using addc.)
+
+forth
+
+( That's all, folks!)

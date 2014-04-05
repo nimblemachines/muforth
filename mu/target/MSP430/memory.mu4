@@ -1,0 +1,125 @@
+( This file is part of muFORTH: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2014 David Frech. All rights reserved, and all wrongs
+  reversed. (See the file COPYRIGHT for details.)
+
+loading MSP430 memory image
+
+( Space for compiling into. I think MSP430s max out at 128 KiB, but for now
+  let's limit ourselves to 64k address space. This is where most of the
+  varieties I'm interested in max out.)
+
+( Helpfully, all MSP430s start their RAM at the same place:)
+"0200 constant @ram
+
+( We are quickly prototyping this using a G2553 device, so default the size
+  of ram and flash accordingly:)
+.ifndef #ram
+  512 constant #ram
+.then
+
+.ifndef #flash
+  16 Ki constant #flash
+.then
+
+"1_0000 #flash - constant @flash
+
+( Represent the entire address space. This way we don't worry about any
+  translation issues - like forcing target address fc00 to refer to first
+  byte of the image buffer.)
+
+64 Ki constant #image
+#image buffer 'image
+
+: wrap   [ #image 1- ] and ;
+: +a  ( a1 a2 - sum)  +  wrap ;  ( add and wrap to 16bit address)
+
+: image+  ( target - host)  wrap  'image + ;
+: image-  ( host - target)        'image -  wrap ;
+
+
+( Generic tools for reading and writing host-side memory. These give us a
+  second "hand" so we can, eg, compare two images using c@+ on the one hand
+  and m* on the other.)
+
+variable m  ( memory pointer)
+: m*  ( - byte)  m @  c@  1 m +! ;
+: m&  ( byte)    m @  c!  1 m +! ;
+
+
+( DEBUG: Define show-comma to show code as it's compiled.)
+.ifdef show-comma
+: .debug-comma  dup  .h8_ ;
+.else
+: .debug-comma ;
+.then
+
+( DEBUG: Define show-! to show writes to image.)
+.ifdef show-!
+: .debug-c!   cr  ( byte addr)  2dup .hcell_  .h8 ;
+: .debug-w!   cr  ( word addr)  2dup .hcell_  .hcell ;
+.else
+: .debug-c! ;
+: .debug-w! ;
+.then
+
+: image-c@             image+ c@ ;
+: image-c!  .debug-c!  image+ c! ;
+
+( MSP430s are little-endian.)
+: image-@  ( a - w)             image+  leh@ ;
+: image-!  ( w a)    .debug-w!  image+  leh! ;
+
+-: ( buf a u)  swap image+ -rot  cmove ;
+: >image
+   [ ]       is |read    ( read from image buffer)
+   ['] leh@  is |cell@
+              2 |cell !  ( size of cell)
+              2 |addr !  ( size of addr) ;
+>image
+
+( Dictionary operators.)
+variable h   ( image dictionary pointer pointer; points to one of:)
+   2variable 'ram     ( ram pointer, origin)
+   2variable 'flash   ( flash pointer, origin)
+
+: ram     'ram    h ! ;
+: flash   'flash  h ! ;
+-- : in-flash?  h @  'flash = ;
+-- : in-ram?    in-flash? not ;
+: org    ( a) ( set dict pointer)  h @  ! ;
+
+meta
+: here  ( - a)  h @ @ ;
+: allot ( n)    h @ +! ;
+-- : c,    ( ch)   .debug-comma  \m here image-c!  1 \m allot ;
+: ,     ( n)    \m here image-!  2 \m allot ;
+
+forth
+( return the origin & number of bytes in region)
+: region  ( 'region - a u)  2@  ( origin ptr)  over - ;
+
+( Initialization.)
+: wipe   'image  #image  ( erase)   "ff  fill ;
+
+: ram!      ( ram-origin)  dup 'ram   2!  ( set ptr and origin to origin) ;
+: flash!  ( flash-origin)  dup 'flash 2!  ( set ptr and origin to origin) ;
+
+
+( Create a notion of flash "slots" for firmware, which I tend to program in
+  chunks of 512 bytes - not coincidentally the flash page size.
+
+  Use this to init the flash region to this slot. Slot 0 is the bootloader
+  - ie, 0fe00. Slot 1 is "200 bytes before that: 0fc00. Etc.
+
+  NOTE: We do not subtract from 64 Ki to get the starting address of the
+  slot! This would work for S08 devices, but _not_ for 908 devices! Thus we
+  really do need to _calculate_ the end of flash, and then subtract from
+  there.)
+
+: fslot  ( num)  1+  -"200 *  [ @flash #flash + ]  +  dup @flash u< if
+   error" Too many slots for flash!"  then  flash! ;
+
+
+( Erase image, default origins: ram to @ram, and flash to @flash.)
+wipe  @ram ram!  @flash flash!
