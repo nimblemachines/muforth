@@ -7,6 +7,22 @@ loading MSP430 assembler
 
 hex
 
+-:  ."  (compiling inlne assembler)"  ;
+-:
+    .assembler. find  if  ,        ^  then  ( find assembler's if/then etc)
+     .compiler. find  if  execute  ^  then  ( need } and ; to exit this mode)
+      .equates. find  if  ,        ^  then
+         .meta. find  if  ,        ^  then  ( labels are in .meta.)
+        .forth. find  if  ,        ^  then  ( utility words in .forth.)
+                                            number literal ;
+mode __inline-asm
+
+( Support for inline asm in any colon word.)
+compiler
+: asm{   __inline-asm ;  ( start assembler)
+: }      -] ;  ( exit assembler mode and restart colon compiler)
+forth
+
 : reg   constant ;
 
 assembler
@@ -60,28 +76,28 @@ forth
   
   As  Reg  Resulting mode
   ==  ===  ==============
-  01   r2  Absolute address
+  01   sr  Absolute address
   01   pc  PC-relative address
   11   pc  Immediate mode - 16-bit immediate value follows
 
   Ad  Reg  Resulting mode
   ==  ===  ==============
-   1   r2  Absolute address
+   1   sr  Absolute address
    1   pc  PC-relative address
 )
 
 ( Constant generators.
 
-  Two registers - r2 and r3 - can be used to generate a small set of
+  Two registers - sr and r3 - can be used to generate a small set of
   constants, obviating the use of a following immediate word or immediate
   offset.
 
   As  Reg   Constant
   ==  ===   ======================
-  00   r2   Normal r2 register mode - for reading and writing Status register
-  01   r2   0 - following index used as absolute address
-  10   r2   4
-  11   r2   8
+  00   sr   Normal sr register mode - for reading and writing Status bits
+  01   sr   0 - following index used as absolute address
+  10   sr   4
+  11   sr   8
 
   00   r3   0
   01   r3   1
@@ -100,14 +116,14 @@ assembler
 :  &    ( offset     - offset ea)  %01_0010 or ;  ( absolute)
 
 : #   ( imm - ea | n ea)
-   dup  0= if  drop  \a r3        ^  then
-   dup 1 = if  ( 1)  \a r3 \a +)  ^  then  ( 1 dropped on output)
-   dup 2 = if  drop  \a r3 \a )   ^  then
+   dup  0= if  drop  asm{  r3     } ^  then
+   dup 1 = if  ( 1)  asm{  r3 +)  } ^  then  ( 1 dropped on output)
+   dup 2 = if  drop  asm{  r3 )   } ^  then
    0ffff and  0ffff = if  ( -1 or 0ffff)
-                     \a r3 \a )+  ^  then
-   dup 4 = if  drop  \a r2 \a )   ^  then
-   dup 8 = if  drop  \a r2 \a )+  ^  then
-   \a pc \a )+ ;
+                     asm{  r3 )+  } ^  then
+   dup 4 = if  drop  asm{  sr )   } ^  then
+   dup 8 = if  drop  asm{  sr )+  } ^  then
+   asm{  pc )+  } ;
 forth
 
 
@@ -124,7 +140,7 @@ forth
 
   o o o o  o o o o  o b R R  r r r r    o=op, b=byte, r=reg, R=mode
 )
-: fmt2  constant  does> @
+: fmt2  constant  does> @ ;
 
 assembler
 1000 fmt2 ror   ( TI call this rrc: "rotate right thru carry")
@@ -160,7 +176,7 @@ forth
   Offset is a signed _word_ offset.
 )
 
-: fmt3  constant  does> @
+: fmt3  constant  does> @ ;
 
 assembler
 2000 fmt3 jnz
@@ -181,7 +197,7 @@ forth
                                                       S=src mode, D=dest mode
 )
 
-: fmt1  constant  does> @
+: fmt1  constant  does> @ ;
 
 assembler
 4000 fmt1 mov
@@ -212,27 +228,21 @@ f000 fmt1 and
 f040 fmt1 andb
 
 ( Synthesised instructions - aka useful macros.)
-( Need some macro help here!! These are too ugly with all the \a's.)
-compiler
-: asm{   __macro ;
-:    }   \ [ ;
-assembler
--- : macro   XXX ?
 
-: clr   0 # mov ;
-: clrb  0 # movb ;
-: inv   -1 # xor ;  ( com?)
-: invb  -1 # xorb ;
-: pop   sp )+  swap  mov ;
-: popb  sp )+  swap  movb ;  ( SP increments by 2!!)
-: ret   pc pop ; ( !!)
-: nop   r3 dup mov ;  ( 0 # r3 mov)
-: setc  1 # sr or ;
-: setz  2 # sr or ;
-: setn  4 # sr or ;
-: clrc  1 # sr bic ;
-: clrz  2 # sr bic ;
-: clrn  4 # sr bic ;
+: clr   asm{  0 # mov   } ;
+: clrb  asm{  0 # movb  } ;
+: inv   asm{  -1 # xor  } ;  ( com?)
+: invb  asm{  -1 # xorb } ;
+: pop   asm{  sp )+  \f swap  mov  } ;
+: popb  asm{  sp )+  \f swap  movb } ;  ( SP increments by 2!!)
+: ret   asm{  pc pop  } ; ( !!)
+: nop   asm{  r3 dup mov  } ;  ( 0 # r3 mov)
+: setc  asm{  1 # sr or  } ;
+: setz  asm{  2 # sr or  } ;
+: setn  asm{  4 # sr or  } ;
+: clrc  asm{  1 # sr bic  } ;
+: clrz  asm{  2 # sr bic  } ;
+: clrn  asm{  4 # sr bic  } ;
 
 ( XXX lsr can only be implemented as clrc; ror - weird.)
 
