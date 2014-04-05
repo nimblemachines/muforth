@@ -160,6 +160,27 @@ void mu_set_termios_speed()
 }
 
 /*
+ * For talking to weird targets that need parity. We ignore errors, and
+ * hope they are found elsewhere. ;-)
+ */
+void mu_set_termios_even_parity()
+{
+    struct termios *pti = (struct termios *) TOP;
+    pti->c_iflag |= (IGNPAR);       /* ignore parity errors */
+    pti->c_cflag |= (PARENB);       /* enable parity */
+    pti->c_cflag &= ~(PARODD);      /* even parity */
+    DROP(1);
+}
+
+void mu_set_termios_odd_parity()
+{
+    struct termios *pti = (struct termios *) TOP;
+    pti->c_iflag |= (IGNPAR);           /* ignore parity errors */
+    pti->c_cflag |= (PARENB | PARODD);  /* enable parity - odd */
+    DROP(1);
+}
+
+/*
  * We need to be able to send RS232 BREAKs. In at least one case (HC908
  * bootloader) target hardware requires this - or at least it may make
  * debugging the connection easier. ;-)
