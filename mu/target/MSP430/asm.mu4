@@ -109,22 +109,51 @@ forth
   instruction is mov r3, r3.
 )
 
-assembler
-: +)    ( offset reg - offset ea)  %01_0000 or ;
-:  )    (        reg -        ea)  %10_0000 or ;
-:  )+   (        reg -        ea)  %11_0000 or ;
-:  &    ( offset     - offset ea)  %01_0010 or ;  ( absolute)
+( Output an immediate or offset word if necessary. There are three
+  interesting cases:
 
-: #   ( imm - ea | n ea)
+  As  Reg  Resulting mode          Action
+  ==  ===  ==============          ======
+  01   r3  Constant 1              drop word
+  01   xx  Indexed/Abs/PC-rel      output word
+  11   pc  Immediate               output word
+)
+
+( Let's combine offset/immediate and mode/reg info into one word. Makes
+  stack shuffling much simpler.)
+
+: off>ea  ( offset - ea)  8 << ;
+: ea>off  ( ea - offset)  8 u>> ;
+: ea>rm   ( ea - reg/mode)  %11_1111 and ;
+
+assembler
+: +)    ( offset reg - ea)  swap off>ea  %01_0000 or  or ;  ( indexed)
+:  )    (        reg - ea)               %10_0000 or ;      ( indirect)
+:  )+   (        reg - ea)               %11_0000 or ;      ( post-increment)
+
+: #   ( imm - ea)
+   0ffff and
    dup  0= if  drop  asm{  r3     } ^  then
    dup 1 = if  ( 1)  asm{  r3 +)  } ^  then  ( 1 dropped on output)
    dup 2 = if  drop  asm{  r3 )   } ^  then
-   0ffff and  0ffff = if  ( -1 or 0ffff)
-                     asm{  r3 )+  } ^  then
+   dup 0ffff = if  ( -1 or 0ffff)
+               drop  asm{  r3 )+  } ^  then
    dup 4 = if  drop  asm{  sr )   } ^  then
    dup 8 = if  drop  asm{  sr )+  } ^  then
-   asm{  pc )+  } ;
+             off>ea  asm{  pc )+  }  or ;
+
+:  &   ( offset - ea)   asm{  sr +)  } ;  ( absolute)
 forth
+
+: off,  ( ea)  ea>off  \m , ;
+: ea,   ( ea)
+   dup asm{   1 #   } = if   drop        ^  then  ( const 1)
+   dup ea>rm  ( ea reg/mode)
+   dup asm{  pc )+  } = if   drop  off,  ^  then  ( immed)
+            4 u>> %01 = if         off,  ^  then  ( indexed)
+   drop ;
+
+: op,   \m , ;
 
 
 ( Instructions are defined in opcode order, so it's easy to see where 
@@ -140,7 +169,7 @@ forth
 
   o o o o  o o o o  o b R R  r r r r    o=op, b=byte, r=reg, R=mode
 )
-: fmt2  constant  does> @ ;
+: fmt2  constant  does> @  ( ea op)   over ea>rm or  op,  ea, ;
 
 assembler
 1000 fmt2 ror   ( TI call this rrc: "rotate right thru carry")
