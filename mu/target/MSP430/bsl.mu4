@@ -11,8 +11,6 @@ hex
 variable spy  spy on
 : send          spy @ if ." >"  dup .h8_ then  _send ;
 : recv   _recv  spy @ if ." <"  dup .h8_ then ;
-: expect  ( b)  recv  2dup = if  2drop ^  then
-   error" expected "  swap .h8_  ." got "  .h8 ;
 
 variable checksum
 variable checkwhich
@@ -24,17 +22,42 @@ variable checkwhich
 : >b   dup sum  send ;
 : >w   >hilo  >b >b ;
 
-: <bsl  ( cmd)  80 send  90 expect  sum!  80 >b  >b ;
-: bsl>  checksum    c@ invert send
-        checksum 1+ c@ invert send ;
+: b>   recv  dup sum ;
+
+: ?match  ( want got)  2dup = if  2drop ^  then
+   error" expected "  swap .h8_  ." got "  .h8 ;
+
+: >buf  ( buf u)  swap m !  ?for  m* >b  next  then ;
+: buf>  ( buf u)  swap m !  ?for  b> m&  next  then ;
+
+( For reading back memory from BSL.)
+: hdr>  sum!  b> 80 ?match  b> b> ?match ;
+: chk>  recv checksum c@ =  recv checksum 1+ c@ = and  if ^ then
+        error" bad checksum received" ;
+
+: ?ack  recv  90 ?match ;
+: sync  80 send  ?ack ;
 
 : >length   dup >b  >b ;  ( Send length twice! Genius!)
 
-( Protocol commands.)
-: rxpass  10 <bsl  24 >length  0 >w  0 >w  20 for  0ff >b  next  bsl> ;
-: txdata  ( addr)
-          14 <bsl  04 >length  >w  10 >w  bsl> ;
+: <bsl  ( length cmd)  sync  sum!  80 >b  >b  4 + >length ;
+: bsl>  checksum    c@ invert send
+        checksum 1+ c@ invert send ;
+
+( Protocol commands. See Table 2-1, page 11, in SLAU319.
+
+  Cmd   Command name    Direction
+  ===   =============   ==========
+   10   RX password     host -> BSL
+   12   RX data block   host -> BSL
+   14   TX data block   BSL -> host
+   18   Mass erase      n/a
+)
+
+: unlock              20 10 <bsl  0 >w  0 >w  20 for  0ff >b  next  bsl> ?ack ;
+: txbuf  ( buf a u)  dup 12 <bsl  swap >w  dup >w  >buf  bsl>  ?ack ;
+: rxbuf  ( buf a u)    0 14 <bsl  swap >w  dup >w        bsl>  hdr>  buf>  chk> ;
+: mass-erase           0 18 <bsl  0 >w  06 >b  0a5 >b    bsl>  ?ack ;
 
 decimal
-
-: bsl  ( start things going)  9600 bps  even-parity ;
+: bsl  ( start things going)  9600 bps  even-parity  unlock ;
