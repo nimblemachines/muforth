@@ -87,7 +87,7 @@ ldflags=""
 # But default to whatever Darwin wants to build.
 if [ "$os" = "Darwin" ]; then
     archobjs="file.o main.o time.o tty.o usb-darwin.o"
-    cflags="-mdynamic-no-pic -DHAS_TIME -DHAS_TTY"
+    cflags="-mdynamic-no-pic -DHAS_TIME -DHAS_TTY -DHAS_SERIAL"
     ldflags="-framework CoreFoundation -framework IOKit"
 fi
 if [ "$os" = "Linux" ]; then
