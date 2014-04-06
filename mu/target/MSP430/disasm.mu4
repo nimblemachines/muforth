@@ -1,0 +1,201 @@
+( This file is part of muFORTH: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2014 David Frech. All rights reserved, and all wrongs
+  reversed. (See the file COPYRIGHT for details.)
+
+loading MSP430 disassembler
+
+( Disassembler for MSP430 CPU instructions. There is _no_ support for CPUX
+  instructions! They will disassemble as _undefined_.)
+
+hex
+
+( Words to compile the instruction table.
+  ..  acts like 'then'
+  match and exact compile a test and a zbranch, followed by code to print
+  the opcode name)
+
+: (match)   ( op mask match - op f)  push  over and  pop = ;
+: (exact)   ( op      match - op f)        over          = ;
+
+( In the disassembler, use .op to print the following opcode name.)
+: (.op)  pop @+ push  ( fetch following cfa)  >name type ;
+
+compiler
+: ..   compile ^  \ then ;
+: .op   compile (.op)  .assembler. \chain ;
+: match  ( - src)  compile (match)  \ if  \ .op ;
+: exact  ( - src)  compile (exact)  \ if  \ .op ;
+forth
+
+( Sign-extend 16-bit word to host number)
+: sext  ( w - n)   dup 8000 and if -1_0000 + then ;
+
+( Standard ways of printing different "types".)
+: .udec   radix preserve  decimal  (u.) type ;
+: .hex    radix preserve  hex       (.) type ;
+
+: .r  ( reg)
+   dup  0= if  drop ." pc" ^  then
+   dup 1 = if  drop ." sp" ^  then
+   dup 2 = if  drop ." sr" ^  then
+   ." r"  .udec ;
+
+: .o  ( off)  sext  .hex ;
+: .i  ( imm)  ." #"  .o ;
+
+assembler
+: *unimplemented* ;  ( so we can print the name ;-)
+forth
+
+( Remember, 2op instructions have this form:
+  oooo_ssss_DbSS_dddd   o=op, s=srcreg, d=destreg, S=srcmode, D=destmode
+
+  We convert to a "canonical" ea with the form:
+  0000_0000_00RR_rrrr   r=reg, R=mode)
+
+: src>ea   ( op - ea)
+   dup 0f00 and 8 >>  swap  30 and        or ;
+
+: dest>ea  ( op - ea)
+   dup   0f and       swap  80 and  3 >>  or ;
+
+: .pcrel      cell*  .o  ." (pc)" ; ( XXX show dest?)
+: .absolute   cell*  ." &" .hcell ;
+: .reg       ( ea)  ea>reg        .r ;
+: .indirect  ( ea)  ea>reg  ." (" .r ." )" ;
+: .indexed   ( ea)  cell* .o  .indirect ;
+: .postinc   ( ea)  .indirect  ." +" ;
+
+: .eadest  ( ea)
+   dup 10 = if  drop  .pcrel     ^  then
+   dup 12 = if  drop  .absolute  ^  then
+   dup  4 >> jump  .reg  .indexed  .indirect  .postinc ;
+
+( XXX should be some kind of table?)
+: .easrc   ( ea)
+   dup 30 = if  drop  cell* .i  ^  then
+   dup 22 = if  drop      4 .i  ^  then
+   dup 32 = if  drop      8 .i  ^  then
+   dup 03 = if  drop      0 .i  ^  then
+   dup 13 = if  drop      1 .i  ^  then
+   dup 23 = if  drop      2 .i  ^  then
+   dup 33 = if  drop  0ffff .i  ^  then
+   .eadest ;
+
+( 1ops have byte suffix already.)
+: .1op  ( op - op)  space  dup ea>rm  .easrc ;
+
+( 2ops need to add byte suffix.)
+: .byte  ( op - op)  dup 40 and if ." b" then ;
+: .2op  ( op - op)
+   .byte space  dup src>ea .easrc  space  dup dest>ea  .eadest ;
+
+: >jmpdest  ( op - dest)
+   3ff and  dup 200 and if  -400 +  then  2*  p @  2 - + ;
+
+: .jmp  ( op - op)  space  dup >jmpdest  .hcell ;
+
+: shred  ( op - op)
+( All the instructions!)
+
+   ff80 1000 match ror    .1op
+.. ff80 1040 match rorb   .1op
+.. ff80 1080 match swpb   .1op
+.. ff80 1100 match asr    .1op
+.. ff80 1140 match asrb   .1op
+.. ff80 1180 match sxt    .1op
+.. ff80 1200 match push   .1op
+.. ff80 1240 match pushb  .1op
+.. ff80 1280 match call   .1op
+.. ff80 1300 match reti   .1op
+
+.. fc00 2000 match jnz  .jmp
+.. fc00 2400 match jz   .jmp
+.. fc00 2800 match jnc  .jmp
+.. fc00 2c00 match jc   .jmp
+
+.. fc00 3000 match jn   .jmp
+.. fc00 3400 match jge  .jmp
+.. fc00 3800 match jl   .jmp
+.. fc00 3c00 match jmp  .jmp
+
+.. f000 4000 match mov   .2op
+.. f000 5000 match add   .2op
+.. f000 6000 match addc  .2op
+.. f000 7000 match subc  .2op
+
+.. f000 8000 match sub   .2op
+.. f000 9000 match cmp   .2op
+.. f000 a000 match dadd  .2op
+.. f000 b000 match bit   .2op
+
+.. f000 c000 match bic   .2op
+.. f000 d000 match or    .2op
+.. f000 e000 match xor   .2op
+.. f000 f000 match and   .2op
+
+.ifdef syn-instrs
+( XXX add these too?)
+: clr   asm{   0 #  \f swap  mov   } ;
+: clrb  asm{   0 #  \f swap  movb  } ;
+: inv   asm{  -1 #  \f swap  xor  } ;  ( com?)
+: invb  asm{  -1 #  \f swap  xorb } ;
+: pop   asm{  sp )+  \f swap  mov  } ;
+: popb  asm{  sp )+  \f swap  movb } ;  ( SP increments by 2!!)
+: ret   asm{  pc pop  } ; ( !!)
+: nop   asm{  0 # r3 mov  } ;
+: setc  asm{  1 # sr or  } ;
+: setz  asm{  2 # sr or  } ;
+: setn  asm{  4 # sr or  } ;
+: clrc  asm{  1 # sr bic  } ;
+: clrz  asm{  2 # sr bic  } ;
+: clrn  asm{  4 # sr bic  } ;
+.then
+
+.. .op *unimplemented*
+
+( That's all folks!)
+;
+
+( Support for interactive disassembly.)
+: dis+  ( a - a' 0)  drop  p @  0 advance  0 ;
+: dis-  ( a - a' 0)            -2 advance  0 ;  ( back up one instruction)
+
+( The workhorse.)
+: 1dis  ( a)
+   dup .addr  .nesting space
+   p !  cell*  ( op)  dup .hcell_  space
+   shred  drop ;
+
+.ifdef hc08-reference
+
+( HC08 version)
+: b  ( - b)  c* ;   ( XXX these could print as they go...)
+: w  ( - w)  b  8 <<  b + ;
+
+( If there is a pre byte - 9e - shift it up into high byte and add in
+  following byte.)
+
+: op  ( a - op)  p !  b  dup 9e = if  8 <<  b +  then ;
+
+: dispatch  ( a - op)
+   op
+   ( Handle some strange S08 opcodes that don't fit well into the matrix
+     before we dispatch by column.)
+   dup 9ef3 = if  .cphx sp1 ^  then  ( really sp1)
+   dup 9eae = if  .ldhx ix  ^  then
+   dup 9ebe = if  .ldhx >x ix2 ^  then  ( forced to ,x)
+   dup 9ece = if  .ldhx >x ix1 ^  then  ( forced to ,x)
+   dup 9efe = if  .ldhx ix1 ^  then  ( really sp1)
+   dup 9eff = if  .sthx ix1 ^  then  ( really sp1)
+
+   dup col  jump
+   brbit  bit   bcond2  1op    1op  1op  1op  1op
+   inh8   col9  2op_a0  2op    2op  2op  2op  2op  ;
+
+( The workhorse.)
+: 1dis  ( a)
+   dup .addr  .nesting  dispatch  drop ;
+
+.then
