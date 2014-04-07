@@ -85,7 +85,9 @@ forth
    .eadest ;
 
 ( 1ops have byte suffix already.)
-: .1op  ( op - op)  space  dup ea>rm  .easrc ;
+: .1op   ( op - op)  space  dup ea>rm    .easrc ;
+: .dest  ( op - op)  space  dup dest>ea  .eadest ;  ( for synthetic instrs)
+
 
 ( 2ops need to add byte suffix.)
 : .byte  ( op - op)  dup 40 and if ." b" then ;
@@ -100,7 +102,23 @@ forth
 : shred  ( op - op)
 ( All the instructions!)
 
-   ff80 1000 match ror    .1op
+( Match some "synthetic" instructions before we try the core instructions.)
+        4303 exact nop
+..      d312 exact setc
+..      d322 exact setz
+..      d222 exact setn
+..      d232 exact eint
+..      c312 exact clrc
+..      c322 exact clrz
+..      c222 exact clrn
+..      c232 exact dint
+
+.. ff70 4130 match pop   .dest
+.. ff70 4170 match popb  .dest
+
+( These are the real, core instructions.)
+
+.. ff80 1000 match ror    .1op
 .. ff80 1040 match rorb   .1op
 .. ff80 1080 match swpb   .1op
 .. ff80 1100 match asr    .1op
@@ -136,24 +154,6 @@ forth
 .. f000 e000 match xor   .2op
 .. f000 f000 match and   .2op
 
-.ifdef syn-instrs
-( XXX add these too?)
-: clr   asm{   0 #  \f swap  mov   } ;
-: clrb  asm{   0 #  \f swap  movb  } ;
-: inv   asm{  -1 #  \f swap  xor  } ;  ( com?)
-: invb  asm{  -1 #  \f swap  xorb } ;
-: pop   asm{  sp )+  \f swap  mov  } ;
-: popb  asm{  sp )+  \f swap  movb } ;  ( SP increments by 2!!)
-: ret   asm{  pc pop  } ; ( !!)
-: nop   asm{  0 # r3 mov  } ;
-: setc  asm{  1 # sr or  } ;
-: setz  asm{  2 # sr or  } ;
-: setn  asm{  4 # sr or  } ;
-: clrc  asm{  1 # sr bic  } ;
-: clrz  asm{  2 # sr bic  } ;
-: clrn  asm{  4 # sr bic  } ;
-.then
-
 .. .op *unimplemented*
 
 ( That's all folks!)
@@ -168,35 +168,3 @@ forth
    dup .addr  .nesting space
    p !  cell*  ( op)  dup .hcell_  space
    shred  drop ;
-
-.ifdef hc08-reference
-
-( HC08 version)
-: b  ( - b)  c* ;   ( XXX these could print as they go...)
-: w  ( - w)  b  8 <<  b + ;
-
-( If there is a pre byte - 9e - shift it up into high byte and add in
-  following byte.)
-
-: op  ( a - op)  p !  b  dup 9e = if  8 <<  b +  then ;
-
-: dispatch  ( a - op)
-   op
-   ( Handle some strange S08 opcodes that don't fit well into the matrix
-     before we dispatch by column.)
-   dup 9ef3 = if  .cphx sp1 ^  then  ( really sp1)
-   dup 9eae = if  .ldhx ix  ^  then
-   dup 9ebe = if  .ldhx >x ix2 ^  then  ( forced to ,x)
-   dup 9ece = if  .ldhx >x ix1 ^  then  ( forced to ,x)
-   dup 9efe = if  .ldhx ix1 ^  then  ( really sp1)
-   dup 9eff = if  .sthx ix1 ^  then  ( really sp1)
-
-   dup col  jump
-   brbit  bit   bcond2  1op    1op  1op  1op  1op
-   inh8   col9  2op_a0  2op    2op  2op  2op  2op  ;
-
-( The workhorse.)
-: 1dis  ( a)
-   dup .addr  .nesting  dispatch  drop ;
-
-.then
