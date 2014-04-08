@@ -223,6 +223,84 @@ forth
 ( 1800 - 1fff: CPUX extension words)
 
 
+comment
+==========================================================================
+Discursus on condition codes, conditional branches, and control structures
+
+In many traditional computer architectures, the condition codes are in a
+status register, and there are usually four of them: N V C Z. That's
+Negative, oVerflow, Carry, and Zero.
+
+How are these used and what do they mean?
+
+First, let's define how condition code flags represent the results of a
+signed subtract (or compare). If we execute X - Y, where both are _signed_
+values, then the N (negative), V (overflow) and Z (zero) bits are set as
+follows:
+
+Let S = N xor V. Then
+
+  (LT)  X < Y  ==   S
+  (GE)  X >= Y ==  !S
+  (GT)  X > Y  ==  !S and !Z
+               == !(S or   Z)  (deMorgan's law)
+  (LE)  X <= Y ==   S or   Z
+
+I've written on the left the traditional "conditional branch" names for
+each relation.
+
+So, what happens when we subtract or compare _unsigned_ values? Before
+discussing that we have to understand what the carry bit represents.  Since
+the natural way of doing subtraction to _add_ the two's complement of the
+subtrahend - ie:
+
+  X - Y == X + (-Y)
+
+and since two's complement is the one's complement plus one:
+
+  -Y == ~Y + 1
+
+we can write subtract as
+
+  X - Y == X + ~Y + 1
+
+and subtract with a _borrow_ as
+
+  X - Y - 1 == X + ~Y
+
+Note something odd here: the carry in is complemented: we carry in a one
+when there is no borrow and carry in a zero when there _is_ a borrow. So,
+carry = ~borrow. I call this a "natural" borrow.
+
+There are three architectures that I know of that represent borrow this
+way: 6502, MSP430, and ARM. All others use a "synthetic" borrow, where
+carry = borrow. Since the MSP430 is one of the elect few using a "natural"
+borrow, in the following discussion we'll understand C = 0 to mean borrow,
+and C = 1 to mean no borrow.
+
+So let's define how X - Y affects the condition codes, if X and Y are
+_unsigned_.
+
+  (LO)  X < Y   ==   !C
+  (HS)  X >= Y  ==    C
+  (HI)  X > Y   ==    C and !Z
+                == !(!C or   Z)   (deMorgan's law)
+  (LS)  X <= Y  ==   !C or   Z
+
+Again I've written traditional conditional branch names for these
+conditions. LO == lower; HS == higher or same; HI == higher; LS == lower or
+same.
+
+Since MSP430 only implements the jc/jhs and jnc/jlo instructions, we can
+only check for LO or HS. HI and LS can be calculated by swapping the
+operands, and doing an LO or HS, resp.
+
+I define Forth words to represent each condition. Those words actually
+compile the conditional jump opcode, and the following "if" or "until"
+either leaves a pointer to the instruction for later fixup by an else or
+then (if), or resolves the backward branch (until).
+==========================================================================
+
 ( Format III - jumps:
 
   o o o c  c c s d  d d d d  d d d d    o=op, c=cond, s=sign, d=dest offset
@@ -230,26 +308,47 @@ forth
   Offset is a signed _word_ offset.
 )
 
+: fmt3  ( op)  constant  does> @  op, ;
+assembler
+2000 fmt3 0=   ( jnz)
+2400 fmt3 0!=  ( jz)
+2800 fmt3 u>=  ( jnc aka jlo - carry is ~borrow)
+2c00 fmt3 u<   ( jc  aka jhs - ditto)
+
+3000 fmt3 0>=  ( jn  aka 0<)
+3400 fmt3 <    ( jge aka >= signed)
+3800 fmt3 >=   ( jl  aka <  signed)
+3c00 fmt3 never  ( jmp always!)
+forth
+
+( Jump offsets are relative to the _following_ instruction.)
+
 ( Tests to see if a value fits into a field of a certain bit width.)
-: ufits?  ( value bits - f)     u>>        0= ;   ( unsigned)
+-- : ufits?  ( value bits - f)     u>>        0= ;   ( unsigned)
 : sfits?  ( value bits - f)   1- >>  1+  2 u< ;   ( signed)
 
-: ?joff  ( dest - offset)
-   \m here 2 + -  2/  dup #10 sfits? if  [ 1 #10 << 1- ] and  ^ then
-   error" relative jump out of range" ;
+: jump-offset?  ( dest src - masked-offset fits)
+   -  2/  dup  [ 1 #10 << 1- ] and  ( offset masked-offset)
+   swap #10 sfits? ;
 
-: fmt3  constant  does> @  ( dest op)  swap ?joff or  op, ;
+: patch  ( masked-offset src)   2 - tuck  image-@  or  swap image-! ;
 
 assembler
-2000 fmt3 jnz
-2400 fmt3 jz
-2800 fmt3 jnc  ( aka jlo - carry is ~borrow)
-2c00 fmt3 jc   ( aka jhs - ditto)
+( Resolve a relative jump from src to dest.)
+: resolve  ( src dest)
+   over jump-offset? if  swap patch  ^  then
+   error" relative jump out of range" ;
 
-3000 fmt3 jn   ( 0<)
-3400 fmt3 jge  ( >= signed)
-3800 fmt3 jl   ( <  signed)
-3c00 fmt3 jmp
+( Control structure words.)
+: if      (      - src )  \m here ;
+: then    ( src  -     )  \m here   \a resolve ;
+: else    ( src1 - src2)  \a never  \a if  swap  \a then ;
+
+: begin   ( - dest)       \m here ;
+: until   ( dest)         \a if  swap  \a resolve ;
+: again   ( dest)         \a never  \a until ;
+: while   ( dest - src dest)   \a if  swap ;
+: repeat  ( src dest)     \a again  \a then ;
 forth
 
 
