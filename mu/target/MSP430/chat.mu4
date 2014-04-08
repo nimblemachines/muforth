@@ -11,15 +11,21 @@ __meta
 
 ( Taking inspiration from the wildly successful HC08 serial chat protocol.
 
-  Responds to the following commands:
+  Responds to the following commands. NOTE: these are hex values!
 
-  Bye/Idle
-  Run
-  GetSP
-  SetAddr
-  ReadWord
-  ReadWords
-  WriteWord
+00 - 0f  Idle   - these command bytes are ignored
+
+10  SetAddr     - set the memory address pointer
+11  GetSP       - get stack pointer - points to saved regs
+12  ReadWord    - read a word from memory, incr pointer
+13  ReadWords   - read N words, incrementing as we go
+14  WriteWord   - write a word to memory, incr pointer
+15  Run         - pop the registers and save status, and go
+
+16 - ff  Idle   - these command bytes are ignored
+)
+
+( XXX How do we write to the flash?
 
   Not sure yet about these last two... Can we write flash a word at a time?
   Or does that violate the "cumulative charge time" for a block? We may end
@@ -31,55 +37,113 @@ __meta
   FlashStatus
 )
 
+( Register conventions:
+  Use   i as memory pointer
+      cnt as byte count
+        t to pass a parameter around
+        x as scratch)
 
-( HC08 chat2 protocol - minor changes)
+label get-byte
+   begin  01 # IFG2 & bitb  0!= until
+   UCA0RXBUF & t movb  ret  ;c
 
-( Commands:
-  0  Bye        - ignored by chat; force other command loops to return to chat;
-                  can be used as an Idle
-  1  Run        - does an RTI - pops stack frame and runs
-                  when it returns to chat loop, returns flags register
-  2  SetHX      - reads two bytes from SCI, writes them into H & X registers
-  3  GetHX      - writes H then X register to SCI
-  4  HXtoSP     - sets SP from HX -- deprecated, but I'm leaving it in
-  5  SPtoHX     - sets HX from SP
-  6  ReadNext   - reads a byte from memory @ HX, writes it to SCI, inc HX
-  7  WriteNext  - reads a byte from SCI, writes into memory @ HX, inc HX
+label put-byte
+   begin  02 # IFG2 & bitb  0!= until
+   t UCA0TXBUF & movb  ret  ;c
 
- ~~ The following are S08-only commands ~~
+label get-word
+   get-byte c  t x mov
+   get-byte c  t swpb  x t or  ret  ;c
 
-  8  ReadN      - reads a length from SCI, reads that many bytes from
-                  memory, and writes them to SCI [S08 only!]
-  9  FlashNext  - reads a byte from SCI, writes to flash @ HX, inc HX
-                - calls a routine at @ram that host downloads to device
- 10  FlashStatus - returns FSTAT
-                 - need this as a way to "ping" the device for the
-                 - completion of long operations, such as erase
-)
+label put-word
+   put-byte c  t swpb  put-byte j  ;c
 
-( chat3 protocol - minor changes)
+label set-addr
+   get-word c  t i mov  ret  ;c
 
-( Commands:
-  0  Bye        - ignored by chat; force other command loops to return to chat;
-                  can be used as an Idle
-  1  Version    - return chat protocol version. A new command! Heh.
-                - Starting out at 3.
-  2  Run        - does an RTI - pops stack frame and runs
-                  when it returns to chat loop, returns flags register
-  3  GetSP      - sets HX from SP, then returns HX
-  4  GetHX      - writes H then X register to SCI
-  5  SetHX      - reads two bytes from SCI, writes them into H & X registers
-  6  ReadNext   - reads a byte from memory @ HX, writes it to SCI, incrs HX
-  7  WriteNext  - reads a byte from SCI, writes into memory @ HX, incrs HX
+label get-sp
+   sp t mov  2 # t add  put-word j  ;c
 
- ~~ The following are S08-only commands ~~
+label read-word
+   i )+ t mov  put-word j  ;c
 
-  8  ReadN      - reads a count from SCI, reads that many bytes from
-                  memory, and writes them to SCI
-  9  FlashNext  - reads a byte from SCI, writes to flash @ HX, incrs HX
-                - calls a routine at @ram that host downloads to device
- 10  FlashStatus - returns FSTAT
-                 - need this as a way to "ping" the device for the
-                 - completion of long operations, such as erase
-)
+label read-words
+   get-byte c  t cnt mov
+   begin  read-word c  1 # cnt sub  0= until  ret  ;c
 
+label write-word
+   get-word c  t i ) mov  2 # i add  ret  ;c
+
+label run
+   2 # sp add  ( skip return address to chat-entry)
+     i pop  r pop  t pop
+   cnt pop  x pop  y pop
+   reti  ;c
+
+( Dispatch.)
+label process
+   get-byte c  ( cmd)
+
+   10 # t sub  set-addr      0!= until
+   01 # t sub  get-sp        0!= until
+   01 # t sub  read-word     0!= until
+   01 # t sub  read-words    0!= until
+   01 # t sub  write-word    0!= until
+   01 # t sub  run           0!= until
+
+.ifdef bootloader
+
+   ( Support for self-programming.)
+   ( XXX this is crap from AVR iic code)
+   20 xl cpi  0= if  write-word         rjmp  then
+   21 xl cpi  0= if  erase-page         rjmp  then
+   22 xl cpi  0= if  program-page       rjmp  then
+   23 xl cpi  0= if  clear-page-buffer  rjmp  then
+   24 xl cpi  0= if  app-start          rjmp  then
+   25 xl cpi  0= if  app-stop           rjmp  then
+
+.then
+
+   ( unknown... restart!)
+   ret  ;c
+
+( Push registers and start conversing with host.)
+label chat-entry
+   ( call has already pushed PC)
+   sr push
+   y push  x push  cnt push
+   t push  r push    i push
+   put-byte c
+   begin  process c  again  ;c
+
+label interact
+   begin  chat-entry c  again  ;c
+
+Vreset handler
+   -- set SP to end of RAM
+   @ram #ram +  # sp mov
+
+   -- disable watchdog timer
+   5a80 # WDTCTL & mov
+
+   -- Set clock to factory-calibrated 16 MHz
+   -- See G2553 datasheet, p15
+   TAG_DCO_30 CAL_BC1_16MHZ + & BCSCTL1 & movb
+   TAG_DCO_30 CAL_DCO_16MHZ + & DCOCTL & movb
+
+   -- Configure UART for 115,200 bps, 8 bits, no parity
+   01 # UCA0CTL1 & orb           -- hold UART in reset while configuring
+   UCA0CTL0 & clrb               -- reset to defaults: 8 bits, no parity, 1 stop
+   UCA0BR1 & clrb                -- set baud rate divisor
+   8 # UCA0BR0 & movb
+   %1011_0001 # UCA0MCTL & movb  -- 16x oversample; set modulator for 115,200
+   01 # UCA0CTL1 & bicb          -- bring UART out of reset
+
+   begin  interact c  again  ;c
+
+( Set BSL flag to _not_ mass erase if wrong password entered during BSL
+  "hello" sequence.)
+
+here
+Vbslkey org  0 ,
+org
