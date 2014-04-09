@@ -54,6 +54,7 @@ variable checkwhich
    14   TX data block   BSL -> host  Yes
    16   Erase segment   n/a          Yes
    18   Mass erase      n/a          No
+   1a   Load PC         n/a          Yes
 )
 
 ( NOTE: Until further notice, we should not use mass-erase. As far as I
@@ -71,10 +72,45 @@ variable checkwhich
 : txbuf  ( buf a u)  dup 12 <bsl  swap >w  dup >w  >buf  bsl>  ?ack ;
 : rxbuf  ( buf a u)    0 14 <bsl  swap >w  dup >w        bsl>  hdr>  buf>  chk> ;
 -- : mass-erase           0 18 <bsl  0 >w  06 >b  0a5 >b    bsl>  ?ack ;
+: run    ( pc)         0 1a <bsl       >w    0 >w        bsl>  ?ack ;
 
-decimal
-variable chatting
-: +chat  chatting on ;
+comment debug-commands
 
-: t.read  rxbuf ;
-: bsl  ( start things going)  9600 bps  even-parity  unlock  +chat ;
+Both BSL and chat should define the following:
+
+  t.chat   ( )          -- say hello
+  t.read   ( buf a u)   -- read bytes from target into buf
+  t.write  ( buf a u)   -- write bytes from buf into target
+  t.flash  ( buf a u)   -- flash bytes from buf into target
+  t.go     ( pc)        -- execute code on target
+
+debug-commands
+
+( Let's make sure we're not writing the flash inadvertently - until we know
+  exactly what we're doing.)
+
+: in-ram?  ( a - f)   @ram  dup #ram +  within ;
+: txbuf-checked   ( buf a u)
+   over in-ram? if  2dup + in-ram?  if  txbuf  ^  then  then
+   cr  ." write to "  over u.  dup u.  ." blocked"  drop 2drop ;
+
+( Do an operation in 64 byte chunks. This is compatible with the BSL
+  protocol - which has a max payload of 250 bytes - and also with the
+  process of writing the flash, which can be done by byte, word, or by
+  64-byte block.)
+
+variable 'doit  ( buf a u)
+: chunk  ( buf a u - buf+u a+u)  push
+   cr  ." chunk "  over u.  dup u.  r@ u.
+   2dup r@  'doit @execute  pop dup v+ ;
+
+: chunked  ( buf a u 'code - buf+u a+u)  'doit !
+   40 u/mod  ( r q)  swap push  ?for  40 chunk  next  then
+                         pop =if  ( rem) chunk  ^  then  drop ;
+
+: t.chat  ( start things going)  #9600 bps  even-parity  unlock ;
+
+: t.read    ( buf a u)  ['] rxbuf          chunked  2drop ;
+: t.write   ( buf a u)  ['] txbuf-checked  chunked  2drop ;
+
+: t.go      ( pc)  run ;
