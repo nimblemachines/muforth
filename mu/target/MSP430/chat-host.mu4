@@ -1,0 +1,63 @@
+( This file is part of muFORTH: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2014 David Frech. All rights reserved, and all wrongs
+  reversed. (See the file COPYRIGHT for details.)
+
+loading MSP430 serial chat protocol (host)
+
+hex
+
+( Taking inspiration from the wildly successful HC08 serial chat protocol.
+
+  Responds to the following commands. NOTE: these are hex values!
+
+00 - 0f  Idle   - these command bytes are ignored
+
+10  GetVersion  - get the chat protocol version
+11  SetAddr     - set the memory address pointer
+12  GetSP       - get stack pointer - points to saved regs
+13  ReadWord    - read a word from memory, incr pointer
+14  ReadWords   - read N words, incrementing as we go
+15  WriteWord   - write a word to memory, incr pointer
+16  Run         - set the pc in the saved frame, pop the registers and
+                  saved status, and go
+
+17 - ff  Idle   - these command bytes are ignored
+)
+
+( Spying on the protocol.)
+variable spy  spy off
+: send          spy @ if ." >"  dup .h8_ then  _send ;
+: recv   _recv  spy @ if ." <"  dup .h8_ then ;
+
+: >b   send ;
+: b>   recv ;
+: >w          >hilo  >b >b ;
+: w>   b> b>  lohi> ;
+
+: c.Idle                  0 >b     ;
+: c.GetVersion  ( - n)   10 >b  w> ;
+: c.SetAddr     ( a)     11 >b  >w ;
+: c.GetSP       ( - sp)  12 >b  w> ;
+: c.ReadWord    ( - w)   13 >b  w> ;
+: c.ReadWords   ( n)     14 >b  >b ;  ( Still have to read the streaming bytes)
+: c.WriteWord   ( w)     15 >b  >w ;
+: c.Run         ( pc)    16 >b  >w ;
+
+: resync  flush  c.Idle  c.Idle ;
+
+: c.setup-chunk  ( buf a u - #words)
+   resync  swap c.SetAddr  swap m !  1+ 2/ ( words) ;
+
+( Hook into interact code.)
+: t.chat
+   tty-target target-raw
+   #115200 bps  resync  drain ;
+
+: t.read    ( buf a u)
+   c.setup-chunk  dup c.ReadWords  ?for  b> m*  b> m*  next  then ;
+
+: t.write   ( buf a u)
+   c.setup-chunk       ?for  m* m* lohi>  c.WriteWord  next  then ;
+
+: t.go  ( pc)  c.Run ;
