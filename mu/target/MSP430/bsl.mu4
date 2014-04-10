@@ -7,11 +7,6 @@ loading MSP430 BSL support
 
 hex
 
-( Spying on the protocol.)
-variable spy  spy off
-: send          spy @ if ." >"  dup .h8_ then  _send ;
-: recv   _recv  spy @ if ." <"  dup .h8_ then ;
-
 variable checksum
 variable checkwhich
 : sum  ( b)  checkwhich @  checksum +  dup c@  rot xor  swap c!
@@ -68,30 +63,18 @@ variable checkwhich
   Since the BSL apparently _clears_ LOCKA, using 06 and doing a mass erase
   will erase the info memory.)
 
-: bsl.unlock              20 10 <bsl  0 >w  0 >w  20 for  0ff >b  next  bsl> ?ack ;
-: bsl.txbuf  ( buf a u)  dup 12 <bsl  swap >w  dup >w  >buf  bsl>  ?ack ;
-: bsl.rxbuf  ( buf a u)    0 14 <bsl  swap >w  dup >w        bsl>  hdr>  buf>  chk> ;
--- : mass-erase           0 18 <bsl  0 >w  06 >b  0a5 >b    bsl>  ?ack ;
-: bsl.run    ( pc)         0 1a <bsl       >w    0 >w        bsl>  ?ack ;
-
-comment debug-commands
-
-Both BSL and chat should define the following:
-
-  t.chat   ( )          -- say hello
-  t.read   ( buf a u)   -- read bytes from target into buf
-  t.write  ( buf a u)   -- write bytes from buf into target
-  t.flash  ( buf a u)   -- flash bytes from buf into target
-  t.go     ( pc)        -- execute code on target
-
-debug-commands
+: bsl-unlock              20 10 <bsl  0 >w  0 >w  20 for  0ff >b  next  bsl> ?ack ;
+: bsl-txbuf  ( buf a u)  dup 12 <bsl  swap >w  dup >w  >buf  bsl>  ?ack ;
+: bsl-rxbuf  ( buf a u)    0 14 <bsl  swap >w  dup >w        bsl>  hdr>  buf>  chk> ;
+-- : mass-erase               0 18 <bsl  0 >w  06 >b  0a5 >b    bsl>  ?ack ;
+: bsl-loadpc  ( pc)        0 1a <bsl       >w    0 >w        bsl>  ?ack ;
 
 ( Let's make sure we're not writing the flash inadvertently - until we know
   exactly what we're doing.)
 
 : in-ram?  ( a - f)   @ram  dup #ram +  within ;
-: bsl.txbuf-checked   ( buf a u)
-   over in-ram? if  2dup + in-ram?  if  bsl.txbuf  ^  then  then
+: bsl-txbuf-checked   ( buf a u)
+   over in-ram? if  2dup + in-ram?  if  bsl-txbuf  ^  then  then
    cr  ." write to "  over u.  dup u.  ." blocked"  drop 2drop ;
 
 ( Do an operation in 64 byte chunks. This is compatible with the BSL
@@ -111,9 +94,32 @@ variable blow-chunks
    40 u/mod  ( r q)  swap push  ?for  40 chunk  next  then
                          pop =if  ( rem) chunk  ^  then  drop ;
 
-: t.chat  ( start things going)  #9600 bps  even-parity  bsl.unlock ;
 
-: t.read    ( buf a u)  ['] bsl.rxbuf          chunked  2drop ;
-: t.write   ( buf a u)  ['] bsl.txbuf-checked  chunked  2drop ;
+( Naming convention note: All the following b.Foobar commands are the BSL
+  _implementations_ of the chat command interface.)
 
-: t.go      ( pc)  bsl.run ;
+: b.Hello  ( start things going)  #9600 bps  even-parity  bsl-unlock ;
+
+: b.ReadWord  ( a - w)                 pad swap \m cell  bsl-rxbuf  pad leh@ ;
+: b.WriteWord ( w a)    push  pad leh!  pad pop \m cell  bsl-txbuf-checked ;
+
+: b.ReadChunk    ( buf a u)  ['] bsl-rxbuf          chunked  2drop ;
+: b.WriteChunk   ( buf a u)  ['] bsl-txbuf-checked  chunked  2drop ;
+
+: b.FlashChunk  chat-fail ;
+
+( The only register that b.SetRegs actually sets or gets.)
+variable bsl-pc   "0dead bsl-pc !
+
+( The order, low to high: flashcmd i r t cnt x y status pc)
+: b.GetRegs  ( buf - sp)
+   m !  .PC \m cell/ for  "0dead >hilo m& m&  next
+   bsl-pc @ >hilo m& m&  "0dead ;
+
+: b.SetRegs  ( buf)   .PC +  leh@  bsl-pc ! ;
+
+: b.Run  bsl-pc @  bsl-loadpc ;
+
+: bsl
+   chat-via  b.Hello  b.GetRegs  b.SetRegs  b.ReadWord  b.WriteWord
+             b.ReadChunk  b.WriteChunk  b.FlashChunk  b.Run  chat-fail ;

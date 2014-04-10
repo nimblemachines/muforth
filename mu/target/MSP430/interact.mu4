@@ -7,69 +7,46 @@ loading MSP430 interaction
 
 variable chatting
 
-( XXX Don't define chat words unless there is support in a connected
-  device.)
+variable chat-vector
+: chat-cmd   ( index)  cells  constant
+             does> @  chat-vector @ =if  +  @execute  ^  then  2drop
+                error" Not connected to a chat-capable target" ;
 
-.ifdef t.chat
+: chat-via   pop  chat-vector !  chatting off ;
+: chat-fail   error" Chat command not implemented" ;
 
-: +chat  chatting on ;
+0 chat-cmd t.Hello
+1 chat-cmd t.GetRegs      ( buf - sp)
+2 chat-cmd t.SetRegs      ( buf)
+3 chat-cmd t.ReadWord     ( a - w)
+4 chat-cmd t.WriteWord    ( a w)
+5 chat-cmd t.ReadChunk    ( buf a u)  ( XXX order??)
+6 chat-cmd t.WriteChunk   ( buf a u)
+7 chat-cmd t.FlashChunk   ( buf a u cmd)
+8 chat-cmd t.Run
+9 chat-cmd t.RunWait
+
 
 : >chat
-   ['] t.read  is |read    ( read from connected target)
-   ['] leh@    is |cell@
-                2 |cell !  ( size of cell)
-                2 |addr !  ( size of addr) ;
+   ['] t.ReadChunk  is |read    ( read from connected target)
+   ['] leh@         is |cell@
+                     2 |cell !  ( size of cell)
+                     2 |addr !  ( size of addr) ;
 
 : copy-chunk  ( a u)
-   over image+ -rot  t.write ;
+   over image+ -rot  t.WriteChunk ;
 
 : copy-ram
    h preserve
    ram  region  ( a u)  copy-chunk ;
 
-: chat  +chat  >chat  t.chat  copy-ram ;
 
-.else  ( NO CONNECTED CHAT TARGET!)
-
-: chat  error" No connected chat-capable target." ;
-: >chat ;
-
-.then
-
+( For reading and writing target cells.)
+: t@  ( addr - h)  t.ReadWord ;
+: t!  ( h addr)    t.WriteWord ;
 
 
 .ifdef avr-bogus
-
-( For reading and writing target cells.)
-: t@  ( addr - h)                  pad swap 2 zread  pad leh@ ;
-: t!  ( h addr)    swap  pad leh!  pad swap 2 zwrite ;
-
-( chat-entry has pushed an "exception frame" onto the stack.
-
-  The order, low to high: rah ral pad sreg tl th xl xh yl yh zl zh pch pcl
-                  offset:  <skip>   0    1  2  3  4  5  6  7  8  9  10  11
-
-  rah/ral is the return address to the "process" routine.
-  NOTE: PC is pushed big-endian!
-)
-
-variable chat-frame  ( loaded from rp0)
-: treg  ( offset - taddr)  constant  does> @  chat-frame @  + ;
-
-( There is a byte of padding below the SREG to word-align frame.)
- 1 treg .SREG
- 2 treg .T
- 4 treg .X
- 6 treg .Y
- 8 treg .Z
-10 treg .PC
-
-( Target has cell size of 16 bits.)
-meta
-: cell   2  ;
-: cell/  2/ ;
-: cells  2* ;
-: cell+  \m cell + ;
 
 : rp0  \eq SPL  t@  1+ ;             ( bottom of target's R stack)
 : sp0  chat-frame @  -2 and  64 - ;  ( bottom of target's D stack;
@@ -88,20 +65,75 @@ meta
 : .  . ;
 : .s  .s ;
 
-forth
-: 2sp  space space ;
-: .b8  binary  <#  # # # #  char _ hold  # # # #  #> type  2sp ;
-: .w   ( addr)  t@  .hcell  2sp ;
+.then
 
--- 005f reg  SREG     | I       T       H       S       V       N       Z       C
+
+( chat-entry has pushed an "exception frame" onto the stack.
+
+  The order, low to high: flashcmd i r t cnt x y status pc)
+
+: reg  ( index)  \m cells  constant ;
+
+00 reg .FCMD     -- flash command
+01 reg .I
+02 reg .R
+03 reg .T
+04 reg .CNT
+05 reg .X
+06 reg .Y
+07 reg .SR       -- status register
+08 reg .PC
+09 reg .LAST
+
+.LAST buffer chat-frame  ( local copy of target's stack frame)
+    variable chat-sp     ( current value of target's SP)
+
+: get-regs   chat-frame t.GetRegs  chat-sp ! ;
+: set-regs   chat-frame t.SetRegs ;
+
+( These index into our local chat-frame, _not_ into target memory!)
+: reg@   ( offset - reg)   chat-frame +  leh@ ;
+: reg!   ( reg offset)     chat-frame +  leh! ;
+
+: 2sp  space space ;
+: .b9  binary  <#  # # # #  # # # #  #  #> type  2sp ;
+: .r   ( offset)  reg@  .hcell  2sp ;
 
 : .regs
    radix preserve
-   cr  ." ITHS_VNZC     T     X     Y     Z    SP    PC"
-       (  1000_0011  1234  3456  8738  abab  3a00  3b66 )
-   cr  .SREG t@ .b8  .T .w  .X .w  .Y .w  .Z .w
-       chat-frame @ .hcell 2sp  \m pc@ .hcell 2sp ;
+   cr  ." V----INZC     I     R     T   CNT     X     Y    SP    PC"
+       (  000100011  0000  0000  0000  0000  0000  0000  0000  0000)
+   cr  .SR reg@ .b9 .I .r .R .r .T .r
+                                    .CNT .r .X .r .Y .r
+                                       chat-sp @ .hcell 2sp  .PC .r ;
 
+: hi  chatting on  >chat  t.Hello  copy-ram  get-regs  .regs ;
+
+
+( NOTE: All the following d.Foobar commands are the dummy
+  _implementations_ of the chat command interface.)
+
+: d.Hello  ." Connecting to dummy chat target." ;
+
+: d.ReadChunk    ( buf a u)
+   cr  ." Dummy read chunk "  rot u.  swap u.  u.  cr ;
+
+: d.WriteChunk   ( buf a u)
+   cr  ." Dummy write chunk "  rot u.  swap u.  u.  cr ;
+
+( The order, low to high: flashcmd i r t cnt x y status pc)
+( GetRegs sets each register to its index in the frame.)
+: d.GetRegs  ( buf - sp)
+   m !  0  .LAST \m cell/ for  dup >hilo m& m&  \m cell+  next
+   drop  "0dead ;
+
+: dummy                        ( SetRegs  ReadWord  WriteWord)
+   chat-via  d.Hello  d.GetRegs     drop     nope   2drop
+                                     ( FlashChunk    Run      RunWait)
+             d.ReadChunk  d.WriteChunk  chat-fail  chat-fail  chat-fail  ;
+
+
+.ifdef avr-bogus
 
 ( The semantics of moving cells to and from the target stack are a bit
   complicated.
@@ -136,8 +168,6 @@ forth
 
 : get-rp   \m rp0  \m cell+ ( skip ret addr)  chat-frame ! ;
 
-: chat  +chat  >chat  avrchat.Hello  get-rp  .regs ;
-: copy-ram ;  ( XXX no-op)
 : runwait  zgo  get-rp  .regs ;
 
 ( XXX Should we try to automatically connect to target?)
@@ -225,4 +255,4 @@ host-seekeys 'seekeys !  ( back to host bindings)
 : dis  ( a - a')   disasming   inspect ;
 
 ( Execute ram-resident code.)
-: reset   \eq Vreset  image-@  t.go ;
+: reset   \eq Vreset  image-@  .PC reg!  set-regs  t.Run ;
