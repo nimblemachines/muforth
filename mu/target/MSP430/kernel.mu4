@@ -1,0 +1,51 @@
+( This file is part of muFORTH: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2014 David Frech. All rights reserved, and all wrongs
+  reversed. (See the file COPYRIGHT for details.)
+
+loading MSP430 Forth kernel
+
+( Yes, you guessed it: The guts of Forth for the MSP430! This chip is
+  awesomely well-suited to running Forth, and in fact, it will even run an
+  ITC - indirect-threaded code - Forth with almost no overhead.
+
+  Since this is the purest and most elegant expression of Forth, it's
+  pretty great that it will fit nicely onto the chip. With 16-bit addresses
+  and ITC, a ton of code will fit into the MSP430G2553's 16 KiB of flash.)
+
+assembler
+: next   asm{  i )+ w mov  w ) pc mov  } ;
+forth
+
+__meta
+hex
+
+code lit    t push  i )+ t mov  next  ;c
+
+code   branch   begin  i )+ i mov  next  ;c
+code =0branch   t x mov  begin  \f swap  x tst  0!= until  2 # i add  next  ;c
+code  0branch   t x mov  t pop  again  ;c
+
+code +    x pop      x t add           next  ;c
+code -    x pop      t x sub  x t mov  next  ;c
+
+code and  x pop      x t and  next  ;c
+code or   x pop      x t bis  next  ;c
+code xor  x pop      x t xor  next  ;c
+
+code swap   ( x t - t x)  x pop  t push  x t mov  next  ;c
+code nip    ( x t - t)                 2 # s add  next  ;c
+code drop   ( x t - x)    t pop                   next  ;c
+code over   ( x t - x t x)  t push  2 s +) t mov  next  ;c
+
+code tuck   (   x t - t x t)  x pop         t push  x push           next  ;c
+code rot    ( y x t - x t y)  x pop  y pop  x push  t push  y t mov  next  ;c
+
+( These are a bit tricky, esp since borrow is ~carry. The idea is: get the
+  inverse of the flag value we want into carry, then subtract top from
+  itself - yielding zero - minus borrow, or -1 for true, 0 for false. It's
+  efficient but non-obvious.)
+
+code 0=               1 # t sub  ( ~Z -> C)  begin  begin  t t subc  next  ;c
+code 0<   8000 # t xor  t t add  ( ~N -> C)  again  ;c
+code u<      x pop  t x cmp  ( ~uless -> C)  again  ;c
