@@ -44,259 +44,6 @@ assembler
 10 constant y   ( scratch y)
 forth
 
-
-.ifdef avr-bogus
-
--- ------------------------------------------------------------------------
--- Peephole optimiser tags
--- ------------------------------------------------------------------------
-
-( Tags tell the meta-compiler what kind of special code, if any, was just
-  compiled. Currently used to identify literals and calls, for simple
-  peephole optimisations.
-
-  We store the tag byte at \m here. No tag is represented by an "empty"
-  image byte - 0ff - _not_ by a tag of zero.)
-
-( Tags used:)
-1 constant $rcall  ( $ suggests price tag ;-)
-2 constant $call
-3 constant $lit
-
-: tag!  ( tag-byte)  \m here image-c! ;
-: tag@               \m here image-c@ ;
-: notag  "0ff tag! ;
-
-( We also want to cleanly uncompile code, so instead of simply backing up h
-  and leaving the cruft - instructions and tags - behind, let's back up and
-  "uncompile" the code, leaving behind untagged code.)
-
-: uncompile  ( #words)
-   notag
-   \m here  swap  for  -2 +a  -1 ( 0ffff) over  image-!  next  org ;
-
--- ------------------------------------------------------------------------
--- Macros defining register convention and stack operations
--- ------------------------------------------------------------------------
-
-assembler
-
-( So, let's get to work, defining some macros that will be useful either in
-  programming in assembler but in a forth "style", or in writing an actual
-  forth kernel.)
-
-( 0 and 1 used by mul and spm instructions)
- 2 constant g0  ( general purpose scratch - low)
- 3 constant g1
- 4 constant g2
- 5 constant g3
-( XXX do we need more than this?
-( 6-13 free)
-14 constant u   ( user pointer low, or the pair)
-14 constant ul  ( user pointer low)
-15 constant uh  ( user pointer high)
-16 constant h0  ( general purpose scratch - high)
-17 constant h1
-18 constant h2
-19 constant h3
-( 20 free)
-( 21 free)
-22 constant k   ( literal - immediate - low, or the pair)
-22 constant kl  ( literal - immediate - low)
-23 constant kh  ( literal high)
-24 constant t   ( top low, or the pair)
-24 constant tl  ( top low)
-25 constant th  ( top high)
-26 constant x
-26 constant xl
-27 constant xh
-28 dup constant y    constant s   ( data stack pointer low, or the pair)
-28 dup constant yl   constant sl  ( data stack pointer low)
-29 dup constant yh   constant sh  ( data stack pointer high)
-30 constant z
-30 constant zl
-31 constant zh
-forth
-
-( Basic stack macros.)
-: dpush  ( reg)  asm{  -y  \f swap  st } ;
-: dpop   ( reg)  asm{  y+  \f swap  ld } ;
-
-( Macros that make sense for Forth:)
-: <dup>   asm{  t dpush } ;  ( push top onto D stack)
-: <drop>  asm{  t dpop } ;   ( pop top of D stack into top)
-
-
--- ------------------------------------------------------------------------
--- Smart jump and call, tail call elimination
--- ------------------------------------------------------------------------
-
-assembler
-: c  ( dest)  ( smart call - compile rcall if possible, otherwise call)
-   kshort? if  \a rcall  $rcall tag! ^  then
-                \a call   $call tag! ;
-
-: j  ( dest)  ( smart jmp - compile rjmp if possible, otherwise jmp)
-   kshort? if  \a rjmp ^  then  \a jmp ;
-
-forth
-
-: replace  ( addr toggle)
-   over  image-@  xor  swap  image-! ;
-
-: untag  ( oldtag - f)  drop  notag  -1 ;
-
-( If last code compiled was a call, rewrite it to a jump and return true;
-  else return false.)
-
-: tail?  ( - f)
-   tag@ dup  $rcall = if  ( short call)
-   \m here 2 -  "1000 replace  untag  ^  then
-        dup  $call = if   ( long call)
-   \m here 4 -  "0002 replace  untag  ^  then
-   drop  0 ;
-
-meta-compiler
-: ^   tail? if ^ then  asm{  ret } ;
-
-meta
-: compile,  ( target-cfa)  \a c  ( compile call) ;
-
-forth
-
--- ------------------------------------------------------------------------
--- Literal loading.
--- ------------------------------------------------------------------------
-
-: load-literal  ( n)
-   >hilo  asm{  kl ldi  kh ldi } ;
-
-( With a literal in kl and kh push it onto the D stack.)
-( XXX push-literal should be a routine!)
-: push-literal   asm{  t dpushw  k t movw } ;
-
-( something like this:
-variable push-lit
-: push-literal   push-lit @  asm{  c } ;
-)
-
-( XXX when push-literal becomes a call, this will be short to uncompile,
-  but could still be 4 bytes - if call r.t. rcall.)
-
-: unpush-literal  3 uncompile ;  ( back up over 2 pushes and movw)
-
-meta
-: literal  ( n)  load-literal  push-literal  $lit tag! ;
-
-forth
-
--- ------------------------------------------------------------------------
--- Support for special literal versions of binops, relops, and memory ops
--- ------------------------------------------------------------------------
-
-( Pop top of D stack into kl and kh just as if they were loaded by
-  load-literal. This is used to make versions of binary operations that
-  work either with true literals, or with a value sitting on the D stack.)
-
-: pop-literal   asm{  k dpopw } ;
-
-: lit?   ( f)
-   tag@ $lit =  dup if  unpush-literal  then ;
-
-: _litop  current preserve  meta-compiler  create
-          does>  lit?  if  cell+  then  @  \m compile, ;
-
-meta
-( NOTE: litbinop can only be used for commutative operations, since the
-  stack entry point swaps top and k.)
-
-: litbinop
-   _litop
-      \m here  ( stack entry point)  ,
-      pop-literal
-      \m here  ( literal entry point)  , ;
-
-: litcompare
-   _litop
-      \m here  ( literal entry point)
-      push-literal
-      \m here  ( stack entry point)  ,  , ;
-
-: litfetch
-   _litop
-      \m here  ( literal entry point)
-      asm{  <dup>  k z movw  here 4 + rjmp }
-      \m here  ( stack entry point)  ,  , ;
-
-: litstore
-   _litop
-      \m here  ( literal entry point)
-      asm{         k z movw  here 8 + rjmp }
-      \m here  ( stack entry point)  ,  , ;
-
-forth
-
-( Finally, we have the definition of the target colon compiler.)
-
--:  ."  (compiling a target word)"  ;
--:  .meta-compiler. find  if  execute  ^  then
-              .lex. find  if  execute  ^  then  ( comments and conditional compilation)
-           .target. find  if  execute  \m compile, ^  then
-          .equates. find  if  execute  \m literal  ^  then  ( chip equates create literals)
-                               number  \m literal ;
-mode __target-colon
-
-
-( Interrupt vectors and handlers.)
-: big-vectors?   [ #flash  16 Ki u< not ] ;
-: *vector  ( vector# - offset)  big-vectors?  if  4 * ^  then  2* ;
-: @vector  ( vector# - addr)  *vector  \m origin  + ;
-
-( Calculate the _offset_ past the vectors.)
-: #vectors   [ \eq LAST_VECTOR 1+ *vector ] ;
-
-: vector,  ( vector# dest)  ( compile jmp or rjmp to handler)
-   h preserve
-   swap  @vector org  big-vectors? if  \a jmp  ^  then  \a rjmp ;
-
-( Return true if vector has _not_ been set. For two-word vectors - on
-  devices with 16Ki and larger flash - assume that if first word - the jmp
-  instruction - is unset that the vector is unset.)
-
-: unvectored?  ( vector# - f)  @vector  image-@  "0ffff = ;
-
-meta
-: handler  ( vector#)  \m here  vector,  __asm ;
-
-( Set all unset vectors to point to this vector - usually RESET.)
-: default-handler  ( vector#)
-   \m handler  ( force it, in case it's been set already)
-   ( then set all unset handlers to this address)
-   0  \eq LAST_VECTOR 1+  for
-      dup unvectored? if  dup  \m handler  ( set it)  then  1+  next
-   drop ;
-
-forth
-
-
-( Now that we know the origins of all the regions and the size and number
-  of the vectors, let's make a word that skips the vectors - in the current
-  space! - and one that gives us a clean slate.)
-
-( XXX Assuming no allocations have yet been done, this could be defined more
-  simply as "#vectors allot".)
-
-: skip-vectors   \m origin  #vectors +  org ;
-
-: clean-slate
-   wipe  ( erase all memory images)
-   @ram ram!  @flash flash! ;
-
-clean-slate
-
-.then  ( avr-bogus)
-
-
 ( XXX just to get the rest of this to compile)
 : barf   error" Not yet implemented!!" ;
 : __target-colon   barf ;
@@ -306,9 +53,18 @@ meta-compiler
 : ^   barf ;
 forth
 
+: unvectored?  ( offset - f)  image-@  "0ffff = ;
 
 meta
 : handler  ( vector-offset)  \m here swap  image-!  __asm ;
+
+( Set all unset vectors to point to this vector - usually RESET.)
+: default-handler  ( start-vector default-vector)
+   \m handler  ( force it, in case it's been set already)
+   ( then set all unset handlers to this address)
+   \eq Vreset  swap do
+      i unvectored? if  i  \m handler  ( set it)  then
+   \m cell +loop ;
 
 ( Create new target names. A name is a target word which is defined as a
   _constant_ equal to its code field address.)
@@ -333,6 +89,7 @@ meta
 : hooks   \m here  .meta. chain' execute  \m cell+  image-! ;
 
 : '  .target. chain' execute ;  ( get target word's constant value)
+: >body  \m cell+ ;
 
 : __host   \ [ ;  ( return to host forth mode)
 : {        \m __host ;  ( useful for bracketing a few  host forth words)
