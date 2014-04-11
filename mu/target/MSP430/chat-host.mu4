@@ -23,6 +23,7 @@ hex
                 - saved status, and go
 17  FlashWord   - write word to flash, incr pointer
                 - execute command saved on chat frame
+                - target returns flash status
 
 17 - ff  Idle   - these command bytes are ignored
 )
@@ -32,15 +33,15 @@ hex
 : >w          >hilo  >b >b ;
 : w>   b> b>  lohi> ;
 
-: c.Idle                  0 >b     ;
-: c.GetVersion  ( - n)   10 >b  w> ;
-: c.SetAddr     ( a)     11 >b  >w ;
-: c.GetSP       ( - sp)  12 >b  w> ;
-: c.ReadWord    ( - w)   13 >b  w> ;
-: c.ReadWords   ( n)     14 >b  >b ;  ( Still have to read the streaming bytes)
-: c.WriteWord   ( w)     15 >b  >w ;
-: c.Run         ( )      16 >b     ;
-: c.FlashWord   ( w)     17 >b  >w ;
+: c.Idle                   0 >b         ;
+: c.GetVersion  ( - n)    10 >b      w> ;
+: c.SetAddr     ( a)      11 >b  >w     ;
+: c.GetSP       ( - sp)   12 >b      w> ;
+: c.ReadWord    ( - w)    13 >b      w> ;
+: c.ReadWords   ( n)      14 >b  >b     ;  ( then read streamed bytes)
+: c.WriteWord   ( w)      15 >b  >w     ;
+: c.Run         ( )       16 >b         ;
+: c.FlashWord   ( w - w)  17 >b  >w  w> ;
 
 : resync  flush  c.Idle  c.Idle ;
 
@@ -61,10 +62,11 @@ hex
 : c.GetRegs   ( buf - sp)   c.GetSP  dup push  .LAST  c.ReadChunk  pop ;
 : c.SetRegs   ( buf)        c.GetSP            .LAST  c.WriteChunk ;
 
-: c.FlashChunk   ( buf a u cmd)
+( Or together the statuses from each FlashWord command and return it.)
+: c.FlashChunk   ( buf a u cmd - status)
    ( Copy flash command to stack)
    \eq FKEY +  c.GetSP .FCMD + c.SetAddr  c.WriteWord
-   c.setup-chunk  ?for  m* m* lohi>  c.FlashWord  next  then ;
+   c.setup-chunk  0 swap  ?for  m* m* lohi>  c.FlashWord  or  next  then ;
 
 : c.RunWait   c.Run  c.GetVersion drop ;
 
