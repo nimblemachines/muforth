@@ -21,22 +21,12 @@ __meta
 13  ReadWord    - read a word from memory, incr pointer
 14  ReadWords   - read N words, incrementing as we go
 15  WriteWord   - write a word to memory, incr pointer
-16  Run         - pop the registers and save status, and go
-
-17 - ff  Idle   - these command bytes are ignored
+16  Run         - pop the registers and saved status, and go
+17  FlashWord   - write a word to flash, using command byte saved on stack
+                - can be used to initiate an erase, or to write a word
+18 - ff  Idle   - these command bytes are ignored
 )
 
-( XXX How do we write to the flash?
-
-  Not sure yet about these last two... Can we write flash a word at a time?
-  Or does that violate the "cumulative charge time" for a block? We may end
-  up having to copy a RAM-resident routine that loadss a buffer into the
-  flash all at once. And in that case, we might as well use Run to execute
-  it...
-
-  FlashWord
-  FlashStatus
-)
 
 ( Register conventions:
   Use   i as memory pointer
@@ -61,13 +51,13 @@ label put-word
 
 ( NOTE: This should be incremented with any change to the command set!)
 label get-version
-   0001 # t mov  put-word j  ;c
+   0002 # t mov  put-word j  ;c
 
 label set-addr
    get-word c  t i mov  ret  ;c
 
 label get-sp
-   sp t mov  2 # t add  put-word j  ;c
+   s t mov  2 # t add  put-word j  ;c
 
 label read-word
    i )+ t mov  put-word j  ;c
@@ -82,10 +72,26 @@ label write-word
    get-word c  t i ) mov  2 # i add  ret  ;c
 
 label run
-   4 # sp add  ( skip return address to chat-entry & flash command)
+   4 # s add  ( skip return address to chat-entry & flash command)
      i pop  r pop  t pop
    cnt pop  x pop  y pop
    reti  ;c
+
+( Write a word into flash, using the flash command stored on the stack. It
+  can be used to erase or program the flash.)
+
+label flash-word
+   get-word c                    -- get value to write
+   FKEY         FLOCKA + # FCTL3 & mov    -- clear FLOCK, but keep FLOCKA set!
+   2 s +) x mov  FKEY # x bis
+   x FCTL1 & mov                 -- write flash command
+   t i ) mov  2 # i add          -- write word and incr pointer
+.ifdef in-ram
+   begin  FBUSY # FCTL3 & bit  0= until
+.then
+   FKEY # FCTL1 & mov            -- clear command
+   FKEY FLOCK + FLOCKA + # FCTL3 & mov    -- set FLOCK and FLOCKA
+   ret  ;c
 
 ( Dispatch.)
 label process
@@ -98,19 +104,7 @@ label process
    01 # t sub  read-words    0!= until
    01 # t sub  write-word    0!= until
    01 # t sub  run           0!= until
-
-.ifdef bootloader
-
-   ( Support for self-programming.)
-   ( XXX this is crap from AVR iic code)
-   20 xl cpi  0= if  write-word         rjmp  then
-   21 xl cpi  0= if  erase-page         rjmp  then
-   22 xl cpi  0= if  program-page       rjmp  then
-   23 xl cpi  0= if  clear-page-buffer  rjmp  then
-   24 xl cpi  0= if  app-start          rjmp  then
-   25 xl cpi  0= if  app-stop           rjmp  then
-
-.then
+   01 # t sub  flash-word    0!= until
 
    ( unknown... restart!)
    ret  ;c
