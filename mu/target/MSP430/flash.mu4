@@ -1,0 +1,110 @@
+( This file is part of muFORTH: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2014 David Frech. All rights reserved, and all wrongs
+  reversed. (See the file COPYRIGHT for details.)
+
+loading MSP430 Flash programming
+
+hex
+
+( The MSP430 has two areas of flash: main and info. Main memory is
+  divided into 512 byte pages - which TI annoyingly calls "segments" -
+  which are further divided into 64 byte rows - which TI annoyingly calls
+  "blocks". Info memory is divided into 64-byte pages.
+
+  A page is the unit of erasure. A row is a unit of exposure to "cumulative
+  progromming time". I think the way the flash code has been written that
+  this isn't a problem, even doing word writes, rather than block/row writes.)
+
+( XXX These are for main memory. Do we want to treat info memory separately?)
+#512 constant /page   ( this is the erase size of main memory)
+ #64 constant /row    ( max size of row to program)
+
+: check-flash-status  ( status)
+   ." FCTL3=" dup u.
+   84 and if error" flash access or protection violation" then ;
+
+: program-row  ( 'target len)
+   cr ." program-row "  over u.  dup u.
+      over image+ -rot  \eq FWRT    t.FlashChunk  check-flash-status ;
+
+: erase-page  ( 'target)
+   cr ." erase-page " dup u.
+   2  over image+ -rot  \eq FERASE  t.FlashChunk  check-flash-status ;
+
+: flash-buffer   pad  1 Ki  + ;    ( scratch space)
+: blank?  ( addr - flag)
+   cr ." blank? "  dup u.
+   -1  swap  [ /page  100 / ] for  ( do it in chunks of 256)
+      ( sum addr)  dup 100 flash-buffer -rot  t.ReadChunk  100 + swap
+      ( addr+ sum)  flash-buffer m !  100 for  m* and  next  swap
+      ( sum addr+)  over 0ff xor if  pop drop 2drop  0 ^  then  ( exit early)
+   next  drop  0ff = ;
+
+( Where is the bootloader code?)
+( NOTE: this is currently the same as what last-page? calculates, but only
+  because the bootloader currently fits into the last page. If that
+  changes, last-page will stay the same but this constant will change. Best
+  to keep them separate.)
+
+@flash #flash +  1 Ki 2/ -  constant @boot
+
+( Check to see if we're going to clobber the bootloader and complain if
+  we're not executing from RAM.)
+
+: ?clobbering-loader  ( a u - a u)
+   2dup +  @boot  swap u< not  if ^ then  ( not touching bootloader - Ok)
+   .PC reg@  [ @ram #ram + ] u<  if ^ then  ( running in RAM - Ok)
+   error" You need to be running a RAM-based version of the chat code in
+order to re-flash it. Consult a local guru. ;-)" ;
+
+( If target address is first byte of the last page of flash, return true)
+: last-page?  ( 'target - f)  [ @flash #flash +  /page - ]  = ; 
+
+: flash-vectors
+   cr ." flashing vectors"
+   0ffc0 40  ( 0ffc0 - 0ffff)  program-row ;
+
+( When we are about to program the _first_ row of a page, we erase the
+  page. If it's the last page of the flash, we save the trims, erase the
+  page, and then flash the vectors and trims.)
+
+: erased  ( 'target)
+   dup [ /page 1- ] and  if  drop ^  then  ( do nothing if not first byte)
+   dup erase-page
+   last-page? if  ( erasing last page)  flash-vectors  then ;
+
+: row  ( 'target len - 'target+len)
+   2dup + push  over erased  program-row  pop ;
+
+: flash-region  ( a len)
+   /row /mod  ( r q)  swap push  ?for   /row row  next  then
+                            pop  =if  ( rem) row  drop ^  then  2drop ;
+
+: flash-image
+   h preserve  flash
+   region ( a u)  ?clobbering-loader  flash-region ;
+
+( Be careful about setting p. Some chunked read implementations use it, so
+  set it *after* doing the read.)
+
+: verify-chunk  ( 'target len - 'target+len)
+   2dup + push
+   2dup flash-buffer -rot t.ReadChunk
+   ( 'target len)  swap image+ m !  ( we'll use m* to read image)
+   ( len)  flash-buffer swap
+   for  c@+ swap  m*  xor  if  m @ image-  -1 +a u.  then  next  drop
+   pop ;
+
+( Do 256 bytes at a time. The chat protocol can only specify 255 words at a
+  time.)
+
+: verify-region
+   100 /mod  ( r q)  swap push  ?for  100 verify-chunk  next  then
+                         pop  =if  ( rem) verify-chunk  drop ^  then  2drop ;
+: verify
+   h preserve  flash
+   region ( a len)  verify-region  ( program image)
+   region drop  last-page? if
+      0ffc0 40  ( 0ffc0 - 0ffff)  verify-region  ( vectors)
+   then ;
