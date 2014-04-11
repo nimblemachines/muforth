@@ -48,6 +48,11 @@ hex
 : c.setup-chunk  ( buf a u - #words)
    resync  swap c.SetAddr  swap m !  1+ 2/ ( words) ;
 
+( Copy flash command to target stack)
+( NOTE: already has FKEY set!)
+: c.copy-fcmd  ( fcmd)
+   c.GetSP .FCMD + c.SetAddr  c.WriteWord ;
+
 ( Hook into interact code.)
 : c.Hello
    tty-target target-raw
@@ -62,14 +67,17 @@ hex
 : c.GetRegs   ( buf - sp)   c.GetSP  dup push  .LAST  c.ReadChunk  pop ;
 : c.SetRegs   ( buf)        c.GetSP            .LAST  c.WriteChunk ;
 
+: c.ErasePage ( a fcmd - status)
+   c.copy-fcmd  c.SetAddr  0 c.FlashWord ;
+
 ( Or together the statuses from each FlashWord command and return it.)
-: c.FlashChunk   ( buf a u cmd - status)
-   ( Copy flash command to stack)
-   \eq FKEY +  c.GetSP .FCMD + c.SetAddr  c.WriteWord
+: c.FlashChunk   ( buf a u fcmd - status)
+   c.copy-fcmd
    c.setup-chunk  0 swap  ?for  m* m* lohi>  c.FlashWord  or  next  then ;
 
 : c.RunWait   c.Run  c.GetVersion drop ;
 
 : chat
    chat-via  c.Hello  c.GetRegs  c.SetRegs  c.ReadWord  c.WriteWord
-             c.ReadChunk  c.WriteChunk  c.FlashChunk  c.Run  c.RunWait ;
+             c.ReadChunk  c.WriteChunk  c.ErasePage  c.FlashChunk
+             c.Run  c.RunWait ;
