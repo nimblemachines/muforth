@@ -18,64 +18,66 @@ comment %%
   NOTE: if we did  w )+ pc mov  next would take 1 cycle more, but docolon
   and friends would be shorter and simpler... %%
 
-: next     asm{  i )+ w mov  w ) pc mov  } ;
+: next     asm{  ip )+ w mov  w ) pc mov  } ;
 
-: rpush    ( ea)  asm{   2 # r sub   ( ea)  r )  mov  } ;
-: rpop     ( ea)  asm{      r )+  \f swap ( ea)  mov  } ;
+: rpush    ( ea)  asm{   2 # rp sub   ( ea)  rp )  mov  } ;
+: rpop     ( ea)  asm{       rp )+  \f swap ( ea)  mov  } ;
 
-: nest     asm{  i rpush  } ;
-: unnest   asm{  i rpop   } ;
+: nest     asm{  ip rpush  } ;
+: unnest   asm{  ip rpop   } ;
 forth
 
 __meta
 hex
 
 ( Note the structural similarities!)
-label dodoes     nest                 i pop  ( fall thru)  ;c
-label dovar      t push  2 # w add  w t mov  next  ;c
-label doconst    t push        2 w +) t mov  next  ;c
-label docolon    nest    2 # w add  w i mov  next  ;c
+label dodoes     nest                    ip pop  ( fall thru)  ;c
+label dovar      top push  2 # w add  w top mov  next  ;c
+label doconst    top push        2 w +) top mov  next  ;c
+label docolon    nest      2 # w add   w ip mov  next  ;c
 
-code ^      unnest  next  ;c
+code ^   unnest  next  ;c
 
-code lit    t push  i )+ t mov  next  ;c
+code lit  top push  ip )+ top mov  next  ;c
 
-code      branch   i )+ i mov  next  ;c
-code     0branch   t tst  t pop  ' branch >body 0!= until  ( fall thru)  ;c
-label       skip    2 # i add  next  ;c
-code    ?0branch   t tst  skip 0= until  t pop  ' branch >body j  ;c
+code    branch      ip )+  ip mov  next  ;c
+code   0branch   top tst  top pop  ' branch >body 0!= until  ( fall thru)  ;c
+label     skip         2 # ip add  next  ;c
+code  ?0branch   top tst  skip 0= until  top pop  ' branch >body j  ;c
 
 ( If we also wanted =0branch, it would look like this:
-code    =0branch   t tst  skip 0= until         ' branch >body j  ;c
+code  =0branch   top tst  skip 0= until           ' branch >body j  ;c
 
-( Fast version, using cnt register)
-code  ffor  ( u)   cnt rpush  t cnt mov  t pop  next  ;c
-code fnext         1 # cnt sub    ' branch >body 0= until  cnt rpop  skip j  ;c
+( Fast version, using count register)
+code ffor  ( u)   count rpush  top count mov  top pop  next  ;c
+code fnext    1 # count sub  ' branch >body 0= until  count rpop  skip j  ;c
 
 ( Slow version, keeping count on R stack)
 ( for is just >r. next is 3 cycles slower per iteration then fnext)
-code next         1 # r ) sub    ' branch >body 0= until  2 # r add  skip j  ;c
+code next      1 # rp ) sub  ' branch >body 0= until  2 # rp add  skip j  ;c
 
-code +    x pop      x t add           next  ;c
-code -    x pop      t x sub  x t mov  next  ;c
+code +     x pop  x top add             next  ;c
+code -     x pop  top x sub  x top mov  next  ;c
 
-code and  x pop      x t and  next  ;c
-code or   x pop      x t bis  next  ;c
-code xor  x pop      x t xor  next  ;c
+code and   x pop  x top and  next  ;c
+code or    x pop  x top bis  next  ;c
+code xor   x pop  x top xor  next  ;c
 
-code swap   ( x t - t x)  x pop  t push  x t mov  next  ;c
-code nip    ( x t - t)                 2 # s add  next  ;c
-code drop   ( x t - x)    t pop                   next  ;c
-code over   ( x t - x t x)  t push  2 s +) t mov  next  ;c
+code swap   ( x t - t x)   x pop  top push        x top mov  next  ;c
+code nip    ( x t - t)                           2 # sp add  next  ;c
+code drop   ( x t - x)                              top pop  next  ;c
+code over   ( x t - x t x)        top push  2 sp +) top mov  next  ;c
 
-code tuck   (   x t - t x t)  x pop         t push  x push           next  ;c
-code rot    ( y x t - x t y)  x pop  y pop  x push  t push  y t mov  next  ;c
+code tuck  (   x t - t x t)  x pop       top push    x push             next  ;c
+code rot   ( y x t - x t y)  x pop  y pop  x push  top push  y top mov  next  ;c
 
 ( These are a bit tricky, esp since borrow is ~carry. The idea is: get the
   inverse of the flag value we want into carry, then subtract top from
   itself - yielding zero - minus borrow, or -1 for true, 0 for false. It's
   efficient but non-obvious.)
 
-code 0=               1 # t sub  ( ~Z -> C)  begin  begin  t t subc  next  ;c
-code 0<   8000 # t xor  t t add  ( ~N -> C)  again  ;c
-code u<      x pop  t x cmp  ( ~uless -> C)  again  ;c
+code 0=                   1 # top sub  ( ~Z -> C)
+   begin  begin  top top subc  next  ;c
+
+code 0<   8000 # top xor  top top add  ( ~N -> C)  again  ;c
+code u<          x pop  top x cmp  ( ~uless -> C)  again  ;c
