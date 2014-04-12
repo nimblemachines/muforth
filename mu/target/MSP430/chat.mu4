@@ -29,52 +29,52 @@ __meta
 
 
 ( Register conventions:
-  Use   i as memory pointer
-      cnt as byte count
-        t to pass a parameter around
+  Use  ip as memory pointer
+    count as byte count
+      top to pass a parameter around
         x as scratch)
 
 label get-byte
    begin  01 # IFG2 & bitb  0!= until
-   UCA0RXBUF & t movb  ret  ;c
+   UCA0RXBUF & top movb  ret  ;c
 
 label put-byte
    begin  02 # IFG2 & bitb  0!= until
-   t UCA0TXBUF & movb  ret  ;c
+   top UCA0TXBUF & movb  ret  ;c
 
 label get-word
-   get-byte c  t x mov
-   get-byte c  t swpb  x t bis  ret  ;c
+   get-byte c  top x mov
+   get-byte c  top swpb  x top bis  ret  ;c
 
 label put-word
-   put-byte c  t swpb  put-byte j  ;c
+   put-byte c  top swpb  put-byte j  ;c
 
 ( NOTE: This should be incremented with any change to the command set!)
 label get-version
-   0002 # t mov  put-word j  ;c
+   0002 # top mov  put-word j  ;c
 
 label set-addr
-   get-word c  t i mov  ret  ;c
+   get-word c  top ip mov  ret  ;c
 
 label get-sp
-   s t mov  2 # t add  put-word j  ;c
+   sp top mov  2 # top add  put-word j  ;c
 
 label read-word
-   i )+ t mov  put-word j  ;c
+   ip )+ top mov  put-word j  ;c
 
 label read-words
-   get-byte c  t tst  0!= if
-      t cnt mov
-      begin  read-word c  1 # cnt sub  0= until
+   get-byte c  top tst  0!= if
+      top count mov
+      begin  read-word c  1 # count sub  0= until
    then  ret  ;c
 
 label write-word
-   get-word c  t i ) mov  2 # i add  ret  ;c
+   get-word c  top ip ) mov  2 # ip add  ret  ;c
 
 label run
-   4 # s add  ( skip return address to chat-entry & flash command)
-     i pop  w pop  r pop  t pop
-   cnt pop  x pop  y pop
+   4 # sp add  ( skip return address to chat-entry & flash command)
+      ip pop  w pop  rp pop  count pop
+     top pop  x pop   y pop
    reti  ;c
 
 ( Write a word into flash, using the flash command stored on the stack. It
@@ -83,28 +83,28 @@ label run
 label flash-word
    get-word c                    -- get value to write
    FKEY         # FCTL3 & mov    -- clear FLOCK
-   2 s +) FCTL1 & mov            -- write flash command - must have FKEY!
-   t i ) mov  2 # i add          -- write word and incr pointer
+   2 sp +) FCTL1 & mov           -- write flash command - must have FKEY!
+   top ip ) mov  2 # ip add      -- write word and incr pointer
 .ifdef in-ram
    begin  FBUSY # FCTL3 & bit  0= until
 .then
    FKEY # FCTL1 & mov            -- clear command
    FKEY FLOCK + # FCTL3 & mov    -- set FLOCK
-   FCTL3 & t mov  put-word j     -- read status and return it
-   ;c 
+   FCTL3 & top mov  put-word j   -- read status and return it
+   ;c
 
 ( Dispatch.)
 label process
    get-byte c  ( cmd)
 
-   10 # t sub  get-version   0!= until
-   01 # t sub  set-addr      0!= until
-   01 # t sub  get-sp        0!= until
-   01 # t sub  read-word     0!= until
-   01 # t sub  read-words    0!= until
-   01 # t sub  write-word    0!= until
-   01 # t sub  run           0!= until
-   01 # t sub  flash-word    0!= until
+   10 # top sub  get-version   0!= until
+   01 # top sub  set-addr      0!= until
+   01 # top sub  get-sp        0!= until
+   01 # top sub  read-word     0!= until
+   01 # top sub  read-words    0!= until
+   01 # top sub  write-word    0!= until
+   01 # top sub  run           0!= until
+   01 # top sub  flash-word    0!= until
 
    ( unknown... restart!)
    ret  ;c
@@ -112,10 +112,10 @@ label process
 ( Push registers and start conversing with host.)
 label chat-entry
    ( call has already pushed PC)
-   sr push  sr clr  ( disable interrupts!)
-   y push  x push  cnt push
-   t push  r push    w push  i push
-   0 # push  ( room for flash command)
+      sr push  sr clr  ( disable interrupts!)
+       y push   x push  top push
+   count push  rp push    w push  ip push
+     0 # push  ( room for flash command)
    begin  process c  again  ;c
 
 label interact
