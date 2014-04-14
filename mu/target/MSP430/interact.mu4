@@ -121,13 +121,19 @@ variable chat-vector
 ( NOTE: All the following d.Foobar commands are the dummy
   _implementations_ of the chat command interface.)
 
-: d.Hello  ." Connecting to dummy chat target." ;
+.LAST buffer dummy-frame
+
+: d.Hello  ." Connecting to dummy chat target."
+   ( Init each reg in dummy-frame to its index)
+   dummy-frame m !
+   0  .LAST \m cell/ for  dup >hilo m& m&  \m cell+  next  drop ;
 
 : d.ReadChunk    ( buf a u)
-   cr  ." Dummy read chunk "  rot u.  swap u.  u.  cr ;
+   -- cr  ." Dummy read chunk "  rot u.  swap u.  u.  cr ;
+   2drop drop ;
 
 : d.WriteChunk   ( buf a u)
-   cr  ." Dummy write chunk "  rot u.  swap u.  u.  cr ;
+   cr  ." Dummy write chunk "  rot u.  swap u.  u. ;
 
 : d.ErasePage   ( a fcmd - status)
    cr  ." Dummy erase page "  swap u.  u.
@@ -142,14 +148,18 @@ variable chat-vector
 ( The order, low to high: flashcmd i r t cnt x y status pc)
 ( GetRegs sets each register to its index in the frame.)
 : d.GetRegs  ( buf - sp)
-   m !  0  .LAST \m cell/ for  dup >hilo m& m&  \m cell+  next
-   drop  "0dead ;
+   ( copy dummy-frame to buf)
+   dummy-frame swap .LAST cmove  "dead ;
 
-: dummy                        ( SetRegs  ReadWord  WriteWord)
-   chat-via  d.Hello  d.GetRegs     drop     nope   2drop
+: d.SetRegs  ( buf)
+   ( copy buf to dummy-frame)
+   dummy-frame .LAST cmove ;
+
+: dummy                                   ( ReadWord  WriteWord)
+   chat-via  d.Hello  d.GetRegs  d.SetRegs     nope   2drop
              d.ReadChunk  d.WriteChunk  d.ErasePage  d.FlashChunk
-              ( Run      RunWait)
-             chat-fail  chat-fail  ;
+            ( Run   RunWait)
+             nope    nope  ;
 
 
 .ifdef avr-bogus
@@ -213,6 +223,14 @@ mode __target
 
 .then  ( avr-bogus)
 
+
+( XXX for testing)
+: rx  ( x y cfa - x' y')  ( execute target non-forth word)
+   chatting @ 0= if  error" not connected to target"  then
+   copy-ram  .PC reg!  .Y reg!  .X reg!
+   set-regs  t.RunWait  get-regs  .regs
+   .X reg@  .Y reg@ ;
+ 
 
 ( Set |@ and |c@ to _some_ form of target fetch. Prefer to get bytes from
   target if we're connected. This word is useful so we can set an initial
