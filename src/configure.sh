@@ -86,13 +86,15 @@ ldflags=""
 # Keep Wnarrowing, because we might be building a 32-bit executable.
 # But default to whatever Darwin wants to build.
 if [ "$os" = "Darwin" ]; then
-    archobjs="file.o main.o time.o tty.o usb-darwin.o"
-    cflags="-mdynamic-no-pic -DHAS_TIME -DHAS_TTY -DHAS_SERIAL"
+    archobjs="file.o main.o time.o tty.o select.o usb-darwin.o"
+    cflags="-mdynamic-no-pic"
     ldflags="-framework CoreFoundation -framework IOKit"
+    config="HAS_TIME HAS_TTY HAS_SERIAL"
 fi
 if [ "$os" = "Linux" ]; then
     archobjs="file.o main.o time.o tty.o select.o usb-linux.o"
-    cflags="-DHAS_TIME -DHAS_TTY -DHAS_SERIAL"
+    config="HAS_TIME HAS_TTY HAS_SERIAL"
+
     if [ "$cpu" = "x86_64" ]; then
         Wnarrowing=""
     fi
@@ -160,7 +162,7 @@ fi
 
 if [ "$os" = "FreeBSD" -o "$os" = "NetBSD" ]; then
     archobjs="file.o main.o time.o tty.o select.o usb-netbsd.o usb-freebsd.o"
-    cflags="-DHAS_TIME -DHAS_TTY -DHAS_SERIAL"
+    config="HAS_TIME HAS_TTY HAS_SERIAL"
     if [ "$cpu" = "amd64" ]; then
         Wnarrowing=""
     fi
@@ -168,7 +170,7 @@ fi
 
 if [ "$os" = "DragonFly" ]; then
     archobjs="file.o main.o time.o tty.o select.o usb-netbsd.o"
-    cflags="-DHAS_TIME -DHAS_TTY -DHAS_SERIAL"
+    config="HAS_TIME HAS_TTY HAS_SERIAL"
     if [ "$cpu" = "x86_64" ]; then
         Wnarrowing=""
     fi
@@ -209,6 +211,18 @@ ARCH_LD=    ${ldflags}
 ARCHOBJS=   ${archobjs}
 MUDIR=      ${top}/mu
 EOT
+
+# Create a config.h with our config definitions in it.
+# NOTE: If/when we deprecate CHUMOO, remove it from here.
+(
+cat <<EOT
+/* Generated automagically by configure.sh. Do not edit! */
+
+EOT
+for c in CHUMOO $config; do
+    echo "#define $c"
+done
+) > config.h
 
 # fix up use of sed in scripts/do_sed.sh
 sed ${sedext} \
