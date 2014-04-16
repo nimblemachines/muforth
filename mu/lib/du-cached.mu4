@@ -6,12 +6,15 @@
 
 ( Memory dump. This version has a built-in 16 byte line cache.)
 
-( If tty support compiled into muforth, load the memory dumper.)
-.ifdef get-termios  ( useless without tty support)
+
+( If termios support compiled into muforth, load tty code so we have
+  user-raw mode, for interactive dump and disassembly. If termios code is
+  not available, we can still dump in "batch" mode.)
+
+.ifdef get-termios
    .ifndef user-raw  ld lib/tty.mu4  .then
-.else
-   z" Need termios support to load memory dumper."  abort
 .then
+
 
 ( Since we read the same 16 byte chunk of target memory - whether over USB,
   a serial line, or from a local memory image - let's make this a bit more
@@ -95,39 +98,6 @@ variable m  ( memory pointer)
 
 
 -- ------------------------------------------------------------------------
--- Call, jump, and return
--- ------------------------------------------------------------------------
-
-( up to 12 remembered locations)
-12 array+ istack-addr  ( saved address)
-12 array+ istack-mode  ( address of word to reset to saved mode)
-variable isp  ( stack pointer - points to next empty space)
-0 isp !
-variable du-set-mode  ( cfa of word to restore du mode)
-
-( If there is room on the i-stack, push a and make ea the new a. Otherwise,
-  drop ea and return a.)
-
-: i-push  ( a ea - ea | a)
-   isp @  dup 12 u<  if  ( room)  push ( isp)
-      du-set-mode @  r@ istack-mode !  swap ( ea a)  r@ istack-addr !
-      pop 1+ isp !  ^  then
-   ( a ea isp)  2drop ;
-
-( If there is something on the i-stack, pop the address, pop and execute
-  the mode cfa if nonzero - to return us to prev mode - and return the new
-  a. Otherwise, return original a.)
-
-: i-pop   ( a - popped | a)
-   isp @  =if  ( not empty)  1- dup isp !  push ( isp)  drop ( a)
-      r@ istack-addr @  ( saved-a)
-     pop istack-mode @ =if execute  ^  then  then  ( saved-a 0)
-   ( a isp)  drop ;
-
-: .nesting  isp @  ?for  char > emit  next  space  then  ;
-
-
--- ------------------------------------------------------------------------
 -- Printing addresses and memory contents
 -- ------------------------------------------------------------------------
 
@@ -182,6 +152,7 @@ comment
  ====================================================
 
 variable #field  ( width of each byte, rendered)
+defer .nesting   ' nope is .nesting
 
 : .padding   ( a - a)
    dup  p !  ( set memory address)
@@ -230,6 +201,8 @@ defer decorate-cell  ( a n #spaces - a n)
 : hex-bytes    3  #field ! ;
 
 
+.ifdef user-raw
+
 -- ------------------------------------------------------------------------
 -- Binding keys to actions
 -- ------------------------------------------------------------------------
@@ -256,6 +229,61 @@ host-seekeys 'seekeys !  ( until further notice, use host's key bindings)
 
 : inspect-key  ( a - a' flag)
    key  dup 128 u< if  'key @execute ^  then  drop  ( key)  -1 ;
+
+-- ------------------------------------------------------------------------
+-- Call, jump, and return
+-- ------------------------------------------------------------------------
+
+( up to 12 remembered locations)
+12 array+ istack-addr  ( saved address)
+12 array+ istack-mode  ( address of word to reset to saved mode)
+variable isp  ( stack pointer - points to next empty space)
+0 isp !
+variable du-set-mode  ( cfa of word to restore du mode)
+
+( If there is room on the i-stack, push a and make ea the new a. Otherwise,
+  drop ea and return a.)
+
+: i-push  ( a ea - ea | a)
+   isp @  dup 12 u<  if  ( room)  push ( isp)
+      du-set-mode @  r@ istack-mode !  swap ( ea a)  r@ istack-addr !
+      pop 1+ isp !  ^  then
+   ( a ea isp)  2drop ;
+
+( If there is something on the i-stack, pop the address, pop and execute
+  the mode cfa if nonzero - to return us to prev mode - and return the new
+  a. Otherwise, return original a.)
+
+: i-pop   ( a - popped | a)
+   isp @  =if  ( not empty)  1- dup isp !  push ( isp)  drop ( a)
+      r@ istack-addr @  ( saved-a)
+     pop istack-mode @ =if execute  ^  then  then  ( saved-a 0)
+   ( a isp)  drop ;
+
+-: isp @  ?for  char > emit  next  space  then  ;  is .nesting
+
+
+-- ------------------------------------------------------------------------
+-- Moving around, aligning addresses.
+-- ------------------------------------------------------------------------
+
+variable skip-by-cell
+: see-skip   skip-by-cell @ if  |cell @  ^  then  16 ;
+
+( skip-advance rounds down to nearest `skip'.)
+: skip-advance  ( a skip - a' 0)
+   advance  see-skip negate and ( round)  0 ;
+
+: skip+  ( a - a' 0)  see-skip         skip-advance ;
+: skip-  ( a - a' 0)  see-skip negate  skip-advance ;
+
+
+-- ------------------------------------------------------------------------
+-- Default bindings for host.
+-- ------------------------------------------------------------------------
+
+( Pressing 1 toggles between skipping by cell and by line of 16 bytes.)
+key: 1  ( a - a 0)  skip-by-cell @  0=  skip-by-cell !  0 skip-advance ;
 
 : advance!  ( cfa)
   dup     32 key!  ( these are all synonyms for moving forward)
@@ -293,21 +321,6 @@ defer 1inspect  ( a - a)
 
 
 -- ------------------------------------------------------------------------
--- Moving around, aligning addresses.
--- ------------------------------------------------------------------------
-
-variable skip-by-cell
-: see-skip   skip-by-cell @ if  |cell @  ^  then  16 ;
-
-( skip-advance rounds down to nearest `skip'.)
-: skip-advance  ( a skip - a' 0)
-   advance  see-skip negate and ( round)  0 ;
-
-: skip+  ( a - a' 0)  see-skip         skip-advance ;
-: skip-  ( a - a' 0)  see-skip negate  skip-advance ;
-
-
--- ------------------------------------------------------------------------
 -- Dump modes - set up key bindings, memory source, moving forward and
 -- backward, and how to display each line. Sets du-set-mode so we can
 -- return to this mode with i-pop.
@@ -325,62 +338,45 @@ variable skip-by-cell
       ( 'keymap) 'seekeys !  inspect!  retreat!  advance!  ( set-memory)  execute
       ( addr-mask) and  0 advance ;
 
-
--- ------------------------------------------------------------------------
--- Default bindings for host.
--- ------------------------------------------------------------------------
-
-( Pressing 1 toggles between skipping by cell and by line of 16 bytes.)
-key: 1  ( a - a 0)  skip-by-cell @  0=  skip-by-cell !  0 skip-advance ;
-
 ( Default behaviour for host:)
-: 1dump  ( a)
-   dup  p !  cell*  ea !
+: 1dump-host  ( a)
+   dup @  ea !
    hex-bytes
    dup _addr  dup .chars
    dup .addr  dup .hex-bytes
    dup _addr      .hex-cells ;
 
 host-seekeys  cell negate  ( 'keymap mask)
-   du-mode host-dumping   >host  skip+  skip-  1dump
+   du-mode host-dumping   >host  skip+  skip-  1dump-host
 
 : du   ( a - a')  host-dumping  inspect ;
 
-
 ( Batch mode)
 ( Redirect to stdout to make it easier to write output to a file.)
-: dumps   ( start limit)
+: dumps   ( limit start)
    >host
    out-channel preserve  >stdout
    radix preserve
    isp preserve  isp off
-   begin  swap  dup 1dump  16 advance drop  swap  2dup u< 0=  until  2drop ;
+   begin  2dup swap u< while  dup 1dump-host  16 +  -16 and  repeat
+   2drop ;
 
+.else  ( no user-raw)
 
-comment broken_for_native_code
+( Default behaviour for host:)
+: 1dump-host  ( a)
+   hex-bytes
+   dup _addr  dup .chars
+   dup .addr  dup .hex-bytes
+   dup _addr      .hex-cells ;
 
-( Below this is very old code, I think inherited from dforth. Here for
-  historio-comic relief only.)
+( Batch mode)
+( Redirect to stdout to make it easier to write output to a file.)
+: dumps   ( limit start)
+   >host
+   out-channel preserve  >stdout
+   radix preserve
+   begin  2dup swap u< while  dup 1dump-host  16 +  -16 and  repeat
+   2drop ;
 
-( See.  a grotty little decompiler)
-
-: >dict<   ( a - f) ( within dict)   [ ' unnest ]  here  within  ;
-: -named   dup >dict< if  >name type  0 ^  then  -1  ;
-
-( this word is UNUSED right now.)
-: code?  ( code - name T | body F)
-   forth  begin  @ dup  while  2dup  ( >code)  = until
-   cell+ ( name) nip -1  ^  then  ( 0)  ;
-
-: .ch   ( n - n')   dup "ff and  >letter emit  8 rshift  ;
-: 1see   ( a - a ea)
-   cr  dup .a16   inspect-nesting
-   dup @  dup  .w16 space   dup .ch  .ch  .ch  .ch  drop  space  space
-   -named if  ( 10 u.r) .w16  space  then  ( a)
-   dup |@ cell- ( code)  ( a ea)  ;
-
-' 1see '1see !
-
-: (see)  ( a - a)  ['] 1see  4  inspect  ;
-: see   '  cell-  ( code)   (see)  ;
-broken_for_native_code
+.then  ( ifdef user-raw)
