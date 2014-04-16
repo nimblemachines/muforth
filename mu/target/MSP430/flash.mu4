@@ -3,7 +3,7 @@
   Copyright 2002-2014 David Frech. All rights reserved, and all wrongs
   reversed. (See the file COPYRIGHT for details.)
 
-loading MSP430 Flash programming
+loading MSP430 flash programming
 
 hex
 
@@ -33,6 +33,9 @@ hex
    cr ." erase-page " dup u.
    [ \eq FERASE \eq FKEY + ]  t.ErasePage   check-flash-status ;
 
+: skip-row  ( 'target len)
+   cr ."    skip-row "  swap u.  u. ;
+
 : flash-buffer   pad  1 Ki  + ;    ( scratch space)
 : blank?  ( addr - flag)
    cr ." blank? "  dup u.
@@ -55,7 +58,7 @@ hex
 
 : ?clobbering-loader  ( a u - a u)
    2dup +  @boot  swap u< not  if ^ then  ( not touching bootloader - Ok)
-   .PC reg@  [ @ram #ram + ] u<  if ^ then  ( running in RAM - Ok)
+   .PC reg@  @ram  [ @ram #ram + ] within  if ^ then  ( running in RAM - Ok)
    error" You need to be running a RAM-based version of the chat code in
 order to re-flash it. Consult a local guru. ;-)" ;
 
@@ -75,8 +78,11 @@ order to re-flash it. Consult a local guru. ;-)" ;
    dup erase-page
    last-page? if  ( erasing last page)  flash-vectors  then ;
 
+( Avoid flashing vectors _twice_.)
 : row  ( 'target len - 'target+len)
-   2dup + push  over erased  program-row  pop ;
+   2dup + push
+   over 0ffc0 = if  skip-row  pop  ^  then
+   over erased  program-row  pop ;
 
 : flash-region  ( a len)
    /row /mod  ( r q)  swap push  ?for   /row row  next  then
