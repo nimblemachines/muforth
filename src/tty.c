@@ -7,6 +7,8 @@
 
 /* tty support for muForth, both for the console and attached targets */
 
+/* XXX Should this file be called termios.c instead? */
+
 #include "muforth.h"
 
 #include <sys/ioctl.h>
@@ -39,7 +41,7 @@ void mu_set_termios()
  * In case the user has redirected stdout to a file, use stderr as the file
  * descriptor to test.
  */
-void mu_tty_width()
+void mu_tty_width()     /* ( fd - width) */
 {
     int fd = TOP;
     struct winsize tty_size;
@@ -118,7 +120,6 @@ void mu_raw_termios()
 }
 #endif
 
-#ifdef HAS_SERIAL
 void mu_set_termios_target_raw()
 {
     struct termios *pti = (struct termios *) TOP;
@@ -213,4 +214,3 @@ void mu_tty_icount()
     if (ioctl(TOP, FIONREAD, &TOP) == -1)
         return abort_strerror();
 }
-#endif  /* HAS_SERIAL */

@@ -192,11 +192,10 @@ void mu_to_r()   { RPUSH(POP); }
 void mu_r_from() { PUSH(RPOP); }
 void mu_rfetch() { PUSH(RP[0]); }
 
-#ifdef CHUMOO
 /* These are Chuck's newfangled names for >r and r> */
+/* XXX Consider deprecating and removing these? */
 void mu_push()   { mu_to_r(); }
 void mu_pop()    { mu_r_from(); }
-#endif
 
 /* shunt is shorthand for r> drop */
 void mu_shunt()  { RP++; }

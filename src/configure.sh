@@ -89,11 +89,9 @@ if [ "$os" = "Darwin" ]; then
     archobjs="file.o main.o time.o tty.o select.o usb-darwin.o"
     cflags="-mdynamic-no-pic"
     ldflags="-framework CoreFoundation -framework IOKit"
-    config="HAS_TIME HAS_TTY HAS_SERIAL"
 fi
 if [ "$os" = "Linux" ]; then
     archobjs="file.o main.o time.o tty.o select.o usb-linux.o"
-    config="HAS_TIME HAS_TTY HAS_SERIAL"
 
     if [ "$cpu" = "x86_64" ]; then
         Wnarrowing=""
@@ -162,7 +160,6 @@ fi
 
 if [ "$os" = "FreeBSD" -o "$os" = "NetBSD" ]; then
     archobjs="file.o main.o time.o tty.o select.o usb-netbsd.o usb-freebsd.o"
-    config="HAS_TIME HAS_TTY HAS_SERIAL"
     if [ "$cpu" = "amd64" ]; then
         Wnarrowing=""
     fi
@@ -170,7 +167,6 @@ fi
 
 if [ "$os" = "DragonFly" ]; then
     archobjs="file.o main.o time.o tty.o select.o usb-netbsd.o"
-    config="HAS_TIME HAS_TTY HAS_SERIAL"
     if [ "$cpu" = "x86_64" ]; then
         Wnarrowing=""
     fi
@@ -211,18 +207,6 @@ ARCH_LD=    ${ldflags}
 ARCHOBJS=   ${archobjs}
 MUDIR=      ${top}/mu
 EOT
-
-# Create a config.h with our config definitions in it.
-# NOTE: If/when we deprecate CHUMOO, remove it from here.
-(
-cat <<EOT
-/* Generated automagically by configure.sh. Do not edit! */
-
-EOT
-for c in CHUMOO $config; do
-    echo "#define $c"
-done
-) > config.h
 
 # fix up use of sed in scripts/do_sed.sh
 sed ${sedext} \

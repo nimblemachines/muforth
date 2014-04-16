@@ -27,23 +27,20 @@ static void init_stacks()
 
 void mu_push_build_time()
 {
-#ifdef HAS_TIME
     PUSH(BUILD_TIME);
-#else
-    PUSH_ADDR(BUILD_DATE);
-    PUSH(strlen(BUILD_DATE));
-#endif
 }
 
-#ifndef HAS_TTY
-void mu_tty_width()  { TOP = 80; }  /* fd -- width */
-#endif
+void mu_push_build_date()
+{
+    PUSH_ADDR(BUILD_DATE);
+    PUSH(strlen(BUILD_DATE));
+}
 
 static void mu_start_up()
 {
-    PUSH_ADDR("warm");       /* push the token "warm" */
+    PUSH_ADDR("warm");      /* push the token "warm" */
     PUSH(4);
-    muboot_interpret_token();    /* ... and execute it! */
+    muboot_interpret_token();   /* ... and execute it! */
 }
 
 void muforth_init()

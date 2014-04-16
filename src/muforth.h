@@ -10,7 +10,6 @@
 #include <string.h>
 
 #include "env.h"
-#include "config.h"
 
 /* Support for putting 32-bit values into cell (64-bit) sized containers -
  * for support of 64-bit muFORTH on 32-bit platforms.
