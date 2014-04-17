@@ -38,24 +38,84 @@ label docolon    nest      2 # w add   w ip mov  next  ;c
 
 code ^   unnest  next  ;c
 
-code lit  top push  ip )+ top mov  next  ;c
+code (lit)  top push  ip )+ top mov  next  ;c
 
-code    branch      ip )+  ip mov  next  ;c
-code   0branch   top tst  top pop  ' branch >body 0!= until  ( fall thru)  ;c
-label     skip         2 # ip add  next  ;c
-code  ?0branch   top tst  skip 0= until  top pop  ' branch >body j  ;c
+code    (branch)      ip )+  ip mov  next  ;c
+code   (0branch)   top tst  top pop  ' (branch) >body 0!= until  ( fall thru)  ;c
+label       skip         2 # ip add  next  ;c
+code  (?0branch)   top tst  skip 0= until  top pop  ' (branch) >body j  ;c
 
-( If we also wanted =0branch, it would look like this:
-code  =0branch   top tst  skip 0= until           ' branch >body j  ;c
+( If we also wanted =0branch, it would look like this:)
+-- code  (=0branch)   top tst  skip 0= until           ' (branch) >body j  ;c
 
 ( Fast version, using count register)
-code ffor  ( u)   count rpush  top count mov  top pop  next  ;c
-code fnext    1 # count sub  ' branch >body 0= until  count rpop  skip j  ;c
+code (ffor)   ( u)   count rpush  top count mov  top pop  next  ;c
+code (fnext)     1 # count sub  ' (branch) >body 0= until  count rpop  skip j  ;c
 
 ( Slow version, keeping count on R stack)
 ( for is just >r. next is 3 cycles slower per iteration then fnext)
-code next      1 # rp ) sub  ' branch >body 0= until  2 # rp add  skip j  ;c
+code (next)      1 # rp ) sub  ' (branch) >body 0= until  2 # rp add  skip j  ;c
 
+
+( Do-loop frame looks like this:
+
+  +--------------------+
+  |  addr of loop end  |   for leave and ?leave
+  +--------------------+
+  |  saved count reg   |
+  +--------------------+
+  |       limit        |<--- rp
+  +--------------------+
+
+   Current index is in count register; current "user-visible" index is
+   calculated as count + limit.)
+
+code (do)   ( limit start)  -- implements (do)
+   6 # rp sub  ( make room on R stack - all in one go)
+    ip )+ 4 rp +) mov  ( fetch following branch address onto R)
+    count 2 rp +) mov  ( save count reg on R)
+   x pop  x rp  ) mov  ( save limit to R)
+   x top sub  top count mov  ( count = start - limit)
+   top pop  next  ;c
+
+( Increment count. If it overflows to zero, restore count register, pop
+  stack frame, skip backwards jump, and continue. If non-zero, simply take
+  the backwards jump.)
+
+code (loop)  -- implements (loop)
+   1 # count add  ' (branch) >body 0= until
+label undo
+   2 rp +) count mov  6 # rp add  skip j  ;c
+
+( Add incr to count. If the sign of count has changed, we've crossed the
+  threshold, so restore count, pop frame, and skip jump. Otherwise, take
+  the backwards jump.)
+
+code (+loop)  ( incr)   -- implements (+loop)
+   count x mov  ( save count value)
+   top count add   top pop   count x xor  undo 0>= until
+   ' (branch) >body j  ;c
+
+( Push current loop index. index = count + limit)
+code i   ( - index)
+  top push  count top mov  rp ) top add  next  ;c
+
+( XXX push dest-2 so I can call skip? Forget leave entirely? Or only allow
+  leave to exit loop by exiting the enclosing word?)
+
+-- undo codes leave
+code leave  -2 allot  undo ,
+
+
+( Basic unary ops.)
+code invert   top inv               next  ;c
+code negate   top inv  1 # top add  next  ;c
+
+code 2*      top top add  next  ;c
+code 2/          top asr  next  ;c
+code u2/   clrc  top ror  next  ;c
+
+( Basic binary ops.)
 code +     x pop  x top add             next  ;c
 code -     x pop  top x sub  x top mov  next  ;c
 
@@ -63,6 +123,7 @@ code and   x pop  x top and  next  ;c
 code or    x pop  x top bis  next  ;c
 code xor   x pop  x top xor  next  ;c
 
+( Stack ops.)
 code swap   ( x t - t x)   x pop  top push        x top mov  next  ;c
 code nip    ( x t - t)                           2 # sp add  next  ;c
 code drop   ( x t - x)                              top pop  next  ;c
@@ -71,13 +132,30 @@ code over   ( x t - x t x)        top push  2 sp +) top mov  next  ;c
 code tuck  (   x t - t x t)  x pop       top push    x push             next  ;c
 code rot   ( y x t - x t y)  x pop  y pop  x push  top push  y top mov  next  ;c
 
+( Return stack ops.)
+code >r   ( w)    top rpush  top pop   next  ;c
+code r>   ( - w)  top push   top rpop  next  ;c
+code r@   ( - w)  top push   0 rp +) top mov  next  ;c
+
+( Memory access.)
+code @   ( a - w)  top ) top mov   next  ;c
+code c@  ( a - b)  top ) top movb  next  ;c
+
+code !   ( w a)    x pop  x top ) mov   top pop  next  ;c
+code c!  ( b a)    x pop  x top ) movb  top pop  next  ;c
+
+
+
 ( These are a bit tricky, esp since borrow is ~carry. The idea is: get the
   inverse of the flag value we want into carry, then subtract top from
   itself - yielding zero - minus borrow, or -1 for true, 0 for false. It's
   efficient but non-obvious.)
 
-code 0=                   1 # top sub  ( ~Z -> C)
-   begin  begin  top top subc  next  ;c
+code 0=                   1 # top sub  ( ~Z -> C)  ( fall thru)  ;c
+label makeflag   top top subc  next  ;c
 
-code 0<   8000 # top xor  top top add  ( ~N -> C)  again  ;c
-code u<          x pop  top x cmp  ( ~uless -> C)  again  ;c
+code 0<   8000 # top xor  top top add  ( ~N -> C)  makeflag j  ;c
+code u<          x pop  top x cmp  ( ~uless -> C)  makeflag j  ;c
+
+code  <          x pop  top x cmp  clrc  makeflag >= until
+                                   setc  makeflag j  ;c
