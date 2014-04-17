@@ -1,0 +1,86 @@
+( This file is part of muFORTH: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2014 David Frech. All rights reserved, and all wrongs
+  reversed. (See the file COPYRIGHT for details.)
+
+loading MSP430 serial chat protocol (peer)
+
+( NOTE: This might seem a bit odd, but this file implements the side of the
+  chat protocol normally implemented by firmware in a target chip! The
+  reason for doing this here, in muforth, is to test out the protocol by have
+  both sides running on the host.)
+
+hex
+
+( Taking inspiration from the wildly successful HC08 serial chat protocol.
+
+  Responds to the following commands. NOTE: these are hex values!
+
+00 - 0f  Idle   - these command bytes are ignored
+
+10  GetVersion  - get the chat protocol version
+11  SetAddr     - set the memory address pointer
+12  GetSP       - get stack pointer - points to saved regs
+13  ReadWord    - read a word from memory, incr pointer
+14  ReadWords   - read N words, incrementing as we go
+15  WriteWord   - write a word to memory, incr pointer
+16  Run         - set the pc in the saved frame, pop the registers and
+                - saved status, and go
+17  FlashWord   - write word to flash, incr pointer
+                - execute command saved on chat frame
+                - target returns flash status
+
+17 - ff  Idle   - these command bytes are ignored
+)
+
+variable pty-master
+: pty-send  ( b)     pty-master @ >emit ;
+: pty-recv  ( - b)   pty-master @ <key ;
+
+( Spying on the protocol.)
+variable spy  spy on
+: send             spy @ if ." >"  dup .h8_ then  pty-send ;
+: recv   pty-recv  spy @ if ." <"  dup .h8_ then ;
+
+: >b   send ;
+: b>   recv ;
+: >w          >hilo  >b >b ;
+: w>   b> b>  lohi> ;
+
+variable peer-sp
+: p.push  ( w)     peer-sp @       \m cell-  dup  peer-sp !  image-! ;
+: p.pop   ( - w)   peer-sp @  dup  \m cell+       peer-sp !  image-@ ;
+
+: peer-setup-frame
+   @ram #ram +  peer-sp !
+   fed0 p.push  ( outer PC)
+   fcb2 p.push  ( frame PC)
+   0 p.push ( SR)  4008 p.push ( Y)  e665 p.push ( X)  cafe p.push ( TOP)
+   0200 p.push ( Count)  0308 p.push ( RP)  e844 p.push ( W)  c29e p.push ( IP)
+   0 p.push ( FCMD) ;
+
+: p.GetVersion   0002 >w ;
+: p.GetSP        peer-sp @ >w ;
+
+: p.SetAddr      w>  image+  m ! ;
+: p.ReadWord                m* m*  lohi>  >w ;
+: p.WriteWord    w>  >hilo  m& m& ;
+
+: p.ReadWords    b>  ?for  p.ReadWord  next  then ;
+
+: p.Run          ;
+: p.FlashWord    p.WriteWord  9658 ( status) >w ;
+
+: peer-command
+   b> dup  10 18 within if  10 - jump
+      p.GetVersion  p.SetAddr  p.GetSP
+      p.ReadWord  p.ReadWords  p.WriteWord
+      p.Run  p.FlashWord
+   then  drop ;
+
+: peer-chat  begin  peer-command  again ;
+
+: peer
+   open-pty  cr  ." Connect to "  zcount type  ."  to chat with this peer."
+   dup  here get-termios drop  here set-termios-peer-raw  dup here set-termios
+   pty-master !  peer-setup-frame  peer-chat ;

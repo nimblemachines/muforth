@@ -86,12 +86,12 @@ ldflags=""
 # Keep Wnarrowing, because we might be building a 32-bit executable.
 # But default to whatever Darwin wants to build.
 if [ "$os" = "Darwin" ]; then
-    archobjs="file.o main.o time.o tty.o select.o usb-darwin.o"
+    archobjs="file.o main.o time.o tty.o select.o pty.o usb-darwin.o"
     cflags="-mdynamic-no-pic"
     ldflags="-framework CoreFoundation -framework IOKit"
 fi
 if [ "$os" = "Linux" ]; then
-    archobjs="file.o main.o time.o tty.o select.o usb-linux.o"
+    archobjs="file.o main.o time.o tty.o select.o pty.o usb-linux.o"
 
     if [ "$cpu" = "x86_64" ]; then
         Wnarrowing=""
