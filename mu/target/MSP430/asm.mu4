@@ -184,24 +184,32 @@ forth
 )
 : fmt2  constant  does> @  ( ea op)   over ea>rm or  op,  ea, ;
 
+( NOTE: I renamed two badly-named instructions: rrc and rra.
+
+    rrc "rotate right thru carry"       is really  ror
+    rra "rotate right arithmetically"   is really  asr
+
+  Since every other architecture in the world, practically, calls these
+  "ror" and "asr", that's what I'm going to do.)
+
 assembler
-1000 fmt2 ror   ( TI call this rrc: "rotate right thru carry")
+( Condition code effects:  V N Z C )
+1000 fmt2 ror            ( * * * * )    ( TI's "rrc")
 1040 fmt2 rorb
-1080 fmt2 swpb  ( swap bytes)
+1080 fmt2 swpb           ( - - - - )    ( swap bytes)
 ( 10c0 unimplemented)
-1100 fmt2 asr   ( TI call this rra: "rotate right arithmetically"
-                  b15 -> b15, b15 -> b14, ..., b0 -> Carry)
+1100 fmt2 asr            ( 0 * * * )    ( TI's "rra")
 1140 fmt2 asrb
-1180 fmt2 sxt
+1180 fmt2 sxt            ( 0 * * * )    ( sign-extend byte to word)
 ( 11c0 unimplemented)
 forth
-1200 fmt2 _push
+1200 fmt2 _push          ( - - - - )
 1240 fmt2 _pushb
 assembler
-1280 fmt2 call
+1280 fmt2 call           ( - - - - )
 ( 12c0 unimplemented)
 forth
-1300 fmt2 _reti
+1300 fmt2 _reti          ( * * * * )
 assembler
 ( 1340 unimplemented - CPUX calla encoding)
 ( 1380 unimplemented - more CPUX calla encodings)
@@ -325,6 +333,10 @@ assembler
 3400 fmt3 <    ( jge aka >= signed)
 3800 fmt3 >=   ( jl  aka <  signed)
 3c00 fmt3 never  ( jmp always!)
+
+( For testing carry directly:)
+2800 fmt3 CS   ( carry set   - compiles jnc)
+2c00 fmt3 CC   ( carry clear - compiles jc)
 forth
 
 ( Jump offsets are relative to the _following_ instruction.)
@@ -381,22 +393,27 @@ forth
    over ea>dest  pop or  op,  ea,  ea, ;
 
 assembler
-4000 fmt1 mov
+( Condition code effects:  V N Z C )
+4000 fmt1 mov            ( - - - - )
 4040 fmt1 movb
-5000 fmt1 add
+5000 fmt1 add            ( * * * * )
 5040 fmt1 addb
-6000 fmt1 addc   ( adc?)
+6000 fmt1 addc           ( * * * * )   ( adc?)
 6040 fmt1 addcb
-7000 fmt1 subc   ( sbc? sbb?)
+7000 fmt1 subc           ( * * * * )   ( sbc? sbb?)
 7040 fmt1 subcb
 
-8000 fmt1 sub
+8000 fmt1 sub            ( * * * * )
 8040 fmt1 subb
-9000 fmt1 cmp
+9000 fmt1 cmp            ( * * * * )
 9040 fmt1 cmpb
-a000 fmt1 dadd   ( decimal add! can be safely ignored ;-)
+
+( decimal add! can be safely ignored ;-)
+a000 fmt1 dadd           ( * * * * )
 a040 fmt1 daddb
-b000 fmt1 bit
+
+( Like and, bit clears the V bit.)
+b000 fmt1 bit            ( 0 * * * )
 b040 fmt1 bitb
 
 ( IMPORTANT NOTE: bic, bicb, bis, and bisb are treated as a species of
@@ -408,9 +425,10 @@ b040 fmt1 bitb
   and clear bits in the status register, it wouldn't work if they then *also*
   independently affected the condition codes.)
 
-c000 fmt1 bic
+( Condition code effects:  V N Z C )
+c000 fmt1 bic            ( - - - - )
 c040 fmt1 bicb
-d000 fmt1 bis
+d000 fmt1 bis            ( - - - - )
 d040 fmt1 bisb
 
 ( Unlike bic and bis, and and xor affect the condition codes, with the
@@ -419,34 +437,40 @@ d040 fmt1 bisb
   * and clears the V bit;
   * xor sets the V bit if both operands are negative.)
 
-e000 fmt1 xor
+( Condition code effects:  V N Z C )
+e000 fmt1 xor            ( * * * * )
 e040 fmt1 xorb
-f000 fmt1 and
+f000 fmt1 and            ( 0 * * * )
 f040 fmt1 andb
 
 ( Synthesised instructions - aka useful macros.)
 
-: clr   asm{   0 #  \f swap  mov   } ;
+( Condition code effects:                 V N Z C )
+: clr   asm{   0 #  \f swap  mov   } ;  ( - - - - )
 : clrb  asm{   0 #  \f swap  movb  } ;
-: inv   asm{  -1 #  \f swap  xor  } ;  ( com?)
+: inv   asm{  -1 #  \f swap  xor  } ;   ( * * * * )   ( com?)
 : invb  asm{  -1 #  \f swap  xorb } ;
-: tst   asm{   0 #  \f swap  cmp  } ;
+: tst   asm{   0 #  \f swap  cmp  } ;   ( 0 * * 1 )
 : tstb  asm{   0 #  \f swap  cmpb } ;
+
+( NOTE: Both pop and popb incr SP by 2!)
 : pop   asm{  sp )+  \f swap  mov  } ;
-: popb  asm{  sp )+  \f swap  movb } ;  ( SP increments by 2!!)
+: popb  asm{  sp )+  \f swap  movb } ;
+
 : ret   asm{  pc pop  } ; ( !!)
 : nop   asm{  0 # r3 mov  } ;
 : br    asm{  pc mov  } ;  ( branch to arbitrary ea)
 
-: setc  asm{  1 # sr bis  } ;
-: setz  asm{  2 # sr bis  } ;
-: setn  asm{  4 # sr bis  } ;
-: eint  asm{  8 # sr bis  } ;
+( Condition code effects:        V N Z C )
+: setc  asm{  1 # sr bis  } ;  ( - - - 1 )
+: setz  asm{  2 # sr bis  } ;  ( - - 1 - )
+: setn  asm{  4 # sr bis  } ;  ( - 1 - - )
+: eint  asm{  8 # sr bis  } ;  ( - - - - )
 
-: clrc  asm{  1 # sr bic  } ;
-: clrz  asm{  2 # sr bic  } ;
-: clrn  asm{  4 # sr bic  } ;
-: dint  asm{  8 # sr bic  } ;
+: clrc  asm{  1 # sr bic  } ;  ( - - - 0 )
+: clrz  asm{  2 # sr bic  } ;  ( - - 0 - )
+: clrn  asm{  4 # sr bic  } ;  ( - 0 - - )
+: dint  asm{  8 # sr bic  } ;  ( - - - - )
 
 ( Smart jump and call.)
 
