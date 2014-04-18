@@ -216,47 +216,47 @@ code u2/
   
      |       |       |
      +-------+-------+
-  4  |  ixh  |  ixl  |  5   index == 8000 + start-limit to 8000
+  4  |  ixh  |  ixl  |  5   index == start-limit to 0
      +-------+-------+
-  2  |  deh  |  del  |  3   delta == 8000 + limit
+  2  |  lih  |  lil  |  3   limit
      +-------+-------+
   0  |     empty     |  1
      +-------+-------+  <---- RP
 )
 
+( XXX Another word that would benefit from little-endian data stack!)
 code (do)   ( limit start)
    rp ) ldhx  -4 # aix  rp ) sthx
-     .a pul   0 ,x sta  ( start_hi)
+     .a pul             0 ,x sta  ( save start_hi)
      .a pul   1 ,s sub  5 ,x sta  ( index_lo = start_lo - limit_lo)
-     .a pul  "80 # eor  2 ,x sta  ( delta = "8000 + limit)
+     .a pul             2 ,x sta  ( limit_hi)
    0 ,x lda   2 ,x sbc  4 ,x sta  ( index_hi = start_hi - limit_hi)
-     .a pul             3 ,x sta  next  ;c
+     .a pul             3 ,x sta  ( limit_lo)  next  ;c
 
 code i
-   ( Push index + delta of inner do loop.)
+   ( Push index + limit of inner do loop.)
    rp ) ldhx
    3 ,x lda  5 ,x add  .a psh  2 ,x lda  4 ,x adc  apush j  ;c
 
 code j
-   ( Push index + delta of second enclosing do loop.)
+   ( Push index + limit of second enclosing do loop.)
    7 ,x lda  9 ,x add  .a psh  6 ,x lda  8 ,x adc  apush j  ;c
 
+( XXX little-endian data stack FTW!!)
 code (+loop)  ( incr)
-   ( Add incr to index; overflow means we've crossed threshold)
-   ( Be careful: sta clears V bit!)
+   ( Add incr to index; if sign changes, we've crossed threshold)
    rp ) ldhx
      .a pul ( hi)  0 ,x sta
      .a pul ( lo)  5 ,x add  5 ,x sta
-   0 ,x lda ( hi)  4 ,x adc  .a psh  tpa .a rol ( V -> C)
-           .a pul  4 ,x sta
-   CS if  4 # aix
+   0 ,x lda ( hi)  4 ,x adc  4 ,x sta
+   0 ,x eor  0< if  4 # aix
 label skip-branch
       rp ) sthx  ( de-allocate loop frame)
       ip ) ldhx  4 # aix  next-ip j  then  ( skip branch; do next)
                          ' branch j        ( otherwise, branch)  ;c
 
 code (loop)
-   ( Add one to index; overflow means we've crossed threshold)
+   ( Add one to index; if sign changes, we've crossed threshold)
    1 # lda .a psh  .a clr  .a psh ( push constant 1)
    ' (+loop) j  ;c
 

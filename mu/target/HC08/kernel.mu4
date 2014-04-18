@@ -192,9 +192,9 @@ label push-constant  ( - word)
 
      |       |       |
      +-------+-------+
-  4  |  ixh  |  ixl  |  5   index == 8000 + start-limit to 8000
+  4  |  ixh  |  ixl  |  5   index == start-limit to 0
      +-------+-------+
-  2  |  deh  |  del  |  3   delta == 8000 + limit
+  2  |  lih  |  lil  |  3   limit
      +-------+-------+
   0  |  rah  |  ral  |  1   return address
      +-------+-------+
@@ -206,22 +206,19 @@ label push-constant  ( - word)
 litop (do)
 label #(do)  -- for test code
            tl sub  5 ,s sta
-   th lda  "80 # eor  th sta  ( delta = "8000 + limit)
-   xh lda  th sbc  4 ,s sta   ( index = start-delta)
-   ' r! j  ( Move last to R. This has to be a _jump_!!)  ;c
+   xh lda  th sbc  4 ,s sta   ( index = start-limit)
+   ' r! j  ( Move limit to R. This has to be a _jump_!!)  ;c
 
 ( Note: caller has to do 4 # ais after calling (loop or (+loop)
  code (+loop)  ( incr)
 litop (+loop)
 label #(+loop)  -- for test code, and (loop)
-   ( Add incr to index; overflow means we've crossed threshold)
-   ( Be careful: sta clears V bit!)
-           5 ,s add  5 ,s sta
-   xh lda  4 ,s adc  .a psh  tpa .a rol ( V -> C)
-   .a pul  4 ,s sta  rts  ;c
+   ( Add incr to index; if sign changes, we've crossed threshold)
+           5 ,s add  5 ,s sta  4 ,s lda  xl sta  ( save ixh)
+             xh adc  4 ,s sta  xl eor  ( N = crossed)  rts  ;c
 
 code (loop)
-   ( Add one to index; overflow means we've crossed threshold)
+   ( Add one to index; if sign changes, we've crossed threshold)
    xh clr  1 # lda  ( load constant 1)  #(+loop) j  ;c
 
 code i
@@ -249,6 +246,16 @@ code (next)
    3 ,s lda  1 # sub  3 ,s sta
    2 ,s lda  0 # sbc  2 ,s sta
    3 ,s ora  1 # sub ( Z -> C)  rts  ;c
+
+
+( XXX What if for pushed the negation of the count, and next _incremented_?
+  We would have a carry when ffff incremented to 0000. Easy to check.)
+
+code (for-incr)  ( n)  ( XXX push negated count)  ;c
+code (next-incr)
+   ( Increment count on S stack.)
+   3 ,s lda  1 # add  3 ,s sta
+   2 ,s lda  0 # adc  2 ,s sta  rts  ;c
 
 
 {
@@ -299,8 +306,8 @@ meta-compiler
 
 ( do, loop, +loop)
 : do      ( - src dest)   code{  -4 # ais }  \mc (do)  \mc begin ;
-: loop    ( src dest)     code{  \t (loop) c }  code{  CS until  4 # ais } ;
-: +loop   ( src dest)           \mc (+loop)     code{  CS until  4 # ais } ;
+: loop    ( src dest)     code{  \t (loop) c }  code{  0< until  4 # ais } ;
+: +loop   ( src dest)           \mc (+loop)     code{  0< until  4 # ais } ;
 forth
 
 }
