@@ -7,6 +7,11 @@
 
 /* Quick and dirty pty - pseudo-tty - support */
 
+/* Totally stupid GNU/Linux bullshit!! */
+#ifdef __linux__
+#define _XOPEN_SOURCE
+#endif
+
 #include "muforth.h"
 
 #include <stdlib.h>
@@ -17,7 +22,7 @@ void mu_open_pty()      /* ( - fd z") leaves pathname of slave */
     int fd;         /* fd of master */
     char *slave;    /* name of corresponding slave device */
 
-    fd = posix_openpt(O_RDWR);
+    fd = open("/dev/ptmx", O_RDWR);
     if (fd == -1)
         return abort_strerror();
     if (grantpt(fd) == -1)
