@@ -127,7 +127,7 @@ void mu_set_termios_target_raw()
     pti->c_cflag &= ~(CRTSCTS);   /* no handshaking */
     pti->c_cflag |= (CLOCAL);     /* no modem signalling */
     pti->c_cc[VMIN] = 0;          /* return even if no chars avail */
-    pti->c_cc[VTIME] = 5;         /* timeout in decisecs */
+    pti->c_cc[VTIME] = 20;        /* timeout in decisecs */
     DROP(1);
 }
 
