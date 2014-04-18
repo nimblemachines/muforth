@@ -17,7 +17,8 @@
 #include <stdlib.h>
 #include <fcntl.h>
 
-void mu_open_pty()      /* ( - fd z") leaves pathname of slave */
+/* Leaves fd of master, and pathname to slave device. */
+void mu_open_pty()      /* ( - fd z") */
 {
     int fd;         /* fd of master */
     char *slave;    /* name of corresponding slave device */
@@ -25,10 +26,13 @@ void mu_open_pty()      /* ( - fd z") leaves pathname of slave */
     fd = open("/dev/ptmx", O_RDWR);
     if (fd == -1)
         return abort_strerror();
+
     if (grantpt(fd) == -1)
         return abort_strerror();
+
     if (unlockpt(fd) == -1)
         return abort_strerror();
+
     slave = ptsname(fd);
     if (slave == NULL)
         return abort_strerror();
