@@ -1,0 +1,88 @@
+( This file is part of muFORTH: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2014 David Frech. All rights reserved, and all wrongs
+  reversed. (See the file COPYRIGHT for details.)
+
+loading MSP430 bootstrap loader (BSL) support (peer)
+
+hex
+
+( NOTE: This might seem a bit odd, but this file implements the side of the
+  BSL protocol normally implemented by ROM code in a target chip! The
+  reason for doing this here, in muforth, is to test out the protocol by
+  having both sides running on the host.)
+
+hex
+
+variable pty-master
+: pty-send  ( b)     pty-master @ >emit ;
+: pty-recv  ( - b)   pty-master @ <key ;
+
+( Spying on the protocol.)
+variable spy  spy on
+: send             spy @ if ." >"  dup .h8_ then  pty-send ;
+: recv   pty-recv  spy @ if ." <"  dup .h8_ then ;
+
+( Since checksumming is done on a 16-bit word basis, let's checksum by
+  words rather than by alternating bytes.)
+
+variable checksum
+: sum!  0ffff checksum ! ;
+: sum  ( w)  checksum @  xor  checksum ! ;
+
+: >w   dup sum  >hilo  send send ;
+: w>   recv recv  lohi>  dup sum ;
+
+: >bb   ( lo hi)  lohi> >w ;
+: bb>   ( - hi lo)      w> >hilo ;
+
+: ?match  ( want got)  2dup = if  2drop ^  then
+   ." expected "  .h8_  ." got " .h8_ ;
+
+: >buf  ( len)  1+ 2/ ?for  m* m* >bb  next  then ;
+: buf>  ( len)  1+ 2/ ?for  bb> m& m&  next  then ;
+
+:  ack    90 send ;
+: nack   0a0 send ;
+
+: ?sync  begin  recv  80 = until  ack ;
+
+: <bsl  ( - length cmd)
+   sum!  bb>  80 ?match ( cmd)  bb> dup ?match ( length)  swap ;
+
+: chk>  ( - sum ok)  w>  checksum @  0= ;
+: ?ack  if  drop ack ^  then  nack  u. ." bad checksum received " ;
+
+( Protocol commands. See Table 2-1, page 11, in SLAU319.
+
+  Cmd   Command name    Direction    Password-protected?
+  ===   =============   ==========   ===================
+   10   RX password     host -> BSL  No
+   12   RX data block   host -> BSL  Yes
+   14   TX data block   BSL -> host  Yes
+   16   Erase segment   n/a          Yes
+   18   Mass erase      n/a          No
+   1a   Load PC         n/a          Yes
+)
+
+: bsl-chunk   w> ( addr)  image+ m !  w> ( len or fcmd) ;
+: bsl-rxpass  bsl-chunk  drop  10 for  w> drop  next  chk> ?ack ;
+: bsl-rxdata  bsl-chunk  buf>  chk> ?ack ;
+: bsl-txdata  bsl-chunk        chk>  ( sum ok)  2drop
+              sum!  80 >w  dup  dup >bb  >buf  checksum @ >w ;
+: bsl-erase   bsl-chunk  drop  chk>  =if  200 for  0ff m&  next  then  ?ack ;
+
+: bsl-ignore  ( len cmd)  drop  1+ 2/ ?for  w> drop  next  then  chk> ?ack ;
+
+: peer-command
+   ?sync  <bsl  ( len cmd)
+   dup  10 18 within if  nip  10 - 2/ jump
+      bsl-rxpass  bsl-rxdata  bsl-txdata  bsl-erase
+   then  bsl-ignore ;
+
+: re-peer
+   open-pty  cr  ." Connect to "  zcount type  ."  to chat with this peer."
+   pty-master !  begin  peer-command  again ;
+
+: peer
+   begin  catch re-peer  pty-master @ close-file  again ;
