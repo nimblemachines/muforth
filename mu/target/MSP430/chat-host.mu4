@@ -28,22 +28,34 @@ hex
 17 - ff  Idle   - these command bytes are ignored
 )
 
+variable checksum
+: sum!  0ffff checksum ! ;
+: sum  ( w)  checksum @  xor  checksum ! ;
+
 : >b   send ;
 : b>   recv ;
-: >w          >hilo  >b >b ;
-: w>   b> b>  lohi> ;
+: >w   dup sum  >hilo  >b >b ;
+: w>   b> b>  lohi>  dup sum ;
 
 : c.Idle                   0 >b         ;
 : c.GetVersion  ( - n)    10 >b      w> w>  ( lo hi)  10 << + ;
-: c.SetAddr     ( a)      11 >b  >w     ;
+: c.SetAddr     ( a)      11 >b  >w       sum! ;
 : c.GetSP       ( - sp)   12 >b      w> ;
 : c.ReadWord    ( - w)    13 >b      w> ;
 : c.ReadWords   ( n)      14 >b  >b     ;  ( then read streamed bytes)
 : c.WriteWord   ( w)      15 >b  >w     ;
 : c.Run         ( )       16 >b         ;
 : c.FlashWord   ( w - w)  17 >b  >w  w> ;
+: c.GetCheck    ( - w)    18 >b      w> ;
 
 : resync  flush  c.Idle  c.Idle ;
+
+variable checksumming
+: ?check
+   checksumming @ if
+      c.GetCheck drop  checksum @ 0= if ^ then
+      ." checksum failed "
+  then ;
 
 : c.setup-chunk  ( buf a u - #words)
    ( resync)  swap c.SetAddr  swap m !  1+ 2/ ( words) ;
@@ -67,10 +79,12 @@ hex
 .then ;
 
 : c.ReadChunk    ( buf a u)
-   c.setup-chunk  dup c.ReadWords  ?for  b> m&  b> m&  next  then ;
+   c.setup-chunk  dup c.ReadWords  ?for  w> >hilo  m& m&  next  then
+   ?check ;
 
 : c.WriteChunk   ( buf a u)
-   c.setup-chunk  ?for  m* m* lohi>  c.WriteWord  next  then ;
+   c.setup-chunk  ?for  m* m* lohi>  c.WriteWord  next  then
+   ?check ;
 
 : c.GetRegs   ( buf - sp)   c.GetSP  dup push  .LAST  c.ReadChunk  pop ;
 : c.SetRegs   ( buf)        c.GetSP            .LAST  c.WriteChunk ;
@@ -81,7 +95,8 @@ hex
 ( Or together the statuses from each FlashWord command and return it.)
 : c.FlashChunk   ( buf a u fcmd - status)
    c.copy-fcmd
-   c.setup-chunk  0 swap  ?for  m* m* lohi>  c.FlashWord  or  next  then ;
+   c.setup-chunk  0 swap  ?for  m* m* lohi>  c.FlashWord  or  next  then
+   ?check ;
 
 
 ( The interact interfaces for ReadWord and WriteWord take an address. Let's

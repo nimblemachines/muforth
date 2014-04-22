@@ -29,6 +29,7 @@ hex
 17  FlashWord   - write word to flash, incr pointer
                 - execute command saved on chat frame
                 - target returns flash status
+18  GetCheck    - get current checksum
 
 17 - ff  Idle   - these command bytes are ignored
 )
@@ -42,10 +43,14 @@ variable spy  spy on
 : send             spy @ if ." >"  dup .h8_ then  pty-send ;
 : recv   pty-recv  spy @ if ." <"  dup .h8_ then ;
 
+variable checksum
+: sum!  0ffff checksum ! ;
+: sum  ( w)  checksum @  xor  checksum ! ;
+
 : >b   send ;
 : b>   recv ;
-: >w          >hilo  >b >b ;
-: w>   b> b>  lohi> ;
+: >w   dup sum  >hilo  >b >b ;
+: w>   b> b>  lohi>  dup sum ;
 
 variable peer-sp
 : p.push  ( w)     peer-sp @       \m cell-  dup  peer-sp !  image-! ;
@@ -65,22 +70,24 @@ variable peer-sp
 
 : p.GetVersion   [ muforth-commit drop 8 evaluate ]  dup >w  10 >> >w ;
 
-: p.SetAddr      w>  image+  m ! ;
+: p.SetAddr      w>  image+  m !  sum! ;
 : p.GetSP        peer-sp @ >w ;
 
-: p.ReadWord        m* >b  m* >b ;
-: p.WriteWord    b> m&  b> m& ;
+: p.ReadWord     m* m* lohi> >w ;
+: p.WriteWord    w> >hilo m& m& ;
 
 : p.ReadWords    b>  ?for  p.ReadWord  next  then ;
 
 : p.Run          ;
-: p.FlashWord    p.WriteWord  9658 ( status) >w ;
+: p.FlashWord    p.WriteWord  96 58 >b >b ;
+
+: p.GetCheck     checksum @ >w ;
 
 : peer-command
-   b> dup  10 18 within if  10 - jump
+   b> dup  10 19 within if  10 - jump
       p.GetVersion  p.SetAddr  p.GetSP
       p.ReadWord  p.ReadWords  p.WriteWord
-      p.Run  p.FlashWord
+      p.Run  p.FlashWord  p.GetCheck
    then  drop ;
 
 : re-peer
