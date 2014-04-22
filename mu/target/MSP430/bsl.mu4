@@ -3,42 +3,41 @@
   Copyright 2002-2014 David Frech. All rights reserved, and all wrongs
   reversed. (See the file COPYRIGHT for details.)
 
-loading MSP430 BSL support
+loading MSP430 bootstrap loader (BSL) support
 
 hex
 
+( Since checksumming is done on a 16-bit word basis, let's checksum by
+  words rather than by alternating bytes.)
+
 variable checksum
-variable checkwhich
-: sum  ( b)  checkwhich @  checksum +  dup c@  rot xor  swap c!
-             checkwhich @  1 xor  checkwhich ! ;
+: sum!  0ffff checksum ! ;
+: sum  ( w)  checksum @  xor  checksum ! ;
 
-: sum!  checkwhich off  checksum on ( set to ffff) ;
+: >w   dup sum  >hilo  send send ;
+: w>   recv recv  lohi>  dup sum ;
 
-: >b   dup sum  send ;
-: >w   >hilo  >b >b ;
-
-: b>   recv  dup sum ;
+: >bb   ( lo hi)  lohi> >w ;
+: bb>   ( - hi lo)      w> >hilo ;
 
 : ?match  ( want got)  2dup = if  2drop ^  then
    ." expected "  .h8_  ." got " .h8_ ;
 
-: >buf  ( buf u)  swap m !  ?for  m* >b  next  then ;
-: buf>  ( buf u)  swap m !  ?for  b> m&  next  then ;
+: >buf  ( buf u)  swap m !  1+ 2/ ?for  m* m* >bb  next  then ;
+: buf>  ( buf u)  swap m !  1+ 2/ ?for  bb> m& m&  next  then ;
 
 ( For reading back memory from BSL.)
-: hdr>  sum!  b> 80 ?match  b> drop  b> b> ?match ;
-: chk>  recv checksum    c@  =
-        recv checksum 1+ c@  = and  if ^ then
+: hdr>  sum!  bb> 80 ?match  drop  bb> ?match ;
+: chk>  w> drop  checksum @  0=  if ^ then
         error" bad checksum received" ;
 
 : ?ack  recv  90 ?match ;
 : sync  80 send  ?ack ;
 
-: >length   dup >b  >b ;  ( Send length twice! Genius!)
+: >length   dup >bb ;  ( Send length twice! Genius!)
 
-: <bsl  ( length cmd)  sync  sum!  80 >b  >b  4 + >length ;
-: bsl>  checksum    c@ send
-        checksum 1+ c@ send ;
+: <bsl  ( length cmd)  sync  sum!  80 swap >bb  4 + >length ;
+: bsl>  checksum @  >w ;
 
 ( Protocol commands. See Table 2-1, page 11, in SLAU319.
 
@@ -63,11 +62,11 @@ variable checkwhich
   Since the BSL apparently _clears_ LOCKA, using 06 and doing a mass erase
   will erase the info memory.)
 
-: bsl-unlock              20 10 <bsl  0 >w  0 >w  20 for  0ff >b  next  bsl> ?ack ;
+: bsl-unlock              20 10 <bsl  0 >w  0 >w  10 for  0ffff >w  next  bsl> ?ack ;
 : bsl-txbuf  ( buf a u)  dup 12 <bsl  swap >w  dup >w  >buf  bsl>  ?ack ;
 : bsl-rxbuf  ( buf a u)    0 14 <bsl  swap >w  dup >w        bsl>  hdr>  buf>  chk> ;
 : bsl-erase  ( a fcmd)     0 16 <bsl  swap >w      >w        bsl>  ?ack ;
--- : mass-erase               0 18 <bsl  0 >w  06 >b  0a5 >b    bsl>  ?ack ;
+-- : mass-erase               0 18 <bsl  0 >w  0a506 >w      bsl> ;
 : bsl-loadpc  ( pc)        0 1a <bsl       >w    0 >w        bsl>  ?ack ;
 
 ( Let's make sure we're not writing the flash inadvertently - until we know
