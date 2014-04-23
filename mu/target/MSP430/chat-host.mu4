@@ -33,15 +33,18 @@ variable checksum
 : sum!  0ffff checksum ! ;
 : sum  ( w)  checksum @  xor  checksum ! ;
 
-: >b   send ;
-: b>   recv ;
-: >w   dup sum  >hilo  >b >b ;
-: w>   b> b>  lohi>  dup sum ;
+defer ?ok
+
+: >b         dup sum  send ;
+: b>   recv  dup sum ;
+
+: >w                     dup sum  >hilo  send send ;
+: w>   recv recv  lohi>  dup sum ;
 
 : c.Idle                   0 >b         ;
-: c.GetVersion  ( - n)    10 >b      w> w>  ( lo hi)  10 << + ;
-: c.SetAddr     ( a)      11 >b  >w       sum! ;
-: c.GetSP       ( - sp)   12 >b      w> ;
+: c.GetVersion  ( - n)    10 >b      w> w>  ( lo hi)  10 << +  ?ok ;
+: c.SetAddr     ( a)      11 >b  >w      ?ok ;
+: c.GetSP       ( - sp)   12 >b      w>  ?ok ;
 : c.ReadWord    ( - w)    13 >b      w> ;
 : c.ReadWords   ( n)      14 >b  >b     ;  ( then read streamed bytes)
 : c.WriteWord   ( w)      15 >b  >w     ;
@@ -49,31 +52,32 @@ variable checksum
 : c.FlashWord   ( w - w)  17 >b  >w  w> ;
 : c.GetCheck    ( - w)    18 >b      w> ;
 
+-:
+.ifdef paranoid
+   c.GetCheck drop
+.else
+   checksum off
+.then
+   checksum @  sum!  0= if ^ then
+   ." checksum failed: " checksum @ u. ;  is ?ok
+
 : resync  flush  c.Idle  c.Idle ;
 
-variable checksumming
-: ?check
-   checksumming @ if
-      c.GetCheck drop  checksum @ 0= if ^ then
-      ." checksum failed "
-  then ;
-
 : c.setup-chunk  ( buf a u - #words)
-   ( resync)  swap c.SetAddr  swap m !  1+ 2/ ( words) ;
+   swap c.SetAddr  swap m !  1+ 2/ ( words) ;
 
 ( Copy flash command to target stack)
 ( NOTE: already has FKEY set!)
 : c.copy-fcmd  ( fcmd)
    c.GetSP .FCMD + c.SetAddr  c.WriteWord ;
 
-: us  #1000 *  ( ns)  0 swap  nanosleep ;
-: ms  #1000 *  us ;
-: chill  ( wait a bit)  #500 ms ;
-
 ( Hook into interact code.)
 : c.Hello
    tty-target target-raw
-   #115200 bps  resync  drain  chill
+   #115200 bps  resync  drain
+.ifdef paranoid
+   c.GetCheck drop  sum!
+.then
 .ifndef ignore-version
    cr ." Chat firmware version "  c.GetVersion
    radix preserve  hex  sep preserve  -sep   u.
@@ -81,11 +85,11 @@ variable checksumming
 
 : c.ReadChunk    ( buf a u)
    c.setup-chunk  dup c.ReadWords  ?for  w> >hilo  m& m&  next  then
-   ?check ;
+   ?ok ;
 
 : c.WriteChunk   ( buf a u)
    c.setup-chunk  ?for  m* m* lohi>  c.WriteWord  next  then
-   ?check ;
+   ?ok ;
 
 : c.GetRegs   ( buf - sp)   c.GetSP  dup push  .LAST  c.ReadChunk  pop ;
 : c.SetRegs   ( buf)        c.GetSP            .LAST  c.WriteChunk ;
@@ -97,7 +101,7 @@ variable checksumming
 : c.FlashChunk   ( buf a u fcmd - status)
    c.copy-fcmd
    c.setup-chunk  0 swap  ?for  m* m* lohi>  c.FlashWord  or  next  then
-   ?check ;
+   ?ok ;
 
 
 ( The interact interfaces for ReadWord and WriteWord take an address. Let's
@@ -108,8 +112,8 @@ variable chat-addr  chat-addr on
 : ?set-addr  ( a)
    chat-addr @ over xor if  dup c.SetAddr  then  \m cell+  chat-addr ! ;
 
-: c.ReadWordAddr   ( a - w)  ?set-addr  c.ReadWord ;
-: c.WriteWordAddr  ( w a)    ?set-addr  c.WriteWord ;
+: c.ReadWordAddr   ( a - w)  ?set-addr  c.ReadWord   ?ok ;
+: c.WriteWordAddr  ( w a)    ?set-addr  c.WriteWord  ?ok ;
 
 
 ( NOTE: We don't define RunWait separately. Since we will always be reading

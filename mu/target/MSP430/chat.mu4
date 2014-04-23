@@ -24,7 +24,9 @@ __meta
 16  Run         - pop the registers and saved status, and go
 17  FlashWord   - write a word to flash, using command byte saved on stack
                 - can be used to initiate an erase, or to write a word
-18 - ff  Idle   - these command bytes are ignored
+18  GetCheck    - return accumulated checksum to host
+
+19 - ff  Idle   - these command bytes are ignored
 )
 
 
@@ -32,7 +34,8 @@ __meta
   Use  ip as memory pointer
     count as byte count
       top to pass a parameter around
-        x as scratch)
+        x as scratch
+        y as checksum)
 
 label get-byte
    begin  01 # IFG2 & bitb  0!= until
@@ -44,9 +47,12 @@ label put-byte
 
 label get-word
    get-byte c  top x mov
-   get-byte c  top swpb  x top bis  ret  ;c
+   get-byte c  top swpb  x top bis  top y xor  ret  ;c
 
 label put-word
+   top y xor  ( fall thru)  ;c
+
+label put-word-unsummed
    put-byte c  top swpb  put-byte j  ;c
 
 ( Compile the first 32 bits of the current muforth Git commit.
@@ -71,7 +77,7 @@ label read-word
 
 label read-words
    get-byte c  top tst  0!= if
-      top count mov
+      top y xor  top count mov
       begin  read-word c  1 # count sub  0= until
    then  ret  ;c
 
@@ -100,9 +106,13 @@ label flash-word
    FCTL3 & top mov  put-word j   -- read status and return it
    ;c
 
+label get-check
+   y top mov  0ffff # y mov  put-word-unsummed j  ;c
+
 ( Dispatch.)
 label process
    get-byte c  ( cmd)
+   top y xor
 
    10 # top sub  get-version   0!= until
    01 # top sub  set-addr      0!= until
@@ -112,6 +122,7 @@ label process
    01 # top sub  write-word    0!= until
    01 # top sub  run           0!= until
    01 # top sub  flash-word    0!= until
+   01 # top sub  get-check     0!= until
 
    ( unknown... restart!)
    ret  ;c
