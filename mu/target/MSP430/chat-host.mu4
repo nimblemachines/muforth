@@ -33,13 +33,35 @@ variable checksum
 : sum!  0ffff checksum ! ;
 : sum  ( w)  checksum @  xor  checksum ! ;
 
-defer ?ok
-
 : >b         dup sum  send ;
 : b>   recv  dup sum ;
 
 : >w                     dup sum  >hilo  send send ;
 : w>   recv recv  lohi>  dup sum ;
+
+
+( We need this _first_ so we can define the other words, in paranoid mode,
+  to check their sums.)
+
+: c.GetCheck    ( - w)    18 >b      w> ;
+
+.ifdef paranoid
+
+: ?ok
+   c.GetCheck drop
+   checksum @  sum!  dup 0= if  drop ^  then
+   ." checksum failed: " u. ;
+
+: ?reset
+   c.GetCheck drop  sum! ;
+
+.else
+
+: ?ok ;
+: ?reset ;
+
+.then
+
 
 : c.Idle                   0 >b         ;
 : c.GetVersion  ( - n)    10 >b      w> w>  ( lo hi)  10 << +  ?ok ;
@@ -48,18 +70,9 @@ defer ?ok
 : c.ReadWord    ( - w)    13 >b      w> ;
 : c.ReadWords   ( n)      14 >b  >b     ;  ( then read streamed bytes)
 : c.WriteWord   ( w)      15 >b  >w     ;
-: c.Run         ( )       16 >b         ;
+: c.Run         ( )       16 >b          ?reset ;
 : c.FlashWord   ( w - w)  17 >b  >w  w> ;
-: c.GetCheck    ( - w)    18 >b      w> ;
 
--:
-.ifdef paranoid
-   c.GetCheck drop
-.else
-   checksum off
-.then
-   checksum @  sum!  0= if ^ then
-   ." checksum failed: " checksum @ u. ;  is ?ok
 
 : resync  flush  c.Idle  c.Idle ;
 
@@ -75,9 +88,7 @@ defer ?ok
 : c.Hello
    tty-target target-raw
    #115200 bps  resync  drain
-.ifdef paranoid
-   c.GetCheck drop  sum!
-.then
+   ?reset
 .ifndef ignore-version
    cr ." Chat firmware version "  c.GetVersion
    radix preserve  hex  sep preserve  -sep   u.
