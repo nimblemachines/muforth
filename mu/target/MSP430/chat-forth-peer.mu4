@@ -1,0 +1,93 @@
+( This file is part of muFORTH: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2014 David Frech. All rights reserved, and all wrongs
+  reversed. (See the file COPYRIGHT for details.)
+
+loading MSP430 serial chat protocol - Forth-specific (peer)
+
+hex
+
+( Taking inspiration from the wildly successful HC08 serial chat protocol.
+
+  Responds to the following commands. NOTE: these are hex values!
+
+00 - 1f  Idle   - these command bytes are ignored
+
+20  GetVersion  - get the chat protocol version
+21  SetAddr     - set the memory address pointer
+22  GetCheck    - return accumulated checksum to host; reset it
+
+23  ReadWord    - read a word from memory, incr pointer
+24  WriteWord   - write a word to memory, incr pointer
+25  FlashWord   - write a word to flash, using command byte saved on stack
+                - can be used to initiate an erase, or to write a word
+
+26  GetDepth    - get stack depth
+27  Pop         - pop one word from stack
+28  Push        - push one word onto stack
+29  Execute     - execute top, using rest of stack as params
+
+2a - ff  Idle   - these command bytes are ignored
+)
+
+variable pty-master
+: pty-send  ( b)     pty-master @ >emit ;
+: pty-recv  ( - b)   pty-master @ <key ;
+
+( Spying on the protocol.)
+variable spy  spy on
+: send             spy @ if ." >"  dup .h8_ then  pty-send ;
+: recv   pty-recv  spy @ if ." <"  dup .h8_ then ;
+
+variable checksum
+: sum!  0ffff checksum ! ;
+: sum  ( w)  checksum @  xor  checksum ! ;
+
+: >b   send ;
+: b>   recv ;
+: >w   dup sum  >hilo  >b >b ;
+: w>   b> b>  lohi>  dup sum ;
+
+
+( Compile the first 32 bits of the current muforth Git commit.
+  When asked for the version, return these two 16-bit words, in
+  little-endian order.)
+
+: p.GetVersion   [ muforth-commit drop 8 evaluate ]  dup >w  10 >> >w ;
+
+: p.SetAddr      w>  image+  m ! ;
+
+: p.ReadWord     m* m* lohi> >w ;
+: p.WriteWord    w> >hilo m& m& ;
+
+: p.FlashWord    p.WriteWord  9658 >w ;
+
+: p.GetCheck     checksum @ >w  sum! ;
+
+( Forth-specific words.)
+@ram #ram +  constant rp0  ( bottom of R stack!)
+rp0 #48 -    constant sp0  ( bottom of D stack!)
+
+variable peer-sp   sp0 peer-sp !
+
+: p.GetDepth   sp0  peer-sp @  -  2/  >w ;
+: p.PushWord   w>  peer-sp @       \m cell-  dup  peer-sp !  image-! ;
+: p.PopWord        peer-sp @  dup  \m cell+       peer-sp !  image-@  >w ;
+: p.Execute    \m cell peer-sp +!  ( drop cfa) ;
+
+: peer-command
+   b>  dup sum  dup 20 2a within if  20 - jump
+      p.GetVersion  p.SetAddr  p.GetCheck
+      p.ReadWord  p.WriteWord  p.FlashWord
+      p.GetDepth  p.PopWord  p.PushWord  p.Execute
+   then  drop ;
+
+: re-peer
+   open-pty  cr  ." Connect to "  zcount type  ."  to chat with this peer."
+   pty-master !  begin  peer-command  again ;
+
+: peer
+   begin  catch re-peer  pty-master @ close-file  again ;
+
+( Let's run it!)
+peer
