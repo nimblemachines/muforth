@@ -21,13 +21,14 @@ hex
 24  WriteWord   - write a word to memory, incr pointer
 25  FlashWord   - write a word to flash, using command byte saved on stack
                 - can be used to initiate an erase, or to write a word
+26  Run         - run non-forth code
 
-26  GetDepth    - get stack depth
-27  Pop         - pop one word from stack
-28  Push        - push one word onto stack
-29  Execute     - execute top, using rest of stack as params
+27  GetDepth    - get stack depth
+28  Pop         - pop one word from stack
+29  Push        - push one word onto stack
+2a  RunForth    - execute top, using rest of stack as params
 
-2a - ff  Idle   - these command bytes are ignored
+2b - ff  Idle   - these command bytes are ignored
 )
 
 variable pty-master
@@ -43,11 +44,28 @@ variable checksum
 : sum!  0ffff checksum ! ;
 : sum  ( w)  checksum @  xor  checksum ! ;
 
+@ram #ram +  constant rp0  ( bottom of R stack!)
+rp0 #48 -    constant sp0  ( bottom of D stack!)
+
+variable peer-sp
+
 : >b   send ;
 : b>   recv ;
 : >w   dup sum  >hilo  >b >b ;
 : w>   b> b>  lohi>  dup sum ;
 
+: p.push  ( w)     peer-sp @       \m cell-  dup  peer-sp !  image-! ;
+: p.pop   ( - w)   peer-sp @  dup  \m cell+       peer-sp !  image-@ ;
+: p.empty?         peer-sp @  sp0 = ;
+: p.top   ( - w)   peer-sp @                                 image-@ ;
+
+
+: peer-setup-frame
+   sp0 peer-sp !
+   cafe p.push ( TOP)
+   [ rp0  \m cell- ]  fed0 ( PC)  over image-!  ( push PC on R stack)
+        p.push ( RP)
+   c29e p.push ( IP) ;
 
 ( Compile the first 32 bits of the current muforth Git commit.
   When asked for the version, return these two 16-bit words, in
@@ -60,26 +78,30 @@ variable checksum
 : p.ReadWord     m* m* lohi> >w ;
 : p.WriteWord    w> >hilo m& m& ;
 
-: p.FlashWord    p.WriteWord  9658 >w ;
+: p.FlashWord
+   p.top  dup  [ \eq FWRT   \eq FKEY + ] = if
+      drop  p.WriteWord  9658 >w  ^  then
+               [ \eq FERASE \eq FKEY + ] = if
+      m @ image-  -200 and  image+  200 0ff fill  then
+   w> drop  9658 >w ;
 
 : p.GetCheck     checksum @ >w  sum! ;
 
 ( Forth-specific words.)
-@ram #ram +  constant rp0  ( bottom of R stack!)
-rp0 #48 -    constant sp0  ( bottom of D stack!)
-
-variable peer-sp   sp0 peer-sp !
-
 : p.GetDepth   sp0  peer-sp @  -  2/  >w ;
-: p.PushWord   w>  peer-sp @       \m cell-  dup  peer-sp !  image-! ;
-: p.PopWord        peer-sp @  dup  \m cell+       peer-sp !  image-@  >w ;
-: p.Execute    \m cell peer-sp +!  ( drop cfa) ;
+: p.PushWord   w>  p.push ;
+: p.PopWord    p.empty? if  cafe >w  ^  then
+                           p.pop >w ;
+
+( These pop the registers, execute code, and then push them again. No-op?)
+: p.RunForth    ;
+: p.Run         ;
 
 : peer-command
-   b>  dup sum  dup 20 2a within if  20 - jump
+   b>  dup sum  20 -  dup 0b u< if  jump
       p.GetVersion  p.SetAddr  p.GetCheck
-      p.ReadWord  p.WriteWord  p.FlashWord
-      p.GetDepth  p.PopWord  p.PushWord  p.Execute
+      p.ReadWord  p.WriteWord  p.FlashWord  p.Run
+      p.GetDepth  p.PopWord  p.PushWord  p.RunForth
    then  drop ;
 
 : re-peer
@@ -87,7 +109,7 @@ variable peer-sp   sp0 peer-sp !
    pty-master !  begin  peer-command  again ;
 
 : peer
-   begin  catch re-peer  pty-master @ close-file  again ;
+   peer-setup-frame  begin  catch re-peer  pty-master @ close-file  again ;
 
 ( Let's run it!)
 peer

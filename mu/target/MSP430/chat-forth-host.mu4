@@ -21,13 +21,14 @@ hex
 24  WriteWord   - write a word to memory, incr pointer
 25  FlashWord   - write a word to flash, using command byte saved on stack
                 - can be used to initiate an erase, or to write a word
+26  Run         - run non-forth code
 
-26  GetDepth    - get stack depth
-27  Pop         - pop one word from stack
-28  Push        - push one word onto stack
-29  Execute     - execute top, using rest of stack as params
+27  GetDepth    - get stack depth
+28  Pop         - pop one word from stack
+29  Push        - push one word onto stack
+2a  RunForth    - execute top, using rest of stack as params
 
-2a - ff  Idle   - these command bytes are ignored
+2b - ff  Idle   - these command bytes are ignored
 )
 
 variable checksum
@@ -72,11 +73,12 @@ variable checksum
 : c.ReadWord    ( - w)    23 >b      w> ;
 : c.WriteWord   ( w)      24 >b  >w     ;
 : c.FlashWord   ( w - w)  25 >b  >w  w> ;
+: c.Run                   26 >b         ;
 
-: c.GetDepth    ( - n)    26 >b      w>  ?ok ;
-: c.PopWord     ( - w)    27 >b      w> ;
-: c.PushWord    ( w)      28 >b  >w     ;
-: c.Execute               29 >b         ; 
+: c.GetDepth    ( - n)    27 >b      w>  ?ok ;
+: c.PopWord     ( - w)    28 >b      w> ;
+: c.PushWord    ( w)      29 >b  >w     ;
+: c.RunForth              2a >b         ;
 
 
 : resync  flush  c.Idle  c.Idle ;
@@ -112,8 +114,6 @@ variable checksum
    c.PopWord drop ( fcmd)
    ?ok ;
 
-: c.GetRegs  ( buf - sp)  drop  c.GetDepth ;
-
 
 ( The interact interfaces for ReadWord and WriteWord take an address. Let's
   make that work, but also streamline the conversation with the target to
@@ -126,12 +126,23 @@ variable chat-addr  chat-addr on
 : c.ReadWordAddr   ( a - w)  ?set-addr  c.ReadWord   ?ok ;
 : c.WriteWordAddr  ( w a)    ?set-addr  c.WriteWord  ?ok ;
 
+: c.GetRegs  ( buf - sp)  push
+   c.PopWord            .IP  r@  + leh!
+   c.PopWord       dup  .RP  r@  + leh!
+   c.ReadWordAddr       .PC  r@  + leh!
+   c.PopWord            .TOP pop + leh!  4444 ;
+
+: c.SetRegs  ( buf)  push
+   .TOP r@  + leh@       c.PushWord
+   .PC  r@  + leh@
+   .RP  r@  + leh@  dup  c.PushWord  c.WriteWordAddr
+   .IP  pop + leh@       c.PushWord ;
 
 ( NOTE: We don't define RunWait separately. Since we will always be reading
   the registers back after Run, that first command - the GetSP in GetRegs -
   will block until the target is ready.)
 
 : chat
-   chat-via  c.Hello  c.GetRegs  chat-fail  c.ReadWordAddr  c.WriteWordAddr
+   chat-via  c.Hello  c.GetRegs  c.SetRegs  c.ReadWordAddr  c.WriteWordAddr
              c.ReadChunk  c.WriteChunk  c.ErasePage  c.FlashChunk
-             c.Execute  c.Execute ;
+             c.Run  c.Run ;
