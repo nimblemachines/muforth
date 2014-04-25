@@ -21,13 +21,14 @@ hex
 24  WriteWord   - write a word to memory, incr pointer
 25  FlashWord   - write a word to flash, using command byte saved on stack
                 - can be used to initiate an erase, or to write a word
+26  Run         - run non-forth code
 
-26  GetDepth    - get stack depth
-27  Pop         - pop one word from stack
-28  Push        - push one word onto stack
-29  Execute     - execute top, using rest of stack as params
+27  GetDepth    - get stack depth
+28  Pop         - pop one word from stack
+29  Push        - push one word onto stack
+2a  RunForth    - execute top, using rest of stack as params
 
-2a - ff  Idle   - these command bytes are ignored
+2b - ff  Idle   - these command bytes are ignored
 )
 
 assembler
@@ -49,27 +50,28 @@ __meta
 ( Register conventions:
   Use  ip as memory pointer
        rp as data stack pointer
-      top to pass a parameter around
+      top as top of data stack
+        w as a general parameter
         x as scratch
         y as checksum)
 
 label get-byte
    begin  01 # IFG2 & bitb  0!= until
-   UCA0RXBUF & top movb  ret  ;c
+   UCA0RXBUF & w movb  ret  ;c
 
 label put-byte
    begin  02 # IFG2 & bitb  0!= until
-   top UCA0TXBUF & movb  ret  ;c
+   w UCA0TXBUF & movb  ret  ;c
 
 label get-word
-   get-byte c  top x mov
-   get-byte c  top swpb  x top bis  top y xor  ret  ;c
+   get-byte c  w x mov
+   get-byte c  w swpb  x w bis  w y xor  ret  ;c
 
 label put-word
-   top y xor  ( fall thru)  ;c
+   w y xor  ( fall thru)  ;c
 
 label put-word-unsummed
-   put-byte c  top swpb  put-byte j  ;c
+   put-byte c  w swpb  put-byte j  ;c
 
 ( Compile the first 32 bits of the current muforth Git commit.
   When asked for the version, return these two 16-bit words, in
@@ -79,17 +81,17 @@ muforth-commit drop 8 evaluate
    dup 10 >>  swap  ( high low)
 
 label get-version
-   ( commit-lo) # top mov  put-word c
-   ( commit-hi) # top mov  put-word j  ;c
+   ( commit-lo) # w mov  put-word c
+   ( commit-hi) # w mov  put-word j  ;c
 
 label set-addr
-   get-word c  top ip mov  ret  ;c
+   get-word c  w ip mov  ret  ;c
 
 label read-word
-   ip )+ top mov  put-word j  ;c
+   ip )+ w mov  put-word j  ;c
 
 label write-word
-   get-word c  top ip ) mov  2 # ip add  ret  ;c
+   get-word c  w ip ) mov  2 # ip add  ret  ;c
 
 ( Write a word into flash, using the flash command stored on the stack. It
   can be used to erase or program the flash.)
@@ -97,18 +99,18 @@ label write-word
 label flash-word
    get-word c                    -- get value to write
    FKEY         # FCTL3 & mov    -- clear FLOCK
-   rp ) FCTL1 & mov              -- write flash command - must have FKEY!
-   top ip ) mov  2 # ip add      -- write word and incr pointer
+   top FCTL1 & mov               -- write flash command - must have FKEY!
+   w ip ) mov  2 # ip add        -- write word and incr pointer
 .ifdef in-ram
    begin  FBUSY # FCTL3 & bit  0= until
 .then
    FKEY # FCTL1 & mov            -- clear command
    FKEY FLOCK + # FCTL3 & mov    -- set FLOCK
-   FCTL3 & top mov  put-word j   -- read status and return it
+   FCTL3 & w mov  put-word j     -- read status and return it
    ;c
 
 label get-check
-   y top mov  0ffff # y mov  put-word-unsummed j  ;c
+   y w mov  0ffff # y mov  put-word-unsummed j  ;c
 
 
 ( Forth-specific words.)
@@ -120,56 +122,70 @@ rp0 #48 -    equ sp0  ( bottom of D stack!)
   code!)
 
 label get-depth
-   sp0 # top mov  rp top sub  top asr  put-word j  ;c
+   sp0 # w mov  rp w sub  w asr  put-word j  ;c
 
 label pop-word
-   top rpop  put-word j  ;c
+   top w mov  
+   sp0 # rp cmp  0= if  cafe # top mov   put-word j  then
+                               top rpop  put-word j  ;c
 
 label push-word
-   get-word c  top rpush  ret  ;c
+   get-word c  top rpush  w top mov  ret  ;c
 
-( After execute, how do we get back to chat?)
+code execute   top w mov  top pop  w ) pc mov  ;c
+code branch    ip ) ip mov  next  ;c
+
 label call-bug  ( point IP here!)
+   ' execute ,
    0 ,  ( bug)
+   ' branch ,  call-bug ,
 
-label execute
-   rp sp mov     ( rp has been our data stack pointer)
-   rp0 # rp mov  ( empty R stack)
-   call-bug # ip mov  ( so we come back!!)
-   w pop ( cfa)  top pop  w ) pc mov ( dispatch thru code field)  ;c
+label switch-stacks
+   sp w mov  rp sp mov  w rp mov
+   pc rpop  ( pop return address from R!)
+
+label run-forth
+   switch-stacks c  ip pop   rp pop   next  ;c
+
+label run  ( non-forth code)
+                    ip rpop  sp rpop  pc rpop  ;c
 
 ( Dispatch.)
 label command-table
    get-version ,  set-addr ,  get-check ,
-   read-word ,  write-word ,  flash-word ,
-   get-depth ,  pop-word ,  push-word ,  execute ,
+   read-word ,  write-word ,  flash-word ,  run ,
+   get-depth ,  pop-word ,  push-word ,  run-forth ,
 
 label process
    get-byte c  ( cmd)
-   top y xor
+   w y xor
 
-   20 # top sub   ( 0 to 1f become large unsigned numbers)
-   process command-table - 2/ # top cmp  u< if
-      top top add  command-table top +) pc mov  ( jump!)
+   20 # w sub   ( 0 to 1f become large unsigned numbers)
+   process command-table - 2/ # w cmp  u< if
+      w w add  command-table w +) pc mov  ( jump!)
    then
 
    ( unknown... ignore!)
    ret  ;c
 
 ( Push registers and start conversing with host.)
-here call-bug image-!  ( fix up call-bug to point to bug!)
+
+here call-bug 2 + image-!  ( fix up call-bug to point to bug!)
 code bug
-   top push   ( get top into memory)
-   sp rp mov  ( start using rp for data stack...)
+   switch-stacks c  0dead # push ( invalid pc)
    ( fall thru)  ;c
 
 label start-chat
-   rp0 # sp mov   ( ... and sp for return stack! - now empty)
+   ( pc has been pushed already)
+   sp )+ rpush ( pc)  sp rpush  ip rpush
    begin  process c  again  ;c
 
 
 Vreset handler
-   sp0 # rp mov   -- forth data stack starts out empty
+   rp0 # sp mov         ( return stack starts out empty)
+   sp0 # rp mov         ( data stack starts out empty...)
+   cafe # top mov       ( ...with a silly marker in top)
+   call-bug # ip mov    ( start out with IP pointing to execute loop)
 
    -- disable watchdog timer
    WDTKEY 80 + # WDTCTL & mov
@@ -198,7 +214,7 @@ Vreset handler
    -- We're running at 16M, so set it to 16M/40 = 400k.
    FKEY #39 ( divisor-1) +  %0100_0000 ( MCLK)  + # FCTL2 & mov
 
-   start-chat j  ;c
+   begin  start-chat c  again  ;c
 
 
 ( Set BSL flag to _not_ mass erase if wrong password entered during BSL
