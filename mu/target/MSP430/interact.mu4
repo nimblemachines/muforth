@@ -75,22 +75,24 @@ variable ram-copied  ( pointer to first un-copied byte)
 .then
 
 
-( chat-entry has pushed an "exception frame" onto the stack.
-
-  The order, low to high: flashcmd ip w rp count top x y status pc)
+( The chat firmware has pushed an "exception frame" onto the stack.)
 
 : reg  ( index)  \m cells  constant ;
 
 .ifdef newregs
 
 00 reg .FCMD      -- flash command
-01 reg .IP
-02 reg .SP        -- RP is SP!! conundrums galore!
-03 reg .COUNT
-04 reg .TOP
-05 reg .SR        -- status register
-06 reg .PC
-07 reg .LAST
+
+01 reg .COUNT
+02 reg .W
+03 reg .X
+04 reg .Y
+
+05 reg .IP
+06 reg .RP
+07 reg .SR        -- status register
+08 reg .PC
+09 reg .LAST
 
 .else
 
@@ -129,14 +131,16 @@ variable ram-copied  ( pointer to first un-copied byte)
 
 .ifdef newregs
 
-   cr  ." V----INZC    IP    SP   Cnt   Top    RP    PC"
-       (  000100011  0000  0000  0000  0000  0000  0000)
+   cr  ." V----INZC    IP     W    RP   Cnt     X     Y    SP    PC"
+       (  000100011  0000  0000  0000  0000  0000  0000  0000  0000)
    cr           .sr
                    .IP .r
-                         .SP .r
-                            .COUNT .r
-                                    .TOP .r
-                             chat-sp @ .h16 2sp  .PC .r ;
+                          .W .r
+                               .RP .r
+                                  .COUNT .r
+                                            .X .r
+                                                  .Y .r
+                                         chat-sp @ .h16 2sp  .PC .r ;
 .else
 
    cr  ." V----INZC    IP     W    RP   Cnt   Top     X     Y    SP    PC"
@@ -145,14 +149,21 @@ variable ram-copied  ( pointer to first un-copied byte)
                    .IP .r
                           .W .r
                                .RP .r
-                                 .COUNT .r
+                                  .COUNT .r
                                           .TOP .r
                                                   .X .r
                                                         .Y .r
                                                chat-sp @ .h16 2sp  .PC .r ;
 .then
 
-: hi  chatting on  >chat  t.Hello  ram-copied off  copy-ram  get-regs  .regs ;
+( Entry into chat pushes a return address that, if returned - or jumped -
+  to, will get us back into chat.)
+
+variable chat-pc
+
+: hi  chatting on  >chat  t.Hello  ram-copied off  copy-ram
+      get-regs  .PC reg@  chat-pc !  .regs ;
+
 : chat-via   pop  chat-vector !  hi ;
 
 
@@ -342,16 +353,6 @@ host-seekeys 'seekeys !  ( back to host bindings)
 ( Execute ram-resident code.)
 ( XXX for testing)
 
-.ifdef newregs  ( X and Y are no longer in the stack frame...)
-
-: rx  ( count top pc - count' top')  ( execute target non-forth word)
-   chatting @ 0= if  error" not connected to target"  then
-   copy-ram  .PC reg!  .TOP reg!  .COUNT reg!  runwait  .COUNT reg@  .TOP reg@ ;
-
-.else
-
 : rx  ( x y pc - x' y')  ( execute target non-forth word)
    chatting @ 0= if  error" not connected to target"  then
    copy-ram  .PC reg!  .Y reg!  .X reg!  runwait  .X reg@  .Y reg@ ;
-
-.then
