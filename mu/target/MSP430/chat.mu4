@@ -33,27 +33,27 @@ __meta
 ( Register conventions:
   Use  ip as memory pointer
     count as byte count
-      top to pass a parameter around
+        w to pass a parameter around
         x as scratch
         y as checksum)
 
 label get-byte
    begin  01 # IFG2 & bitb  0!= until
-   UCA0RXBUF & top movb  ret  ;c
+   UCA0RXBUF & w movb  ret  ;c
 
 label put-byte
    begin  02 # IFG2 & bitb  0!= until
-   top UCA0TXBUF & movb  ret  ;c
+   w UCA0TXBUF & movb  ret  ;c
 
 label get-word
-   get-byte c  top x mov
-   get-byte c  top swpb  x top bis  top y xor  ret  ;c
+   get-byte c  w x mov
+   get-byte c  w swpb  x w bis  w y xor  ret  ;c
 
 label put-word
-   top y xor  ( fall thru)  ;c
+   w y xor  ( fall thru)  ;c
 
 label put-word-unsummed
-   put-byte c  top swpb  put-byte j  ;c
+   put-byte c  w swpb  put-byte j  ;c
 
 ( Compile the first 32 bits of the current muforth Git commit.
   When asked for the version, return these two 16-bit words, in
@@ -63,35 +63,31 @@ muforth-commit drop 8 evaluate
    dup 10 >>  swap  ( high low)
 
 label get-version
-   ( commit-lo) # top mov  put-word c
-   ( commit-hi) # top mov  put-word j  ;c
+   ( commit-lo) # w mov  put-word c
+   ( commit-hi) # w mov  put-word j  ;c
 
 label set-addr
-   get-word c  top ip mov  ret  ;c
+   get-word c  w ip mov  ret  ;c
 
 label get-sp
-   sp top mov  2 # top add  put-word j  ;c
+   sp w mov  2 # w add  put-word j  ;c
 
 label read-word
-   ip )+ top mov  put-word j  ;c
+   ip )+ w mov  put-word j  ;c
 
 label read-words
-   get-byte c  top tst  0!= if
-      top y xor  top count mov
+   get-byte c  w tst  0!= if
+      w y xor  w count mov
       begin  read-word c  1 # count sub  0= until
    then  ret  ;c
 
 label write-word
-   get-word c  top ip ) mov  2 # ip add  ret  ;c
+   get-word c  w ip ) mov  2 # ip add  ret  ;c
 
 label run
-   4 # sp add  ( skip return address to chat-entry & flash command)
-.ifdef newregs
-   ip pop  rp pop  count pop  top pop
-.else
-    ip pop  w pop  rp pop  count pop
-   top pop  x pop   y pop
-.then
+   4 # sp add  ( skip return address from process & flash command)
+   count pop  w pop  x pop  y pop  ( regs used by chat)
+   ip pop  rp pop                  ( regs needed by host)
    reti  ;c
 
 ( Write a word into flash, using the flash command stored on the stack. It
@@ -101,17 +97,17 @@ label flash-word
    get-word c                    -- get value to write
    FKEY         # FCTL3 & mov    -- clear FLOCK
    2 sp +) FCTL1 & mov           -- write flash command - must have FKEY!
-   top ip ) mov  2 # ip add      -- write word and incr pointer
+   w ip ) mov  2 # ip add        -- write word and incr pointer
 .ifdef in-ram
    begin  FBUSY # FCTL3 & bit  0= until
 .then
    FKEY # FCTL1 & mov            -- clear command
    FKEY FLOCK + # FCTL3 & mov    -- set FLOCK
-   FCTL3 & top mov  put-word j   -- read status and return it
+   FCTL3 & w mov  put-word j     -- read status and return it
    ;c
 
 label get-check
-   y top mov  0ffff # y mov  put-word-unsummed j  ;c
+   y w mov  0ffff # y mov  put-word-unsummed j  ;c
 
 ( Dispatch.)
 label command-table
@@ -121,29 +117,68 @@ label command-table
 
 label process
    get-byte c  ( cmd)
-   top y xor
+   w y xor
 
-   10 # top sub   ( 00 to 0f become large unsigned numbers)
-   process command-table - 2/ # top cmp  u< if
-      top top add  command-table top +) pc mov  ( jump!)
+   10 # w sub   ( 00 to 0f become large unsigned numbers)
+   process command-table - 2/ # w cmp  u< if
+      w w add  command-table w +) pc mov  ( jump!)
    then
 
    ( unknown... ignore!)
    ret  ;c
 
+
 ( Push registers and start conversing with host.)
+
+( How this is done - what registers are pushed, and in what order - is an
+  evolving story. It should be simple. I should probably push everything.
+  But that would be slow and a waste, esp since this chat code is primarily
+  designed to support the execution of _Forth_ code, not arbitrary native
+  code.
+
+  OTOH, having the chat code too wedded to assumptions about the register
+  conventions of the code it supports also seems like a mistake.
+
+  I think I've arrived, enfin, at a solution: We push registers that belong
+  to either of two sets:
+
+  * registers that are _used_ by chat itself
+  * registers that are likely needed by the host in order to execute target code
+
+  We push the chat registers first, at the top of the frame, then the
+  registers wanted by the host below these. This way the host can optionally
+  leave the chat-saved regs alone. Basically, it can pretend that they are
+  not even there, rather than copying them back and forth.
+
+  This leaves at least one question unanswered: Where does the status
+  register get saved? Is it part of the chat-saved regs that the host doesn't
+  care about? But what if we want to display it to the user? Right now it
+  gets pushed at the top of the frame, just below the PC, so that we can
+  execute code by doing an "reti" instruction... But this isn't strictly
+  necessary.
+
+  Also, the PC is among those registers that the host will likely want to
+  read and change... But it's currently at the top of the frame.
+
+  Solution: Put the registers for the host at the _top_ of the frame, under
+  the PC and status register. Then push the chat-saved registers below these.
+  The host can ignore them. It may not even _see_ them, depending on what
+  value we return for GetSP. Because we're putting the flash command at the
+  top of the frame, we'll be passing the address of the whole frame to the
+  host; however, it only has to read and write ip and above.
+
+  Lastly, what of "top"? It is, strictly speaking, not a normal register,
+  but rather, part of the target's stack. Ideally the forth-specific
+  "trampoline" code used to execute target code, and to trap back into chat,
+  should be responsible for saving and restoring top.)
+
 label chat-entry
    ( call has already pushed PC)
-      sr push  sr clr  ( disable interrupts!)
+    sr push  sr clr  ( disable interrupts!)
+    rp push  ip push                       ( needed by host)
+     y push   x push  w push  count push   ( used by chat)
+   0 # push  ( room for flash command)
 
-.ifdef newregs
-     top push  count push  rp push  ip push
-.else
-       y push   x push  top push
-   count push  rp push    w push  ip push
-.then
-
-     0 # push  ( room for flash command)
    begin  process c  again  ;c
 
 label interact
