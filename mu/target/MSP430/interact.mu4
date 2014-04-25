@@ -81,6 +81,19 @@ variable ram-copied  ( pointer to first un-copied byte)
 
 : reg  ( index)  \m cells  constant ;
 
+.ifdef newregs
+
+00 reg .FCMD      -- flash command
+01 reg .IP
+02 reg .SP        -- RP is SP!! conundrums galore!
+03 reg .COUNT
+04 reg .TOP
+05 reg .SR        -- status register
+06 reg .PC
+07 reg .LAST
+
+.else
+
 00 reg .FCMD     -- flash command
 01 reg .IP
 02 reg .W
@@ -92,6 +105,8 @@ variable ram-copied  ( pointer to first un-copied byte)
 08 reg .SR       -- status register
 09 reg .PC
 10 reg .LAST
+
+.then
 
 .LAST buffer chat-frame  ( local copy of target's stack frame)
     variable chat-sp     ( current value of target's SP)
@@ -111,6 +126,19 @@ variable ram-copied  ( pointer to first un-copied byte)
 
 : .regs
    radix preserve
+
+.ifdef newregs
+
+   cr  ." V----INZC    IP    SP   Cnt   Top    RP    PC"
+       (  000100011  0000  0000  0000  0000  0000  0000)
+   cr           .sr
+                   .IP .r
+                         .SP .r
+                            .COUNT .r
+                                    .TOP .r
+                             chat-sp @ .h16 2sp  .PC .r ;
+.else
+
    cr  ." V----INZC    IP     W    RP   Cnt   Top     X     Y    SP    PC"
        (  000100011  0000  0000  0000  0000  0000  0000  0000  0000  0000)
    cr           .sr
@@ -122,6 +150,7 @@ variable ram-copied  ( pointer to first un-copied byte)
                                                   .X .r
                                                         .Y .r
                                                chat-sp @ .h16 2sp  .PC .r ;
+.then
 
 : hi  chatting on  >chat  t.Hello  ram-copied off  copy-ram  get-regs  .regs ;
 : chat-via   pop  chat-vector !  hi ;
@@ -312,6 +341,17 @@ host-seekeys 'seekeys !  ( back to host bindings)
 
 ( Execute ram-resident code.)
 ( XXX for testing)
+
+.ifdef newregs  ( X and Y are no longer in the stack frame...)
+
+: rx  ( count top pc - count' top')  ( execute target non-forth word)
+   chatting @ 0= if  error" not connected to target"  then
+   copy-ram  .PC reg!  .TOP reg!  .COUNT reg!  runwait  .COUNT reg@  .TOP reg@ ;
+
+.else
+
 : rx  ( x y pc - x' y')  ( execute target non-forth word)
    chatting @ 0= if  error" not connected to target"  then
    copy-ram  .PC reg!  .Y reg!  .X reg!  runwait  .X reg@  .Y reg@ ;
+
+.then
