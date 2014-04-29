@@ -353,6 +353,52 @@ host-seekeys 'seekeys !  ( back to host bindings)
 ( Execute ram-resident code.)
 ( XXX for testing)
 
+variable 'trampoline
+variable 'start-forth
+
+: trampoline!  ( cfa)
+   'trampoline @  dup .IP reg!  t!  chat-pc @  'trampoline @ 4 + t!
+   'start-forth @ .PC reg! ;
+
+( Because the target "caches" the top of the stack in a register, and
+  because the trampoline code loads this register before execution, and
+  pushes it afterward, we can deal only with the "memory image" of the target
+  stack, rather than also worrying about what to put into the "top" register.
+
+  What's a bit mystifying is that, to achieve a target stack depth of N,
+  the host has to push N+1 items. The top one goes into top; and the
+  bottom-most one is the "sentinel" value, that gets loaded into top when the
+  stack becomes empty.
+
+  When pushing from the host, or when "pulling" from the target, we don't
+  move more than 8 items.)
+
+meta
+: sp0   [ @ram #ram +  #48 - ] ;
+: sp!   .RP reg! ;  ( the trampoline code swaps RP and SP)
+: sp@   .RP reg@ ;  ( the trampoline code swaps RP and SP)
+: depth   \m sp0  \m sp@ -  \m cell/  1- ;
+forth
+
+: stack>  ( "push" stack to target)
+   depth 0 max 8 min
+   \m sp0  over 1+  \m cells -  dup \m sp! ( top of D stack)  swap
+   ?for  tuck t!  \m cell+  next  then  ( copy each cell as a word to D stack)
+   "cafe swap t! ( sentinel) ;
+
+: stack<  ( "pop" stack from target)
+   \m depth 0 max 8 min  =if
+      \m sp@ over  ( n sp n)
+      for  dup t@  pop 2push  \m cell+  next ( starting with top, push to R)
+      drop ( sp)
+      for  2pop push  next  ( pop from R to reverse order)
+      0
+   then  drop ;
+
+: remote  ( cfa)  ( execute target forth word)
+   chatting @ 0= if  error" not connected to target"  then
+   copy-ram  trampoline!  stack>  runwait  stack< ;
+
 : rx  ( x y pc - x' y')  ( execute target non-forth word)
    chatting @ 0= if  error" not connected to target"  then
    copy-ram  .PC reg!  .Y reg!  .X reg!  runwait  .X reg@  .Y reg@ ;
