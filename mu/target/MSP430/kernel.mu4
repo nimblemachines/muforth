@@ -161,28 +161,35 @@ code @execute  ( 'cfa)   top ) top mov  again  ;c
 {  h @  }  ram
 
 ( For debugging and interactive execution.)
-( Host should have set PC -> start-forth
-                       IP -> trampoline
+( Host should have set PC -> start-forth or continue-forth
                        SP -> top of R stack
-                       RP -> top of D stack)
+                        W -> top of D stack
+                      TOP -> word to execute
+                        X -> chat-entry)
 
 code bug
    top push  ( so all of D stack is in memory)
-   sp w mov  rp sp mov  w rp mov  ( swap SP and RP)
-   ip )+ pc mov  ( following address will get us back to chat!)  ;c
+   sp w mov  rp sp mov  ( D stack -> W, R stack -> SP)
+label bug-to-chat
+   1000 # br  ;c  ( jump to chat-entry; address patched by start-forth)
 
 label trampoline
-   0 ,  ( word to execute - patched by host)
-   ' bug ,
-   0 ,  ( address to return to chat - patched by host)
-   ' (branch) ,  trampoline ,  ( loop!)  ;c
-
-( XXX what if everything was just on the data stack? host pushes cfa, PC to
-  return to, IP ... everything! Seems actually simpler...)
+   0 ,  ( word to execute - patched by start-forth)
+   ' bug ,  ;c
 
 label start-forth
-   sp w mov  rp sp mov  w rp mov  ( swap SP and RP)
+   trampoline # ip mov  top ip ) mov
+   ( fall thru)  ;c
+
+label continue-forth
+   x bug-to-chat 2 + & mov
+   sp rp mov  w sp mov  ( R stack -> RP, D stack -> SP)
    top pop  ( host pushed depth+1 things onto D stack)
    next  ;c
+
+( Fake colon words to test nesting and chat entry while nested)
+label fc   docolon ,  ' bug ,  ' ^ ,  ;c
+label fb   docolon ,  fc ,  ' ^ ,  ;c
+label fa   docolon ,  fb ,  ' (lit) ,  c0de ,  ' bug ,  ' ^ ,  ;c
 
 {  h !  }

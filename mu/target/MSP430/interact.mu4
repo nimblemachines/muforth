@@ -319,12 +319,14 @@ host-seekeys 'seekeys !  ( back to host bindings)
 ( Execute ram-resident code.)
 ( XXX for testing)
 
-variable 'trampoline
 variable 'start-forth
+variable 'continue-forth
 
-: trampoline!  ( cfa)
-   'trampoline @  dup .IP reg!  t!  chat-pc @  'trampoline @ 4 + t!
-   'start-forth @ .PC reg! ;
+( Host should set PC -> start-forth or continue-forth
+                  SP -> top of R stack
+                   W -> top of D stack
+                 TOP -> word to execute
+                   X -> chat-entry)
 
 ( Because the target "caches" the top of the stack in a register, and
   because the trampoline code loads this register before execution, and
@@ -341,8 +343,8 @@ variable 'start-forth
 
 meta
 : sp0   [ @ram #ram +  #48 - ] ;
-: sp!   .RP reg! ;  ( the trampoline code swaps RP and SP)
-: sp@   .RP reg@ ;  ( the trampoline code swaps RP and SP)
+: sp!   .W reg! ;  ( the trampoline code loads SP from W)
+: sp@   .W reg@ ;  ( the trampoline code stores SP into W)
 : depth   \m sp0  \m sp@ -  \m cell/  1- ;
 forth
 
@@ -361,9 +363,21 @@ forth
       0
    then  drop ;
 
+: continue  ( target-pc)
+   ( pc)     .PC reg!
+   chat-pc @  .X reg!  ( chat return)
+   copy-ram  stack>  runwait  stack< ;
+
+: ?chat
+   chatting @ 0= if  error" not connected to target"  then ;
+
+meta
+: cont    ( )     ( continue forth execution)
+   ?chat          'continue-forth @  continue ;
+forth
+
 : remote  ( cfa)  ( execute target forth word)
-   chatting @ 0= if  error" not connected to target"  then
-   copy-ram  trampoline!  stack>  runwait  stack< ;
+   ?chat  .TOP reg!  'start-forth @  continue ;
 
 : rx  ( x y pc - x' y')  ( execute target non-forth word)
    chatting @ 0= if  error" not connected to target"  then
