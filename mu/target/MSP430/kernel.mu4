@@ -31,31 +31,38 @@ forth
 __meta
 hex
 
+implements dodoes    nest  ip pop  ( fall thru to dovar/docreate)  ;c
+
 ( Note the structural similarities!)
-label dodoes     nest                    ip pop  ( fall thru)  ;c
-label dovar      top push  2 # w add  w top mov  next  ;c
-label doconst    top push        2 w +) top mov  next  ;c
-label docolon    nest      2 # w add   w ip mov  next  ;c
+meta: create     name  0 ,   ;code   top push  2 # w add  w top mov  next  ;c
+meta: constant   create  ,   ;code   top push        2 w +) top mov  next  ;c
+meta: :          create  ]   ;code   nest      2 # w add   w ip mov  next  ;c
 
-code ^   unnest  next  ;c
+code*  ^                           unnest                            next  ;c
 
-code (lit)  top push  ip )+ top mov  next  ;c
+( XXX something like this:
+  h preserve  ram here  constant  2 allot)
+( XXX automagically do h preserve for these words?)
+-- :meta variable   ram constant  2 allot ;  ( XXX here allot ram rom??? spaces?)
 
-code    (branch)      ip )   ip mov  next  ;c
-code   (0branch)   top tst  top pop  ' (branch) >body 0!= until  ( fall thru)  ;c
-label       skip         2 # ip add  next  ;c
-code  (?0branch)   top tst  skip 0= until  top pop  ' (branch) >body j  ;c
+
+code* (lit)  top push  ip )+ top mov  next  ;c
+
+code*    (branch)      ip )   ip mov  next  ;c
+code*   (0branch)   top tst  top pop  ' (branch) >body 0!= until  ( fall thru)  ;c
+label        skip         2 # ip add  next  ;c
+code*  (?0branch)   top tst  skip 0= until  top pop  ' (branch) >body j  ;c
 
 ( If we also wanted =0branch, it would look like this:)
--- code  (=0branch)   top tst  skip 0= until           ' (branch) >body j  ;c
+-- code*  (=0branch)   top tst  skip 0= until           ' (branch) >body j  ;c
 
 ( Fast version, using count register)
-code (ffor)   ( u)   count rpush  top count mov  top pop  next  ;c
-code (fnext)     1 # count sub  ' (branch) >body 0= until  count rpop  skip j  ;c
+code* (for)   ( u)   count rpush  top count mov  top pop  next  ;c
+code* (next)     1 # count sub  ' (branch) >body 0= until  count rpop  skip j  ;c
 
 ( Slow version, keeping count on R stack)
-( for is just >r. next is 3 cycles slower per iteration then fnext)
-code (next)      1 # rp ) sub  ' (branch) >body 0= until  2 # rp add  skip j  ;c
+( for is just >r. next is 3 cycles slower per iteration then fast next)
+-- code* (next)     1 # rp ) sub  ' (branch) >body 0= until  2 # rp add  skip j  ;c
 
 
 ( Do-loop frame looks like this:
@@ -69,7 +76,7 @@ code (next)      1 # rp ) sub  ' (branch) >body 0= until  2 # rp add  skip j  ;c
    Current index is in count register; current "user-visible" index is
    calculated as count + limit.)
 
-code (do)   ( limit start)  -- implements (do)
+code* (do)   ( limit start)
    4 # rp sub  ( make room on R stack - all in one go)
     count 2 rp +) mov  ( save count reg on R)
    x pop  x rp  ) mov  ( save limit to R)
@@ -80,7 +87,7 @@ code (do)   ( limit start)  -- implements (do)
   stack frame, skip backwards jump, and continue. If non-zero, simply take
   the backwards jump.)
 
-code (loop)  -- implements (loop)
+code* (loop)
    1 # count add  ' (branch) >body 0= until
 label undo
    2 # rp add  rp )+ count mov  skip j  ;c
@@ -89,7 +96,7 @@ label undo
   threshold, so restore count, pop frame, and skip jump. Otherwise, take
   the backwards jump.)
 
-code (+loop)  ( incr)   -- implements (+loop)
+code* (+loop)  ( incr)
    count x mov  ( save count value)
    top count add   top pop   count x xor  undo 0>= until
    ' (branch) >body j  ;c
@@ -177,19 +184,14 @@ label trampoline
    0 ,  ( word to execute - patched by start-forth)
    ' bug ,  ;c
 
-label start-forth
+implements start-forth
    trampoline # ip mov  top ip ) mov
    ( fall thru)  ;c
 
-label continue-forth
+implements continue-forth
    x bug-to-chat 2 + & mov
    sp rp mov  w sp mov  ( R stack -> RP, D stack -> SP)
    top pop  ( host pushed depth+1 things onto D stack)
    next  ;c
-
-( Fake colon words to test nesting and chat entry while nested)
-label fc   docolon ,  ' bug ,  ' ^ ,  ;c
-label fb   docolon ,  fc ,  ' ^ ,  ;c
-label fa   docolon ,  fb ,  ' (lit) ,  c0de ,  ' bug ,  ' ^ ,  ;c
 
 {  h !  }

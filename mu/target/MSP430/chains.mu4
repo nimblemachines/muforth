@@ -3,7 +3,7 @@
   Copyright 2002-2014 David Frech. All rights reserved, and all wrongs
   reversed. (See the file COPYRIGHT for details.)
 
--- loading MSP430 meta-compiler (chains)
+loading MSP430 meta-compiler (chains and token consumers)
 
 forth  decimal
 
@@ -89,3 +89,97 @@ lex
 : .and  .and ;
 : .not  .not ;
 forth
+
+
+( Metacompiler token consumers. Let's put them all in one place so we can
+  understand how they work in relation to each other.)
+
+-:  ."  (compiling inlne assembler)" ;
+-:
+    .assembler. find  if  ,        ^  then  ( find assembler's if/then etc)
+     .compiler. find  if  execute  ^  then  ( need } and ; to exit this mode)
+      .equates. find  if  ,        ^  then
+         .meta. find  if  ,        ^  then  ( labels are in .meta.)
+        .forth. find  if  ,        ^  then  ( utility words in .forth.)
+                                            number literal ;
+mode __inline-asm
+
+
+-:  ."  (assembling)" ;
+-:
+    .assembler. find  if  execute  ^  then
+      .equates. find  if  execute  ^  then
+         .meta. find  if  execute  ^  then  ( labels are in .meta.)
+        .forth. find  if  execute  ^  then  ( utility words in .forth.)
+                                            number ;
+mode __asm
+
+( There are two slightly different "meta" modes we can be in. When
+  _building_ the target image, we are in __build. When interacting - after
+  connecting via chat - we are in __interact. Since all the compilation words
+  want to return to __meta when they are done - eg, this is what the meta  ;
+  and  ;c  do - let's just defer what __meta means.)
+
+defer __meta
+
+( The build meta-interpreter. We're in this mode when we're building the
+  target image, and when in between [ and ] when running the target colon
+  compiler.)
+
+-:  ."  (meta)" ;
+-:
+         .meta. find  if  execute  ^  then  ( labels are in .meta.)
+      .equates. find  if  execute  ^  then
+        .forth. find  if  execute  ^  then
+                                            number ;
+
+mode __building
+
+now __building  is __meta
+
+
+( __meta-colon is for compiling new words that are part of the meta-compiler.
+  __meta-colon is to __meta as __inline-asm is to __asm.)
+
+-:  ."  (compiling a meta colon word)" ;
+-:
+     .compiler. find  if  execute  ^  then
+         .meta. find  if  ,        ^  then
+      .equates. find  if  ,        ^  then
+        .forth. find  if  ,        ^  then  ( utility words in .forth.)
+                                            number literal ;
+mode __meta-colon
+
+
+( Interacting with a chatty, connected target. This differs from __meta in
+  three ways:
+
+  * we do not search .forth.
+  * we actually try to execute target words remotely
+  * we potentially convert numbers in a target-specific way)
+
+defer target-number    ( convert token to a number, specific to target)
+defer remote
+-:  error" tried to remotely execute a target word while not chatting" ;
+    is remote
+
+-:  ."  (chatting)" ;
+-:
+      .meta. find  if  execute          ^  then  ( labels are in .meta.)
+   .equates. find  if  execute          ^  then
+    .target. find  if  execute  remote  ^  then  ( execute on target)
+       .lex. find  if  execute          ^  then
+                                                  target-number ;
+mode __chatting
+
+
+defer target-literal   ( compile a target literal)
+defer target-compile,  ( compile a target word into a colon definition)
+
+-:  ."  (compiling a target colon word)"  ;
+-:
+    .meta-compiler. find  if  execute                   ^  then
+           .target. find  if  execute  target-compile,  ^  then
+              .lex. find  if  execute                   ^  then
+                                       target-number target-literal ;
+mode __target-colon

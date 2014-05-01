@@ -128,7 +128,8 @@ variable ram-copied  ( pointer to first un-copied byte)
 variable chat-pc
 
 : hi  chatting on  >chat  t.Hello  ram-copied off  copy-ram
-      get-regs  .PC reg@  chat-pc !  .regs ;
+      get-regs  .PC reg@  chat-pc !  .regs
+      now __chatting is __meta  __meta ;
 
 : chat-via   pop  chat-vector !  hi ;
 
@@ -184,66 +185,84 @@ variable chat-pc
              nope    nope  ;
 
 
-.ifdef avr-bogus
+: _runwait  set-regs  t.RunWait  get-regs ;
+: _run      set-regs  t.Run ;  ( don't wait for target)
 
-( The semantics of moving cells to and from the target stack are a bit
-  complicated.
+: runwait   _runwait  .regs ;
 
-  When the target stack is empty, sp0 = sp, and the top register contains
-  garbage.
+: 'reset   \eq Vreset image-@  .PC reg! ;
+: reset    'reset  runwait ;
+: go       'reset  _run ;  ( when the code you're calling doesn't speak
+                             the same protocol as running code)
 
-  When the target stack isn't empty, the distance between sp0 and sp is
-  2*depth, but the bottom-most cell is garbage, and top is valid.)
+( These are implement'ed by the kernel code.)
+meta
+variable start-forth
+variable continue-forth
+forth
+
+( Host should set PC -> start-forth or continue-forth
+                  SP -> top of R stack
+                   W -> top of D stack
+                 TOP -> word to execute
+                   X -> chat-entry)
+
+( Because the target "caches" the top of the stack in a register, and
+  because the trampoline code loads this register before execution, and
+  pushes it afterward, we can deal only with the "memory image" of the target
+  stack, rather than also worrying about what to put into the "top" register.
+
+  What's a bit mystifying is that, to achieve a target stack depth of N,
+  the host has to push N+1 items. The top one goes into top; and the
+  bottom-most one is the "sentinel" value, that gets loaded into top when the
+  stack becomes empty.
+
+  When pushing from the host, or when "pulling" from the target, we don't
+  move more than 8 items.)
+
+meta
+: sp0   [ @ram #ram +  #48 - ] ;
+: sp!   .W reg! ;  ( the trampoline code loads SP from W)
+: sp@   .W reg@ ;  ( the trampoline code stores SP into W)
+: depth   \m sp0  \m sp@ -  \m cell/  1- ;
+forth
 
 : stack>  ( "push" stack to target)
-   depth 0= if  "cafe \m top!  \m sp0 \m sp!  ^  then
-   \m top!
-   depth 7 min  ( more than that would be silly)
-   \m sp0 over 1+ \m cells -  dup \m sp! ( top of D stack)  swap
+   depth 0 max 8 min
+   \m sp0  over 1+  \m cells -  dup \m sp! ( top of D stack)  swap
    ?for  tuck t!  \m cell+  next  then  ( copy each cell as a word to D stack)
-   "cafe swap t! ( push bottom) ;
+   "cafe swap t! ( sentinel) ;
 
 : stack<  ( "pop" stack from target)
-   \m depth 0 max 8 min  ( more than that would be silly)  =if
-      1- ( depth, excluding top)  =if
-         \m sp@ over  ( n sp n)
-         for  dup t@  pop 2push  \m cell+  next  ( starting with top, push to R)
-         drop ( sp)
-         for  2pop push  next  ( pop from R to reverse order)
-         0
-      then  \m top@  swap
+   \m depth 0 max 8 min  =if
+      \m sp@ over  ( n sp n)
+      for  dup t@  pop 2push  \m cell+  next ( starting with top, push to R)
+      drop ( sp)
+      for  2pop push  next  ( pop from R to reverse order)
+      0
    then  drop ;
 
-( Get target's hardware SP - ie, forth's return stack ptr - and store into
-  chat-frame.)
+: continue  ( target-pc)
+   ( pc)     .PC reg!
+   chat-pc @  .X reg!  ( chat return)
+   copy-ram  stack>  runwait  stack< ;
 
-: get-rp   \m rp0  \m cell+ ( skip ret addr)  chat-frame ! ;
+: ?chat
+   chatting @ 0= if  error" not connected to target"  then ;
 
-: runwait  zgo  get-rp  .regs ;
+meta
+: cont    ( )     ( continue forth execution)
+   ?chat          p@ continue-forth  continue ;
+forth
 
-( XXX Should we try to automatically connect to target?)
-: remote  ( cfa)  ( execute target forth word)
-   chatting @ 0= if  error" not connected to target"  then
-   copy-ram  \m pc!  stack>  runwait  stack< ;
-
-: rx  ( cfa)  ( execute target non-forth word)
-   chatting @ 0= if  error" not connected to target"  then
-   copy-ram  \m pc!          runwait ;
+-: ( cfa)  ( execute target forth word)
+   ?chat  .TOP reg!  p@ start-forth  continue ;  is remote
 
 
-( Interacting with a chatty, connected target.)
-
--:  ."  (interacting with target)"  ;
--:
-      .meta. find  if  execute          ^  then  ( labels are in .meta.)
-    .target. find  if  execute  remote  ^  then  ( execute as forth word)
-   .equates. find  if  execute          ^  then
-.ifdef no-number                                 complain ;
-.else                                            number ;
-.then
-mode __target
-
-.then  ( avr-bogus)
+( XXX for testing only - deprecated and going away!)
+: rx  ( x y pc - x' y')  ( execute target non-forth word)
+   ?chat
+   copy-ram  .PC reg!  .Y reg!  .X reg!  runwait  .X reg@  .Y reg@ ;
 
 
 ( Set |@ and |c@ to _some_ form of target fetch. Prefer to get bytes from
@@ -304,81 +323,3 @@ host-seekeys 'seekeys !  ( back to host bindings)
 
 : du   ( a - a')   dumping     inspect ;
 : dis  ( a - a')   disasming   inspect ;
-
-
-: _runwait  set-regs  t.RunWait  get-regs ;
-: _run      set-regs  t.Run ;  ( don't wait for target)
-
-: runwait   _runwait  .regs ;
-
-: 'reset   \eq Vreset image-@  .PC reg! ;
-: reset    'reset  runwait ;
-: go       'reset  _run ;  ( when the code you're calling doesn't speak
-                             the same protocol as running code)
-
-( Execute ram-resident code.)
-( XXX for testing)
-
-variable 'start-forth
-variable 'continue-forth
-
-( Host should set PC -> start-forth or continue-forth
-                  SP -> top of R stack
-                   W -> top of D stack
-                 TOP -> word to execute
-                   X -> chat-entry)
-
-( Because the target "caches" the top of the stack in a register, and
-  because the trampoline code loads this register before execution, and
-  pushes it afterward, we can deal only with the "memory image" of the target
-  stack, rather than also worrying about what to put into the "top" register.
-
-  What's a bit mystifying is that, to achieve a target stack depth of N,
-  the host has to push N+1 items. The top one goes into top; and the
-  bottom-most one is the "sentinel" value, that gets loaded into top when the
-  stack becomes empty.
-
-  When pushing from the host, or when "pulling" from the target, we don't
-  move more than 8 items.)
-
-meta
-: sp0   [ @ram #ram +  #48 - ] ;
-: sp!   .W reg! ;  ( the trampoline code loads SP from W)
-: sp@   .W reg@ ;  ( the trampoline code stores SP into W)
-: depth   \m sp0  \m sp@ -  \m cell/  1- ;
-forth
-
-: stack>  ( "push" stack to target)
-   depth 0 max 8 min
-   \m sp0  over 1+  \m cells -  dup \m sp! ( top of D stack)  swap
-   ?for  tuck t!  \m cell+  next  then  ( copy each cell as a word to D stack)
-   "cafe swap t! ( sentinel) ;
-
-: stack<  ( "pop" stack from target)
-   \m depth 0 max 8 min  =if
-      \m sp@ over  ( n sp n)
-      for  dup t@  pop 2push  \m cell+  next ( starting with top, push to R)
-      drop ( sp)
-      for  2pop push  next  ( pop from R to reverse order)
-      0
-   then  drop ;
-
-: continue  ( target-pc)
-   ( pc)     .PC reg!
-   chat-pc @  .X reg!  ( chat return)
-   copy-ram  stack>  runwait  stack< ;
-
-: ?chat
-   chatting @ 0= if  error" not connected to target"  then ;
-
-meta
-: cont    ( )     ( continue forth execution)
-   ?chat          'continue-forth @  continue ;
-forth
-
-: remote  ( cfa)  ( execute target forth word)
-   ?chat  .TOP reg!  'start-forth @  continue ;
-
-: rx  ( x y pc - x' y')  ( execute target non-forth word)
-   chatting @ 0= if  error" not connected to target"  then
-   copy-ram  .PC reg!  .Y reg!  .X reg!  runwait  .X reg@  .Y reg@ ;
