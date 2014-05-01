@@ -101,12 +101,17 @@ variable ram-copied  ( pointer to first un-copied byte)
                                                chat-sp @ .h16 2sp  .PC .r ;
 
 ( Entry into chat pushes a return address that, if returned - or jumped -
-  to, will get us back into chat.)
+  to, will get us back into chat. If bug-to-chat is defined, patch it with
+  the chat return address.)
 
-variable chat-pc
+meta
+variable bug-to-chat
+forth
 
-: hi  chatting on  >chat  t.Hello  ram-copied off  copy-ram
-      get-regs  .PC reg@  chat-pc !  .regs
+: set-bug   \m bug-to-chat @  =if  .PC reg@  swap 2 +  image-!  ^  then  drop ;
+
+: hi  chatting on  >chat  t.Hello  get-regs  set-bug  .regs
+      ram-copied off  copy-ram
       now __chatting is __meta  __meta ;
 
 : chat-via   pop  chat-vector !  hi ;
@@ -173,17 +178,6 @@ variable chat-pc
 : go       'reset  _run ;  ( when the code you're calling doesn't speak
                              the same protocol as running code)
 
-( These are implement'ed by the kernel code.)
-meta
-variable start-forth
-variable continue-forth
-forth
-
-( Host should set PC -> start-forth or continue-forth
-                  SP -> top of R stack
-                   W -> top of D stack
-                 TOP -> word to execute
-                   X -> chat-entry)
 
 ( Because the target "caches" the top of the stack in a register, and
   because the trampoline code loads this register before execution, and
@@ -220,15 +214,24 @@ forth
       0
    then  drop ;
 
+
+( Host should set PC -> start-forth or continue-forth
+                  SP -> top of R stack
+                   W -> top of D stack
+                 TOP -> word to execute)
+
 : continue  ( target-pc)
    ( pc)     .PC reg!
-   chat-pc @  .X reg!  ( chat return)
    copy-ram  stack>  runwait  stack< ;
 
 : ?chat
    chatting @ 0= if  error" not connected to target"  then ;
 
+( These are implement'ed by the kernel code.)
 meta
+variable start-forth
+variable continue-forth
+
 : cont    ( )     ( continue forth execution)
    ?chat          p@ continue-forth  continue ;
 forth
