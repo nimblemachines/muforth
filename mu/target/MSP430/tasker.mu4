@@ -1,0 +1,54 @@
+( This file is part of muFORTH: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2014 David Frech. All rights reserved, and all wrongs
+  reversed. (See the file COPYRIGHT for details.)
+
+loading MSP430 multitasker
+
+__meta
+
+ram  ( XXX for testing)
+
+{ h @ } ram
+label 'user  0 ,  ( for now, just keep the user pointer in RAM)
+                  ( could keep it in a register too - got plenty)
+label #woken  0 ,
+{ h ! }
+
+{ variable #user   ( user variable bytes allocated) }
+meta: user  ( #bytes)
+   #user @ constant  #user +!
+   ;code  top push  'user & top mov  2 w +) top add  next  ;c
+
+02 user task.status
+02 user task.link
+02 user task.top       ( saved SP - top of data stack)
+02 user task.bottom    ( sp0 - bottom of data stack)
+
+code pause
+   top push  count push  rp push  ip push
+   'user & w mov  sp ' task.top >value w +) mov  ( fall thru)  ;c
+
+label wait
+   ' task.link   >value w +) w  mov  ( follow link)
+   ' task.status >value w +) pc mov  ( jump thru status)  ;c
+
+label run
+   ' task.top    >value w +) sp mov  w 'user & mov  1 # #woken & add
+   ip pop  rp pop  count pop  top pop  next  ;c
+
+
+( Idle task)
+( Unlike a normal task, whose status field points either to wait - if
+  sleeping - or run - if running - the idle task's status always points to
+  idle.
+
+  Also, idle task has no stacks, so no need for task.top and task.bottom
+  fields. It only needs task.status and task.link.)
+
+( Our main job here is to put the CPU to sleep if there is nothing to do.)
+{ h @ } ram
+{ h ! }
+label idle
+   #woken & tst  #woken & clr
+   wait 0= until  ( sleep!!)  nop  wait j  ;c
