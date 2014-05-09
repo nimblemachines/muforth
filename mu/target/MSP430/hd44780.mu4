@@ -1,0 +1,216 @@
+( This file is part of muFORTH: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2014 David Frech. All rights reserved, and all wrongs
+  reversed. (See the file COPYRIGHT for details.)
+
+loading Hitachi HD44780 LCD
+
+( This is totally minimal, just a way to get a few characters onto the
+  display.)
+
+__meta
+hex
+
+( For now, and for simplicity of wiring it up, let's assume we're
+  connecting in 4-bit mode, which means d4 to d7 are connected, and d0 to
+  d3 are left unconnected.
+
+  E strobes control lines - RS and R/nW - on its rising edge, and data -
+  read or write - on its falling edge. The datasheet says that at 5v the
+  interface can run with a 500ns cycle time, but at 3v, it slows to 1000ns.
+  Let's assume the slower cycle time.
+
+  For future reference, here is the command set:
+
+  RS  R/nW   D7  D6  D5  D4   D3  D2  D1  D0   Operation
+  ==  ====   ===============================   =========
+   1    0    <data>                            Write data
+   1    1    <data>                            Read data
+   0    0    <command>                         Write command
+   0    1    BF  A6  A5  A4   A3  A2  A1  A0   Read address and busy flag
+
+  Here are the commands, broken out into binary.
+
+  D7  D6  D5  D4   D3  D2  D1  D0
+  ===============================
+   0   0   0   0    0   0   0   1    Display clear and return home
+   0   0   0   0    0   0   1   *    Return home
+   0   0   0   0    0   1  ID   S    Entry mode set
+   0   0   0   0    1   D   C   B    Display on/off control
+   0   0   0   1   SC   RL  *   *    Cursor or display shift
+   0   0   1  DL    N   F   *   *    Function set
+   0   1  C5  C4   C3  C2  C1  C0    Set character generator address
+   1  A6  A5  A4   A3  A2  A1  A0    Set display memory address
+
+  Legend:
+
+     * = don't care bit
+
+    ID = increment/decrement; 1 = increment
+     S = shift; 1 = shift
+
+     D = display;  1 = on
+     C = cursor;   1 = on
+     B = blinking; 1 = on
+
+    SC = shift or cursor; 1 = shift display, 0 = move cursor
+    RL = right/left; 1 = right
+
+    DL = data length; 1 = 8 bits, 0 = 4 bits
+     N = lines; 1 = 2 lines, 0 = 1 line
+     F = font; 1 = 5x11, 0 = 5x8
+
+  For status read, BF = 1 means chip is busy with last command.
+
+  Curiously, though, when reading or writing data, the internal address is
+  updated _after_ BF returns to 0. So it's necessary to continue to poll
+  until the address changes, before reading or writing another character.
+  Weird.
+
+  Display memory addresses are a bit odd too. There is a maximum of 40
+  characters per line - 28 hex. The following addresses are in hex:
+
+   First line: 00 to 27
+  Second line: 40 to 67
+
+  According to the 44780U datasheet, if the power-up reset occurs
+  successfully, the following commands are executed internally:
+
+  1. Display clear
+
+  2. Function set:
+      DL = 1; 8-bit interface
+       N = 0; 1 line display
+       F = 0; 5x8 character font
+
+  3. Display on/off control
+      D = 0; display off
+      C = 0; cursor off
+      B = 0; blink off
+
+  4. Entry mode set
+     ID = 1; increment by 1
+      S = 0; no shift
+)
+
+
+( Interface connections. We're using the 4-bit interface, so with E, RS,
+  and R/nW we need 7 pins total. Let's use Port 2. Here is how to connect
+  it to the LCD:
+
+  Port  Pin      LCD  Pin*
+  ====  ===      ===  ===
+  P2.7   18       D7   14
+  P2.6   19       D6   13
+  P2.5   13       D5   12
+  P2.4   12       D4   11
+
+  P2.3   11       --   --
+  P2.2   10        E    6
+  P2.1    9     R/nW    5
+  P2.0    8       RS    4
+
+  *LCD pins numbers assume 14-pin, 2x7 connector. I'm not sure how the
+  single-row inline connectors are pinned out.)
+
+
+( Interface timing.
+
+  If we're running 16M, we get lucky. Forth's next takes 4 cycles; at 16M
+  that is _exactly_ 250ns, or the quarter cycle delay we need to bitbang the
+  interface. So no delay loop is necessary!)
+
+
+( Speaking of timing, let's try using delays so we don't have to read from
+  the LCD. This way we can tie R/nW low, and not worry about 3v versus 5v
+  issues.
+
+  Running at 16M, an instruction cycle is 62.5ns. In a simple loop, it
+  takes 4 cycles to decrement a register and jump if not zero. So let's
+  divide our desired delays by 250ns to get the loop count.)
+
+( Delay 100us after every normal command. The HD44780U datasheet says it
+  takes about 37us after each command, but my old LCD - an Hitachi LM-018L
+  from 1997 - could be much slower.)
+
+code 100us
+   #100,000 ( ns)  #250 /  # w mov
+   begin  begin  begin  1 # w sub  0= until  next  ;c
+
+( Delay 5ms after a long command - Home or Clear. Again, the datasheet
+  specifies a much short time - 1.5ms - but let's be conservative.)
+
+code 5ms
+   #5,000,000 ( ns)  #250 /  # w mov  again  ;c
+
+( Delay for a half cycle - about 500ns)
+code H
+   #500 ( ns)  #250 /  # w mov  again  ;c
+
+
+code p2@  ( - bits)  top push   P2IN & top movb            next  ;c
+code p2!  ( bits)              top P2OUT & movb  top pop   next  ;c
+
+code >nyb<  ( swap nybbles)
+  ( Shift high nybble into low nybble of high byte)
+  top top add   top top add  top top add  top top add
+  top x mov  x swpb  x top bisb  next  ;c
+
+code >hi  ( mask hi nybble)  0f0 # top andb  next  ;c
+
+-- code >lo  ( move hi nybble to low)
+--   clrc  top asrb  top asrb  top asrb  top asrb  next  ;c
+
+.ifdef use-toggle
+
+meta: toggle  ( bits addr)  create  , ,
+   ;code  4 w +) x mov  2 w +) w mov  x w ) xorb  next  ;c
+
+%0000_0100 P2OUT toggle E~
+%1111_0000 P2DIR toggle dir~
+
+( Do one interface cycle.)
+: wr4  ( data)       >hi  H  E~  p2!  H       E~ ;
+: rd4  ( - data)    dir~  H  E~       H  p2@  E~  dir~  >hi ;
+
+.else  ( use source and sink)
+
+meta: source  ( bits addr)  create  , ,
+   ;code  4 w +) x mov  2 w +) w mov  x w ) bisb  next  ;c
+
+meta: sink    ( bits addr)  create  , ,
+   ;code  4 w +) x mov  2 w +) w mov  x w ) bicb  next  ;c
+
+4 P2OUT source E/  ( drive rising edge of E)
+4 P2OUT sink   E\  ( drive falling edge of E)
+
+%1111_0000 P2DIR source   dir-out
+%1111_0000 P2DIR sink     dir-in
+
+( Do one interface cycle.)
+: wr4  ( data)       >hi  H  E/  p2!  H       E\ ;
+: rd4  ( - data)  dir-in  H  E/       H  p2@  E\  dir-out  >hi ;
+
+.then  ( toggle vs source/sink)
+
+: wr8  ( data RS)                  p2!  dup  wr4 ( hi)  >nyb<  wr4 ( lo)  100us ;
+: rd8  ( RS - data)  2+ ( R/nW=1)  p2!       rd4 ( hi)  rd4 ( lo)  >nyb<  or ;
+
+code p2-init
+   P2SEL & clrb  P2OUT & clrb  -1 # P2DIR & movb  next  ;c
+
+: cmd   ( byte)  0 wr8 ;
+: emit  ( char)  1 wr8 ;
+
+: lcd-init
+   p2-init  ( implicitly does 0 p2!)
+   %0011_0000  dup wr4 5ms  dup wr4 5ms  wr4 100us
+   %0010_1000 ( 4 bit interface; 2 lines; 5x8 font)  dup wr4  ( put us into 4-bit mode)
+   cmd  ( send cmd again, but do both nybbles this time)
+   %0000_1110 cmd  ( display and cursor on)
+   ;
+
+: at    ( addr)  80 or  cmd ;
+: clear           1     cmd  5ms ;
+: home            2     cmd  5ms ;
+: cr    ( line#)  =if  drop 40  then  at ;
