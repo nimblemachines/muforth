@@ -148,18 +148,11 @@ code H
    #500 ( ns)  #250 /  # w mov  again  ;c
 
 
-code p2@  ( - bits)  top push   P2IN & top movb            next  ;c
-code p2!  ( bits)              top P2OUT & movb  top pop   next  ;c
-
 code >nyb<  ( swap nybbles)
   ( Shift high nybble into low nybble of high byte)
   top top add   top top add  top top add  top top add
   top x mov  x swpb  x top bisb  next  ;c
 
-code >hi  ( mask hi nybble)  0f0 # top andb  next  ;c
-
--- code >lo  ( move hi nybble to low)
---   clrc  top asrb  top asrb  top asrb  top asrb  next  ;c
 
 .ifdef use-toggle
 
@@ -170,8 +163,8 @@ meta: toggle  ( bits addr)  create  , ,
 %1111_0000 P2DIR toggle dir~
 
 ( Do one interface cycle.)
-: wr4  ( data)       >hi  H  E~  p2!  H       E~ ;
-: rd4  ( - data)    dir~  H  E~       H  p2@  E~  dir~  >hi ;
+: wr4  ( data)            H  E~  data!  H         E~ ;
+: rd4  ( - data)  dir-in  H  E~         H  data@  E~  dir-out ;
 
 .else  ( use source and sink)
 
@@ -181,20 +174,39 @@ meta: source  ( bits addr)  create  , ,
 meta: sink    ( bits addr)  create  , ,
    ;code  4 w +) x mov  2 w +) w mov  x w ) bicb  next  ;c
 
-4 P2OUT source E/  ( drive rising edge of E)
-4 P2OUT sink   E\  ( drive falling edge of E)
+%0000_0100 P2OUT source E/  ( drive rising edge of E)
+%0000_0100 P2OUT sink   E\  ( drive falling edge of E)
 
-%1111_0000 P2DIR source   dir-out
-%1111_0000 P2DIR sink     dir-in
+%1111_0000 P2DIR source  dir-out
+%1111_0000 P2DIR sink    dir-in
+
+meta: drive  ( mask)  constant
+   ;code  ( bits)
+          2 w +) x mov  ( x=mask)
+        x P2OUT & bicb  ( clear bits that are set in mask)
+        x top     andb  ( keep only bits in mask)
+      top P2OUT & bisb  ( combine bits)
+      top pop   next  ;c
+
+meta: sense  ( mask)  constant
+   ;code  ( - bits)
+      top push
+      P2OUT & top movb
+       2 w +) top andb  ( keep only bits in mask)
+      next  ;c
+
+%0000_0011 drive control!  ( RS and R/nW)
+%1111_0000 drive data!     ( D4 to D7)
+%1111_0000 sense data@     ( D4 to D7)
 
 ( Do one interface cycle.)
-: wr4  ( data)       >hi  H  E/  p2!  H       E\ ;
-: rd4  ( - data)  dir-in  H  E/       H  p2@  E\  dir-out  >hi ;
+: wr4  ( data)            H  E/  data!  H         E\ ;
+: rd4  ( - data)  dir-in  H  E/         H  data@  E\  dir-out ;
 
 .then  ( toggle vs source/sink)
 
-: wr8  ( data RS)                  p2!  dup  wr4 ( hi)  >nyb<  wr4 ( lo)  100us ;
-: rd8  ( RS - data)  2+ ( R/nW=1)  p2!       rd4 ( hi)  rd4 ( lo)  >nyb<  or ;
+: wr8  ( data RS)                  control!  dup  wr4 ( hi)  >nyb<  wr4 ( lo)  100us ;
+: rd8  ( RS - data)  2+ ( R/nW=1)  control!       rd4 ( hi)  rd4 ( lo)  >nyb<  or ;
 
 code p2-init
    P2SEL & clrb  P2OUT & clrb  -1 # P2DIR & movb  next  ;c
@@ -202,15 +214,15 @@ code p2-init
 : cmd   ( byte)  0 wr8 ;
 : emit  ( char)  1 wr8 ;
 
-: lcd-init
-   p2-init  ( implicitly does 0 p2!)
-   %0011_0000  dup wr4 5ms  dup wr4 5ms  wr4 100us
-   %0010_1000 ( 4 bit interface; 2 lines; 5x8 font)  dup wr4  ( put us into 4-bit mode)
-   cmd  ( send cmd again, but do both nybbles this time)
-   %0000_1110 cmd  ( display and cursor on)
-   ;
-
 : at    ( addr)  80 or  cmd ;
 : clear           1     cmd  5ms ;
 : home            2     cmd  5ms ;
 : cr    ( line#)  =if  drop 40  then  at ;
+
+: lcd-init
+   p2-init  ( implicitly sets RS and R/nW to 0)
+   %0011_0000  dup wr4 5ms  dup wr4 5ms  wr4 100us
+   %0010_1000 ( 4 bit interface; 2 lines; 5x8 font)  dup wr4  ( put us into 4-bit mode)
+   cmd  ( send cmd again, but do both nybbles this time)
+   %0000_1110 cmd  ( display and cursor on)
+   clear ;
