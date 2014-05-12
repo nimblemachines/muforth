@@ -133,52 +133,24 @@ hex
   takes about 37us after each command, but my old LCD - an Hitachi LM-018L
   from 1997 - could be much slower.)
 
-code 100us
-   #100,000 ( ns)  #250 /  # w mov
-   begin  begin  begin  1 # w sub  0= until  next  ;c
+meta: delay   ( ns)  #250 / constant
+   ;code  2 w +) w mov  begin  1 # w sub  0= until  next  ;c
+
+  #100,000 ( ns)  delay 100us
 
 ( Delay 5ms after a long command - Home or Clear. Again, the datasheet
-  specifies a much short time - 1.5ms - but let's be conservative.)
+  specifies a much shorter time - 1.5ms - but let's be conservative.)
 
-code 5ms
-   #5,000,000 ( ns)  #250 /  # w mov  again  ;c
+#5,000,000 ( ns)  delay 5ms
 
 ( Delay for a half cycle - about 500ns)
-code H
-   #500 ( ns)  #250 /  # w mov  again  ;c
+      #500 ( ns)  delay H
 
+code E/
+   %0000_0100 # P2OUT & bisb  next  ;c
 
-code >nyb<  ( swap nybbles)
-  ( Shift high nybble into low nybble of high byte)
-  top top add   top top add  top top add  top top add
-  top x mov  x swpb  x top bisb  next  ;c
-
-
-.ifdef use-toggle
-
-meta: toggle  ( bits addr)  create  , ,
-   ;code  4 w +) x mov  2 w +) w mov  x w ) xorb  next  ;c
-
-%0000_0100 P2OUT toggle E~
-%1111_0000 P2DIR toggle dir~
-
-( Do one interface cycle.)
-: wr4  ( data)            H  E~  data!  H         E~ ;
-: rd4  ( - data)  dir-in  H  E~         H  data@  E~  dir-out ;
-
-.else  ( use source and sink)
-
-meta: source  ( bits addr)  create  , ,
-   ;code  4 w +) x mov  2 w +) w mov  x w ) bisb  next  ;c
-
-meta: sink    ( bits addr)  create  , ,
-   ;code  4 w +) x mov  2 w +) w mov  x w ) bicb  next  ;c
-
-%0000_0100 P2OUT source E/  ( drive rising edge of E)
-%0000_0100 P2OUT sink   E\  ( drive falling edge of E)
-
-%1111_0000 P2DIR source  dir-out
-%1111_0000 P2DIR sink    dir-in
+code E\
+   %0000_0100 # P2OUT & bicb  next  ;c
 
 meta: drive  ( mask)  constant
    ;code  ( bits)
@@ -188,25 +160,14 @@ meta: drive  ( mask)  constant
       top P2OUT & bisb  ( combine bits)
       top pop   next  ;c
 
-meta: sense  ( mask)  constant
-   ;code  ( - bits)
-      top push
-      P2OUT & top movb
-       2 w +) top andb  ( keep only bits in mask)
-      next  ;c
-
 %0000_0011 drive control!  ( RS and R/nW)
 %1111_0000 drive data!     ( D4 to D7)
-%1111_0000 sense data@     ( D4 to D7)
+
+: nyb<<  2* 2* 2* 2* ;
 
 ( Do one interface cycle.)
 : wr4  ( data)            H  E/  data!  H         E\ ;
-: rd4  ( - data)  dir-in  H  E/         H  data@  E\  dir-out ;
-
-.then  ( toggle vs source/sink)
-
-: wr8  ( data RS)                  control!  dup  wr4 ( hi)  >nyb<  wr4 ( lo)  100us ;
-: rd8  ( RS - data)  2+ ( R/nW=1)  control!       rd4 ( hi)  rd4 ( lo)  >nyb<  or ;
+: wr8  ( data RS)   control!  dup  wr4 ( hi)  nyb<<  wr4 ( lo)  100us ;
 
 code p2-init
    P2SEL & clrb  P2OUT & clrb  -1 # P2DIR & movb  next  ;c
