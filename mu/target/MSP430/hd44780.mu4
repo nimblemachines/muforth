@@ -113,6 +113,29 @@ hex
   *LCD pins numbers assume 14-pin, 2x7 connector. I'm not sure how the
   single-row inline connectors are pinned out.)
 
+( For connecting to an HC595, rather than to a G2553.
+  NOTE: Using the signal names from the TI HC595 datasheet.
+
+  2553  Pin      595  Pin    LCD  Pin*   Tied
+  ====  ===      ===  ===    ===  ====   ====
+  SIMO   15     SER   14                        serial data in
+   CLK    7   SRCLK   11                        shift register clock
+   CLK    7    RCLK   12                        storage register clock
+
+              nSRCLR   10                High
+                 nOE   13                 Low
+
+                  QG    6     D7   14
+                  QF    5     D6   13
+                  QE    4     D5   12
+                  QD    3     D4   11
+
+                  QC    2     RS    4
+                            R/nW    5     Low
+  P1.0    2                    E    6
+
+  *LCD pins numbers assume 14-pin, 2x7 connector. I'm not sure how the
+  single-row inline connectors are pinned out.)
 
 ( Interface timing.
 
@@ -146,6 +169,83 @@ meta: delay   ( ns)  #250 / constant
 ( Delay for a half cycle - about 500ns)
       #500 ( ns)  delay H
 
+.ifdef hc595
+
+code port-init
+   ( Set up E output pin)
+   1 # P1DIR & bisb  ( using P1.0 to drive E)
+
+   ( Set up SPI)
+   ( Enable SMCLK and hold SPI in reset while configuring)
+   81 # UCB0CTL1 & bisb
+
+   ( Clock phase=0, polarity=1; clock idles high, shifts data out on
+     falling edge; shifts data in on rising edge.
+     MSB first, 8-bit mode, Master mode, 3 pin SPI, synchronous)
+   %0110_1001 # UCB0CTL0 & movb
+
+   ( Let's use a modest shift rate of 1M - SMCLK/16)
+   UCB0BR1 & clrb
+   #16 # UCB0BR0 & movb
+
+   ( Bring SPI out of reset)
+   01 # UCB0CTL1 & bicb
+
+   %1010_0000 # P1SEL  & bisb  ( Give P1.5 and P1.7 to UCB0 - aka SPI)
+   %1010_0000 # P1SEL2 & bisb
+   next  ;c
+
+code E/
+   %0000_0001 # P1OUT & bisb  next  ;c
+
+code E\
+   %0000_0001 # P1OUT & bicb  next  ;c
+
+code split ( data RS - nyblo nybhi)
+           x popb  ( 8 bits of data)
+         x y movb  ( copy - will become lo nybble)
+   y y addb  y y addb  y y addb  y y addb  ( shift lo to hi)
+       top y bisb  ( add in RS)
+          y pushb  ( nyblo)
+     0f0 # x andb  ( keep only hi nybble)
+       x top bisb  ( add in RS)
+             next  ;c
+
+( Start an SPI transaction, and don't return until it is finished!)
+code spi!
+   top UCB0TXBUF & movb  top pop
+   begin  01 # UCB0STAT & bitb  0= until  ( wait for UCBUSY zero)
+   next  ;c
+
+( Do one interface bus cycle. High nybble is D7-D4 or D3-D0; bit 3 is RS;
+  bits 2 to 0 are ignored.)
+
+: wr4  ( data)   spi!  H  E/  H  E\ ;
+
+( Do two 4-bit cycles for each 8-bit transfer.)
+: wr8  ( data RS)   split  wr4 ( hi)  wr4 ( lo)  100us ;
+
+: cmd   ( byte)  0 wr8 ;
+: emit  ( char)  8 wr8 ;
+
+: at    ( addr)  80 or  cmd ;
+: clear           1     cmd  5ms ;
+: home            2     cmd  5ms ;
+: cr    ( line#)  =if  drop 40  then  at ;
+
+: lcd-init
+   E\  port-init
+   %0011_0000  dup wr4 5ms  dup wr4 5ms  wr4 100us
+   %0010_0000 wr4  ( 4 bit interface)  100us
+   %0010_1000 cmd  ( 4 bit interface; 2 lines; 5x8 font)
+   %0000_1110 cmd  ( display and cursor on)
+   clear ;
+
+.else  ( not hc595)
+
+code port-init
+   P2SEL & clrb  P2OUT & clrb  -1 # P2DIR & movb  next  ;c
+
 code E/
    %0000_0100 # P2OUT & bisb  next  ;c
 
@@ -165,12 +265,11 @@ meta: drive  ( mask)  constant
 
 : nyb<<  2* 2* 2* 2* ;
 
-( Do one interface cycle.)
-: wr4  ( data)            H  E/  data!  H         E\ ;
-: wr8  ( data RS)   control!  dup  wr4 ( hi)  nyb<<  wr4 ( lo)  100us ;
+( Do one interface bus cycle.)
+: wr4  ( data)   data!  H  E/  H  E\ ;
 
-code p2-init
-   P2SEL & clrb  P2OUT & clrb  -1 # P2DIR & movb  next  ;c
+( Do two 4-bit cycles for each 8-bit transfer.)
+: wr8  ( data RS)   control!  dup  wr4 ( hi)  nyb<<  wr4 ( lo)  100us ;
 
 : cmd   ( byte)  0 wr8 ;
 : emit  ( char)  1 wr8 ;
@@ -181,9 +280,11 @@ code p2-init
 : cr    ( line#)  =if  drop 40  then  at ;
 
 : lcd-init
-   p2-init  ( implicitly sets RS and R/nW to 0)
+   port-init  ( implicitly sets RS and R/nW to 0)
    %0011_0000  dup wr4 5ms  dup wr4 5ms  wr4 100us
    %0010_1000 ( 4 bit interface; 2 lines; 5x8 font)  dup wr4  ( put us into 4-bit mode)
    cmd  ( send cmd again, but do both nybbles this time)
    %0000_1110 cmd  ( display and cursor on)
    clear ;
+
+.then
