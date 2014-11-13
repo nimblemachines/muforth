@@ -6,8 +6,8 @@
 loading AVR memory image
 
 ( Space for compiling into. AVRs can get big; for now let's limit ourselves
-  to 64k address space. Since the program space is word-addressed, this
-  means 32k words.
+  to 128k address space. Since the program space is word-addressed, this
+  means 64k words.
 
   XXX: We should really define this in a device/xxx file that gets loaded
   _before_ this one.)
@@ -23,8 +23,8 @@ variable image  ( image buffer pointer; points to either flash- or eeprom-image)
               does>  cell+ ( skip count)  image ! ;
 
 ( Two real images)
-64 Ki make-image  flash-image
- 4 Ki make-image  eeprom-image
+128 Ki make-image  flash-image
+  4 Ki make-image  eeprom-image
 
 ( And two dummy images)
  8 make-image  ram-image   ( to capture accidental c, or , to ram)
@@ -35,7 +35,7 @@ variable image  ( image buffer pointer; points to either flash- or eeprom-image)
 : 'image  image @           ( get address) ;
 
 : wrap   #image 1-  and ;
-: +a  ( a1 a2 - sum)  +  wrap ;  ( add and wrap to 16bit address)
+: +a  ( a1 a2 - sum)  +  wrap ;  ( add and wrap to image boundary)
 
 : image+  ( target - host)  wrap  'image + ;
 : image-  ( host - target)        'image -  wrap ;
@@ -69,17 +69,21 @@ defer >prog ( dump program memory)
 defer >data ( dump data memory)
 defer >ee   ( dump eeprom memory)
 
+: log2  ( n - #bits)
+   0 swap  begin  dup 1 and 0= while  1 u+  u2/  repeat  drop ;
+
+: addrbits  ( size)  log2  |addr ! ;
+
 -: ( buf a u)  swap image+ -rot  cmove ;
 : >image-read   [ ]  is |read ;  ( read from current image buffer)
 
-: >image-prog   >image-read  flash-image ;
-: >image-data   >image-read  data-image ;
-: >image-ee     >image-read  eeprom-image ;
+: >image-prog   >image-read   flash-image   #flash addrbits ;
+: >image-data   >image-read    data-image  #ram 2* addrbits ;  ( #ram 100 +)
+: >image-ee     >image-read  eeprom-image  #eeprom addrbits ;
 
 : >image
    ['] leh@  is |cell@
-              2 |cell !  ( size of cell)
-              2 |addr !  ( size of addr)
+              2 |cell !  ( size of cell in bytes)
 
    ['] >image-prog  is >prog
    ['] >image-data  is >data
