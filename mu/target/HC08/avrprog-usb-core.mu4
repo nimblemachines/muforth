@@ -153,7 +153,7 @@ label SpiTx  ( Sends char in A; returns recvd char in A)
 1 zvar addr-lo
 1 zvar toggle
 
-1 zvar total-count
+2 zvar total-count  ( negated 16-bit count, big-endian!)
 
 label toggle-data  ( HX points to EP buffer control byte)
    0 ,x lda  40 # and ( data0/1)  match-data1 # eor  0 ,x sta  rts  ;c
@@ -162,7 +162,8 @@ label toggle-data  ( HX points to EP buffer control byte)
   avr-cmd  addr-hi  addr-lo  dummy/toggle)
 
 label save-command
-   wLength ) lda  total-count ) sta
+   .a clr  wLength    ) sub  total-count 1+ ) sta  ( negate and store length)
+   .a clr  wLength 1+ ) sbc  total-count    ) sta
    wValue ) ldhx  avr-cmd ) sthx
    wIndex ) ldhx  addr-lo ) sthx
    rts  ;c
@@ -173,10 +174,10 @@ label bulk-read
 
 ( Read data from chip and copy into IN buffer.)
 label prepare-next-in
-   total-count ) lda  0!= if  ( still data to read)
-      .h clr  .h psh  ( bufptr)
-      buflen0 # cmp  u>= if  ( whole packet)  buflen0 # lda  then
-      .a psh  begin
+   total-count ) ldhx  0!= if  ( still data to read)
+      buflen0 negate # cphx  u< if  ( whole packet)  buflen0 negate # ldx  then
+      .h clr  .h psh ( bufptr)  .x neg  .x psh ( count)
+      begin
          .x clr
 
          ( resend command, addr, and dummy bytes)
@@ -184,20 +185,20 @@ label prepare-next-in
 
          ( put last byte returned into in-buffer)
          1 ,s ldx  in-buffer ,x sta  .x inc  1 ,s stx
-         total-count ) dec
+         total-count 1+ ) inc  0= if  total-count ) inc  then
 
          ( toggle cmd byte and incr addr-lo if toggled back to 0)
          toggle ) lda  avr-cmd ) eor  avr-cmd ) sta
          toggle ) and  0= if  addr-lo ) inc  ( in zpage!)  then
 
       0 ,s decz? until  2 # ais  ( pop repeat count and bufptr)
-      txa  ( in-count to a)
    then
+   ( in-count in x)
    ( fall thru)
 
-( Enter with in-count in A)
+( Enter with in-count in X)
 label prepare-fixed-in
-   in-count ) sta
+   in-count ) stx
    ( toggle DATA0/1)  in-control # ldhx  toggle-data c  ( fall thru)
 
 ( Get ready to receive another SETUP token.)
@@ -220,9 +221,7 @@ label single-avr-cmd
    begin  wValue ,x lda  SpiTx c  in-buffer ,x sta  .x inc
           4 # cpx  0= until
 
-   bmRequestType ) lda  40 # and  0!= if  ( read)
-      wLength ) lda  prepare-fixed-in j  then
-
+   bmRequestType ) lda  80 # and  ( read)  prepare-fixed-in  0= until
    ( otherwise write, so fall thru)
 
 ( Prepare to return status - a zero-length IN transaction. Also be ready to
@@ -236,7 +235,7 @@ label finish-control-write
    expect-setup-token j  ;c
 
 label bulk-write
-   wLength ) lda  0!= finish-control-write until
+   wLength ) ldhx  finish-control-write  0!= until
    save-command c
    expect-setup-token j  ( wait for OUT or new SETUP)  ;c
 
@@ -267,14 +266,13 @@ label setup-or-out-token
    ( OUT token)
    ( If last OUT was zero-length, it was a status transaction for a
      control read, so get ready for a new SETUP.)
-   out-count ) lda  0= if  expect-setup-token j  then
+   out-count ) lda  expect-setup-token  0!= until
 
    ( Otherwise, we've got a bulk write data payload. Write bytes to target
      via SPI, by repeating single byte write commands. Be careful about
      toggling the command byte for program memory reads and writes.)
 
-   .h clr  .h psh  ( bufptr)
-   .a psh  ( repeat out-count times)
+   .h clr  .h psh ( bufptr)  .a psh ( out-count)
    begin
       .x clr
 
@@ -283,7 +281,7 @@ label setup-or-out-token
 
       ( send byte from out-buffer)
       1 ,s ldx  out-buffer ,x lda  SpiTx c  .x inc  1 ,s stx
-      total-count ) dec
+      total-count 1+ ) inc  0= if  total-count ) inc  then
 
       ( toggle cmd byte and incr addr-lo if toggled back to 0)
       toggle ) lda  avr-cmd ) eor  avr-cmd ) sta
@@ -292,7 +290,7 @@ label setup-or-out-token
    0 ,s decz? until  2 # ais
 
    ( If total-count zero, we've received all the data; queue up status IN token.)
-   total-count ) lda   0= if  finish-control-write j  then
+   total-count ) ldhx  0= if  finish-control-write j  then
 
    ( total-count non-zero; expect more data.)
    ( toggle DATA0/1)  out-control # ldhx  toggle-data c
