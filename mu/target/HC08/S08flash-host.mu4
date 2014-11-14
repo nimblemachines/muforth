@@ -32,29 +32,21 @@ forth
 41 constant mMassErase
 
 #512 constant /page   ( S08 has 512 byte Flash pages - this is erase size)
- #64 constant /row    ( max size of row to program)
 
 : check-flash-status  ( status)
    ." FSTAT=" dup u.
    30 and if error" flash access or protection violation" then ;
 
-: program-row  ( 'target len)
-   cr ." program-row "  2dup swap u. u.
+: program-chunk  ( 'target len)
+   cr ." program "  2dup swap u. u.
    over image+  mByteProgram  t.FlashChunk  check-flash-status ;
 
 : erase-page  ( 'target)
-   cr ." erase-page " dup u.
+   cr ." erase " dup u.
    1  over image+  mPageErase  t.FlashChunk  check-flash-status ;
 
-( We use the USB ram region of the image as a read buffer: 1860-1960. This
-  way we don't clobber anything we care about.)
 : blank?  ( addr - flag)
-   cr ." blank? "  dup u.
-   -1  swap  [ /page  40 / ] for  ( do it in chunks of 64)
-      ( sum addr)  dup 40 1860 image+  t.ReadChunk  40 + swap
-      ( addr+ sum)  1860 image+ m !  40 for  m* and  next  swap
-      ( sum addr+)  over 0ff xor if  pop drop 2drop  0 ^  then  ( exit early)
-   next  drop  0ff = ;
+   /page pad  t.ReadChunk  pad m !  0ff /page for  m* and  next  0ff = ;
 
 ( Where is the bootloader code?)
 ( NOTE: this is currently the same as what last-page? calculates, but only
@@ -92,25 +84,24 @@ order to re-flash it. Consult a local guru. ;-)" ;
 ( Flash vectors, security bytes, & trims)
 : flash-vectors
    cr ." flashing vectors, security bytes, and trims"
-   0ffac 14  ( 0ffac - 0ffcf)  program-row  ( trims and security bytes)
-   0ffc0 40  ( 0ffc0 - 0ffff)  program-row  ( vectors) ;
+   0ffac 14  ( 0ffac - 0ffcf)  program-chunk  ( trims and security bytes)
+   0ffc0 40  ( 0ffc0 - 0ffff)  program-chunk  ( vectors) ;
 
 ( When we are about to program the _first_ row of a page, we erase the
   page. If it's the last page of the flash, we save the trims, erase the
   page, and then flash the vectors and trims.)
 
 : erased  ( 'target)
-   dup [ /page 1- ] and  if  drop ^  then  ( do nothing if not first byte)
    dup last-page? if  ( erasing last page)
       save-trims  erase-page  flash-vectors  ^  then
    erase-page ;
 
-: row  ( 'target len - 'target+len)
-   2dup + push  over erased  program-row  pop ;
+: prog-page  ( 'target len - 'target+len)
+   2dup + push  over erased  program-chunk  pop ;
 
 : flash-region  ( a len)
-   /row /mod  ( r q)  swap push  ?for   /row row  next  then
-                            pop  =if  ( rem) row  drop ^  then  2drop ;
+   /page /mod  ( r q)  swap push  ?for   /page prog-page  next  then
+                            pop  =if  ( rem) prog-page  drop ^  then  2drop ;
 
 : flash-image
    h preserve  flash
@@ -131,24 +122,19 @@ order to re-flash it. Consult a local guru. ;-)" ;
    then ;
 
 ( Fast verify! Using chunked reads.)
-( We use the USB ram region of the image as a read buffer: 1860-1960. This
-  way we don't clobber anything we care about.)
-
 ( Be careful about setting p. Some chunked read implementations use it, so
   set it *after* doing the read.)
 
 : verify-chunk  ( 'target len - 'target+len)
    2dup + push
-   2dup  1860 image+ t.ReadChunk
+   2dup  pad t.ReadChunk
    ( 'target len)  swap image+ m !  ( we'll use m* to read image)
-   ( len)  1860 image+ swap
+   ( len)  pad swap
    for  c@+ swap  m*  xor  if  m @ image-  -1 +a u.  then  next  drop
    pop ;
 
-( Do 128 bytes at a time. I can't read 256 at a time using USB.)
-
 : verify-region
-   80 /mod  ( r q)  swap push  ?for  80 verify-chunk  next  then
+   /page /mod  ( r q)  swap push  ?for  /page verify-chunk  next  then
                        pop  =if  ( rem) verify-chunk  drop ^  then  2drop ;
 
 : verify
