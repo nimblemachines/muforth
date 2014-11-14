@@ -45,8 +45,13 @@ forth
    cr ." erase " dup u.
    1  over image+  mPageErase  t.FlashChunk  check-flash-status ;
 
+( Read 256 bytes at a time. See comment for verify, below.)
 : blank?  ( addr - flag)
-   /page pad  t.ReadChunk  pad m !  0ff /page for  m* and  next  0ff = ;
+   0ff swap  ( bits addr)  [ /page 100 / ] for
+      dup 100 + push
+      100 pad  t.ReadChunk  pad m !  100 for  m* and  next
+      pop
+   next  drop  0ff = ;
 
 ( Where is the bootloader code?)
 ( NOTE: this is currently the same as what last-page? calculates, but only
@@ -100,8 +105,8 @@ order to re-flash it. Consult a local guru. ;-)" ;
    2dup + push  over erased  program-chunk  pop ;
 
 : flash-region  ( a len)
-   /page /mod  ( r q)  swap push  ?for   /page prog-page  next  then
-                            pop  =if  ( rem) prog-page  drop ^  then  2drop ;
+   /page /mod  ( r q)  swap push  ?for  /page prog-page  next  then
+                             pop  =if  ( rem) prog-page  drop ^  then  2drop ;
 
 : flash-image
    h preserve  flash
@@ -126,6 +131,7 @@ order to re-flash it. Consult a local guru. ;-)" ;
   set it *after* doing the read.)
 
 : verify-chunk  ( 'target len - 'target+len)
+   -- cr ." verify "  over u.  dup u.
    2dup + push
    2dup  pad t.ReadChunk
    ( 'target len)  swap image+ m !  ( we'll use m* to read image)
@@ -133,9 +139,13 @@ order to re-flash it. Consult a local guru. ;-)" ;
    for  c@+ swap  m*  xor  if  m @ image-  -1 +a u.  then  next  drop
    pop ;
 
+( Verify in chunks of 256 bytes. While the USB chat can now read really big
+  chunks at a time - like 4 KiB - the serial chat uses a one byte count,
+  and so is limited to 256 at a time.)
+
 : verify-region
-   /page /mod  ( r q)  swap push  ?for  /page verify-chunk  next  then
-                       pop  =if  ( rem) verify-chunk  drop ^  then  2drop ;
+   100 /mod  ( r q)  swap push  ?for  100 verify-chunk  next  then
+                         pop  =if  ( rem) verify-chunk  drop ^  then  2drop ;
 
 : verify
    h preserve  flash
