@@ -83,6 +83,7 @@ comment register-use
 
   r0/r1              is used for writing flash (via SPM instruction)
   r26/27 -- aka x -- is used for status and data bytes
+  r28/29 -- aka y -- is used to address cmd history buf (XXX debug)
   r30/31 -- aka z -- is used to point to memory
 
   These are also registers that are considered "scratch" by the
@@ -100,8 +101,10 @@ register-use
 
 ( Above the stack, reserve two bytes to be used as flags for bootloader.)
 
-@ram #ram + ( ramend)  2 -  equ app-running
-           app-running 1-   equ stack-bottom
+( XXX debug)
+@ram #ram + ( ramend)  10 -  equ cmd-history
+           cmd-history  2 -  equ app-running
+           app-running  1-   equ stack-bottom
 
 ( Returns Z set if running.)
 label app-running?
@@ -124,7 +127,10 @@ label app-run
 
 .else  ( no bootloader - app is always present, and no need for hooks)
 
-@ram #ram + ( ramend)  1-  ( stack bottom)  equ stack-bottom
+( XXX debug)
+@ram #ram + ( ramend)  10 -  equ cmd-history
+           cmd-history  1-   equ stack-bottom
+-- @ram #ram + ( ramend)  1-  ( stack bottom)  equ stack-bottom
 
 label app-start
    application-start j  ;c
@@ -150,11 +156,13 @@ label wait-twint
      for addresses and might be building up a word value in R0/R1 to
      write to flash.)
    z pushw  0 pushw
+   y pushw  ( XXX debug)
    begin
       ( Call application run hook, if programmed & running)
       app-run rcall
       TWCR xl lds  TWINT xl sbrs
    again
+   y popw  ( XXX debug)
    0 popw  z popw
    TWSR xl lds  0f8 xl andi  ret  ;c
 
@@ -294,6 +302,9 @@ label process
    ack-twint rcall
    60 xl cpi  process  0= until  ( wait til addressed as slave+write)
    read-byte rcall  ( cmd)
+   y+ xl st  yl tst  0= if
+      cmd-history >hilo  yl ldi  yh ldi  ( XXX debug)
+   then
 
    10 xl cpi  set-addr      0= not until
    11 xl cpi  read-program  0= not until
@@ -323,6 +334,7 @@ label chat-entry  ( callable from other code!)
    z pushw  y pushw  x pushw  t pushw  ( push all 4 pointer regs)
    SREG xl in  xl push  ( push status)  xl push ( padding)
 
+   cmd-history >hilo  yl ldi  yh ldi  ( XXX debug)
    ack-twint rcall
    begin  process rcall  again  ;c
 
