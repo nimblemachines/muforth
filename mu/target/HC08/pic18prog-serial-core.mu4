@@ -13,8 +13,8 @@ hex
   S08QE or QG as a programmer. I need a 3v device for this! So I can't use
   my JS16 - until I set it up with an external 3/3.3v regulator!)
 
-.ifndef S08QG
-  z" This code will only run properly on an S08QG part."  abort
+.ndef S08QG  .ndef S08QE32  .and  .if
+  z" This code will only run properly on an S08QG or an S08QE32 part."  abort
 .then
 
 ( The style of this code was inspired by chat3.mu4. It's really just an
@@ -52,18 +52,59 @@ label signon
 
 ( Port pins.)
 
-( PIC18     QG8            JS16
-  ===================================
-  PGC    PTB2, pin 10   PTA3, pin 11
-  PGD    PTB3, pin 9    PTA2, pin 10
-  /MCLR  PTB5, pin 7    PTA4, pin 12
-  PGM    PTB4, pin 8    PTA1, pin 9
+( On QE32: PTA4 is output-only; PTA5 is input-only)
+
+( PIC18     QG8            QE32            JS16
+  ===================================================
+  PGC    PTB2, pin 10   PTC5, pin 1     PTA3, pin 11
+  PGD    PTB3, pin 9    PTC4, pin 2     PTA2, pin 10
+  /MCLR  PTB5, pin 7    PTA4, pin 4     PTA4, pin 12
+  PGM    PTB4, pin 8    PTA0, pin 26    PTA1, pin 9
+
+  I created a couple of boards with Microchip PIC18F14K50 USB chips on
+  them, and wired a six-pin header with the following pinout, from top to
+  bottom:
+
+  *  Gnd
+  *  3.3v/5v
+  *  PGC/D-  pin 18   NOTE: 3.3v only!
+  *  PGD/D+  pin 19   NOTE: 3.3v only!
+  *  /MCLR   pin 4
+  *  PGM     pin 7
 )
+
+.ifdef S08QG
+
+macro PGC        PTBD  2  ;m
+macro PGD        PTBD  3  ;m
+macro PGD-drive  PTBDD 3  ;m
+macro MCLR       PTBD  5  ;m
+macro PGM        PTBD  4  ;m
 
 label init-pins
    .a clr  PTBD ) sta   ( set pins low)
    .a com  PTBDD ) sta  ( set them for output)
-   %0011_1100 # lda  PTBDS ) sta  ( set high drive)  rts  ;c
+   %0011_1100 # lda  PTBDS ) sta  ( set high drive)
+   rts  ;c
+
+.else .ifdef S08QE32
+
+macro PGC        PTCD  5  ;m
+macro PGD        PTCD  4  ;m
+macro PGD-drive  PTCDD 4  ;m
+macro MCLR       PTAD  4  ;m
+macro PGM        PTAD  0  ;m
+
+label init-pins
+   .a clr  PTAD ) sta   ( set pins low)
+           PTCD ) sta
+   .a com  PTADD ) sta  ( set them for output)
+           PTCDD ) sta
+   %0001_0001 # lda  PTADS ) sta  ( set high drive)
+   %0011_0000 # lda  PTCDS ) sta
+   rts  ;c
+
+.then .then
 
 ( The building blocks.)
 
@@ -83,9 +124,13 @@ comment %% delay-times
   QE and QG parts have been trimmed to run at 9.216M so they can
   accuratedly generate 115200 bps clock.
 
+  But one of my QE32 parts is running with a crystal at 24M.
+
   At 9.216M, to delay 1ms, n = (9216 - 18) * 256 / (9*257) = 1018
            to delay 100us, n = (922 - 18) * 256 / (9*257) = 100
 
+  At 24M, to delay 1ms, n = (24000 - 18) * 256 / (9*257) = 2654
+        to delay 100us, n = (2400 - 18) * 256 / (9*257) = 263.6
 %%
 
 label delay
@@ -95,29 +140,56 @@ label delay
 
 decimal
 
+.ifdef 24m
+
+label 1ms
+   -2654 # ldhx  delay j  ;c
+
+label 100us
+   -264 # ldhx  delay j  ;c
+
+label short
+   .x psh  .x pul  rts  ;c
+
+.else  ( 9.216M)
+
 label 1ms
    -1018 # ldhx  delay j  ;c
 
 label 100us
    -100 # ldhx  delay j  ;c
 
+.then
+
 hex
 
 ( Now for some spiffy macros that let us define the bit send and receive
   words so that they look like timing diagrams!)
 
-macro D/  PTBD 3 bset   ;m
-macro D\  PTBD 3 bclr   ;m
+macro D/  PGD bset   ;m
+macro D\  PGD bclr   ;m
 
-macro C/  PTBD 2 bset   ;m
-macro C\  PTBD 2 bclr   ;m
+.ifdef 24m
+
+( At 24M we need to slow down the clock pulses a bit, otherwise the PIC
+  can't keep up!)
+
+macro C/  PGC bset  short c  ;m
+macro C\  PGC bclr  short c  ;m
+
+.else
+
+macro C/  PGC bset   ;m
+macro C\  PGC bclr   ;m
+
+.then
 
 label drive-d  ( drive value of C onto bus)
-   PTBDD 3 bset  ( redrive PGD)
+   PGD-drive bset  ( redrive PGD)
    CS if  D/  rts  then
           D\  rts  ;c
 
-macro D@  PTBD 3 bset? if then  ( sets C with pin value!)  ;m
+macro D@  PGD bset? if then  ( sets C with pin value!)  ;m
 macro D!  drive-d c    ;m
 
 label send-bit    C/  D!  C\   rts  ;c
@@ -139,22 +211,23 @@ label send-icsp-byte
 
 ( Read byte from chip into A.)
 label recv-icsp-byte
-   PTBDD 3 bclr  ( undrive PGD)
+   PGD-drive bclr  ( undrive PGD)
    .a psh  ( byte accumulator)
    8 # lda  .a psh  ( bit count)
    begin  recv-bit c  1 ,s ror  0 ,s decz? until
    1 ,s lda  2 # ais
+   -- PGD-drive bset  ( redrive PGD)  ( XXX move this here?)
    rts  ;c
 
 ( PGM high, delay, then /MCLR high.)
 label enter-prog-mode
-   PTBD 4 bset  100us c  ( only need to delay 2us)
-   PTBD 5 bset
+   PGM bset  100us c  ( only need to delay 2us)
+   MCLR bset
    rts  ;c
 
 ( /MCLR low, then PGM low.)
 label exit-prog-mode
-   PTBD 5 bclr   PTBD 4 bclr
+   MCLR bclr   PGM bclr
    rts  ;c
 
 .ifdef notyet
