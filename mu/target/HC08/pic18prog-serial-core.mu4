@@ -126,10 +126,12 @@ comment %% delay-times
 
   But one of my QE32 parts is running with a crystal at 24M.
 
+  At 9.216M, to delay 5ms, n = (46,080 - 18) * 256 / (9*257) = 5098
   At 9.216M, to delay 1ms, n = (9216 - 18) * 256 / (9*257) = 1018
            to delay 100us, n = (922 - 18) * 256 / (9*257) = 100
 
-  At 24M, to delay 1ms, n = (24000 - 18) * 256 / (9*257) = 2654
+  At 24M, to delay 5ms, n = (120,000 - 18) * 256 / (9*257) = 13,279
+  At 24M, to delay 1ms, n = (24,000 - 18) * 256 / (9*257) = 2654
         to delay 100us, n = (2400 - 18) * 256 / (9*257) = 263.6
 %%
 
@@ -142,22 +144,32 @@ decimal
 
 .ifdef 24m
 
+label 5ms
+   -13,279 # ldhx  delay j  ;c
+
 label 1ms
    -2654 # ldhx  delay j  ;c
 
 label 100us
    -264 # ldhx  delay j  ;c
 
-label short
-   .x psh  .x pul  rts  ;c
+( At 24M we need to slow down the clock pulses a bit, otherwise the PIC
+  can't keep up!)
+
+macro short  .x psh  .x pul  ;m
 
 .else  ( 9.216M)
+
+label 5ms
+   -5098 # ldhx  delay j  ;c
 
 label 1ms
    -1018 # ldhx  delay j  ;c
 
 label 100us
    -100 # ldhx  delay j  ;c
+
+macro short  ;m
 
 .then
 
@@ -169,23 +181,10 @@ hex
 macro D/  PGD bset   ;m
 macro D\  PGD bclr   ;m
 
-.ifdef 24m
-
-( At 24M we need to slow down the clock pulses a bit, otherwise the PIC
-  can't keep up!)
-
-macro C/  PGC bset  short c  ;m
-macro C\  PGC bclr  short c  ;m
-
-.else
-
-macro C/  PGC bset   ;m
-macro C\  PGC bclr   ;m
-
-.then
+macro C/  PGC bset  short  ;m
+macro C\  PGC bclr  short  ;m
 
 label drive-d  ( drive value of C onto bus)
-   PGD-drive bset  ( redrive PGD)
    CS if  D/  rts  then
           D\  rts  ;c
 
@@ -216,7 +215,7 @@ label recv-icsp-byte
    8 # lda  .a psh  ( bit count)
    begin  recv-bit c  1 ,s ror  0 ,s decz? until
    1 ,s lda  2 # ais
-   -- PGD-drive bset  ( redrive PGD)  ( XXX move this here?)
+   PGD-drive bset  ( redrive PGD)
    rts  ;c
 
 ( PGM high, delay, then /MCLR high.)
