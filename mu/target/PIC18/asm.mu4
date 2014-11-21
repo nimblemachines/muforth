@@ -19,6 +19,21 @@ forth
 : op,  \m , ;
 -- : op,  ( compile)  dup \m ,  ( and print)  .b  cr ;
 
+( Tests to see if a value fits into a field of a certain bit width.)
+: ufits?  ( value bits - f)     u>>        0= ;   ( unsigned)
+: sfits?  ( value bits - f)   1- >>  1+  2 u< ;   ( signed)
+
+: ones  ( n - mask)  1 swap <<  1- ;  ( create a mask of n 1s)
+
+( Immediate fields)
+: imm   ( imm op #bits - op')
+   rot swap  ( op imm #bits)  2dup ufits? if  ones and  or  ^  then
+   error" immediate value out of range" ;
+
+:  i7  ( imm op - op')    7 imm ;
+:  i8  ( imm op - op')    8 imm ;
+: i12  ( imm op - op')  #12 imm ;
+
 
 ( Zero ops.)
 forth
@@ -46,328 +61,185 @@ assembler
 000e 0op  tblwt*-   ( tbl!-)  ( write program memory, post decr)
 000f 0op  tblwt+*   ( tbl-!)  ( write program memory, pre incr)
 
-( s=1 means restore W, STATUS, BSR from shadow regs.
-0000 0000 0001 000s  retfie    return from interrupt and enable
-0000 0000 0001 001s  return    subroutine return)
-
-0010 0op  reti       ( return from interrupt; restore from stack)
-0011 0op  reti.s     ( return from interrupt; restore from shadow regs)
+0010 0op  iret       ( return from interrupt; restore from stack)
+0011 0op  iret.s     ( return from interrupt; restore from shadow regs)
 
 0012 0op  ret        ( return from subroutine; restore from stack)
 0013 0op  ret.s      ( return from subroutine; restore from shadow regs)
 
 00ff 0op  reset
+
+: bank  ( bank#)  0100  4 imm  op, ;  ( movlb)
 forth
 
-: i4  ( imm op - op')  swap   0f and  or ;
-: i8  ( imm op - op')  swap  0ff and  or ;
+: afop    constant does> @  ( af op)     9 imm  op, ;
+: dafop   constant does> @  ( daf op)  #10 imm  op, ;
 
+assembler
+: b)   ( f - bits)  ( "banked")      0100 or ;  ( set "a" bit)
+: !    ( f - bits)  ( "store to f")  0200 or ;  ( set "d" bit)
 
+0200  afop mul   ( mulwf           PRODH:PRODL = w * f)
+0400 dafop dec   ( decf     DNVCZ  f/w = f - 1)
+forth
 
+: i8op  constant  does> @  ( imm op)  i8  op, ;
 
-.ifdef avr-copied-crap
+assembler
+0800 i8op negi   ( sublw)  ( DNVCZ  w = k - w)  ( ie, negate w and add k)
+0900 i8op ori    ( iorlw)  ( NZ     w = k or w)
+0a00 i8op xori   ( xorlw)  ( NZ     w = k xor w)
+0b00 i8op andi   ( andlw)  ( NZ     w = k and w)
+0c00 i8op reti   ( retlw)  (        w = k, and return)
+0d00 i8op muli   ( mullw)  (        w = k * w)
+0e00 i8op ldi    ( movlw)  (        w = k)
+0f00 i8op addi   ( addlw)  ( DNVCZ  w = k + w)
+forth
 
-( Below is crazy AVR stuff copied over.)
+( NOTE: Some of these operations are 1ops. These operate on F not W! But
+  they can store the result in F _or_ W.)
 
-comment
-==========================================================================
-  Weird encodings, of constants and registers, in different and alarming ways.
+1000 dafop or     ( iorwf)  ( NZ     )
+1400 dafop and    ( andwf)  ( NZ     )
+1800 dafop xor    ( xorwf)  ( NZ     )
 
-  Rd     d_dddd -> 0000_000d_dddd_0000  ( dest reg)
-  Rs     s_ssss -> 0000_00s0_0000_ssss  ( source reg)
-  I6    ii_iiii -> 0000_0ii0_0000_iiii  ( 6 bit io offset: 0-63)
-  I5     i_iiii -> 0000_0000_iiii_i000  ( 5 bit io offset: 0-31)
-  Rhd      dddd -> 0000_0000_dddd_0000  ( dest high regs, 16 to 31)
-  Rhs      ssss -> 0000_0000_0000_ssss  ( source high regs, 16 to 31)
-  Rp         dd -> 0000_0000_00dd_0000  ( pointer/pairs, 0=24/25, 1=26/27 etc)
-  K8  kkkk_kkkk -> 0000_kkkk_0000_kkkk  ( 8 bit immed data)
-  K6    kk_kkkk -> 0000_0000_kk00_kkkk  ( 6 bit immed data - word insns)
-* Ah    kk_kkkk -> 0000_000k_kkkk_000k  ( long jmp/call high 6 bits)
-  S7   sss_ssss -> 0000_00ss_ssss_s000  ( 7 bit signed branch offset)
-  U6    uu_uuuu -> 00u0_uu00_0000_0uuu  ( 6 bit unsigned offset for ld/st Y,Z)
-  T3        bbb -> 0000_0000_0bbb_0000  ( status bit)
-  K3        bbb -> 0000_0000_0000_0bbb  ( register or io bit)
+1c00 dafop com    ( comf)    ( NZ     f/w = ~f)
 
-*Unused in ATtiny, and in ATmega smaller than 16k.
-==========================================================================
+2000 dafop adc    ( addwfc)  ( DNVCZ  f/w = w + f + C)
+2400 dafop add    ( addwf)   ( DNVCZ  f/w = w + f)
+2800 dafop inc    ( incf)    ( DNVCZ  f/w = f + 1)
+2c00 dafop decsz  ( decfsz)  (        f/w = f - 1, skip if zero)
 
-( I've put similar words next to each other to make them easier to read.)
+3000 dafop rrc    ( rrcf)    ( NCZ    rotate right thru carry)
+3400 dafop rlc    ( rlcf)    ( NCZ    rotate left thru carry)
+3800 dafop rot4   ( swapf)   (        f/w = swap_nybbles[f])
+3c00 dafop incsz  ( incfsz)  (        f/w = f + 1, skip if zero)
 
-: T3  ( bit op - bits)    swap  07 and  4 << or ;
-: Rd  ( reg op - bits)    swap  1f and  4 << or ;
-: I5  ( io op - bits)     swap  1f and  3 << or ;
-: S7  ( off op - bits)    swap  7f and  3 << or ;
-: Rs  ( reg op - bits)    over  10 and  5 << or  swap 0f and  or ;
-: I6  ( io op - bits)     over  30 and  5 << or  swap 0f and  or ;
-: K8  ( const op - bits)  over 0f0 and  4 << or  swap 0f and  or ;
-: K6  ( const op - bits)  over  30 and  2 << or  swap 0f and  or ;
-: K3  ( bit op - bits)    swap  07 and  or ;
+4000 dafop ror    ( rrncf)  ( NZ     rotate right not thru carry)
+4400 dafop rol    ( rlncf)  ( NZ     rotate left not thru carry)
 
-: U6   ( off op - bits)
-   over 20 and 8 << or  over 18 and 7 << or  swap 7 and  or ;
+4800 dafop incsnz  ( infsnz)  (       f/w = inc f, skip nz)
+4c00 dafop decsnz  ( dcfsnz)  (       f/w = dec f, skip nz)
 
-: Rp? ( reg op - index op)
-   swap  #24 - dup 0< if error" only even regs 24 to 30 allowed" then
-   u2/ swap ;
+5000 dafop ldw  ( movf, with d clr)  ( NZ)
+5200 dafop tst  ( movf, with d set)  ( NZ)
 
-: Rh? ( reg op - index op)
-   swap  #16 - dup 0< if error" only regs 16 to 31 allowed"  then  swap ;
+( NOTE: borrow is the complement of carry!)
+( XXX decide about rsub here and rsubi... Do these names make sense?)
 
-: Rp   ( reg op - bits)  Rp?  Rd ;
-: Rhd  ( reg op - bits)  Rh?  Rd ;
-: Rhs  ( reg op - bits)  Rh?  Rs ;
+5400 dafop rsbb   ( subfwb)  ( DNVCZ  f/w = w - f - borrow)
+5800 dafop sbb    ( subwfb)  ( DNVCZ  f/w = f - w - borrow)
+5c00 dafop sub    ( subwf)   ( DNVCZ  f/w = f - w)
 
+( NOTE: There is no destination for these, so no d bit.)
+( But here again... sub/cmp is "standardly" f - w, not w - f.)
+6000 afop cmpslt  ( cpfslt          f - w, skip if lt, unsigned)
+6200 afop cmpseq  ( cpfseq          f - w, skip if eq)
+6400 afop cmpsgt  ( cpfsgt          f - w, skip if gt, unsigned)
+6600 afop tstsz   ( tstfsz          test f, skip if 0)
 
-: Ah  ( addr op - lo hibits)
-   over #16 u>>  dup 3e and 3 <<  swap 1 and  or  or ;
+6800 afop set   ( setf            f = ff  no status chg)
+6a00 afop clr   ( clrf     Z      f = 0   Z = 1)
+6c00 afop neg   ( negf     DNVCZ  f = -f
+6e00 afop stw   ( movwf           f = w   no status chg)
+forth
 
-: ljmp  ( a32)    constant does> @ ( a32 op)  swap 2/ swap  Ah op, op, ;
+: bitop
+   constant does> @  ( f bit# op)  swap 9 << or  i8  op, ;
 
-( Branch and jump plumbing.)
+7000 bitop btog    (  btg             bit toggle f)
+8000 bitop bset    (  bsf             bit set f)
+9000 bitop bclr    (  bcf             bit clr f)
 
-( Note: dest and src are byte addresses; the relative jump offset is a
-  _word_ offset. Also, src points to word _following_ the branch!)
+( XXX bset? bclr?  what about the skip?)
+a000 bitop btstss  (  btfss           bit test, skip set)
+b000 bitop btstsc  (  btfsc           bit test, skip clr)
 
-: >offset  ( dest src - offset)  - 2/ ;
-
-( Computes the jump offset from src to dest; checks if within range;
-  if so, masks to range-1, and returns -1; else returns offset and 0.
-  Range check is done by adding range/2 to offset and checking if that
-  is u< range.)
-
-: inrange?  ( offset range - offset f | offset' t)
-   push  dup r@ u2/ +   r@ u< if  pop 1- and  -1 ^ then
-                                  pop drop     0 ;
-
-( Called when here points _at_ rjmp/rcall, not past it, so we fix up
-  the offset.)
-: rel12?  ( dest - offset fits?)  \m here >offset 1-  1000 inrange? ;
+: movff   ( fsrc fdest)  swap  c000 i12 op,  f000 i12 op, ;
+forth
 
 : too-far   error" relative jump out of range" ;
-( XXX: fix to generate long call/jmp when necessary)
-: rjmp  ( dest)  constant does> @  ( dest op)  swap rel12? if  or op,  ^ then
-   too-far ;
+: >offset?  ( offset #bits - masked-offset fits)
+   push  dup  r@ ones and  ( offset masked-offset)  swap  pop sfits? ;
+
+: rel11
+   constant does> @  ( dest op)  swap  \m here - 2/ 1-  #11 >offset?
+   if  or op,  ^  then  too-far ;
 
 assembler
-
-( Once again, issues of using the manufacturer's mnemonics - which are
-  absolutely terrible - or inventing my own.)
-
-( 2opw - pppp pppp dddd ssss. d,r >> 1)
-: movw  ( Rs Rd -)  u2/ 4 <<  swap u2/ or  0100 or op, ;
-
-( 2op - pppp ppsd dddd ssss)
+d000 rel11 rjmp
+d800 rel11 rcall
 forth
-: 2op    ( Rs Rd)   constant does> @  (  Rs Rd op)  Rd Rs op, ;
-assembler
-0400 2op cpc   (       Rd - Rs - carry)  ( cmpc)
-0800 2op sbc   ( Rd <- Rd - Rs - carry)  ( subc)
-0c00 2op add
-1000 2op cpse  (       Rd - Rs)  ( cmpskipeq)
-1400 2op cp    (       Rd - Rs)  ( cmp)
-1800 2op sub   ( Rd <- Rd - Rs)
-1c00 2op adc
-2000 2op and
-2400 2op eor
-2800 2op or
-2c00 2op mov
-9c00 2op mul
-: tst  dup \a and ;  ( tst == and Rd,Rd)
-: clr  dup \a eor ;  ( clr == eor Rd,Rd)
 
-( bi - byte immed. pppp kkkk dddd kkkk - r16-31)
+( d000 - d7ff rjmp
+  d800 - dfff rcall - see below for smart versions of these)
+
+( e000 - e7ff: Conditional branches - see below)
+
+( e800 - ebff: unimplemented/extended instructions - See below)
+
+( For long jump/call, the low 8 bits are in the first word; the high
+  12 bits are in the extension word.)
+
+: ljmp
+   constant does> @  ( dest op)  over 0ff or op,  8 u>>  f000 or op, ;
+
+( For load index - FSR - registers, the high 4 bits are in the first
+  word; the low 8 bits are in the extension.)
+
+: ldix
+   constant does> @  ( offset op)  over  8 u>> or op,  0ff and  f000 or op, ;
+
+assembler
+ec00 ljmp call
+ed00 ljmp call.s  ( save W, STATUS, BSR in shadow regs.)
+ee00 ldix ldx   ( load X, aka FSR0)
+ee10 ldix ldy   ( load Y, aka FSR1)
+ee20 ldix ldz   ( load Z, aka FSR2)
+ef00 ljmp jmp
 forth
-: bi     ( imm Rhd)  constant does> @  ( imm Rhd op)  Rhd K8 op, ;
-assembler
-( No addi, adci, tsti, or eori! Interesting. And a bit fucked!)
-3000 bi cpi  (        Rhd - K)         ( cmpi)
-4000 bi sbci ( Rhd <- Rhd - K - carry) ( subci)
-5000 bi subi ( Rhd <- Rhd - K)
-6000 bi ori
-7000 bi andi
-e000 bi ldi
 
-( 1op - pppp pppd dddd pppp)
+( f000 - ffff is a nop, and is used as an extension word for two-word
+  instructions.)
+
+-- --------------------------------------------------------------------------
+-- Extended instructions: e800 to ebff
+-- --------------------------------------------------------------------------
+
+( Ok, time for the extended instructions. If the XINST bit is set in the
+  configuration space, a few instructions are added. These are useful for C
+  compilers, but might very well be useful to assembler and Forth hackers
+  too.)
+
+( Here are the extended instructions:)
+assembler
+0014 0op callw      ( push pc + 2; pcl = w, pch = pclath, pcu = pclatu)
 forth
-: 1op    ( Rd)      constant does> @  (     Rd op)  Rd    op, ;
+
+( XXX should we check if imm < 0 and do sub automagically?)
+: addix  constant does> @  ( imm op)  6 imm  op, ;
 assembler
-9400 1op com
-9401 1op neg
-9402 1op swap  ( swap nibbles)
-9403 1op inc
-9405 1op asr
-9406 1op lsr
-9407 1op ror
-940a 1op dec
-: lsl  dup \a add ;  ( lsl == add Rd,Rd)
-: asl  \a lsl ;
-: rol  dup \a adc ;  ( rol == adc Rd,Rd)
+e800 addix addx     ( addfsr    add literal to fsr 0)
+e840 addix addy     ( addfsr    add literal to fsr 1)
+e880 addix addz     ( addfsr    add literal to fsr 2)
+e8c0 addix addzret  ( addulnk   add literal to fsr 2 and return)
 
-( long jump and call - pppp pppk kkkk pppk, kkkk kkkk kkkk kkkk)
-940c ljmp jmp
-940e ljmp call
+e900 addix subx     ( subfsr    sub literal from fsr 0)
+e940 addix suby     ( subfsr    sub literal from fsr 1)
+e980 addix subz     ( subfsr    sub literal from fsr 2)
+e9c0 addix subzret  ( subulnk   sub literal from fsr 2 and return)
 
-( STATUS bit set & clear)
+ea00 i8op pushi     ( pushl     store lit at FSR2; dec FSR2
+                                ie, post-decrement)
+
+( In movsf and movss, the z offsets are added to FSR2)
+: movsf   ( ssrc fdest)  swap  eb00  i7 op,  f000 i12 op, ;
+: movss   ( ssrc sdest)  swap  eb80  i7 op,  f000  i7 op, ;
 forth
-: statusbit  ( bit)  constant does> @  ( bit op)  T3 op, ;
-assembler
-9408 statusbit bset ( set STATUS bit)
-9488 statusbit bclr ( clr STATUS bit)
-
-( Indexed load & store.)
-( X can be post-inc, pre-dec, offset by 0. Y & Z can be post-inc, pre-dec,
-  and offset by 0-63.)
-
-.ifdef prefix-ldst
-
-forth
-: ld/st  ( ix Rd)  constant does> @  ( ix Rd op)  Rd or op, ;
-
-: ix          ( - ix)  constant ;
-: ix_off   ( u6 - ix)  constant does> @  ( u6 op)  U6 ;
-
-: stk             ( Rd)  constant does> @      ( Rd op)  Rd op, ;
-: ix_data     ( a16 Rd)  constant does> @  ( a16 Rd op)  Rd op, op, ;
-
-assembler
-8000 ld/st ld  ( ix Rd)
-8200 ld/st st  ( ix Rd)
-
-0000 ix_off  ,z   ( u6 - ix)
-0008 ix_off  ,y   ( u6 - ix)
-1001 ix       z+
-1002 ix      -z
-1004 ix     pmz  ( prog mem)
-1005 ix     pmz+ ( prog mem)
-1009 ix       y+
-100a ix      -y
-100c ix       x@  ( to distinguish from the _register_ x)
-100d ix       x+
-100e ix      -x
-
-900f stk pop   ( Rd)
-920f stk push  ( Rd)
-
-( Factory mnemonics for ld/st data space:)
-9000 ix_data lds  ( a16 Rd)
-9200 ix_data sts  ( a16 Rd)
-
-.then
-
-.ifdef postfix-ldst
-
-forth
-: ld/st           ( Rd)  constant does> @  ( Rd op)  Rd ;
-
-: ix       ( op+Rd)      constant does> @  ( op     ix)      or op, ;
-: ix_off   ( op+Rd off)  constant does> @  ( op off ix)   U6 or op, ;
-
-: stk             ( Rd)  constant does> @      ( Rd op)  Rd op, ;
-: ix_data     ( a16 Rd)  constant does> @  ( a16 Rd op)  Rd op, op, ;
-
-assembler
-8000 ld/st ld  ( Rd - op)
-8200 ld/st st  ( Rd - op)
-
-( Alternate syntax)
-: <-  \a ld ;
-: ->  \a st ;
-
-( suffixes - these do the action)
-0000 ix_off  ,z   ( op+Rd u6)
-0008 ix_off  ,y   ( op+Rd u6)
-1001 ix       z+
-1002 ix      -z
-1004 ix     pmz  ( prog mem)
-1005 ix     pmz+ ( prog mem)
-1009 ix       y+
-100a ix      -y
-100c ix       x@  ( to distinguish from the _register_ x)
-100d ix       x+
-100e ix      -x
-
-900f stk pop   ( Rd)
-920f stk push  ( Rd)
-
-( Factory mnemonics for ld/st data space:)
-9000 ix_data lds  ( a16 Rd)
-9200 ix_data sts  ( a16 Rd)
-
-.then
-
-( wi - word immed. pppp pppp kkdd kkkk. dd=0..3 -> r24,26,28,30)
-forth
-: wi     ( imm Rp)  constant does> @  ( imm Rp op)  Rp K6 op, ;
-assembler
-9600 wi adiw  ( addiw)
-9700 wi sbiw  ( subiw)
-
-( iobit - set/clear bit in io space - pppp pppp aaaa abbb)
-( These can address 0-1f in io space - 20 to 3f in data space.)
-forth
-: within-io?  ( addr op limit - io op flag)
-   push  swap 20 -  tuck pop u< ;
-
-: check-io  ( addr op limit - io op)
-   within-io? not if error" io address out of range" then ;
-
-: iobit  ( bit io)  constant does> @  ( bit io op)  20 check-io  I5 K3 op, ;
-assembler
-9800 iobit cbi   ( clear bit io)
-9900 iobit sbic  ( skip if bit io clear)
-9a00 iobit sbi   ( set bit io)
-9b00 iobit sbis  ( skip if bit io set)
-
-( io - pppp piid dddd iiii)
-( These address 0-3f in io space - 20 to 5f in data space.)
-( But the addresses that we give them are data space, *not* io space.)
-forth
-: io     ( io-addr Rd)   constant does> @  (  io-addr Rd op)
-   Rd  I6 op, ;
-
-( These are call with addresses that have already checked and are within
-  the io window - 0 to 3f.)
-b000 io _in    ( Rd <- io[i])
-b800 io _out   ( Rd -> io[i])
-assembler
-: in   ( addr Rd)  40 within-io? if  _in  ^  then  20 u+  \a lds ;
-: out  ( addr Rd)  40 within-io? if  _out ^  then  20 u+  \a sts ;
-
-( rel jump and call - pppp kkkk kkkk kkkk)
-c000 rjmp rjmp
-d000 rjmp rcall
-
-( Load, store, and test bits in registers.)
-forth
-: regbit  ( bit reg)  constant does> @  ( bit reg op)  Rd K3 op, ;
-assembler
-f800 regbit bld  ( load from Status.T)
-fa00 regbit bst  ( store to Status.T)
-                 ( the difference is 0200! like all ld/st pairs)
-fc00 regbit sbrc  ( skip if bit in reg clear)
-fe00 regbit sbrs  ( skip if bit in reg set)
-
-( Zero ops.)
-forth
-: 0op  constant does> @ op, ;
-assembler
-0000 0op nop
-c000 0op nop2  ( rjmp to following word; takes 2 cycles!)
-
-9508 0op ret
-9518 0op reti
-9588 0op sleep
-95c8 0op lpm    ( load r0 from program memory @z; using pmz or pmz+ with ld
-                  is more flexible!)
-95e8 0op spm    ( store r1:r0 to z; depends on SPMCSR)
-95a8 0op wdr    ( watchdog reset)
-
-9509 0op icall
-9409 0op ijmp
 
 comment
 =============================================================================
-Digression on the AVR's condition code idiosyncrasies, and an explanation
+Digression on the PIC18's condition code idiosyncrasies, and an explanation
 of how carry and borrow work.
 
 First, let's define how condition code flags represent the results of a
@@ -386,19 +258,15 @@ Let S = N xor V. Then
 I've written on the left the traditional "conditional branch" names for
 each relation.
 
-There are two conditional branch instructions on the AVR: each tests a
-single bit in the status register; one branches if the bit is set, the
-other if clear.
+The PIC18 conditional branch instructions only let us test one of the four
+condition code bits at a time. There are no "bgt" or "ble" instructions. We
+have to make our own.
 
-AVR defines a bit S == N xor V. So S set is equivalent to "<"; S clear
-means ">=". The only way to test "<=" or ">" is to switch the order of the
-operands; we have no way of testing (S or Z) (LE) or !(S or Z) (GT)
-directly. Slightly odd, but it works.
-
-We have a similar issue with subtract or compare of _unsigned_ values. But
-before discussing that we have to understand what the carry bit represents.
-Since the natural way of doing subtraction to _add_ the two's complement of
-the subtrahend - ie:
+Things are a bit simpler when we subtract or compare _unsigned_ values,
+mostly because there is no possiblity of overflow. But before discussing
+that we have to understand what the carry bit represents. Since the natural
+way of doing subtraction to _add_ the two's complement of the subtrahend -
+ie:
 
   X - Y == X + (-Y)
 
@@ -418,137 +286,81 @@ Note something odd here: the carry in complemented: we carry in a one when
 there is no carry in (ie, no borrow); and carry in a zero when there _is_ a
 borrow. So, carry = ~borrow.
 
-There are only two architectures that I know of that represent carry this
-way: ARM and 6502. All others use a synthesized carry, where carry =
-borrow. Since the AVR is one of these latter, in the following we'll
-understand C = 1 to mean borrow, and C = 0 to mean no borrow.
+There are only four architectures that I know of that represent carry this
+way: ARM, 6502, MSP430, and the PIC18. All others use a synthesized carry,
+where carry = borrow. Since the PIC18 is one of the former in the
+following we'll understand C = 0 to mean borrow, and C = 1 to mean no
+borrow.
 
 So let's define how X - Y affects the condition codes, if X and Y are
 _unsigned_.
 
-  (LO)  X < Y   ==   C
-  (HS)  X >= Y  ==  !C
-  (HI)  X > Y   ==  !C and !Z
-                == !(C or   Z)   (deMorgan's law)
-  (LS)  X <= Y  ==   C or   Z
+  (LO)  X < Y   ==   !C
+  (HS)  X >= Y  ==    C
+  (HI)  X > Y   ==    C and !Z
+                == !(!C or   Z)   (deMorgan's law)
+  (LS)  X <= Y  ==   !C or   Z
 
 Again I've written traditional conditional branch names for these
 conditions. LO == lower; HS == higher or same; HI == higher; LS == lower or
 same.
 
-NOTE: On AVR "HS" does **NOT** mean "higher or same" but instead "half
-carry bit set"!! This is another COMPLETELY RETARDED choice of mnemonics.
-BRHS and BRHC mean "branch if half carry set" and "branch if half carry
-clear", resp. The branch if higher or same is BRSH (branch if same or
-higher). Barf!! Has this caused bugs? I'm sure of it.
-
 Here again, since we can only test one bit (C) we have to synthesize HI and
 LS by swapping the arguments to the compare or subtract.
 =============================================================================
 
+( Conditional jump:
+
+     1110 0ccs dddd dddd      c=cond, s=sense, d=dest offset
+
+  Unconditional short jump:
+
+     1101 0ddd dddd dddd      d=dest offset
+
+  Offset is a signed _word_ offset from the following instruction.
+)
+
+: cond?  ( op - f)  f800 and e000 = ;  ( true if a cond jump)
+: cond   constant ;
 assembler
-( Status register bit names)
+e000 cond 0=   ( bz)
+e300 cond u<   ( bnc aka bcc aka blo - carry is ~borrow)
+e600 cond 0<   ( bn  aka bmi)
 
-( XXX: rename these? so that C doesn't conflict with "0C? call them what?
-  .C? C.? And that brings up other issues with number parsing which should
-  also be fixed! Or at least documented... .C and C. are not parsed as
-  numbers, because of the way the loops work. Is this right? And what about
-  sign and radix? Do we prefer #-10 or -#10? Or should both work? Right now
-  sign must precede radix.)
+e200 cond CS  ( bc  aka bcs)
+e300 cond CC  ( bnc aka bcc)
 
-0 constant .C
-1 constant .Z
-2 constant .N
-3 constant .V
-4 constant .S
-5 constant .H
-6 constant .T
-7 constant .I
+e400 cond VS  ( bov  aka bvs)
+e500 cond VC  ( bnov aka bvc)
 
-: sei  \a .I \a bset ;  ( set global interrupt enable bit)
-: cli  \a .I \a bclr ;  ( clear global interrupt enable bit)
-: sec  \a .C \a bset ;  ( set carry)
-: clc  \a .C \a bclr ;  ( clear carry)
+d000 cond never  ( jump always!)
 
-: u<  \a .C ;  ( carry set)
-: 0=  \a .Z ;  ( zero  set)
-: 0<  \a .N ;  ( negative set)
-: <   \a .S ;  ( signed bit set; ie N xor V == 1)
-
-( Conditional branches: test status reg bit; branch if set/clear)
-( branch if bit clear: 1111 01kk kkkk ksss)
-( branch if bit set:   1111 00kk kkkk ksss)
-: not  400 xor ;  ( toggle sense of condition code)
-
+( not doesn't work on never, so be careful!)
+: not  ( cond - !cond)  ( invert sense of test)
+   dup cond? if ( cond jmp)  0100 xor  then ;
 forth
 
-: checkrange  ( offset range - offset | throw)
-   inrange?  if ^ then   too-far ;
 
-( Calculate offset encoding for the jmp, by first inspecting the opcode
-  to see what kind of jmp it is.)
+( Jump offsets are relative to the _following_ instruction.)
 
-( Conditional jumps - cjmps - have a range of 80. Relative jmps - rjmps
-  have a range of 1000.)
-
-( checkrange masks the offset to fit into range)
-: offsetbits  ( jmp offset - jmp bits)  over f000 and f000 = if
-   ( short)   80 checkrange  3 <<  ^  then
-    ( rel)  1000 checkrange  ;
-
-( Put these resolve's in the assembler chain so they don't conflict with
-  forth's.)
-assembler
-: resolve>  ( src dest)  ( doesn't change type of jmp - short or relative)
-   over >offset push  ( src)  2 - ( point to jmp)
-   dup image-@ pop ( 'jmp jmp offset)  offsetbits  or  swap image-! ;
-
-( <resolve can _in theory_ compile a short jump around an rjmp. If the
-  offset is too large to fit in 7 bits, 0404 xor with branch - makes it
-  skip following - and then compile rjmp. For now, let's get this going
-  with short branches.
-
-  I say _in theory_ because we are *not* doing this for three reasons:
-
-    * It's simpler. This is important.
-
-    * resolve is symmetric if we don't rewrite jumps - we can't rewrite
-      forward jumps because there isn't room to add an rjmp afterwards
-      since we've already compiled code there;
-
-    * There really should be no need. Code words should be short. We can
-      jump +/-64 words. That is plenty.)
-
-: <resolve  ( dest src)  swap  \a resolve> ;
-
-forth
-
-( Compile a conditional jump; on entry stack has status bit, possibly or'ed
-  with 400 to reverse its sense, so we should xor into opcode. By default
-  opcode generated is jump if status bit _clear_.)
-
-: cjmp,  ( statusbit - src)  f400 xor op,  \m here ;
-
-( Unconditional jmp and call)
-: rjmp,   ( - src)  c000 op,  \m here ;
-: rcall,  ( - src)  d000 op,  \m here ;  ( useful for forward references)
+: offset-size  ( jmp - #bits)  cond? if  8 ^  then  #11 ;
 
 assembler
-( These are different from the pure Forth ones. Forward conditional branches
-  are always _short_, but backwards branches can be short or long. A long
-  branch is formed by inverting the condition to branch _around_ the
-  longer branch.
+( Resolve a relative jump from src to dest.)
+: resolve  ( src dest)
+   over - 2/  push  ( offset)
+   2 - dup  image-@  pop  ( src-2 jmp offset)
+   over offset-size  >offset? if  or  swap image-!  ^  then
+   too-far ;
 
-  Thus we need words to compile forward conditional branches, forward
-  unconditional branches, and backwards branches of either kind.)
+( Control structure words.)
+: if      ( cond - src )  \a not  op,  \m here ;
+: then    ( src  -     )  \m here   \a resolve ;
+: else    ( src1 - src2)  \a never  \a if  swap  \a then ;
 
-( if compiles "branch if bit clr")
-: if      ( bit - src)    cjmp, ;
-: always  ( - src)        rjmp, ;
-: then    ( src)          \m here \a resolve> ;
-: else    ( src1 - src2)  rjmp, swap  \a then ;
 : begin   ( - dest)       \m here ;
-: until   ( dest bit -)   \a if  \a <resolve ;
-: again   ( dest -)       rjmp,  \a <resolve ;
-: while   ( dest bit - src dest)   \a if  swap ;
-: repeat  ( src dest -)   \a again  \a then ;
+: until   ( dest)         \a if  swap  \a resolve ;
+: again   ( dest)         \a never  \a until ;
+: while   ( dest - src dest)   \a if  swap ;
+: repeat  ( src dest)     \a again  \a then ;
+forth
