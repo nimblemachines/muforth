@@ -59,6 +59,7 @@ comment %%
 0faa constant eeadrh  ( address register high)
 0fa9 constant eeadrl  ( address register low)
 0fa8 constant eedata
+0fa7 constant eecon2  ( aka EECON2)
 0fa6 constant eecon   ( aka EECON1)
 
 ( eecon bits:)
@@ -78,7 +79,10 @@ comment %%
    >hilo  lit  ph store
           lit  pu store ;
 
-: e!
+variable ep  ( local copy of eeprom pointer)
+: e!+
+   ep @  1 ep +!
+   eepgd eeclr  cfgs eeclr
    >hilo  lit  eeadrl store
           lit  eeadrh store ;
 
@@ -90,12 +94,28 @@ comment %%
    >hilo  lit  zl store
           lit  zh store ;
 
+( Delays)
+: us  #1000 *  ( ns)  0 swap  nanosleep ;
+: ms  #1000 *  us ;
+
+( Get a value from W back to the host)
+: readw   memdata store  nop  2 pic.Read ;
+
 ( I've chosen these names badly... ;-)
-: data@+        x@+ load  memdata store  nop  2 pic.Read ;  ( read data memory)
+: data@+        x@+ load  readw ;  ( read data memory)
 : data!+   lit  x@+ store ;                                 ( write data memory)
 
 : r+  ( read, post inc)  9 pic.Read ;  ( read prog memory)
-: e+  00 ;  ( XXX fix this!)
+
+: ee@+  ( read eeprom memory)
+   e!+  rd eeset  eedata load  readw ;
+
+: ee!+  ( write eeprom memory)
+   e!+  lit  eedata store
+   wr eeset  nop nop  ( write begins now)
+
+   ( poll WR bit until clear)
+   begin  eecon load  readw  [ 1 wr << ] and  0= until  #100 us ;
 
 : zpread   ( buf addr len)  ( read program memory)
    swap p!  swap m !  ?for  r+ m&  next  then ;
@@ -107,7 +127,10 @@ comment %%
    swap x!  swap m !  ?for  m* data!+  next  then ;
 
 : zeread   ( buf addr len)  ( read eeprom)
-   swap e!  swap m !  ?for  e+ m&  next  then ;
+   swap ep !  swap m !  ?for  ee@+ m&  next  then ;
 
--- : zewrite  ( buf addr len)  16 zsetup  iic.Write ;  ( write eeprom)
-
+: zewrite  ( buf addr len)  ( write eeprom)
+   swap ep !  swap m !
+   wren eeset  ( enable EEPROM writes)
+   ?for  m* ee!+  next  then
+   wren eeclr  ( disable EEPROM writes) ;
