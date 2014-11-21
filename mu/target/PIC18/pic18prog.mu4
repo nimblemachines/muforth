@@ -1,0 +1,110 @@
+( This file is part of muFORTH: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2014 David Frech. All rights reserved, and all wrongs
+  reversed. (See the file COPYRIGHT for details.)
+
+loading PIC18 programming
+
+hex
+
+comment %%
+  Chip commands:
+  0000  execute core instruction
+  0010  read tablat
+  1000  tblrd*
+  1001  tblrd*+  ( read, post-increment)
+  1010  tblrd*-  ( read, post-decrement)
+  1011  tblrd+*  ( read, pre-increment)
+  1100  tblwr*        ( write)
+  1101  tblwr*+2      ( write, post-increment by 2)
+  1110  tblwrprog*+2  ( write, post-increment by 2, start prog)
+  1111  tblwrprog     ( write, start programming)
+%%
+
+( NOTE: In all these core instructions the a bit is 0, meaning that we're
+  using "access mode". This maps 00 to 5f to RAM, and 60 to ff to I/O regs
+  f60 to fff.)
+
+: core  ( lo hi)  swap  00 pic.Write ;  ( execute core instruction)
+: lit   ( byte)     0e ( movlw)  core ;
+: load  ( freg)     50 ( movf)   core ;
+: store ( freg)     6e ( movwf)  core ;
+: clear ( freg)     6a ( clrf)   core ;
+: bset  ( freg bit)  2* 80 +  ( bsf)  core ;
+: bclr  ( freg bit)  2* 90 +  ( bcf)  core ;
+: nop   0 0  core ;
+
+( Useful addresses:)
+0ff8 constant pu  ( aka TBLPTRU)
+0ff7 constant ph  ( aka TBLPTRH)
+0ff6 constant pl  ( aka TBLPTRL)
+0ff5 constant memdata ( aka TABLAT)
+
+( Using FSR0 to access data memory.)
+0fef constant x@    ( aka INDF0)
+0fee constant x@+   ( aka POSTINC0)
+0fed constant x@-   ( aka POSTDEC0)
+0fec constant x+@   ( aka PREINC0)
+0feb constant x@+w  ( aka PLUSW0)
+0fea constant xh    ( aka FSR0H)
+0fe9 constant xl    ( aka FSR0L)
+
+( If XINST is set, are we literal offset addressing mode even while
+  programming? If so, let's make sure to set FSR2 to zero so that things still work as expected.)
+
+0fda constant zh    ( aka FSR2H)
+0fd9 constant zl    ( aka FSR2L)
+
+( EEPROM registers)
+0faa constant eeadrh  ( address register high)
+0fa9 constant eeadrl  ( address register low)
+0fa8 constant eedata
+0fa6 constant eecon   ( aka EECON1)
+
+( eecon bits:)
+0 constant rd
+1 constant wr
+2 constant wren
+3 constant wrerr
+4 constant free
+6 constant cfgs
+7 constant eepgd
+
+: eeset  ( bit)  eecon swap  bset ;
+: eeclr  ( bit)  eecon swap  bclr ;
+
+: p!
+   >hilo  lit  pl store
+   >hilo  lit  ph store
+          lit  pu store ;
+
+: e!
+   >hilo  lit  eeadrl store
+          lit  eeadrh store ;
+
+: x!  ( data-addr)  ( set X pointer - aka FSR0)
+   >hilo  lit  xl store
+          lit  xh store ;
+
+: z!  ( data-addr)  ( set Z pointer - aka FSR2) ( mostly to zero!)
+   >hilo  lit  zl store
+          lit  zh store ;
+
+( I've chosen these names badly... ;-)
+: x+   x@+ load  memdata store  nop  2 pic.Read ;  ( read data memory)
+: r+  ( read, post inc)  9 pic.Read ;  ( read prog memory)
+: e+  00 ;  ( XXX fix this!)
+
+: zpread   ( buf addr len)  ( read program memory)
+   swap p!  swap m !  ?for  r+ m&  next  then ;
+
+: zread    ( buf addr len)  ( read data memory)
+   swap x!  swap m !  ?for  x+ m&  next  then ;
+
+-- : zwrite   ( buf addr len)  13 zsetup  iic.Write ;  ( write data memory)
+
+: zeread   ( buf addr len)  ( read eeprom)
+   swap e!  swap m !  ?for  e+ m&  next  then ;
+
+-- : zewrite  ( buf addr len)  16 zsetup  iic.Write ;  ( write eeprom)
+
