@@ -11,7 +11,7 @@
 cat <<EOT
 services.udev.extraRules = ''
 EOT
-./make-udev-rules.sh $1
+../scripts/make-udev-rules.sh $1
 cat <<EOT
 '';
 EOT
