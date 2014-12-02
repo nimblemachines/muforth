@@ -159,14 +159,14 @@ EOF
 fi
 
 if [ "$os" = "FreeBSD" -o "$os" = "NetBSD" ]; then
-    archobjs="file.o main.o time.o tty.o select.o usb-netbsd.o usb-freebsd.o"
+    archobjs="file.o main.o time.o tty.o select.o pty.o usb-netbsd.o usb-freebsd.o"
     if [ "$cpu" = "amd64" ]; then
         Wnarrowing=""
     fi
 fi
 
 if [ "$os" = "DragonFly" ]; then
-    archobjs="file.o main.o time.o tty.o select.o usb-netbsd.o"
+    archobjs="file.o main.o time.o tty.o select.o pty.o usb-netbsd.o"
     if [ "$cpu" = "x86_64" ]; then
         Wnarrowing=""
     fi

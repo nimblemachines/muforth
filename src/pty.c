@@ -23,7 +23,7 @@ void mu_open_pty()      /* ( - fd z") */
     int fd;         /* fd of master */
     char *slave;    /* name of corresponding slave device */
 
-    fd = open("/dev/ptmx", O_RDWR);
+    fd = posix_openpt(O_RDWR);
     if (fd == -1)
         return abort_strerror();
 
