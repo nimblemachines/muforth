@@ -21,29 +21,37 @@ variable fd-target
    z" serial-target" open-file-rw  ( this should be a symlink to device)
    dup fd-target !  dup target-raw  ( fd) ;
 
-: get-target-termios  ( - termios)
-   tty-target here get-termios drop ( returns size of struct)  here ;
 
-: set-target-termios  ( termios)
-   tty-target swap set-termios ;
+( Since we want to have several easy-to-use words that read, modify, and
+  write back termios, let's make a defining word.)
 
-( Now automagically opens target tty if necessary.)
-: bps   ( speed)
-   get-target-termios
-     ( speed termios) tuck set-termios-speed
-   set-target-termios ;
+( XXX I thought of using the IP rather than creating an embedded colon
+  word, but I'm not sure how to execute the code in the child word
+  _between_ the calls to get- and set-termios.)
 
-: even-parity
-   get-target-termios  dup set-termios-even-parity  set-target-termios ;
+: termios:
+   create  <:>  -]
+   does>  ( x0 x1 .. cfa)
+      tty-target here get-termios drop ( returns size of struct)
+      here  ( x0 x1 .. cfa termios)  swap execute
+      tty-target here set-termios ;
 
-: odd-parity
-   get-target-termios  dup set-termios-odd-parity   set-target-termios ;
+termios: bps   ( speed)  ( speed termios) set-termios-speed ;
+termios: ignore-parity                    set-termios-ignore-parity ;
+termios: even-parity                      set-termios-even-parity ;
+termios: odd-parity                       set-termios-odd-parity ;
+
 
 ( Recv from, send to target.)
 : _send  tty-target  >emit ;
 : _recv  tty-target  <key ;
+
+( flush throws away bytes in the input queue; drain waits until all bytes
+  in the output queue have been transmitted.)
+
 : flush  tty-target  tty-iflush ;
 : drain  tty-target  tty-drain ;
+
 : icount  ( - chars-waiting)  tty-target  tty-icount ;
 
 ( Spying on the protocol.)
