@@ -40,11 +40,12 @@ decimal
 : c.SetHX   >lohi  c.SetH  c.SetX ;
 : c.GetHX          c.GetH  c.GetX  hilo> ;
 
-( Resynchronise the protocol - just to make sure. We throw away any unread
-  input, and then send one ChatIdle, just in case we were in the middle of
-  a SetH/SetX/WriteNext. This puts us back into a known state.)
+( Resynchronise the protocol - just to make sure. We send one ChatIdle,
+  just in case we were in the middle of a SetH/SetX/WriteNext, and let it
+  transmit. Then we throw away any unread input. This puts us back into a
+  known state.)
 
-: resync  flush  c.Idle ;
+: resync  c.Idle  drain  flush ;
 
 .then
 
@@ -53,9 +54,8 @@ decimal
 ( Simpler, slightly improved chat protocol)
 
 ( Host side)
-: c.Bye        00 send  ;  ( command 0 is ignored by the chat target)
-: c.RunWait    01 send  recv ( flags)  drop ;  ( wait for response)
-: c.Run        01 send  ;                      ( don't wait)
+: c.Idle       00 send  ;  ( command 0 is ignored by the chat target)
+: c.Run        01 send  ;  ( don't wait for target!)
 : c.SetHX      02 send  >lohi send send ;
 : c.GetHX      03 send        recv recv hilo> ;
 -- : c.HXtoSP     04 send  ;  ( deprecated)
@@ -77,7 +77,7 @@ decimal
   the version number at three...)
 
 ( Host side)
-: c.Bye        00 send  ;  ( command 0 is ignored by the chat target)
+: c.Idle       00 send  ;  ( command 0 is ignored by the chat target)
 : c.Version    01 send  recv ;  ( query chat protocol version)
 : c.RunWait    02 send  recv ( flags)  drop ;  ( wait for response)
 : c.Run        02 send  ;                      ( don't wait)
@@ -93,8 +93,11 @@ decimal
 .then
 
 .ifndef chat1-host
-( In this case we send two dummy bytes in case we were doing a SetHX.)
-: resync  flush  c.Bye c.Bye ;
+( Resynchronise the protocol - just to make sure. We send two dummy bytes,
+  in case we were doing a SetHX. We wait for them to transmit. Then we
+  throw away any unread input. This puts us back into a known state.)
+
+: resync  c.Idle  c.Idle  drain  flush ;
 .then
 
 .ifndef c.GetSP
@@ -188,7 +191,7 @@ variable m  ( memory pointer)
    115200 bps
 .then
 
-   resync  drain  ( exit BDM loop, if running; resync chat protocol)
+   resync  ( exit BDM loop, if running; resync chat protocol)
 
    ( Wire our versions into the interact code.)
    ['] c.Id is t.Id
