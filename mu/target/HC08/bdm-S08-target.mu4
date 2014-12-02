@@ -86,9 +86,6 @@ comment Commands
 : b.SetAddr           -1 +a  b.WriteHX ;
 : b.GetAddr  b.ReadHX  1 +a ;
 
-( XXX should be a limited number of tries)
-: b.RunWait  b.Go  begin  b.ReadStatus  40 and until ;
-
 : b.setup-chunk  ( 'target len buffer - len)
    m !  swap b.SetAddr ;
 
@@ -132,8 +129,14 @@ comment Commands
 
 .then
 
+( XXX should be a limited number of tries)
+: b.Ready  begin  b.ReadStatus  40 and until ;
+
 ( Order of regs in memory: H CC A X PC)
-: b.GetRegs  ( buf - sp)  m !
+( NOTE: Since we no longer wait for target in b.RunWait - it doesn't exist
+  - let's wait for the target here, before reading the regs.)
+
+: b.GetRegs  ( buf - sp)  m !  b.Ready
    b.ReadHX >lohi ( X H) m&  b.ReadCC m&  b.ReadA m& ( X) m&
    b.ReadPC >lohi m& m&  b.ReadSP ;
 
@@ -171,7 +174,7 @@ variable bdm-flash-command
    \l bdm-flash-end  ( rambuf)  dup b.WriteSP  ( 'target len rambuf)
    swap ( len)  pop  b.WriteChunk  ( clobbers HX)
    ( 'target)  b.WriteHX
-   b.RunWait  ( flash the buffer)
+   b.Go  b.Ready  ( flash the buffer)
    \l FSTAT b.ReadByte  ( return flash status) ;
 
 .then
@@ -312,7 +315,6 @@ decimal
    b.Hello  ( start BDM firmware)
 
    ( Wire our versions into the interact code.)
-   ['] b.RunWait is t.RunWait
    ['] b.Go is t.Run  ( keeping b.Go since it's a BDM command name)
    ['] b.GetRegs is t.GetRegs
    ['] b.SetRegs is t.SetRegs
