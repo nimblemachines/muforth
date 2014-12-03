@@ -50,13 +50,17 @@ variable spy  spy on
 : >w   >lohi  >b >b ;
 : w>           b> b>  hilo> ;
 
+( Location of flash command in zero-page RAM.)
+0ff constant fcmd
+
 ( Emulate the old behaviour of sending a "turd" - the CPU flags - as an
   "I'm back" signal.)
+
+: swi  
 .ifdef send-turds
-: turd   68 >b ;
-.else
-: turd   ;
+   68 >b
 .then
+   0 fcmd image-c! ( set flash command to 0 - an illegal value) ;
 
 ( Emulate S08 stack _exactly_: it pushes _then_ decrements; increments
   _then_ pops.)
@@ -88,21 +92,23 @@ variable peer-sp  ( holds an image address, not a target address!)
 
 : p.ReadN    b>  dup 0= if  drop #256  then  for  p.ReadNext  next ;
 
-: p.Run   turd ;
+: p.Run   swi ;
 
 : peer-erase-page
    m @  image-  ( 'target)  [ /page 1- invert ] and  image+  m !
    /page for  0ff m&  next  [ /page negate ]  m +! ;
 
 ( If fcmd not a valid flash command, read a byte but do nothing.)
-0ff constant fcmd
+variable flash-status
 : p.FlashNext
+   0c0 flash-status !  ( assume ok)
    fcmd image-c@
    dup mByteProgram = if  drop  p.WriteNext  ^  then
    b> drop
-       mPageErase   = if  peer-erase-page  then ;
+       mPageErase   = if  peer-erase-page  ^  then
+   0d0 flash-status !  ( done + ACCERR) ;
 
-: p.FlashStatus   0c0 >b ;
+: p.FlashStatus   flash-status @  >b ;
 
 
 : peer-command
@@ -114,7 +120,7 @@ variable peer-sp  ( holds an image address, not a target address!)
 
 : re-peer
    open-pty  cr  ." Connect to "  zcount type  ."  to chat with this peer."
-   pty-master !  turd  begin  peer-command  again ;
+   pty-master !  swi  begin  peer-command  again ;
 
 : peer
    @ram #ram +  image+  1-  peer-sp !  peer-push-frame
