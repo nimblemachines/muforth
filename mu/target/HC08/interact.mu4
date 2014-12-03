@@ -10,33 +10,34 @@
 loading HC08 Interaction (common)
 
 
-comment chat-commands
+variable chatting
 
-  Simple and unified interaction layer.
+variable chat-vector
+: chat-cmd   ( index)  cells  constant
+             does> @  chat-vector @  =if  +  @execute  ^  then  2drop
+                error" Not connected to a chat-capable target" ;
 
-  The interaction "plumbing" - whether chat-monitor, chat, or BDM - will
-  implement the following commands:
+: chat-fail   error" Chat command not implemented" ;
 
-  GetRegs  - get all registers into a local buffer
-  SetRegs  - set all registers from a local buffer
-  SetAddr  - set memory address for subsequent Read and Write commands
-  Read     - read a single byte from memory, increment pointer
-  Write    - write a single byte to memory, increment pointer
-  Run      - start executing
+ 0 chat-cmd t.Hello
+ 1 chat-cmd t.GetRegs      ( buf - sp)
+ 2 chat-cmd t.SetRegs      ( buf)
+ 3 chat-cmd t.Run
+ 4 chat-cmd t.ReadChunk    ( target len buf)  ( XXX order??)
+ 5 chat-cmd t.WriteChunk   ( target len buf)
+ 6 chat-cmd t.FlashChunk   ( target len buf cmd - status)
 
-comment chat-commands
+-:  ( buf addr len)  rot t.ReadChunk ;
+: >chat  [ ]       is |read
+         ['] beh@  is |cell@
+                   16 |addr !  ( size of addr in bits)
+                    2 |cell !  ( size of cell in bytes) ;
 
-defer t.GetRegs  ( buf - sp)
-defer t.SetRegs  ( buf)
-defer t.SetAddr  ( a)
-defer t.GetAddr  ( - a)
-defer t.Read     ( - byte)
-defer t.Write    ( byte)
-defer t.ReadChunk    ( 'target len buffer)
-defer t.WriteChunk   ( 'target len buffer)
-defer t.FlashChunk   ( 'target len buffer cmd)
-defer t.Run
-defer t.Id  ( return chip id)
+
+variable ipad  ( "interact" pad)
+: t@  ( a - w)                \m cell  ipad  t.ReadChunk  ipad beh@ ;
+: t!  ( w a)  swap ipad beh!  \m cell  ipad  t.WriteChunk ;
+
 
 ( We keep a local copy of the target's registers in the same order as they
   appear in an exception frame.
@@ -46,8 +47,8 @@ defer t.Id  ( return chip id)
 6 buffer chat-frame  ( local copy of SWI stack frame)
 variable chat-sp     ( current value of target's SP)
 
-: GetRegs   chat-frame t.GetRegs  chat-sp ! ;
-: SetRegs   chat-frame t.SetRegs ;
+: get-regs   chat-frame t.GetRegs  chat-sp ! ;
+: set-regs   chat-frame t.SetRegs ;
 
 ( These index into our local chat-frame, _not_ into target memory!)
 : reg  ( offset)  constant  does> @  chat-frame + ;  ( self-index)
@@ -100,20 +101,10 @@ variable chat-sp     ( current value of target's SP)
    zram put  ( crashes if connected chip has different @ram from target)
     ram put ;
 
-: hi   copy-ram  GetRegs .regs ;
+: hi   chatting on  >chat  t.Hello  get-regs  .regs  copy-ram ;
 
-variable chatting
+: chat-via   pop  chat-vector !  hi ;
 
-: +chat  chatting on ;
-
-: t.ReadW  ( - word)         t.Read  ( hi)  t.Read  ( lo)  hilo> ;
-: t.WriteW  ( word)   >lohi  t.Write ( hi)  t.Write ( lo) ;
-
--:  ( buf addr len)  rot t.ReadChunk ;
-: >chat  [ ]       is |read
-         ['] beh@  is |cell@
-                   16 |addr !  ( size of addr in bits)
-                    2 |cell !  ( size of cell in bytes) ;
 
 ( Set |@ and |c@ to _some_ form of target fetch. Prefer to get bytes from
   target if we're connected. This word is useful so we can set an initial
@@ -165,8 +156,8 @@ host-seekeys 'seekeys !  ( back to host bindings)
 forth
 : .r   .regs ;
 
-: _run      SetRegs  t.Run ;  ( don't wait for target) 
-: _runwait  _run  GetRegs ;   ( wait for target)   
+: _run      set-regs  t.Run ;  ( don't wait for target)
+: _runwait  _run  get-regs ;   ( wait for target)
 
 : runwait   _runwait  .regs ;
 : call  pc!  runwait ;
@@ -198,8 +189,8 @@ __host
 meta
 : s0  chat-sp @ ;    ( bottom of target's D stack)
 : r0  \m s0  64 - ;  ( bottom of target's R stack; room for 32 values on D)
-: sp!  ( target-sp)    \l sp t.SetAddr t.WriteW ;
-: sp@  ( - target-sp)  \l sp t.SetAddr t.ReadW ;
+: sp!  ( target-sp)    \l sp t! ;
+: sp@  ( - target-sp)  \l sp t@ ;
 
 ( XXX Use chat-sp as bottom of stack; swi frame is above it. Push data
   stack values below chat-sp. Target stub will do -6 # ais to set initial
@@ -224,9 +215,6 @@ meta
 
 .then  ( not threaded)
 
-: cell   2  ;
-: cell/  2/ ;
-: cells  2* ;
 : depth  \m s0 \m sp@ -  \m cell/ ;
 : u.  u. ;
 : .  . ;
@@ -235,6 +223,8 @@ meta
 : dis  dis ;
 
 forth
+.ifdef post-increment-read-write
+
 : stack>  ( "push" stack to target)
    depth 8 min  ( more than that would be silly)
    \m s0 over \m cells -  dup \m sp! ( top of D stack) t.SetAddr
@@ -246,6 +236,29 @@ forth
    \m sp@ t.SetAddr  dup ( depth)
    for  t.ReadW  pop 2push  next  ( starting with top, push to R)
    for  2pop push  next  ( pop from R to reverse order)  ^  then  drop ;
+
+.else
+
+( XXX Build stacks on pad then read/write in one go?)
+( Or build them in the image?)
+
+#16 buffer stackpad
+
+: stack>  ( "push" stack to target)
+   stackpad m !  depth 8 min  ( more than that would be silly)
+   ?for  >lohi m& m&  next  then  ( copy each cell as a word to stackpad)
+   m @ stackpad - ( len)  \m s0 over -  ( target)  dup \m sp!  swap  stackpad
+   ( target len buf) t.WriteChunk ;
+
+( XXX should this set hx when done?)
+: stack<  ( "pop" stack from target)
+   \m depth 0 max 8 min  ( more than that would be silly)  =if
+   \m sp@ ( target)  over \m cells  ( len)  stackpad  t.ReadChunk
+   dup  ( depth)  stackpad m ! ( do this after ReadChunk)
+   for  m* m* hilo>  pop 2push  next  ( starting with top, push to R)
+   for  2pop push  next  ( pop from R to reverse order)  ^  then  drop ;
+
+.then
 
 ( XXX Should we try to automatically connect to target?)
 : remote  ( cfa)  ( execute target word on stack)
