@@ -70,25 +70,22 @@ decimal
 
 .ifdef chat3-host
 
-( Mostly reorganised, eliminating HXtoSP - and therefore SetSP.
-  Implementation on the target uses subroutines, rather than being one big
-  loop. Since I keep changing this, I thought from now on I'd include a
-  protocol version command - which will always be command #1!! I'll start
-  the version number at three...)
+( Mostly reorganised, eliminating HXtoSP - and therefore SetSP. Implementation
+  on the target uses subroutines, rather than being one big loop. Since I keep
+  changing this, I thought from now on I'd include a protocol version command -
+  which will always be command #1!! It returns 32 bits of the muforth commit, in
+  big-endian order.)
 
 ( Host side)
 : c.Idle       00 send  ;  ( command 0 is ignored by the chat target)
-: c.Version    01 send  recv ;  ( query chat protocol version)
-: c.RunWait    02 send  recv ( flags)  drop ;  ( wait for response)
+: c.Version    01 send  ;  ( point to chat firmware version commit)
 : c.Run        02 send  ;                      ( don't wait)
 : c.GetSP      03 send        recv recv hilo> ;
-: c.GetHX      04 send        recv recv hilo> ;
-: c.SetHX      05 send  >lohi send send ;
-: c.ReadNext   06 send  recv ;
-: c.WriteNext  07 send  send ;
-: c.Stream     08 send  send ;  ( "stream" N bytes from memory)
-: c.FlashNext  09 send  send ;  ( flash one byte)
-: c.FlashStat  10 send  recv ;  ( read flash status)
+: c.SetHX      04 send  >lohi send send ;
+: c.ReadNext   05 send  recv ;
+: c.WriteNext  06 send  send ;
+: c.Stream     07 send  send ;  ( "stream" N bytes from memory)
+: c.FlashNext  08 send  send recv ;  ( flash one byte, get flash status)
 
 .then
 
@@ -152,15 +149,35 @@ variable m  ( memory pointer)
    c.setup-chunk  dup c.Stream  for  recv m&  next ;
 
 .ifdef usb-debug-via-serial
+
 : c.FlashChunk  complain ;  ( we should be using USB to flash when running both)
+
 .else
+
+.ifdef chat3-host  ( FlashNext returns status for every byte!)
+
+: flash-chunk-until-error  ( len - status)
+   for  m* c.FlashNext  dup "c0 xor if  rdrop ^  then  drop  next
+   "c0 ;
+
+: c.FlashChunk   ( 'target len buffer cmd - status)
+   "30 \l FSTAT chat-c!  ( clear flash errors)
+   \l flash-command chat-c!  c.setup-chunk
+   flash-chunk-until-error
+   00 \l flash-command chat-c! ;
+
+.else
+
+( chat1-host or chat2-host)
 : c.FlashChunk   ( 'target len buffer cmd - status)
    "30 \l FSTAT chat-c!  ( clear flash errors)
    \l flash-command chat-c!
    c.setup-chunk  for  m* c.FlashNext  next
    00 \l flash-command chat-c!
    c.FlashStat ;
-.then
+
+.then  ( chat3-host)
+.then  ( usb-debug-via-serial)
 
 .else  ( 908 version without streaming read)
 
@@ -191,7 +208,14 @@ variable m  ( memory pointer)
 .else
    115200 bps
 .then
-   resync  ( exit BDM loop, if running; resync chat protocol) ;
+   resync  ( exit BDM loop, if running; resync chat protocol)
+
+.ifdef chat3-host
+   c.Version  4 c.Stream  recv recv recv recv  3210>
+   cr ." Chat firmware version "
+   radix preserve  hex  sep preserve  -sep   u.
+.then
+   ;
 
 .ifdef S08
 
