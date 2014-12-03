@@ -57,6 +57,7 @@ variable peer-sp
 : p.pop   ( - w)   peer-sp @  dup  \m cell+       peer-sp !  image-@ ;
 
 : peer-push-frame
+   @ram #ram +  peer-sp !
    ff4c p.push  ( outer PC)
    fefe p.push  ( frame PC)
    0 p.push ( SR)
@@ -78,8 +79,21 @@ variable peer-sp
 
 : p.ReadWords    b>  dup sum  ?for  p.ReadWord  next  then ;
 
-: p.Run          "c0de checksum ! ;  ( emulate code that clobbers Y when run)
-: p.FlashWord    p.WriteWord  9658 >w ;
+: p.Run
+   "c0de checksum !   ( emulate code that clobbers Y when run)
+   peer-push-frame ;
+
+: peer-erase-page
+   m @  image-  ( 'target)  [ /page 1- invert ] and  image+  m !
+   /page for  0ff m&  next  [ /page negate ]  m +! ;
+
+( Only do the flash operation if FCMD is valid.)
+: p.FlashWord
+   p.pop  dup p.push  ( get FCMD from stack)
+   dup  [ \eq FWRT    \eq FKEY  + ] = if  drop  p.WriteWord  9658 >w  ^  then
+   w> drop
+        [ \eq FERASE  \eq FKEY  + ] = if  peer-erase-page  9658 >w  ^  then
+   f00d >w  ( bad flash command) ;
 
 : p.GetCheck     checksum @ >w  sum! ;
 
@@ -95,7 +109,6 @@ variable peer-sp
    pty-master !  begin  peer-command  again ;
 
 : peer
-   @ram #ram +  peer-sp !
    peer-push-frame  begin  catch re-peer  pty-master @ close-file  again ;
 
 ( Let's run it!)
