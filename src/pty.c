@@ -9,7 +9,7 @@
 
 /* Totally stupid GNU/Linux bullshit!! */
 #ifdef __linux__
-#define _XOPEN_SOURCE
+#define _XOPEN_SOURCE 600
 #endif
 
 #include "muforth.h"
