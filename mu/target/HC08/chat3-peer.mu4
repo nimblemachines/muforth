@@ -3,39 +3,35 @@
   Copyright 2002-2014 David Frech. All rights reserved, and all wrongs
   reversed. (See the file COPYRIGHT for details.)
 
-loading HC08 serial chat protocol v2 (peer)
+loading HC08 serial chat protocol v3 (peer)
 
 ( NOTE: This might seem a bit odd, but this file implements the side of the
   chat protocol normally implemented by firmware in a target chip! The
   reason for doing this here, in muforth, is to test out the protocol by
   having both sides running on the host.)
 
-hex
-
-( chat2 commands:
+( chat3 commands:
 
   0  Idle       - ignored by chat; force other command loops to return to chat;
                   can be used as an Idle
-  1  Run        - does an RTI - pops stack frame and runs
-                  ifdef turd, when it returns to chat loop, returns flags
-  2  SetHX      - reads two bytes from SCI, writes them into H & X registers
-  3  GetHX      - writes H then X register to SCI
-  4  HXtoSP     - sets SP from HX -- deprecated, but I'm leaving it in
-  5  SPtoHX     - sets HX from SP
-  6  ReadNext   - reads a byte from memory @ HX, writes it to SCI, inc HX
-  7  WriteNext  - reads a byte from SCI, writes into memory @ HX, inc HX
+  1  Version    - sets HX to point to version string:
+                - 4 bytes of muforth commit, big-endian
+  2  Run        - does an RTI - pops stack frame and runs
+  3  GetSP      - sets HX from SP, then returns HX
+  4  SetHX      - reads two bytes from SCI, writes them into H & X registers
+  5  ReadNext   - reads a byte from memory @ HX, writes it to SCI, incrs HX
+  6  WriteNext  - reads a byte from SCI, writes into memory @ HX, incrs HX
 
  ~~ The following are S08-only commands ~~
 
-  8  ReadN      - reads a length from SCI, reads that many bytes from
-                  memory, and writes them to SCI [S08 only!]
-  9  FlashNext  - reads a byte from SCI, writes to flash @ HX, inc HX
-                - calls a routine at @ram that host downloads to device
- 10  FlashStatus - returns FSTAT
-                 - need this as a way to "ping" the device for the
-                 - completion of long operations, such as erase
+  7  ReadN      - reads a count from SCI, reads that many bytes from
+                  memory, and writes them to SCI
+  8  FlashNext  - reads a byte from SCI, writes to flash @ HX, incrs HX
+                - calls a routine in ram that host downloads to device
+                - returns FSTAT
 )
 
+hex
 
 variable pty-master
 : pty-send  ( b)     pty-master @ >emit ;
@@ -54,21 +50,15 @@ variable spy  spy on
 ( Location of flash command in zero-page RAM.)
 0ff constant fcmd
 
-( Emulate the old behaviour of sending a "turd" - the CPU flags - as an
-  "I'm back" signal.)
-
-: swi  
-.ifdef send-turds
-   68 >b
-.then
+: swi
    0 fcmd image-c! ( set flash command to 0 - an illegal value) ;
 
 ( Emulate S08 stack _exactly_: it pushes _then_ decrements; increments
   _then_ pops.)
 
-variable peer-sp  ( holds an image address, not a target address!)
-: p.push  ( b)     peer-sp @  dup  1-       peer-sp !  c! ;
-: p.pop   ( - b)   peer-sp @       1+  dup  peer-sp !  c@ ;
+variable peer-sp  ( holds a target address!)
+: p.push  ( b)     peer-sp @  dup  1-       peer-sp !  image-c! ;
+: p.pop   ( - b)   peer-sp @       1+  dup  peer-sp !  image-c@ ;
 
 : p.pushw  ( w)    >hilo  p.push  p.push ;
 
@@ -78,12 +68,13 @@ variable peer-sp  ( holds an image address, not a target address!)
    fefe p.pushw  ( frame PC)
      80 p.push ( X)  58 p.push ( A)  68 p.push ( CC)  02 p.push ( H) ;
 
-: p.SetHX      w>  image+  m ! ;
-: p.GetHX                  m @  image-  >w ;
+variable chat-version
+muforth-commit drop 8 evaluate  chat-version bew!
 
-( These emulate txs and tsx, resp.)
-: p.HXtoSP      m @  1-  peer-sp ! ;
-: p.SPtoHX               peer-sp @  1+  m ! ;
+: p.Version   chat-version  m ! ;
+
+: p.GetSP       peer-sp @  1+  >w ;
+: p.SetHX   w>  image+  m ! ;
 
 : p.ReadNext     m* >b ;
 : p.WriteNext        b> m& ;
@@ -100,23 +91,17 @@ variable peer-sp  ( holds an image address, not a target address!)
    /page for  0ff m&  next  [ /page negate ]  m +! ;
 
 ( If fcmd not a valid flash command, read a byte but do nothing.)
-variable flash-status
 : p.FlashNext
-   0c0 flash-status !  ( assume ok)
    fcmd image-c@
-   dup mByteProgram = if  drop  p.WriteNext  ^  then
+   dup mByteProgram = if  drop  p.WriteNext  0c0 >b  ^  then
    b> drop
-       mPageErase   = if  peer-erase-page  ^  then
-   0d0 flash-status !  ( done + ACCERR) ;
-
-: p.FlashStatus   flash-status @  >b ;
-
+       mPageErase   = if  peer-erase-page  0c0 >b  ^  then
+   0d0 >b  ( done + ACCERR) ;
 
 : peer-command
-   b>  dup #11 u< if  jump
-      nope  p.Run  p.SetHX  p.GetHX
-      p.HXtoSP  p.SPtoHX  p.ReadNext  p.WriteNext
-      p.ReadN  p.FlashNext  p.FlashStatus
+   b>  dup #9 u< if  jump
+      nope  p.Version  p.Run  p.GetSP  p.SetHX
+      p.ReadNext  p.WriteNext  p.ReadN  p.FlashNext
    then  drop ;
 
 : re-peer
@@ -124,7 +109,7 @@ variable flash-status
    pty-master !  swi  begin  peer-command  again ;
 
 : peer
-   @ram #ram +  image+  1-  peer-sp !  peer-push-frame
+   @ram #ram +  1-  peer-sp !  peer-push-frame
    0 fcmd image-c!  ( set flash command to 0 - an illegal value)
    6e ffad image-c!  97 ffaf image-c!  ( fake trims)
    begin  catch re-peer  pty-master @ close-file  again ;
