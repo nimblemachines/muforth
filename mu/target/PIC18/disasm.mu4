@@ -1,0 +1,164 @@
+( This file is part of muFORTH: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2014 David Frech. All rights reserved, and all wrongs
+  reversed. (See the file COPYRIGHT for details.)
+
+loading PIC18 disassembler
+
+( Disassembler for PIC18 CPU instructions.)
+
+hex
+
+( Words to compile the instruction table.
+  ..  acts like 'then'
+  match and exact compile a test and a zbranch, followed by code to print
+  the opcode name)
+
+: (match)   ( op mask match - op f)  push  over and  pop = ;
+: (exact)   ( op      match - op f)        over          = ;
+
+( In the disassembler, use .op to print the following opcode name.)
+: (.op)  pop @+ push  ( fetch following cfa)  >name type  space ;
+
+compiler
+: ..    compile ^  \ then ;
+: .op   compile (.op)  .assembler. \chain ;
+: match  ( - src)  compile (match)  \ if  \ .op ;
+: exact  ( - src)  compile (exact)  \ if  \ .op ;
+: multi  ( - src)  compile (match)  \ if        ;  ( doesn't print op)
+forth
+
+( Sign-extend 16-bit word to host number)
+: sext  ( w - n)   dup 8000 and if -1_0000 + then ;
+
+( Standard ways of printing different "types".)
+: .udec   radix preserve  decimal  (u.) type ;
+: .hex    radix preserve  hex       (.) type ;
+
+: -trailing  ( a u - a u')  ( strip trailing blanks)
+   over + ( end)  begin  1-  dup c@ bl -  until  over -  1+ ;
+
+: .o  ( off)  sext  .hex ;
+: .i  ( imm)  ." #"  dup .hex
+   sext  dup 0< if  ." ("  .hex  ." )"  ^  then  drop ;
+
+assembler
+: *unimplemented* ;  ( so we can print the name ;-)
+forth
+
+: .bank  dup >bank .hex ;
+
+: >jmpdest  ( op - dest)
+   3ff and  dup 200 and if  -400 +  then  2*  p @  + ;
+
+( Print jmp opcode, including a _single_ trailing space.)
+: .jop  ( op - op)
+   z" jnz jz  jnc jc  jn  jge jl  jmp "  over #10 >>  7 and  2* 2*  +
+   4 -trailing  1+ type ;
+
+: .jmp  ( op - op)  .jop  dup >jmpdest  .hcell ;
+
+: .f  dup >f8  .h8_ ;
+: .a  dup 100 and if ." b) " ^ then  ." ) " ;
+: .d  dup 200 and 0= if  ." w " then ;
+: .afop   ( op - op)  .f  .a ;
+: .dafop  ( op - op)  .d  .afop ;
+
+( Special-purpose matchers for the most common instructions.)
+: (afop)    ( op      match - op f)        over fe00 and = ;
+: (dafop)   ( op      match - op f)        over fc00 and = ;
+
+compiler
+:  afop  ( - src)  compile  (afop)  \ if  \ .op  compile .afop ;
+: dafop  ( - src)  compile (dafop)  \ if  \ .op  compile .dafop ;
+forth
+
+: shred  ( op - op)
+( All the instructions!)
+
+        0000 exact nop
+
+..      0003 exact sleep
+..      0004 exact clrwdt
+..      0005 exact push
+..      0006 exact pop
+..      0007 exact daw
+
+..      0008 exact p@   ( tblrd*)    ( read program memory)
+..      0009 exact p@+  ( tblrd*+)   ( read program memory, post incr)
+..      000a exact p@-  ( tblrd*-)   ( read program memory, post decr)
+..      000b exact p+@  ( tblrd+*)   ( read program memory, pre incr)
+
+..      000c exact p!   ( tblwt*)    ( write program memory)
+..      000d exact p!+  ( tblwt*+)   ( write program memory, post incr)
+..      000e exact p!-  ( tblwt*-)   ( write program memory, post decr)
+..      000f exact p+!  ( tblwt+*)   ( write program memory, pre incr)
+
+..      0010 exact iret       ( return from interrupt; restore from stack)
+..      0011 exact iret.s     ( return from interrupt; restore from shadow regs)
+
+..      0012 exact ret        ( return from subroutine; restore from stack)
+..      0013 exact ret.s      ( return from subroutine; restore from shadow regs)
+
+..      00ff exact reset
+
+.. fff0 0100 match bank    .bank
+
+..      0200 afop  mul
+..      0400 dafop dec
+
+..      1000 dafop or
+..      1400 dafop and
+..      1800 dafop xor
+
+..      1c00 dafop com
+
+..      2000 dafop adc
+..      2400 dafop add
+..      2800 dafop inc
+..      2c00 dafop decsz
+
+..      3000 dafop rrc
+..      3400 dafop rlc
+..      3800 dafop rot4
+..      3c00 dafop incsz
+
+..      4000 dafop ror
+..      4400 dafop rol
+
+..      4800 dafop incsnz
+..      4c00 dafop decsnz
+
+..      5000 dafop ldw
+..      5200 dafop tst
+
+..      5400 dafop rsbb
+..      5800 dafop sbb
+..      5c00 dafop sub
+
+..      6000 afop cmpslt
+..      6200 afop cmpseq
+..      6400 afop cmpsgt
+..      6600 afop tstsz
+
+..      6800 afop set
+..      6a00 afop clr
+..      6c00 afop neg
+..      6e00 afop stw
+
+.. f800 e000 multi       .jmp
+
+.. .op *unimplemented*
+
+( That's all folks!)
+;
+
+( Support for interactive disassembly.)
+: dis+  ( a - a' 0)  drop  p @  0 advance  0 ;
+: dis-  ( a - a' 0)            -4 advance  0 ;  ( back up a bit)
+
+( The workhorse.)
+: 1dis  ( a)
+   dup .addr  .nesting space
+   p !  cell*  ( op)  dup .hcell_  space
+   shred  drop ;
