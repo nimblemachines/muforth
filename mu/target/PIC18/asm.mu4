@@ -37,6 +37,7 @@ forth
 
 variable xinst  ( extended instruction in use?)
 : ?xinst  xinst @ 0= if  error" requires the extended instruction set"  then ;
+: ?noxinst  xinst @  if  error" not valid for extended instruction set" then ;
 
 
 ( Zero ops.)
@@ -114,21 +115,30 @@ forth
    dup >f8  swap >bank  current-bank @ =  if ^ then
    warn" warning: address doesn't match current bank setting" ;
 
+
+( Check that an address is a valid stack - z - offset.)
+: ?zoffset  ( f - f8)
+   >f8  dup 060 u< if ^ then  ( ok)
+   error" access ram address outside of valid range" ;
+
 ( Check that an address is a valid "access ram" address:
   000 - 05f or f60 - fff. Outside this range is invalid.)
 
 : ?access  ( f - f8)
    dup >f8  swap
-   dup 060 u< if drop ^ then  ( ok)
-   f5f over u< if drop ^ then ( also ok)
+   dup 060 u< if drop ?noxinst ^ then  ( ok if not ext instruction set)
+   f5f over u< if drop ^ then ( ok always)
    error" access ram address outside of valid range" ;
 
 ( Check that address given is _only_ an 8 bit offset.)
 : ?f   dup >bank if  error" more than 8 bits in f"  then ;
 
 assembler
-:  )   ( f - bits)  ( "access ram")  ?access        ;  ( clear "a" bit)
-: b)   ( f - bits)  ( "banked")      ?bank  0100 or ;  ( set "a" bit)
+: ,z   ( offset - bits)  ( "stack offset")  ?xinst  ?zoffset ;  ( clear "a" bit)
+:  )   ( f      - bits)  ( "access ram")            ?access ;   ( clear "a" bit)
+: b)   ( f      - bits)  ( "banked")         ?bank  0100 or ;   ( set "a" bit)
+( XXX / or // for banked?)
+
 
 ( In dafop we've reversed the sense of the d bit. Now set means store to w,
   and clear means store to f, which we think should be the default.)
