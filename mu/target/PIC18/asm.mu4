@@ -23,7 +23,8 @@ forth
 : ufits?  ( value bits - f)     u>>        0= ;   ( unsigned)
 : sfits?  ( value bits - f)   1- >>  1+  2 u< ;   ( signed)
 
-: ones  ( n - mask)  1 swap <<  1- ;  ( create a mask of n 1s)
+: mask  ( n - mask)  1 swap << ;
+: ones  ( n - mask)  mask  1- ;  ( create a mask of n 1s)
 
 ( Immediate fields)
 : imm   ( imm op #bits - op')
@@ -33,6 +34,9 @@ forth
 :  i7  ( imm op - op')    7 imm ;
 :  i8  ( imm op - op')    8 imm ;
 : i12  ( imm op - op')  #12 imm ;
+
+variable xinst  ( extended instruction in use?)
+: ?xinst  xinst @ 0= if  error" requires the extended instruction set"  then ;
 
 
 ( Zero ops.)
@@ -101,8 +105,9 @@ forth
 ( afop is a 2op with just an "a" bit, no "d" bit;
   dafop is a 2op with both an "a" bit and a "d" bit.)
 
-: afop    constant does> @  ( af op)     9 imm  op, ;
-: dafop   constant does> @  ( daf op)  #10 imm  op, ;
+: ~d  ( op - op')  ( toggle d bit)  0200 xor ;
+: afop    constant does> @  ( af op)     9 imm      op, ;
+: dafop   constant does> @  ( daf op)  #10 imm  ~d  op, ;
 
 ( check that address given matches current bank, then truncate to 8 bits.)
 : ?bank  ( f - f8)
@@ -114,8 +119,8 @@ forth
 
 : ?access  ( f - f8)
    dup >f8  swap
-   dup 060 u< if ^ then  ( ok)
-   f5f over u< if ^ then ( also ok)
+   dup 060 u< if drop ^ then  ( ok)
+   f5f over u< if drop ^ then ( also ok)
    error" access ram address outside of valid range" ;
 
 ( Check that address given is _only_ an 8 bit offset.)
@@ -125,13 +130,11 @@ assembler
 :  )   ( f - bits)  ( "access ram")  ?access        ;  ( clear "a" bit)
 : b)   ( f - bits)  ( "banked")      ?bank  0100 or ;  ( set "a" bit)
 
-( XXX decide how to do this. If using w, then instructions should have d
-  bit set in their opcodes.)
+( In dafop we've reversed the sense of the d bit. Now set means store to w,
+  and clear means store to f, which we think should be the default.)
 
-( XXX if ! means store to f, maybe use @ to mean load to w?)
-( I'm leaning toward having store to f be the _default_.)
-: !    ( f - bits)  ( "store to f")  ?f     0200 or ;  ( set "d" bit)
-: w    ( f - bits)  ( "store to w")  ?f     0200 invert and ;  ( clear "d" bit)
+-- : !    ( f - bits)  ( "store to f")  ?f     0200 or ;  ( set "d" bit)
+: w    ( f - bits)  ( "store to w")  ?f     0200 or ;  ( set "!d" bit)
 
 0200  afop mul   ( mulwf           PRODH:PRODL = w * f)
 0400 dafop dec   ( decf     DNVCZ  f/w = f - 1)
@@ -255,20 +258,17 @@ forth
   instructions.)
 
 -- --------------------------------------------------------------------------
--- Extended instructions: e800 to ebff
+-- Extended instructions: e800 to ebff, plus 0014 (callw)
 -- --------------------------------------------------------------------------
 
-( Ok, time for the extended instructions. If the XINST bit is set in the
-  configuration space, a few instructions are added. These are useful for C
-  compilers, but might very well be useful to assembler and Forth hackers
-  too.)
+( If the XINST bit is set in the configuration space, a few instructions
+  are added. These are useful for C compilers, but might very well be
+  useful to assembler and Forth hackers too.)
 
-assembler
-0014 0op callw      ( push pc + 2; pcl = w, pch = pclath, pcu = pclatu)
-forth
+0014 0op _callw      ( push pc + 2; pcl = w, pch = pclath, pcu = pclatu)
 
 ( XXX should we check if imm < 0 and do sub automagically?)
-: addix  constant does> @  ( imm op)  6 imm  op, ;
+: addix  constant does> ?xinst  @  ( imm op)  6 imm  op, ;
 assembler
 e800 addix addx     ( addfsr    add literal to fsr 0)
 e840 addix addy     ( addfsr    add literal to fsr 1)
@@ -280,12 +280,19 @@ e940 addix suby     ( subfsr    sub literal from fsr 1)
 e980 addix subz     ( subfsr    sub literal from fsr 2)
 e9c0 addix subzret  ( subulnk   sub literal from fsr 2 and return)
 
-ea00 i8op pushi     ( pushl     store lit at FSR2; dec FSR2
+forth
+ea00 i8op _pushi    ( pushl     store lit at FSR2; dec FSR2
                                 ie, post-decrement)
+assembler
 
 ( In movsf and movss, the z offsets are added to FSR2)
-: movsf   ( ssrc fdest)  swap  eb00  i7 op,  f000 i12 op, ;
-: movss   ( ssrc sdest)  swap  eb80  i7 op,  f000  i7 op, ;
+: movsf   ( ssrc fdest)  ?xinst  swap  eb00  i7 op,  f000 i12 op, ;
+: movss   ( ssrc sdest)  ?xinst  swap  eb80  i7 op,  f000  i7 op, ;
+
+: callw   ?xinst _callw ;
+: pushi   ?xinst _pushi ;
+forth
+
 forth
 
 comment

@@ -34,35 +34,32 @@ forth
 ( Standard ways of printing different "types".)
 : .udec   radix preserve  decimal  (u.) type ;
 : .hex    radix preserve  hex       (.) type ;
+: .h12    radix preserve  hex  <#  # # #  #> type ;
+
+: .h12_   .h12 space ;
 
 : -trailing  ( a u - a u')  ( strip trailing blanks)
    over + ( end)  begin  1-  dup c@ bl -  until  over -  1+ ;
 
-: .o  ( off)  sext  .hex ;
-: .i  ( imm)  ." #"  dup .hex
-   sext  dup 0< if  ." ("  .hex  ." )"  ^  then  drop ;
+: .bank  dup 0f and  8 <<  dup current-bank !  .hex ;
 
-assembler
-: *unimplemented* ;  ( so we can print the name ;-)
-forth
+: .imm6   dup  03f and  .h8 ;
+: .imm8   dup  0ff and  .h8 ;
+: .nop    dup 0fff and  .h12 ;
 
-: .bank  dup >bank .hex ;
+( Convert f8 to access ram address and print it.)
+: .access  ( f8)  5f over u< if  0f00 +  then  .h12 ;
 
-: >jmpdest  ( op - dest)
-   3ff and  dup 200 and if  -400 +  then  2*  p @  + ;
+( Print a guess of the address, based on current bank setting)
+( XXX Use slashes /addr/ to suggest "banked"?)
+: .banked  ( f8)
+   current-bank @  +  ." /" .h12 ." /" ;
 
-( Print jmp opcode, including a _single_ trailing space.)
-: .jop  ( op - op)
-   z" jnz jz  jnc jc  jn  jge jl  jmp "  over #10 >>  7 and  2* 2*  +
-   4 -trailing  1+ type ;
+: .af  dup >f8  over 100 and if  .banked  ^ then  .access ;
+: .d   dup 200 and 0= if  ." w " then ;
 
-: .jmp  ( op - op)  .jop  dup >jmpdest  .hcell ;
-
-: .f  dup >f8  .h8_ ;
-: .a  dup 100 and if ." b) " ^ then  ." ) " ;
-: .d  dup 200 and 0= if  ." w " then ;
-: .afop   ( op - op)  .f  .a ;
-: .dafop  ( op - op)  .d  .afop ;
+: .afop   ( op - op)      .af ;
+: .dafop  ( op - op)  .d  .af ;
 
 ( Special-purpose matchers for the most common instructions.)
 : (afop)    ( op      match - op f)        over fe00 and = ;
@@ -72,6 +69,35 @@ compiler
 :  afop  ( - src)  compile  (afop)  \ if  \ .op  compile .afop ;
 : dafop  ( - src)  compile (dafop)  \ if  \ .op  compile .dafop ;
 forth
+
+: .bitop   dup  9 >>  7 and  ( bit#)  u.  .af ;
+
+: .movff   dup .h12_  cell* .h12 ;
+
+( Extended instructions; "s" is 7 bit offset from fsr2)
+: .movsf   dup .h12_  cell* .h12 ;
+: .movss   dup .h12_  cell* .h12 ;
+
+: >offset  ( op #bits - op offset)
+   1- push  dup  r@ ones and  ( op unsigned-bits)
+           over pop mask and  ( op unsigned-bits sign-bit)  -  2* ;
+
+( XXX .haddr might print too many digits!)
+: .dest  ( op #bits - op)  >offset  p @ +  .haddr ;
+
+: .rjmp   #11 .dest ;
+
+( Print jmp opcode, including a _single_ trailing space.)
+( Order is ZCVN, bit set, then bit clear.)
+: .jop  ( op - op)
+   z" bz  bnz bc  bnc bv  bnv bn  bnn "  over 8 >>  7 and  2* 2*  +
+   4 -trailing  1+ type ;
+
+( NOTE: shred hasn't printed the opcode; we have to do that.)
+: .cond  ( op - op)   .jop  8 .dest ;
+
+: .ljmp  ( op - op)   dup 0ff and  ( low)  cell* 0fff and  8 << +  .haddr ;
+: .ldix  ( op - op)   dup 0f and  ( high)  8 <<  cell* 0ff and  +  .h12 ;
 
 : shred  ( op - op)
 ( All the instructions!)
@@ -102,10 +128,20 @@ forth
 
 ..      00ff exact reset
 
-.. fff0 0100 match bank    .bank
+.. fff0 0100 match bank   .bank
 
 ..      0200 afop  mul
 ..      0400 dafop dec
+
+( XXX create a special category for these? like afop and dafop?)
+.. ff00 0800 match negi   .imm8
+.. ff00 0900 match ori    .imm8
+.. ff00 0a00 match xori   .imm8
+.. ff00 0b00 match andi   .imm8
+.. ff00 0c00 match reti   .imm8
+.. ff00 0d00 match muli   .imm8
+.. ff00 0e00 match ldi    .imm8
+.. ff00 0f00 match addi   .imm8
 
 ..      1000 dafop or
 ..      1400 dafop and
@@ -146,9 +182,54 @@ forth
 ..      6c00 afop neg
 ..      6e00 afop stw
 
-.. f800 e000 multi       .jmp
+.. f000 7000 match btog     .bitop
+.. f000 8000 match bset     .bitop
+.. f000 9000 match bclr     .bitop
+.. f000 a000 match btstss   .bitop
+.. f000 b000 match btstsc   .bitop
 
-.. .op *unimplemented*
+.. f000 c000 match movff    .movff
+
+.. f800 d000 match rjmp     .rjmp
+.. f800 d800 match rcall    .rjmp
+
+.. f800 e000 multi          .cond
+
+   ( e800 - e8ff are _extended instructions_)
+
+.. ff00 ec00 match call     .ljmp
+.. ff00 ed00 match call.s   .ljmp
+
+.. fff0 ee00 match ldx   .ldix
+.. fff0 ee10 match ldy   .ldix
+.. fff0 ee20 match ldz   .ldix
+
+.. ff00 ef00 match jmp   .ljmp
+
+.. f000 f000 match nop   .nop    ( this is an extension word; show its contents)
+
+-- --------------------------------------------------------------------------
+-- Extended instructions: e800 to ebff, plus 0014 (callw)
+-- --------------------------------------------------------------------------
+
+..      0014 exact callw
+
+.. ffc0 e800 match addx     .imm6
+.. ffc0 e840 match addy     .imm6
+.. ffc0 e880 match addz     .imm6
+.. ffc0 e8c0 match addzret  .imm6
+
+.. ffc0 e900 match subx     .imm6
+.. ffc0 e940 match suby     .imm6
+.. ffc0 e980 match subz     .imm6
+.. ffc0 e9c0 match subzret  .imm6
+
+.. ff00 ea00 match pushi   .imm8
+
+.. ff80 eb00 match movsf   .movsf
+.. ff80 eb80 match movss   .movss
+
+.. ." *unimplemented*"
 
 ( That's all folks!)
 ;
