@@ -203,6 +203,23 @@ UEP1 -- -- -- EPHSHK EPCONDIS EPOUTEN EPINEN EPSTALL ---0 0000 289, 257
 UEP0 -- -- -- EPHSHK EPCONDIS EPOUTEN EPINEN EPSTALL ---0 0000 285, 257
 ]]
 
+pic_1xk50_configs = [[
+300000h CONFIG1L -- -- USBDIV CPUDIV1 CPUDIV0 -- -- -- --00 0---
+300001h CONFIG1H IESO FCMEN PCLKEN PLLEN FOSC3 FOSC2 FOSC1 FOSC0 0010 0111
+300002h CONFIG2L -- -- -- BORV1 BORV0 BOREN1 BOREN0 PWRTEN ---1 1111
+300003h CONFIG2H -- -- -- WDTPS3 WDTPS2 WDTPS1 WDTPS0 WDTEN ---1 1111
+300005h CONFIG3H MCLRE -- -- -- HFOFST -- -- -- 1--- 1---
+300006h CONFIG4L BKBUG(2) ENHCPU -- -- BBSIZ LVP -- STVREN -0-- 01-1
+300008h CONFIG5L -- -- -- -- -- -- CP1 CP0 ---- --11
+300009h CONFIG5H CPD CPB -- -- -- -- -- -- 11-- ----
+30000Ah CONFIG6L -- -- -- -- -- -- WRT1 WRT0 ---- --11
+30000Bh CONFIG6H WRTD WRTB WRTC -- -- -- -- -- 111- ----
+30000Ch CONFIG7L -- -- -- -- -- -- EBTR1 EBTR0 ---- --11
+30000Dh CONFIG7H -- EBTRB -- -- -- -- -- -- -1-- ----
+3FFFFEh DEVID1(1) DEV2 DEV1 DEV0 REV4 REV3 REV2 REV1 REV0 qqqq qqqq(1)
+3FFFFFh DEVID2(1) DEV10 DEV9 DEV8 DEV7 DEV6 DEV5 DEV4 DEV3 0000 1100
+]]
+
 dofile 'target/HC08/string.lua'
 
 -- S08
@@ -229,7 +246,7 @@ function show_vectors(v)
     print()
 end
 
-function show_regs(reg_addrs, reg_bits)
+function show_regs(reg_addrs, reg_bits, configs)
     local reg2addr = {}
 
     local function drop_footnotes(s)
@@ -280,9 +297,9 @@ function show_regs(reg_addrs, reg_bits)
 -- EEDATA EEPROM Data Register 0000 0000 287, 52, 61
 -- EECON2 EEPROM Control Register 2 (not a physical register) 0000 0000 287, 52, 61
 
-    local pat = "^([%w_]+)" .. (" ([%u%d/-]+)"):rep(8)
-    local function show_line(l)
+    local function show_reg(l)
         if l:match "^%s*$" then return end    -- skip whitespace-only lines
+        local pat = "([%w_]+)" .. (" ([%u%d/-]+)"):rep(8)
         local reg, b7, b6, b5, b4, b3, b2, b1, b0 = l:match(pat)
         if reg then
             print (string.format("%04x reg  %-8s | "..("%-7s "):rep(8),
@@ -290,17 +307,34 @@ function show_regs(reg_addrs, reg_bits)
             return
         end
 
-        reg, desc = l:match "^([%w_]+) (.+)"
+        reg, desc = l:match "([%w_]+) (.+)"
         print (string.format("%04x reg  %-8s | %s", addr(reg), reg, desc))
+    end
+
+-- 300000h CONFIG1L -- -- USBDIV CPUDIV1 CPUDIV0 -- -- -- --00 0---
+    local function show_config(l)
+        if l:match "^%s*$" then return end    -- skip whitespace-only lines
+        local pat = "(%x+)h ([%w_]+)" .. (" ([%u%d/-]+)"):rep(8)
+        local addr, reg, b7, b6, b5, b4, b3, b2, b1, b0 = l:match(pat)
+        if addr then
+            print (string.format("%06x reg  %-8s | "..("%-7s "):rep(8),
+                                 "0x"..addr, reg, b7, b6, b5, b4, b3, b2, b1, b0))
+            return
+        end
+
+        print("Failed to match config: ", l)
     end
 
     for l in reg_addrs:lines() do
       read_addrs(drop_footnotes(l))
     end
     for l in reg_bits:lines() do
-      show_line(drop_footnotes(l))
+      show_reg(drop_footnotes(l))
     end
     print()
+    for l in configs:lines() do
+      show_config(drop_footnotes(l))
+    end
 end
 
 function show_heading(s)
@@ -309,9 +343,9 @@ function show_heading(s)
     print()
 end
 
-function show_part(name, reg_addrs, reg_bits)
+function show_part(name, reg_addrs, reg_bits, configs)
     show_heading(name)
-    show_regs(reg_addrs, reg_bits)
+    show_regs(reg_addrs, reg_bits, configs)
 end
 
-show_part("1xK50", pic_1xk50_reg_addrs, pic_1xk50_reg_bits)
+show_part("1xK50", pic_1xk50_reg_addrs, pic_1xk50_reg_bits, pic_1xk50_configs)
