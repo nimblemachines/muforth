@@ -206,6 +206,7 @@ UEP0 -- -- -- EPHSHK EPCONDIS EPOUTEN EPINEN EPSTALL ---0 0000 285, 257
 dofile 'target/HC08/string.lua'
 
 -- S08
+-- UNUSED currently for PIC18
 function show_vectors(v)
     vt = {}
     name_max = 0  -- width of name field
