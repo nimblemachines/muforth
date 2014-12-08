@@ -1,0 +1,86 @@
+( This file is part of muFORTH: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2014 David Frech. All rights reserved, and all wrongs
+  reversed. (See the file COPYRIGHT for details.)
+
+loading PIC18 Serial chat v3 (core)
+
+hex
+
+__meta
+
+( Set config registers)
+.ifdef 1xk50   -- at the moment, the only option
+   %0011_0010  ( CONFIG1H: PLLEN, FOSC=HS 0010)  1 config c!
+   %0001_1110  ( CONFIG2H: WDTEN=0)              3 config c!
+   %1100_0101  ( CONFIG4L: ENH_CPU=1)            6 config c!
+.then
+
+boot
+xinst on
+
+4 org  ( skip reset jmp at 0, but clobber the IRQ handler slots!)
+
+label version
+   muforth-commit drop 8 evaluate  >3210  c, c, c, c,
+
+( Wait for RCIF, then read received byte into W)
+label get-byte
+   begin  PIR1 ) 5 ( RCIF) btstss  again  RCREG ) ldw  ret  ;c
+
+( Wait for TXIF, then transmit W)
+label put-byte
+   begin  PIR1 ) 4 ( TXIF) btstss  again  TXREG ) stw  ret  ;c
+
+( Compile the first 32 bits of the current muforth Git commit. When asked
+  for the version, return these four bytes, in little-endian order.)
+
+label get-version
+   version  >hilo  ldi  pl ) stw
+            >hilo  ldi  ph ) stw
+                   ldi  pu ) stw  ret  ;c
+
+( Jump indirect to p)
+label run
+   pu ) ldw  PCLATU ) stw
+   ph ) ldw  PCLATH ) stw
+   pl ) ldw  PCL    ) stw  ;c
+
+label set-p
+   get-byte c  pl ) stw
+   get-byte c  ph ) stw
+   get-byte c  pu ) stw  ret  ;c
+
+label set-x
+   get-byte c  xl ) stw
+   get-byte c  xh ) stw  ret  ;c
+
+label read-prog
+   p@+  memdata ) ldw  put-byte j  ;c
+
+label read-data
+            x@+ ) ldw  put-byte j  ;c
+
+label write-data
+   get-byte c  x@+ ) stw  ret  ;c
+
+( Stack pointed to by z is empty descending, so 0 ,z is scratch)
+label process-serial
+   get-byte c  ( command)   0 ,z stw  ( have to store it!)
+   0 ,z decsnz  get-version j
+   0 ,z decsnz  run j
+   0 ,z decsnz  set-p j
+   0 ,z decsnz  set-x j
+   0 ,z decsnz  read-prog j
+   0 ,z decsnz  read-data j
+   0 ,z decsnz  write-data j
+   ( unknown command)  ret  ;c
+
+hooks RESET
+label the-real-reset-starts-here
+   #48,000,000 #115,000 / #16 / 1- ldi  SPBRG ) stw
+   %0010_0100 ldi  TXSTA ) stw  ( enable xmit, enable BRGH)
+   %1001_0000 ldi  RCSTA ) stw  ( enable serial port, enable rcvr)
+
+   #ram  1-  >hilo  ldi  zl ) stw  ldi  zh ) stw  ( stack)
+   begin  process-serial c  again  ;c
