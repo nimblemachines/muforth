@@ -249,11 +249,6 @@ end
 function show_regs(reg_addrs, reg_bits, configs)
     local reg2addr = {}
 
-    local function drop_footnotes(s)
-        s = s:gsub("%(%d+%)", "")
-        return s
-    end
-
 -- Some lines have five reg/addr pairs; some have four
 -- FFFh TOSU FD7h TMR0H FAFh SPBRG F87h --(2) F5Fh UEIR
 -- FD8h STATUS FB0h SPBRGH F88h --(2) F60h UIE
@@ -323,6 +318,11 @@ function show_regs(reg_addrs, reg_bits, configs)
         end
 
         print("Failed to match config: ", l)
+    end
+
+    local function drop_footnotes(s)
+        s = s:gsub("%(%d+%)", "")
+        return s
     end
 
     for l in reg_addrs:lines() do
