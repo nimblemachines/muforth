@@ -15,7 +15,7 @@ hex
   it is half size. If we define #boot to be the full size bootblock for each
   chip, we can easily calculate bbsiz here.)
 
-variable bbsiz
+variable bbsiz  ( 0 on unprogrammed chips)
 : @app  #boot  bbsiz @ 0= if  2/  then ;
 
 : clean-slate
@@ -23,6 +23,17 @@ variable bbsiz
    0 ee!  0 ram!  @app app!  0 boot!  #flash [ 1 Ki 2/ ] - sig! ;
 
 clean-slate
+
+( PIC18s have all manner of different CONFIGxx registers. Some of the newer
+  USB-capable chips, such as the 26J53, have only 8 bytes of CONFIG registers.
+
+  But the 1xK50 and 2xK50 have up to 14 bytes of CONFIG space. So let's
+  allocate 16 bytes. Hopefully that will be enough!)
+
+( A self-indexing byte array; length is rounded up to cell boundary.)
+: buffer+   ( bytes)  aligned  ( round up)  cell/  array  does> + ;
+
+#16 buffer+ config  ( these will be written to CONFIGxL/H)
 
 
 -- ------------------------------------------------------------------------
@@ -54,11 +65,14 @@ forth
 -- Creating new target names -- assembler code (label and handler)
 -- ------------------------------------------------------------------------
 
-00_0000 equ RESET ( Reset vector at 00_0000)
-00_0008 equ IRQHI ( High-priority / compatibility interrupt at 00_0008)
-00_0018 equ IRQLO ( Low-priority interrupt at 00_0018)
+( By putting the vector addresses in .meta. we can use hooks to resolve
+  them.)
 
 meta
+00_0000 constant RESET ( Reset vector at 00_0000)
+00_0008 constant IRQHI ( High-priority / compatibility interrupt at 00_0008)
+00_0018 constant IRQLO ( Low-priority interrupt at 00_0018)
+
 : handler  ( vector-offset)  boot  org  __asm ;
 
 : label   \m here  current preserve  meta constant  __asm ;
@@ -69,6 +83,10 @@ meta
 
 : hook    state preserve  \m label  0 \a jmp ( dummy) ;
 : hooks   h preserve  \m here  .meta. chain' execute  org  \a jmp ;
+
+assembler
+: ;c   __meta ;
+
 forth
 
 
