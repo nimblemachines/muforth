@@ -1,0 +1,306 @@
+( This file is part of muFORTH: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2014 David Frech. All rights reserved, and all wrongs
+  reversed. (See the file COPYRIGHT for details.)
+
+loading PIC18 meta-compiler (main)
+
+hex
+
+( On PIC18 parts, the bootloader - if any - starts at the beginning of
+  flash, after the three vectors. We put the signature space at the top of
+  flash. But what about the app space? Where does it start?
+
+  CONFIG4L bit 3 is BBSIZ. If set the bootblock is the full size. If reset
+  it is half size. If we define #boot to be the full size bootblock for each
+  chip, we can easily calculate bbsiz here.)
+
+variable bbsiz
+: @app  #boot  bbsiz @ 0= if  2/  then ;
+
+: clean-slate
+   wipe  ( erase all memory images)
+   0 ee!  0 ram!  @app app!  0 boot!  #flash [ 1 Ki 2/ ] - sig! ;
+
+clean-slate
+
+
+-- ------------------------------------------------------------------------
+-- Signatures - how we built the target image 
+-- ------------------------------------------------------------------------
+
+meta
+: string,  ( a u)
+   \m here image+ swap  ( a image u)  dup \m allot  cmove ;
+
+: cr,    #LF  \m c, ;  ( add a newline)
+: sig,  ( a u)   \m string,  \m cr, ;
+
+: sig"   char " parse  \m sig, ;
+
+( Compile creation date, build command line, and muforth commit.)
+
+: end-sig
+   " created: "  \m string,  clock time"  \m sig,
+   " command: "  \m string,
+      " ./muforth " \m string,  command-line  count  \m sig,
+   " commit : "  \m string,  muforth-commit  drop 8  \m sig,
+   #LF  \m align, ;
+
+forth
+
+
+-- ------------------------------------------------------------------------
+-- Creating new target names -- assembler code (label and handler)
+-- ------------------------------------------------------------------------
+
+00_0000 equ RESET ( Reset vector at 00_0000)
+00_0008 equ IRQHI ( High-priority / compatibility interrupt at 00_0008)
+00_0018 equ IRQLO ( Low-priority interrupt at 00_0018)
+
+meta
+: handler  ( vector-offset)  boot  org  __asm ;
+
+: label   \m here  current preserve  meta constant  __asm ;
+
+( For forward references. Use hook to define the hook. This creates a label
+  and compiles a long jump. Then resolve using hooks, which recompiles the
+  jmp to point to here.)
+
+: hook    state preserve  \m label  0 \a jmp ( dummy) ;
+: hooks   h preserve  \m here  .meta. chain' execute  org  \a jmp ;
+forth
+
+
+.ifdef copied-from-msp-meta
+
+-- ------------------------------------------------------------------------
+-- Creating new target names -- forth code (code and name)
+-- ------------------------------------------------------------------------
+
+variable last-code   ( for ;code and does> to fix up)
+
+( Back up over last token so we can re-read it.)
+: untoken   parsed drop  first ! ;
+
+( Create new target names. A name is a target word which is defined as a
+  _constant_ equal to its code field address.)
+
+meta
+: name    \m here  dup last-code !  current preserve  target constant ;
+: codes   ( 'code)  \m name  \m ,  __asm ;
+: code    \m here  \m cell+  \m codes ;
+
+( For code words that implement forward-referenced meta-compiler primitives.)
+: code*   implements  untoken  \m code ;
+forth
+
+
+-- ------------------------------------------------------------------------
+-- Macros defining register conventions
+-- ------------------------------------------------------------------------
+
+assembler
+ 4 constant ip     ( ip - forth instruction pointer)
+ 5 constant w      (  w - "working" register: holds cfa during next)
+ 6 constant rp     ( rp - return stack pointer)
+ 7 constant count  ( current for/next/do/loop count)
+ 8 constant top    ( cached top of data stack)
+ 9 constant x      ( scratch x)
+10 constant y      ( scratch y)
+forth
+
+( Tell the disassembler about these register names.)
+-: ( reg)
+   dup #11 u< if  ( special)
+      2* 2*
+      z" pc  sp  sr  r3  ip  w   rp  cnt top x   y   "  +  4 -trailing type
+   ^  then
+   ." r"  .udec ;  is .regname
+
+
+-- ------------------------------------------------------------------------
+-- Forward references for fundamental target kernel words.
+-- ------------------------------------------------------------------------
+meta
+
+( These are pointers to target CODE words.)
+variable (branch)
+variable (0branch)
+variable (=0branch)
+variable (?0branch)
+variable (for)
+variable (?for)
+variable (next)
+variable (do)
+variable (loop)
+variable (+loop)
+variable (lit)
+variable ^
+variable dodoes
+
+forth
+
+( looks up a label or forward-reference variable, and executes it to push
+  its value or address)
+
+: lookup  ( look up next token as forward-ref variable or label)
+   .meta. chain' execute ( get addr) ;
+
+: implements   \m here  lookup  !  __asm ;
+
+( Fetch value of variable - a primitive - and complain if not yet defined.)
+: (p@)  ( var)  @  =if  ^  then  error" primitive not yet defined" ;
+
+( Fetch primitive and compile into target.)
+: (p,)  ( var)  (p@)  \m , ;
+
+compiler
+: p,   .meta. \chain  compile (p,) ;
+: p@   .meta. \chain  compile (p@) ;
+forth
+
+
+-- ------------------------------------------------------------------------
+-- Support for ;code and does>
+-- ------------------------------------------------------------------------
+
+( This word, which is followed inline by a target code address, patches the
+  code field of the last last word compiled with a bl to the inline target
+  address. It essentially "repoints" previously defined words - defined by
+  create, variable, constant, etc - to point to new code. It gets -compiled-
+  indirectly by both ;calls and does>.)
+
+: (;code@)   pop @  last-code @  image-! ;
+
+
+( <;code> is used to switch from compiling -host- code [that will later run
+  on the host, and build the target word] to compiling -target- code, that
+  will run when words defined by this defining word later execute. In order
+  to connect the two worlds, and to be able to patch up code fields to
+  point to this newly-defined behaviour, <;code> captures the target's
+  "here" value. Remember, we are about to start compiling target code at
+  "here".
+
+  <;code> runs at the compile time of a defining word, but it leaves it up
+  to its caller - ;code or does> - to change the interpreter mode.)
+
+: <;code>   compile (;code@)  \m here  ,  show ;
+
+
+definer
+: does>   <;code>  p@ dodoes  asm{ ( dodoes) # call  }  __target-colon ;
+: ;code   <;code>                                       __asm ;
+forth
+
+
+-- ------------------------------------------------------------------------
+-- Control structures.
+-- ------------------------------------------------------------------------
+
+( Resolve a forward or backward jump, from src to dest.)
+( When using absolute branch addresses, this is easy: just store dest at src.)
+
+( NOTE: when using absolute addresses for branches, we must mark them as
+  needing relocation, so we use a, . If instead we used relative branch
+  addresses we should use , .)
+
+meta
+: <resolve  ( dest src)  image-! ;
+: >resolve  ( src dest)  swap  \m <resolve ;
+: >mark   \m here  0 \m , ;
+
+target-compiler
+: =if   ( - src)        p, (=0branch)  \m >mark ;
+: ?if   ( - src)        p, (?0branch)  \m >mark ;
+: if    ( - src)        p,  (0branch)  \m >mark ;
+: then  ( src)          \m here  \m >resolve ;
+: else  ( src0 - src1)  p,   (branch)  \m >mark
+                        swap  \tc then ;
+
+: begin   ( - dest)  \m here ;
+: =until  ( dest -)  \tc =if  \m <resolve ;
+: ?until  ( dest -)  \tc ?if  \m <resolve ;
+: until   ( dest -)   \tc if  \m <resolve ;
+: again   ( dest -)  p, (branch)  \m >mark  \m <resolve ;
+: =while  ( dest - src dest)  \tc =if  swap ;
+: ?while  ( dest - src dest)  \tc ?if  swap ;
+: while   ( dest - src dest)   \tc if  swap ;
+: repeat  ( src dest -)   \tc again  \tc then ;
+
+( n for .. next         goes n times; 64 Ki if n=0 )
+( n ?for .. next then   goes n times; 0 if n=0 )
+
+: for     ( - dest)      p,  (for)            \tc begin ;
+: ?for    ( - src dest)  p, (?for)  \m >mark  \tc begin ;
+: next    ( dest -)      p, (next)  \m >mark  \m <resolve ;
+
+( do, loop, +loop)
+: do      ( - dest)   p, (do)              \tc begin ;
+: loop    ( dest)     p, (loop)   \m >mark  \m <resolve ;
+: +loop   ( dest)     p, (+loop)  \m >mark  \m <resolve ;
+forth
+
+
+-- ------------------------------------------------------------------------
+-- Special versions of host colon compiler
+-- ------------------------------------------------------------------------
+
+( Define useful colon compilers:
+      meta:  for defining new target defining words!
+     macro:  for defining assembler macros
+  compiler:  for defining target-compiler words
+
+  We define the another colon compiler - the actual target colon - in the
+  kernel, using our meta-defining words!)
+
+meta
+
+: meta:      current preserve  meta               :  __definer-colon ;
+: compiler:  current preserve  target-compiler    :  __definer-colon ;
+: macro:                                          :  __inline-asm ;
+
+forth
+
+
+-- ------------------------------------------------------------------------
+-- Punctuation that changes the compiler state, or creates literals
+-- ------------------------------------------------------------------------
+
+meta
+: '   .target. chain' execute ;  ( get target word's constant value: cfa)
+: >body   \m cell+ ;
+: >value  \m cell+  image-@ ;
+
+: ]   __target-colon ;  ( does NOT create a literal!)
+
+: literal    p, (lit)  \m , ;  ( make a target literal)
+
+: __host   \ [ ;        ( return to host forth mode)
+: {        \m __host ;  ( useful for bracketing a few host forth words)
+
+forth
+: }    __meta ;  ( return to meta)
+
+assembler
+: ;c   __meta ;
+
+target-compiler
+: [   __meta ;
+: ^    p, ^ ;         ( compile target's exit)
+: ;   \tc ^  \tc [ ;  ( compile exit and return to meta)
+
+: [']        \m '  \m literal ;
+: literal          \m literal ;
+
+definer
+: ;   \ ;  __meta ;  ( do normal host ; but then return to __meta)
+
+forth
+
+( Patch target colon compiler.)
+.meta. chain' literal  is target-literal
+             ' number  is target-number    ( use host's number)
+-: \m , ;              is target-compile,  ( simply comma into image)
+
+.then
