@@ -43,6 +43,35 @@ variable image  ( image buffer pointer; points to either flash- or eeprom-image)
 : image-  ( host - target)        'image -  wrap ;
 
 
+( This is a bit of a hack, but we have to do it somehow. PIC18's have, in
+  addition to the program memory, two small regions of flash memory: one
+  for storing ID bytes, and one for CONFIG bytes. The ID space is 8 bytes
+  long; the size of the CONFIG space varies from part to part, and PIC18s
+  have all manner of different CONFIGxx registers. Some of the newer
+  USB-capable chips, such as the 26J53, have only 8 bytes of CONFIG
+  registers.
+
+  But the 1xK50 and 2xK50 have up to 14 bytes of CONFIG space. So let's
+  allocate 16 bytes. Hopefully that will be enough!
+
+  Rather than making these images in their own right - which engenders its
+  own set of problems - lets create the idea of flash-spaces. These are
+  self-indexing, and also "know" where they begin.)
+
+: flash-space
+   create  ( #bytes origin)  , ( origin)  aligned  dup , ( #bytes)  allot
+   does>  ( target 'space - host | 0)
+      @+ push ( target origin)  -  ( offset)  pop @+ push ( #bytes)
+      over swap u< if  pop +  ^  then  ( offset)  pop 2drop  0 ;
+
+( Ok, let's create the two spaces and make each one 16 bytes long so that
+  reads by the memory dumping code will work reasonably.)
+
+16 "20_0000 flash-space     id-space
+16 "30_0000 flash-space config-space
+16               buffer   dead-space  0 dup dead-space 2!  ( fill with 00)
+
+
 ( DEBUG: Define show-comma to show code as it's compiled.)
 .ifdef show-comma
 : .debug-comma  dup  .h8_ ;
@@ -79,7 +108,15 @@ defer >ee   ( dump eeprom memory)
 -: ( buf a u)  swap image+ -rot  cmove ;
 : >image-read   [ ]  is |read ;  ( read from current image buffer)
 
-: >image-prog   >image-read   flash-image     4 Mi addrbits ;
+: choose-flash-space  ( target - host)
+   dup #flash u< if  image+  ^  then  ( normal flash-image access)
+   dup     id-space  =if  nip ^  then  drop
+   dup config-space  =if  nip ^  then  2drop  dead-space ;
+
+-: ( buf a u)  swap choose-flash-space  -rot cmove ;
+: >flash-read   [ ]  is |read ;  ( read from flash/id/config buffer)
+
+: >image-prog   >flash-read                   4 Mi addrbits ;
 : >image-data   >image-read    data-image     4 Ki addrbits ;
 : >image-ee     >image-read  eeprom-image  #eeprom addrbits ;
 
@@ -140,12 +177,14 @@ forth
 : region  ( - a u)  h 2@  ( origin ptr)  over - ;
 
 ( Initialization.)
-: erase-image  'image #image "ff fill ;  ( erases _current_ image)
+: fferase  'image #image "ff fill ;  ( erases _current_ image)
 : wipe
-   ram-image erase-image
+   "20_0000 id-space 16 "ff fill
+   "30_0000 config-space 16 "ff fill
    data-image  "d0d0_dead_d0d0_dead dup  'image 2!
-   eeprom-image erase-image
-   flash-image erase-image ;  ( leaves flash-image as _current_ image)
+   ram-image fferase
+   eeprom-image fferase
+   flash-image fferase ;  ( leaves flash-image as _current_ image)
 
 : ram!      ( ram-origin)  dup 'ram   2!  ( set ptr and origin to origin) ;
 : app!      ( app-origin)  dup 'app   2!  ( set ptr and origin to origin) ;
