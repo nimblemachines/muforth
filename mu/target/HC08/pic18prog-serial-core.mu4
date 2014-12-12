@@ -135,6 +135,20 @@ comment %% delay-times
         to delay 100us, n = (2400 - 18) * 256 / (9*257) = 263.6
 %%
 
+( A few delays to keep in mind:
+
+  P5    40 ns  - between 4-bit cmd and 16-bit payload
+  P5A   40 ns  - between last payload and new 4-bit cmd
+  P9     1 ms  - after 4th cmd bit, hold PGC high to program flash
+  P9A    5 ms  - after 4th cmd bit, hold PGC high to program config byte
+  P10  100 us  - hold PGC low after pgm/erase before next cmd
+
+  P12    2 us
+  P15    2 us
+  P16    0
+  P18    0
+)
+
 label delay
    .h psh  .x psh
    begin  begin  1 ,s inc  ( lo)  0= until  0 ,s inc  0= until
@@ -144,32 +158,38 @@ decimal
 
 .ifdef 24m
 
-label 5ms
-   -13,279 # ldhx  delay j  ;c
+( Configuration programming delay: 5ms)
+-13,279 constant P9A
 
-label 1ms
-   -2654 # ldhx  delay j  ;c
+( Programming delay: 1ms)
+-2654 constant P9
 
+label P10
+label P12  ( overkill for P12 and P15, but whatever)
+label P15
 label 100us
    -264 # ldhx  delay j  ;c
 
 ( At 24M we need to slow down the clock pulses a bit, otherwise the PIC
   can't keep up!)
 
-macro short  .x psh  .x pul  ;m
+macro Q  .x psh  .x pul  ;m
 
 .else  ( 9.216M)
 
-label 5ms
-   -5098 # ldhx  delay j  ;c
+( Configuration programming delay: 5ms)
+-5098 constant P9A
 
-label 1ms
-   -1018 # ldhx  delay j  ;c
+( Programming delay: 1ms)
+-1018 constant P9
 
+label P10
+label P12  ( overkill for P12 and P15, but whatever)
+label P15
 label 100us
    -100 # ldhx  delay j  ;c
 
-macro short  ;m
+macro Q  ;m
 
 .then
 
@@ -181,52 +201,46 @@ hex
 macro D/  PGD bset   ;m
 macro D\  PGD bclr   ;m
 
-macro C/  PGC bset  short  ;m
-macro C\  PGC bclr  short  ;m
+macro C/  PGC bset  ;m
+macro C\  PGC bclr  ;m
 
-label drive-d  ( drive value of C onto bus)
-   CS if  D/  rts  then
-          D\  rts  ;c
+label drive-d  ( drive low bit of A onto PGD)
+   .a ror  CS if  D/  rts  then
+                  D\  rts  ;c
 
 macro D@  PGD bset? if then  ( sets C with pin value!)  ;m
 macro D!  drive-d c    ;m
 
-label send-bit    C/  D!  C\   rts  ;c
-label recv-bit    C/  D@  C\   rts  ;c
+label send-bit    D!  C/  Q      C\   rts  ;c
+label recv-bit        C/  Q  D@  C\   rts  ;c
 
 ( 4-bit command to send in A. Send LSB first.)
 label send-icsp-cmd
-   .a psh  ( byte to send)
-   4 # lda  .a psh  ( bit count)
-   begin  1 ,s ror  send-bit c  0 ,s decz? until
-   2 # ais  rts  ;c
+label send-nybble
+   send-bit c  ( fall thru)  ;c
+
+label send-icsp-cmd3
+   send-bit c  send-bit c  send-bit j  ;c
 
 ( Byte to send in A. Send LSB first.)
 label send-icsp-byte
-   .a psh  ( byte to send)
-   8 # lda  .a psh  ( bit count)
-   begin  1 ,s ror  send-bit c  0 ,s decz? until
-   2 # ais  rts  ;c
+   send-nybble c  send-nybble j  ;c
 
-( Read byte from chip into A.)
+( 4-bit command to send in A. Send LSB first. After fourth bit keep PGC
+  high for a delay time specified in HX, then bring it low for time P10.
+  Then send 16-bit dummy word.)
+
+label send-icsp-cmd-prog
+   .a clr ( always send NOP!)  send-icsp-cmd3 c
+   D!  C/  delay c  C\  P10 c
+   ( A still 00)  send-icsp-byte c  send-icsp-byte c
+   send-serial-byte j  ;c  ( return a status ping)
+
+( Read byte from chip into A. Recv LSB first.)
 label recv-icsp-byte
    PGD-drive bclr  ( undrive PGD)
-   .a psh  ( byte accumulator)
-   8 # lda  .a psh  ( bit count)
-   begin  recv-bit c  1 ,s ror  0 ,s decz? until
-   1 ,s lda  2 # ais
+   8 # ldx  begin  recv-bit c  .a ror  .x decz? until
    PGD-drive bset  ( redrive PGD)
-   rts  ;c
-
-( PGM high, delay, then /MCLR high.)
-label enter-prog-mode
-   PGM bset  100us c  ( only need to delay 2us)
-   MCLR bset
-   rts  ;c
-
-( /MCLR low, then PGM low.)
-label exit-prog-mode
-   MCLR bclr   PGM bclr
    rts  ;c
 
 .ifdef notyet
@@ -270,6 +284,26 @@ label bulk-write
 
 .then
 
+( While holding PGD and PGC low, bring PGM high, delay P15, bring
+  /MCLR high, and delay P12 before changing PGC or PGD.)
+
+( init-pins will drive PGC and PGD low.)
+label enter-prog-mode
+   init-pins c  ( set up port pins)
+   PGM bset  P15 c  MCLR bset  P12 j  ;c
+
+( Bring PGD and PGC low, delay P16, bring /MCLR low, delay P18, then bring
+  PGM low.
+
+  NOTE: P16 and P18 are both 0!)
+
+label exit-prog-mode
+   PGD bclr  PGC bclr  MCLR bclr  PGM bclr  rts  ;c
+
+( NOTE also: ID locations are programmed just like the bulk of the flash.
+  CONFIG bytes are treated differently, however. Not only are they
+  programmed a byte at a time but also the delay is different.)
+
 label simple-read
    recv-serial-byte c  send-icsp-cmd c
    .a clr  send-icsp-byte c  ( send dummy byte)
@@ -278,12 +312,24 @@ label simple-read
 label simple-write
    recv-serial-byte c  send-icsp-cmd c
    recv-serial-byte c  send-icsp-byte c
-   recv-serial-byte c  send-icsp-byte j  ;c
+   recv-serial-byte c  send-icsp-byte c
+   send-serial-byte j  ;c  ( return a status ping)
+
+label program-write
+   P9 # ldhx  send-icsp-cmd-prog j  ;c
+
+label config-write
+   P9A # ldhx  send-icsp-cmd-prog j  ;c
+
 
 ( Commands:
 0-1f  Bye        - exit PIC18 prog code and return to chat loop
   20  Read       - send 4-bit command, send dummy byte, read 1 byte
   21  Write      - send 4-bit command, send 2 bytes
+  22  Program    - send 4-bit command, send 2 dummy bytes
+  23  Config     - send 4-bit command, send 2 dummy bytes
+  24  +Prog      - enter programming mode
+  25  -Prog      - exit programming mode
 )
 
 label process-serial
@@ -295,14 +341,16 @@ label process-serial
    u< if  ( 00 - 1f Bye)  2 # ais  ( skip return from process-serial)
       exit-prog-mode j  then
 
-   ( 20)  simple-read            0!= until
-   ( 21)  simple-write   .a dec  0!= until
+   ( 20)  simple-read              0!= until
+   ( 21)  simple-write     .a dec  0!= until
+   ( 22)  program-write    .a dec  0!= until
+   ( 23)  config-write     .a dec  0!= until
+   ( 24)  enter-prog-mode  .a dec  0!= until
+   ( 25)  exit-prog-mode   .a dec  0!= until
 
    ( unknown command)   rts  ;c
 
 \l pic18-prog-loop resolve>>  ( jump at start of Flash points here)
 label main-loop
-   init-pins c  ( set up port pins)
-   enter-prog-mode c
    signon c     ( tell who we are and what we're doing)
    begin  process-serial c  again  ;c
