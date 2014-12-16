@@ -228,12 +228,20 @@ label send-icsp-byte
 
 ( 4-bit command to send in A. Send LSB first. After fourth bit keep PGC
   high for a delay time specified in HX, then bring it low for time P10.
-  Then send 16-bit dummy word.)
+  Then send 16-bit dummy word.
+
+  Since we are supposed to send a 4-bit NOP - %0000 - command, receive a
+  byte from the host, and xor it with 55. If the result is zero, use this as
+  the 4-bit command. If not, skip the programming step, but return the status
+  ping.
+
+  Because the 55 byte acts a bit like a "key", we are somewhat less likely
+  to accidentally program the PIC's flash.)
 
 label send-icsp-cmd-prog
-   .a clr ( always send NOP!)  send-icsp-cmd3 c
-   D!  C/  delay c  C\  P10 c
-   ( A still 00)  send-icsp-byte c  send-icsp-byte c
+   recv-serial-byte c  55 # eor  0= if
+   send-icsp-cmd3 c  D!  C/  delay c  C\  P10 c
+   ( A still 00)  send-icsp-byte c  send-icsp-byte c  then
    send-serial-byte j  ;c  ( return a status ping)
 
 ( Read byte from chip into A. Recv LSB first.)
@@ -290,7 +298,8 @@ label bulk-write
 ( init-pins will drive PGC and PGD low.)
 label enter-prog-mode
    init-pins c  ( set up port pins)
-   PGM bset  P15 c  MCLR bset  P12 j  ;c
+   PGM bset  P15 c  MCLR bset  P12 c
+   send-serial-byte j  ;c  ( return a status ping)
 
 ( Bring PGD and PGC low, delay P16, bring /MCLR low, delay P18, then bring
   PGM low.
@@ -312,8 +321,7 @@ label simple-read
 label simple-write
    recv-serial-byte c  send-icsp-cmd c
    recv-serial-byte c  send-icsp-byte c
-   recv-serial-byte c  send-icsp-byte c
-   send-serial-byte j  ;c  ( return a status ping)
+   recv-serial-byte c  send-icsp-byte j  ;c
 
 label program-write
    P9 # ldhx  send-icsp-cmd-prog j  ;c

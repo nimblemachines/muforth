@@ -17,15 +17,22 @@ comment %%
   1011  tblrd+*  ( read, pre-increment)
   1100  tblwr*        ( write)
   1101  tblwr*+2      ( write, post-increment by 2)
-  1110  tblwrprog*+2  ( write, post-increment by 2, start prog)
+  1110  tblwrprog*+2  ( write, post-increment by 2, start programming)
   1111  tblwrprog     ( write, start programming)
 %%
+
+: chip   constant  does> @  ( lo hi cmd)  push swap pop  pic.Write ;
+00 chip core          ( execute core instruction)
+0c chip write2        ( write two bytes)
+0d chip write2+       ( write two bytes, post-increment by 2)
+0e chip write2+prog   ( write two bytes, post-increment by 2, start programming)
+0f chip write2prog    ( write two bytes, start programming)
+
 
 ( NOTE: In all these core instructions the a bit is 0, meaning that we're
   using "access mode". This maps 00 to 5f to RAM, and 60 to ff to I/O regs
   f60 to fff.)
 
-: core  ( lo hi)  swap  00 pic.Write ;  ( execute core instruction)
 : lit   ( byte)     0e ( movlw)  core ;
 : load  ( freg)     50 ( movf)   core ;
 : store ( freg)     6e ( movwf)  core ;
@@ -81,11 +88,19 @@ comment %%
           lit  pu store ;
 
 variable ep  ( local copy of eeprom pointer; we have to increment it!)
+: ep!   eecon clear  ep ! ;
+
+#eeprom 200 u< .if  ( we only need one byte to address the EEPROM)
 : e!+
    ep @  1 ep +!
-   eepgd eeclr  cfgs eeclr
+   lit  eeadrl store ;
+
+.else  ( need two bytes of EEPROM address)
+: e!+
+   ep @  1 ep +!
    >hilo  lit  eeadrl store
           lit  eeadrh store ;
+.then
 
 : x!  ( data-addr)  ( set X pointer - aka FSR0)
    >hilo  lit  xl store
@@ -102,21 +117,26 @@ variable ep  ( local copy of eeprom pointer; we have to increment it!)
 ( Get a value from W back to the host)
 : readw   memdata store  nop  2 pic.Read ;
 
-( I've chosen these names badly... ;-)
-: data@+        x@+ load  readw ;  ( read data memory)
-: data!+   lit  x@+ store ;                                 ( write data memory)
+( Polled write: after setting WR and writing two NOPs, poll the WR bit of
+  EECON1 until clear.)
 
-: r+  ( read, post inc)  9 pic.Read ;  ( read prog memory)
-
-: ee@+  ( read eeprom memory)
-   e!+  rd eeset  eedata load  readw ;
-
-: ee!+  ( write eeprom memory)
-   e!+  lit  eedata store
+: polled-write
    wr eeset  nop nop  ( write begins now)
 
    ( poll WR bit until clear)
    begin  eecon load  readw  [ 1 wr << ] and  0= until  #100 us ;
+
+( I've chosen these names badly... ;-)
+: data@+        x@+ load  readw ;  ( read data memory)
+: data!+   lit  x@+ store ;        ( write data memory)
+
+: r+  ( read, post inc)  9 pic.Read ;  ( read prog memory)
+
+: ee@+  ( - b)  ( read eeprom memory)
+   e!+  rd eeset  eedata load  readw ;
+
+: ee!+  ( b)    ( write eeprom memory)
+   e!+  lit  eedata store  polled-write ;
 
 : zpread   ( buf addr len)  ( read program memory)
    swap p!  swap m !  ?for  r+ m&  next  then ;
@@ -128,10 +148,166 @@ variable ep  ( local copy of eeprom pointer; we have to increment it!)
    swap x!  swap m !  ?for  m* data!+  next  then ;
 
 : zeread   ( buf addr len)  ( read eeprom)
-   swap ep !  swap m !  ?for  ee@+ m&  next  then ;
+   swap ep!  swap m !  ?for  ee@+ m&  next  then ;
 
 : zewrite  ( buf addr len)  ( write eeprom)
-   swap ep !  swap m !
+   swap ep!  swap m !
    wren eeset  ( enable EEPROM writes)
    ?for  m* ee!+  next  then
    wren eeclr  ( disable EEPROM writes) ;
+
+( Procedures for erasing and programming the chip.
+
+  Bulk erase:
+    Write command to 3c_0004/5, using code 1100, with both bytes equal
+    Two NOPs
+    Delay for P11 + P10 == 5ms + 100us
+
+    Bulk erase commands:
+      0f8f  Erase chip
+      0088  Erase user IDs
+      0084  Erase data EEPROM
+      0081  Erase boot block
+      0082  Erase CONFIG bits
+      0180  Erase flash block 0
+      0280  Erase flash block 1
+      0480  Erase flash block 2
+      0880  Erase flash block 3
+
+  Row erase:
+    Set EEPGD & WREN, clear CFGS in EECON1
+    Load pu/ph/pl
+    Set FREE & WR in EECON1
+    Two NOPs
+    Poll WR bit until clear
+    Hold PGC low for P10 == 100us
+    Clear WREN
+
+  Program EEPROM:
+    Set WREN, clear EEPGD and CFGS in EECON1
+    Load EEADR, EEADRH with address
+    Load EEDATA with byte to program
+    Set WR in EECON1
+    Two NOPs
+    Poll WR bit until clear
+    Hold PGC low for P10 == 100us
+    Clear WREN
+
+  Program flash:
+    Set EEPGD & WREN, clear CFGS in EECON1
+    Load pu/ph/pl
+    Repeat code 1101, load two bytes, postinc by 2, all but last two bytes
+    code 1111, load last two bytes and program
+    XXX: could we use code 1110 instead of 1111 which would post-increment and get us
+       ready for the next row?
+    code 0000, hold PGC high for P9, low for P10
+
+  Program ID:
+    Set EEPGD & WREN, clear CFGS in EECON1
+    Load pu/ph/pl
+    code 1101, load two bytes, postinc by 2
+    code 1101, load two bytes, postinc by 2
+    code 1101, load two bytes, postinc by 2
+    code 1111, load two bytes and program
+    code 0000, hold PGC high for P9, low for P10
+
+  Program CONFIG byte:
+    Set EEPGD, CFGS, and WREN in EECON1
+    Set even address in pu/ph/pl
+    code 1111, load even byte in both slots
+    code 0000, hold PGC high for P9A and low for P10
+    Set odd address in pl
+    code 1111, load odd byte in both slots
+    code 0000, hold PGC high for P9A and low for P10
+    Repeat as necessary
+)
+
+( Instead of reusing the memory dump's p pointer - the semantics of which
+  are different than they were originally - let's create our own.)
+
+variable pp ( programming pointer - contains a target address)
+: pp&  ( b)    pp @  image-c!  1 pp +! ;
+: pp*  ( - b)  pp @  image-c@  1 pp +! ;
+
+: image-pp@  ( - host-addr)  pp @  image+ ;
+
+
+: +prog  ( enable programming)     pic.Hello  pic.+Prog  eecon clear ;
+: -prog  ( disable programming)               pic.-Prog  pic.Bye ;
+
+( XXX programming PDF suggests writing to 3c_0005 before 3c_0004, but
+  doesn't say it's *necessary*... this code seems to work. Hmm.)
+
+: erase-command  ( cmd)
+   >hilo  3c_0004 p!  dup write2
+          3c_0005 p!  dup write2
+   nop nop  6 ms ;
+
+: erase-chip   0f8f erase-command ;
+
+: prog-config-byte
+   pp @  1 pp +!  dup config-space c@
+   dup 0ff =  if  2drop ^  then  ( skip if 0ff)
+   swap p!  8 pic.Read ( read config byte)  ( ours chip's)
+   over = if  ( already programmed this one)  drop ^  then
+   dup ( high and low bytes the same!)  write2prog  pic.Config
+   char . emit ;
+
+( XXX Be careful not to enable the protection of CONFIG bytes, by setting
+  WRTC to 0 in CONFIG6H, until *after* writing the other bytes!)
+
+: prog-config
+   cr ." Writing CONFIG bytes"
+   eepgd eeset  cfgs eeset  wren eeset  ( enable CONFIG writes)
+   30_0000 pp !  10 for  prog-config-byte  next
+   eecon clear ( reset EECON) ;
+
+( Show progress in chunks the size of the erase page, even if we use bulk
+  erase. The programming buffer size is too small a chunk to show.)
+
+: prog-region
+   region  over p!  swap pp !  ( len)
+   #program 1- + ( round up)  #program / ?for  ( flash buffers to fill)
+      pp @  [ #erase 1- ] and 0= if  cr ."    page "  pp @  u.  then
+      [ #program 2/ 1- ] for  pp* pp* write2+  next  ( all but last two bytes)
+                              pp* pp* write2+prog    ( last two bytes)
+      pic.Program
+   next  then ;
+
+: prog-flash
+   eepgd eeset  wren eeset
+   cr  ." Writing flash (application)"  app  prog-region
+   cr  ." Writing flash (signature)"  signature  prog-region
+.ifdef bootloader
+   cr  ." Writing flash (bootloader)"  boot  prog-region
+.then
+   eecon clear ;
+
+: prog-ee-byte
+   pp*  dup 0ff =  if  drop ^  then  ( skip if 0ff)
+   ee!+
+   char . emit ;
+
+: prog-eeprom
+   cr ." Writing eeprom"
+   eeprom region  over pp !  swap ep!  ( len)  =if
+      wren eeset  ( enable EEPROM writes)
+      for  prog-ee-byte  next
+      eecon clear ( reset EECON)
+      ^
+   then  drop ;
+
+: prog
+   cr  ." REMINDER: Have you checked in all changes? You should if you want the
+signature's commits to be correct!"  cr
+   radix preserve  hex
+   'h preserve  image preserve
+   +prog  erase-chip  prog-flash  prog-eeprom  prog-config  -prog ;
+
+
+: verify-flash ;
+
+: verify-config ;
+
+: verify
+   +prog  verify-flash  verify-config  -prog ;
