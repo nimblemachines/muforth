@@ -254,7 +254,7 @@ function show_regs(reg_addrs, reg_bits, configs)
 -- FD8h STATUS FB0h SPBRGH F88h --(2) F60h UIE
     local function read_addrs(l)
         if l:match "^%s*$" then return end    -- skip whitespace-only lines
-        local firstpair = "(%x+)h ([%w-]+)"
+        local firstpair = "(%x+)h ([%w_-]+)"
         local pair = " " .. firstpair
         local a1, r1, a2, r2, a3, r3, a4, r4, a5, r5 =
             l:match(firstpair .. pair:rep(4))
@@ -294,7 +294,7 @@ function show_regs(reg_addrs, reg_bits, configs)
 
     local function show_reg(l)
         if l:match "^%s*$" then return end    -- skip whitespace-only lines
-        local pat = "([%w_]+)" .. (" ([%u%d/-]+)"):rep(8)
+        local pat = "([%w_]+)" .. (" ([%u%d/_-]+)"):rep(8)
         local reg, b7, b6, b5, b4, b3, b2, b1, b0 = l:match(pat)
         if reg then
             print (string.format("%04x reg  %-8s | "..("%-7s "):rep(8),
@@ -309,7 +309,7 @@ function show_regs(reg_addrs, reg_bits, configs)
 -- 300000h CONFIG1L -- -- USBDIV CPUDIV1 CPUDIV0 -- -- -- --00 0---
     local function show_config(l)
         if l:match "^%s*$" then return end    -- skip whitespace-only lines
-        local pat = "(%x+)h ([%w_]+)" .. (" ([%u%d/-]+)"):rep(8)
+        local pat = "(%x+)h ([%w_]+)" .. (" ([%u%d/_-]+)"):rep(8)
         local addr, reg, b7, b6, b5, b4, b3, b2, b1, b0 = l:match(pat)
         if addr then
             print (string.format("%06x reg  %-8s | "..("%-7s "):rep(8),
