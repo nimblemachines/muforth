@@ -1,0 +1,54 @@
+( This file is part of muFORTH: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2014 David Frech. All rights reserved, and all wrongs
+  reversed. (See the file COPYRIGHT for details.)
+
+loading PIC18 UART test code
+
+hex
+
+__meta
+
+( Set config registers)
+.ifdef 1xk50   -- at the moment, the only option
+   %0010_0010  ( CONFIG1H: FOSC=HS 0010)         CONFIG1H config-space c!
+   %0001_1110  ( CONFIG2H: WDTEN=0)              CONFIG2H config-space c!
+   %1100_0101  ( CONFIG4L: ENH_CPU=1)            CONFIG4L config-space c!
+.then
+
+boot
+xinst on
+
+4 org  ( skip reset jmp at 0, but clobber the IRQ handler slots!)
+
+( Wait for RCIF, then read received byte into W)
+label get-byte
+   begin  PIR1 ) 5 ( RCIF) btstss  again  RCREG ) ldw  ret  ;c
+
+( Wait for TXIF, then transmit W)
+label put-byte
+   begin  PIR1 ) 4 ( TXIF) btstss  again  TXREG ) stw  ret  ;c
+
+( Stack pointed to by z is empty descending, so 0 ,z is scratch)
+label process-serial
+   get-byte c  put-byte c  ( echo)
+   1 addi put-byte c
+   1 addi put-byte c
+   1 addi put-byte j  ;c
+
+hooks RESET
+label the-real-reset-starts-here
+   ( UART TX is on RB7; set it as an output)
+   TRISB ) 7 bclr
+
+   ( Also, RX, on pin RB5, is shared with AN11, to which - rather oddly -
+     it defaults at reset. So we reset ANS11 to claim the pin as a digital
+     input.)
+   ANSELH ) 3 bclr
+
+   #12,000,000 #57,600 / #16 / 1- ldi  SPBRG ) stw
+   %0010_0100 ldi  TXSTA ) stw  ( enable xmit, enable BRGH)
+   %1001_0000 ldi  RCSTA ) stw  ( enable serial port, enable rcvr)
+
+   #ram  1-  ldz  ( stack)
+   begin  process-serial c  again  ;c
