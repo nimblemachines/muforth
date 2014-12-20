@@ -1,0 +1,111 @@
+( This file is part of muFORTH: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2014 David Frech. All rights reserved, and all wrongs
+  reversed. (See the file COPYRIGHT for details.)
+
+loading PIC18 Serial chat v3 (host)
+
+hex
+
+( Taking inspiration from the wildly successful HC08 serial chat protocol.
+
+  Responds to the following commands. NOTE: these are hex values!
+
+00 - 0f  Idle   - these command bytes are ignored
+
+XXX GetSP??
+10  Version     - set p to point to the chat protocol version
+11  Run         - load PC from p
+12  SetP        - set p - the program memory address pointer
+13  SetX        - set x - the data memory address pointer
+14  ReadProg    - read a byte from program memory, incr p pointer
+15  ReadData    - read a byte from data memory, incr x pointer
+16  WriteData   - write a byte to data memory, incr x pointer
+
+17 - ff  Idle   - these command bytes are ignored
+)
+
+: >b  send ;
+: b>  recv ;
+: >w  ( w)    >hilo  >b >b ;  ( send word little-endian)
+
+: c.Idle                   0 >b         ;
+: c.Version     ( - n)    10 >b         ;
+: c.Run         ( )       11 >b         ;
+: c.SetP        ( a)      12 >b  >hilo >b  >w ;  ( send 24 bit address)
+: c.SetX        ( a)      13 >b  >w     ;
+: c.ReadProg    ( - b)    14 >b      b> ;
+: c.ReadData    ( - b)    15 >b      b> ;
+: c.WriteData   ( b)      16 >b  >b     ;
+
+( Send three no-ops, let them transmit, _then_ throw away any input bytes.)
+: resync  c.Idle  c.Idle  c.Idle  drain  flush ;
+
+( Hook into interact code.)
+: c.Hello
+   #115200 bps  resync
+   cr ." Chat firmware version "
+   c.Version  c.ReadProg c.ReadProg c.ReadProg c.ReadProg  0123>
+   radix preserve  hex  sep preserve  -sep   u. ;
+
+: c.setup-data-chunk  ( buf a u - #bytes)
+   swap c.SetX  swap m ! ;
+
+: c.ReadDataChunk    ( buf a u)
+   c.setup-data-chunk  ?for  c.ReadData m&  next  then ;
+
+: c.WriteDataChunk   ( buf a u)
+   c.setup-data-chunk  ?for  m* c.WriteData  next  then ;
+
+( XXX VerifyChunk?)
+: c.ReadProgChunk    ( buf a u)
+   swap c.SetP  swap m !  ( ie, setup-prog-chunk)
+   ?for  c.ReadProg m&  next  then ;
+
+: c.FlashChunk       ( buf a u)   complain ;
+( XXX ErasePage a separate word like on MSP430? Or use the same interface
+  but diff command, like on S08?)
+
+.ifdef notyet
+( Copy flash command to target stack)
+( NOTE: already has FKEY set!)
+: c.copy-fcmd  ( fcmd)
+   c.GetSP .FCMD + c.SetAddr  c.WriteWord ;
+
+( For a tiny bit of protection against accidental flashing, let's zero the
+  FCMD after a page erase or chunk of flashword commands.)
+: c.clear-fcmd   0 c.copy-fcmd ;
+
+: c.ErasePage ( a fcmd - status)
+   c.copy-fcmd  c.SetAddr  0 c.FlashWord  c.clear-fcmd ;
+
+( Or together the statuses from each FlashWord command and return it.)
+: c.FlashChunk   ( buf a u fcmd - status)
+   c.copy-fcmd
+   c.setup-chunk  0 swap  ?for  m* m* lohi>  c.FlashWord  or  next  then
+   c.clear-fcmd
+   ?ok ;
+
+
+( The interact interfaces for ReadWord and WriteWord take an address. Let's
+  make that work, but also streamline the conversation with the target to
+  only set the address if necessary.)
+
+variable chat-addr  chat-addr on
+: ?set-addr  ( a)
+   chat-addr @ over xor if  dup c.SetAddr  then  \m cell+  chat-addr ! ;
+
+: c.ReadWordAddr   ( a - w)  ?set-addr  c.ReadWord   ?ok ;
+: c.WriteWordAddr  ( w a)    ?set-addr  c.WriteWord  ?ok ;
+
+.then  ( notyet)
+
+( NOTE: We don't define RunWait separately. Since we will always be reading
+  the registers back after Run, that first command - the GetSP in GetRegs -
+  will block until the target is ready.)
+
+: chat
+   chat-via   c.Hello  c.Run ( RunWait?)
+              c.ReadProgChunk  c.ReadDataChunk  chat-fail ( c.ReadEEChunk)
+              c.WriteDataChunk  chat-fail ( c.WriteEEChunk)
+              chat-fail ( Flash)  chat-fail ( Erase) ;

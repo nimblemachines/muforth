@@ -5,20 +5,33 @@
 
 loading PIC18 interaction
 
+( XXX we have to combine the elegant chat-cmd stuff pioneered with MSP430,
+  and the space-switching - >prog, >data etc - pioneered with AVR, into one
+  nice thing. How?)
+
 variable chatting
 
-( XXX Don't define chat words unless there is support in a connected device.)
+variable chat-vector
+: chat-cmd   ( index)  cells  constant
+             does> @  chat-vector @  =if  +  @execute  ^  then  2drop
+                error" Not connected to a chat-capable target" ;
 
-.ifdef zpread  ( support for reading the target's program memory)
+: chat-fail   error" Chat command not implemented" ;
 
-: +chat  chatting on ;
+ 0 chat-cmd t.Hello
+ 1 chat-cmd t.Run
+ 2 chat-cmd t.ReadProg     ( buf target len)
+ 3 chat-cmd t.ReadData     ( buf target len)
+ 4 chat-cmd t.ReadEE       ( buf target len)
+ 5 chat-cmd t.WriteData    ( buf target len)
+ 6 chat-cmd t.WriteEE      ( buf target len)
+ 7 chat-cmd t.Flash        ( buf target len)
+ 8 chat-cmd t.Erase        (     target)
 
-( Don't set the memory fetch words; we need to specify program or data!)
-( XXX need these for image? setting >data for image is meaningless!)
 
-: >chat-prog   ['] zpread  is |read     4 Mi addrbits ;
-: >chat-data   ['] zread   is |read     4 Ki addrbits ;
-: >chat-ee     ['] zeread  is |read  #eeprom addrbits ;
+: >chat-prog   ['] t.ReadProg  is |read     4 Mi addrbits ;
+: >chat-data   ['] t.ReadData  is |read     4 Ki addrbits ;
+: >chat-ee     ['] t.ReadEE    is |read  #eeprom addrbits ;
 
 : >chat  ['] leh@  is |cell@
                     2 |cell !  ( size of cell in bytes)
@@ -168,18 +181,15 @@ forth
 .then
 mode __target
 
-.else  ( residual-avr-crap)
+.then  ( residual-avr-crap)
 
-: chat  +chat  >chat  pic.Hello  pic.+Prog ;
 
-.then
+( XXX what goes here?)
+: get-regs ;
+: .regs ;
 
-.else  ( NO CONNECTED CHAT TARGET!)
-
-: chat  error" No connected chat-capable target." ;
-: >chat ;
-
-.then
+: hi   chatting on  >chat  t.Hello  get-regs  .regs ;
+: chat-via   pop  chat-vector !  hi ;
 
 
 ( Set |@ and |c@ to _some_ form of target fetch. Prefer to get bytes from

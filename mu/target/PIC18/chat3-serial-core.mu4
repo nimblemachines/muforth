@@ -9,9 +9,30 @@ hex
 
 __meta
 
+( Taking inspiration from the wildly successful HC08 serial chat protocol.
+
+  Responds to the following commands. NOTE: these are hex values!
+
+00 - 0f  Idle   - these command bytes are ignored
+
+10  GetVersion  - set p to point to the chat protocol version
+11  Run         - load PC from p
+12  SetP        - set p - the program memory address pointer
+13  SetX        - set x - the data memory address pointer
+14  ReadProg    - read a byte from program memory, incr p pointer
+15  ReadData    - read a byte from data memory, incr x pointer
+16  WriteData   - write a byte to data memory, incr x pointer
+
+17 - ff  Idle   - these command bytes are ignored
+)
+
 ( Set config registers)
 .ifdef 1xk50   -- at the moment, the only option
+.ifdef noxtal  -- for testing: 32 MHz clk via PLL
+   %0011_1000  ( CONFIG1H: PLLEN, FOSC=HS 1000)  CONFIG1H config-space c!
+.else  ( 12 MHz xtal => 48 MHz clk for USB)
    %0011_0010  ( CONFIG1H: PLLEN, FOSC=HS 0010)  CONFIG1H config-space c!
+.then
    %0001_1110  ( CONFIG2H: WDTEN=0)              CONFIG2H config-space c!
    %1100_0101  ( CONFIG4L: ENH_CPU=1)            CONFIG4L config-space c!
 .then
@@ -45,7 +66,7 @@ label get-version
 label run
    pu ) ldw  PCLATU ) stw
    ph ) ldw  PCLATH ) stw
-   pl ) ldw  PCL    ) stw  ;c
+   pl ) ldw  PCL    ) stw  ( this jumps!) ;c
 
 label set-p
    get-byte c  pl ) stw
@@ -67,7 +88,7 @@ label write-data
 
 ( Stack pointed to by z is empty descending, so 0 ,z is scratch)
 label process-serial
-   get-byte c  ( command)   0 ,z stw  ( have to store it!)
+   get-byte c  ( command)   0f1 ( -0f) addi  0 ,z stw  ( have to store it!)
    0 ,z decsnz  get-version j
    0 ,z decsnz  run j
    0 ,z decsnz  set-p j
@@ -79,9 +100,24 @@ label process-serial
 
 hooks RESET
 label the-real-reset-starts-here
-   #48,000,000 #115,000 / #16 / 1- ldi  SPBRG ) stw
+   ( UART TX is on RB7; set it as an output)
+   TRISB ) 7 bclr
+
+   ( Also, RX, on pin RB5, is shared with AN11, to which - rather oddly -
+     it defaults at reset. So we reset ANS11 to claim the pin as a digital
+     input.)
+   ANSELH ) 3 bclr
+
+.ifdef noxtal
+   #32,000,000 #115,200 / #4 / 1- ldi  SPBRG ) stw
+   %0000_1000 ldi  BAUDCON ) stw  ( set BRG16 so we divide by 4)
+.else
+   #48,000,000 #115,200 / #16 / 1- ldi  SPBRG ) stw
+.then
    %0010_0100 ldi  TXSTA ) stw  ( enable xmit, enable BRGH)
    %1001_0000 ldi  RCSTA ) stw  ( enable serial port, enable rcvr)
+
+   RCREG ) ldw  ( make sure we're ready to receive a byte)
 
    #ram  1-  ldz  ( stack)
    begin  process-serial c  again  ;c
