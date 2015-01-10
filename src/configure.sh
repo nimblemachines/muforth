@@ -2,7 +2,7 @@
 
 # This file is part of muFORTH: http://muforth.nimblemachines.com/
 #
-# Copyright (c) 2002-2014 David Frech. All rights reserved, and all wrongs
+# Copyright (c) 2002-2015 David Frech. All rights reserved, and all wrongs
 # reversed. (See the file COPYRIGHT for details.)
 
 # This NOT a GNU configure script!
@@ -28,7 +28,7 @@ if [ -d ../.git ]; then
 
 # This file is part of muFORTH: http://muforth.nimblemachines.com/
 #
-# Copyright (c) 2002-2014 David Frech. All rights reserved, and all wrongs
+# Copyright (c) 2002-2015 David Frech. All rights reserved, and all wrongs
 # reversed. (See the file COPYRIGHT for details.)
 
 # So that we always have an accurate git commit available to Forth code,
