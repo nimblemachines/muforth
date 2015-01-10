@@ -1,0 +1,49 @@
+These are notes about programming flash and EEPROM via software on the chip,
+not via ICSP.
+
+I'm thinking about how much knowledge of the required sequence to put into the
+chat code on the chip, and how much, for "safety's sake", to keep on the host
+side.
+
+Here are the sequences:
+
+To read EEPROM:
+- put address into EEADR
+- clear EEPGD and CFGS in EECON1
+- set RD in EECON1
+- data is available in next instruction
+- read EEDATA
+
+To write EEPROM:
+- put address into EEADR
+- put data byte into EEDATA
+- clear EEPGD and CFGS in EECON1
+- set WREN in EECON1
+- write 55 then AA to EECON2
+- set WR in EECON1
+- poll WR until it goes to 0
+
+To erase a page of flash:
+- set TBLPTRU/H/L
+- clear CFGS
+- set EEPGD, WREN, FREE in EECON1
+- write 55 then AA to EECON2
+- set WR in EECON1
+CPU will stall until erase is finished.
+
+To program a page of flash:
+- set TBLPTRU/H/L
+- fill write buffer
+  - write byte to TABLAT
+  - store byte via TBLWR*, TBLWR+*, or TBLWR*+
+- clear CFGS
+- set EEPGD, WREN in EECON1
+- write 55 then AA to EECON2
+- set WR in EECON1
+CPU will stall until programming is finished.
+
+NOTE: TBLPTR needs to point _within_ block to program, so using TBLWR*+ may not
+work, as it will have incremented to point to the _following_ block.
+
+Example code in datasheet uses TBLWR+* instead, so TBLPTR points to last byte
+loaded during programming. Try this both ways and see which works?
