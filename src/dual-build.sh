@@ -2,8 +2,7 @@
 
 # This file is part of muFORTH: http://muforth.nimblemachines.com/
 #
-# Copyright (c) 2002-2015 David Frech. All rights reserved, and all wrongs
-# reversed. (See the file COPYRIGHT for details.)
+# Copyright (c) 2002-2015 David Frech. (Read the LICENSE for details.)
 
 # Build both 32-bit and 64-bit versions of muforth, in case we want to
 # deploy on another machine. But this is *not* a cross-build! The target
