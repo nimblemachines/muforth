@@ -1,6 +1,6 @@
 -- This file is part of muFORTH: http://muforth.nimblemachines.com/
 
--- Copyright 2002-2015 David Frech. (Read the LICENSE for details.)
+-- Copyright (c) 2002-2015 David Frech. (Read the LICENSE for details.)
 
 -- Equates for several S08 variants, "scraped" from Freescale datasheets.
 -- From here we generate muFORTH code!
@@ -1041,7 +1041,7 @@ qg_vec = [[
 0xFFFE:FFFF Reset Vreset
 ]]
 
-dofile 'target/HC08/string.lua'
+dofile 'target/HC08/device/string.lua'
 
 function show_vectors(v)
 vt = {}

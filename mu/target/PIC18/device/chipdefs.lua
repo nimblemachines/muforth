@@ -1,6 +1,6 @@
 -- This file is part of muFORTH: http://muforth.nimblemachines.com/
 
--- Copyright 2002-2015 David Frech. (Read the LICENSE for details.)
+-- Copyright (c) 2002-2015 David Frech. (Read the LICENSE for details.)
 
 -- Equates for several PIC18 variants, "scraped" from Microchip datasheets.
 -- From here we generate muFORTH code!
@@ -219,7 +219,7 @@ pic_1xk50_configs = [[
 3FFFFFh DEVID2(1) DEV10 DEV9 DEV8 DEV7 DEV6 DEV5 DEV4 DEV3 0000 1100
 ]]
 
-dofile 'target/HC08/string.lua'
+dofile 'target/HC08/device/string.lua'
 
 -- S08
 -- UNUSED currently for PIC18

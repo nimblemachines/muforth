@@ -1,6 +1,6 @@
 -- This file is part of muFORTH: http://muforth.nimblemachines.com/
 
--- Copyright 2002-2015 David Frech. (Read the LICENSE for details.)
+-- Copyright (c) 2002-2015 David Frech. (Read the LICENSE for details.)
 
 -- Common equates for Atmel atmega parts.
 
@@ -436,7 +436,7 @@ mega8515_vec = [[
 17 $010 SPM_READY Store Program memory Ready
 ]]
 
-dofile 'target/HC08/string.lua'
+dofile 'target/HC08/device/string.lua'
 
 function show_vectors(v, size)
 vt = {}
