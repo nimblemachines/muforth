@@ -218,3 +218,15 @@ void mu_tty_icount()
     if (ioctl(TOP, FIONREAD, &TOP) == -1)
         return abort_strerror();
 }
+
+/*
+ * This is bogus, ridiculously dangerous and unportable, and for testing
+ * only. But here it is: A generic ioctl interface!
+ */
+void mu_ioctl()     /* fd ioctl arg */
+{
+    if (ioctl(ST2, ST1, TOP) == -1)
+        return abort_strerror();
+
+    DROP(3);
+}
