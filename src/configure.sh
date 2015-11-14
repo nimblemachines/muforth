@@ -119,16 +119,12 @@ It appears that you are one of the few intrepid souls running NixOS.
 
 We salute you!
 
-You'll want to take the udev.nix file that was just generated, which
-contains a service definition and a few udev rules, and append it to your
-configuration.nix.
+If you want to use USB devices with muFORTH, you'll want to take the
+udev.nix file that was just generated, which contains a service definition
+and a few udev rules, and append it to your configuration.nix.
 
-Then do the following as root:
-
-  # udevadm control --reload
-
-(or possibly some other command to tell udevd to reload its rules files;
-'man udev' for the whole story).
+After doing a 'nixos-rebuild switch' or 'nixos-rebuild test' the new rules
+should be available to udev.
 EOF
         else
             ../scripts/make-udev-rules.sh $USER > 99-muforth.rules

@@ -10,13 +10,14 @@
 #   15a2  - my Freescale HC08 JS16 board
 #   1cbe  - TI/Luminary Stellaris/Tiva ICDI boards
 #   c251  - Keil CMSIS-DAP - for Freescale Freedom (FRDM) boards
+#   0d28  - MBED/CMSIS-DAP - for anything supported by mbed
 
 cat <<EOT
-# udev rules to match USB devices of interest to muFORTH
+    # udev rules to match USB devices of interest to muFORTH
 EOT
 
-for vid in 0483 04d8 15a2 1cbe c251 ; do
+for vid in 0483 04d8 15a2 1cbe c251 0d28 ; do
     cat <<EOT
-SUBSYSTEMS=="usb", ATTRS{idVendor}=="$vid", OWNER:="$1"
+    SUBSYSTEMS=="usb", ATTRS{idVendor}=="$vid", OWNER:="$1"
 EOT
 done

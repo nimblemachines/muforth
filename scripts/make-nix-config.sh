@@ -8,9 +8,9 @@
 # USB devices with muFORTH.
 
 cat <<EOT
-services.udev.extraRules = ''
+  services.udev.extraRules = ''
 EOT
 ../scripts/make-udev-rules.sh $1
 cat <<EOT
-'';
+  '';
 EOT
