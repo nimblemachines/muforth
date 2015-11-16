@@ -174,7 +174,12 @@ void mu_usb_find_device()
     else
         matched = foreach_dirent(USB_ROOT2, is_bus_or_dev, enumerate_devices, &match);
 
-    if (matched == 0)
+    /*
+     * foreach_dirent returns either 0 (no match or error) or >0 (fd of
+     * matched, opened device); but just for completeness, and to more
+     * closely match the code in mu_hid_find_device, let's match <= 0 here.
+     */
+    if (matched <= 0)
     {
         /* No match found */
         DROP(1);
@@ -311,8 +316,10 @@ void mu_usb_write()
  * devices. All we need is to be able to send and receive raw reports - the
  * command and data buffers used by the debug firmware.
  *
- * We enumerate /dev/, matching for "hidrawX", and try each of these to see
- * if the vid & pid match.
+ * We could enumerate all of /dev/, matching for "hidrawX", and trying each
+ * of these to see if the vid & pid match, but we do something simpler: we
+ * directly try /dev/hidraw0 to hidraw9, trying to match the vid and pid
+ * with any that we can open.
  *
  * hid-read and hid-write are simply calls to read() and write().
  */
@@ -347,27 +354,28 @@ static int match_hid(char *dev, struct match *pmatch)
     return 0;
 }
 
-static int is_hidraw(struct dirent *pde)
-{
-    return ((memcmp(pde->d_name, "hidraw", 6) == 0) && isdigit(pde->d_name[6]))
-        ? -1 : 0;
-}
-
 /*
  * hid-find-device (vendor-id product-id -- dev -1 | 0)
  */
 void mu_hid_find_device()
 {
+    char hidraw[] = "/dev/hidrawX";
+    int dev;
     struct match match;
     int matched;
 
     match.idVendor = ST1;
     match.idProduct = TOP;
 
-    /* Enumerate /dev, looking for hidraw* */
-    matched = foreach_dirent("/dev", is_hidraw, match_hid, &match);
+    /* Try hidraw0 to hidraw9 */
+    for (dev = '0'; dev <= '9'; dev++)
+    {
+        hidraw[11] = dev;
+        matched = match_hid(hidraw, &match);
+        if (matched > 0) break;
+    }
 
-    if (matched == 0)
+    if (matched <= 0)
     {
         /* No match found */
         DROP(1);
