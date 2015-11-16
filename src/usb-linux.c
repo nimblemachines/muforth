@@ -359,19 +359,20 @@ static int match_hid(char *dev, struct match *pmatch)
  */
 void mu_hid_find_device()
 {
-    char hidraw[] = "/dev/hidrawX";
-    int dev;
     struct match match;
     int matched;
+    int devnum;
+    char dev_hidraw[] = "/dev/hidrawX";
+
 
     match.idVendor = ST1;
     match.idProduct = TOP;
 
     /* Try hidraw0 to hidraw9 */
-    for (dev = '0'; dev <= '9'; dev++)
+    for (devnum = '0'; devnum <= '9'; devnum++)
     {
-        hidraw[11] = dev;
-        matched = match_hid(hidraw, &match);
+        dev_hidraw[11] = devnum;
+        matched = match_hid(dev_hidraw, &match);
         if (matched > 0) break;
     }
 
