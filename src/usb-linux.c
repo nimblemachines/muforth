@@ -25,6 +25,10 @@
 #include <linux/hidraw.h>
 #include <linux/input.h>
 
+#ifdef DEBUG_USB_ENUMERATION
+#include <stdio.h>
+#endif
+
 /*
  * The two places USB devices can live. /dev/bus/usb is the "newer" place,
  * so if it exists and is readable we search it, otherwise we search
@@ -96,15 +100,20 @@ static int foreach_dirent(char *path, path_ok_fn try_path,
             subpath = path_prefix(pde->d_name, pathbuf + USB_PATH_MAX, '\0', pathbuf);
             subpath = path_prefix(path, subpath, '/', pathbuf);
             matched = fn(subpath, pmatch);
-            if (matched != 0)
+
+            /* 
+             * matched < 0 means error
+             *        == 0 means no match. We ignore both of these!
+             */
+            if (matched > 0)
             {
                closedir(pdir);
-               return matched;   /* error or match */
+               return matched;   /* open fd of matched device */
             }
         }
     }
     closedir(pdir);
-    return 0;   /* no match */
+    return 0;   /* no match (or error!) */
 }
 
 static int read_le16(__le16 *pw)
@@ -119,6 +128,9 @@ static int match_device(char *dev, struct match *pmatch)
     struct usb_device_descriptor dev_desc;
     int count;
 
+#ifdef DEBUG_USB_ENUMERATION
+    fprintf(stderr, "match_device: trying %s\n", dev);
+#endif
     fd = open(dev, O_RDONLY);
     if (fd == -1) return -1;
 
@@ -161,8 +173,6 @@ void mu_usb_find_device()
         matched = foreach_dirent(USB_ROOT1, is_bus_or_dev, enumerate_devices, &match);
     else
         matched = foreach_dirent(USB_ROOT2, is_bus_or_dev, enumerate_devices, &match);
-
-    if (matched < 0) return abort_strerror();
 
     if (matched == 0)
     {
@@ -313,6 +323,9 @@ static int match_hid(char *dev, struct match *pmatch)
     struct hidraw_devinfo hid;
     unsigned int vid, pid;
 
+#ifdef DEBUG_USB_ENUMERATION
+    fprintf(stderr, "match_hid: trying %s\n", dev);
+#endif
     fd = open(dev, O_RDONLY);
     if (fd == -1) return -1;
 
@@ -353,8 +366,6 @@ void mu_hid_find_device()
 
     /* Enumerate /dev, looking for hidraw* */
     matched = foreach_dirent("/dev", is_hidraw, match_hid, &match);
-
-    if (matched < 0) return abort_strerror();
 
     if (matched == 0)
     {
