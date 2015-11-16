@@ -43,8 +43,8 @@
 
 struct match
 {
-    int idVendor;
-    int idProduct;
+    unsigned int idVendor;
+    unsigned int idProduct;
 };
 
 typedef int (*usb_match_fn)(char *, struct match *);    /* filepath, match_data */
@@ -73,7 +73,8 @@ static int dir_exists(char *path)
 
 /*
  * Returns
- *   0 if directory exhausted or error
+ *  <0 if error
+ *   0 if directory exhausted
  *  >0 if match found
  */
 static int foreach_dirent(char *path, path_ok_fn try_path,
@@ -85,8 +86,8 @@ static int foreach_dirent(char *path, path_ok_fn try_path,
 
     pdir = opendir(path);
 
-    /* Return no match if directory couldn't be opened. */
-    if (pdir == NULL) return 0;
+    /* Return error if directory couldn't be opened. */
+    if (pdir == NULL) return -1;
 
     while ((pde = readdir(pdir)) != NULL)
     {
@@ -102,18 +103,21 @@ static int foreach_dirent(char *path, path_ok_fn try_path,
             matched = fn(subpath, pmatch);
 
             /* 
-             * matched < 0 means error
-             *        == 0 means no match. We ignore both of these!
+             * matched < 0 means matched but error opening read/write
+             *        == 0 means no match
+             *         > 0 means match and device opened read/write
+             *
+             * We want to keep looking if no match, but exit otherwise.
              */
-            if (matched > 0)
+            if (matched != 0)
             {
                closedir(pdir);
-               return matched;   /* open fd of matched device */
+               return matched;   /* open fd of matched device or error */
             }
         }
     }
     closedir(pdir);
-    return 0;   /* no match (or error!) */
+    return 0;   /* no match */
 }
 
 static int read_le16(__le16 *pw)
@@ -122,6 +126,12 @@ static int read_le16(__le16 *pw)
     return pb[0] + (pb[1] << 8);
 }
 
+/*
+ * match_device returns 0 if there was no match (or if it couldn't open a
+ * device); >0 if it successfully matched the device and was able to open
+ * it read/write; <0 if it matched a device but couldn't open it (the only
+ * true error condition we care about).
+ */
 static int match_device(char *dev, struct match *pmatch)
 {
     int fd;
@@ -132,16 +142,17 @@ static int match_device(char *dev, struct match *pmatch)
     fprintf(stderr, "match_device: trying %s\n", dev);
 #endif
     fd = open(dev, O_RDONLY);
-    if (fd == -1) return -1;
+    if (fd == -1) return 0;
 
     count = read(fd, &dev_desc, USB_DT_DEVICE_SIZE);
-    assert (count == USB_DT_DEVICE_SIZE, "couldn't read device descriptor");
+    if (count != USB_DT_DEVICE_SIZE) return 0;
+    /* was assert(count == USB_DT_DEVICE_SIZE, "couldn't read device descriptor"); */
 
     close(fd);
 
     if (read_le16(&dev_desc.idVendor) == pmatch->idVendor &&
         read_le16(&dev_desc.idProduct) == pmatch->idProduct)
-        return open(dev, O_RDWR);   /* Re-open read-write */
+        return open(dev, O_RDWR);   /* Re-open read-write; this could fail! */
 
     return 0;
 }
@@ -174,12 +185,9 @@ void mu_usb_find_device()
     else
         matched = foreach_dirent(USB_ROOT2, is_bus_or_dev, enumerate_devices, &match);
 
-    /*
-     * foreach_dirent returns either 0 (no match or error) or >0 (fd of
-     * matched, opened device); but just for completeness, and to more
-     * closely match the code in mu_hid_find_device, let's match <= 0 here.
-     */
-    if (matched <= 0)
+    if (matched < 0) return abort_strerror();
+
+    if (matched == 0)
     {
         /* No match found */
         DROP(1);
@@ -321,9 +329,16 @@ void mu_usb_write()
  * directly try /dev/hidraw0 to hidraw9, trying to match the vid and pid
  * with any that we can open.
  *
- * hid-read and hid-write are simply calls to read() and write().
+ * hid-read and hid-write are simply calls to read() and write() with the
+ * arguments permuted.
  */
 
+/*
+ * match_hid returns 0 if there was no match (or if it couldn't open a
+ * device); >0 if it successfully matched the device and was able to open
+ * it read/write; <0 if it matched a device but couldn't open it (the only
+ * true error condition we care about).
+ */
 static int match_hid(char *dev, struct match *pmatch)
 {
     int fd;
@@ -334,10 +349,10 @@ static int match_hid(char *dev, struct match *pmatch)
     fprintf(stderr, "match_hid: trying %s\n", dev);
 #endif
     fd = open(dev, O_RDONLY);
-    if (fd == -1) return -1;
+    if (fd == -1) return 0;
 
     if (ioctl(fd, HIDIOCGRAWINFO, &hid) == -1)
-        return -1;
+        return 0;
 
     close(fd);
 
@@ -349,7 +364,7 @@ static int match_hid(char *dev, struct match *pmatch)
      * endianness (little) to local host's? */ 
     if (hid.bustype == BUS_USB &&
         vid == pmatch->idVendor && pid == pmatch->idProduct)
-        return open(dev, O_RDWR);   /* Re-open read-write */
+        return open(dev, O_RDWR);   /* Re-open read-write; could fail! */
 
     return 0;
 }
@@ -364,7 +379,6 @@ void mu_hid_find_device()
     int devnum;
     char dev_hidraw[] = "/dev/hidrawX";
 
-
     match.idVendor = ST1;
     match.idProduct = TOP;
 
@@ -373,10 +387,12 @@ void mu_hid_find_device()
     {
         dev_hidraw[11] = devnum;
         matched = match_hid(dev_hidraw, &match);
-        if (matched > 0) break;
+        if (matched != 0) break;
     }
 
-    if (matched <= 0)
+    if (matched < 0) return abort_strerror();
+
+    if (matched == 0)
     {
         /* No match found */
         DROP(1);
