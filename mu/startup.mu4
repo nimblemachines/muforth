@@ -801,7 +801,7 @@ decimal
    ( match)  pop 1 -1 v+  -1 ^  then
    ( end of input)  drop 0 ;
 
-: ?sign  ( a1 u1 - a2 u2 neg) char - punct  if  -1 ^  then  0 ;
+: ?sign  ( a1 u1 - a2 u2 neg)  char - punct  if  -1 ^  then  0 ;
 
 ( I wanted to add Michael Pruemm's '0' as a hex specifier, but it's not as
   simple as adding it to this list. It will match a bare 0, which won't be
@@ -817,15 +817,15 @@ decimal
 ( . resets dpl; others leave it unchanged; this means that embedding . in a
   number causes a double number to be pushed, and dpl set to the count of
   digits _after_ the _last_ . in the number.)
-: ?dot  ( a1 u1 - a2 u2)
-   char . punct  if  dpl off ^  then
-   char , punct  if   ^  then
-   char - punct  if   ^  then
-   char / punct  if   ^  then
-   char : punct  if   ^  then
-   char _ punct  if   ^  then   drop complain ;
+: dot?  ( a1 u1 - a2 u2 matched)
+   char . punct  if  dpl off  -1 ^  then
+   char , punct  if   -1 ^  then
+   char - punct  if   -1 ^  then
+   char / punct  if   -1 ^  then
+   char : punct  if   -1 ^  then
+   char _ punct  if   -1 ^  then  0 ;
 
-( This is scary.  We need a bunch of literals for `digit>'.)
+( This is scary. We need a bunch of literals for `digit>'.)
 
 : digit>   ( ch - digit | junk)
    char 0 -  [ 2 2* 2* 1+ ]  ( 9)   over u< if  ( !decimal)
@@ -857,10 +857,8 @@ decimal
 : >number  ( u1 a1 c1 - u2 a2 c2)  ( a2 is first unconvertible char)
    =if  for  @digit?  while  *digit 1+ next  0 ^  then   drop  pop  then  ;
 
-( If >number can't convert any digits, complain.)
-: digits   ( u1 a1 c1 - u2 a2 c2 u3)
-   dup push ( chars left)  >number  pop over - ( count of digits converted)
-   0= if  drop complain  then ;
+: digits   ( u1 a1 c1 - u2 a2 c2 #converted)
+   dup push ( chars left)  >number  pop over - ( count of digits converted) ;
 
 ( XXX 2009-sep-01. The following doesn't make sense, and it's a lie as
   well, since 'number,' doesn't exist any more:
@@ -873,11 +871,17 @@ decimal
   would be set to 4. Then `0' pushes 0 on the stack but doesn't affect dpl,
   so Forth tries to convert it, and BOOM.)
 
-: number  ( a u - n)
+: ?bad-number  ( sign accum a u good - sign accum a u | a u 0)
+   if ^ then  2push 2drop 2pop  0  shunt ;
+
+: number?  ( a u - n -1 | a' u' 0)
    radix preserve ( always reset the radix, even in case of error)
    ?radix  ?sign -rot  dpl on  0 -rot  ( sign accum a u)
-   begin  digits  =while ( still chars to parse)  ?dot  repeat
-   2drop  swap  if negate then  ;
+   begin  digits  ?bad-number  =while ( still chars to parse)
+            dot?  ?bad-number  repeat
+   2drop   swap  if negate then  -1 ;
+
+: number   number? huh? ;
 
 
 ( Ok, folks, now that we have number parsing code we can redefine the
