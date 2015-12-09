@@ -2,7 +2,7 @@
 
   Copyright 2002-2015 David Frech. (Read the LICENSE for details.)
 
-( Since we have uuencode, we need decode as well. Esp since the Philips
+( Since we have uuencode, we need decode as well. Esp since the Philips/NXP
   LPC2000 parts can send back memory contents in uuencoded format.)
 
 
@@ -11,27 +11,25 @@
 loading UUdecode
 
 : uu1decode   bl -  63 and ;  ( maps both space and ` to 0)
-: uupeel   dup 8 >> ;
-: uu3peel   uupeel  uupeel ;
-
-( high to low:  c0:c1:c2)
-: c,   ram c!  1 r +! ;
-: c@+   (s a - a+1 c)  dup 1+ swap c@ ;
-: 6b@   ( a n - a+1 n')  6 <<  push  c@+ uu1decode  pop  +  ;
-: uu3decode,   uu3peel  c,  c,  c, ;
 
 ( Each letter represents 2 bits; so aaaa is a byte.)
-: uu3   ( a - a+4)  0  6b@  6b@  6b@  6b@   ( aaa:abb:bbc:ccc)  uu3decode, ;
-: uu2   ( a - a+3)  0  6b@  6b@  6b@  2 >>  ( aaa:abb:bb0)  uupeel c, c, ;
-: uu1   ( a - a+2)  0  6b@  6b@       6 >>  ( aaa:a00)      c,  ;
+: uupeel8  ( aaaa:bbbb:cccc - aaaa:bbbb:cccc aaaa:bbbb)  dup  8 u>> ;
 
-: uuleft   ( a 0|1|2 - a+)  jump  nope  uu1  uu2  [
-: uuline  ( a)
-   c@+ uu1decode ( count)
-   3 /mod ( m q)  swap push ( m)  ?for  uu3  next  then  pop  uuleft  drop ;
+: 6b@   ( a n - a+1 n')  6 <<  push  c@+ swap  uu1decode  pop  + ;
+
+( high to low:  c0:c1:c2)
+: uu3  ( a - a+4)  0  6b@  6b@  6b@  6b@  ( aaa:abb:bbc:ccc)     uupeel8 uupeel8  uu, uu, uu, ;
+: uu2  ( a - a+3)  0  6b@  6b@  6b@       ( aaa:abb:bb0)  2 u>>  uupeel8          uu, uu, ;
+: uu1  ( a - a+2)  0  6b@  6b@            ( aaa:a00)      4 u>>                   uu, ;
+
+: uuleft   ( a 0|1|2 - a+)  jump  nope  uu1  uu2 ;
+: uudline  ( a)
+   c@+ swap  uu1decode ( count)
+   3 /mod ( m q)  swap push ( m)  ?for  uu3  next  then  pop uuleft  drop ;
 
 
 
+.ifdef uutest
 
 ( test)
 chain .uu.
@@ -52,3 +50,5 @@ mode _uudec
 
 uudec muforth.uu
 uuenc muforth.uu.mu4
+
+.then

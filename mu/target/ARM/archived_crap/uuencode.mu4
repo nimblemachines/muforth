@@ -2,7 +2,8 @@
 
   Copyright 2002-2015 David Frech. (Read the LICENSE for details.)
 
-( uuencode.mu4 - uuencode the image for download to AEB-1.)
+( uuencode.mu4 - uuencode the image for download to ARM AEB-1, or NXP LPC via
+  serial bootloader.)
 
 ( 2002-mar-29. Converted to muForth.)
 
@@ -13,49 +14,58 @@
 
 loading UUencode
 
-( 1 line of chars: 45 input bytes -> 60 output, plus count and cr)
+( 1 line of chars: 45 input bytes -> 60 output bytes, plus count)
 64 buffer uubuf
-variable u
-: clean  uubuf u ! ;
-: uflush  uubuf  u @  over - type ;
-: u,  u @  c!  1 u +! ;
+variable uu
+: uuclean   uubuf  uu ! ;
+: uuflush   uubuf  uu @  over - type ;
+: uu,       255 and  dup uucheck +!  uu @  c!  1 uu +! ;
 
-: uu1encode   63 and  bl +  ;  ( XXX: encodes 0 as 32, not as 96 `)
--- : uu1encode   63 and  dup 0= if  64 +  then  bl +  ;
-: uupeel   dup 6 >>  ;
-: uu4peel   uupeel  uupeel  uupeel  ;
+.ifdef aeb1
+: uu1encode   63 and  bl + ;  ( XXX: encodes 0 as 32, not as 96 `)
+: uucr   #LF emit ;
+.else  ( NXP LPC?)
+: uu1encode   63 and  dup 0= if  64 +  then  bl +  ;  ( encodes 0 as ` )
+: uucr   #CR emit  #LF emit ;
+.then
 
-: uu1encode,   uu1encode  u,  ;
+: uu1encode,   uu1encode  uu, ;
 
-( high to low:  c0:c1:c2)
-: c@+   (s a - a+1 c)  dup 1+ swap c@ ;
-: 8b@   ( a n - a+1 n')  8 <<  push  c@+  pop  +  ;
-: uu4encode,
-   uu4peel   uu1encode,  uu1encode,  uu1encode,  uu1encode,  ;
 
 ( Each letter represents 2 bits; so aaaa is a byte; colons separate chars
   as they will be sent out, in groups of 6 bits.)
 
-: uu3   ( a - a+3)  0  8b@  8b@  8b@   ( aaa:abb:bbc:ccc)  uu4encode, ;
-: uu2   ( a - a+2)  0  8b@  8b@  8 <<  ( aaa:abb:bb0:000)  uu4encode, ;
-: uu1   ( a - a+1)  0  8b@      16 <<  ( aaa:a00:000:000)  uu4encode, ;
+: uupeel6   ( aaa:bbb:ccc:ddd - aaa:bbb:ccc:ddd aaa:bbb:ccc)  dup  6 u>> ;
 
-: cr,   ctrl J  u,  ;
+( Encode 3 bytes into 4 characters.)
+: uu3encode,
+   uupeel6  uupeel6  uupeel6
+   uu1encode,  uu1encode,  uu1encode,  uu1encode, ;
 
-: uuleft  ( a 0|1|2 - a+)  jump  nope  uu1  uu2  [
-: uuline  ( a n - a+n)
-   clean
-   cr,  dup uu1encode, ( count)
+: 8b@   ( a n - a+1 n')  8 <<  push  c@+ swap  pop  + ;
+
+( high to low:  c0:c1:c2)
+: uu3   ( a - a+3)  0  8b@  8b@  8b@   ( aaa:abb:bbc:ccc)  uu3encode, ;
+: uu2   ( a - a+2)  0  8b@  8b@  8 <<  ( aaa:abb:bb0:000)  uu3encode, ;
+: uu1   ( a - a+1)  0  8b@      16 <<  ( aaa:a00:000:000)  uu3encode, ;
+
+
+: uuleft  ( a 0|1|2 - a+)  jump  nope  uu1  uu2 ;
+: uueline  ( a n - a+n)
+   uuclean
+   dup uu1encode, ( count)
    3 /mod  ( r q)  swap push  ?for  uu3  next  then  pop uuleft
-   uflush ;
+   uuflush ;
 
-: uuimage  ( a len)
-   45 /mod  ( r q)  swap push  ?for  45 uuline  next   then
-                          pop   dup  if uuline drop ^  then  2drop ;
+: uueimage  ( a len)
+   45 /mod  ( r q)  swap push  ?for  45 uueline uucr  next   then
+                              pop  =if  uueline uucr  0      then  2drop ;
 
-: uu(  ." begin 600 image" ;
-: )uu  cr  0 uu1encode emit  cr  ." end"  cr  ;
-: uu  uu(  uuimage  )uu  ;
+.ifdef aeb1
+: uu(  uucr  ." begin 600 image"  uucr ;
+: )uu  0 uu1encode emit  uucr  ." end"  uucr ;
+: uue  uu(  uueimage  )uu ;
+.then
 
 
 ( Tests)
@@ -71,5 +81,3 @@ variable u
 >stdout  (  jiffies  swap-  .  ." jiffies "  0  bye)
 
 .then
-
-
