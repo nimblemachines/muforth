@@ -39,12 +39,19 @@ variable checksum
 : w>   recv recv  lohi>  dup sum ;
 
 
+: c.Idle                   0 >b         ;
+: c.GetVersion  ( - n)    10 >b      w> w>  ( lo hi)  10 << + ;
+: c.SetAddr     ( a)      11 >b  >w     ;
+: c.GetSP       ( - sp)   12 >b      w> ;
+: c.ReadWord    ( - w)    13 >b      w> ;
+: c.ReadWords   ( n)      14 >b  >b     ;  ( then read streamed bytes)
+: c.WriteWord   ( w)      15 >b  >w     ;
+: c.Run         ( )       16 >b         ;
+: c.FlashWord   ( w - w)  17 >b  >w  w> ;
+: c.GetCheck    ( )       18 >b      w> drop ;
+
+
 .ifdef paranoid
-
-( We need this _first_ so we can define the other words, in paranoid mode,
-  to check their sums.)
-
-: c.GetCheck    ( - )    18 >b      w> drop ;
 
 ( Reset host's and target's checksum accumulator.)
 : ?reset   c.GetCheck              sum! ;
@@ -57,17 +64,6 @@ variable checksum
 : ?ok ;
 
 .then
-
-
-: c.Idle                   0 >b         ;
-: c.GetVersion  ( - n)    10 >b      w> w>  ( lo hi)  10 << +  ?ok ;
-: c.SetAddr     ( a)      11 >b  >w      ?ok ;
-: c.GetSP       ( - sp)   12 >b      w>  ?ok ;
-: c.ReadWord    ( - w)    13 >b      w> ;
-: c.ReadWords   ( n)      14 >b  >b     ;  ( then read streamed bytes)
-: c.WriteWord   ( w)      15 >b  >w     ;
-: c.Run         ( )       16 >b          ?reset ;
-: c.FlashWord   ( w - w)  17 >b  >w  w> ;
 
 
 ( Send two no-ops, let them transmit, _then_ throw away any input bytes.)
@@ -90,7 +86,7 @@ variable checksum
    #115200 bps  resync
    ?reset
 .ifndef ignore-version
-   cr ." Chat firmware version "  c.GetVersion
+   cr ." Chat firmware version "  c.GetVersion  ?ok
    radix preserve  hex  sep preserve  -sep   u.
 .then ;
 
@@ -102,8 +98,11 @@ variable checksum
    c.setup-chunk  ?for  m* m* lohi>  c.WriteWord  next  then
    ?ok ;
 
-: c.GetRegs   ( buf - sp)   c.GetSP  dup push  .LAST  c.ReadChunk  pop ;
-: c.SetRegs   ( buf)        c.GetSP            .LAST  c.WriteChunk ;
+( We used to do ?reset in c.Run, but if we're resetting the chip we'll lose
+  the GetCheck command and time out. Doing it here makes more sense.)
+
+: c.GetRegs  ( buf - sp)  ?reset  c.GetSP  dup push  .LAST  c.ReadChunk  pop ;
+: c.SetRegs  ( buf)               c.GetSP            .LAST  c.WriteChunk ;
 
 : c.ErasePage ( a fcmd - status)
    c.copy-fcmd  c.SetAddr  0 c.FlashWord  c.clear-fcmd ;
