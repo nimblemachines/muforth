@@ -1,0 +1,120 @@
+Chat, Forth, and stack frames
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+I'm rethinking how to do debug/chat on the MSP430.
+
+In the current incarnation (as of commit cb69f5e7) the chat code - which knows
+nothing about Forth - nevertheless saves and restores a set of registers that
+I have deemed, ahead of time, to be "Forth-related". If this set changes in
+the future, the chat code would need to change with it. This seems wrong.
+
+There are four approaches to dealing with the registers:
+
+(1) save and restore everything
+(2) save and restore a particular subset
+(3) save and restore only the registers that the chat code itself uses
+(4) save and restore the bare minimum
+
+I've thus far been using the second approach, tying the chat code to a
+particular set of registers that are used by the Forth VM. To make this more
+palatable I re-use the Forth VM registers within the chat code - after saving
+them on the stack. But there is still an unnecessary connection between the
+chat code - which should probably be Forth-agnostic - and a particular Forth
+VM implementation - which could itself change in the future.
+
+I'd be tempted to use the first approach, as it is the most general and
+flexible, but it has a serious shortcoming: on RAM-limited devices saving a
+32-byte stack frame is a bit much, especially since we might be doing this
+(entering chat) from a Forth word whose execution is already nested several
+levels.
+
+The third approach is appealing because the stack frame is much smaller - chat
+currenly uses five registers - but after a bit of thinking I realized that I
+might not have to save *any* registers! Given that fact...
+
+It might be interesting to explore the last approach.
+
+The bare minimum is pretty small. We need the PC, the status register (SR),
+and a "context pointer", which points to a chunk of memory (a stack, actually)
+that contains the register values that we actually care about. Thus it falls
+to the code that is using chat to save its own context before entering chat.
+This is made less onerous by having the chat code use only registers that are
+deemed "caller saved" - ie, temporary or scratch registers. We will adopt the
+convention that the top five registers (at least) are caller saved. (Chat
+needs five registers to function.) The Forth VM registers will all be
+allocated from the bottom (callee-saved) end of the register set - and in any
+case, the Forth state that we care about will be pushed onto the stack before
+entering chat.
+
+This approach will also work for native (non-Forth) code, as long as it adopts
+the same register convention: the bottom registers are callee-saved, and the
+top ones are caller-saved.
+
+In both cases - native and Forth - a single context pointer is passed to and
+from chat. This makes our stack frame a tidy six bytes: PC, SR, context.
+
+This approach also suggests that the register printing code should be a
+deferred word. For native code it might print one set of registers, and for
+Forth code a different set - and they might be found in different places. The
+chat code will simply pass the context pointer, and the specific register
+printer routine will know how to pull out the registers (or other context) it
+cares about.
+
+What about the flash command (FCMD) slot?
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Currently there is space on the saved stack frame for the flash command. This
+makes it easy to communicate it between the host and the target, but has the
+disadvantage that for safety it must be explicitly cleared by the host after a
+flash command, or series of flash commands. This is a bit clunky.
+
+I've been tempted to change this, and the simplest - and safest - approach is
+to pass the flash command to the target *every time* and not to save it. This
+way a flash command cannot be inadvertently executed unless we somehow by
+mistake send the right series of five or so bytes down the wire...
+
+Sending the flash command every time will slow down the protocol slightly, but
+I don't think it will be noticeable.
+
+The two stack conundrum
+~~~~~~~~~~~~~~~~~~~~~~~
+There is a further complication in all this. Forth uses two stacks - one for
+data, and one for return addresses. Native code uses only one which mixes
+return addresses and data. Most architectures - and this is true for the
+MSP430 - have special support for a single stack. The trouble arises when
+Forth code wants to use this stack one way (eg, for data), while native code
+wants to use it in another (ie, mostly for return addresses, though really
+both data and addresses are on this stack).
+
+The issue here is that we want to use SP for the data stack, but during chat
+it is acting as a return stack (for CALL/RET). So we need to switch the stacks
+whenever we switch between Forth context and chat context. This is not a big
+deal, but it is something that needs to be considered.
+
+What about multitasking?
+~~~~~~~~~~~~~~~~~~~~~~~~
+Yes, things change even more.
+
+On a multitasking Forth system there are more than two stacks: each task has
+its own data and return stack. Generally a chat session will be communicating
+with a single task and its two stacks, however. But making this connection
+more flexible - eg thru a context pointer rather than a fixed-format stack
+frame - makes a lot of sense.
+
+In fact it was while thinking about multitasking and the way that task state
+is saved before a context switch that I lit on the idea of separating the chat
+frame from the Forth VM state.
+
+In some ways things become even simpler for the host. In addition to the
+data stack values, IP and RP are pushed onto the data stack by the host. A
+small Forth word - very similar to the "run" word in a multitasker - pops RP,
+IP, and TOP, and starts executing.
+
+The question of how much state needs to be saved for a context switch also
+suggests that perhaps having the current for/do count in a register is not a
+great optimization. Is saving two cycles per loop more valuable than
+streamlining the task context switch? I'm not sure, but I begin to lean in the
+direction of streamlining the task cycle.
+
+Of course, separating all these concerns from the *chat* code and putting them
+into Forth-specific code makes all the more sense. The chat code should be as
+generic as possible, and communicating everything via a single context pointer
+is a great way to achieve that.
