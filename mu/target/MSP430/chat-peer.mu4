@@ -2,7 +2,7 @@
 
   Copyright 2002-2015 David Frech. (Read the LICENSE for details.)
 
-loading MSP430 serial chat protocol (peer)
+loading MSP430 serial chat protocol v2 (peer)
 
 ( NOTE: This might seem a bit odd, but this file implements the side of the
   chat protocol normally implemented by firmware in a target chip! The
@@ -15,22 +15,20 @@ hex
 
   Responds to the following commands. NOTE: these are hex values!
 
-00 - 0f  Idle   - these command bytes are ignored
+00 - 1f  Idle   - these command bytes are ignored
 
-10  GetVersion  - get the chat protocol version
-11  SetAddr     - set the memory address pointer
-12  GetSP       - get stack pointer - points to saved regs
-13  ReadWord    - read a word from memory, incr pointer
-14  ReadWords   - read N words, incrementing as we go
-15  WriteWord   - write a word to memory, incr pointer
-16  Run         - set the pc in the saved frame, pop the registers and
-                - saved status, and go
-17  FlashWord   - write word to flash, incr pointer
-                - execute command saved on chat frame
-                - target returns flash status
-18  GetCheck    - get current checksum
+20  GetVersion  - get the chat protocol version
+21  SetAddr     - set the memory address pointer
+22  GetSP       - get stack pointer - points to saved regs
+23  ReadWord    - read a word from memory, incr pointer
+24  ReadWords   - read N words, incrementing as we go
+25  WriteWord   - write a word to memory, incr pointer
+26  Run         - pop the registers and saved status, and go
+27  FlashWord   - write a word to flash, passing command each time
+                - can be used to initiate an erase, or to write a word
+28  GetCheck    - return accumulated checksum to host
 
-19 - ff  Idle   - these command bytes are ignored
+29 - ff  Idle   - these command bytes are ignored
 )
 
 variable pty-master
@@ -43,7 +41,6 @@ variable spy  spy on
 : recv   pty-recv  spy @ if ." <"  dup .h8_ then ;
 
 variable checksum
-: sum!  0ffff checksum ! ;
 : sum  ( w)  checksum @  xor  checksum ! ;
 
 : >b   send ;
@@ -57,12 +54,10 @@ variable peer-sp
 
 : peer-push-frame
    @ram #ram +  peer-sp !
-   ff4c p.push  ( outer PC)
-   fefe p.push  ( frame PC)
+   fed4 p.push  ( outer PC)
+   ff30 p.push  ( frame PC)
    0 p.push ( SR)
-   4008 p.push ( Y)  e665 p.push ( X)  cafe p.push ( TOP)
-   0200 p.push ( Count)  0308 p.push ( RP)  e844 p.push ( W)  c29e p.push ( IP)
-   0 p.push ( FCMD) ;
+   0308 p.push ( CP) ;
 
 ( Compile the first 32 bits of the current muforth Git commit.
   When asked for the version, return these two 16-bit words, in
@@ -79,7 +74,7 @@ variable peer-sp
 : p.ReadWords    b>  dup sum  ?for  p.ReadWord  next  then ;
 
 : p.Run
-   "c0de checksum !   ( emulate code that clobbers Y when run)
+   "c0de checksum !   ( emulate code that clobbers checksum when run)
    peer-push-frame ;
 
 : peer-erase-page
@@ -88,16 +83,15 @@ variable peer-sp
 
 ( Only do the flash operation if FCMD is valid.)
 : p.FlashWord
-   p.pop  dup p.push  ( get FCMD from stack)
-   dup  [ \eq FWRT    \eq FKEY  + ] = if  drop  p.WriteWord  9658 >w  ^  then
-   w> drop
-        [ \eq FERASE  \eq FKEY  + ] = if  peer-erase-page  9658 >w  ^  then
+   w> ( value)  w> ( FCMD)
+   dup  [ \eq FWRT    \eq FKEY  + ] = if  drop  >hilo m& m&  9658 >w  ^  then
+        [ \eq FERASE  \eq FKEY  + ] = if    peer-erase-page  9658 >w  ^  then
    f00d >w  ( bad flash command) ;
 
-: p.GetCheck     checksum @ >w  sum! ;
+: p.GetCheck     checksum @ >w ;  ( zeroes checksum!!)
 
 : peer-command
-   b>  dup sum  10 - dup 9 u< if  jump
+   b>  dup sum  20 - dup 9 u< if  jump
       p.GetVersion  p.SetAddr  p.GetSP
       p.ReadWord  p.ReadWords  p.WriteWord
       p.Run  p.FlashWord  p.GetCheck
@@ -107,8 +101,16 @@ variable peer-sp
    open-pty  cr  ." Connect to "  zcount type  ."  to chat with this peer."
    pty-master !  begin  peer-command  again ;
 
+( FUCK!! Is it a new Linux kernel? The re-peering process seems now to open
+  another, different, pty each time! Really annoying.
+
+  Ah! A race condition. Lovely. Let's wait 100ms before re-opening the pty
+  master. That seems to work. Fucking Linux!!)
+
 : peer
-   peer-push-frame  begin  catch re-peer  pty-master @ close-file  again ;
+   peer-push-frame
+   begin  catch re-peer  pty-master @ close-file
+                                         0 #100,000,000 nanosleep  again ;
 
 ( Let's run it!)
 peer
