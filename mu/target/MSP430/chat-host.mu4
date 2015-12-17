@@ -2,7 +2,11 @@
 
   Copyright 2002-2015 David Frech. (Read the LICENSE for details.)
 
-loading MSP430 serial chat protocol (host)
+.ifndef chat-v1
+loading MSP430 serial chat protocol v2 (host)
+.else
+loading MSP430 serial chat protocol v1 (host)
+.then
 
 hex
 
@@ -10,26 +14,28 @@ hex
 
   Responds to the following commands. NOTE: these are hex values!
 
-00 - 0f  Idle   - these command bytes are ignored
+  These are the v2 values. The v1 commands were 10 - 18 hex.
 
-10  GetVersion  - get the chat protocol version
-11  SetAddr     - set the memory address pointer
-12  GetSP       - get stack pointer - points to saved regs
-13  ReadWord    - read a word from memory, incr pointer
-14  ReadWords   - read N words, incrementing as we go
-15  WriteWord   - write a word to memory, incr pointer
-16  Run         - set the pc in the saved frame, pop the registers and
+00 - 1f  Idle   - these command bytes are ignored
+
+20  GetVersion  - get the chat protocol version
+21  SetAddr     - set the memory address pointer
+22  GetSP       - get stack pointer - points to saved regs
+23  ReadWord    - read a word from memory, incr pointer
+24  ReadWords   - read N words, incrementing as we go
+25  WriteWord   - write a word to memory, incr pointer
+26  Run         - set the pc in the saved frame, pop the registers and
                 - saved status, and go
-17  FlashWord   - write word to flash, incr pointer
+27  FlashWord   - write word to flash, incr pointer
                 - execute command saved on chat frame
                 - target returns flash status
-18  GetCheck    - get target's checksum value
+28  GetCheck    - get target's checksum value
 
-19 - ff  Idle   - these command bytes are ignored
+29 - ff  Idle   - these command bytes are ignored
 )
 
 variable checksum
-: sum!  0 checksum ! ;
+: sum!       checksum off ;
 : sum  ( w)  checksum @  xor  checksum ! ;
 
 : >b         dup sum  send ;
@@ -39,6 +45,21 @@ variable checksum
 : w>   recv recv  lohi>  dup sum ;
 
 
+.ifndef chat-v1
+
+: c.Idle                       0 >b         ;
+: c.GetVersion  ( - n)        20 >b          w> w>  ( lo hi)  10 << + ;
+: c.SetAddr     ( a)          21 >b  >w     ;
+: c.GetSP       ( - sp)       22 >b          w> ;
+: c.ReadWord    ( - w)        23 >b          w> ;
+: c.ReadWords   ( n)          24 >b  >b     ;  ( then read streamed bytes)
+: c.WriteWord   ( w)          25 >b  >w     ;
+: c.Run         ( )           26 >b         ;
+: c.FlashWord   ( cmd w - w)  27 >b  >w  >w  w> ;
+: c.GetCheck    ( )           28 >b          w> drop ;
+
+.else  ( chat-v1)
+
 : c.Idle                   0 >b         ;
 : c.GetVersion  ( - n)    10 >b      w> w>  ( lo hi)  10 << + ;
 : c.SetAddr     ( a)      11 >b  >w     ;
@@ -47,8 +68,10 @@ variable checksum
 : c.ReadWords   ( n)      14 >b  >b     ;  ( then read streamed bytes)
 : c.WriteWord   ( w)      15 >b  >w     ;
 : c.Run         ( )       16 >b         ;
-: c.FlashWord   ( w - w)  17 >b  >w  w> ;
+: c.FlashWord   ( cmd w - w)                     2drop  "9658 ;  ( dummy)
 : c.GetCheck    ( )       18 >b      w> drop ;
+
+.then
 
 
 .ifdef paranoid
@@ -71,15 +94,6 @@ variable checksum
 
 : c.setup-chunk  ( buf a u - #words)
    swap c.SetAddr  swap m !  1+ 2/ ( words) ;
-
-( Copy flash command to target stack)
-( NOTE: already has FKEY set!)
-: c.copy-fcmd  ( fcmd)
-   c.GetSP .FCMD + c.SetAddr  c.WriteWord ;
-
-( For a tiny bit of protection against accidental flashing, let's zero the
-  FCMD after a page erase or chunk of flashword commands.)
-: c.clear-fcmd   0 c.copy-fcmd ;
 
 ( Hook into interact code.)
 : c.Hello
@@ -105,13 +119,13 @@ variable checksum
 : c.SetRegs  ( buf)               c.GetSP            .LAST  c.WriteChunk ;
 
 : c.ErasePage ( a fcmd - status)
-   c.copy-fcmd  c.SetAddr  0 c.FlashWord  c.clear-fcmd ;
+   swap c.SetAddr  0 c.FlashWord ;
 
 ( Or together the statuses from each FlashWord command and return it.)
 : c.FlashChunk   ( buf a u fcmd - status)
-   c.copy-fcmd
-   c.setup-chunk  0 swap  ?for  m* m* lohi>  c.FlashWord  or  next  then
-   c.clear-fcmd
+   push ( fcmd)
+   c.setup-chunk  pop 0 rot  ( fcmd 0 #words)
+   ?for  over ( fcmd)  m* m* lohi>  c.FlashWord  or  next  then  nip
    ?ok ;
 
 

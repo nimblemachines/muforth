@@ -195,31 +195,53 @@ meta: incr   constant  ;code  2 w +) top add  next  ;c
 ram
 
 ( For debugging and interactive execution.)
-( Host should have set PC -> start-forth or continue-forth
+( Host should have set PC -> continue-forth
                        SP -> top of R stack
-                        W -> top of D stack
-                      TOP -> word to execute)
+                       CP -> top of D stack)
+
+( The host can push things onto host stack; they get copied to target
+  stack, registers popped, words execute, re-push, copy back to host...
+  Much easier than stuffing things into register slots on stack frame!)
+
+( The chat firmware pushes, at the very top of RAM, the chat entry point
+  address.)
 
 code bug
    top push  ( so all of D stack is in memory)
-   sp w mov  rp sp mov  ( D stack -> W, R stack -> SP)
-implements bug-to-chat
-   1000 # br  ;c  ( jump to chat-entry; address patched by hi)
-
-( patched by start-forth)
-label trampoline  ]  ( make a fake colon word: no docolon, just a body)
-   nope  ( patched by start-forth)
-   begin  bug  [  implements ip-after-bug  ]  again  [
-
-implements start-forth
-   trampoline # ip mov  top ip ) mov
-   ( fall thru)  ;c
+   ip push  count push  ( capture Forth VM context)
+   sp cp mov  rp sp mov  ( D stack -> CP, R stack -> SP)
+   @ram #ram + \m cell- & call  ( fall thru)  ;c
 
 implements continue-forth
-   sp rp mov  w sp mov  ( R stack -> RP, D stack -> SP)
-   top pop  ( host pushed depth+1 things onto D stack)
+   sp rp mov  cp sp mov  ( R stack -> RP, D stack -> SP)
+   ip pop  ( restore Forth VM context)
+   top pop  ( host pushed depth+1 data items onto D stack)
    next  ;c
 
+implements trampoline  ( x0 .. xn cfa - y0 .. ym)
+   ( make a fake colon word: no docolon, just a body)
+   ]  execute  begin  bug  again  [
+
+__host
+
+( XXX show some indication of whether a word is still executing;
+  IP != trampoline + 4)
+
+: .ip
+   .IP reg@  dup .h16
+   [ \m trampoline @ 4 + ] = if  ( done)  2sp ^  then  ." * " ;
+
+-: ( forth version of .regs)
+   radix preserve
+
+   cr  ." V----INZC    IP   Cnt    CP    SP    PC"
+       (  000100011  0000  0000  0000  0000  0000)
+   cr           .sr   .ip
+                      .COUNT .r
+                               .CP .r
+                       chat-sp @ .h16 2sp  .PC .r ;  is .regs
+
+__meta
 
 comment ~~examples~~
 variable inc

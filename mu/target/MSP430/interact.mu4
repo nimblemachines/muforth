@@ -55,6 +55,21 @@ variable ram-copied  ( pointer to first un-copied byte)
 
 : reg  ( index)  \m cells  constant ;
 
+.ifndef chat-v1
+
+( These are passed to and from chat, via get-regs and set-regs:)
+00 reg .CP     -- context pointer
+01 reg .SR     -- status register
+02 reg .PC
+03 reg .LAST
+
+( These are passed to and from target via D stack:)
+03 reg .IP
+04 reg .COUNT
+05 reg .SIZE
+
+.else  ( chat-v1)
+
 00 reg .FCMD     -- flash command
 01 reg .IP
 02 reg .W
@@ -66,8 +81,11 @@ variable ram-copied  ( pointer to first un-copied byte)
 08 reg .SR       -- status register
 09 reg .PC
 10 reg .LAST
+10 reg .SIZE
 
-.LAST buffer chat-frame  ( local copy of target's stack frame)
+.then
+
+.SIZE buffer chat-frame  ( local copy of target's stack frame)
     variable chat-sp     ( current value of target's SP)
 
 : get-regs   chat-frame t.GetRegs  chat-sp ! ;
@@ -83,7 +101,22 @@ variable ram-copied  ( pointer to first un-copied byte)
 : .r   ( offset)  reg@  .h16  2sp ;
 : .sr       .SR   reg@  .b9   2sp ;
 
-: .regs
+defer .regs
+
+.ifndef chat-v1
+
+-: ( chat v2 version of .regs)
+   radix preserve
+
+   cr  ." V----INZC    CP    SP    PC"
+       (  000100011  0000  0000  0000 )
+   cr           .sr
+                   .CP .r
+          chat-sp @ .h16 2sp  .PC .r ;  is .regs
+
+.else  ( chat-v1)
+
+-: ( chat v1 version of .regs)
    radix preserve
 
    cr  ." V----INZC    IP     W    RP   Cnt   Top     X     Y    SP    PC"
@@ -96,22 +129,12 @@ variable ram-copied  ( pointer to first un-copied byte)
                                           .TOP .r
                                                   .X .r
                                                         .Y .r
-                                               chat-sp @ .h16 2sp  .PC .r ;
+                                               chat-sp @ .h16 2sp  .PC .r ;  is .regs
 
-( Entry into chat pushes a return address that, if returned - or jumped -
-  to, will get us back into chat. If bug-to-chat is defined, patch it with
-  the chat return address.)
 
-meta
-variable bug-to-chat
-variable ip-after-bug   ( in trampoline code)
-forth
+.then
 
-: set-bug-pc   \m bug-to-chat @   =if  .PC reg@  swap 2 +  image-!  ^  then  drop ;
-: set-bug-ip   \m ip-after-bug @  =if  .IP reg!                     ^  then  drop ;
-
-: hi  chatting on  >chat  t.Hello  get-regs
-      set-bug-pc  set-bug-ip  .regs
+: hi  chatting on  >chat  t.Hello  get-regs  .regs
       ram-copied off  copy-ram
       now __chatting is __meta  __meta ;
 
@@ -121,7 +144,7 @@ forth
 ( NOTE: All the following d.Foobar commands are the dummy _implementations_
   of the chat command interface.)
 
-.LAST buffer dummy-frame
+.SIZE buffer dummy-frame
 
 : d.Hello  ." Connecting to dummy chat target."
    ( Init each reg in dummy-frame to its index, then set PC to RAM)
@@ -178,6 +201,8 @@ forth
 : reset    go  0 #100,000,000 nanosleep ( 100ms)  get-regs .regs ;
 
 
+.ifndef chat-v1
+
 ( Because the target "caches" the top of the stack in a register, and
   because the trampoline code loads this register before execution, and
   pushes it afterward, we can deal only with the "memory image" of the target
@@ -193,8 +218,8 @@ forth
 
 meta
 : sp0   [ @ram #ram +  #48 - ] ;
-: sp!   .W reg! ;  ( the trampoline code loads SP from W)
-: sp@   .W reg@ ;  ( the trampoline code stores SP into W)
+: sp!   .CP reg! ;  ( the trampoline code loads SP from CP)
+: sp@   .CP reg@ ;  ( the trampoline code stores SP into CP)
 : depth   \m sp0  \m sp@ -  \m cell/  1- ;
 forth
 
@@ -203,6 +228,9 @@ forth
    \m sp0  over 1+  \m cells -  dup \m sp! ( top of D stack)  swap
    ?for  tuck t!  \m cell+  next  then  ( copy each cell as a word to D stack)
    "cafe swap t! ( sentinel) ;
+
+( XXX add a way to automagically sign-extend or zero-extend values coming
+  from the target stack?)
 
 : stack<  ( "pop" stack from target)
    \m depth 0 max 8 min  =if
@@ -213,40 +241,34 @@ forth
       0
    then  drop ;
 
-
-( Host should set PC -> start-forth or continue-forth
+( Host should set PC -> continue-forth
                   SP -> top of R stack
-                   W -> top of D stack
-                 TOP -> word to execute)
-
-: continue  ( target-pc)
-   ( pc)     .PC reg!
-   copy-ram  stack>  _runwait  stack< ;  ( get but don't print regs)
+                  CP -> top of D stack)
 
 : ?chat
    chatting @ 0= if  error" not connected to target"  then ;
 
+( NOTE: For initial execution of a Forth word, xn is cfa!)
+: continue  ( x0 .. xn ip - y0 .. yn ip w count)
+   ?chat
+   copy-ram  stack>  _runwait  stack<
+   .COUNT reg!  .IP reg!  .regs ;
+
 ( These are implement'ed by the kernel code.)
 meta
-variable start-forth
 variable continue-forth
+variable trampoline
 
 : cont    ( )     ( continue forth execution)
-   ?chat          p@ continue-forth  continue  .regs ;
+   .IP reg@  continue ;
 forth
 
 -: ( cfa)  ( execute target forth word)
-   ?chat  
-   .IP reg@ push
-          .TOP reg!  p@ start-forth  continue
-   .IP reg@  \m ip-after-bug @ = if  ( done; restore IP)  r@ .IP reg!  then
-   rdrop  .regs ;  is remote
+   p@ continue-forth .PC reg!
+   p@ trampoline  continue ;  is remote
 
 
-( XXX for testing only - deprecated and going away!)
-: rx  ( x y pc - x' y')  ( execute target non-forth word)
-   ?chat
-   copy-ram  .PC reg!  .Y reg!  .X reg!  runwait  .X reg@  .Y reg@ ;
+.then
 
 
 ( Set |@ and |c@ to _some_ form of target fetch. Prefer to get bytes from

@@ -2,39 +2,50 @@
 
   Copyright 2002-2015 David Frech. (Read the LICENSE for details.)
 
-loading MSP430 serial chat protocol (core)
-
-hex
-
-__meta
+loading MSP430 serial chat protocol v2 (core)
 
 ( Taking inspiration from the wildly successful HC08 serial chat protocol.
 
   Responds to the following commands. NOTE: these are hex values!
 
-00 - 0f  Idle   - these command bytes are ignored
+00 - 1f  Idle   - these command bytes are ignored
 
-10  GetVersion  - get the chat protocol version
-11  SetAddr     - set the memory address pointer
-12  GetSP       - get stack pointer - points to saved regs
-13  ReadWord    - read a word from memory, incr pointer
-14  ReadWords   - read N words, incrementing as we go
-15  WriteWord   - write a word to memory, incr pointer
-16  Run         - pop the registers and saved status, and go
-17  FlashWord   - write a word to flash, using command byte saved on stack
+20  GetVersion  - get the chat protocol version
+21  SetAddr     - set the memory address pointer
+22  GetSP       - get stack pointer - points to saved regs
+23  ReadWord    - read a word from memory, incr pointer
+24  ReadWords   - read N words, incrementing as we go
+25  WriteWord   - write a word to memory, incr pointer
+26  Run         - pop the registers and saved status, and go
+27  FlashWord   - write a word to flash, passing command each time
                 - can be used to initiate an erase, or to write a word
-18  GetCheck    - return accumulated checksum to host
+28  GetCheck    - return accumulated checksum to host
 
-19 - ff  Idle   - these command bytes are ignored
+29 - ff  Idle   - these command bytes are ignored
 )
 
+decimal
 
-( Register conventions:
-  Use  ip as memory pointer
-    count as byte count
-      top to pass a parameter around
-        x as scratch
-        y as checksum)
+assembler
+( The chat code saves and restores - but does not otherwise touch - the
+  context pointer, cp. It is used to pass execution context between the
+  host and target. By default we assume it is the first "callee-saved"
+  register, r4.)
+
+ 04 constant cp     ( context pointer)
+
+( These are all considered "caller saved" registers. They are scratch.
+  Called code can freely clobber them.)
+
+ 12 constant top    ( current accumulator)
+ 13 constant mp     ( memory pointer)
+ 14 constant count  ( word count)
+ 15 constant check  ( checksum accumulator)
+forth
+
+hex
+
+__meta
 
 label get-byte
    begin  01 # IFG2 & bitb  0!= until
@@ -45,15 +56,15 @@ label put-byte
    top UCA0TXBUF & movb  ret  ;c
 
 label get-word
-   get-byte c  top x mov
-   get-byte c  top swpb  x top bis
-   top y xor  ( xor into checksum)  ret  ;c
+   get-byte c  top push  ( save low byte)
+   get-byte c  top swpb  sp )+ top bis  ( combine high and low)
+   top check xor  ( xor into checksum)  ret  ;c
 
 label get-check
-   y top mov  ( fall thru)  ;c     -- zeroes checksum!
+   check top mov  ( fall thru)  ;c     -- zeroes checksum!
 
 label put-word
-   top y xor  ( xor into checksum)
+   top check xor  ( xor into checksum)
    put-byte c  top swpb  put-byte j  ;c
 
 ( Compile the first 32 bits of the current muforth Git commit.
@@ -68,37 +79,36 @@ label get-version
    ( commit-hi) # top mov  put-word j  ;c
 
 label set-addr
-   get-word c  top ip mov  ret  ;c
+   get-word c  top mp mov  ret  ;c
 
 label get-sp
    sp top mov  2 # top add  put-word j  ;c
 
 label read-word
-   ip )+ top mov  put-word j  ;c
+   mp )+ top mov  put-word j  ;c
 
 label read-words
    get-byte c  top tst  0!= if
-      top y xor  ( xor into checksum)  top count mov
+      top check xor  ( xor into checksum)  top count mov
       begin  read-word c  1 # count sub  0= until
    then  ret  ;c
 
 label write-word
-   get-word c  top ip ) mov  2 # ip add  ret  ;c
+   get-word c  top mp ) mov  2 # mp add  ret  ;c
 
 label run
-   4 # sp add  ( skip return address to chat-entry & flash command)
-      ip pop  w pop  rp pop  count pop
-     top pop  x pop   y pop
-   reti  ;c
+   2 # sp add  ( skip return address to chat-entry)
+   cp pop  ( context pointer)  reti  ;c
 
 ( Write a word into flash, using the flash command stored on the stack. It
   can be used to erase or program the flash.)
 
 label flash-word
-   get-word c                    -- get value to write
+   get-word c  top push          -- get value to write
+   get-word c                    -- get flash command + key
    FKEY         # FCTL3 & mov    -- clear FLOCK
-   2 sp +) FCTL1 & mov           -- write flash command - must have FKEY!
-   top ip ) mov  2 # ip add      -- write word and incr pointer
+   top FCTL1 & mov               -- write flash command - must have FKEY!
+   mp ) pop  2 # mp add          -- write word and incr pointer
 .ifdef in-ram
    begin  FBUSY # FCTL3 & bit  0= until
 .then
@@ -109,21 +119,21 @@ label flash-word
 
 ( Dispatch.)
 label command-table
-   ( 10) get-version ,
-   ( 11) set-addr ,
-   ( 12) get-sp ,
-   ( 13) read-word ,
-   ( 14) read-words ,
-   ( 15) write-word ,
-   ( 16) run ,
-   ( 17) flash-word ,
-   ( 18) get-check ,
+   ( 20) get-version ,
+   ( 21) set-addr ,
+   ( 22) get-sp ,
+   ( 23) read-word ,
+   ( 24) read-words ,
+   ( 25) write-word ,
+   ( 26) run ,
+   ( 27) flash-word ,
+   ( 28) get-check ,
 
 label process
    get-byte c  ( cmd)
-   top y xor   ( xor into checksum)
+   top check xor   ( xor into checksum)
 
-   10 # top sub   ( 00 to 0f become large unsigned numbers)
+   20 # top sub   ( 00 to 1f become large unsigned numbers)
    process command-table - 2/ # top cmp  u< if
       top top add  command-table top +) pc mov  ( jump!)
    then
@@ -134,14 +144,8 @@ label process
 ( Push registers and start conversing with host.)
 label chat-entry
    ( call has already pushed PC)
-      sr push  sr clr  ( disable interrupts!)
-       y push   x push  top push
-   count push  rp push    w push  ip push
-     0 # push  ( room for flash command)
+   sr push  sr clr  ( disable interrupts!)  cp push
    begin  process c  again  ;c
-
-label interact
-   begin  chat-entry c  again  ;c
 
 Vreset handler
    -- set SP to end of RAM
@@ -178,7 +182,9 @@ Vreset handler
 
 .then  ( not in-ram)
 
-   begin  interact c  again  ;c
+   chat-entry # push  ( so it's always available at the top of the stack)
+   begin  chat-entry c  again  ( so we can be lazy and "ret" back into chat)
+   ;c
 
 
 ( Set BSL flag to _not_ mass erase if wrong password entered during BSL
