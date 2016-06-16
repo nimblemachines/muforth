@@ -97,6 +97,11 @@ void mu_usb_find_device()
     /* Enumerate USB device tree, looking for a match */
     matched = enumerate_devices(ST1, TOP);
 
+    /*
+     * enumerate_devices only returns failure (-1) if it found a match but
+     * couldn't open the device for read & write. Tell the user about the
+     * error.
+     */
     if (matched < 0) return abort_strerror();
 
     if (matched == 0)
