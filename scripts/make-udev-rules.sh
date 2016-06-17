@@ -2,7 +2,7 @@
 
 # This file is part of muFORTH: http://muforth.nimblemachines.com/
 #
-# Copyright (c) 2002-2015 David Frech. (Read the LICENSE for details.)
+# Copyright (c) 2002-2016 David Frech. (Read the LICENSE for details.)
 
 # Create a udev rules file that matches all the USB devices we care about:
 #   0483  - ST-LINK/V2 - for STMicro ARM boards

@@ -2,7 +2,7 @@
 
 # This file is part of muFORTH: http://muforth.nimblemachines.com/
 #
-# Copyright (c) 2002-2015 David Frech. (Read the LICENSE for details.)
+# Copyright (c) 2002-2016 David Frech. (Read the LICENSE for details.)
 
 # Make a configuration snippet for NixOS users with udev rules for using
 # USB devices with muFORTH.
