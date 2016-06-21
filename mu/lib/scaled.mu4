@@ -14,6 +14,112 @@
 
 loading Scaled integer (aka fixed point) number conversion
 
+comment %%
+
+  Usage notes, warnings, snafus to avoid, etc.
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  The way that input of scaled integer - or fixed point - numbers is done
+  in Forth is a perfect example of the evils of global variables. The way it
+  works is as follows: If a token is not found in the dictionary, an attempt
+  is made to convert it into a number. If, during conversion, a dot ( . )
+  character is found, the variable `dpl' - presumably standing for decimal
+  point location - is set to zero, and incremented by the following digits
+  that are converted. Thus, at the end of conversion, dpl holds the number of
+  digits found to the _right_ of the last dot.
+
+  This can be used to convert to a scaled integer value by multiplying the
+  mantissa as an integer by the scaled one value, and dividing by 10^dpl.
+
+  An example will help to make this clearer. If you enter
+
+    1.8903
+
+  the integer 18,903 is pushed onto the stack, and dpl is set to 4. Assuming
+  that we are using 28 bits of fraction - the default in this code -
+  conversion to a scaled integer value is done as follows:
+
+    18,903   1 28 <<   10,000  */
+
+  which yields
+
+    507,423,542 (1e3e_ab36 in hex).
+
+  This seemingly random number should be compared to the scaled one value,
+  268,435,456 (1000_000 in hex). By dividing the first number by the second
+  on a reasonable calculator, you'll see that the answer is 1.8903.
+
+  To convert a scaled integer value back to a mantissa that can be printed
+  as a humanly-readable number, we swap the multiplier and divisor, with a
+  caveat: in order to print, we have to _specify_ a signficance to use. In
+  our example, we can try printing six significant digits. Here is how it
+  works:
+
+    507,423,542  1,000,000  1 28 <<  */
+
+  yields
+
+    1,890,299
+
+  which we will print as
+
+    1.890299
+
+  However!! You'll see that we failed, slightly. It turns out that there is
+  a better way. What we just described could be termed "truncating conversion".
+  Let's try doing "rounding conversion" instead. It looks like this (we are
+  basically adding _half_ of the divisor to the dividend before doing the
+  division):
+
+    18,903  1 28 <<  *  10,000 2/ + ( round)  10,000 /
+
+  This yields
+
+    507,423,542
+
+  the same value we got before. Ok, but let's see what happens on _output_.
+
+    507,423,542  1,000,000  *  1 28 << 2/ +  1 28 <<  /
+
+  which yields
+
+    1,890,300
+
+  Ah! Much better. In general, using the rounding operators will give
+  better results. They are the default, but if you want to try the truncating
+  ones just say `trunc'. `round' resets to rounding behaviour.
+
+  You'll probably want to use `>sc' and `sc.' to convert textual numbers to
+  and from (resp.) scaled integer numbers.
+
+  So what about the trouble with dpl? The issue is that constants don't set
+  dpl while numbers do. As above, demonstration is somewhat easier than
+  explanation. Let's assume that >sc doesn't reset dpl. We enter
+
+    3.14159 >sc   2 >sc
+
+  The second usage is perfectly legal: we should be able to convert
+  integers to scaled integers, and back again. But `2' is a constant word in
+  muFORTH, so it simply pushes its value and doesn't affect dpl (which is
+  reset to -1 at the start of number conversion). What happens? >sc will use
+  a divisor of 100,000, like it did for pi, and this will cause our constant
+  to divide away to something very small.
+
+    6 sc.  6 sc.
+
+  prints
+
+    0.000020 3.141590
+
+  If we instead ensure that startup.mu4 resets dpl, and that >sc resets it
+  as well, and we ensure that we always convert (using >sc) immediately after
+  entering numbers, we can manage the problem, but it must be admitted that
+  it's a bit ugly.
+
+  So, tread carefully.
+%%
+
+
 ( In METAFONT, Knuth calls sc* `make_scaled' and sc/ `take_scaled')
 ( sc* multiplies an integer and a scaled num and returns a scaled num.)
 ( sc/ takes two integers and returns a scaled num representing their quotient.)
@@ -21,7 +127,8 @@ loading Scaled integer (aka fixed point) number conversion
 defer sc*  ( n sc | sc n - sc=n*sc)
 defer sc/  ( n1 n2 - sc=n1/n2)
 
-( Good tradeoff of dynamic range and precision)
+( 28 bits is a good tradeoff of dynamic range and precision, but feel free
+  to change for your application!)
 28 constant #f  ( number of fractional bits)
 
 -: ( n1 n2 - sc=n1/n2)  push  #f <<                    pop  / ;     ( sc/)
