@@ -1,0 +1,56 @@
+( This file is part of muFORTH: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2016 David Frech. (Read the LICENSE for details.)
+
+( Copied from target/V25/fixed.d4 and modified.)
+
+( 26-aug-1999. When we converst between integer and scaled numbers, we should
+  use 64-bit integers. Hmmm.)
+
+( 2016-jun-20. Since muFORTH now uses 64-bit integers, and there is no such
+  thing as a double number, this code needed some interventions. I decided
+  to have *one* kind of non-integral number: s31.32)
+
+loading Scaled integer (aka fixed point) number conversion
+
+( In METAFONT, Knuth calls sc* `make_scaled' and sc/ `take_scaled')
+( sc* multiplies an integer and a scaled num and returns a scaled num.)
+( sc/ takes two integers and returns a scaled num representing their quotient.)
+
+defer sc*  ( n sc | sc n - sc=n*sc)
+defer sc/  ( n1 n2 - sc=n1/n2)
+
+( Good tradeoff of dynamic range and precision)
+28 constant #f  ( number of fractional bits)
+
+-: ( n1 n2 - sc=n1/n2)  push  #f <<                    pop  / ;     ( sc/)
+-: ( n sc | sc n - sc=n*sc)  *                             #f >> ;  ( sc*)
+
+-: ( n1 n2 - sc=n1/n2)  push  #f <<  r@ 2/ + ( round)  pop  / ;     ( sc/)
+-: ( n sc | sc n - sc=n*sc)  *  [ 1 #f << 2/ ] + ( round)  #f >> ;  ( sc*)
+
+: round   [ ] is sc*  [ ] is sc/ ;  round
+: trunc   [ ] is sc*  [ ] is sc/ ;
+
+: exp10  ( n - 10^n)  1 swap  ?for 10 * next then  ;
+
+( We need to be careful with `dpl'. Since constants do not change it, we
+  need to be certain that it is -always- -1 if no punctuation was seen. We
+  consider it to be `read-once': as long as it is initialized properly, it
+  will always return to -1 after being used. It is also reset every time
+  the interpreter tries to input a number.)
+
+: scale  ( n - n exp10)
+   dpl @  dup 0< if  ( no dot)  drop  1  ( n 1)  ^  then
+                        ( dot)    exp10  ( n exp)  dpl on ( reset it) ;
+
+: >sc  ( n - scaled)    scale  sc/ ;
+
+( Printing scaled integers)
+: n.f   ( f n - a #)
+   dup push ( sign)  abs
+   <#  swap ?for # next then  char . hold  #s  pop sign #> ;
+
+: significance   ( sc f - f sc 10^f)  tuck  exp10 ;
+: (sc.)     ( sc f - a #)   significance  sc*  n.f ;
+: sc.       ( sc f)         (sc.)  type space ;
