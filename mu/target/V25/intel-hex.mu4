@@ -1,0 +1,141 @@
+( This file is part of muFORTH: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2016 David Frech. (Read the LICENSE for details.)
+
+( Produces an intel hex listing of the target image for download or 
+  burning EPROM.)
+
+( 24-sep-1998.  Changed to new, simpler dictionary.)
+
+( 30-may-1999.  Added proper segments, signatures.)
+
+( 06-aug-1999. Changed so that EPROM size is unnecessary. "8000 is segment
+  of signature; code segment follows.)
+
+( 20-aug-1999. EPROM size -is- necessary, or the programmer barfs. Soooo,
+  load this file with an EPROM -type- on the stack.)
+
+( 18-may-2000. Modified to write a line at a time, rather than a byte at a
+  time. Doing this for the ARM uuencode code made it much faster.)
+
+loading Intel hex
+
+decimal
+
+( with loadable-image  ( makes an EPROM image loadable into monitor)
+
+[with] eprom  [if]
+." Using 27"  eprom-type dup u.   8 /  dup (u.) type  ." Ki EPROM - "
+Ki 16 / ( paragraphs)  "10000 swap-  constant |eprom
+." starting segment is "  |eprom  hex u. decimal
+       [then]
+
+[with] loadable-image
+  [if]    cr ." Making loadable EPROM image."   "a0   [else]  0  [then]
+constant |load
+
+( Useful ASCII.)
+ctrl J constant <LF>
+ctrl M constant <CR>
+
+
+( Original code re-used the dictionary pointer for "compiling" Intel hex
+  streams. Let's use pad and our own pointer.)
+
+variable ihp  ( "intel hex pointer")
+: i,   ihp @  c!  1 ihp +! ;
+
+-1 [if]
+: cr,     ( send LF to image file; for Unix)  <LF> i,  ;
+  [else]
+: cr,     ( send CR LF to image file; for DOS programmer)
+   <CR> i,  <LF> i,  ;
+  [then]
+
+: nyb,   15 and  >digit  i,  ;
+: .byte   dup  4 rshift  nyb,  nyb,  ;
+: >byte   ( sum a byte - sum+ a)  dup .byte  +under  ;
+: >word   ( sum a b1 b2 - sum+ a)  push >byte  pop >byte  ;
+                                                    ( sends b1 then b2)
+: addr    ( sum ta - sum+ ta)  dup >hilo  >word  ;  ( big endian)
+: chunk   ( sum ha # - ha+# sum)   for  c@+ swap  >byte  next  swap  ;
+: check   ( sum)  negate  .byte  cr,  pad  ihp @ over -  type  ;
+: header  ( n - sum)  pad ihp !  char : i,  dup .byte  ;
+: tag     ( sum ta n - sum+n)  >byte  drop  ;
+
+      (  : count    vaddr    tag       data      checksum )
+      ( =====================================================)
+: data  ( 'host 'target # - 'host+#)
+      dup header   rot addr  0 tag   -rot chunk       check  ;
+: end   0 header     0 addr  1 tag                    check  ;
+
+: seg   ( seg)   [with] eprom [if]  |eprom -  |load +  [then]
+        2 header     0 addr  2 tag   swap addr drop   check  ;
+
+: progress   out-channel preserve >stderr  char .  emit  ;
+
+: fragment  ( 'host 'target # - 'host+# 'target+#)
+   2dup + push   data  pop  progress  ;
+
+: chunks    ( 'host 'target #)  15 + 16 /   ( send whole 16 byte lines)
+   ?for  16 fragment  next  then  2drop  ;
+
+variable |word-seg	( location in target code where word-seg should go)
+variable |boot		( initial boot address)
+
+: +para   ( para addr padding - para+)   15 +  +  16 /  +  ;
+
+[with] eprom [if]
+: hexify-signature  ( - code-seg)
+   |eprom dup seg
+   "origin  0  "here  chunks  ( signature)  ( seg) "here 0 +para  ;
+      [then]
+   
+: hexify-reset-vector  ( jump-seg at-seg)
+   seg   |here dup push |+  ( 'host)  swap  ( 'host jump-seg)
+   ( compile far jump to reset code)
+   |boot @  ( seg off)  <asm  ) JMPF,  asm>   0  5 chunks
+   pop |h !  |here |+ 5 "90 fill  ( cover our tracks)  ;
+
+
+( patch-word-seg rounds up to paragraph boundary if we're burning an EPROM,
+  but adds 256 bytes of space in addition if we're in RAM mode.)
+
+: patch-word-seg  ( seg - word-seg code-seg)
+   dup ( seg)  |here   [with] debug [if] 256 [else] 0 [then]  +para
+   dup |word-seg @ |+ >!  ( patch word-seg in)  swap  ;
+
+: hexify-code  ( code-seg)
+       seg  |origin  0  |here  chunks  ( code space)  ;
+
+: hexify-words  ( word-seg - word-seg)
+   dup seg  >origin  0  >here  chunks  ( body space)  ;
+
+[with] eprom [if]
+: hexify-image  ( - word-seg)
+   hexify-signature   patch-word-seg  ( word-seg code-seg)  dup push
+   hexify-code  hexify-words   pop -1 hexify-reset-vector
+   ( if this makes the burner barf, then we need the size.)
+   end  ;
+[else]   ( debug)
+: hexify-image  ( - word-seg)
+   debug-code-seg  patch-word-seg  ( word-seg code-seg)
+   hexify-code  hexify-words  end  ;
+[then]
+
+
+: <file  ( pathname)  create-file  writes-file  ;
+: file>  file-channel @  close-file  ;
+
+( Write hex image to a file.)
+: hello  ( pfa str - word-seg | -nil-)  radix preserve  out-channel preserve
+   <file  execute  file>  ;
+
+: image  ( - word-seg)   lit hexify-image   z" v25-image"   hello  ;
+
+[with] debug [if]
+: hexify-loader
+   debug-code-seg  hexify-code  end  ;
+
+: loader  lit hexify-loader  z" v25-loader"  hello  ;
+[then]

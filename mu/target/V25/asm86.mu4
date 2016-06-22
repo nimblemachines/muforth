@@ -1,0 +1,405 @@
+( This file is part of muFORTH: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2016 David Frech. (Read the LICENSE for details.)
+
+( 80x86 assembler, of all things!  and after so long!  31-aug-1998)
+
+( This assembler is going to be stack-driven, like my 6809 assembler.  We
+  won't set flags like that Frank guy.  Having everything on the stack makes
+  things cleaner and also makes macros more useful.)
+
+( Operands are identified by `mode' words -- abbrev `md' on the stack --
+  that describe their type, and that contain a few flag bits.  The low-order
+  byte of a `md' is, to the degree possible, a mod-r/m byte.  The high-order
+  byte is where the flags live.)
+
+( I may end up borrowing from Laxen and Perry here.  There are, seemingly,
+  five types of operands:  r8, r16, sreg, mem, imm.  Make these our types.)
+
+( 13-sep-1998.  Changed to >, >! style.)
+( 14-sep-1998.  Changed to use separate segments for code and bodies.  The
+                new words are defined in memory.4d.
+		Also changed names of operations to end with comma, like
+		in Pygmy.)
+( 15-sep-1998.  Capitalization project.  Work now so there is less work later.
+	Also changed ASSEMBLE so it does NOT search target.  We introduce
+	the word `|' to find a word, like a variable, in the target and find
+	its data.  See target compiler.)
+( 24-sep-1998.  Changed to new, simpler dictionary.)
+
+( 26-sep-1999. Back to causing trouble by introducing a `cleaner' but more
+  pedantic vocabulary structure for meta-compilation. Now the assembler
+  searches -only- assembler.)
+
+( 17-apr-2000. Changed assembler and <asm code to work with new, improved
+  interpreter.)
+
+loading 8086/V25 assembler
+
+octal  ( !!)  forth definitions
+
+vocab assembler
+
+compiler definitions
+: \a    assembler \chain  ;
+
+-:  ."  (assembling a macro)"  ;
+-:   compiler -"find if  assembler -"find if  number, exit  then
+        compile, exit  then  execute  ;
+mode <asm   ( `;' or `asm>  ;' ends)
+: asm>   ]  ;  ( exit macro-assembler)
+
+forth definitions
+( 1-sep-1998.  Added a `w' bit to all md constants.)
+: reg  ( type n)  11 *  or ( type)  constant  ;
+: regs  ( type count)  0 swap  for  2dup reg 1+  next  2drop  ;
+
+assembler definitions
+( '1000 bit is `word'.)
+0300 10 regs   AL  CL  DL  BL  AH  CH  DH  BH   ( type includes mod=3)
+1300 10 regs   AX  CX  DX  BX  SP  BP  SI  DI
+2000  4 regs   ES  CS  SS  DS   ( these are not word!  but shouldn't matter)
+( 3xxx would be word seg regs)
+forth definitions
+
+( So far this is `borrowed' from L&P.  But here we start to differ.
+  I want memory operands to be smart words, not simply constants.)
+
+decimal
+: s8?  ( n - f)  128 +  256 u<  ;    ( fits into signed 8 bits?)
+octal
+( displacement of 0 => md = 0, except for [BP])
+: disp>md  ( disp - md)  s8? if  100  exit  then  200  ;
+
+: mem  ( r/m)  create  5000 or ,  ( word!)
+   does>  ( disp body - disp md+r/m)
+   @ over  ( disp r/m disp)  if  over disp>md  or  then  ;
+   ( mem words keep a disp of 0 on the stack)
+
+assembler definitions
+0 mem [BX+SI]   1 mem [BX+DI]   2 mem [BP+SI]   3 mem [BP+DI]
+4 mem [SI]      5 mem [DI]      ( [BP])         7 mem [BX]
+
+( this needs to force an r/m of '100 for an offset of 0.)
+: [BP]  ( disp - disp md)  dup  disp>md  5006  or  ;
+
+ 5006 constant )     ( type 4, word, mod=0, aux=?, r/m=6; ie,  EA=disp16)
+: #   ( n - n r/m)  dup s8?  1000 and  7000 xor  ;  ( imm, word if s8? false)
+
+forth definitions
+
+( Again from L&P:)
+( ignore '1000 bit when matching.)
+: type?  ( type)  create ,  does>  ( md body - f)  @ swap 6000 and   =  ;
+0000 type? reg?   2000 type? seg?   4000 type? mem?   6000 type? imm?
+
+: 0r0   ( md - bits)  070 and  ;
+: m0r   ( md - bits)  307 and  ;
+: 00r   ( md - bits)  007 and  ;
+: acc?  ( md - f)    1000 bic  \a AL =  ;
+
+( size of data types defaults to -word-, so..)
+assembler definitions
+: BYTE   ( md - md')  1000 bic  ;
+forth definitions
+: -byte  ( f - bit)   1000 and  ;
+: word?  ( md - f)    -byte  0<>  ;
+: w      ( f - bit)   1 and  ;      ( make a `w' bit for opcode)
+: or,    ( n1 n2)     or |c,  ;
+: opw,   ( op f)      w or,  ;
+
+: oops    error" : bogus operand"  -;
+
+: r/m,  ( disp r/m)
+   dup  m0r 006 =  ( special case)  if  |c, |,  exit  then
+   dup |c,  6 rshift  ( mod) 3 and ( sanity)  which  drop   |c,  |,  nope  -;
+
+: combine  ( r/m reg - r/m')  0r0  swap  m0r  or  ;
+: ,/c,   ( n f)  if  |,  exit  then   |c,  ;
+
+
+( Here we go with 2ops.  There are several different possibilities:
+  On the stack these look like:
+     reg reg
+     disp mem reg
+     reg disp mem
+     imm # reg
+     imm # disp mem)
+
+( do the hardest one -first-)
+
+( w.r.t. md reg r/m, d set means r/m to reg)
+( remember, `d'-bit set means -to- register.)
+( r r        -canon->  r r 2      d-bit
+  r seg      -canon->  r seg 2
+  seg r      -canon->  r seg 0
+  n mem r    -canon->  n mem r 2
+  r n mem    -canon->  n mem r 0
+  i # r      -canon->  i r # 2
+  i # n mem  -canon->  i n mem # 0
+  seg n mem  -canon->  n mem seg 0
+  n mem seg  -canon->  n mem seg 2)
+
+: canonical-order
+    dup mem?  if  rot  0 ( d-bit)  exit  then
+   over imm?  if  swap  then  ( i # r -> i r #)
+   over seg?  if  swap 0 ( d-bit)  exit  then  2 ( d-bit)  ;
+
+: 1mi-rm  ( r r d op | n mem r d op)
+   ( 0r0) or  over word? opw,  combine r/m,  ;
+
+: 1mi-#a  ( i acc op)  ( 0r0) 4 +  swap word? tuck   opw,  ,/c,  ;
+
+( "80 = byte, "81 = word, "82 = illegal, "83 = signed-extend byte)
+: 1mi-imm-op   ( #w w - op)
+   if  if  "81 exit  then  "83 exit  then  drop  "80  ;
+
+: 1mi-#   ( i r # op | i n mem # op)
+   swap word? push  over word? push  combine  ( i rm | i n rm)
+   2pop  1mi-imm-op  dup push |c,  r/m,  pop "81 =  ,/c,  ;
+   
+: 1mi  create ,  does>
+   @ ( op) push  canonical-order  ( 2nd is reg or #, period.)
+   over reg?  if                            pop  1mi-rm  exit  then
+   over imm?  if  drop ( d)
+                  over acc?  if  drop ( #)  pop  1mi-#a  exit  then
+                                            pop  1mi-#   exit  then
+   oops  ;
+
+( Laxen and Perry were WRONG: You DO want to compress signed numbers, for
+  logicals too. A value like "80 will not fit in a byte, so will not be
+  [error-producingly] compressed.)
+
+assembler definitions
+00 1mi ADD,   10 1mi OR,   20 1mi ADC,   30 1mi SBB,
+40 1mi AND,   50 1mi SUB,  60 1mi XOR,   70 1mi CMP,
+forth definitions
+
+: mov-#rm  ( i r w | i n mem w)
+   over reg? if  10 ( 8) and  "b0 or  swap  00r  or,  exit  then
+   "c6  swap opw,  m0r r/m,  ;
+
+: mov-#  ( i r # d | i n mem # d)  2drop  ( i r | i n mem)
+   dup word? push   r@ mov-#rm   pop  ,/c,  ;
+
+: mov-seg  ( r sreg d | n mem sreg d)   "8c or,  combine r/m,  ;
+: mov-a   ( n mem r d)  2 xor ( -d)  "a0 or  swap word? opw,  drop  |,  ;
+: mov-rm  ( n mem r d)
+   over acc?  if  push ( d)  over \a ) =  if   pop  mov-a  exit  then
+   pop  then   "88 or  over word? opw,  combine r/m,  ;
+
+( Mov)
+assembler definitions
+: MOV,   canonical-order
+   over reg?  if  mov-rm   exit  then
+   over imm?  if  mov-#    exit  then
+   over seg?  if  mov-seg  exit  then  oops  -;
+
+
+forth definitions
+
+( Shift and rotate)
+( The only way to do this more cleanly is to rewrite the handling of r/m
+  to put stuff on the stack instead of compiling it. That way we don't have
+  to compile a dummy opcode that we later fix up. But this works.)
+  
+: shift-op  ( 1 # | bits # | cl - op)
+   dup \a CL = if  drop "d2  exit  then
+   dup imm? if  drop  dup 1 = if  drop "d0  exit  then
+   |c, "c0  exit  then  oops  ;
+
+: 2mi  create ,  does>  @
+   ( { n # | cl } { r op | n mem op } )
+   |here |+ push  0 |c, ( op)   over word? w push   combine r/m,
+   shift-op  pop ( op w) or  pop c!  ;
+
+assembler definitions
+00 2mi ROL,   10 2mi ROR,   20 2mi RCL,   30 2mi RCR,
+40 2mi SHL,   50 2mi SHR,                 70 2mi SAR,
+( 40 2mi sal is for -weenies-)
+forth definitions
+
+( These are in no particular order!)
+
+( Load effective address)
+: 3mi  create ,  does>  ( n mem r)   @ |c,  combine r/m,  ;
+
+assembler definitions
+"8d 3mi LEA,    "c5 3mi LDS,    "c4 3mi LES,
+forth definitions
+
+( Random 1ops)
+( only inc and dec can be byte r/m; we force the others to word)
+: 4mi  create ,  does>  @  ( r op | n mem op)  push
+   dup word?  10 r@ u<  or w "fe or,  pop combine r/m,  ;
+
+( these go in -forth-, not -assembler-; they are helpers)
+00 4mi _inc   10 4mi _dec   20 4mi _call   30 4mi _callf
+40 4mi _jmp   50 4mi _jmpf  60 4mi _push
+
+( Push, pop)
+assembler definitions
+: PUSH,  ( r | n mem | i # | sreg)
+   dup reg?  if  00r "50 or,  exit  then
+   dup mem?  if  _push  exit  then
+   dup seg?  if  0r0 6 or,  exit  then
+   dup imm?  if  drop  dup s8? dup  2 and  "68 or,  0=  ,/c,  exit  then
+   oops  -;
+
+: POP,  ( r | n mem | sreg)
+   dup reg?  if  00r "58 or,  exit  then
+   dup mem?  if  "8f |c,  m0r  r/m,  exit  then
+   dup seg?  if  0r0 7 or,  exit  then
+   oops  -;
+forth definitions
+
+( Jump and call)
+: rel    |here 2 + -  ;
+: rel8?  ( a - rel f)  rel  dup s8?  ;
+: near  ( n mem op | r op)
+   over \a ) = if  |c, drop  rel |, shunt  then  drop  ;
+: far   ( seg off mem op | n mem op | r op)
+   over \a ) = if  |c, drop  |, |,   shunt  then  drop  ;
+: jmp8  ( n mem)
+   dup \a ) = if  over rel8?  ( n mem rel f) 
+   if  "eb |c, |c,  2drop  shunt  then  drop ( rel)  then  ;
+
+assembler definitions
+: JMP,    ( n mem | r)       jmp8   "e9 near  _jmp    ;
+: JMPF,   ( seg off mem | n mem)    "ea far   _jmpf   ;
+: CALL,   ( n mem | r)              "e8 near  _call   ;
+: CALLF,  ( seg off mem | n mem)    "9a far   _callf  ; 
+forth definitions
+
+( Inc, dec)
+: inc/dec  ( r op | n mem op)
+   over reg? if  swap 00r or,  shunt  then  drop  ;
+
+assembler definitions
+: INC,  "40 inc/dec  _inc  ;
+: DEC,  "48 inc/dec  _dec  ;
+forth definitions
+
+( 1ops:  not neg mul imul div idiv)
+: 5mi  create ,  does>  ( n mem | r)  @ push
+   "f6 over word? opw,  pop  combine r/m,  ;
+
+assembler definitions
+20 5mi NOT,   30 5mi NEG,
+40 5mi MUL,   50 5mi IMUL,   60 5mi DIV,   70 5mi IDIV,
+( leaving imul immediates for later, if ever)
+forth definitions
+
+( Test)
+: test-r  ( r r | n mem r)   "84  over word? opw,  combine r/m,  ;
+: test-i  ( i r | i n mem)
+   dup acc? if  word?  "a8 over opw,  ,/c,  exit  then
+   dup word? push ( w)  "f6 r@ opw,  m0r r/m,  pop ,/c,  ;
+
+assembler definitions
+: TEST,   ( ugh)
+   canonical-order  drop ( d)  ( r r | n mem r | i r # | i n mem #)
+   dup reg? if            test-r  exit  then
+   dup imm? if  drop ( #) test-i  exit  then  oops  -;
+forth definitions
+
+( Segment overrides)
+: 6mi  create ,  does>  @  "26 or,  ;
+assembler definitions
+00 6mi ES:   10 6mi CS:   20 6mi SS:   30 6mi DS:
+forth definitions
+
+( Loops)
+: 7mi  create ,  does>  ( a body)
+   @ swap  ( op a)  rel8? 0=  if error" : loop too big!"  then
+   swap  |c, |c,  ;
+
+assembler definitions
+"e2 7mi LOOP,   "e1 7mi LOOPE,   "e0 7mi LOOPNE,
+forth definitions
+
+( String instructions)
+( these all need something on the stack to get their size from.)
+: 8mi  create ,  does>  ( r | n mem)
+   @ ( op)  over word? opw,   mem? if  drop  then  ;
+
+assembler definitions
+"6c 8mi INS,    "6e 8mi OUTS,
+"a4 8mi MOVS,   "a6 8mi CMPS,   "aa 8mi STOS,   "ac 8mi LODS,   "ae 8mi SCAS,
+
+: XCHG,  ( r r | r n mem | n mem r | immed/seg)
+   canonical-order  ( r r d | n mem r d | bogus)  drop ( d)
+   over acc? if  swap  then  ( bring 2nd accum to top)
+   dup acc? if  over reg? if  drop  00r "90 or,  exit then  then
+   dup reg? if  "86 over word? opw,  combine r/m,  exit then
+   oops  ( imm or seg)  -;
+
+: INT,  ( n #)
+   imm? if  dup 3 = if   drop "cc |c, exit  then
+   "cd |c, |c,  exit then  oops  -;
+forth definitions
+
+( Input-output)
+: in/out  ( dx acc op | n # acc op)   swap word?  rot  ( op w dx | n op w #)
+   dup imm? if  drop opw,  |c,  exit then
+   dup \a DX = if  drop "8 +under ( op)  opw,  exit then  oops  -;
+
+assembler definitions
+: IN,    "e4 in/out  ;
+: OUT,   "e6 in/out  ;
+forth definitions
+
+( Return immediates)
+assembler definitions
+: +RET,   ( n #)  imm? if  "c2 |c, |,  exit then  oops  -;
+: +RETF,  ( n #)  imm? if  "ca |c, |,  exit then  oops  -;
+forth definitions
+
+( Generic one-byters)
+: 9mi  create ,  does> @  |c,  ;
+
+assembler definitions hex
+( We're leaving out the lame decimal-adjust instructions and enter/leave
+  and a few others.  If we need them they're easy to add.)
+
+ 98 9mi CBW,     f8 9mi CLC,     fc 9mi CLD,     fa 9mi CLI,     f5 9mi CMC,
+ 99 9mi CWD,     f4 9mi HLT,     ce 9mi INTO,    cf 9mi IRET,    9f 9mi LAHF,
+ f0 9mi LOCK,    90 9mi NOP,     61 9mi POPA,    9d 9mi POPF,    60 9mi PUSHA,
+ 9c 9mi PUSHF,   f3 9mi REP,     f3 9mi REPE,    f2 9mi REPNE,   c3 9mi RET,
+ cb 9mi RETF,    9e 9mi SAHF,    f9 9mi STC,     fd 9mi STD,     fb 9mi STI,
+ d7 9mi XLAT,
+forth definitions
+
+( V25 derangements)
+assembler definitions
+: FINT,    "920f |,  ;  ( v25: finish interrupt)
+: IRETRB,  "910f |,  ;  ( v25: ret from reg bank irq)
+forth definitions octal
+
+( Conditionals)
+assembler definitions hex
+( These have the opposite sense than you might suppose.)
+71 constant overflow   73 constant u<   73 constant carry   76 constant u>
+75 constant 0=         79 constant 0<   7d constant <       7e constant >
+e3 constant cxne ( don't try to reverse this one!)
+: not   1 xor  ;
+forth definitions octal
+
+: jcond,   ( a op)  over rel8? if  ( a op rel)  swap |c, |c, drop exit then
+   drop ( rel8)  \a not ( invert sense)
+   |c,  3 |c,  ( jump -over- following jmp)   <asm  ) JMP,  asm>  ;
+
+( Structures)
+( "eb is jmp rel8)
+assembler definitions
+: IF,      ( op - fwd)  |c,  |here  0 |c,  ;
+: THEN,    ( fwd)  |here  over 1+ -  swap |+ c!  ;
+: ELSE,    ( fwd - fwd')  "eb  \a IF,  swap  \a THEN,  ;
+: BEGIN,   ( - back)   |here  ;
+: UNTIL,   ( back op)  jcond,  ;
+: AGAIN,   ( back)     <asm  ) JMP,  asm>  ;
+: WHILE,   ( back op - fwd back)  \a IF,  swap  ;
+: REPEAT,  ( fwd back)  \a AGAIN,  \a THEN,  ;
+( ... and you too can use `BEGIN, .. WHILE, .. AGAIN, .. THEN,')
+( ...                  or `BEGIN, .. WHILE, .. UNTIL, .. THEN,')
+forth definitions
