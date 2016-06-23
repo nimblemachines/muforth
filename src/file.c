@@ -7,7 +7,7 @@
 /* file primitives */
 
 #include "muforth.h"
-#include "version.h"        /* MU_DIR */
+#include "muhome.h"     /* MU_DIR */
 
 #include <fcntl.h>
 #include <sys/mman.h>

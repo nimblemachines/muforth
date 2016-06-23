@@ -199,7 +199,7 @@ SEDEXT=     ${sedext}
 ARCH_C=     ${cflags}
 ARCH_LD=    ${ldflags}
 ARCHOBJS=   ${archobjs}
-MUDIR=      ${top}/mu
+MU_DIR=     ${top}/mu
 EOT
 
 # fix up use of sed in scripts/do_sed.sh
