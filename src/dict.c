@@ -104,7 +104,7 @@ typedef struct link_field link_cell;
 struct dict_name
 {
     char suffix[SUFFIX_LEN];    /* last 7 characters of name */
-    unsigned char length;       /* 255 max! */
+    unsigned char length;       /* 127 max; high bit = hidden */
     link_cell link;             /* link to preceding link */
 };
 
@@ -120,9 +120,13 @@ struct dict_entry
 
 /*
  * The forth and compiler "vocabulary" chains
+ *
+ * These are now initialised at dictionary init time by calling new_name()
+ * with the hidden flag true. This way these pseudo-words won't be found by
+ * mu_find() or show up when listed by  word .
  */
-static link_cell forth_chain;
-static link_cell compiler_chain;
+static link_cell *forth_chain;
+static link_cell *compiler_chain;
 
 /* bogus C-style dictionary init */
 struct inm          /* "initial name" */
@@ -175,16 +179,17 @@ void mu_allot()    { ph += ALIGNED(POP) / sizeof(cell); }
 void mu_aligned()  { TOP = ALIGNED(TOP); }
 
 /*
- * .forth. and .compiler. push the address of the respective link pointer.
+ * .forth. and .compiler. push the address of the respective struct
+ * dict_name.
  */
 void mu_push_forth_chain()
 {
-    PUSH_ADDR(&forth_chain);
+    PUSH_ADDR(forth_chain);
 }
 
 void mu_push_compiler_chain()
 {
-    PUSH_ADDR(&compiler_chain);
+    PUSH_ADDR(compiler_chain);
 }
 
 /* Type of string compare functions */
@@ -214,8 +219,11 @@ void mu_find()
     struct dict_entry *pde;
     link_cell *plink = (link_cell *)TOP;
 
-    /* Only search if length < 256. Max length of name is 255. */
-    if (length < 256)
+    /*
+     * Only search if length < 128. This prevents us from matching hidden
+     * entries!
+     */
+    if (length < 128)
     {
         while ((plink = _(plink->cell)) != NULL)
         {
@@ -244,14 +252,18 @@ void mu_find()
  * new_name creates a new dictionary (name) entry and returns it
  */
 static link_cell *new_name(
-    link_cell *link, char *name, int length)
+    link_cell *link, char *name, int length, int hidden)
 {
     struct dict_name *pnm;  /* the new name */
     int prefix_bytes;
 
     assert(ALIGNED(ph) == (intptr_t)ph, "misaligned (new_name)");
 
-    length = MIN(length, 255);
+    /*
+     * Since we're using the high bit of the length as a "hidden" or
+     * "deleted" flag, cap the length at 127.
+     */
+    length = MIN(length, 127);
 
     /*
      * Calculate space for the bytes of the name that don't fit into
@@ -270,7 +282,7 @@ static link_cell *new_name(
 
     /* Copy name string */
     memcpy(pnm->suffix + SUFFIX_LEN - length, name, length);
-    pnm->length = length;
+    pnm->length = length + (hidden ? 128 : 0);
 
     /* Set link pointer */
     _(pnm->link.cell) = link;
@@ -294,7 +306,7 @@ static void new_linked_name(
     link_cell *plink, char *name, int length)
 {
     /* create new name & link onto front of chain */
-    _(plink->cell) = new_name(_(plink->cell), name, length);
+    _(plink->cell) = new_name(_(plink->cell), name, length, 0);
 }
 
 /* (linked-name)  ( a u chain) */
@@ -333,8 +345,16 @@ void init_dict()
 {
     allocate();
 
-    init_chain(&forth_chain, initial_forth);
-    init_chain(&compiler_chain, initial_compiler);
+    /*
+     * Create "hidden" names for the two initial chains. Unlike later
+     * chains, which are create/does words, these use the (hidden) name of
+     * the chain in their bodies, instead of the string "muchain".
+     */
+    forth_chain    = new_name(NULL, ".forth.", 7, 1);
+    compiler_chain = new_name(NULL, ".compiler.", 10, 1);
+
+    init_chain(forth_chain, initial_forth);
+    init_chain(compiler_chain, initial_compiler);
 }
 
 /*
