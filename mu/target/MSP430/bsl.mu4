@@ -62,11 +62,13 @@ variable checksum
   will erase the info memory.)
 
 : bsl-unlock              20 10 <bsl  0 >w  0 >w  10 for  0ffff >w  next  bsl> ?ack ;
+: bsl-unlock-image        20 10 <bsl  0 >w  0 >w  ffe0 image+ 20  >buf    bsl> ?ack ;
 : bsl-txbuf  ( buf a u)  dup 12 <bsl  swap >w  dup >w  >buf  bsl>  ?ack ;
 : bsl-rxbuf  ( buf a u)    0 14 <bsl  swap >w  dup >w        bsl>  hdr>  buf>  chk> ;
 : bsl-erase  ( a fcmd)     0 16 <bsl  swap >w      >w        bsl>  ?ack ;
 -- : mass-erase               0 18 <bsl  0 >w  0a506 >w      bsl> ;
 : bsl-loadpc  ( pc)        0 1a <bsl       >w    0 >w        bsl>  ?ack ;
+
 
 ( Let's make sure we're not writing the flash inadvertently - until we know
   exactly what we're doing.)
@@ -114,18 +116,15 @@ variable blow-chunks
 : b.FlashChunk  ( buf a u fcmd - status)
    drop  ['] bsl-txbuf  chunked  2drop  9658 ;
 
-( The only register that b.SetRegs actually sets or gets. Let's pretend, at
-  start, that it's in _ram_, so that flash-image won't complain.)
-variable bsl-pc   0220 bsl-pc !
+( The order, low to high: context status pc)
+variable bsl-frame  ( chat frame is 6 bytes; this will fit into a variable!)
+   dead_dead_dead_dead bsl-frame !
+   220 bsl-frame .PC +  leh!  ( pretend PC is in RAM, so flash-image won't complain)
 
-( The order, low to high: flashcmd i r t cnt x y status pc)
-: b.GetRegs  ( buf - sp)
-   m !  .PC \m cell/ for  "0dead >hilo m& m&  next
-   bsl-pc @ >hilo m& m&  "0dead ;
+: b.GetRegs  ( buf - sp)      bsl-frame @  swap !  "0dead ;
+: b.SetRegs  ( buf)        @  bsl-frame ! ;
 
-: b.SetRegs  ( buf)   .PC +  leh@  bsl-pc ! ;
-
-: b.Run  bsl-pc @  bsl-loadpc ;
+: b.Run  bsl-frame .PC + leh@  bsl-loadpc ;
 
 : bsl
    chat-via  b.Hello  b.GetRegs  b.SetRegs  b.ReadWord  b.WriteWord
