@@ -1,0 +1,65 @@
+( This file is part of muFORTH: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2016 David Frech. (Read the LICENSE for details.)
+
+loading MSP430 4kHz generator
+
+( We need to "rescue" a chip that has had its calibration data rudely
+  erased by the BSL. Without this, we cannot run the UART chat code,
+  because we need an accurate 16MHz clock to drive the UART.
+
+  TI published example code - both in assembler and C - do this, but their
+  code requires an external 32768Hz watch battery crystal as the "standard"
+  to calibrate against. They divide it down to 4096Hz, figure out the
+  closest divisors of the target clock, and then run a routine that
+  essentially tries lots of settings to try find one that is close enough.
+
+  They generate calibrations for 1, 8, 12, and 16MHz. Their divisors are
+
+   1MHZ :  244 x 4096Hz = 999.4kHz
+   8MHZ : 1953 x 4096Hz = 7.99MHz
+  12MHZ : 2930 x 4096Hz = 12.00MHz
+  16MHZ : 3906 x 4096Hz = 15.99MHz
+
+  Since I don't have one handy, I thought I'd use a second MSP430 - one has
+  still has its calibration data intact - to generate a 4 kHz square wave,
+  and then calibrate against that. Our divisors will be simpler and will
+  divide neatly:
+
+   1MHZ =  250 x 4000Hz
+   8MHZ = 2000 x 4000Hz
+  12MHZ = 3000 x 4000Hz
+  16MHZ = 4000 x 4000Hz
+
+  So I get to dig into the guts of the timers - a feature whose documentation
+  leaves *much* to be desired. I spent several hours - into the wee hours -
+  last night trying to make sense of the timers and the example code. I
+  couldn't figure out how it was that they were sampling the ACLK - which was
+  being driven by the external crystal - edges. I finally found, buried in
+  the chip datasheet, a table that describes CCI0B as being connected to
+  ACLK...
+
+  And then the description of the compare registers and how they work was
+  equally inscrutable for a while. I think I understand it now, so here
+  goes.)
+
+__meta
+
+hex
+
+label scream
+   -- set up port pin for timer output; TA0 on p1.5 (pin 7)
+   %0010_0000 # P1DIR & bisb      -- p1.5 output
+   %0010_0000 # P1SEL & bisb      -- p1.5 select TA0
+   %0010_0000 # P1SEL2 & bicb     --    (ditto)
+
+   -- set up output square wave @ 4000Hz, assuming 16M SMCLK
+   #1999 # TACCR0 & mov             -- Toggle mode period = 2*(TACCRO + 1)
+   %1000_0000 # TACCTL0 & mov       -- Compare mode, Toggle
+.ifdef lfo
+   %0010_0000 # BCSCTL3 & bisb      -- ACLK = VLO (12 kHz or so)
+   %0001_0001_0100 # TACTL & mov    -- ACLK, /1, Up mode, TACLR
+.else
+   %0010_0001_0100 # TACTL & mov    -- SMCLK, /1, Up mode, TACLR
+.then
+  ret ;c
