@@ -2,27 +2,26 @@
 
   Copyright 2002-2016 David Frech. (Read the LICENSE for details.)
 
-loading MSP430 serial chat protocol v2 (core)
+loading MSP430 serial chat protocol v3 (core)
 
 ( Taking inspiration from the wildly successful HC08 serial chat protocol.
 
   Responds to the following commands. NOTE: these are hex values!
 
-00 - 1f  Idle   - these command bytes are ignored
+00 - 2f  Idle   - these command bytes are ignored
 
-20  GetVersion  - get the chat protocol version
-21  SetAddr     - set the memory address pointer
-22  GetSP       - get stack pointer - points to saved regs
-23  ReadWord    - read a word from memory, incr pointer
-24  ReadWords   - read N words, incrementing as we go
-25  WriteWord   - write a word to memory, incr pointer
-26  Run         - pop the registers and saved status, and go
-27  FlashWord   - write a word to flash, passing command each time
+30  GetVersion  - get the chat protocol version
+31  SetAddr     - set the memory address pointer
+32  GetSP       - get stack pointer - points to saved regs
+33  ReadBytes   - read N words, but byte-wise, incrementing as we go
+34  ReadWords   - read N words, incrementing as we go
+35  WriteWord   - write a word to memory, incr pointer
+36  FlashWord   - write a word to flash, passing command each time
                 - can be used to initiate an erase, or to write a word
-28  GetCheck    - return accumulated checksum to host
-29  ReadWordsB  - read N words *byte-wise*, incrementing as we go
+37  Run         - pop the registers and saved status, and go
+38  GetCheck    - return accumulated checksum to host
 
-2a - ff  Idle   - these command bytes are ignored
+39 - ff  Idle   - these command bytes are ignored
 )
 
 decimal
@@ -38,6 +37,7 @@ assembler
 ( These are all considered "caller saved" registers. They are scratch.
   Called code can freely clobber them.)
 
+ 11 constant x      ( scratch)
  12 constant top    ( current accumulator)
  13 constant mp     ( memory pointer)
  14 constant count  ( word count)
@@ -98,6 +98,7 @@ Thanks, TI!
 
 TI-is-a-bunch-of-fucking-liars!
 
+( Per-word code address is already pushed!)
 label do-words
    get-byte c  top tst  0!= if  ( if count non-zero)
       top check xor  ( xor into checksum)  top count mov
@@ -118,52 +119,57 @@ label read-words-bytewise
    put-word j  ;c
 .then
 
+( write-word is used to write into both flash and RAM. Just in case we are
+  running this code from RAM and writing into flash, after each word write,
+  make sure the flash controller is not busy before continuing!)
+
+label write-words
+   do-words c  ( push address of following code!)  ;c
+
 label write-word
    get-word c  top mp ) mov  2 # mp add  ret  ;c
+
+( Write a word into flash, using the flash command passed to us by the
+  host. It can be used to erase or program the flash.)
+
+label flash-words
+   do-words c  ( push address of following code!)
+   FKEY          # FCTL3 & mov   -- clear FLOCK
+   get-word c  top FCTL1 & mov   -- write flash command - must have FKEY!
+   write-word c
+.ifdef in-ram
+   begin   FBUSY # FCTL3 & bit  0= until
+.then
+   FKEY          # FCTL1 & mov   -- clear command
+   FKEY FLOCK +  # FCTL3 & mov   -- set FLOCK
+   FCTL3 & top mov  put-word j   -- read status and return it
+   ;c
 
 label run
    2 # sp add  ( skip return address to chat-entry)
    cp pop  ( context pointer)  reti  ;c
 
-( Write a word into flash, using the flash command passed to us by the
-  host. It can be used to erase or program the flash.)
-
-label flash-word
-   get-word c  top push          -- get value to write
-   get-word c                    -- get flash command + key
-   FKEY         # FCTL3 & mov    -- clear FLOCK
-   top FCTL1 & mov               -- write flash command - must have FKEY!
-   mp ) pop  2 # mp add          -- write word and incr pointer
-.ifdef in-ram
-   begin  FBUSY # FCTL3 & bit  0= until
-.then
-   FKEY # FCTL1 & mov            -- clear command
-   FKEY FLOCK + # FCTL3 & mov    -- set FLOCK
-   FCTL3 & top mov  put-word j   -- read status and return it
-   ;c
-
 ( Dispatch.)
 label command-table
-   ( 20) get-version ,
-   ( 21) set-addr ,
-   ( 22) get-sp ,
-   ( 23) read-word ,
-   ( 24) read-words ,
-   ( 25) write-word ,
-   ( 26) run ,
-   ( 27) flash-word ,
-   ( 28) get-check ,
+   ( 30) get-version ,
+   ( 31) set-addr ,
+   ( 32) get-sp ,
 .ifdef in-ram
-   ( 29) read-words ,
+   ( 33) read-words ,
 .else
-   ( 29) read-words-bytewise ,
+   ( 33) read-words-bytewise ,
 .then
+   ( 34) read-words ,
+   ( 35) write-words ,
+   ( 36) flash-words ,
+   ( 37) run ,
+   ( 38) get-check ,
 
 label process
    get-byte c  ( cmd)
    top check xor   ( xor into checksum)
 
-   20 # top sub   ( 00 to 1f become large unsigned numbers)
+   30 # top sub   ( 00 to 2f become large unsigned numbers)
    process command-table - 2/ # top cmp  u< if
       top top add  command-table top +) pc mov  ( jump!)
    then
