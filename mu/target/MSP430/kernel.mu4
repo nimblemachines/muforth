@@ -14,11 +14,17 @@ loading MSP430 Forth kernel
 
 ( XXX move these to meta?)
 assembler
-comment %%
-  NOTE: if we did  w )+ pc mov  next would take 1 cycle more, but docolon
-  and friends would be shorter and simpler... %%
 
-: next     asm{  ip )+ w mov  w ) pc mov  } ;
+( NOTE: I have chosen to use auto-increment to load the code pointer into
+  pc. After next, w points to the parameter field rather than the code field.
+
+  This adds one cycle to next - 5 instead of 4 - but simplifies all the
+  Forth runtimes - for create, constant, :, etc - and saves an instruction
+  and a cycle in each of them. The only execution path that slows down is
+  calling native - code - words. I hope it's worth it! I like the simplicity
+  and elegance of doing it this way.)
+
+: next     asm{  ip )+ w mov  w )+ pc mov  } ;
 
 : rpush    ( ea)  asm{   2 # rp sub   ( ea)  rp )  mov  } ;
 : rpop     ( ea)  asm{       rp )+  \f swap ( ea)  mov  } ;
@@ -33,9 +39,9 @@ hex
 implements dodoes    nest  ip pop  ( fall thru to dovar/docreate)  ;c
 
 ( Note the structural similarities!)
-meta: create     name  0 ,   ;code   top push  2 # w add  w top mov  next  ;c
-meta: constant   create  ,   ;code   top push        2 w +) top mov  next  ;c
-meta: :          create  ]   ;code   nest      2 # w add   w ip mov  next  ;c
+meta: create     name  0 ,   ;code   top push  w   top mov  next  ;c
+meta: constant   create  ,   ;code   top push  w ) top mov  next  ;c
+meta: :          create  ]   ;code   nest      w    ip mov  next  ;c
 
 code*  ^                           unnest                  begin     next  ;c
 codes nope
@@ -170,8 +176,8 @@ code -           x pop  top x sub  x top mov  next  ;c
 ( Another useful compare operator - equality!)
 : =   xor 0= ;
 
-code execute   ( cfa)    begin  top w mov  top pop  w ) pc mov  ;c
-code @execute  ( 'cfa)   top ) top mov  again  ;c
+code execute   ( cfa)    top   w mov  begin  top pop  w )+ pc mov  ;c
+code @execute  ( 'cfa)   top ) w mov  again  ;c
 
 
 ( Small constants.)
@@ -184,7 +190,7 @@ code @execute  ( 'cfa)   top ) top mov  again  ;c
 ( Incrementers by small constants. Shared code means they take up very
   little space!)
 
-meta: incr   constant  ;code  2 w +) top add  next  ;c
+meta: incr   constant  ;code  w ) top add  next  ;c
  1 incr 1+
  2 incr 2+
 
@@ -234,7 +240,7 @@ __host
 -: ( forth version of .regs)
    radix preserve
 
-   cr  ." V----INZC    IP   Cnt    CP    SP    PC"
+   cr  ." V----INZC    IP   Cnt    SP    RP    PC"
        (  000100011  0000  0000  0000  0000  0000)
    cr           .sr   .ip
                       .COUNT .r
