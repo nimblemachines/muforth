@@ -15,6 +15,8 @@ hex
 
 __meta
 
+ram
+
  250 equ DIV_1M   --  250 x 4000Hz = 1MHz
 2000 equ DIV_8M   -- 2000 x 4000Hz = 8MHz
 3000 equ DIV_12M  -- 3000 x 4000Hz = 12MHz
@@ -34,10 +36,46 @@ label dco-tune
    %0100_0001_0000_0000 # TBCCTL0 & mov   -- Rising edge, CCI0A, capture
    %0000_0010_0010_0100 # TBCTL & mov     -- SMCLK, /1, continuous, TBCLR
    pulse c  top cp mov
-   TBCTL & clr   ret  ;c
+   TBCTL & clr  ret  ;c
 
 label tweek
    cp DCOCTL & movb  dco-tune j  ;c
+
+label clear-locks
+   3300 # FCTL3 & xor  ( read 9600 + LOCKA; write a500 + LOCKA)
+   FKEY # FCTL3 & mov  ( clear LOCK)
+   ret  ;c
+
+label set-locks
+   FKEY FLOCK + FLOCKA + # FCTL3 & mov  ( set LOCK and toggle LOCKA on)
+   ret  ;c
+
+( Clear flash info segment A)
+label erase-segment-a
+   FKEY FERASE + # FCTL1 & mov  ( set segment erase bit)
+   10c0 & clr  ( dummy write to initiate erase)
+   begin  FBUSY # FCTL3 & bit  0= until
+   ret  ;c
+
+label save-calibration
+   FKEY FWRT + # FCTL1 & mov  ( set write bit)
+   8f00 # cp bis
+   cp CAL_DCO_16MHZ & mov  ( write DCO+BC1 settings to flash)
+   begin  FBUSY # FCTL3 & bit  0= until
+   FKEY # FCTL1 & mov  ( clear flash command)
+   ret  ;c
+
+( Flash results into info segment A)
+( For now, DCO value to flash is in cp)
+label dco-flash
+   ( In the final version, this code will be running at 1M. Currently we
+     are still running at 16M, so skip this step.)
+   -- FKEY %0100_0010 + # FCTL2 & mov  ( set flash clock to MCLK/3 = 1M/3 = 333kHz)
+
+   clear-locks c
+   erase-segment-a c
+   save-calibration c
+   set-locks j  ;c
 
 label dco-init
    -- Init input capture pin: p2.0, pin 8
