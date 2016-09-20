@@ -62,54 +62,103 @@ code*  (?0branch)   top tst  skip 0= until  top pop  ' (branch) >body j  ;c
 ( If we also wanted =0branch, it would look like this:)
 code*  (=0branch)   top tst  skip 0= until           ' (branch) >body j  ;c
 
-( Fast version, using count register)
-code* (for)   ( u)   count rpush  top count mov  top pop  next  ;c
-code* (next)     1 # count sub  ' (branch) >body 0= until  count rpop  skip j  ;c
 
-( Slow version, keeping count on R stack)
-( for is just >r. next is 3 cycles slower per iteration then fast next)
--- code* (next)     1 # rp ) sub  ' (branch) >body 0= until  2 # rp add  skip j  ;c
+.ifndef loop-on-stack
+
+( XXX Crazy idea. While looping, the loop register caches the top of
+  the R stack the same way that top caches the top of the D stack, so why
+  not have it *always* cache the top of R? Why not have a register called
+  rtop that is analogous to top, and use it for loop indices? Rather than
+  having a special-purpose register just for looping.)
+
+( Fast version, using loop register)
+code* (for)   ( u)   loop rpush  top loop mov  top pop  next  ;c
+code* (next)     1 # loop sub  ' (branch) >body 0= until  loop rpop  skip j  ;c
 
 
 ( Do-loop frame looks like this:
 
-  +--------------------+
-  |  saved count reg   |
-  +--------------------+
-  |       limit        |<--- rp
-  +--------------------+
+  +------------------+
+  |  saved loop reg  |
+  +------------------+
+  |      limit       |<--- rp
+  +------------------+
 
-   Current index is in count register; current "user-visible" index is
-   calculated as count + limit.)
+   Current index is in loop register; current "user-visible" index is
+   calculated as index + limit.)
 
 code* (do)   ( limit start)
    4 # rp sub  ( make room on R stack - all in one go)
-    count 2 rp +) mov  ( save count reg on R)
+     loop 2 rp +) mov  ( save loop reg on R)
    x pop  x rp  ) mov  ( save limit to R)
-   x top sub  top count mov  ( count = start - limit)
+   x top sub  top loop mov  ( index = start - limit)
    top pop  next  ;c
 
-( Increment count. If it overflows to zero, restore count register, pop
+( Increment index. If it overflows to zero, restore loop register, pop
   stack frame, skip backwards jump, and continue. If non-zero, simply take
   the backwards jump.)
 
 code* (loop)
-   1 # count add  ' (branch) >body 0= until
+   1 # loop add  ' (branch) >body 0= until
 label undo
-   2 # rp add  rp )+ count mov  skip j  ;c
+   2 # rp add  rp )+ loop mov  skip j  ;c
 
-( Add incr to count. If the sign of count has changed, we've crossed the
-  threshold, so restore count, pop frame, and skip jump. Otherwise, take
+( Add incr to index. If the sign of index has changed, we've crossed the
+  threshold, so restore index, pop frame, and skip jump. Otherwise, take
   the backwards jump.)
 
 code* (+loop)  ( incr)
-   count x mov  ( save count value)
-   top count add   top pop   count x xor  undo 0>= until
+   loop x mov  ( save index value)
+   top loop add   top pop   loop x xor  undo 0>= until
    ' (branch) >body j  ;c
 
-( Push current loop index. index = count + limit)
+( Push current loop index. User-visible index = index + limit)
 code i   ( - index)
-  top push  count top mov  rp ) top add  next  ;c
+  top push  loop top mov  rp ) top add  next  ;c
+
+.else  ( keeping for/next and do/loop index on R stack, not in a register)
+
+( for is just >r. next is 3 cycles slower per iteration then fast next)
+code* (next)     1 # rp ) sub  ' (branch) >body 0= until  2 # rp add  skip j  ;c
+
+( Do-loop frame looks like this:
+
+  +---------+
+  |  limit  |
+  +---------+
+  |  index  |<--- rp
+  +---------+
+
+   "User-visible" index is calculated as index + limit.)
+
+code* (do)   ( limit start)
+   4 # rp sub  ( make room on R stack - all in one go)
+   x pop      x 2 rp +) mov  ( save limit to R)
+   x top sub  top rp  ) mov  ( index = start - limit)
+   top pop  next  ;c
+
+( Increment index. If it overflows to zero, pop stack frame, skip backwards
+  jump, and continue. If non-zero, simply take the backwards jump.)
+
+code* (loop)
+   1 # rp ) add  ' (branch) >body 0= until
+label undo
+   4 # rp add  skip j  ;c
+
+( Add incr to index. If the sign of index has changed, we've crossed the
+  threshold, so pop stack frame, skip backwards jump, and continue.
+  Otherwise, take the backwards jump.)
+
+code* (+loop)  ( incr)
+   rp ) x mov  ( save index value)
+   top rp ) add   top pop   rp ) x xor  undo 0>= until
+   ' (branch) >body j  ;c
+
+( Push current loop index. User-visible index = index + limit)
+code i   ( - index)
+  top push  rp ) top mov  2 rp +) top add  next  ;c
+
+.then
 
 
 ( Basic unary ops.)
@@ -142,6 +191,7 @@ code rot   ( y x t - x t y)  x pop  y pop  x push  top push  y top mov  next  ;c
 
 
 ( Return stack ops.)
+.ifdef loop-on-stack  implements (for)  .then
 code >r   ( w)    top rpush  top pop   next  ;c
 code r>   ( - w)  top push   top rpop  next  ;c
 code r@   ( - w)  top push   rp ) top mov  next  ;c
@@ -214,7 +264,12 @@ ram
 
 code bug
    top push  ( so all of D stack is in memory)
-   ip push  count push  ( capture Forth VM context)
+   ip push  ( capture Forth VM context)
+.ifdef loop-on-stack
+   rp ) push
+.else
+   loop push
+.then
    sp cp mov  rp sp mov  ( D stack -> CP, R stack -> SP)
    @ram #ram + \m cell- & call  ( fall thru)  ;c
 
@@ -240,10 +295,10 @@ __host
 -: ( forth version of .regs)
    radix preserve
 
-   cr  ." V----INZC    IP   Cnt    SP    RP    PC"
+   cr  ." V----INZC    IP  Loop    SP    RP    PC"
        (  000100011  0000  0000  0000  0000  0000)
    cr           .sr   .ip
-                      .COUNT .r
+                       .LOOP .r
                                .CP .r
                        chat-sp @ .h16 2sp  .PC .r ;  is .regs
 
