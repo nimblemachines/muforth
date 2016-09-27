@@ -26,18 +26,82 @@
    radix preserve  decimal
    <esc  40 + attrib;  30 + attrib;  attrib  esc> ;
 
-( Sequence of each subset of 8 colors:
-: black    0 ;
-: red      1 ;
-: green    2 ;
-: yellow   3 ;
-: blue     4 ;
-: magenta  5 ;
-: cyan     6 ;
-: white    7 ;
-)
+( Sequence of each subset of 8 colors.
+  Index, in binary, is 421
+                       bgr)
 
-( Show all colors)
-: set-color  ( n)  8 /mod swap  9  color ;
-: .color  ( n)  dup set-color  7 and  char 0 + dup emit emit ;
+0 constant black    ( +black = grey)
+1 constant red
+2 constant green             (   4       2      1 )
+3 constant yellow   ( -blue  =         green + red)
+4 constant blue
+5 constant magenta  ( -green = blue          + red)
+6 constant cyan     ( -red   = blue  + green      )
+7 constant white
+
+( Generate a new palette.)
+( Four byte values: floor ceil +floor +ceil)
+variable component  "dd77_aa55 component !  ( Little-endian hack!)
+
+: comp@  ( 'component exists - color 'component)
+   over swap if  1+  then  c@  swap ;
+
+: get-components  ( i - r g b)
+   push  component
+   r@ 8 and if  2 +  then  ( use "bright" versions)
+   r@ 1 and comp@ ( red)
+   r@ 2 and comp@ ( green)
+   pop 4 and comp@ ( blue)
+   drop ;
+
+( Generate a new palette.)
+: gen
+   ( black is special)  0 0 0  0 pal!
+   16 1 do  i get-components  i pal!  loop
+   set-palette ;
+
+( Export a palette so we can use set-console-colors to set it.)
+compiler  ( We want to print a string with embedded " chars.)
+: .string   \ (")  \f char string,  drop  \ type ;
+forth
+: .rgb_   ( r g b)  rot .h8  swap .h8  .h8_ ;
+: export
+   out-channel preserve  >stdout
+   .string }
+
+# Put this into your .bash_login or .profile.
+# If we are on a Linux console, set the colors to something decent.
+if [ "$TERM" = "linux" ]; then
+    # Sequence (+color is bright) is:
+    # black red green yellow blue cyan magenta white
+    # grey +red +green +yellow +blue +cyan +magenta +white
+
+    ~/set-console-colors \
+        }
+    8 0 do  i pal@  .rgb_  loop  ." \
+        "
+   16 8 do  i pal@  .rgb_  loop  ."
+
+fi
+"  ;
+
+( Show all colors.)
+: +fg  ( bright color8)  9  color ;
+: fg  ( n)  8 /mod swap  ( bright color8)  +fg ;
+: .color  ( n)  dup fg  7 and  char 0 + dup emit emit ;
 : cc  16 0 do  i .color  loop  0 9 9 color  ( back to defaults) ;
+
+( Test "close" colors. These pairs - red + magenta, green + cyan, yellow +
+  white - all differ in that one has a blue component, and the other lacks
+  blue. For good measure, I put the two pure blues in there as well.)
+
+: tt
+   cr  0 red +fg  ."  red "   0 magenta +fg  ."  magenta "
+       0 green +fg  ."  green "  0 cyan +fg  ."  cyan "
+       0 blue +fg  ."  blue "
+       0 yellow +fg  ."  yellow "  0 white +fg  ."  white"
+   cr  1 red +fg  ." +red "   1 magenta +fg  ." +magenta "
+       1 green +fg  ." +green "  1 cyan +fg  ." +cyan "
+       1 blue +fg  ." +blue "
+       1 yellow +fg  ." +yellow "  1 white +fg  ." +white"
+   0 9 9 color ;
