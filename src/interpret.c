@@ -91,7 +91,7 @@ static void mu_return_token(char *last, int ate_trailing)
     parsed.length = last - _(first);
 
     /* Save trailing delimiter as a token: address and length */
-    trailing.data = last;;
+    trailing.data = last;
     trailing.length = ate_trailing;
 
     /* Account for characters processed, return token */
