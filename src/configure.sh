@@ -152,7 +152,7 @@ EOF
     fi
 fi
 
-if [ "$os" = "FreeBSD" -o "$os" = "NetBSD" ]; then
+if [ "$os" = "FreeBSD" -o "$os" = "NetBSD" -o "$os" = "OpenBSD"]; then
     archobjs="file.o main.o time.o tty.o select.o pty.o usb-netbsd.o usb-freebsd.o"
     if [ "$cpu" = "amd64" ]; then
         Wnarrowing=""
