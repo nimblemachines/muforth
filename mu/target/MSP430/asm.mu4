@@ -106,7 +106,7 @@ forth
 
   As  Reg  Resulting mode          Action
   ==  ===  ==============          ======
-  01   r3  Constant 1              drop word
+  01   r3  Constant 1              none
   01   xx  Indexed/Abs/PC-rel      output word
   11   pc  Immediate               output word
 )
@@ -122,10 +122,9 @@ forth
 : ea>mode  ( ea - reg/mode)  30 and ;
 
 assembler
-:  )    (     reg - ea)                    %10_0000 or ;    ( indirect)
-: +)    ( off reg - ea)  swap off>ea  =if  %01_0000 or  or  ( indexed)
-                    ^  then  drop  \a ) ;
-:  )+   (     reg - ea)                    %11_0000 or ;    ( post-increment)
+: +)    ( off reg - ea)  swap off>ea   %01_0000 or  or ;  ( indexed)
+:  )    (     reg - ea)                %10_0000 or ;      ( indirect)
+:  )+   (     reg - ea)                %11_0000 or ;      ( post-increment)
 forth
 
 : imm>ea   ( immed - ea)  off>ea  asm{  pc )+  }  or ;
@@ -134,7 +133,7 @@ assembler
 : #   ( imm - ea)
    0ffff and
    dup  0= if  drop  asm{  r3     } ^  then
-   dup 1 = if  ( 1)  asm{  r3 +)  } ^  then  ( 1 dropped on output)
+   dup 1 = if  ( 1)  asm{  r3 +)  } ^  then  ( 1 needed for +)
    dup 2 = if  drop  asm{  r3 )   } ^  then
    dup 0ffff = if  ( -1 or 0ffff)
                drop  asm{  r3 )+  } ^  then
@@ -145,11 +144,11 @@ assembler
 :  &   ( offset - ea)   asm{  sr +)  } ;  ( absolute)
 forth
 
-: off,     ( ea)  ea>off             \m , ;
-: pc-off,  ( ea)  ea>off  \m here -  \m , ;
+: off,     ( ea)  ea>off                        \m , ;
+: pc-off,  ( ea)  ea>off  \m here  \m cell+  -  \m , ;
 
 : ea,   ( ea)
-   dup asm{   1 #   } = if   drop        ^  then  ( const 1)
+   dup asm{   1 #     } = if   drop           ^  then  ( const 1)
    dup ea>rm  ( ea reg/mode)
    dup asm{    pc )+  } = if   drop  off,     ^  then  ( immed)
    dup asm{  0 pc +)  } = if   drop  pc-off,  ^  then  ( pc-relative)
@@ -210,9 +209,8 @@ forth
   generator.)
 
 : ?push-erratum  ( ea - ea')
-   dup ea>rm
-   dup 22 =  if  2drop  4 imm>ea  ^  then
-       32 =  if   drop  8 imm>ea  ^  then ;
+   dup asm{  4 #  } =  if  drop  4 imm>ea  ^  then
+   dup asm{  8 #  } =  if  drop  8 imm>ea  ^  then ;
 
 assembler
 : push   ( ea)  ?push-erratum  _push ;
