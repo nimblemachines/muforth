@@ -179,9 +179,21 @@ fi
 # Figure out which version of sed we're running, so we can properly specify
 # the use of extended (ie, sane) regular expressions.
 
+# XXX Do this a different way? How about _trying_ to run sed -E and if that
+# works, we have BSD sed; if sed -r works, then we have GNU. If neither one
+# works, complain that the person has a weird sed and that they need to
+# find a better one.
+
 echo
 
-if sed --version 2> /dev/null | grep -q "GNU"; then
+if sed --version 2> /dev/null | grep -q "not GNU sed"; then
+  cat <<EOF
+You are running a funky version of sed - probably built into busybox - that
+does not support extended regular expressions. Please install a sed that
+does, like GNU sed, and then re-run configure.sh.
+EOF
+  exit 1
+elif sed --version 2> /dev/null | grep -q "GNU sed"; then
   cat <<EOF
 Found GNU sed; using "-r" for extended regular expressions.
 EOF
