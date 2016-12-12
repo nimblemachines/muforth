@@ -152,7 +152,7 @@ EOF
     fi
 fi
 
-if [ "$os" = "FreeBSD" -o "$os" = "NetBSD" ]; then
+if [ "$os" = "FreeBSD" -o "$os" = "NetBSD" -o "$os" = "OpenBSD" ]; then
     archobjs="file.o main.o time.o tty.o select.o pty.o usb-netbsd.o usb-freebsd.o"
     if [ "$cpu" = "amd64" ]; then
         Wnarrowing=""
@@ -219,6 +219,11 @@ sed ${sedext} \
   -e "s/%sedext%/${sedext}/g" \
   ../scripts/do_sed.sh.in > ../scripts/do_sed.sh
 chmod 755 ../scripts/do_sed.sh
+
+# Touch local.mk, which we'll need regardless of which kind of Make the
+# user has. Also, this allows us to use .include rather than .sinclude,
+# which doesn't exist in OpenBSD.
+touch local.mk
 
 # Figure out which version of make we're using (most likely GNU or BSD) and
 # set up an appropriate Makefile.
