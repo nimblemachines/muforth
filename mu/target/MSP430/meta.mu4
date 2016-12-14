@@ -40,7 +40,6 @@ variable (0branch)
 variable (=0branch)
 variable (?0branch)
 variable (for)
-variable (?for)
 variable (next)
 variable (do)
 variable (loop)
@@ -182,37 +181,42 @@ forth
 meta
 : <resolve  ( dest src)  image-! ;
 : >resolve  ( src dest)  swap  \m <resolve ;
-: >mark   \m here  0 \m , ;
+: mark   \m here  0 \m , ;
 
 target-compiler
-: =if   ( - src)        p, (=0branch)  \m >mark ;
-: ?if   ( - src)        p, (?0branch)  \m >mark ;
-: if    ( - src)        p,  (0branch)  \m >mark ;
+: =if   ( - src)        p, (=0branch)  \m mark ;
+: ?if   ( - src)        p, (?0branch)  \m mark ;
+: if    ( - src)        p,  (0branch)  \m mark ;
 : then  ( src)          \m here  \m >resolve ;
-: else  ( src0 - src1)  p,   (branch)  \m >mark
+: else  ( src0 - src1)  p,   (branch)  \m mark
                         swap  \tc then ;
 
 : begin   ( - dest)  \m here ;
 : =until  ( dest -)  \tc =if  \m <resolve ;
 : ?until  ( dest -)  \tc ?if  \m <resolve ;
-: until   ( dest -)   \tc if  \m <resolve ;
-: again   ( dest -)  p, (branch)  \m >mark  \m <resolve ;
+: until   ( dest -)  \tc  if  \m <resolve ;
+: again   ( dest -)  p, (branch)  \m mark  \m <resolve ;
 : =while  ( dest - src dest)  \tc =if  swap ;
 : ?while  ( dest - src dest)  \tc ?if  swap ;
-: while   ( dest - src dest)   \tc if  swap ;
+: while   ( dest - src dest)  \tc  if  swap ;
 : repeat  ( src dest -)   \tc again  \tc then ;
 
-( n for .. next         goes n times; 64 Ki if n=0 )
-( n ?for .. next then   goes n times; 0 if n=0 )
+( NOTE: We only implement the "smart" for that loops 0 times when passed a
+  zero. No more "special case" loops of the form:
+    ?for  blah blah  next  then
+  Now, for compiles ?if followed by the for runtime; next compiles the next
+  runtime, resolves the backwards branch for next, and, lastly, resolves
+  the forward branch from the ?if.)
 
-: for     ( - dest)      p,  (for)            \tc begin ;
-: ?for    ( - src dest)  p, (?for)  \m >mark  \tc begin ;
-: next    ( dest -)      p, (next)  \m >mark  \m <resolve ;
+( n for .. next         goes n times; 0 if n=0 )
+
+: for     ( - src dest)  \tc ?if  p, (for)  \tc begin ;
+: next    ( dest -)      p, (next)  \m mark  \m <resolve  \tc then ;
 
 ( do, loop, +loop)
-: do      ( - dest)   p, (do)              \tc begin ;
-: loop    ( dest)     p, (loop)   \m >mark  \m <resolve ;
-: +loop   ( dest)     p, (+loop)  \m >mark  \m <resolve ;
+: do      ( - dest)   p, (do)             \tc begin ;
+: loop    ( dest)     p, (loop)   \m mark  \m <resolve ;
+: +loop   ( dest)     p, (+loop)  \m mark  \m <resolve ;
 forth
 
 
