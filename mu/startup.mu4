@@ -206,7 +206,7 @@ forth
 
 
 ( Mark a branch source for later fixup.)
-: >mark  ( - src)  here  0 , ;
+: mark  ( - src)  here  0 , ;
 
 ( Resolve a forward or backward jump, from src to dest.)
 ( When using absolute branch addresses, this is easy: just store dest at src.)
@@ -217,30 +217,31 @@ forth
 : compile   pop  @+  push  , ;
 
 compiler
-: =if   ( - src)        compile (=0branch)  >mark ;
-: if    ( - src)        compile  (0branch)  >mark ;
-: then  ( src)          here >resolve ;
-: else  ( src0 - src1)  compile   (branch)  >mark  swap  \c then ;
+: then   ( src)          here >resolve ;
+: =if    ( - src)        compile (=0branch)  mark ;
+: ?if    ( - src)        compile (?0branch)  mark ;
+: if     ( - src)        compile  (0branch)  mark ;
+: again  ( dest)         compile   (branch)  mark  <resolve ;
+: else   ( src0 - src1)  compile   (branch)  mark  swap  \c then ;
 
 : begin   ( - dest)  here ;
-: =until  ( dest -)       \c =if  <resolve ;
-: until   ( dest -)        \c if  <resolve ;
-: again   ( dest -)     compile   (branch)  >mark  <resolve ;
+: =until  ( dest)             \c =if  <resolve ;
+: ?until  ( dest)             \c ?if  <resolve ;
+: until   ( dest)              \c if  <resolve ;
 : =while  ( dest - src dest)  \c =if  swap ;
+: ?while  ( dest - src dest)  \c ?if  swap ;
 : while   ( dest - src dest)   \c if  swap ;
-: repeat  ( src dest -)   \c again  \c then ;
+: repeat  ( src dest)   \c again  \c then ;
 
-( n for .. next         goes n times; 2^wordsize if n=0 )
-( n ?for .. next then   goes n times; 0 if n=0 )
+( n for .. next         goes n times; 0 if n=0 )
 
-: for     ( - dest)      compile push           \c begin ;
-: ?for    ( - src dest)  compile (?for)  >mark  \c begin ;
-: next    ( dest -)      compile (next)  >mark  <resolve ;
+: for     ( - src dest)  \c ?if  compile push  \c begin ;
+: next    ( dest)        compile (next)  mark  <resolve  \c then ;
 
 ( do, loop, +loop)
-: do      ( - src dest)   compile (do)     >mark  \c begin ;
-: loop    ( src dest -)   compile (loop)   >mark  <resolve  \c then ;
-: +loop   ( src dest -)   compile (+loop)  >mark  <resolve  \c then ;
+: do      ( - src dest)   compile (do)     mark  \c begin ;
+: loop    ( src dest)     compile (loop)   mark  <resolve  \c then ;
+: +loop   ( src dest)     compile (+loop)  mark  <resolve  \c then ;
 
 ( make \ more like ANS-Forth's POSTPONE)
 ( Now, the confusion happens because we need to write code _in this word_
@@ -373,7 +374,7 @@ here 0 ,
    create , ( compile the constant)  does> @ ;
 
 ( An array with every cell set to a default value.)
-: defarray   ( default cells)  create  ?for dup , next then  drop ;
+: defarray   ( default cells)  create  for dup , next  drop ;
 : array      ( cells)  0 swap  defarray ;
 
 ( A byte array; length is rounded up to cell boundary.)
@@ -1038,7 +1039,7 @@ ctrl M  constant #CR   --  13
 
 : abs   ( n - |n|)   dup 0<  if  negate then ;
 
-: spaces  ( n)  0 max  ?for  space  next  then  ;
+: spaces  ( n)  0 max  for  space  next ;
 
 ( pad is where we convert numbers to ASCII. A number is 1 cell - could be
   64 bits! - and in binary would take 64 characters to represent, plus a
@@ -1082,7 +1083,7 @@ variable sep  ( include "thousands" separators in numbers - or not.)
 
 ( This should truncate to field length. Actually, it shouldn't. Does it?)
 : truncating-field   ( a c field - a' field)   tuck swap -  ( a field field-c)
-   dup 0< if  drop ^  then  ?for  bl hold  next then  #>  ;
+   dup 0< if  drop ^  then  for  bl hold  next  #>  ;
 
 ( Non-truncating field.)
 : field   ( a c field - a c)  over - spaces  ;
@@ -1196,8 +1197,8 @@ being-defined -v  ( be verbose)
 : words   [ ]  forall-words ;
 
 ( XXX: should be primitive?)
-: fill        ( a u n)  -rot  ?for  2dup c!    1+  next  then  2drop ;
-: cell-fill   ( a u n)  -rot  ?for  2dup  ! cell+  next  then  2drop ;
+: fill        ( a u n)  -rot  for  2dup c!    1+  next  2drop ;
+: cell-fill   ( a u n)  -rot  for  2dup  ! cell+  next  2drop ;
 
 : erase  ( a u)   0 fill  ;   ( easy, what?)
 : blank  ( a u)  bl fill  ;

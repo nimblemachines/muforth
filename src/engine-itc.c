@@ -84,23 +84,7 @@ void mu_lit_()  { PUSH(*(cell *)IP++); }
 void mu_branch_()            { BRANCH; }
 void mu_equal_zero_branch_() { if (TOP == 0) BRANCH; else IP++; }
 void mu_zero_branch_()       { mu_equal_zero_branch_(); DROP(1); }
-
-/*
- * for, ?for, next
- *
- * for simply compiles "push"; it pairs with next.
- *
- * ?for compiles (?for); it has to be matched with "next" and "then".  At
- * run-time (ie when (?for) executes), if TOP is zero we skip the entire
- * loop by jumping to "then"; otherwise we could be looping for a long time
- * - 2^(#bits in CELL)!
- */
-
-void mu_qfor_()
-{
-    if (TOP == 0) { BRANCH; DROP(1); }   /* take branch, pop stack */
-    else          { IP++; RPUSH(POP); }  /* skip branch, push count onto R */
-}
+void mu_qzero_branch_()      { if (TOP == 0) { BRANCH; DROP(1); } else IP++; }
 
 void mu_next_()
 {
