@@ -805,24 +805,29 @@ decimal
 
 ( Punctuation in numbers: sign, radix, decimal point, separators.)
 
+( NOTE WELL: This code - the number parsing code - has been a thorn in my
+  side for ever. You'll see, as you read the following code and comments,
+  that over the years I have made changes, but it has never been as simple as
+  elegant as I would like. It needs a really good whacking.)
+
 ( 2006-mar-26. Ok, so this *totally* sucks. The presence of these bits of
   punctuation can mask a word not being found in the dictionary. A bare /,
   for instance, with no digits to keep it company, is happily parsed as a
   number. The number? 0. Urgh.)
 
-: punct  ( a1 u1 ch - a2 u2 matched)
+: punct  ( a u ch - a' u' matched)
    over if ( still chars to process)  swap push  over c@  xor if
    ( no match)  pop 0 ^ then
    ( match)  pop 1 -1 v+  -1 ^  then
    ( end of input)  drop 0 ;
 
-: ?sign  ( a1 u1 - a2 u2 neg)  char - punct  if  -1 ^  then  0 ;
+: ?sign  ( a u - a' u' neg)  char - punct  if  -1 ^  then  0 ;
 
 ( I wanted to add Michael Pruemm's '0' as a hex specifier, but it's not as
   simple as adding it to this list. It will match a bare 0, which won't be
   matched as a number.)
 
-: ?radix  ( a1 u1 - a2 u2)
+: ?radix  ( a u - a' u')
 (   char 0 punct  if  hex ^  then )
    char " punct  if  hex ^  then
    char # punct  if  decimal ^  then
@@ -833,7 +838,7 @@ decimal
   number causes dpl to be set to the count of digits _after_ the _last_ .
   in the number.)
 
-: dot?  ( a1 u1 - a2 u2 matched)
+: dot?  ( a u - a' u' matched)
    char . punct  if  dpl off  -1 ^  then
    char , punct  if   -1 ^  then
    char - punct  if   -1 ^  then
@@ -850,13 +855,13 @@ decimal
           [ 2 2* 2* 2* 2* ]  ( 32)  -
      [ 2 1+  2* 2* 2*  1+ ]  ( 25)  over u< if  ( !hex, lowercase)
       ( junk)  ^
-   then  then  ( hex) [ 2 2* 1+ 2* ]  ( 10) +  then  ( decimal)  ;
+   then  then  ( hex) [ 2 2* 1+ 2* ]  ( 10) +  then  ( decimal) ;
 
-:  digit?   ( ch -   digit T |   junk F)  digit>  dup radix @  u<  ;
-: @digit?   ( a  - a digit T | a junk F)  dup c@  digit?  ;
+:  digit?   ( ch -   digit T |   junk F)  digit>  dup radix @  u< ;
+: @digit?   ( a  - a digit T | a junk F)  dup c@  digit? ;
 
-: *digit  ( u a digit - u*base+digit a)
-   swap push ( a)  swap ( dig u)  radix @ * +  pop  dpl @ 0< 1+  dpl +!  ;
+: *digit  ( accum a digit - accum*base+digit a)
+   rot  radix @ * +  swap  dpl @ 0< 1+  dpl +! ;
 
 ( 2002-mar-23. I still don't like how number parsing works. On the one
   hand, we know ahead of time exactly how many characters we have [in the
@@ -870,11 +875,15 @@ decimal
   And that "dpl!" in ?dot bugs me, too.)
 
 ( ANS compatible! - or at least it was when it converting with double numbers.)
-: >number  ( u1 a1 c1 - u2 a2 c2)  ( a2 is first unconvertible char)
-   =if  for  @digit?  while  *digit 1+ next  0 ^  then   drop  pop  then  ;
+( If >number finds a non-digit, it pops the return stack - which contains
+  the for loop counter - and returns this value, which is number of
+  characters left in the token.)
 
-: digits   ( u1 a1 c1 - u2 a2 c2 #converted)
-   dup push ( chars left)  >number  pop over - ( count of digits converted) ;
+: >number  ( accum a u - accum' a' u')  ( a' is first unconvertible char)
+   for  @digit?  0= if  drop pop ^  then  *digit  1+  next  0 ;
+
+: digits   ( accum a u - accum' a' u' #converted)
+   dup push ( chars left)  >number  pop over - ;
 
 ( XXX 2009-sep-01. The following doesn't make sense, and it's a lie as
   well, since 'number,' doesn't exist any more:
