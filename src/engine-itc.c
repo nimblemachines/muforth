@@ -86,6 +86,22 @@ void mu_equal_zero_branch_() { if (TOP == 0) BRANCH; else IP++; }
 void mu_zero_branch_()       { mu_equal_zero_branch_(); DROP(1); }
 void mu_qzero_branch_()      { if (TOP == 0) { BRANCH; DROP(1); } else IP++; }
 
+/*
+ * (next)
+ *
+ * "for" now compiles (?0branch) followed by push and doesn't need a
+ * matching "then" after "next"; "next" compiles (next) and automatically
+ * does the "then".
+ *
+ * At run-time (ie when (?0branch) executes), if TOP is zero we skip the
+ * entire loop by DROPping the zero and jumping to after "next"; otherwise
+ * we skip the branch offset, push the count onto the R stack, and continue
+ * into the body of the for/next loop.
+ *
+ * Without this test for zero we could be looping for a long time -
+ * 2^(#bits in CELL)!
+ */
+
 void mu_next_()
 {
     cell rtop = RP[0];                  /* counter on top of R stack */
