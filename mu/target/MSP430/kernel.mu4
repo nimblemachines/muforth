@@ -83,11 +83,12 @@ hex
 implements dodoes    nest  ip pop  ( fall thru to dovar/docreate)  ;c
 
 ( Note the structural similarities!)
-meta: create     name  0 ,   ;code   top push  w   top mov  next  ;c
+meta: create     name  0 ,   ;code   label wpush
+                                     top push  w   top mov  next  ;c
 meta: constant   create  ,   ;code   top push  w ) top mov  next  ;c
 meta: :          create  ]   ;code   nest      w    ip mov  next  ;c
 
-code*  ^                           unnest                  begin     next  ;c
+code*  ^                           unnest         begin     next  ;c
 codes nope
 
 ( Allocate space _before_ defining the buffer, so we can define them in
@@ -96,7 +97,7 @@ codes nope
 meta: buffer   ( #bytes)   'ram @  swap 'ram +!  constant  ;
 meta: variable    2 buffer ;
 
-code* (lit)  top push  ip )+ top mov  next  ;c
+code* (lit)  ip )+ w mov  wpush jmp  ;c
 
 code*    (branch)      ip )   ip mov  next  ;c
 code*   (0branch)   top tst  top pop  ' (branch) >body 0!= until  ( fall thru)  ;c
@@ -140,7 +141,7 @@ code* (do)   ( limit start)
 code* (loop)
    1 # loop add  ' (branch) >body 0= until
 label undo
-   2 # rp add  rp )+ loop mov  skip j  ;c
+   2 # rp add  loop rpop  skip j  ;c
 
 ( Add incr to index. If the sign of index has changed, we've crossed the
   threshold, so restore index, pop frame, and skip jump. Otherwise, take
@@ -153,11 +154,11 @@ code* (+loop)  ( incr)
 
 ( Push current loop index. User-visible index = index + limit)
 code i   ( - index)
-  top push  loop top mov  rp ) top add  next  ;c
+  loop w mov  rp ) w add  wpush jmp  ;c
 
 .else  ( keeping for/next and do/loop index on R stack, not in a register)
 
-( for is just >r. next is 3 cycles slower per iteration then fast next)
+( for is just >r. next is 3 cycles slower per iteration than fast next)
 code* (next)
    1 # rp ) sub  ' (branch) >body 0= until  2 # rp add  skip j  ;c
 
@@ -196,7 +197,7 @@ code* (+loop)  ( incr)
 
 ( Push current loop index. User-visible index = index + limit)
 code i   ( - index)
-  top push  rp ) top mov  2 rp +) top add  next  ;c
+  rp ) w mov  2 rp +) w add  wpush jmp  ;c
 
 .then
 
@@ -217,14 +218,15 @@ code or    sp )+ top bis  next  ;c
 code xor   sp )+ top xor  next  ;c
 
 ( Stack ops.)
-code dup    ( t - t t)            top push                   next  ;c
-code swap   ( x t - t x)   x pop  top push        x top mov  next  ;c
-code nip    ( x t - t)                           2 # sp add  next  ;c
-code drop   ( x t - x)                              top pop  next  ;c
-code over   ( x t - x t x)        top push  2 sp +) top mov  next  ;c
+code dup    ( t - t t)  top push  next  ;c
+code drop   ( x t - x)  top pop   next  ;c
+code nip    ( x t - t)  2 # sp add  next  ;c
 
-code tuck  (   x t - t x t)  x pop       top push    x push             next  ;c
-code rot   ( y x t - x t y)  x pop  y pop  x push  top push  y top mov  next  ;c
+code over  ( w t - w t w)      sp ) w mov          wpush jmp  ;c
+code swap  ( w t - t w)             w pop          wpush jmp  ;c
+code rot   ( w x t - x t w)  x pop  w pop  x push  wpush jmp  ;c
+
+code tuck  (   x t - t x t)  x pop       top push  x push  next  ;c
 
 : 2dup   over over ;
 : -rot    rot  rot ;
@@ -233,8 +235,8 @@ code rot   ( y x t - x t y)  x pop  y pop  x push  top push  y top mov  next  ;c
 ( Return stack ops.)
 .ifdef loop-on-stack  implements (for)  .then
 code >r   ( w)    top rpush  top pop   next  ;c
-code r>   ( - w)  top push   top rpop  next  ;c
-code r@   ( - w)  top push   rp ) top mov  next  ;c
+code r>   ( - w)      w rpop  wpush jmp  ;c
+code r@   ( - w)  rp ) w mov  wpush jmp  ;c
 
 ( Memory access.)
 code @   ( a - w)  top ) top mov   next  ;c
