@@ -66,7 +66,6 @@ s/forward/>/
 s/to(_|$)/>/
 s/from(_|$)/>/
 s/(.*)_size/#\1/
-s/num_(.*)/#\1/
 
 # turn foo_ to (foo)
 s/((.*)_)$/\(\2\)/

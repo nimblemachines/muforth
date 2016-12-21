@@ -34,19 +34,10 @@ static charptr_cell first;      /* goes from start to end */
 /* line number - incremented for each newline */
 static cell lineno = 1;
 
-/* total count of lines read since muforth started - incremented for each newline */
-static cell linecount = 0;
-
 int parsed_lineno;          /* captured with first character of token */
 struct string parsed;       /* for errors */
 struct string skipped;      /* whitespace skipped before token */
 struct string trailing;     /* whitespace skipped after token */
-
-/* Push total linecount */
-void mu_push_num_lines_read()
-{
-    PUSH(linecount);
-}
 
 /* Push lineno variable */
 void mu_push_line()
@@ -124,11 +115,7 @@ static void skip()
 
     while (_(first) < _(end) && isspace(*_(first)))
     {
-        if (*_(first) == '\n')
-        {
-            lineno++;
-            linecount++;
-        }
+        if (*_(first) == '\n') lineno++;
         _(first)++;
     }
 
@@ -150,11 +137,7 @@ static void mu_scan(int delim)
     for (last = _(first); last < _(end); last++)
     {
         c = *last;
-        if (c == '\n')
-        {
-            lineno++;
-            linecount++;
-        }
+        if (c == '\n') lineno++;
         if (delim == c
             || (delim == ' ' && isspace(c)))
         {
