@@ -34,10 +34,10 @@ static charptr_cell first;      /* goes from start to end */
 /* line number - incremented for each newline */
 static cell lineno = 1;
 
-int parsed_lineno;          /* captured with first character of token */
-struct string parsed;       /* for errors */
-struct string skipped;      /* whitespace skipped before token */
-struct string trailing;     /* whitespace skipped after token */
+int parsed_lineno;              /* captured with first character of token */
+struct string parsed;           /* for errors */
+static struct string skipped;   /* whitespace skipped before token */
+static struct string trailing;  /* whitespace skipped after token */
 
 /* Push lineno variable */
 void mu_push_line()
@@ -84,7 +84,7 @@ void mu_push_trailing()
     PUSH(trailing.length);
 }
 
-static void mu_return_token(char *last, int ate_trailing)
+static void capture_token(char *last, int ate_trailing)
 {
     /* Get address and length of the token */
     parsed.data = _(first);
@@ -94,16 +94,12 @@ static void mu_return_token(char *last, int ate_trailing)
     trailing.data = last;
     trailing.length = ate_trailing;
 
-    /* Account for characters processed, return token */
+    /* Account for characters processed */
     _(first) = last + ate_trailing;
-
-    DROP(-2);
-    ST1 = (addr) parsed.data;
-    TOP = parsed.length;
 
 #ifdef DEBUG_TOKEN
     /* Without these casts, this doesn't work! */
-    fprintf(stderr, "%.*s\n", (int)TOP, (char *)ST1);
+    fprintf(stderr, "%.*s\n", (int)parsed.length, (char *)parsed.data);
 #endif
 }
 
@@ -126,7 +122,7 @@ static void skip()
  * Scan for trailing delimiter and consume it, unless we run out of
  * input text first.
  */
-static void mu_scan(int delim)
+static void scan(int delim)
 {
     char *last;
     char c;
@@ -142,25 +138,27 @@ static void mu_scan(int delim)
             || (delim == ' ' && isspace(c)))
         {
             /* found trailing delimiter; consume it */
-            mu_return_token(last, 1);
+            capture_token(last, 1);
             return;
         }
     }
 
     /* ran out of text; don't consume trailing */
-    mu_return_token(last, 0);
+    capture_token(last, 0);
 }
 
 void mu_token()  /* -- start len */
 {
     skip();         /* skip leading whitespace */
-    mu_scan(' ');   /* scan for trailing whitespace and collect token */
+    scan(' ');   /* scan for trailing whitespace and capture token */
+    mu_push_parsed();   /* push parsed token */
 }
 
 void mu_parse()  /* delim -- start len */
 {
     /* The first character of unseen input is the first character of token. */
-    mu_scan(POP);   /* scan for trailing delimiter and collect token */
+    scan(POP);   /* scan for trailing delimiter and capture token */
+    mu_push_parsed();   /* push parsed token */
 }
 
 /*
