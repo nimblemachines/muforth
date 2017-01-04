@@ -1,11 +1,11 @@
 # update copyright/license
 
-# See the file COPYRIGHT ==> See the LICENSE file
-s/read the LICENSE/read the LICENSE/
-s/read the LICENSE/read the LICENSE/
+# See the file COPYRIGHT ==> read the LICENSE
+s/see the file COPYRIGHT/read the LICENSE/
+s/see the COPYRIGHT file/read the LICENSE/
 
 # Remove the "all rights reserved part"
-s/(Read the LICENSE for details.)/(Read the LICENSE for details.)/
+s/(All rights reserved, and all wrongs)/(Read the LICENSE for details.)/
 
 /reversed. \(See the COPYRIGHT file/d
 /reversed. \(See the file COPYRIGHT/d
