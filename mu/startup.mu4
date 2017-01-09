@@ -1363,19 +1363,33 @@ variable lines-read
 
 variable zloading    ( C-string name of file being loaded)
 
-( raw-load-file doesn't preserve many settings, so it's useful for loading
-  _settings_ files that will have durable effects on the environment.
+( check-depth only prints anything out if depth has changed since the file
+  started loading _and_ zloading is non-zero - ie, we're loading a file.)
+
+: check-depth  ( saved-depth)
+   depth swap -  2 - ( use show-depths to see the "standard" difference!)
+      =if  zloading @ =if
+      ."  [ "  zcount type  ." : +depth " .  ." ]" ^  then  drop  then  drop ;
+
+: show-depths  ( saved)   depth .  . ;
+
+( raw-load-file reads and interprets a file containing muFORTH code.
+
+  Before reading anything, it resets the radix to decimal, resets the
+  interpreter mode to the host forth interpreter, and sets the .forth. vocab
+  chain as the destination for new definitions. It also redirects the console
+  output to stderr, and sets up a few checking and cleanup routines to be
+  executed on exit; most importantly, to close the file, and to check that
+  the stack depth hasn't been altered.
 
   NOTE: We wait until we've both opened and read the file before resetting
-  zloading and line, so we should get more accurate error locations!)
+  zloading and line, so we should get more accurate error locations!
 
-( Switch to decimal, host forth, and the forth chain; load a file.
-
-  NOTE: not only will raw-load-file _not_ reset radix, state, and current
-  to their previous values, any changes made to them by the loaded file with
-  remain after the file is loaded. This is useful for loading a set of
-  development tools that need to change into a metacompiler state, and
-  perhaps switch to hex. See target/HC08/build.mu4 for an example.)
+  Because raw-load-file does *not* preserve the radix, mode, or current
+  chain, any changes made to them by the loaded file will remain after the
+  file is loaded. This is useful for loading a set of development tools that
+  need to change into a metacompiler state, and perhaps switch to hex. See
+  target/HC08/build.mu4 for an example.)
 
 : raw-load-file  ( z")
    decimal
@@ -1387,24 +1401,15 @@ variable zloading    ( C-string name of file being loaded)
    zloading preserve  rot zloading !
    line preserve  1 line !
    line on-exit add-lines-read
-   evaluate ;
-
-( Save radix, state, and current; switch to decimal, host forth, and the
-  forth chain; load a file.)
-
-( check-depth only prints anything out if depth has changed since the file
-  started loading _and_ zloading is non-zero - ie, we're loading a file.)
-
-: check-depth  ( saved-depth)
-   depth swap -  3 - ( use show-depths to see the "standard" difference!)
-      =if  zloading @ =if
-      ."  [ "  zcount type  ." : +depth " .  ." ]" ^  then  drop  then  drop ;
-
-: show-depths  ( saved)   depth .  . ;
-
-: load-file  ( z")
    depth  on-exit check-depth
    -- depth  on-exit show-depths
+   evaluate ;
+
+( Save radix, state, and current, then call raw-load-file to actually load
+  and interpret the file. Unlike raw-load-file, above, load-file preserves
+  the radix, mode, and current chain.)
+
+: load-file  ( z")
    radix preserve  state preserve  current preserve
    raw-load-file ;
 
