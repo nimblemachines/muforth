@@ -26,6 +26,9 @@ hex
                                          0100 to 01ff are 16-bit.)
 
 ( SFRs)
+0000 equ IE1   ( Interrupt Enable 1 and 2 )
+0001 equ IE2
+0002 equ IFG1  ( Interrupt Flag 1 and 2 )
 0003 equ IFG2
 
 ( Port 1)
@@ -50,11 +53,22 @@ hex
 002f equ P2REN
 0042 equ P2SEL2
 
+( ADC10 Module -- Byte Access)
+0048 equ ADC10DTC0  ( ADC data transfer control register 0)
+0049 equ ADC10DTC1  ( ADC data transfer control register 1)
+004a equ ADC10AE0   ( ADC analog enable 0)
+004b equ ADC10AE1   ( ADC analog enable 1)
+
 ( DCO, clock generator)
 0053 equ BCSCTL3
 0056 equ DCOCTL
 0057 equ BCSCTL1
 0058 equ BCSCTL2
+
+( Comparator_A+ Module -- Byte Access)
+0059 equ CACTL1  ( Comparator_A+ control 1)
+005a equ CACTL2  ( Comparator_A+ control 2)
+005b equ CAPD    ( Comparator_A+ Port Disable)
 
 ( UART/SPI - ie, USCI_A0)
 005d equ UCA0ABCTL
@@ -80,8 +94,13 @@ hex
 006e equ UCB0RXBUF
 006f equ UCB0TXBUF
 
-0118 equ UCB0I2COA     ( I2C own address)
-011a equ UCB0I2CSA     ( I2C slave address)
+( Names from G2553 datasheet, p19:)
+0118 equ UCB0OA     ( I2C own address)
+011a equ UCB0SA     ( I2C slave address)
+
+( Names from x2xx family manual, p467:)
+aka UCB0OA  equ UCB0I2COA     ( I2C own address)
+aka UCB0SA  equ UCB0I2CSA     ( I2C slave address)
 
 ( Watchdog timer)
 5a00 equ WDTKEY
@@ -103,37 +122,75 @@ hex
 0010 equ FLOCK
 0040 equ FLOCKA  ( lock bit for info segment A)
 
-( Timer madness!)
-( NOTE!! The G2553 datasheet is *incredibly* confusing when it comes to
-  timers - and a few other things too. They call TAxxx TA0xxx, and TBxxx
-  TA1xxx. For starters. I've here used the equates from the family reference
-  manual, p369 and p390.)
+( NOTE!! The MSP430 documentation is *incredibly* confusing when it comes to
+  the names of the timer registers. The MSP430x2xx family user's manual -
+  slau144j - describes a Timer_A and a Timer_B, whereas the G2553 datasheet
+  mentions a Timer0_A3 and a Timer1_A3. Even though the familly manual
+  Timer_A register addresses exactly match the G2553 datasheet Timer0_A3
+  addresses, and likewise with Timer_B and Timer1_A3, do *not* be mislead
+  into thinking that they are equivalent! If anything, this is a
+  documentation mistake.
 
-011e equ TBIV
-012e equ TAIV
+  The reality is that there are two *types* of timers described by the
+  family manual: Timer_A - which can have either 3 or 7 capture/compare
+  registers - and Timer_B - which likewise can have 3 or 7 CC registers. The
+  G2553 datasheet says that the chip has *two* Timer_A3 instances on it: two
+  timers of *type* A with 3 capture/compare registers. There are *no* timers
+  of type B on the G2553.
 
-0160 equ TACTL
-0162 equ TACCTL0
-0164 equ TACCTL1
-0166 equ TACCTL2
-0170 equ TAR
-0172 equ TACCR0
-0174 equ TACCR1
-0176 equ TACCR2
+  So, for register naming, we follow the G2553 datasheet and not the family
+  manual. The following register addresses are found on p18 of the G2553
+  datasheet.
 
-0180 equ TBCTL
-0182 equ TBCCTL0
-0184 equ TBCCTL1
-0186 equ TBCCTL2
-0190 equ TBR
-0192 equ TBCCR0
-0194 equ TBCCR1
-0196 equ TBCCR2
+  I hope this helps to clear up the confusion!)
 
-( Information memory, segment A - calibration constants)
+( Timer0_A3 Module -- Word Access)
+012e equ TA0IV ( Timer Interrupt Vector)
+
+0160 equ TA0CTL    ( Timer control)
+0162 equ TA0CCTL0  ( Timer Capture/Compare Control 0)
+0164 equ TA0CCTL1  ( Timer Capture/Compare Control 1)
+0166 equ TA0CCTL2  ( Timer Capture/Compare Control 2)
+0170 equ TA0R      ( Timer count register)
+0172 equ TA0CCR0   ( Timer Capture/Compare register 0)
+0174 equ TA0CCR1   ( Timer Capture/Compare register 1)
+0176 equ TA0CCR2   ( Timer Capture/Compare register 2)
+
+( Timer1_A3 Module -- Word Access)
+011e equ TA1IV
+
+0180 equ TA1CTL
+0182 equ TA1CCTL0
+0184 equ TA1CCTL1
+0186 equ TA1CCTL2
+0190 equ TA1R
+0192 equ TA1CCR0
+0194 equ TA1CCR1
+0196 equ TA1CCR2
+
+( ADC10 Module -- Word Access)
+01b0 equ ADC10CTL0  ( ADC control register 0)
+01b2 equ ADC10CTL1  ( ADC control register 1)
+01b4 equ ADC10MEM   ( ADC memory)
+01bc equ ADC10SA    ( ADC data transfer start address)
+
+( Information memory, segment A - ADC calibration constants)
+: adc  ( offset)  10da +  equ ;
+
+( Offsets from G2553 datasheet, p15.)
+0002 adc CAL_ADC_GAIN_FACTOR     | External VREF = 1.5 V, fADC10CLK = 5 MHz
+0004 adc CAL_ADC_OFFSET          | External VREF = 1.5 V, fADC10CLK = 5 MHz
+0006 adc CAL_ADC_15VREF_FACTOR   | REF2_5 = 0, TA = 30C, IVREF+ = 0.5 mA
+0008 adc CAL_ADC_15T30           | INCHx = 0x1010, REF2_5 = 0, TA = 30C
+000a adc CAL_ADC_15T85           | INCHx = 0x1010, REF2_5 = 0, TA = 85C
+000c adc CAL_ADC_25VREF_FACTOR   | REF2_5 = 1, TA = 30C, IVREF+ = 1 mA
+000e adc CAL_ADC_25T30           | INCHx = 0x1010, REF2_5 = 1, TA = 30C
+0010 adc CAL_ADC_25T85           | INCHx = 0x1010, REF2_5 = 1, TA = 85C
+
+( Information memory, segment A - DCO calibration constants)
 : dco  ( offset)  10f6 +  equ ;
 
-( Offsets from G2553 datasheet, p14.)
+( Offsets from G2553 datasheet, p15.)
 0002 dco CAL_DCO_16MHZ
 0003 dco CAL_BC1_16MHZ
 0004 dco CAL_DCO_12MHZ
