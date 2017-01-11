@@ -138,25 +138,31 @@ hex
 
 ( Interface timing.
 
-  If we're running 16M, we get lucky. Forth's next takes 4 cycles; at 16M
-  that is _exactly_ 250ns, or the quarter cycle delay we need to bitbang the
-  interface. So no delay loop is necessary!)
-
-
-( Speaking of timing, let's try using delays so we don't have to read from
-  the LCD. This way we can tie R/nW low, and not worry about 3v versus 5v
-  issues.
+( Let's try using delays so we don't have to read from the LCD. This way we
+  can tie R/nW low, and not worry about 3v versus 5v issues.
 
   Running at 16M, an instruction cycle is 62.5ns. In a simple loop, it
-  takes 4 cycles to decrement a register and jump if not zero. So let's
-  divide our desired delays by 250ns to get the loop count.)
+  takes 3 cycles to decrement a register and jump if not zero. So let's
+  divide our desired delays by 187.5ns to get the loop count.
+
+  Ok, let's turn that on its head. We want to calculate a loop count from a
+  delay time, in ns. We can do 16,000,000/3 loops per second, or
+  16,000,000/3,000,000,000 loops per ns. Instead of dividing, let's
+  multiply! To get from ns to loops, multiply by 16/3,000.
+
+  Except we really want to add another cycle unless our delay time is an
+  exact multiple of 187.5... and we arrive at our final formula:
+
+    loops = [[ns * 16] + 2999]/3000
+
+  Phew.)
 
 ( Delay 100us after every normal command. The HD44780U datasheet says it
   takes about 37us after each command, but my old LCD - an Hitachi LM-018L
   from 1997 - could be much slower.)
 
-meta: delay   ( ns)  #250 / constant
-   ;code  2 w +) w mov  begin  1 # w sub  0= until  next  ;c
+meta: delay   ( ns)  #16 *  #2,999 + ( round up)  #3,000 /  constant
+   ;code  w ) w mov  begin  1 # w sub  0= until  next  ;c
 
   #100,000 ( ns)  delay 100us
 
@@ -205,7 +211,7 @@ code split ( data RS - nyblo nybhi)
          x y movb  ( copy - will become lo nybble)
    y y addb  y y addb  y y addb  y y addb  ( shift lo to hi)
        top y bisb  ( add in RS)
-          y pushb  ( nyblo)
+           y push  ( nyblo)
      0f0 # x andb  ( keep only hi nybble)
        x top bisb  ( add in RS)
              next  ;c
@@ -256,9 +262,9 @@ code E\
 
 meta: drive  ( mask)  constant
    ;code  ( bits)
-          2 w +) x mov  ( x=mask)
-        x P2OUT & bicb  ( clear bits that are set in mask)
-        x top     andb  ( keep only bits in mask)
+             w ) w mov  ( w=mask)
+        w P2OUT & bicb  ( clear bits that are set in mask)
+        w top     andb  ( keep only bits in mask)
       top P2OUT & bisb  ( combine bits)
       top pop   next  ;c
 
