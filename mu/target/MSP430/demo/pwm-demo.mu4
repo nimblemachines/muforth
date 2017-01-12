@@ -1,0 +1,110 @@
+( This file is part of muFORTH: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2017 David Frech. (Read the LICENSE for details.)
+
+ld target/MSP430/build.mu4
+
+loading MSP430 PWM demo
+
+decimal
+__meta
+ram
+
+( One disadvantage of Timer_A compared to Timer_B shows up when doing PWM.
+
+  On Timer_B, the "time base" for the PWM cycle can be set simply by
+  setting the *width* of the timer counter register. It can be set to 8, 10,
+  12, or 16 bits.
+
+  With Timer_A we don't get so lucky, and have to "sacrifice" TAxCCR0 - one
+  of the capture/compare registers - to set the base timer width. This leaves
+  us with two CCRs for doing PWM. On the G2553, then, we can do four channels
+  of simple PWM. This is what we shall do in this demo.
+
+  The *width* of the timer counter register sets the *resolution* of the
+  PWM. For example, if the timer is 8 bits wide, it counts from 0 to 255 and
+  then starts at 0 again. This gives us 256 "steps" of resolution in our PWM.
+  A PWM value of 0 never turns on the output; a PWM value of 255 turns it on
+  for the whole cycle; a PWM value of 128 turns it on for half the cycle.
+
+  Things work similarly for wider counters but trade off something else.
+  The wider the counter, the lower the base frequency; and if we are driving
+  something like a coil or a motor, we will end up *hearing* the base PWM
+  frequency if it's in the audio range.
+
+  On the G2553, the max chip clock is 16MHz. At 8 bits of PWM resolution,
+  the base PWM frequency is
+
+  16,000,000/256 = 62,500 Hz
+
+  neatly out of human auditory range. But at any other resolution we enter
+  the audio range:
+
+  16,000,000/1024  = 15,625 Hz @ 10 bit resolution
+  16,000,000/4096  =  3,906 Hz @ 12 bit resolution
+  16,000,000/65536 =    244 Hz @ 16 bit resolution
+
+  For this demo I'm going to set up Timer_A0 for 12-bit resolution and
+  Timer_A1 for 16-bit resolution.)
+
+( Set up port pins and time bases.
+
+  In general, to connect a port pin to a timer output such as TA0.0 we set
+  the corresponding port registers bits like this:
+
+    DIR  = 1
+    SEL  = 1
+    SEL2 = 0
+
+  News flash! The 20-pin G2553 does *not* have TA0.2 pinned out! So we have
+  to content ourselves with three simultaneous outputs: TA0.1, TA1.1, and
+  TA1.2.
+
+  TA0.1 - corresponds to TA0CCR1 - on P2.6, pin 19
+  TA0.2 - corresponds to TA0CCR2 - *not on our chip*
+  TA1.1 - corresponds to TA1CCR1 - on P2.2, pin 10
+  TA1.2 - corresponds to TA1CCR2 - on P2.4, pin 12
+)
+
+assembler
+04 reg cp
+12 reg x
+forth
+
+label init-pwm
+   %0101_0100 # x movb     -- set bits 2, 4, and 6
+   x P2DIR & bisb          -- set DIR bits
+   x P2SEL & bisb          -- set SEL bits
+   x P2SEL2 & bicb         -- clear SEL2 bits
+
+   ( Initialize PWM bit widths and set all PWMs to 50%.)
+   1 12 << 1- # x mov   x TA0CCR0 & mov   -- 12 bit timer width for Timer_A0
+   x lsr  ( /2)         x TA0CCR1 & mov   -- set to 50%
+   1 16 << 1- # x mov   x TA1CCR0 & mov   -- 16 bit timer width for Timer_A1
+   x lsr  ( /2)         x TA1CCR1 & mov   -- set to 50%
+                        x TA1CCR2 & mov   -- set to 50%
+
+   %1110_0000 # x mov            -- Compare mode, Reset/Set
+   x TA0CCTL1 & mov
+   x TA1CCTL1 & mov
+   x TA1CCTL2 & mov
+
+   %0010_0001_0100 # TA0CTL & mov   -- SMCLK, /1, Up mode, TACLR
+   %0010_0001_0100 # TA1CTL & mov   -- SMCLK, /1, Up mode, TACLR
+   ret  ;c
+
+label t0.1!  ( Set TA0CCR1.)   cp TA0CCR1 & mov  ret  ;c
+label t1.1!  ( Set TA1CCR1.)   cp TA1CCR1 & mov  ret  ;c
+label t1.2!  ( Set TA1CCR2.)   cp TA1CCR2 & mov  ret  ;c
+
+{
+( Convert a percentage and number of bits into capture/compare value.)
+: %bits>pwm  ( percent #bits - ccr)   1 swap << 1-  100 */ ;
+
+( Let's name these based on the pin number so it's easy to know which pin
+  to scope to see the change.)
+
+: pin12  ( percent)  16 %bits>pwm  \m t1.2! call ;
+: pin10  ( percent)  16 %bits>pwm  \m t1.1! call ;
+: pin19  ( percent)  12 %bits>pwm  \m t0.1! call ;
+}

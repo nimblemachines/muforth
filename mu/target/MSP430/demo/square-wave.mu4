@@ -1,0 +1,53 @@
+( This file is part of muFORTH: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2017 David Frech. (Read the LICENSE for details.)
+
+( Generate a square wave by supplying a timer divisor via the CP register.)
+
+( Copied from target/MSP430/gen-4khz.mu4)
+
+ld! target/MSP430/build.mu4  ( sets radix to hex!)
+
+loading MSP430 Square-wave generator
+
+assembler
+( This code uses the following register conventions:)
+
+ 04 reg cp     ( context pointer)
+
+forth
+
+( Tell the disassembler about these register names.)
+-: ( reg)
+   dup 5 u< if  ( low special)
+      2*  z" pcspsrr3cp" +  2 type  ^  then
+           ( 0011223344)
+   ." r"  .udec ;  is .regname
+
+__meta
+decimal
+ram
+
+label scream
+   -- Set up port pin for timer output; TA0.0 on p1.5 (pin 7)
+   -- See p49 of G2553 datasheet.
+   %0010_0000 # P1DIR & bisb        -- p1.5 output
+   %0010_0000 # P1SEL & bisb        -- p1.5 select TA0.0
+   %0010_0000 # P1SEL2 & bicb       --    (ditto)
+
+   -- Set up output square-wave; assume 16M SMCLK
+   -- CP contains divisor
+   cp TA0CCR0 & mov                 -- Toggle mode period = 2*(TA0CCRO + 1)
+   %1000_0000 # TA0CCTL0 & mov      -- Compare mode, Toggle
+   %0010_0001_0100 # TA0CTL & mov   -- SMCLK, /1, Up mode, TACLR
+  ret ;c
+
+{
+( Load CP with the correct divisor to generate a 50% duty-cycle square-wave
+  at frequency freq, assuming chip clock is running at 16MHz. Then call the
+  word scream to set up the timer.)
+
+: hz  ( freq)
+   32_000_000 swap /  1+ 2/ ( round)  2/ 1- ( period)
+   .CP reg!  \m scream call ;
+}
