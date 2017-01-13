@@ -1,0 +1,137 @@
+( This file is part of muFORTH: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2017 David Frech. (Read the LICENSE for details.)
+
+ld target/MSP430/load-kernel.mu4
+
+__meta
+hex
+ram
+
+loading MSP430 Kernel (multiply and divide: a work-in-progress)
+
+( Unsigned multiply of two 16-bit values.
+
+    w  is loop counter
+    x  holds high half of result
+    y  holds low half of result, and also 16-bit multipli-er - m-er
+  top  holds multipli-cand - m-cand
+)
+code um*  ( u1 u2 - udprod)
+   y pop ( m-er)
+label do-um*  ( needed by m* when m-er and m-cand have same sign)
+   x clr ( prodhi)  #16 # w mov
+   begin  1 # y bit  0!= if  top x add  then  x ror  y ror
+          1 # w sub  0= until
+   y push  ( prodlo)  x top mov  next  ;c
+
+
+( Unsigned 32-bit by 16-bit divide.
+
+    w  is loop counter
+    x  holds bit 16 of shifted-left d-end
+    y  hold high part of d-end
+    z  holds low part of d-end
+  top  holds d-sor
+)
+code um/mod  ( ud u - urem uquot)
+   y pop  ( dendhi)  z pop  ( dendlo)  #16 # w mov
+   begin  setc  z z addc  y y addc  x clr  0 # x addc
+          top y sub  0 # x subc  ( carry = not borrow)
+          u< if  top y add  1 # z bic  ( shift in 0, not 1)  then
+          1 # w sub  0= until
+   y push  z top mov  next  ;c
+
+
+( Unsigned 31-bit by 16-bit divide. fig-FORTH style.
+
+    w  is loop counter
+    y  hold high part of d-end
+    z  holds low part of d-end
+  top  holds d-sor
+)
+code um/mod-fig  ( ud u - urem uquot)
+   y pop  ( dendhi)  z pop  ( dendlo)  #16 # w mov
+   begin  setc  z z addc  y y addc  top y sub
+          u< if  top y add  1 # z bic  ( shift in 0, not 1)  then
+          1 # w sub  0= until
+   y push  z top mov  next  ;c
+
+
+( Signed multiply of two 16-bit values.
+
+  This is trickier. We have to be careful. There are several cases:
+
+  * Both m-er and m-cand are 0<. Negate both, and proceed as with um*.
+  * Both m-er and m-cand are >=0. Proceed as with um*.
+  * m-er and m-cand have different signs. We want the m-er to be <0. If
+    m-cand is <0, swap m-er and m-cand and proceed with "mixed" multiply:
+    15 iterations of "unsigned" add and shift, followed by one "signed" add
+    and shift. This is one instance when the MSP430's "natural borrow"
+    causes us trouble. When we go to shift the product to the right that one
+    last time, shifting in the carry on the left, because we did a subtract
+    rather than an add, the carry is inverted. We fix this at the end by
+    XORing top with 8000 hex.
+
+  The following code is correct but is clumsy in several respects. One is
+  that we had to implement the 0< tests awkwkardly because of a limitation of
+  the instruction set: there is no "jump if not negative" instruction, only a
+  "jump if negative", so we do 0< tests by jumping conditionally over a
+  following unconditional jump. It works, but it's slower and longer than
+  necessary. Sadly, there are several of these 0< tests in this code.
+
+  The tests for the different cases could be structured differently.
+
+  Swapping the m-cand and m-er is clumsy.
+
+  And I'm not happy about the kludge with the last carry in. Will it ever
+  be 0? Should I simply shift in a 1? We know the product is negative: the
+  m-er and m-cand had different signs!
+
+  One last note: This code pushes a "flag" value to indicate whether it
+  took the "mixed" multiply route [-1] or the unsigned multiply route [0].
+  Obviously, in the production code these flags will go away, but they helped
+  track down a stupid bug: I was using "bit" [AND] rather than XOR to test
+  whether the m-cand and m-er had the same sign. Go figure.
+
+  Register use is like that of um*:
+
+    w  is loop counter
+    x  holds high half of result
+    y  holds low half of result, and also 16-bit multipli-er - m-er
+  top  holds multipli-cand - m-cand
+)
+code m*  ( n1 n2 - dprod)
+   y pop ( m-er)  top x mov  y x xor  0< if  ( different signs)  -1 # push
+      top tst  0< if  top w mov  y top mov  w y mov  ( exch)  then
+      
+      x clr ( prodhi)  #15 # w mov
+      begin  1 # y bit  0!= if  top x add  then  x ror  y ror
+             1 # w sub  0= until
+      1 # y bit  0!= if  top x sub  then  x ror  y ror
+      y push  ( prodlo)  x top mov
+      8000 # top xor ( complement last carry)  next
+   then
+
+   ( same sign)
+   0 # push
+   top tst  0< if  top neg  y neg  then  ( now both >=0)  do-um* j  ;c
+
+
+( Another quick take on this. We want m-cand >= 0. So, let's approach it
+  this way: if m-cand < 0, negate *both* m-er and m-cand. Now there are two
+  cases:
+
+  * m-er *was* < 0 and is now >= 0. Jump to um*.
+  * m-er *was* >= 0 and is now < 0. Great. Do the "mixed" multiply. And
+    shift in a 1 at the end. ;-)
+
+code m*2  ( n1 n2 - dprod)
+   y pop ( m-er)  top tst  0< if  top neg  y neg  then
+   y tst  do-um* 0< until  ( both >= 0: do unsigned multiply)
+      
+   x clr ( prodhi)  #15 # w mov
+   begin  1 # y bit  0!= if  top x add  then  x ror  y ror
+          1 # w sub  0= until
+   top x sub  setc  x ror  y ror  y push  ( prodlo)  x top mov
+   next  ;c
