@@ -44,13 +44,15 @@ void mu_plus_store()  { *(cell *)TOP += ST1; DROP(2); }
 /* copy nth value (counting from 0) to top - ANS calls this "pick" */
 void mu_nth()    { TOP = SP[TOP+1]; }
 
-void mu_dup()    { cell t = TOP; PUSH(t); }
-void mu_nip()    { cell t = POP; TOP = t; }
+/* t means TOP, s means SECOND */
+void mu_dup()    { cell t = TOP; PUSH(t); }             /* a   -> a   a */
+void mu_over()   { cell s = ST1; PUSH(s); }             /* a b -> a b a */
+void mu_nip()    { ST1 = TOP; DROP(1); }                /* a b ->   b   */
+void mu_swap()   { cell t = TOP; TOP = ST1; ST1 = t; }  /* a b ->   b a */
+
 void mu_drop()   { DROP(1); }
 void mu_2drop()  { DROP(2); }
 void mu_drops()  { DROP(TOP+1); }
-void mu_swap()   { cell t = TOP; TOP = ST1; ST1 = t; }
-void mu_over()   { cell o = ST1; PUSH(o); }          /* a b -> a b a */
 
 void mu_uless()  { ST1 = (ST1 < (ucell) TOP) ? -1 : 0; DROP(1); }
 void mu_less()   { ST1 = (ST1 <         TOP) ? -1 : 0; DROP(1); }
@@ -60,11 +62,11 @@ void mu_zero_equal()  { TOP = (TOP == 0) ? -1 : 0; }
 
 void mu_depth()     { cell d = S0 - SP; PUSH(d); }
 void mu_sp_reset()  { SP = S0; SP[0] = 0xdecafbad; }
-#ifdef MAYBE_UNNECESSARY
+#ifdef WITH_SP_OPERATORS
 void mu_push_s0()   { PUSH_ADDR(S0); }          /* address of stack bottom */
-#endif
 void mu_sp_fetch()  { cell *s = SP; PUSH_ADDR(s); } /* push stack pointer */
 void mu_sp_store()  { SP = (cell *)TOP; }           /* set stack pointer */
+#endif
 
 /* So we can do return-stack magic. */
 void mu_rp_store()       { RP  = (cell *)TOP; DROP(1); }
