@@ -36,6 +36,10 @@ assembler
  7 reg loop   ( current for/next/do/loop index)
 .then
 
+.ifdef microscope
+11 reg w'     ( copy of w' - except when executing code words)
+.then
+
 12 reg w      ( w - "working" register: holds cfa during next; scratch)
 13 reg x      ( scratch x)
 14 reg y      ( scratch y)
@@ -45,7 +49,7 @@ forth
 ( Tell the disassembler about these register names.)
 -: ( reg)
    2* 2*
-   z" pc  sp  sr  r3  ip  rp  top loopr8  r9  r10 r11 w   x   y   z   "  +
+   z" pc  sp  sr  r3  ip  rp  top loopr8  r9  r10 w'  w   x   y   z   "  +
    (  0000111122223333444455556666777788889999aaaabbbbccccddddeeeeffff)
    4 -trailing type ;  is .regname
 
@@ -84,9 +88,14 @@ implements dodoes    nest  ip pop  ( fall thru to dovar/docreate)  ;c
 
 ( Note the structural similarities!)
 meta: create     name  0 ,   ;code   label wpush
+.ifdef microscope                    w w' mov  ( make a copy)  .then
                                      top push  w   top mov  next  ;c
-meta: constant   create  ,   ;code   top push  w ) top mov  next  ;c
-meta: :          create  ]   ;code   nest      w    ip mov  next  ;c
+meta: constant   create  ,   ;code
+.ifdef microscope                    w w' mov  ( make a copy)  .then
+                                     top push  w ) top mov  next  ;c
+meta: :          create  ]   ;code
+.ifdef microscope                    w w' mov  ( make a copy)  .then
+                                     nest      w    ip mov  next  ;c
 
 code*  ^                           unnest         begin     next  ;c
 codes nope
@@ -104,6 +113,9 @@ code*   (0branch)   top tst  top pop  ' (branch) >body 0!= until  ( fall thru)  
 label        skip         2 # ip add  next  ;c
 code*  (?0branch)   top tst  skip 0= until  top pop  ' (branch) >body j  ;c
 code*  (=0branch)   top tst  skip 0= until           ' (branch) >body j  ;c
+
+code execute   ( cfa)    top   w mov  begin  top pop  w )+ pc mov  ;c
+code @execute  ( 'cfa)   top ) w mov  again  ;c
 
 
 .ifndef loop-on-stack
@@ -268,9 +280,6 @@ code -           x pop  top x sub  x top mov  next  ;c
 ( Another useful compare operator - equality!)
 : =   xor 0= ;
 
-code execute   ( cfa)    top   w mov  begin  top pop  w )+ pc mov  ;c
-code @execute  ( 'cfa)   top ) w mov  again  ;c
-
 
 ( Small constants.)
 -2 constant -2
@@ -282,7 +291,9 @@ code @execute  ( 'cfa)   top ) w mov  again  ;c
 ( Incrementers by small constants. Shared code means they take up very
   little space!)
 
-meta: incr   constant  ;code  w ) top add  next  ;c
+meta: incr   constant  ;code
+.ifdef microscope             w w' mov  ( make a copy)  .then
+                              w ) top add  next  ;c
  1 incr 1+
  2 incr 2+
 
@@ -312,8 +323,8 @@ code bug
 .else
    loop push
 .then
-.ifdef prolix-bug
-   z push  y push  x push
+.ifdef microscope
+   z push  y push  x push  w' push
 .then
    sp cp mov  rp sp mov  ( D stack -> CP, R stack -> SP)
    @ram #ram + \m cell- & call  ( fall thru)  ;c
@@ -343,26 +354,26 @@ __host
    0dead  ( use 0dead unless we are executing)
    executing? if  drop  .LOOP reg@  then  .h16__ ;
 
-.ifdef prolix-bug
+.ifdef microscope
 
 : .sp
-   .CP reg@  5 \m cells  +  .h16__ ; ( SP skips X, Y, Z, IP and Loop)
+   \m sp@  6 \m cells  +  .h16__ ;  ( SP skips W, X, Y, Z, IP and Loop)
 
 -: ( forth version of .regs)
    radix preserve
 
-   cr  ." V----INZC     X     Y     Z    IP  Loop    SP    RP    PC"
-       (  000100011  0000  0000  0000  0000  0000  0000  0000  0000)
-   cr           .sr .X .r .Y .r .Z .r   .ip
-                                            .loop   .sp
-                                             chat-sp @ .h16__
-                                                             .PC .r ;
+   cr  ." V----INZC     W     X     Y     Z    IP  Loop    SP    RP    PC"
+       (  000100011  0000  0000  0000  0000  0000  0000  0000  0000  0000)
+   cr           .sr .W .r .X .r .Y .r .Z .r   .ip
+                                                  .loop   .sp
+                                                   chat-sp @ .h16__
+                                                                   .PC .r ;
    is .regs
 
 .else
 
 : .sp
-   .CP reg@  2 \m cells  +  .h16__ ; ( SP skips IP and Loop)
+   \m sp@  2 \m cells  +  .h16__ ;  ( SP skips IP and Loop)
 
 -: ( forth version of .regs)
    radix preserve
