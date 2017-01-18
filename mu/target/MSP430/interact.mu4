@@ -70,7 +70,15 @@ variable ram-copied  ( pointer to first un-copied byte)
   that we can store them in the local register frame.)
 03 chatreg .IP
 04 chatreg .LOOP
+.ifdef prolix-bug
+05 chatreg .W
+06 chatreg .X
+07 chatreg .Y
+08 chatreg .Z
+09 chatreg .SIZE
+.else
 05 chatreg .SIZE
+.then
 
 .else  ( chat-v1)
 
@@ -225,7 +233,9 @@ defer .regs
   stack becomes empty.
 
   When pushing from the host, or when "pulling" from the target, we don't
-  move more than 8 items.)
+  move more than 8 "user" items - but we pad this value a bit, since we are
+  also using the stack to pass some execution context between host and
+  target.)
 
 meta
 : sp0   [ @ram #ram +  #48 - ] ;
@@ -234,8 +244,12 @@ meta
 : depth   \m sp0  \m sp@ -  \m cell/  1- ;
 forth
 
+( Since stack> also pushes ip to execute from, let's push up to 9 values -
+  8 "user" values, plus ip. We already add one to account for pushing the
+  "cafe sentinel.)
+
 : stack>  ( "push" stack to target)
-   depth 0 max 8 min
+   depth 0 max 9 min
    \m sp0  over 1+  \m cells -  dup \m sp! ( top of D stack)  swap
    for  tuck t!  \m cell+  next  ( copy each cell as a word to D stack)
    "cafe swap t! ( sentinel) ;
@@ -243,8 +257,20 @@ forth
 ( XXX add a way to automagically sign-extend or zero-extend values coming
   from the target stack?)
 
+( Since stack< "pops" data stack, plus ip, loop, and if we've defined
+  prolix-bug, w, x, y, and z, let's raise our max so we can copy up to 8
+  "user" values, plus execution context.)
+
+meta
+8 ( user)  2 ( ip and loop) +
+.ifdef prolix-bug
+4 ( scratch regs w x y z) +
+.then
+constant max-pop
+forth
+
 : stack<  ( "pop" stack from target)
-   \m depth 0 max 8 min  =if
+   \m depth 0 max \m max-pop min  =if
       \m sp@ over  ( n sp n)
       for  dup t@  pop 2push  \m cell+  next ( starting with top, push to R)
       drop ( sp)
@@ -263,6 +289,9 @@ forth
 : continue  ( x0 .. xn ip - y0 .. yn ip loop)
    ?chat
    stack>  _runwait  stack<
+.ifdef prolix-bug
+   .W reg!  .X reg!  .Y reg!  .Z reg!
+.then
    .LOOP reg!  .IP reg!  .regs ;
 
 ( These are implement'ed by the kernel code.)
