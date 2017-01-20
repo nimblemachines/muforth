@@ -2,10 +2,14 @@
 
   Copyright 2002-2017 David Frech. (Read the LICENSE for details.)
 
-loading MSP430 disassembler
+.ifndef prefix-disasm
+loading MSP430 disassembler (postfix)
+.else
+loading MSP430 disassembler (prefix)
+.then
 
 ( Disassembler for MSP430 CPU instructions. There is _no_ support for CPUX
-  instructions! They will disassemble as _undefined_.)
+  instructions! They will disassemble as *unimplemented*.)
 
 hex
 
@@ -17,15 +21,15 @@ hex
 : (match)   ( op mask match - op f)  push  over and  pop = ;
 : (exact)   ( op      match - op f)        over          = ;
 
-( In the disassembler, use .op to print the following opcode name.)
-: (.op)  pop @+ push  ( fetch following cfa)  >name type ;
+( In the disassembler, use .op to print the opcode name.)
+: op,   compile (lit)  .assembler. \chain ;  ( compile op as literal)
+: .op   ( cfa)  >name type ;  ( print op name from cfa)
 
 compiler
 : ..   compile ^  \ then ;
-: .op   compile (.op)  .assembler. \chain ;
-: match  ( - src)  compile (match)  \ if  \ .op ;
-: exact  ( - src)  compile (exact)  \ if  \ .op ;
-: multi  ( - src)  compile (match)  \ if        ;  ( doesn't print op)
+: multi  ( - src)  compile (match)  \ if                   ;  ( no literal op)
+: match  ( - src)  compile (match)  \ if  op,              ;  ( literal op)
+: exact  ( - src)  compile (exact)  \ if  op,  compile .op ;  ( literal op, print)
 forth
 
 ( Sign-extend 16-bit word to host number)
@@ -45,13 +49,6 @@ defer .regname  ( so others can override with their particular convention)
       2*  z" pcspsr"  + 2 type  ^  then
    ." r"  .udec ;  is .regname
 
-: .o  ( off)  sext  .hex ;
-: .i  ( imm)  ." #"  dup .hex
-   sext  dup 0< if  ." ("  .hex  ." )"  ^  then  drop ;
-
-assembler
-: *unimplemented* ;  ( so we can print the name ;-)
-forth
 
 ( Remember, 2op instructions have this form:
   oooo_ssss_DbSS_dddd   o=op, s=srcreg, d=destreg, S=srcmode, D=destmode
@@ -65,6 +62,39 @@ forth
 : dest>ea  ( op - ea)
    dup   0f and       swap  80 and  3 >>  or ;
 
+
+.ifndef prefix-disasm  ( default to postfix version!)
+
+( When printing offsets and immediate values, if the number is 8000-ffff
+  also print the negative number, in parentheses, that it represents.)
+
+: .both  ( n)
+   dup .hex space
+   sext  dup 0< if  ." ( "  dup .hex  ." ) "  then  drop ;
+
+: .o  ( off)  .both ;
+: .i  ( imm)  .both  ." #" ;
+
+: .pcrel      p @  cell* sext  +  .hcell ;  ( no & suffix)
+: .absolute        cell*          .hcell  ."  &" ;
+
+: .reg       ( ea)            ea>reg  .regname ;
+: .indirect  ( ea)            ea>reg  .regname ."  )"  ;
+: .indexed   ( ea)  cell* .o  ea>reg  .regname ."  +)" ;
+: .postinc   ( ea)  .indirect  ." +" ;
+
+.else ( prefix disassembler)
+
+( When printing offsets and immediate values, if the number is 8000-ffff
+  also print the negative number, in parentheses, that it represents.)
+
+: .both  ( n)
+   dup .hex
+   sext  dup 0< if  ." ("  dup .hex  ." )"  then  drop ;
+
+: .o  ( off)         .both ;
+: .i  ( imm)  ." #"  .both ;
+
 : .pcrel      p @  cell* sext  +  .hcell ;  ( no & prefix)
 : .absolute        cell*    ." &" .hcell ;
 
@@ -73,10 +103,13 @@ forth
 : .indexed   ( ea)  cell* .o  .indirect ;
 : .postinc   ( ea)  .indirect  ." +" ;
 
+.then
+
+
 : .eadest  ( ea)
    dup 10 = if  drop  .pcrel     ^  then
    dup 12 = if  drop  .absolute  ^  then
-   dup  4 >> jump  .reg  .indexed  .indirect  .postinc ;
+   dup  4 >> jump  .reg  .indexed  .indirect  .postinc  [  show
 
 ( XXX should be some kind of table?)
 : .easrc   ( ea)
@@ -89,25 +122,43 @@ forth
    dup 33 = if  drop  0ffff .i  ^  then
    .eadest ;
 
-( 1ops have byte suffix already.)
-: .1op   ( op - op)  space  dup ea>rm    .easrc ;
-: .dest  ( op - op)  space  dup dest>ea  .eadest ;  ( for synthetic instrs)
-
-
-( 2ops need to add byte suffix.)
 : .byte  ( op - op)  dup 40 and if ." b" then ;
-: .2op  ( op - op)
-   .byte space  dup src>ea .easrc  space  dup dest>ea  .eadest ;
 
 : >jmpdest  ( op - dest)
    dup 1ff and  swap 200 and -  2*  p @  + ;
 
-( Print jmp opcode, including a _single_ trailing space.)
+( Print jmp opcode.)
 : .jop  ( op - op)
    z" jnz jz  jnc jc  jn  jge jl  jmp "  over #10 >>  7 and  2* 2*  +
-   4 -trailing  1+ type ;
+   3 -trailing  type ;
 
-: .jmp  ( op - op)  .jop  dup >jmpdest  .hcell ;
+
+.ifndef prefix-disasm  ( default to postfix version!)
+
+( 1ops have byte suffix already.)
+: .1op   ( op cfa - op)  over ea>rm    .easrc  space  .op ;
+: .dest  ( op cfa - op)  over dest>ea  .eadest space  .op ;  ( for synthetic instrs)
+
+( 2ops need to add byte suffix.)
+: .2op   ( op cfa - op)
+   over src>ea .easrc space  over dest>ea .eadest space  .op .byte ;
+
+: .jmp  ( op - op)  dup >jmpdest .hcell_  .jop ;
+
+.else ( prefix disassembler)
+
+( 1ops have byte suffix already.)
+: .1op   ( op cfa - op)  .op space  dup ea>rm    .easrc ;
+: .dest  ( op cfa - op)  .op space  dup dest>ea  .eadest ;  ( for synthetic instrs)
+
+( 2ops need to add byte suffix.)
+: .2op   ( op cfa - op)
+   .op .byte space  dup src>ea .easrc space  dup dest>ea .eadest ;
+
+: .jmp  ( op - op)  .jop space  dup >jmpdest .hcell ;
+
+.then
+
 
 : shred  ( op - op)
 ( All the instructions!)
@@ -122,6 +173,9 @@ forth
 ..      c322 exact clrz
 ..      c222 exact clrn
 ..      c232 exact dint
+
+( XXX is it better to disassemble these as pop instructions, or as mov from
+  sp, post-incremented?)
 
 .. ff70 4130 match pop   .dest
 .. ff70 4170 match popb  .dest
@@ -162,7 +216,7 @@ forth
 .. f000 e000 match xor   .2op
 .. f000 f000 match and   .2op
 
-.. .op *unimplemented*
+.. ." *unimplemented*"
 
 ( That's all folks!)
 ;
@@ -174,5 +228,5 @@ forth
 ( The workhorse.)
 : 1dis  ( a)
    dup .addr  .nesting space
-   p !  cell*  ( op)  dup .hcell_  space
+   p !  cell*  ( op)  dup .hcell_ space
    shred  drop ;
