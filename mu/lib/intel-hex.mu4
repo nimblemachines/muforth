@@ -25,7 +25,7 @@ variable buf
 : ih>word   ( sum a b1 b2 - sum+ a)  push ih>byte  pop ih>byte  ;
                                                     ( sends b1 then b2)
 : ihaddr    ( sum ta - sum+ ta)  dup >hilo  ih>word  ;  ( big endian)
-: ihchunk   ( sum ha # - ha+# sum)   for  c@+ swap  ih>byte  next  swap  ;
+: ihline    ( sum ha # - ha+# sum)   for  c@+ swap  ih>byte  next  swap  ;
 : ihcheck   ( sum)  negate  .ihbyte  pad  buf @  over -  type   cr ;
 : ihheader  ( n - sum)  pad b!  char : b,  dup .ihbyte  ;
 : ihtag     ( sum ta n - sum+n)  ih>byte  drop  ;
@@ -33,7 +33,9 @@ variable buf
       (  : count    vaddr    tag       data      checksum )
       ( =====================================================)
 : ihdata  ( 'host 'target # - 'host+#)
-        dup ihheader   rot ihaddr  0 ihtag   -rot ihchunk       ihcheck  ;
+        dup ihheader   rot ihaddr  0 ihtag   -rot ihline        ihcheck  ;
+        ( ha ta # sum)  ( ha # sum ta)  ( ha # sum)  ( sum ha #)
+
 : ihend   0 ihheader     0 ihaddr  1 ihtag                      ihcheck  ;
 
 : ihseg   ( seg)
@@ -42,16 +44,20 @@ variable buf
 : ihext   ( ext)
           2 ihheader     0 ihaddr  4 ihtag   swap ihaddr drop   ihcheck  ;
 
-: ihfragment  ( 'host 'target # - 'host+# 'target+#)
+: ihchunk  ( 'host 'target # - 'host+# 'target+#)
    2dup + push   ihdata   pop ;
 
+( If image is a single contiguous piece of memory, use this to generate
+  everything. Otherwise, write your own routine that calls ihchunk and
+  ihend - and ihseg or ihext, as necessary.)
+
 : ihchunks    ( 'host 'target #)
-   32 /mod  ( r q)  swap push  for  32 ihfragment  next
-                      pop  =if  ( rem) ihfragment  0  then
-   drop  2drop  end ;
+   32 /mod  ( r q)  swap push  for  32 ihchunk  next
+                      pop  =if  ( rem) ihchunk  0  then
+   drop  2drop  ihend ;
 
 
 0 .if
 z" target/ARM/bootroms/At29c020.bin"  r/o open-file  mmap-file
-  ( 256k) 16 /  0 swap  chunks  end
+  ( 256k) 16 /  0 swap  ihchunks  ihend
 .then
