@@ -24,69 +24,59 @@ loading Reading Motorola S-record (S19) files
   S9      end block        2            0
 )
 
-variable srecbuf
-variable srecend
+: h*    ( - digit)  m* digit? drop ;  ( assume valid hex digit!)
 
-: b*  ( - byte -1 | 0)
-   srecbuf @  dup  srecend @  u< if  c@+  srecbuf !  -1  ^  then
-   drop  0 ;
-
-: h*    ( - digit)  b* drop  digit? drop ;
-
-( Use this for reading count.)
-: -hh*  (       sum -        sum+ byte)
-   h* 4 <<  h* +  tuck + swap ;  ( read one hex byte)
-
-( Use this for every byte _after_ count.)
-: hh*   ( count sum - count- sum+ byte)
-   -1 u+  -hh* ;
+( Read one hex byte. Use hh* for reading count; -hh* thereafter.)
+:  hh*   (       sum -        sum+ byte)   h* 4 <<  h* +  tuck + swap ;
+: -hh*   ( count sum - count- sum+ byte)   -1 u+  hh* ;
 
 : saddr   ( count sum #addr - count- sum+ addr)
-   0 swap  for  8 << push  hh*  pop +  next ;
+   0 swap  for  8 << push  -hh*  pop +  next ;
 
 : scheck  ( count sum)
-   hh* drop
+   -hh* drop
    1+ "0ff and  =if  error" bad checksum"  then  drop
                 =if  error" bad count"  then  drop ;
 
-.ifdef debug
+.ifdef srec-debug
 
 : .u8      radix preserve hex  <#  # #             #>  type space ;
-: .saddr   radix preserve hex  <#  # #  # #      =if
-                                   # #  # #  then  #>  type space ;
+: .saddr   radix preserve hex  <#  # #  # #      =if  char _ hold
+                                   # #  # #  then  #>  type space space ;
 
 : sheader ( count sum addr - count- sum+)
    cr  ." Header: "  drop
-   over 1- for  hh* emit  next ;
+   over 1- for  -hh* emit  next ;
+
+: sdata   ( count sum addr - count- sum+)
+   cr .saddr  over 1- for  -hh*  .u8  next ;
 
 : strailer  ( count sum addr - count sum)
    cr  ." Entry: " .saddr ;
 
-: sdata   ( count sum addr - count- sum+)
-   cr .saddr  over 1- for  hh*  .u8  next ;
-
 : sskip   ( count sum - count- sum+)
-   cr ." Skip "  over 1- for  hh*  .u8  next ;
+   cr ." Skip "  over 1- for  -hh*  .u8  next ;
 
 .else
-
-: sskip     ( count sum      - count- sum+)  over 1- for  hh* drop  next ;
-: sheader   ( count sum addr - count- sum+)  drop  sskip ;
-: strailer  ( count sum addr - count sum)    drop ;
 
 defer saddr>host  ( target - host)
 -:  [ 256 Ki 1- ] and  pad + ;  is saddr>host  ( a not unreasonable default)
 
-variable 'srec  ( offset of this S record)
-: b&  ( byte)   'srec @  c!  1 'srec +! ;
-: sdata   ( count sum addr - count- sum+)
-   saddr>host 'srec !  over 1- for  hh*  b&  next ;
+variable srp  ( S-record memory pointer)
+: srp&  ( byte)   srp @  c!  1 srp +! ;
+
+: sheader   ( count sum addr - count- sum+)  drop  sskip ;
+: sdata     ( count sum addr - count- sum+)  saddr>host srp !
+                                             over 1- for  -hh* srp&  next ;
+: strailer  ( count sum addr - count sum)    drop ;
+: sskip     ( count sum      - count- sum+)  over 1- for  -hh* drop  next ;
+
 
 .then
 
 : stype  ( - sum)
    h*  ( type)  push
-   0  -hh*  ( sum count)  swap  pop
+   0  hh*  ( sum count)  swap  pop
    ( count sum type)
    dup  0=   if  drop  2 saddr  sheader   ^  then
    dup  1 =  if  drop  2 saddr  sdata     ^  then
@@ -97,23 +87,24 @@ variable 'srec  ( offset of this S record)
    dup  9 =  if  drop  2 saddr  strailer  ^  then
                  drop  sskip ;
 
-: S   begin  b*  while  char S = until  -1  ^  then  0 ;
+variable srend  ( holds address one past end of input.)
+: S   begin  m @  srend @ u< while  m*  char S = until  -1  ^  then  0 ;
 
-: read-srec  ( a u)
-   over +  srecend !  srecbuf !
+: parse-srec  ( a u)
+   over +  srend !  m !
    begin  S  while  stype  scheck  repeat ;
 
 : read-srec-file  ( z")
    open-file-ro  dup on-exit close-file
-   read-file  ( a u)  read-srec ;
+   read-file  ( a u)  parse-srec ;
 
 
 .ifdef litsrec  ( a couple of files embedded here to make testing easier...)
 
 ( To read one of these, do the following:
 
-  pwm-srec count  read-srec              OR
-  blinky-srec count  read-srec
+  pwm-srec count  parse-srec              OR
+  blinky-srec count  parse-srec
 )
 
 z" S3150000000000300020250400003504000035040000FF
