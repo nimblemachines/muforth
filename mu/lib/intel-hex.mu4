@@ -4,60 +4,143 @@
 
 ( Produces an Intel hex listing of a memory image.)
 
-( 2004-jul-07. Taken from target/v25 and massively streamlined.)
-
 .ifndef >hilo
    ld target/common/endian.mu4
 .then
 
-loading Intel hex
+loading Intel hex file support (reading and writing)
 
-decimal
+( NOTE on the funny names in the following code.
 
-( Buffer)
-variable buf
-: b,  buf @ c!  1 buf +! ;
-: b!  buf ! ;
+  Words starting with 'ihw' are associated with Intel hex writing.
+  Words starting with 'ihr' are associated with Intel hex reading.
 
-: nyb,   15 and  >digit  b,  ;
-: .ihbyte   dup  4 >>  nyb,  nyb,  ;
-: ih>byte   ( sum a byte - sum+ a)  dup .ihbyte  u+  ;
-: ih>word   ( sum a b1 b2 - sum+ a)  push ih>byte  pop ih>byte  ;
-                                                    ( sends b1 then b2)
-: ihaddr    ( sum ta - sum+ ta)  dup >hilo  ih>word  ;  ( big endian)
-: ihline    ( sum ha # - ha+# sum)   for  c@+ swap  ih>byte  next  swap  ;
-: ihcheck   ( sum)  negate  .ihbyte  pad  buf @  over -  type   cr ;
-: ihheader  ( n - sum)  pad b!  char : b,  dup .ihbyte  ;
-: ihtag     ( sum ta n - sum+n)  ih>byte  drop  ;
+  Ugly, but simple and clear. ;-)
 
-      (  : count    vaddr    tag       data      checksum )
-      ( =====================================================)
-: ihdata  ( 'host 'target # - 'host+#)
-        dup ihheader   rot ihaddr  0 ihtag   -rot ihline        ihcheck  ;
+hex
+
+( Let's start with writing. It's the easier of the two.)
+
+( NOTE: This code currently will not generate a hex file image with
+  addresses outside the 64 KiB range. It does not generate the necessary
+  ext records to do this.)
+
+: nyb,       0f and  >digit  m& ;
+: ihwb,      ( byte)   dup  4 >>  nyb,  nyb, ;  ( not counted in checksum!)
+: ihwbyte    ( sum a byte - sum+ a)  dup ihwb,  u+ ;
+: ihwaddr    ( sum ta - sum+ ta)  dup >hilo  push ihwbyte  pop ihwbyte ;
+                                 ( big endian: stores hi then lo)
+: ihwline    ( sum ha # - ha+# sum)   for  c@+ swap  ihwbyte  next  swap ;
+: ihwcheck   ( sum)  negate  ihwb,  pad  m @  over -  type   cr ;
+: ihwheader  ( n - sum)  pad m !  char : m&  dup ihwb, ;
+: ihwtag     ( sum ta n - sum+n)  ihwbyte  drop ;
+
+           (  : count        vaddr        tag         data          checksum )
+
+: ihwdata  ( 'host 'target # - 'host+#)
+         dup ihwheader   rot ihwaddr  0 ihwtag   -rot ihwline        ihwcheck ;
         ( ha ta # sum)  ( ha # sum ta)  ( ha # sum)  ( sum ha #)
 
-: ihend   0 ihheader     0 ihaddr  1 ihtag                      ihcheck  ;
+: ihwend   0 ihwheader    0 ihwaddr   1 ihwtag                       ihwcheck ;
 
-: ihseg   ( seg)
-          2 ihheader     0 ihaddr  2 ihtag   swap ihaddr drop   ihcheck  ;
+: ihwseg   ( seg)
+           2 ihwheader    0 ihwaddr   2 ihwtag   swap ihwaddr drop   ihwcheck ;
 
-: ihext   ( ext)
-          2 ihheader     0 ihaddr  4 ihtag   swap ihaddr drop   ihcheck  ;
+: ihwext   ( ext)
+           2 ihwheader    0 ihwaddr   4 ihwtag   swap ihwaddr drop   ihwcheck ;
 
-: ihchunk  ( 'host 'target # - 'host+# 'target+#)
-   2dup + push   ihdata   pop ;
+: ihwchunk  ( 'host 'target # - 'host+# 'target+#)
+   2dup + push   ihwdata   pop ;
 
 ( If image is a single contiguous piece of memory, use this to generate
-  everything. Otherwise, write your own routine that calls ihchunk and
-  ihend - and ihseg or ihext, as necessary.)
+  everything. Otherwise, write your own routine that calls ihwchunk and
+  ihwend - and ihwseg or ihwext, as necessary.)
 
-: ihchunks    ( 'host 'target #)
-   32 /mod  ( r q)  swap push  for  32 ihchunk  next
-                      pop  =if  ( rem) ihchunk  0  then
-   drop  2drop  ihend ;
+: ihwchunks    ( 'host 'target #)
+   20 /mod  ( r q)  swap push  for  20 ihwchunk  next
+                      pop  =if  ( rem) ihwchunk  0  then
+   drop  2drop  ihwend ;
 
+
+( This .ifdef'd code shows how long the Intel hex code, in some form, has
+  been in muforth. The binary below dates back to the ARM AEB-1 evaluation
+  board!)
 
 0 .if
 z" target/ARM/bootroms/At29c020.bin"  r/o open-file  mmap-file
-  ( 256k) 16 /  0 swap  ihchunks  ihend
+  ( 256k) 16 /  0 swap  ihwchunks  ihwend
 .then
+
+
+( Ok, that was easy. How about reading Intel hex files?)
+
+( Let's start with my Moto S-rec reading code and see where that takes us.
+  And maybe I can reflect the improvements made here back over to that
+  code...)
+
+: h*    ( - digit)  m* digit? drop ;  ( assume valid hex digit!)
+
+: hh*  ( sum - sum+ byte)
+   h* 4 <<  h* +  tuck + swap ;  ( read one hex byte)
+
+: ihraddr   ( sum - sum+ addr)
+   0  2 for  8 << push  hh*  pop +  next ;
+
+: ihrcheck  ( sum)
+   hh* drop  "0ff and  if  error" bad checksum"  then ;
+
+.ifdef ihrdebug
+
+: .u8    radix preserve hex  <#  # #       #>  type space ;
+: .u16   radix preserve hex  <#  # #  # #  #>  type space ;
+
+: ihrdata   ( sum count addr - sum+)
+   cr .u16  for  hh*  .u8  next ;
+
+: ihrseg   ( sum count addr - sum+)
+   cr ." Segment base "  2drop  ihraddr .u16 ;
+
+: ihrext   ( sum count addr - sum+)
+   cr ." Linear base "  2drop  ihraddr .u16 ;
+
+: ihrskip   ( sum count addr - sum+)
+   cr ." Skip "  drop  for  hh*  .u8  next ;
+
+.else
+
+variable ihrp  ( memory pointer)
+: ihr&  ( byte)  ihrp @ c!  1 ihrp +! ;
+
+defer ihraddr>host  ( count target base - count host)
+-:  +  pad + ;  is ihraddr>host
+
+variable ihrbase  ( Base address set by seg or ext records. Defaults to 0.)
+
+: ihrdata  ( sum count addr - sum+)
+   ihrbase @ ihraddr>host ihrp !  for  hh*  ihr&  next ;
+
+: ihrseg   ( sum count addr - sum+)  2drop  ihraddr   4 <<  ihrbase ! ;
+: ihrext   ( sum count addr - sum+)  2drop  ihraddr  10 <<  ihrbase ! ;
+: ihrskip  ( sum count addr - sum+)  drop  for  hh* drop  next ;
+
+.then
+
+: ihrtype  ( - sum)
+   0 hh* ( count) push   ihraddr push   hh* 2pop rot ( sum count addr type)
+   dup  0=   if  drop  ihrdata  ^  then
+   dup  1 =  if  drop  2drop    ^  then
+   dup  2 =  if  drop  ihrseg   ^  then
+   dup  4 =  if  drop  ihrext   ^  then
+                 drop  ihrskip ;
+
+( Find the beginning of the next record.)
+variable ihrend  ( holds address one past end of input.)
+: ihrscan   begin  m @  ihrend @ u< while  m*  char : = until  -1  ^  then  0 ;
+
+: read-ihex  ( a u)
+   over +  ihrend !  m !
+   begin  ihrscan  while  ihrtype  ihrcheck  repeat ;
+
+: read-ihex-file  ( z")
+   open-file-ro  dup on-exit close-file
+   read-file  ( a u)  read-ihex ;

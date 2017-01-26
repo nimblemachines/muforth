@@ -1,0 +1,52 @@
+( This file is part of muFORTH: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2017 David Frech. (Read the LICENSE for details.)
+
+loading Intel hex file support (MSP430-specific)
+
+hex
+
+( For the rare occasions when we want to use an external programmer to
+  flash an image, here is code to do that.)
+
+: ihex-region  ( a len)
+   over image+ -rot  ( host target len)
+   20 /mod  ( r q)  swap push  for  20 ihwchunk  next
+                      pop  =if  ( rem) ihwchunk  0  then
+   drop  2drop ;
+
+: gen-ihex
+   h preserve  flash
+   out-channel preserve >stdout
+   region ( a u)  over +  ( a end)  @last-page over u< if
+      ( code reaches into last page; truncate length; need to flash vectors too)
+      ffc0 min  ( don't go beyond vectors)  over -  ( a u)  ihex-region
+      ffc0 40 ihex-region  ( vectors)  ihwend  ^
+   then  2drop
+   region ( a u)  ihex-region  ihwend ;
+
+
+( On the reading side of the equation, let's hook into the intel hex file
+  loading code.)
+
+2variable ihrextent  ( used to calculate flash region size.)
+                     ( treated like 'flash in target/MSP430/memory.mu4)
+
+( Record the extent of this data chunk so we can get an idea of the scope
+  of memory that has been touched. Also map target addresses to host
+  addressing within our target memory image.)
+
+-: ( count target base - count host)
+   over +  image+ push ( host)
+   dup ffc0 u< if  ( ignore vectors etc)
+      ihrextent cell+ @ 0< if  ( origin unset)  dup ihrextent cell+ !  then
+      2dup + ihrextent !
+   then  drop ( target)  pop ( host) ;  is ihraddr>host
+
+( Consumes a token - a filename - and reads it, using the intel hex code,
+  into a memory image.)
+
+: read-ihex
+   -1 dup ihrextent 2! ( reset it)
+   token, read-ihex-file
+   ihrextent 2@  'flash 2!  ( set flash region pointers to loaded code) ;
