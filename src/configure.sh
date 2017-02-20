@@ -1,6 +1,6 @@
 #!/bin/sh
 
-# This file is part of muFORTH: http://muforth.nimblemachines.com/
+# This file is part of muforth: http://muforth.nimblemachines.com/
 #
 # Copyright (c) 2002-2017 David Frech. (Read the LICENSE for details.)
 
@@ -25,7 +25,7 @@ if [ -d ../.git ]; then
     cat <<EOT > /tmp/post-commit.sh
 #/bin/sh
 
-# This file is part of muFORTH: http://muforth.nimblemachines.com/
+# This file is part of muforth: http://muforth.nimblemachines.com/
 #
 # Copyright (c) 2002-2017 David Frech. (Read the LICENSE for details.)
 

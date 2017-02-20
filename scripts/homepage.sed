@@ -1,11 +1,15 @@
-# Make a link to nimblemachines in all the source code.
+# Make a link to muforth home page in all the source code.
+
+# The most egregious: fix the banner line in every source file
+# to say "muforth" rather than "muFORTH".
+s/This file is part of muFORTH:/This file is part of muforth:/
+
+# skip the rest - it's only of historical interest
+b skip
 
 # I think every file has good links; now we just need to keep them updated.
 s#http://sites\.nimblemachines\.com/muforth#http://muforth.nimblemachines.com/#
 s#http://pages\.nimblemachines\.com/muforth/#http://muforth.nimblemachines.com/#
-
-# skip the rest - it's only of historical interest
-b skip
 
 # put a link into the startup banner of startup.mu4
 /\( ### httplink ###/ {
@@ -19,7 +23,7 @@ s/^(.*)\n(.*)/\1\
 /^[#* ]*This file is part of muFORTH; for project details, visit/ {
 N
 N
-s/^([#* ]*).*/\1This file is part of muFORTH: http:\/\/pages.nimblemachines.com\/muforth/
+s/^([#* ]*).*/\1This file is part of muforth: http:\/\/pages.nimblemachines.com\/muforth/
 }
 
 # for any files which still refer to "muforth", convert them and put it a
