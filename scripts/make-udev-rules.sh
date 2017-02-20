@@ -13,7 +13,7 @@
 #   c251  - Keil CMSIS-DAP - for Freescale Freedom (FRDM) boards
 
 cat <<EOT
-    # udev rules to match USB devices of interest to muFORTH
+    # udev rules to match USB devices of interest to muforth
 EOT
 
 for vid in 0483 04d8 0d28 15a2 1cbe c251 ; do

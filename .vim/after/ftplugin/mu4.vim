@@ -1,4 +1,4 @@
-" my customization of mu4 (muFORTH) settings
+" my customization of mu4 (muforth) settings
 
 " expand tabs into spaces
 setlocal expandtab

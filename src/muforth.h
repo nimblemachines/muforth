@@ -11,7 +11,7 @@
 #include "env.h"
 
 /* Support for putting 32-bit values into cell (64-bit) sized containers -
- * for support of 64-bit muFORTH on 32-bit platforms.
+ * for support of 64-bit muforth on 32-bit platforms.
  */
 #ifdef MU_ADDR_32
 

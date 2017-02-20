@@ -3,7 +3,7 @@
 -- Copyright (c) 2002-2017 David Frech. (Read the LICENSE for details.)
 
 -- Equates for several PIC18 variants, "scraped" from Microchip datasheets.
--- From here we generate muFORTH code!
+-- From here we generate muforth code!
 
 -- Be careful of pasted in endashes and ligatures!
 -- To convert en- and em-dashes to normal (double) dashes, do this (in Vim):

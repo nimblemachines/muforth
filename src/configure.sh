@@ -119,7 +119,7 @@ It appears that you are one of the few intrepid souls running NixOS.
 
 We salute you!
 
-If you want to use USB devices with muFORTH, you'll want to take the
+If you want to use USB devices with muforth, you'll want to take the
 udev.nix file that was just generated, which contains a service definition
 and a few udev rules, and append it to your configuration.nix.
 
@@ -130,7 +130,7 @@ EOF
             ../scripts/make-udev-rules.sh $USER > 99-muforth.rules
             cat <<EOF
 A udev rules file has just been generated, which will be of interest to you
-if you want to use USB devices with muFORTH.
+if you want to use USB devices with muforth.
 
 Please do the following as root:
 
@@ -145,7 +145,7 @@ EOF
         cat <<EOF
 
 Your USB devices are mounted on /proc/bus/usb and controlled by usbfs.
-If you want to use USB devices with muFORTH you'll want to modify the
+If you want to use USB devices with muforth you'll want to modify the
 /etc/fstab line that mounts the usbfs to allow regular users to access
 USB device files.
 EOF
@@ -266,6 +266,6 @@ Once it builds successfully, run it like this:
   cd ../mu
   ./muforth
 
-Enjoy muFORTH!
+Enjoy muforth!
 
 EOF

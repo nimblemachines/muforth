@@ -175,7 +175,7 @@ void mu_zcount()
 #ifdef THIS_IS_SILLY
 /*
  * I thought I wanted to be able to sort string, but I have more
- * interesting ideas about what muFORTH is good for. ;-)
+ * interesting ideas about what muforth is good for. ;-)
  *
  * Like C and unlike Forth, mu_string_compare returns an integer representing
  * an ordering (in general the difference between the ASCII codes of the first

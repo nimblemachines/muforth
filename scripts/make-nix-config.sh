@@ -5,7 +5,7 @@
 # Copyright (c) 2002-2017 David Frech. (Read the LICENSE for details.)
 
 # Make a configuration snippet for NixOS users with udev rules for using
-# USB devices with muFORTH.
+# USB devices with muforth.
 
 cat <<EOT
   services.udev.extraRules = ''

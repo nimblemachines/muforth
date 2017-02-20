@@ -185,8 +185,8 @@ void mu_dplus3()
  * Also, since integer divide by definition gives you both quotient and
  * remainder, why does C make you calculate them separately? It's stupid.
  *
- * So, I've given up on double-length math for muFORTH. It's a beautiful
- * and elegant part of Forth, but since I intend muFORTH mostly for
+ * So, I've given up on double-length math for muforth. It's a beautiful
+ * and elegant part of Forth, but since I intend muforth mostly for
  * cross-compiling (to 32bit architectures at the moment, though that could
  * change!), single-length is plenty. So don't try using star-slash with
  * large operands. ;-)

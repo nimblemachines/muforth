@@ -54,7 +54,7 @@ static cell  *ph0;  /* pointer to start of heap space */
  * backwards.
  *
  * A much nicer solution is to move the link field -after- the name, and
- * forgo the prefix length entirely. This is the solution that muFORTH
+ * forgo the prefix length entirely. This is the solution that muforth
  * adopts (as dforth did before it). Instead of -following- the link field,
  * the name -precedes- it, starting with padding, then the characters of
  * the name, then its length (one byte), followed directly by the link.
