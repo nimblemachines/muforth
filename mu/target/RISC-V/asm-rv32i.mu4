@@ -1,0 +1,175 @@
+( This file is part of muforth: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2017 David Frech. (Read the LICENSE for details.)
+
+loading RISC-V RV32 assembler (I subset)
+
+( Since the RISC-V instruction set is modular, I want to make the assembler
+  - and disassembler - modular as well.
+
+  This file only defines the RV32I subset - the 32-bit wide encoding of the
+  32-bit integer instructions.)
+
+( Support for inline asm in any colon word.)
+compiler
+: asm{   __inline-asm ;  ( start assembler)
+: }      -] ;  ( exit assembler mode and restart colon compiler)
+forth
+
+( Let's define the registers first. There are 32 general-purpose
+  registers. We define them with "weird" bits in the upper part so we can
+  identify them, while they are sitting on the stack, as register. ;-)
+
+: 8regs  ( n - n+8)  8 for  dup "5_d00d_00 or  constant 1+  next ;
+assembler
+
+0 8regs  x0  x1  x2  x3  x4  x5  x6  x7
+  8regs  x8  x9 x10 x11 x12 x13 x14 x15
+  8regs x16 x17 x18 x19 x20 x21 x22 x23
+  8regs x24 x25 x26 x27 x28 x29 x30 x31  drop
+
+( And their ABI names, too - see riscv-spec-v2.1.pdf, p109:)
+0 8regs zero  ra  sp  gp  tp  t0  t1  t2
+  8regs   s0  s1  a0  a1  a2  a3  a4  a5
+  8regs   a6  a7  s2  s3  s4  s5  s6  s7
+  8regs   s8  s9 s10 s11  t3  t4  t5  t6  drop
+
+: fp  \a s0 ;  ( frame pointer is also s0)
+forth
+
+( Shifting bits into position.)
+: >rd      ( op bits - op')   7 <<  or ;
+: >funct3  ( op bits - op')  12 <<  or ;
+: >rs2     ( op bits - op')  20 <<  or ;
+: >funct7  ( op bits - op')  25 <<  or ;
+
+( Dealing with register fields.)
+: ?reg  ( reg op - op reg-masked)
+   over -32 and  "5_d00d_00 = if  ( valid reg)  swap  31 and  ^  then
+   error" expected a register" ;
+
+: rd   ( reg op - op')  ?reg  >rd ;
+: rs1  ( reg op - op')  ?reg  15 <<  or ;
+: rs2  ( reg op - op')  ?reg  >rs2 ;
+
+( For grabbing single bits out of something.)
+: bit@  ( mask bit# - bit)  u>>  1 and ;
+
+: op,  ( op)  \m , ;  ( for now, instructions are 32 bits wide)
+
+( The "easy" immediates.)
+: I-imm   ( imm op - op')  swap            "fff and  >rs2 ;
+: S-imm   ( imm op - op')  over   5 >>      "7f and  >funct7
+                            swap             "1f and  >rd ;
+: U-imm   ( imm op - op')  swap  12 >>  "f_ffff and  >funct3 ;
+
+( These two are complicated. ;-)
+: SB-imm  ( imm op - op')
+   over 12 bit@          31 <<  or  ( imm[12])
+   over 5 >>  "3f and  >funct7      ( imm[10:5])
+   over       "1e and  rot  11 bit@  or  >rd  ( imm[4:1|11]) ;
+
+: UJ-imm  ( imm op - op')
+   over 20 bit@      31 <<  or  ( imm[20])
+   over 12 >> "ff and  >funct3  ( imm[19:12])
+   over 2/   "3ff and  rot 11 bit@  or  >rs2  ( imm[10:1|11]) ;
+
+: R-type  ( opcode f3 f7)  push >funct3  pop >funct7  constant
+   does> @  ( rs1 rs2 rd op)  rd  rs2  rs1  op, ;
+
+: I-type  ( opcode f3)  >funct3  constant
+   does> @  ( imm rs1 rd op)  rd  rs1  I-imm  op, ;
+
+: S-type  ( opcode f3)  >funct3  constant
+   does> @  ( off base src op)  rs2  rs1  op, ;
+
+: SB-type  ( opcode f3)  >funct3  constant
+   does> @  ( off rs1 rs2 op)  rs2  rs1  SB-imm  op, ;
+
+: U-type  ( opcode)  constant
+   does> @  ( off rd op)  rd  U-imm  op, ;
+
+: UJ-type  ( opcode)  constant
+   does> @  ( off rd op)  rd  UJ-imm  op, ;
+
+( Remind me.)
+: ???  radix preserve binary  u. ." missing. " ;
+
+( Since the encodings use fields with oddball widths - 5 bits, 7 bits, 3
+  bits - we won't be able to easily use either octal or hex.
+
+  So, binary it is!)
+
+assembler binary
+( load)
+00_000_11  000  I-type lb
+00_000_11  001  I-type lh
+00_000_11  010  I-type lw
+00_000_11  100  I-type lbu
+00_000_11  101  I-type lhu
+
+( misc-mem)
+00_011_11  ???
+
+( op-imm)
+00_100_11  000           I-type addi
+00_100_11  001  0000000  R-type slli  ( rs2 is shift amount)
+00_100_11  010           I-type slti
+00_100_11  011           I-type sltiu
+00_100_11  100           I-type xori
+00_100_11  101  0000000  R-type srli  ( rs2 is shift amount)
+00_100_11  101  0100000  R-type srai  ( rs2 is shift amount)
+00_100_11  110           I-type ori
+00_100_11  111           I-type andi
+
+( auipc)
+00_101_11  U-type auipc
+
+( store)
+01_000_11  000  S-type sb
+01_000_11  001  S-type sh
+01_000_11  010  S-type sw
+
+( op)
+01_100_11  000  0000000  R-type add
+01_100_11  000  0100000  R-type sub
+01_100_11  001  0000000  R-type sll
+01_100_11  010  0000000  R-type slt
+01_100_11  011  0000000  R-type sltu
+01_100_11  100  0000000  R-type xor
+01_100_11  101  0000000  R-type srl
+01_100_11  101  0100000  R-type sra
+01_100_11  110  0000000  R-type or
+01_100_11  111  0000000  R-type and
+
+( lui)
+01_101_11  U-type lui
+
+( branch)
+11_000_11  000  SB-type beq
+11_000_11  001  SB-type bne
+11_000_11  100  SB-type blt
+11_000_11  101  SB-type bge
+11_000_11  110  SB-type bltu
+11_000_11  111  SB-type bgeu
+
+( jalr)
+11_001_11  000  I-type jalr
+
+( jal)
+11_011_11  UJ-type jal
+
+( system)
+11_100_11  ???
+
+( Synthetic instructions.)
+: nop             asm{  0 x0 x0 addi  } ;
+: mv    ( rs rd)  asm{   0 -rot addi  } ;
+: not   ( rs rd)  asm{  -1 -rot xori  } ;
+: neg   ( rs rd)  asm{  x0 -rot sub  } ;
+: seqz  ( rs rd)  asm{   1 -rot sltiu  } ;
+: snez  ( rs rd)  asm{  x0 -rot sltu  } ;
+: sltz  ( rs rd)  asm{  x0 swap slt  } ;
+: sgez  ( rs rd)  asm{  x0 -rot slt  } ;
+
+forth decimal
