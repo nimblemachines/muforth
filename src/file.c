@@ -150,6 +150,19 @@ void mu_open_file_rw()
     mu_open_file();
 }
 
+/* For reading and writing pipes. */
+void mu_open_file_wo_nonblocking()
+{
+    PUSH(O_WRONLY | O_NONBLOCK);
+    mu_open_file();
+}
+
+void mu_open_file_ro_nonblocking()
+{
+    PUSH(O_RDONLY | O_NONBLOCK);
+    mu_open_file();
+}
+
 void mu_close_file()
 {
     while (close(TOP) == -1)
@@ -210,7 +223,7 @@ void mu_read_carefully()    /* fd buffer len -- #read */
 
     while((count = read(fd, buffer, len)) == -1)
     {
-        if (errno == EINTR) continue;
+        if (errno == EINTR || errno == EAGAIN) continue;
         return abort_strerror();
     }
     TOP = count;
@@ -233,7 +246,7 @@ void mu_write_carefully()   /* fd buffer len */
         written = write(fd, buffer, len);
         if (written == -1)
         {
-            if (errno == EINTR) continue;
+            if (errno == EINTR || errno == EAGAIN) continue;
             return abort_strerror();
         }
         buffer += written;
