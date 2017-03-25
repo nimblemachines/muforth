@@ -1,0 +1,166 @@
+( This file is part of muforth: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2017 David Frech. (Read the LICENSE for details.)
+
+loading RISC-V interaction
+
+variable chatting
+
+variable chat-vector
+: chat-cmd   ( index)  cells  constant
+             does> @  chat-vector @ =if  +  @execute  ^  then  2drop
+                error" Not connected to a chat-capable target" ;
+
+: chat-fail   error" Chat command not implemented" ;
+
+ 0 chat-cmd t.hello
+ 1 chat-cmd t.getregs  ( buf - sp)
+ 2 chat-cmd t.setregs  ( buf)
+ 3 chat-cmd t.read     ( buf a u)
+ 4 chat-cmd t.write    ( buf a u)
+ 5 chat-cmd t.run
+
+( For reading and writing target cells.)
+: t@  ( addr - w)                 pad swap \m cell t.read  pad lew@ ;
+: t!  ( w addr)    swap pad lew!  pad swap \m cell t.write ;
+
+
+: >chat
+   ['] t@      is |@
+   ['] t.read  is |read    ( read from connected target)
+   ['] lew@    is |cell@
+               32 |addr !  ( size of addr in bits)
+                4 |cell !  ( size of cell in bytes) ;
+
+: copy-chunk  ( a u)
+   =if
+      -- cr  ." copy-chunk "  over u. dup u.
+      over image+ -rot  t.write  ^
+   then  2drop ;
+
+variable ram-copied  ( pointer to first un-copied byte)
+
+: copy-ram
+   h preserve  ram
+   ram-copied @  dup 0= if  drop  region drop  then
+   \m here  over -  copy-chunk
+   \m here  ram-copied ! ;
+
+( XXX some stuff about getting and setting regs goes here)
+: get-regs ;
+: set-regs ;
+defer .regs
+-: ." regs - coming soon!" ;  is .regs
+
+: hi  chatting on  >chat  t.hello  get-regs  .regs
+      ram-copied off  copy-ram
+      now __chatting is __meta  __meta ;
+
+: chat-via   pop  chat-vector !  hi ;
+
+
+.ifdef notyet
+
+( XXX Need some sense of how to do regs before this can be fleshed out.)
+
+( XXX the following code is copied from MSP430)
+
+( NOTE: All the following d.Foobar commands are the dummy _implementations_
+  of the chat command interface.)
+
+.SIZE buffer dummy-frame
+
+: d.hello  ." Connecting to dummy chat target."
+   ( Init each reg in dummy-frame to its index, then set PC to RAM)
+   dummy-frame m !
+   0  .LAST \m cell/ for  dup >hilo m& m&  \m cell+  next  drop
+   "220 .PC dummy-frame +  leh! ;
+
+: d.read    ( buf a u)
+   -- cr  ." Dummy read chunk "  2 nth u.  over u.  dup u.
+   push  image+  2dup xor if  swap pop cmove  ^  then
+   rdrop  2drop ;
+
+: d.write   ( buf a u)
+   -- cr  ." Dummy write chunk "  2 nth u.  over u.  dup u.
+   push  image+  2dup xor if       pop cmove  ^  then
+   rdrop  2drop ;
+
+: d.getregs  ( buf - sp)
+   ( copy dummy-frame to buf)
+   dummy-frame swap .LAST cmove  "dead ;
+
+: d.setregs  ( buf)
+   ( copy buf to dummy-frame)
+   dummy-frame .LAST cmove ;
+
+: dummy
+   chat-via  d.hello  d.getregs  d.setregs  d.read  d.write  nope ( run) ;
+
+: _run      copy-ram  set-regs  t.run ;  ( don't wait for target)
+: _runwait  _run  get-regs ;   ( wait for target)
+
+: runwait   _runwait  .regs ;
+
+( For running random code that doesn't return.)
+: kick  ( pc)  .PC reg!  _run ;
+
+( when the code you're calling doesn't speak the same protocol as running code)
+: go   \eq Vreset image-@  kick ;
+
+: reset    go  0 #100,000,000 nanosleep ( 100ms)  get-regs .regs ;
+
+( For running random bits of code.)
+: call  ( pc)  .PC reg!  runwait ;
+
+.then  ( notyet)
+
+
+128 array riscv-seekeys
+
+( Default key action is to run host key code)
+host-seekeys riscv-seekeys  128 cells cmove
+
+: >target
+   chatting @ if   >chat  ^  then  >image ;  ( set up memory access)
+
+( Support for dumping memory)
+: 1dump  ( a)
+   hex-bytes
+   dup  p !  cell*  ea !  ( default ea: fetch cell)
+   dup _addr  dup .chars
+   dup .addr  dup .hex-bytes
+   dup _addr  dup .hex-cells
+   drop ;
+
+( Cross-ref image and target. Print line of image memory, then line of
+  target memory.)
+
+: 1xref  ( a)
+   hex-bytes
+   >image    dup .addr  dup .hex-cells
+   chatting @ if
+      -valid
+      >chat  dup _addr  dup .hex-cells
+      -valid
+   then
+   drop ;
+
+riscv-seekeys  -4  du-mode dumping    >target  skip+  skip-  1dump  ( a - a')
+riscv-seekeys  -4  du-mode xrefing    >target  skip+  skip-  1xref  ( a - a')
+-- riscv-seekeys  -2  du-mode disasming  >target  dis+   dis-   1dis   ( a - a')
+
+riscv-seekeys 'seekeys !    ( switch over to our bindings)
+
+key: d  ( a - a 0)   dumping    0 ;
+key: x  ( a - a 0)   xrefing    0 ;
+-- key: i  ( a - a 0)   disasming  0 ;
+
+
+( Interactive)
+
+( Host du available as \f du)
+meta
+: du   ( a - a')   dumping     inspect ;
+-- : dis  ( a - a')   disasming   inspect ;
+forth
