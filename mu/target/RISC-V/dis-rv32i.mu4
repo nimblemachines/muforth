@@ -113,6 +113,9 @@ abi-regs
 : .sub   ." sub "  .3reg ;
 : .sra   ." sra "  .3reg ;
 
+( neg is encoded as sub rd, x0, rs2)
+: .neg   ." neg "  .rd  .rs2 ;
+
 : .op-reg
    dup funct3>  4 *  z" add sll slt sltuxor srl or  and "  +
    4 -trailing type space  .3reg ;
@@ -132,6 +135,17 @@ abi-regs
 : .slli   ." slli "  .shift-imm ;
 : .srli   ." srli "  .shift-imm ;
 : .srai   ." srai "  .shift-imm ;
+
+: .nop  ( encoded as addi x0 x0 0)     ." nop" ;
+
+( load immediate)
+: .li  ( encoded as addi rd x0 imm)    ." li "  .rd  I-imm> .imm ;
+
+( register move)
+: .mv  ( encoded as addi rd rs1 0)     ." mv "  .rd  .rs1 ;
+
+( 1's complement)
+: .not  ( encoded as xori rd rs1 -1)   ." not "  .rd  .rs1 ;
 
 : .ui   .rd  U-imm> .imm ;
 : .auipc   ." auipc "  .ui ;  ( XXX show result of pc+imm?)
@@ -174,7 +188,8 @@ binary  ( !!)
   they are. We do that here rather than in the main "shred32" routine.)
 
 : .op  ( op - op)
-   dup #12 >>
+   dup #12 >>              ( funct7  rs2   rs1  f3)
+   1111111_00000_11111_111  0100000_00000_00000_000  submatch .neg  ( sub rd x0 rs)
    1111111_00000_00000_111  0100000_00000_00000_000  submatch .sub
    1111111_00000_00000_111  0100000_00000_00000_101  submatch .sra
    1111111_00000_00000_000  0000000_00000_00000_000  submatch .op-reg
@@ -187,10 +202,21 @@ binary  ( !!)
   immediate instructions.)
 
 : .op-imm  ( op - op)
-   dup #12 >>
+   dup #7 >>                      (    imm12     rs1  f3   rd)
+   1111111_11111_11111_111_11111  0000000_00000_00000_000_00000
+                                                     submatch .nop  ( addi x0 x0 0)
+
+   drop  dup #12 >>         (    imm12     rs1  f3)
+   0000000_00000_11111_111  0000000_00000_00000_000  submatch .li   ( addi rd x0 imm)
+   1111111_11111_00000_111  0000000_00000_00000_000  submatch .mv   ( addi rd rs 0)
+   1111111_11111_00000_111  1111111_11111_00000_100  submatch .not  ( xori rd rs -1)
+
+                          ( funct7  shamt  rs1  f3)
    1111111_00000_00000_111  0000000_00000_00000_001  submatch .slli
    1111111_00000_00000_111  0000000_00000_00000_101  submatch .srli
    1111111_00000_00000_111  0100000_00000_00000_101  submatch .srai
+
+   ( Nothing special matched. Must be a "normal" immediate op.)
    #7 and  #6 *  z" addi  ????  slti  sltiu xori  ????  ori   andi  "  +
    #5 -trailing type space  .rd  .rs1  I-imm> .imm ;
 
