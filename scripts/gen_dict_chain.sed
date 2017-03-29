@@ -51,7 +51,7 @@ s/shift_right/>>/
 s/fetch/@/
 s/^at_/@_/
 s/store/!/
-s/(.*)_chain/\.\1\./
+#s/(.*)_chain/\.\1\./
 s/set_(.*)_code/<\1>/
 s/lbracket/[/
 s/rbracket/]/

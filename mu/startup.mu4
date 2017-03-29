@@ -293,10 +293,10 @@ forth
 ( Dictionary structure words. Link fields point to link fields. Roughly, a
   dictionary entry is the following cell-sized things: suffix, link, code;
   where suffix is the last 7 [64-bit] characters of the name, followed by
-  its byte-sized length.)
+  its byte-sized length. Remember: high bit of length is hidden bit!)
 
-: link>length  ( 'link - 'len len)  1- dup  c@ ;
-: link>name    ( 'link - a u)  link>length  tuck -  swap ;
+: link>name    ( 'link - a u)
+   1- dup c@ [ bl 2* 2* 1- ] and  ( 'len len)  tuck -  swap ;
 
 ( These words all assume we're calculating to or from a code field
   address.)
@@ -1189,15 +1189,17 @@ being-defined -v  ( be verbose)
 
 ( !!!!-------------------- Add changes below this line -------------------!!!!)
 
-: ?hidden  ( 'code 'link - counted?)
-   dup  1- c@  ( len)  128 and  if  ( hidden)  2drop 0 ^  then
-   swap execute ;
-
 ( Word listing. Putting this in as soon as possible. Needs `space'.)
+( Word called for each word has the following stack comment:
+   ( 'link - counted? exit?)
+
 : forall-words  ( 'link 'code - count)
-   push   0 swap  ( count 'link)
-   begin  @  =while  r@ over ?hidden  u+  repeat
+   push   0 swap  ( count 'link)  0
+   begin  u+  @  =while  dup r@ execute  until  drop ( counted?)  then
    pop 2drop ;
+
+: hidden?   ( 'link - hidden?)      1- c@  ( len)  128 and ;
+: muchain?  ( 'link - muchain?)  cell- @  [ .forth. cell- @ ] = ;
 
 ( This next word has an odd name. It is an odd duck. Given the address of a
   word's link field, find the word's name, print it - making sure to wrap
@@ -1210,8 +1212,10 @@ being-defined -v  ( be verbose)
   needed it elsewhere too - it used to be an unnamed colon word - so I
   decided it needed a name.)
 
-: .name-and-count-it  ( 'link - counted?)
-   link>name  dup 2 + ?wrap  type space space  1 ;
+: .name-and-count-it  ( 'link - counted? exit?)
+   dup muchain? if  drop  0  -1  ^  then
+   dup  hidden? if  drop  0   0  ^  then
+   link>name  dup 2 + ?wrap  type space space  1  0 ;
 
 : words
    cr cr  current @  ['] .name-and-count-it forall-words

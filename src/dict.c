@@ -157,6 +157,22 @@ void mu_here()          /* push current _value_ of heap pointer */
 }
 
 /*
+ * Even though we are now populating the dictionary with "proper"
+ * muchain-style .forth. and .compiler., we still need a way for the code
+ * in interpret.c to push the addresses of these chains. Hence the two
+ * following words.
+ */
+void muboot_push_forth_chain()
+{
+    PUSH_ADDR(forth_chain);
+}
+
+void muboot_push_compiler_chain()
+{
+    PUSH_ADDR(compiler_chain);
+}
+
+/*
  * , (comma) copies the cell on the top of the stack into the dictionary,
  * and advances the heap pointer by one cell. Note that ph is kept
  * cell-aligned.
@@ -177,20 +193,6 @@ void mu_allot()    { ph += ALIGNED(POP) / sizeof(cell); }
 
 /* Align TOP to cell boundary */
 void mu_aligned()  { TOP = ALIGNED(TOP); }
-
-/*
- * .forth. and .compiler. push the address of the respective struct
- * dict_name.
- */
-void mu_push_forth_chain()
-{
-    PUSH_ADDR(forth_chain);
-}
-
-void mu_push_compiler_chain()
-{
-    PUSH_ADDR(compiler_chain);
-}
 
 /* Type of string compare functions */
 typedef int (*match_fn_t)(const char*, const char*, size_t);
@@ -291,7 +293,7 @@ static link_cell *new_name(
     ph = (cell *)(pnm + 1);
 
 #if defined(BEING_DEFINED)
-    fprintf(stderr, "%p %p %.*s\n", pnm, link, length, name);
+    fprintf(stderr, "%p %p %.*s\n", &pnm->link, link, length, name);
 #endif
 
     /* Return address of link field */
@@ -330,6 +332,42 @@ static void init_chain(link_cell *plink, struct inm *pinm)
     }
 }
 
+/*
+ * Create a chain that looks and behaves exactly like the chains that we
+ * will be creating in forth using create/does>.
+ *
+ * Chains live in two worlds. In one world, they are normal words - with
+ * names like .forth. or .compiler. - and they have a link and code fields
+ * and a body.
+ *
+ * In the other world, they act as pointers to the head of the vocab chain
+ * that they represent. In order make the chains "chainable" - so that
+ * searches of one can continue in the chained chain - the body of a chain
+ * needs to look like a dict entry. Thus, it has a (hidden) name - muchain
+ * - and its link field points to the last word defined on its chain.
+ *
+ * To make this all work, these "natively-defined" chains need a code field
+ * that points to code that pushes the address of the link field in the
+ * hidden name. The following word will do this for us.
+ */
+static void mu_push_chain()
+{
+    PUSH_ADDR(&W[2]);   /* push the address of muchain's link field */
+}
+
+/*
+ * Create a new chain. First, call new_linked_name() to create the public
+ * name - .forth. or .compiler. . Then, populate its code field with code
+ * to push the address of the following hidden word's link field. And,
+ * lastly, created the hidden name, and return its address.
+ */
+static link_cell *new_chain(link_cell *plink, char *name, int length)
+{
+    new_linked_name(plink, name, length);
+    *ph++ = (addr)mu_push_chain;    /* set code pointer */
+    return new_name(NULL, "muchain", 7, 1);
+}
+
 static void allocate()
 {
     ph0 = (cell *) calloc(DICT_CELLS, sizeof(cell));
@@ -343,18 +381,29 @@ static void allocate()
 
 void init_dict()
 {
+    link_cell forth;
+    link_cell compiler;
+
     allocate();
 
-    /*
-     * Create "hidden" names for the two initial chains. Unlike later
-     * chains, which are create/does words, these use the (hidden) name of
-     * the chain in their bodies, instead of the string "muchain".
-     */
-    forth_chain    = new_name(NULL, ".forth.", 7, 1);
-    compiler_chain = new_name(NULL, ".compiler.", 10, 1);
+    /* First, populate dictionary with words defined in C. */
+    _(forth.cell) = NULL;
+    _(compiler.cell) = NULL;
+    init_chain(&forth, initial_forth);
+    init_chain(&compiler, initial_compiler);
 
-    init_chain(forth_chain, initial_forth);
-    init_chain(compiler_chain, initial_compiler);
+    /*
+     * Create .forth. and .compiler. chains that look and smell like the
+     * ones that will later be created as create/does words. These have a
+     * body that looks like a normal word, but the name is always "muchain"
+     * and the hidden bit is set.
+     */
+    forth_chain    = new_chain(&forth, ".forth.", 7);
+    compiler_chain = new_chain(&forth, ".compiler.", 10);
+
+    /* Now that everything is in the dictionary, set the link pointers. */
+    _(forth_chain->cell) = _(forth.cell);
+    _(compiler_chain->cell) = _(compiler.cell);
 }
 
 /*

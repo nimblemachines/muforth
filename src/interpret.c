@@ -186,7 +186,7 @@ void mu_huh_q()
 /* Not declared "static" because it is needed by muforth.c to fire up warm! */
 void muboot_interpret_token()
 {
-    mu_push_forth_chain();
+    muboot_push_forth_chain();
     mu_find();
     if (POP)
     {
@@ -199,14 +199,14 @@ void muboot_interpret_token()
 /* The compiler's "consume" function. */
 static void muboot_compile_token()
 {
-    mu_push_compiler_chain();
+    muboot_push_compiler_chain();
     mu_find();
     if (POP)
     {
         EXECUTE;
         return;
     }
-    mu_push_forth_chain();
+    muboot_push_forth_chain();
     mu_find();
     if (POP)
     {
