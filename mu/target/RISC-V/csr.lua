@@ -85,6 +85,8 @@ scraped = [[
 
 dofile 'target/HC08/device/string.lua'
 
+fmt = string.format
+
 function gen_csr(addr, perm, name, comment)
     comment = comment:gsub("%(", "/")
     comment = comment:gsub("%)", "/")
