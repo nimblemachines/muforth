@@ -8,34 +8,20 @@ forth  decimal
 
 ( Metacompiler vocabulary chains.)
 
-( .meta. is where meta-compiler specific words go - esp if they would
+( Since we are now "chaining" chains together, let's do this bottom-up.
+
+  .equates. contains chip equates and any other constants that should be
+  visible to both the assembler and target compiler. When used interactively,
+  or in the assembler, these push their value. When used in a target colon
+  word, these compile literals.
+
+  .meta. is where meta-compiler specific words go - esp if they would
   otherwise shadow a host word of the same name. @ is a good example - the
   meta version writes into the target image, using a local, image-relative
   address. .meta. contains special versions of : to compile macros [though
   I'm thinking of deprecating or removing this] and to define new defining
   words during target compilation. It will also, once the kernel starts
   loading, contain a : that compiles target colon words!
-
-  .definer. is slightly exotic. It's like .compiler. but it's specifically
-  for making new defining words for the meta-compiler. It contains special
-  definitions of words like does> and perhaps others - eg,  ;  [  etc.
-
-  .assembler. contains definitions of instructions, registers, addressing
-  modes, and words to build control structures. It is searched when
-  building code words, and also when compiling macros.
-
-  .alt-assembler. contains an "alternative" set of opcodes whose names end
-  with a comma. This is a form preferred by some. Note that .alt-assembler.
-  is not, at the moment, a first-class citizen in the world of vocabulary
-  chains. It does not have a word to set it as the default for compiling
-  words into - like assembler, below; it does not have a "prefix override" to
-  force compilation from it - like \a below. It only exists as a place to be
-  searched by the __asm and __inline-asm modes, defined below.
-
-  .equates. contains chip equates and any other constants that should be
-  visible to both the assembler and target compiler. When used interactively,
-  or in the assembler, these push their value. When used in a target colon
-  word, these compile literals.
 
   Labels - like temporary locations defined in assembler that do not
   represent target words - are in .meta., and are invisible to the target
@@ -47,33 +33,56 @@ forth  decimal
   metacompiler using variable references; compilation of the kernel will
   patch these with actual addresses of target code.
 
+  .meta. is chained to .equates., so searching .meta. will also search
+  .equates.
+
+  .opcodes2. contains an "alternative" set of opcodes whose names end with
+  a comma. This is a form preferred by some. .opcodes2. is chained to .meta.
+
+  .assembler. contains definitions of instructions, registers, addressing
+  modes, and words to build control structures. It is searched when
+  building code words, and also when compiling macros. It is chained to
+  .opcodes2., so searching .assembler. will also search .opcodes2.,
+  .meta., AND .equates.
+
   .lex. contains words for delimiting comments and for doing conditional
   interpretation and compilation. They are in a separate chain so we don't
   have to keep making synonyms; instead, we just search the .lex. chain.
 
+  .definer. is slightly exotic. It's like .compiler. but it's specifically
+  for making new defining words for the meta-compiler. It contains special
+  definitions of words like does> and perhaps others - eg,  ;  [  etc. It
+  is chained to .compiler. so searching .definer. will search both. Since
+  .compiler. contains all of the conditional compiler words we do not have
+  to also search .lex.
+
   .target-compiler. is like .compiler. but for the -target- colon compiler.
   This will contain target versions of [ ; if then begin while etc. It is
-  sealed since we don't want to get any host words by accident.)
+  linked to .lex. so we get the conditional compiler words, but is
+  otherwise kept "pure". We don't want to get any host words by accident.
 
-sealed .meta.           ( the `meta' version of .forth.)
-sealed .definer.        ( like .compiler. but only for meta defining words)
-sealed .assembler.      ( the host-resident target assembler)
-sealed .alt-assembler.  ( alternative assembler names)
-sealed .equates.        ( chip equates and other constants for target)
-sealed .lex.            ( comments and conditional interpretation)
+  Simple, right? ;-)
+
+          sealed .equates.    ( chip equates and other constants for target)
+ .equates. chain .meta.       ( the `meta' version of .forth.)
+    .meta. chain .opcodes2.   ( the alternative opcode set)
+.opcodes2. chain .assembler.  ( the host-resident target assembler)
+
+.compiler. chain .definer.  ( like .compiler. but only for meta defining words)
 
 sealed .target.           ( the target words - like `forth' on the host)
 sealed .target-compiler.  ( the `meta' version of .compiler.)
 
+sealed .lex.             ( comments and conditional interpretation)
+
 : meta                         .meta. definitions ;
 : definer                   .definer. definitions ;
 : assembler               .assembler. definitions ;
-: equates                   .equates. definitions ;
-: lex                           .lex. definitions ;
 
 : target                     .target. definitions ;
 : target-compiler   .target-compiler. definitions ;
 
+( XXX Do we need all of these?)
 compiler
 : \m   ( compile from meta)                        .meta. \chain ;
 : \d   ( compile from definer)                  .definer. \chain ;
@@ -89,7 +98,7 @@ forth
 : \m      .meta. chain' execute ;  ( execute a meta word from forth)
 : \eq  .equates. chain' execute ;  ( execute an equates word from forth)
 
-lex
+.lex. definitions
 ( Comments are nice to have!)
 : (     \ ( ;
 : --    \ -- ;
@@ -120,10 +129,7 @@ forth
 -:  ."  (compiling inline assembler)" ;
 -:
     .assembler. find  if  ,        ^  then  ( find assembler's if/then etc)
-.alt-assembler. find  if  ,        ^  then  ( try alt opcodes)
      .compiler. find  if  execute  ^  then  ( need } and ; to exit this mode)
-      .equates. find  if  ,        ^  then
-         .meta. find  if  ,        ^  then  ( labels are in .meta.)
         .forth. find  if  ,        ^  then  ( utility words in .forth.)
                                             number literal ;
 mode __inline-asm
@@ -132,9 +138,6 @@ mode __inline-asm
 -:  ."  (assembling)" ;
 -:
     .assembler. find  if  execute  ^  then
-.alt-assembler. find  if  execute  ^  then  ( try alt opcodes)
-      .equates. find  if  execute  ^  then
-         .meta. find  if  execute  ^  then  ( labels are in .meta.)
         .forth. find  if  execute  ^  then  ( utility words in .forth.)
                                             number ;
 mode __asm
@@ -155,7 +158,6 @@ defer __meta  ( will be either __building or __chatting)
 -:  ."  (building)" ;
 -:
          .meta. find  if  execute  ^  then  ( labels are in .meta.)
-      .equates. find  if  execute  ^  then
         .forth. find  if  execute  ^  then
                                             number ;
 mode __building
@@ -178,9 +180,9 @@ defer remote
 
 -:  ."  (chatting)" ;
 -:
+        ( NOTE: if we want to remove .forth., replace it with .lex. .)
        .target. find  if  execute  remote  ^  then  ( execute on target)
          .meta. find  if  execute          ^  then  ( labels are in .meta.)
-      .equates. find  if  execute          ^  then
         .forth. find  if  execute          ^  then
                                                      target-number ;
 mode __chatting
@@ -192,9 +194,7 @@ mode __chatting
 -:  ."  (compiling a meta defining word)" ;
 -:
       .definer. find  if  execute  ^  then  ( does>, ;code, special ;)
-     .compiler. find  if  execute  ^  then  ( also need all that's here!)
          .meta. find  if  ,        ^  then
-      .equates. find  if  ,        ^  then
         .forth. find  if  ,        ^  then  ( utility words in .forth.)
                                             number literal ;
 mode __definer-colon
@@ -208,6 +208,5 @@ defer target-compile,  ( compile a target word into a colon definition)
    .target-compiler. find  if  execute                   ^  then
             .target. find  if  execute  target-compile,  ^  then
            .equates. find  if  execute  target-literal   ^  then
-               .lex. find  if  execute                   ^  then
                                         target-number target-literal ;
 mode __target-colon
