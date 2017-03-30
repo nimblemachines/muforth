@@ -90,19 +90,19 @@ defer .reg
 
 abi-regs
 
-: (.rs1)   ( op - op)  dup rs1>  .reg ;
-: (.rs2)   ( op - op)  dup rs2>  .reg ;
+( Trailing underscore signifies the following space.)
+: .rd_   ( op - op)  dup rd>   .reg space ;
+: .rs1   ( op - op)  dup rs1>  .reg ;
+: .rs2   ( op - op)  dup rs2>  .reg ;
 
-: .rd      ( op - op)  dup rd>   .reg space ;
-
-: .rs1     ( op - op)  (.rs1) space ;
-: .rs2     ( op - op)  (.rs2) space ;
+: .rs1_  ( op - op)  .rs1 space ;
+: .rs2_  ( op - op)  .rs2 space ;
 
 ( Show immediates as signed hex values.)
 : .imm   .hex ;
 
-: .3reg   .rd  .rs1  (.rs2) ;
-: .rs1-off  ( op imm - op)   .imm  ." ("  (.rs1)  ." )" ;
+: .3reg   .rd_  .rs1_  .rs2 ;
+: .rs1-off  ( op imm - op)   .imm  ." ("  .rs1  ." )" ;
 
 : .rel-dest  ( off)   instr-pc @ +  dup ea !  .u32 ;
 
@@ -110,7 +110,7 @@ abi-regs
 
 : .load
    dup funct3>  4 *  z" lb  lh  lw  ??? lbu lhu ??? ??? "  +
-   3 -trailing type space  .rd  I-imm>  .rs1-off ;
+   3 -trailing type space  .rd_  I-imm>  .rs1-off ;
 
 ( Two "special case" 3-regs. They have slightly odd encodings and are
   matched specially.)
@@ -118,7 +118,7 @@ abi-regs
 : .sra   ." sra "  .3reg ;
 
 ( neg is encoded as sub rd, x0, rs2)
-: .neg   ." neg "  .rd  (.rs2) ;
+: .neg   ." neg "  .rd_  .rs2 ;
 
 : .op-reg
    dup funct3>  4 *  z" add sll slt sltuxor srl or  and "  +
@@ -129,13 +129,13 @@ abi-regs
    6 -trailing type space  .3reg ;
 
 : .store
-   dup funct3>  2*  z" sbshsw??"  +  2 type space  .rs2  S-imm>  .rs1-off ;
+   dup funct3>  2*  z" sbshsw??"  +  2 type space  .rs2_  S-imm>  .rs1-off ;
 
 ( Shift immediates are special.)
 ( NOTE: for the 64-bit version of these, the shift amount field is 6 bits
   wide, not 5.)
 
-: .shift-imm   .rd  .rs1  dup rs2> .imm ;
+: .shift-imm   .rd_  .rs1_  dup rs2> .imm ;
 : .slli   ." slli "  .shift-imm ;
 : .srli   ." srli "  .shift-imm ;
 : .srai   ." srai "  .shift-imm ;
@@ -143,16 +143,16 @@ abi-regs
 : .nop  ( encoded as addi x0 x0 0)     ." nop" ;
 
 ( load immediate)
-: .li  ( encoded as addi rd x0 imm)    ." li "   .rd  I-imm> .imm ;
+: .li  ( encoded as addi rd x0 imm)    ." li "   .rd_  I-imm> .imm ;
 
 ( register move)
-: .mv  ( encoded as addi rd rs1 0)     ." mv "   .rd  (.rs1) ;
+: .mv  ( encoded as addi rd rs1 0)     ." mv "   .rd_  .rs1 ;
 
 ( 1's complement)
 ( Calling this .nnot to not conflict with .not, the conditional op.)
-: .nnot  ( encoded as xori rd rs1 -1)   ." not "  .rd  (.rs1) ;
+: .nnot  ( encoded as xori rd rs1 -1)  ." not "  .rd_  .rs1 ;
 
-: .ui   ( op pc - op pc+ui)   push  .rd  U-imm>  dup .imm  pop +  dup ea ! ;
+: .ui   ( op pc - op pc+ui)   push  .rd_  U-imm>  dup .imm  pop +  dup ea ! ;
 
 : .(hex)   ." ("  .hex  ." )" ;
 : .auipc   ." auipc "  instr-pc @  .ui  space space  .(hex) ;
@@ -160,15 +160,15 @@ abi-regs
 
 : .branch
    dup funct3>  4 *  z" beq bne ??? ??? blt bge bltubgeu"  +
-   4 -trailing type space  .rs1  .rs2  SB-imm>  .rel-dest ;
+   4 -trailing type space  .rs1_  .rs2_  SB-imm>  .rel-dest ;
 
 : .uj-dest  UJ-imm>  .rel-dest ;
 : .jal   dup rd> 0= if
-   ." j "         .uj-dest  ^  then
-   ." jal "  .rd  .uj-dest ;
+   ." j "          .uj-dest  ^  then
+   ." jal "  .rd_  .uj-dest ;
 
-: .jr    ." jr "         I-imm> .rs1-off ;
-: .jalr  ." jalr "  .rd  I-imm> .rs1-off ;
+: .jr    ." jr "          I-imm> .rs1-off ;
+: .jalr  ." jalr "  .rd_  I-imm> .rs1-off ;
 
 : .fence    ." fence" ;
 : .fence.i  ." fence.i" ;
@@ -191,8 +191,8 @@ variable csr-sought
 : .csrname  ( addr)  csr-sought !  .csr. [ ] forall-words  drop ;
 : .csrreg   dup 20 >>  dup .csrname  space space  .(hex) ;
 : .csrop  ( op - op)   dup funct3> 3 and  2*  z" ??rwrsrc" +  2 type ;
-: .csr   ." csr"  .csrop         space  .rd     .rs1              .csrreg ;
-: .csri  ." csr"  .csrop  ." i"  space  .rd  dup rs1> .imm space  .csrreg ;
+: .csr   ." csr"  .csrop         space  .rd_     .rs1_              .csrreg ;
+: .csri  ." csr"  .csrop  ." i"  space  .rd_  dup rs1> .imm space  .csrreg ;
 
 binary  ( !!)
 
@@ -237,7 +237,7 @@ binary  ( !!)
 
    ( Nothing special matched. Must be a "normal" immediate op.)
    #7 and  #6 *  z" addi  ????  slti  sltiu xori  ????  ori   andi  "  +
-   #5 -trailing type space  .rd  .rs1  I-imm> .imm ;
+   #5 -trailing type space  .rd_  .rs1_  I-imm> .imm ;
 
 : .jalr-jr
    dup #7 >>
