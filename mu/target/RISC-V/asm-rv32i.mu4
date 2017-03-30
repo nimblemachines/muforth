@@ -40,17 +40,22 @@ forth
 ( Shifting bits into position.)
 : >rd      ( op bits - op')   7 <<  or ;
 : >funct3  ( op bits - op')  12 <<  or ;
+: >rs1     ( op bits - op')  15 <<  or ;
 : >rs2     ( op bits - op')  20 <<  or ;
 : >funct7  ( op bits - op')  25 <<  or ;
 
 ( Dealing with register fields.)
+: >reg  ( reg op - op reg-masked)  swap  31 and ;
 : ?reg  ( reg op - op reg-masked)
-   over -32 and  "5_d00d_00 = if  ( valid reg)  swap  31 and  ^  then
+   over -32 and  "5_d00d_00 = if  ( valid reg)  >reg  ^  then
    error" expected a register" ;
 
 : rd   ( reg op - op')  ?reg  >rd ;
-: rs1  ( reg op - op')  ?reg  15 <<  or ;
+: rs1  ( reg op - op')  ?reg  >rs1 ;
 : rs2  ( reg op - op')  ?reg  >rs2 ;
+
+: rs1-imm  ( zimm op - op')  >reg  >rs1 ;
+: rs2-imm  ( zimm op - op')  >reg  >rs2 ;
 
 ( For grabbing single bits out of something.)
 : bit@  ( mask bit# - bit)  u>>  1 and ;
@@ -64,7 +69,7 @@ forth
 ( The "easy" immediates.)
 : I-imm   ( imm op - op')  swap            "fff and  >rs2 ;
 : S-imm   ( imm op - op')  over   5 >>      "7f and  >funct7
-                            swap             "1f and  >rd ;
+                           swap             "1f and  >rd ;
 : U-imm   ( imm op - op')  swap  12 >>  "f_ffff and  >funct3 ;
 
 ( These two are complicated. ;-)
@@ -79,10 +84,16 @@ forth
    over      "7fe and  rot  11 bit@  or  >rs2  ( imm[10:1|11]) ;
 
 : R-type  ( opcode f3 f7)  push >funct3  pop >funct7  constant
-   does> @  ( rs1 rs2 rd op)  rd  rs2  rs1  op, ;
+   does> @  ( rs1 rs2     rd op)  rd  rs2      rs1  op, ;
+
+: RI-type  ( opcode f3 f7)  push >funct3  pop >funct7  constant
+   does> @  ( rs1 rs2-imm rd op)  rd  rs2-imm  rs1  op, ;
 
 : I-type  ( opcode f3)  >funct3  constant
    does> @  ( imm rs1 rd op)  rd  rs1  I-imm  op, ;
+
+: II-type  ( opcode f3)  >funct3  constant
+   does> @  ( imm rs1-imm rd op)  rd  rs1-imm  I-imm  op, ;
 
 : S-type  ( opcode f3)  >funct3  constant
    does> @  ( off base src op)  rs2  rs1  op, ;
@@ -96,8 +107,11 @@ forth
 : UJ-type  ( opcode)  constant
    does> @  ( dest rd op)  rd  >pc-rel UJ-imm  op, ;
 
-( Remind me.)
-: ???  radix preserve binary  u. ." missing. " ;
+: priv  ( opcode f3 imm12)  push >funct3  pop >rs2  constant
+   does> @  op, ;
+
+: _fence  ( opcode f3)  >funct3 constant
+   does> @  ( pred succ op)  -rot  swap 4 << or  >rs2  op, ;
 
 ( Since the encodings use fields with oddball widths - 5 bits, 7 bits, 3
   bits - we won't be able to easily use either octal or hex.
@@ -113,16 +127,17 @@ assembler binary
 00_000_11  101  I-type lhu
 
 ( misc-mem)
-00_011_11  ???
+00_011_11  000    _fence fence  ( pred succ)
+00_011_11  001  0  priv  fence.i
 
 ( op-imm)
 00_100_11  000           I-type addi
-00_100_11  001  0000000  R-type slli  ( rs2 is shift amount)
+00_100_11  001  0000000  RI-type slli  ( rs2 is shift amount)
 00_100_11  010           I-type slti
 00_100_11  011           I-type sltiu
 00_100_11  100           I-type xori
-00_100_11  101  0000000  R-type srli  ( rs2 is shift amount)
-00_100_11  101  0100000  R-type srai  ( rs2 is shift amount)
+00_100_11  101  0000000  RI-type srli  ( rs2 is shift amount)
+00_100_11  101  0100000  RI-type srai  ( rs2 is shift amount)
 00_100_11  110           I-type ori
 00_100_11  111           I-type andi
 
@@ -164,7 +179,23 @@ assembler binary
 11_011_11  UJ-type jal
 
 ( system)
-11_100_11  ???
+11_100_11  000  0000000_00000  priv ecall
+11_100_11  000  0000000_00001  priv ebreak
+
+11_100_11  000  0000000_00010  priv uret
+11_100_11  000  0001000_00010  priv sret
+11_100_11  000  0010000_00010  priv hret
+11_100_11  000  0011000_00010  priv mret
+
+11_100_11  000  0001000_00101  priv wfi
+
+11_100_11  001  I-type csrrw    ( CSR read/write)
+11_100_11  010  I-type csrrs    ( CSR read/set)
+11_100_11  011  I-type csrrc    ( CSR read/clear)
+
+11_100_11  101  II-type csrrwi  ( CSR read/write immediate)
+11_100_11  110  II-type csrrsi  ( CSR read/set immediate)
+11_100_11  111  II-type csrrci  ( CSR read/clear immediate)
 
 ( Synthetic instructions.)
 : nop             asm{  0 x0 x0 addi  } ;
@@ -178,4 +209,15 @@ assembler binary
 
 : j     ( dest)    asm{  x0 jal  } ;
 : jr    ( off rs)  asm{  x0 jalr  } ;
+
+         ( src dst   ==>  csr rs1 rd csrXX )
+: csrr   ( csr rd)     asm{  x0 swap csrrw   } ;  ( read, don't write)
+
+: csrw   ( rs csr)     asm{  swap x0 csrrw   } ;  ( write, don't read)
+: csrs   ( rs1 csr)    asm{  swap x0 csrrs   } ;  ( set, don't read)
+: csrc   ( rs1 csr)    asm{  swap x0 csrrc   } ;  ( clear, don't read)
+
+: csrwi  ( zimm csr)   asm{  swap x0 csrrwi  } ;  ( write imm, don't read)
+: csrsi  ( zimm csr)   asm{  swap x0 csrrsi  } ;  ( set imm, don't read)
+: csrci  ( zimm csr)   asm{  swap x0 csrrci  } ;  ( clear imm, don't read)
 forth decimal
