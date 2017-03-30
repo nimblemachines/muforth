@@ -175,6 +175,9 @@ abi-regs
 
 : .ecall   ." ecall" ;
 : .ebreak  ." ebreak" ;
+: .wfi     ." wfi" ;
+
+: .ret  dup 28 >>  3 and  z" ushm" +  1 type  ." ret" ;
 
 ( Unfortunately there isn't an easy way to pass arguments to the code to
   execute for each word, so let's just use a variable. Ugly, I know.)
@@ -189,10 +192,20 @@ variable csr-sought
    drop  0  0 ;
 
 : .csrname  ( addr)  csr-sought !  .csr. [ ] forall-words  drop ;
-: .csrreg   dup 20 >>  dup .csrname  space space  .(hex) ;
-: .csrop  ( op - op)   dup funct3> 3 and  2*  z" ??rwrsrc" +  2 type ;
-: .csr   ." csr"  .csrop         space  .rd_     .rs1_              .csrreg ;
-: .csri  ." csr"  .csrop  ." i"  space  .rd_  dup rs1> .imm space  .csrreg ;
+: .csrnum   swap  space space  .(hex) ;  ( print last, as a "comment")
+: .csrreg   dup 20 >>  ( addr)  swap  over .csrname ;
+: .csrboth  .csrreg  .csrnum ;
+
+( Print a "write op": w/s/c for write/set/clear.)
+: .csrwop  ( op - op)   dup funct3> 3 and  z" ?wsc" +  1 type ;
+
+: .csr_r    ." csrr "  .rd_  .csrboth ;
+
+: .csr_w    ." csr"  .csrwop    space  .csrreg  space     .rs1        .csrnum ;
+: .csr_wi   ." csr"  .csrwop   ." i "  .csrreg  space  dup rs1> .imm  .csrnum ;
+
+: .csr_rw   ." csrr"  .csrwop   space  .rd_     .rs1_             .csrboth ;
+: .csr_rwi  ." csrr"  .csrwop  ." i "  .rd_  dup rs1> .imm space  .csrboth ;
 
 binary  ( !!)
 
@@ -248,11 +261,24 @@ binary  ( !!)
 
 : .system
    dup #7 >>
-   1_00000_111_00000  0_00000_000_00000  submatch .ecall
-   1_00000_111_00000  1_00000_000_00000  submatch .ebreak
+   1111111_11111_00000_111_00000  0000000_00000_00000_000_00000  submatch .ecall
+   1111111_11111_00000_111_00000  0000000_00001_00000_000_00000  submatch .ebreak
 
-     00000_100_00000    00000_000_00000  submatch .csr
-     00000_100_00000    00000_100_00000  submatch .csri
+   1100111_11111_00000_111_00000  0000000_00010_00000_000_00000  submatch .ret
+
+   1111111_11111_00000_111_00000  0001000_00101_00000_000_00000  submatch .wfi
+
+   ( Match any other system instruction with f3=000 or 100)
+   00000_011_00000  00000_000_00000  submatch .undecoded
+
+  ( rs1       rd     rs1       rd)
+   11111_100_00000  00000_000_00000  submatch .csr_r   ( read-only: rs1 is x0)
+
+   00000_100_11111  00000_000_00000  submatch .csr_w   ( write-only: rd is x0)
+   00000_100_11111  00000_100_00000  submatch .csr_wi  ( write-only imm)
+
+   00000_100_00000  00000_000_00000  submatch .csr_rw   ( read/write)
+   00000_100_00000  00000_100_00000  submatch .csr_rwi  ( read/write imm)
    drop
    .undecoded ;
 
