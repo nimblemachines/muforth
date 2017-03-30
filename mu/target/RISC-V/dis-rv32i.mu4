@@ -102,7 +102,7 @@ abi-regs
 : .imm   .hex ;
 
 : .3reg   .rd  .rs1  (.rs2) ;
-: .rs1-off  ( op imm - op)   .imm  ." ("  (.rs2)  ." )" ;
+: .rs1-off  ( op imm - op)   .imm  ." ("  (.rs1)  ." )" ;
 
 : .rel-dest  ( off)   instr-pc @ +  dup ea !  .u32 ;
 
@@ -135,7 +135,7 @@ abi-regs
 ( NOTE: for the 64-bit version of these, the shift amount field is 6 bits
   wide, not 5.)
 
-: .shift-imm   .rd  .rs1  rs2> .imm ;
+: .shift-imm   .rd  .rs1  dup rs2> .imm ;
 : .slli   ." slli "  .shift-imm ;
 : .srli   ." srli "  .shift-imm ;
 : .srai   ." srai "  .shift-imm ;
@@ -154,7 +154,8 @@ abi-regs
 
 : .ui   ( op pc - op pc+ui)   push  .rd  U-imm>  dup .imm  pop +  dup ea ! ;
 
-: .auipc   ." auipc "  instr-pc @  .ui  space space  ." ("  .hex  ." )" ;
+: .(hex)   ." ("  .hex  ." )" ;
+: .auipc   ." auipc "  instr-pc @  .ui  space space  .(hex) ;
 : .lui     ." lui "             0  .ui  drop ;
 
 : .branch
@@ -175,11 +176,23 @@ abi-regs
 : .ecall   ." ecall" ;
 : .ebreak  ." ebreak" ;
 
-( XXX look these up in a dict chain?)
-: .csrreg   dup 20 >>  .hex ;
+( Unfortunately there isn't an easy way to pass arguments to the code to
+  execute for each word, so let's just use a variable. Ugly, I know.)
+
+variable csr-sought
+
+-:  ( 'link - counted? exit?)
+   dup  hidden? if  drop  0   0  ^  then  ( skip)
+   dup muchain? if  drop  0  -1  ^  then  ( exit - found a muchain)
+   dup link> >body @  csr-sought @ = if  ( found it!)
+      link>name  type  0  -1  ^  then
+   drop  0  0 ;
+
+: .csrname  ( addr)  csr-sought !  .csr. [ ] forall-words  drop ;
+: .csrreg   dup 20 >>  dup .csrname  space space  .(hex) ;
 : .csrop  ( op - op)   dup funct3> 3 and  2*  z" ??rwrsrc" +  2 type ;
-: .csr   ." csr"  .csrop         space  .rd  .rs1       .csrreg ;
-: .csri  ." csr"  .csrop  ." i"  space  .rd  rs1> .imm  .csrreg ;
+: .csr   ." csr"  .csrop         space  .rd     .rs1              .csrreg ;
+: .csri  ." csr"  .csrop  ." i"  space  .rd  dup rs1> .imm space  .csrreg ;
 
 binary  ( !!)
 
