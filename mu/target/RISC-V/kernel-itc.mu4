@@ -1,0 +1,415 @@
+( This file is part of muforth: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2017 David Frech. (Read the LICENSE for details.)
+
+loading RISC-V Forth kernel (ITC)
+
+( Yes, you guessed it: The guts of Forth for RISC-V!
+
+  Because this is a true RISC architecture, doing threaded code doesn't
+  seem to make a lot of sense. If you include NEXT inline in each code word -
+  the speediest approach - you really need post-increment addressing.
+  Otherwise NEXT can take up a lot of space!
+
+  On RISC-V, NEXT for ITC - indirect-threaded code - is four instructions,
+  and NEXT for DTC - direct-threaded code - is three.
+
+  However! There are several advantages to doing ITC. One is that the
+  system is dead simple, and it's easy to write "user-level" code that mucks
+  about with the internals of words, since everything has a uniform
+  structure.
+
+  It's also cache-efficient, mostly separating data - pointers and
+  variables - from code. In a native Forth these often end up next to each
+  other in memory, making the caches' jobs more difficult. Since Forth is
+  so simple, it's very likely that the entire native code implemenation will
+  fit into the I-cache, making it potentially very fast. We'll see about
+  this!
+
+  Because this is a jump-and-link architecture that lets us specify the
+  link register, we can do some tricks. This feature initially led me to
+  think that a native Forth was the "best fit" for RISC-V. However, I still
+  want to try ITC and see how well - or poorly - it works.)
+
+
+-- ------------------------------------------------------------------------
+-- Macros defining register conventions
+-- ------------------------------------------------------------------------
+
+assembler
+\a a0  constant top
+\a s1  constant ip  ( instruction pointer)
+\a s0  constant rp  ( return stack pointer)
+-- \a sp  constant sp  ( data stack pointer)
+\a gp  constant kp  ( kernel origin pointer)  ( XXX needed?)
+\a tp  constant up  ( "user" pointer - points to per-thread data)
+
+( XXX these are outside of compressed instruction set's register range.)
+\a s2  constant ix  ( loop index)
+\a t0  constant w   ( scratch w, also "word" pointer)
+\a t1  constant x   ( scratch x, also "execute" pointer)
+\a t2  constant y   ( scratch y)
+\a t3  constant z   ( scratch z)
+forth
+
+( Tell the disassembler about these register names.)
+-:  ( reg)
+   dup 0= if  drop  ." zero"  ^  then
+   dup 16 u< if
+            z"    ra sp kp up w  x  y  rp ip topa1 a2 a3 a4 a5 "
+   else
+      16 -  z" a6 a7 ix s3 s4 s5 s6 s7 s8 s9 s10s11z  t4 t5 t6 "
+   then
+   swap 3 * + 3 -trailing type ;
+
+: forth-regs  [ ] is .regname ;  forth-regs
+
+-- ------------------------------------------------------------------------
+-- Macros defining common VM operations
+-- ------------------------------------------------------------------------
+assembler
+
+: next   asm{  0 ip w lw   4 ip ip addi   -4 w x lw   0 x jr  } ;
+
+( XXX Macros or subroutines?)
+( Data stack macros.)
+: push1  ( r1)         asm{   -4 sp sp addi   0 sp rot ( r1) sw  } ;
+
+: push2  ( r2 r1)      asm{   -8 sp sp addi   0 sp rot ( r1) sw
+                                              4 sp rot ( r2) sw  } ;
+
+: push3  ( r3 r2 r1)   asm{  -12 sp sp addi   0 sp rot ( r1) sw
+                                              4 sp rot ( r2) sw
+                                              8 sp rot ( r3) sw  } ;
+
+: pop1  ( r1)          asm{  0 sp rot ( r1) lw    4 sp sp addi  } ;
+
+: pop2  ( r2 r1)       asm{  0 sp rot ( r1) lw
+                             4 sp rot ( r2) lw    8 sp sp addi  } ;
+
+: pop3  ( r3 r2 r1)    asm{  0 sp rot ( r1) lw
+                             4 sp rot ( r2) lw
+                             8 sp rot ( r3) lw   12 sp sp addi  } ;
+
+( Return stack macros.)
+: rpush1  ( r1)      asm{   -4 rp rp addi   0 rp rot ( r1) sw  } ;
+
+: rpush2  ( r2 r1)   asm{   -8 rp rp addi   0 rp rot ( r1) sw
+                                            4 rp rot ( r2) sw  } ;
+
+: rpop1  ( r1)       asm{  0 rp rot ( r1) lw    4 rp rp addi  } ;
+
+: rpop2  ( r2 r1)    asm{  0 rp rot ( r1) lw
+                           4 rp rot ( r2) lw    8 rp rp addi  } ;
+
+forth
+
+
+-- ------------------------------------------------------------------------
+-- The kernel begins here!
+-- ------------------------------------------------------------------------
+__meta
+hex
+meta  ( meta: host words should go into .meta. unless otherwise specified.)
+
+meta: constant  new  ,  ;code  label doconst
+                               0 w w lw  ( fetch constant into w)
+                               ( fall thru)  ;c
+
+meta: create    new     ;code  label dovar
+                               label wpush
+                               top push1   w top mv  ( move pfa to top)   next  ;c
+
+                               label dodoes
+                               top push1   w top mv  ( move pfa to top)
+                               x w mv  ( x is parent ip)  ( fall thru)  ;c
+
+meta: :         new   __target-colon
+                        ;code  label docolon
+                               ip rpush1   w ip mv  ( pfa is new ip)   next  ;c
+
+.mode-prompt
+definer
+.mode-prompt
+meta: does>   <;code>  asm{  dodoes x jal  }  __target-colon ;
+.mode-prompt
+meta
+.mode-prompt
+
+( Allocate buffer space _before_ defining the constant that pushes the
+  buffer's address. This way we can define buffers in ram as well as in
+  flash!)
+
+meta: buffer   ( #bytes)
+   h preserve  ram  here  swap aligned allot  constant ;
+
+meta: variable     cell    buffer ;  ( A variable is a cell-sized buffer!)
+meta: 2variable    cell 2* buffer ;
+
+
+code*  ^    ( unnest)   ip rpop1   here ( begin)   next  ;c
+codes nope
+
+code* (lit)   0 ip w lw   4 ip ip addi  ( fetch literal)   wpush j  ;c
+
+code execute   ( pfa)      top w mv   here ( begin)
+                                      top pop1   -4 w x lw   0 x jr  ;c
+code @execute  ( 'pfa)   0 top w lw   j ( again)  ;c
+
+
+.ifdef notyet  ( skip stuff that is still MSP430 code ;-)
+
+code*    (branch)   0 ip ip lw  ( follow branch)   next  ;c
+code*   (0branch)   top tst  top pop  ' (branch) >body 0!= until  ( fall thru)  ;c
+label        skip   4 ip ip addi   next  ;c
+code*  (?0branch)   top tst  skip 0= until  top pop  ' (branch) >body j  ;c
+code*  (=0branch)   top tst  skip 0= until           ' (branch) >body j  ;c
+
+
+( Fast version, using loop register)
+code* (for)   ( u)
+   loop rpush  top loop mov  top pop  next  ;c
+
+code* (next)
+   1 # loop sub  ' (branch) >body 0= until  loop rpop  skip j  ;c
+
+
+( Do-loop frame looks like this:
+
+  +------------------+
+  |  saved loop reg  |
+  +------------------+
+  |      limit       |<--- rp
+  +------------------+
+
+   Current index is in loop register; current "user-visible" index is
+   calculated as index + limit.)
+
+code* (do)   ( limit start)
+   4 # rp sub  ( make room on R stack - all in one go)
+     loop 2 rp +) mov  ( save loop reg on R)
+   x pop  x rp  ) mov  ( save limit to R)
+   x top sub  top loop mov  ( index = start - limit)
+   top pop  next  ;c
+
+( Increment index. If it overflows to zero, restore loop register, pop
+  stack frame, skip backwards jump, and continue. If non-zero, simply take
+  the backwards jump.)
+
+code* (loop)
+   1 # loop add  ' (branch) >body 0= until
+label undo
+   2 # rp add  loop rpop  skip j  ;c
+
+( Add incr to index. If the sign of index has changed, we've crossed the
+  threshold, so restore index, pop frame, and skip jump. Otherwise, take
+  the backwards jump.)
+
+code* (+loop)  ( incr)
+   loop x mov  ( save index value)
+   top loop add   top pop   loop x xor  undo 0>= until
+   ' (branch) >body j  ;c
+
+( Push current loop index. User-visible index = index + limit)
+code i   ( - index)
+  loop w mov  rp ) w add  wpush jmp  ;c
+
+.then  ( notyet)
+
+
+( Basic unary ops.)
+code invert   top top not   next  ;c
+code negate   top top neg   next  ;c
+
+code 2*   top 1 top slli   next  ;c   ( also: top top top add)
+code 2/   top 1 top srai   next  ;c
+code u2/  top 1 top srli   next  ;c
+
+( Basic binary ops.)
+code +   ( x t - x+t)   x pop1   x top top add   next  ;c
+code -   ( x t - x-t)   x pop1   x top top sub   next  ;c
+
+code and   x pop1   x top top and   next  ;c
+code or    x pop1   x top top or    next  ;c
+code xor   x pop1   x top top xor   next  ;c
+
+( Stack ops.)
+code dup    ( t - t t)  top push1   next  ;c
+code drop   ( x t - x)  top pop1    next  ;c
+code nip    ( x t - t)  cell sp sp addi   next  ;c
+
+code over   ( w t - w t w)     0 sp w lw           wpush j  ;c
+code swap1  ( w t - t w)            w pop1         wpush j  ;c
+code swap2  ( w t - t w)       0 sp w lw   0 sp top sw
+                              here ( begin)   w top mv   next  ;c
+
+code rot    ( w x t - x t w)   0 sp x lw   4 sp   w lw
+                               0 sp x sw   4 sp top sw   j ( again)  ;c
+
+code tuck  (   w t - t w t)    0 sp w lw   0 sp top sw   w push1   next  ;c
+
+: 2dup   over over ;
+: -rot    rot  rot ;
+
+
+( Return stack ops.)
+code >r   ( w)    top rpush1   top pop1   next  ;c
+code r>   ( - w)     w rpop1   wpush j  ;c
+code r@   ( - w)   0 rp w lw   wpush j  ;c
+
+( Memory access.)
+code   @   ( a -  w)  0 top top lw    next  ;c
+code  h@   ( a -  h)  0 top top lh    next  ;c
+code uh@   ( a - uh)  0 top top lhu   next  ;c
+code  c@   ( a -  b)  0 top top lb    next  ;c
+code uc@   ( a - ub)  0 top top lbu   next  ;c
+
+code !   ( w a)    0 sp w lw   0 top w sw
+label poptwo     4 sp top lw   8 sp sp addi   next  ;c
+
+code h!  ( h a)    0 sp w lw   0 top w sh   poptwo j  ;c
+code c!  ( b a)    0 sp w lw   0 top w sb   poptwo j  ;c
+
+code +!  ( w a)    0 sp w lw   0 top x lw   w x x add   0 top x sw
+                   poptwo j  ;c
+
+
+.ifdef notyet
+
+( These are a bit tricky, esp since borrow is ~carry. The idea is: get the
+  inverse of the flag value we want into carry, then subtract top from
+  itself - yielding zero - minus borrow, or -1 for true, 0 for false. It's
+  efficient but non-obvious.)
+
+code 0=                   1 # top sub  ( ~Z -> C)  ( fall thru)  ;c
+label makeflag   top top subc  next  ;c
+
+code 0<   8000 # top xor  top top add  ( ~N -> C)  makeflag j  ;c
+code u<          x pop  top x cmp  ( ~uless -> C)  makeflag j  ;c
+
+code  <          x pop  top x cmp  clrc  makeflag >= until
+                                   setc  makeflag j  ;c
+
+( Another useful compare operator - equality!)
+: =   xor 0= ;
+
+.then  ( flags)
+
+
+( Small constants.)
+-2 constant -2
+-1 constant -1
+ 0 constant 0
+ 1 constant 1
+ 2 constant 2
+
+( Incrementers by small constants. Shared code means they take up very
+  little space!)
+
+meta: incr   constant  ;code   0 w w lw   w top top add   next  ;c
+ 1 incr 1+
+ 2 incr 2+
+
+-1 incr 1-
+-2 incr 2-
+
+
+ram
+
+.ifdef notyet  ( remote exec!)
+
+( For debugging and interactive execution.)
+( Host should have set PC -> continue-forth
+                       SP -> top of R stack
+                       CP -> top of D stack)
+
+( The host can push things onto host stack; they get copied to target
+  stack, registers popped, words execute, re-push, copy back to host...
+  Much easier than stuffing things into register slots on stack frame!)
+
+( The chat firmware pushes, at the very top of RAM, the chat entry point
+  address.)
+
+code bug
+   -4 \m cells sp sp addi  ( roomm for 4 regs)
+   3 \m cells sp  top sw   ( so all of D stack is in memory)
+   2 \m cells sp   ra sw
+   1 \m cells sp   rp sw
+   0 \m cells sp loop sw
+   ebreak  ;c
+
+implements continue-forth
+   3 \m cells sp  top lw
+   2 \m cells sp   ra lw
+   1 \m cells sp   rp lw
+   0 \m cells sp loop lw
+   4 \m cells sp sp addi   ( pop 4 regs)
+   next  ;c
+
+implements trampoline  ( x0 .. xn cfa - y0 .. ym)
+   ]  execute  begin  bug  again  [
+
+__host
+
+( XXX show some indication of whether a word is still executing;
+  IP != trampoline + 4)
+
+: executing?   .IP reg@  [ \m trampoline @ 4 + ]  - ;
+
+: .ip
+   .IP reg@ .h16
+   executing? if  ." * "  ^  then  ( done)  2sp ;
+
+: .loop
+   0dead  ( use 0dead unless we are executing)
+   executing? if  drop  .LOOP reg@  then  .h16__ ;
+
+.ifdef microscope
+
+: .sp
+   \m sp@  6 \m cells  +  .h16__ ;  ( SP skips W, X, Y, Z, IP and Loop)
+
+-: ( forth version of .regs)
+   radix preserve
+
+   cr  ." V----INZC     W     X     Y     Z    IP  Loop    SP    RP    PC"
+       (  000100011  0000  0000  0000  0000  0000  0000  0000  0000  0000)
+   cr           .sr .W .r .X .r .Y .r .Z .r   .ip
+                                                  .loop   .sp
+                                                   chat-sp @ .h16__
+                                                                   .PC .r ;
+   is .regs
+
+.else
+
+: .sp
+   \m sp@  2 \m cells  +  .h16__ ;  ( SP skips IP and Loop)
+
+-: ( forth version of .regs)
+   radix preserve
+
+   cr  ." V----INZC    IP  Loop    SP    RP    PC"
+       (  000100011  0000  0000  0000  0000  0000)
+   cr           .sr   .ip
+                          .loop   .sp
+                           chat-sp @ .h16__
+                                           .PC .r ;
+   is .regs
+
+.then
+
+.then  ( remote exec)
+
+__meta
+
+comment ~~examples~~
+variable inc
+: lala  do  i bug drop  inc @ +loop ;
+
+( to demonstrate scripting target execution from the host)
+meta: grog  ( start n)  0 do  \t 1+ remote  loop ;
+( try: 44 10 grog)
+
+~~examples~~
+
+flash
