@@ -42,24 +42,22 @@ variable ram-copied  ( pointer to first un-copied byte)
    \m here  over -  copy-chunk
    \m here  ram-copied ! ;
 
-meta
-variable sp    ( target SP)
-variable rp    ( target RP)
-variable ra    ( target RA)
-variable loop  ( target loop counter)
-forth
+( Define local copies of target registers. Before executing code on the
+  target, we "push" these values to the target, and after executing code,
+  we "pull" the new values. We used the local, cached values when printing
+  the registers with .regs .)
 
-: get-regs  ( just SP for now)          t.get-sp \m sp ! ;
-: set-regs  ( just SP for now)  \m sp @ t.set-sp ;
+( Name these so they don't conflict with assembler names.)
+variable tsp    ( target SP)
+variable trp    ( target RP)
+variable tip    ( target IP)
+variable tix    ( target loop index counter)
+
+: get-regs  ( just SP for now)        t.get-sp tsp ! ;
+: set-regs  ( just SP for now)  tsp @ t.set-sp ;
 
 : .tr   ( variable)  ( "target register")  @ .h32 2sp ;
-: .regs
-   cr  ."     Loop        SP        RP        PC"
-       (  00000000  00000000  00000000  00000000 )
-   cr  \m loop .tr
-                   \m sp .tr
-                             \m rp .tr
-                                      \m ra .tr ;
+defer .regs
 
 : hi  chatting on  >chat  t.hello  get-regs  .regs
       ram-copied off  copy-ram
@@ -99,7 +97,7 @@ meta
 @ram #ram +            constant sp0   ( D stack is at the end of RAM)
 \m sp0  #32 \m cells - constant rp0   ( R stack is *below* D stack)
 
-: depth   \m sp0  \m sp @ -  \m cell/  1- ;
+: depth   \m sp0  tsp @ -  \m cell/  1- ;
 forth
 
 ( stack> *first* builds a local image of the target stack - in the RAM
@@ -107,10 +105,10 @@ forth
 
 : stack>  ( "push" stack to target)
    depth 0 max 12 min
-   \m sp0  over 1+  \m cells -  dup \m sp ! ( top of D stack)  swap
+   \m sp0  over 1+  \m cells -  dup tsp ! ( top of D stack)  swap
    for  tuck image-!  \m cell+  next  ( copy each cell as a word to D stack)
    "decafbad swap image-! ( sentinel)
-   \m sp @ image+  \m sp @  \m sp0  over -  t.write  ( copy stack image to target) ;
+   tsp @ image+  tsp @  \m sp0  over -  t.write  ( copy stack image to target) ;
 
 ( XXX add a way to automagically sign-extend or zero-extend values coming
   from the target stack?)
@@ -121,31 +119,29 @@ forth
 : stack<  ( "pop" stack from target)
    \m depth 0 max 12 min  =if
       push
-      \m sp @ image+  \m sp @  r@ \m cells  t.read  ( read target stack)
+      tsp @ image+  tsp @  r@ \m cells  t.read  ( read target stack)
       pop
-      \m sp @  over  ( n sp n)
+      tsp @  over  ( n sp n)
       for  dup image-@  pop 2push  \m cell+  next ( starting with top, push to R)
       drop ( sp)
       for  2pop push  next  ( pop from R to reverse order)
       0
    then  drop ;
 
-.ifdef notyet
-
 ( Target always starts by executing the code at continue-forth, with SP
   pointing to the data stack, which contains both the data to be consumed,
   and the "Forth VM" context.
 
   When first executing a word, the host sets things up like this:
-     RA   = trampoline
-     RP   = bottom of R stack ie, empty R stack
-     Loop = 0
+     IP = trampoline
+     RP = bottom of R stack ie, empty R stack
+     IX = 0
 
   When instead continuing execution - perhaps inside a loop that contains a
   call to bug - the host sets things up like this:
-     RA   = saved RA
-     RP   = saved RP
-     Loop = saved Loop)
+     IP = saved IP
+     RP = saved RP
+     IX = saved IX)
 
 : ?chat
    chatting @ 0= if  error" not connected to target"  then ;
@@ -156,22 +152,20 @@ variable continue-forth
 variable trampoline
 forth
 
-( NOTE: For initial execution of a Forth word, xn is cfa!)
-: continue  ( x0 .. xn ra rp loop - y0 .. yn ra rp loop)
+( NOTE: For initial execution of a Forth word, xn is pfa!)
+: continue  ( x0 .. xn ip rp ix - y0 .. yn ip rp ix)
    ?chat
    stack>  p@ continue-forth runwait  stack<
-   \m loop !  \m rp !  \m ra !  .regs ;
+   tix !  trp !  tip !  .regs ;
 
 meta
 : cont    ( )     ( continue forth execution)
-   \m ra @  \m rp @  \m loop @  ( ra rp loop)  continue ;
+   tip @  trp @  tix @  ( ip rp ix)  continue ;
 forth
 
-( Set rp to rp0, loop to 0, and ra to trampoline.)
+( Set rp to rp0, ix to 0, and ip to trampoline.)
 -: ( cfa)  ( execute target forth word)
-   p@ trampoline  \m rp0  0  ( ra rp  loop)  continue ;  is remote
-
-.then  ( notyet)
+   p@ trampoline  \m rp0  0  ( ip rp ix)  continue ;  is remote
 
 
 128 array riscv-seekeys

@@ -70,38 +70,48 @@ forth
 assembler
 
 ( Compile NEXT inline.)
-: next,   asm{  0 ip w lw   4 ip ip addi   -4 w x lw   0 x jr  } ;
+: next,   asm{  0 ip w lw   cell ip ip addi   -1 cells w x lw   0 x jr  } ;
 
 ( XXX Macros or subroutines?)
 ( Data stack macros.)
-: push1  ( r1)         asm{   -4 sp sp addi   0 sp rot ( r1) sw  } ;
+: push1  ( r1)            asm{  -1 cells sp sp addi   0 sp rot ( r1) sw  } ;
 
-: push2  ( r2 r1)      asm{   -8 sp sp addi   0 sp rot ( r1) sw
-                                              4 sp rot ( r2) sw  } ;
+: push2  ( r2 r1)         asm{  -2 cells sp sp addi   0 sp rot ( r1) sw
+                                                   cell sp rot ( r2) sw  } ;
 
-: push3  ( r3 r2 r1)   asm{  -12 sp sp addi   0 sp rot ( r1) sw
-                                              4 sp rot ( r2) sw
-                                              8 sp rot ( r3) sw  } ;
+: push3  ( r3 r2 r1)      asm{  -3 cells sp sp addi   0 sp rot ( r1) sw
+                                                   cell sp rot ( r2) sw
+                                                2 cells sp rot ( r3) sw  } ;
 
-: pop1  ( r1)          asm{  0 sp rot ( r1) lw    4 sp sp addi  } ;
+: push4  ( r4 r3 r2 r1)   asm{  -4 cells sp sp addi   0 sp rot ( r1) sw
+                                                   cell sp rot ( r2) sw
+                                                2 cells sp rot ( r3) sw
+                                                3 cells sp rot ( r4) sw  } ;
 
-: pop2  ( r2 r1)       asm{  0 sp rot ( r1) lw
-                             4 sp rot ( r2) lw    8 sp sp addi  } ;
+: pop1  ( r1)             asm{  0 sp rot ( r1) lw      cell sp sp addi  } ;
 
-: pop3  ( r3 r2 r1)    asm{  0 sp rot ( r1) lw
-                             4 sp rot ( r2) lw
-                             8 sp rot ( r3) lw   12 sp sp addi  } ;
+: pop2  ( r2 r1)          asm{  0 sp rot ( r1) lw
+                             cell sp rot ( r2) lw   2 cells sp sp addi  } ;
+
+: pop3  ( r3 r2 r1)       asm{  0 sp rot ( r1) lw
+                             cell sp rot ( r2) lw
+                          2 cells sp rot ( r3) lw   3 cells sp sp addi  } ;
+
+: pop4  ( r4 r3 r2 r1)    asm{  0 sp rot ( r1) lw
+                             cell sp rot ( r2) lw
+                          2 cells sp rot ( r3) lw
+                          3 cells sp rot ( r4) lw   4 cells sp sp addi  } ;
 
 ( Return stack macros.)
-: rpush1  ( r1)      asm{   -4 rp rp addi   0 rp rot ( r1) sw  } ;
+: rpush1  ( r1)      asm{   -1 cells rp rp addi   0 rp rot ( r1) sw  } ;
 
-: rpush2  ( r2 r1)   asm{   -8 rp rp addi   0 rp rot ( r1) sw
-                                            4 rp rot ( r2) sw  } ;
+: rpush2  ( r2 r1)   asm{   -2 cells rp rp addi   0 rp rot ( r1) sw
+                                               cell rp rot ( r2) sw  } ;
 
-: rpop1  ( r1)       asm{  0 rp rot ( r1) lw    4 rp rp addi  } ;
+: rpop1  ( r1)       asm{  0 rp rot ( r1) lw      cell rp rp addi  } ;
 
 : rpop2  ( r2 r1)    asm{  0 rp rot ( r1) lw
-                           4 rp rot ( r2) lw    8 rp rp addi  } ;
+                        cell rp rot ( r2) lw   2 cells rp rp addi  } ;
 
 forth
 
@@ -148,10 +158,10 @@ meta: 2variable    cell 2* buffer ;
 code*  ^    ( unnest)   ip rpop1   here ( begin)   next,  ;c
 codes nope
 
-code* (lit)   0 ip w lw   4 ip ip addi  ( fetch literal)   wpush j  ;c
+code* (lit)   0 ip w lw   cell ip ip addi  ( fetch literal)   wpush j  ;c
 
 code execute   ( pfa)      top w mv   here ( begin)
-                                      top pop1   -4 w x lw   0 x jr  ;c
+                                      top pop1   -1 cells w x lw   0 x jr  ;c
 code @execute  ( 'pfa)   0 top w lw   j ( again)  ;c
 
 
@@ -159,9 +169,10 @@ code @execute  ( 'pfa)   0 top w lw   j ( again)  ;c
 meta: next   asm{  shared-next j  } ;
 
 
+code*    (branch)   0 ip ip lw  ( follow branch)   next,  ;c
+
 .ifdef notyet  ( skip stuff that is still MSP430 code ;-)
 
-code*    (branch)   0 ip ip lw  ( follow branch)   next  ;c
 code*   (0branch)   top tst  top pop  ' (branch) 0!= until  ( fall thru)  ;c
 label        skip   4 ip ip addi   next  ;c
 code*  (?0branch)   top tst  skip 0= until  top pop  ' (branch) j  ;c
@@ -245,8 +256,8 @@ code swap1  ( w t - t w)            w pop1         wpush j  ;c
 code swap2  ( w t - t w)       0 sp w lw   0 sp top sw
                               here ( begin)   w top mv   next  ;c
 
-code rot    ( w x t - x t w)   0 sp x lw   4 sp   w lw
-                               0 sp x sw   4 sp top sw   j ( again)  ;c
+code rot    ( w x t - x t w)   0 sp x lw   cell sp   w lw
+                               0 sp x sw   cell sp top sw   j ( again)  ;c
 
 code tuck  (   w t - t w t)    0 sp w lw   0 sp top sw   w push1   next  ;c
 
@@ -266,14 +277,14 @@ code uh@   ( a - uh)  0 top top lhu   next  ;c
 code  c@   ( a -  b)  0 top top lb    next  ;c
 code uc@   ( a - ub)  0 top top lbu   next  ;c
 
-code !   ( w a)    0 sp w lw   0 top w sw
-label poptwo     4 sp top lw   8 sp sp addi   next  ;c
+code !   ( w a)     0 sp w lw   0 top w sw
+label poptwo   cell sp top lw   2 cells sp sp addi   next  ;c
 
-code h!  ( h a)    0 sp w lw   0 top w sh   poptwo j  ;c
-code c!  ( b a)    0 sp w lw   0 top w sb   poptwo j  ;c
+code h!  ( h a)     0 sp w lw   0 top w sh   poptwo j  ;c
+code c!  ( b a)     0 sp w lw   0 top w sb   poptwo j  ;c
 
-code +!  ( w a)    0 sp w lw   0 top x lw   w x x add   0 top x sw
-                   poptwo j  ;c
+code +!  ( w a)     0 sp w lw   0 top x lw   w x x add   0 top x sw
+                    poptwo j  ;c
 
 
 .ifdef notyet
@@ -318,90 +329,52 @@ meta: incr   constant  ;code   0 w w lw   w top top add   next  ;c
 
 ram
 
-.ifdef notyet  ( remote exec!)
-
 ( For debugging and interactive execution.)
-( Host should have set PC -> continue-forth
-                       SP -> top of R stack
-                       CP -> top of D stack)
 
 ( The host can push things onto host stack; they get copied to target
   stack, registers popped, words execute, re-push, copy back to host...
   Much easier than stuffing things into register slots on stack frame!)
 
-( The chat firmware pushes, at the very top of RAM, the chat entry point
-  address.)
-
 code bug
-   -4 \m cells sp sp addi  ( roomm for 4 regs)
-   3 \m cells sp  top sw   ( so all of D stack is in memory)
-   2 \m cells sp   ra sw
-   1 \m cells sp   rp sw
-   0 \m cells sp loop sw
-   ebreak  ;c
+   top ip rp ix push4   ebreak  ;c
 
-implements continue-forth
-   3 \m cells sp  top lw
-   2 \m cells sp   ra lw
-   1 \m cells sp   rp lw
-   0 \m cells sp loop lw
-   4 \m cells sp sp addi   ( pop 4 regs)
-   next  ;c
+implements continue-forth  __asm
+   top ip rp ix pop4   next  ;c
 
 implements trampoline  ( x0 .. xn cfa - y0 .. ym)
    ]  execute  begin  bug  again  [
 
 __host
 
-( XXX show some indication of whether a word is still executing;
-  IP != trampoline + 4)
 
-: executing?   .IP reg@  [ \m trampoline @ 4 + ]  - ;
+( Make it easy to get to the key target registers from meta.)
+meta
+: sp@   tsp @  3 \m cells  +  ;  ( skip IP, RP, and IX)
+: rp@   trp @ ;
+: ip@   tip @ ;
+forth
+
+( Show some indication of whether a word is still executing. If IP is
+  anything other than two cells past trampoline, we've hit "bug" somewhere
+  other than the trampoline. Show this by annotating IP with a "*".)
+
+: executing?   tip @  [ \m trampoline @  2 \m cells + ]  - ;
 
 : .ip
-   .IP reg@ .h16
-   executing? if  ." * "  ^  then  ( done)  2sp ;
-
-: .loop
-   0dead  ( use 0dead unless we are executing)
-   executing? if  drop  .LOOP reg@  then  .h16__ ;
-
-.ifdef microscope
+   \m ip@ .h32  executing? if  ." * "  ^  then  ( done)  2sp ;
 
 : .sp
-   \m sp@  6 \m cells  +  .h16__ ;  ( SP skips W, X, Y, Z, IP and Loop)
+   \m sp@  .h32__ ;
+
 
 -: ( forth version of .regs)
-   radix preserve
-
-   cr  ." V----INZC     W     X     Y     Z    IP  Loop    SP    RP    PC"
-       (  000100011  0000  0000  0000  0000  0000  0000  0000  0000  0000)
-   cr           .sr .W .r .X .r .Y .r .Z .r   .ip
-                                                  .loop   .sp
-                                                   chat-sp @ .h16__
-                                                                   .PC .r ;
+   cr  ."       IX        SP        RP        IP"
+       (  00000000  00000000  00000000  00000000 )
+   cr      tix .tr       .sp   trp .tr       .ip ;
    is .regs
 
-.else
 
-: .sp
-   \m sp@  2 \m cells  +  .h16__ ;  ( SP skips IP and Loop)
-
--: ( forth version of .regs)
-   radix preserve
-
-   cr  ." V----INZC    IP  Loop    SP    RP    PC"
-       (  000100011  0000  0000  0000  0000  0000)
-   cr           .sr   .ip
-                          .loop   .sp
-                           chat-sp @ .h16__
-                                           .PC .r ;
-   is .regs
-
-.then
-
-.then  ( remote exec)
-
+meta
 __meta
 
 comment ~~examples~~
