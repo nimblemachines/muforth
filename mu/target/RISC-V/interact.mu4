@@ -7,30 +7,26 @@ loading RISC-V interaction
 variable chatting
 
 variable chat-vector
-: chat-cmd   ( index)  cells  constant
+: chat-cmd   ( index)  dup  cells constant  1+
              does> @  chat-vector @ =if  +  @execute  ^  then  2drop
                 error" Not connected to a chat-capable target" ;
 
 : chat-fail   error" Chat command not implemented" ;
 
- 0 chat-cmd t.hello
- 1 chat-cmd t.getregs  ( buf - sp)
- 2 chat-cmd t.setregs  ( buf)
- 3 chat-cmd t.read     ( buf a u)
- 4 chat-cmd t.write    ( buf a u)
- 5 chat-cmd t.run
-
-( For reading and writing target cells.)
-: t@  ( addr - w)                 pad swap \m cell t.read  pad lew@ ;
-: t!  ( w addr)    swap pad lew!  pad swap \m cell t.write ;
-
+0
+chat-cmd t.hello
+chat-cmd t.get-sp   ( - sp)
+chat-cmd t.set-sp   ( sp)
+chat-cmd t.read     ( buf a u)
+chat-cmd t.write    ( buf a u)
+chat-cmd t.run      ( pc)
+drop
 
 : >chat
-   ['] t@      is |@
-   ['] t.read  is |read    ( read from connected target)
-   ['] lew@    is |cell@
-               32 |addr !  ( size of addr in bits)
-                4 |cell !  ( size of cell in bytes) ;
+   ['] t.read   is |read    ( read from connected target)
+   ['] lew@     is |cell@
+                32 |addr !  ( size of addr in bits)
+                 4 |cell !  ( size of cell in bytes) ;
 
 : copy-chunk  ( a u)
    =if
@@ -46,11 +42,24 @@ variable ram-copied  ( pointer to first un-copied byte)
    \m here  over -  copy-chunk
    \m here  ram-copied ! ;
 
-( XXX some stuff about getting and setting regs goes here)
-: get-regs ;
-: set-regs ;
-defer .regs
--: ." regs - coming soon!" ;  is .regs
+meta
+variable sp    ( target SP)
+variable rp    ( target RP)
+variable ra    ( target RA)
+variable loop  ( target loop counter)
+forth
+
+: get-regs  ( just SP for now)          t.get-sp \m sp ! ;
+: set-regs  ( just SP for now)  \m sp @ t.set-sp ;
+
+: .tr   ( variable)  ( "target register")  @ .h32 2sp ;
+: .regs
+   cr  ."     Loop        SP        RP        PC"
+       (  00000000  00000000  00000000  00000000 )
+   cr  \m loop .tr
+                   \m sp .tr
+                             \m rp .tr
+                                      \m ra .tr ;
 
 : hi  chatting on  >chat  t.hello  get-regs  .regs
       ram-copied off  copy-ram
@@ -59,59 +68,108 @@ defer .regs
 : chat-via   pop  chat-vector !  hi ;
 
 
-.ifdef notyet
-
-( XXX Need some sense of how to do regs before this can be fleshed out.)
-
-( XXX the following code is copied from MSP430)
-
-( NOTE: All the following d.Foobar commands are the dummy _implementations_
-  of the chat command interface.)
-
-.SIZE buffer dummy-frame
-
-: d.hello  ." Connecting to dummy chat target."
-   ( Init each reg in dummy-frame to its index, then set PC to RAM)
-   dummy-frame m !
-   0  .LAST \m cell/ for  dup >hilo m& m&  \m cell+  next  drop
-   "220 .PC dummy-frame +  leh! ;
-
-: d.read    ( buf a u)
-   -- cr  ." Dummy read chunk "  2 nth u.  over u.  dup u.
-   push  image+  2dup xor if  swap pop cmove  ^  then
-   rdrop  2drop ;
-
-: d.write   ( buf a u)
-   -- cr  ." Dummy write chunk "  2 nth u.  over u.  dup u.
-   push  image+  2dup xor if       pop cmove  ^  then
-   rdrop  2drop ;
-
-: d.getregs  ( buf - sp)
-   ( copy dummy-frame to buf)
-   dummy-frame swap .LAST cmove  "dead ;
-
-: d.setregs  ( buf)
-   ( copy buf to dummy-frame)
-   dummy-frame .LAST cmove ;
-
-: dummy
-   chat-via  d.hello  d.getregs  d.setregs  d.read  d.write  nope ( run) ;
-
-: _run      copy-ram  set-regs  t.run ;  ( don't wait for target)
-: _runwait  _run  get-regs ;   ( wait for target)
-
-: runwait   _runwait  .regs ;
-
-( For running random code that doesn't return.)
-: kick  ( pc)  .PC reg!  _run ;
-
-( when the code you're calling doesn't speak the same protocol as running code)
-: go   \eq Vreset image-@  kick ;
-
-: reset    go  0 #100,000,000 nanosleep ( 100ms)  get-regs .regs ;
+: kick     ( pc)  copy-ram  set-regs  t.run ;  ( don't wait for target)
+: runwait  ( pc)  kick  get-regs ;   ( wait for target)
 
 ( For running random bits of code.)
-: call  ( pc)  .PC reg!  runwait ;
+: call   ( pc)  runwait  .regs ;
+
+( when the code you're calling doesn't speak the same protocol as running code)
+-- : go   ( XXX where is reset?)  XXX kick ;
+
+-- : reset    go  0 #100,000,000 nanosleep ( 100ms)  get-regs .regs ;
+
+
+( Because the target "caches" the top of the stack in a register, and
+  because the trampoline code loads this register before execution, and
+  pushes it afterward, we can deal only with the "memory image" of the target
+  stack, rather than also worrying about what to put into the "top" register.
+
+  What's a bit mystifying at first is that, to achieve a target stack depth
+  of N, the host has to push N+1 items. The top one goes into top; and the
+  bottom-most one is the "sentinel" value that gets loaded into top when the
+  stack becomes empty.
+
+  When pushing from the host, or when "pulling" from the target, we don't
+  move more than 8 "user" items - but we pad this value a bit, since we are
+  also using the stack to pass some execution context between host and
+  target.)
+
+meta
+@ram #ram +            constant sp0   ( D stack is at the end of RAM)
+\m sp0  #32 \m cells - constant rp0   ( R stack is *below* D stack)
+
+: depth   \m sp0  \m sp @ -  \m cell/  1- ;
+forth
+
+( stack> *first* builds a local image of the target stack - in the RAM
+  image - and *then* copies it, in one chunk, to the target.)
+
+: stack>  ( "push" stack to target)
+   depth 0 max 12 min
+   \m sp0  over 1+  \m cells -  dup \m sp ! ( top of D stack)  swap
+   for  tuck image-!  \m cell+  next  ( copy each cell as a word to D stack)
+   "decafbad swap image-! ( sentinel)
+   \m sp @ image+  \m sp @  \m sp0  over -  t.write  ( copy stack image to target) ;
+
+( XXX add a way to automagically sign-extend or zero-extend values coming
+  from the target stack?)
+
+( stack> *first* copies the target stack, in one chunk, to the host's RAM
+  image, and *then* pulls the values out and pushes them onto the host's stack.)
+
+: stack<  ( "pop" stack from target)
+   \m depth 0 max 12 min  =if
+      push
+      \m sp @ image+  \m sp @  r@ \m cells  t.read  ( read target stack)
+      pop
+      \m sp @  over  ( n sp n)
+      for  dup image-@  pop 2push  \m cell+  next ( starting with top, push to R)
+      drop ( sp)
+      for  2pop push  next  ( pop from R to reverse order)
+      0
+   then  drop ;
+
+.ifdef notyet
+
+( Target always starts by executing the code at continue-forth, with SP
+  pointing to the data stack, which contains both the data to be consumed,
+  and the "Forth VM" context.
+
+  When first executing a word, the host sets things up like this:
+     RA   = trampoline
+     RP   = bottom of R stack ie, empty R stack
+     Loop = 0
+
+  When instead continuing execution - perhaps inside a loop that contains a
+  call to bug - the host sets things up like this:
+     RA   = saved RA
+     RP   = saved RP
+     Loop = saved Loop)
+
+: ?chat
+   chatting @ 0= if  error" not connected to target"  then ;
+
+( These are implement'ed by the kernel code.)
+meta
+variable continue-forth
+variable trampoline
+forth
+
+( NOTE: For initial execution of a Forth word, xn is cfa!)
+: continue  ( x0 .. xn ra rp loop - y0 .. yn ra rp loop)
+   ?chat
+   stack>  p@ continue-forth runwait  stack<
+   \m loop !  \m rp !  \m ra !  .regs ;
+
+meta
+: cont    ( )     ( continue forth execution)
+   \m ra @  \m rp @  \m loop @  ( ra rp loop)  continue ;
+forth
+
+( Set rp to rp0, loop to 0, and ra to trampoline.)
+-: ( cfa)  ( execute target forth word)
+   p@ trampoline  \m rp0  0  ( ra rp  loop)  continue ;  is remote
 
 .then  ( notyet)
 
