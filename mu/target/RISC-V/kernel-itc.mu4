@@ -155,80 +155,73 @@ meta: variable     cell    buffer ;  ( A variable is a cell-sized buffer!)
 meta: 2variable    cell 2* buffer ;
 
 
-code*  ^    ( unnest)   ip rpop1   here ( begin)   next,  ;c
+code*  ^    ( unnest)   ip rpop1   begin   next,  ;c
 codes nope
 
 code* (lit)   0 ip w lw   cell ip ip addi  ( fetch literal)   wpush j  ;c
 
-code execute   ( pfa)      top w mv   here ( begin)
+code execute   ( pfa)      top w mv   begin
                                       top pop1   -1 cells w x lw   0 x jr  ;c
-code @execute  ( 'pfa)   0 top w lw   j ( again)  ;c
-
+code @execute  ( 'pfa)   0 top w lw   again  ;c
 
 ( Compile a jump to a previous inline NEXT.)
 meta: next   asm{  shared-next j  } ;
 
-
-code*    (branch)   0 ip ip lw  ( follow branch)   next,  ;c
-
-.ifdef notyet  ( skip stuff that is still MSP430 code ;-)
-
-code*   (0branch)   top tst  top pop  ' (branch) 0!= until  ( fall thru)  ;c
-label        skip   4 ip ip addi   next  ;c
-code*  (?0branch)   top tst  skip 0= until  top pop  ' (branch) j  ;c
-code*  (=0branch)   top tst  skip 0= until           ' (branch) j  ;c
-
+code*    (branch)
+label branch        0 ip ip lw  ( follow branch)   next  ;c
+code*   (0branch)   top w mv   top pop1   branch w 0!= until  ( fall thru)  ;c
+label  skip         cell ip ip addi   next  ;c
+code*  (?0branch)   skip top 0= until   top pop1   branch j  ;c
+code*  (=0branch)   skip top 0= until              branch j  ;c
 
 ( Fast version, using loop register)
 code* (for)   ( u)
-   loop rpush  top loop mov  top pop  next  ;c
+   ix rpush1   top ix mv   top pop1   next  ;c
 
 code* (next)
-   1 # loop sub  ' (branch) 0= until  loop rpop  skip j  ;c
-
+   -1 ix ix addi  branch ix 0= until  ix rpop1   skip j  ;c
 
 ( Do-loop frame looks like this:
 
   +------------------+
-  |  saved loop reg  |
+  |   saved ix reg   |
   +------------------+
   |      limit       |<--- rp
   +------------------+
 
-   Current index is in loop register; current "user-visible" index is
-   calculated as index + limit.)
+  Current index is in ix register; current "user-visible" index is
+  calculated as index + limit.)
 
 code* (do)   ( limit start)
-   4 # rp sub  ( make room on R stack - all in one go)
-     loop 2 rp +) mov  ( save loop reg on R)
-   x pop  x rp  ) mov  ( save limit to R)
-   x top sub  top loop mov  ( index = start - limit)
-   top pop  next  ;c
+   top w mv     ( w = start)
+   top x pop2   ( x = limit)
+   ix x rpush2  ( push ix reg and limit onto R)
+   w x ix sub   ( index = start - limit)
+   next  ;c
 
-( Increment index. If it overflows to zero, restore loop register, pop
+( Increment index. If it overflows to zero, restore ix register, pop
   stack frame, skip backwards jump, and continue. If non-zero, simply take
   the backwards jump.)
 
 code* (loop)
-   1 # loop add  ' (branch) 0= until
+   1 ix ix addi   branch ix 0= until
 label undo
-   2 # rp add  loop rpop  skip j  ;c
+   cell rp ix lw        ( restore saved ix from R stack)
+   2 cells rp rp addi   ( pop R stack frame)
+   skip j  ;c
 
 ( Add incr to index. If the sign of index has changed, we've crossed the
   threshold, so restore index, pop frame, and skip jump. Otherwise, take
   the backwards jump.)
 
 code* (+loop)  ( incr)
-   loop x mov  ( save index value)
-   top loop add   top pop   loop x xor  undo 0>= until
-   ' (branch) j  ;c
+   ix x mv  ( save ix *before* adding incr)
+   top ix ix add   top pop1   ix x x xor   undo x 0>= until
+   branch j  ;c
 
 ( Push current loop index. User-visible index = index + limit)
 code i   ( - index)
-  loop w mov  rp ) w add  wpush jmp  ;c
-
-.then  ( notyet)
-
+   0 rp w lw   ix w w add   wpush j  ;c
 
 ( Basic unary ops.)
 code invert   top top not   next  ;c
@@ -237,6 +230,10 @@ code negate   top top neg   next  ;c
 code 2*   top 1 top slli   next  ;c   ( also: top top top add)
 code 2/   top 1 top srai   next  ;c
 code u2/  top 1 top srli   next  ;c
+
+code <<    ( n shamt - n')   x pop1   x top top sll   next  ;c
+code >>    ( n shamt - n')   x pop1   x top top sra   next  ;c
+code u>>   ( n shamt - n')   x pop1   x top top srl   next  ;c
 
 ( Basic binary ops.)
 code +   ( x t - x+t)   x pop1   x top top add   next  ;c
@@ -263,7 +260,6 @@ code tuck  (   w t - t w t)    0 sp w lw   0 sp top sw   w push1   next  ;c
 
 : 2dup   over over ;
 : -rot    rot  rot ;
-
 
 ( Return stack ops.)
 code >r   ( w)    top rpush1   top pop1   next  ;c
