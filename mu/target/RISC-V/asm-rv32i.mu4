@@ -66,6 +66,13 @@ forth
 : >pc-rel  ( dest op - offset op)
    swap  \m here -  swap ;
 
+( Does a signed value fit into a bit field?)
+: sfits?  ( value bits - f)   1- >>  1+  2 u< ;   ( signed)
+
+( Complain when it doesn't fit.)
+: ?sfits  ( value bits)   sfits? if ^ then
+   error" relative branch out of range" ;
+
 : op,  ( op)  \m , ;  ( for now, instructions are 32 bits wide)
 
 ( The "easy" immediates.)
@@ -100,14 +107,16 @@ forth
 : S-type  ( opcode f3)  >funct3  constant
    does> @  ( off base src op)  rs2  rs1  S-imm  op, ;
 
-: SB-type  ( opcode f3)  >funct3  constant
-   does> @  ( dest rs1 rs2 op)  rs2  rs1  >pc-rel SB-imm  op, ;
-
 : U-type  ( opcode)  constant
    does> @  ( imm rd op)  rd  U-imm  op, ;
 
+: SB-type  ( opcode f3)  >funct3  constant
+   does> @  ( dest rs1 rs2 op)  rs2  rs1
+   >pc-rel  dup #13 ?sfits  SB-imm  op, ;
+
 : UJ-type  ( opcode)  constant
-   does> @  ( dest rd op)  rd  >pc-rel UJ-imm  op, ;
+   does> @  ( dest rd op)  rd
+   >pc-rel  dup #21 ?sfits  UJ-imm  op, ;
 
 : priv  ( opcode f3 imm12)  push >funct3  pop >rs2  constant
    does> @  op, ;
@@ -166,6 +175,7 @@ assembler binary
 ( lui)
 01_101_11  U-type lui
 
+( XXX Do we need these if we have the "control structure" words?)
 ( branch)
 11_000_11  000  SB-type beq
 11_000_11  001  SB-type bne
@@ -222,4 +232,50 @@ assembler binary
 : csrwi  ( zimm csr)   asm{  swap x0 csrrwi  } ;  ( write imm, don't read)
 : csrsi  ( zimm csr)   asm{  swap x0 csrrsi  } ;  ( set imm, don't read)
 : csrci  ( zimm csr)   asm{  swap x0 csrrci  } ;  ( clear imm, don't read)
+forth
+
+( Control structures.
+
+  RISC-V is a "compare-and-branch" architecture. There are no condition
+  code bits anywhere. Thus we have to rethink somewhat how we define the
+  looping and conditional branching operators in the assembler.)
+
+( SB-cond words compose and return an instruction with an _empty_ offset.
+  The op is compiled by if and fixed up later.)
+
+: SB-cond  ( opcode f3)  >funct3  constant
+   does> @  ( rs1 rs2 op - op')  rs2  rs1 ;
+
+( Remember: branch is always _opposite_ of condition.)
+assembler
+( Compare two registers: ( rs1 rs2 - op)
+11_000_11  000  SB-cond !=    ( beq)
+11_000_11  001  SB-cond =     ( bne)
+11_000_11  100  SB-cond >=    ( blt)
+11_000_11  101  SB-cond <     ( bge)
+11_000_11  110  SB-cond u>=   ( bltu)
+11_000_11  111  SB-cond u<    ( bgeu)
+
+( Compare a register against zero: ( rs - op)
+: 0=   asm{  x0 =   } ;
+: 0!=  asm{  x0 !=  } ;
+: 0<   asm{  x0 <   } ;
+
+( Resolve a relative jump from src to dest.)
+: resolve  ( src dest)
+   over - ( offset)  over image-@  ( src offset op)
+   dup "fff and 11_011_11 = if  ( UJ-type)  over #21 ?sfits  UJ-imm  else
+                                ( SB-type)  over #13 ?sfits  SB-imm  then
+   swap image-! ;
+
+( Control structure words.)
+: if      ( op   - src )  \m here  swap op, ;
+: then    ( src  -     )  \m here  \a resolve ;
+: else    ( src1 - src2)  \m here  dup \a j  swap  \a then ;
+
+: begin   ( - dest)       \m here ;
+: until   ( op dest)      \a if  swap  \a resolve ;
+: again   ( dest)         \a j ;  ( x0 jal, *not* a conditional branch!)
+: while   ( op dest - src dest)   \a if  swap ;
+: repeat  ( src dest)     \a again  \a then ;
 forth decimal
