@@ -1,3 +1,7 @@
+-- This file is part of muforth: http://muforth.nimblemachines.com/
+
+-- Copyright (c) 2002-2017 David Frech. (Read the LICENSE for details.)
+
 -- String handling utilities
 
 -- returns an iterator that returns chunks of the string, separated by sep
