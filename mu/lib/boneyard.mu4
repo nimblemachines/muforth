@@ -1,0 +1,93 @@
+( This file is part of muforth: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2017 David Frech. (Read the LICENSE for details.)
+
+( I wanted a place to put some code from dict.c and interpret.c that has
+  been hanging around and making a nuisance of itself.)
+
+-- ------------------------------------------------------------------------
+-- From dict.c:
+-- ------------------------------------------------------------------------
+
+( We're going to take some pointers from Martin Tracy and zenFORTH.
+  `last-link' is a 2variable that stores (link, chain) (of the last named
+  word defined.  We don't actually link it into the dictionary until we think
+  it's safe to do so, thereby obviating the need for `smudge'.)
+
+2variable last-link  ( &link &chain)
+variable last-code   ( pointer to last-compiled code field)
+variable last-word   ( last compiled word)
+
+: show     last-link 2@  ( &link chain)  !   ;
+: use      ( code -)  last-code @ !  ;
+: patch    pop @  use   ;
+
+: ?unique  ( a u - a u)
+   2dup current @  ?unique-hook  find  if
+   drop  2dup  fd-out @ push  >stderr  type  ."  again.  "  pop writes
+   then   2drop ;
+
+: code,   0 , ( lex)  here last-code !  0 , ( code)  ;
+: token,  ( - 'link)  token  ?unique  here  scrabble>  allot  ;
+: link,   ( here)  current @  dup @ ,  last-link 2!  ;
+: head,   token,  link,  ;
+
+: name        head,  code,  ;
+: noname   0 align,  code,  ;
+
+( Dictionary structure)
+: link>name   1- ( char-)  dup c@  swap over -  swap  ;
+: >link  ( body - link)  cell- cell- cell- ;
+: link>  ( link - body)  cell+ cell+ cell+ ;
+: >name  ( body - a u)   >link  link>name  ;
+: >lex   ( body - lex)   cell- cell-  ;
+: >code  ( body - code)  cell-  ;
+
+
+-- ------------------------------------------------------------------------
+-- From interpret.c:
+-- ------------------------------------------------------------------------
+
+: consume   state @  @execute ;
+
+: _[   ( interpret one token)
+      .forth. find  if execute ^ then  number ;
+
+: _]   ( compile one token)
+   .compiler. find  if  execute  ^ then
+      .forth. find  if  compile, ^ then    number, ;
+
+-:  compiler -"find if  assembler -"find if  number, exit  then
+        compile, exit  then  execute ;
+
+-:  assembler -"find if  outside -"find if  target -"find  if
+      ( not found)  number exit  then
+      ( target)  @  \o >DATA  ( target pfa contents)  exit  then  then
+      execute  ;
+
+-:  outside -"find  if  target -"find  if  tnumber drop  exit  then
+      @ ( target pfa)  remote exit  then  execute  ;
+
+-:  inside -"find  if   target -"find  if  tnumber, exit  then
+      @ ( target pfa)  \o ,  exit  then   execute  ;
+
+-:  definer -"find  if  compiler -"find  if  ( execute if either of these)
+    outside -"find  if     forth -"find  if  number, exit  then  then
+        compile, exit  then  then   execute  ;
+
+( stack underflow)
+: ?stack   depth 0< if  error"  ate the stack"  then  ;
+
+: interpret ( a u)
+   source 2!  0 >in !
+   begin  token  dup  while  consume  ?stack  repeat  2drop  ;
+
+: evaluate  ( a u)
+   source 2@ 2push  >in @ push  lit interpret catch
+   pop >in !  2pop source 2!  throw  ;
+
+compiler definitions
+: -;     \ [  ;             ( for words that don't end with ^)
+: ^   lit unnest compile,  ;   ( right now this doesn't do anything fancy)
+: ;      \ ^  \ -;  ;
+forth definitions
