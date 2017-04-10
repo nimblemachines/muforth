@@ -5,6 +5,7 @@
 # Copyright (c) 2002-2017 David Frech. (Read the LICENSE for details.)
 
 # Create a udev rules file that matches all the USB devices we care about:
+#   0403  - FTDI (Future Technology Devices International)
 #   0483  - ST-LINK/V2 - for STMicro ARM boards
 #   04d8  - Microchip (why? I forget ;-)
 #   0d28  - MBED/CMSIS-DAP - for anything supported by mbed
@@ -16,7 +17,7 @@ cat <<EOT
     # udev rules to match USB devices of interest to muforth
 EOT
 
-for vid in 0483 04d8 0d28 15a2 1cbe c251 ; do
+for vid in 0403 0483 04d8 0d28 15a2 1cbe c251 ; do
     cat <<EOT
     SUBSYSTEMS=="usb", ATTRS{idVendor}=="$vid", OWNER:="$1"
 EOT
