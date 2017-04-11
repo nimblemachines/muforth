@@ -14,18 +14,11 @@ architectures:
 
   * [ARMv5](https://github.com/nimblemachines/muforth/tree/master/mu/target/ARM/v5)
     (originally targeting an ARM AEB-1 board running an ARM7DI processor)
-
-  * [ARMv6-m](https://github.com/nimblemachines/muforth/tree/master/mu/target/ARM/v6-m)
-    and [ARMv7-m](https://github.com/nimblemachines/muforth/tree/master/mu/target/ARM/v7-m)
-    - aka Cortex-M0, M0+, M3, and M4
-
+  * [ARMv6-m](https://github.com/nimblemachines/muforth/tree/master/mu/target/ARM/v6-m) (aka Cortex-M0/M0+) and [ARMv7-m](https://github.com/nimblemachines/muforth/tree/master/mu/target/ARM/v7-m) (aka Cortex-M3/M4)
   * [Atmel AVR](https://github.com/nimblemachines/muforth/tree/master/mu/target/AVR)
-
   * [Motorola/Freescale/NXP HC08 and HCS08](https://github.com/nimblemachines/muforth/tree/master/mu/target/HC08)
-
   * [RISC-V](https://github.com/nimblemachines/muforth/tree/master/mu/target/RISC-V)
     (initially targeting the SiFive FE310)
-
   * [TI MSP430](https://github.com/nimblemachines/muforth/tree/master/mu/target/MSP430)
 
 
