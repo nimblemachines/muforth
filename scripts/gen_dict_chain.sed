@@ -11,18 +11,6 @@
 # sed rocks!
 #
 
-# keep the /* filename.c */ comments
-/^\/\* .*\.c/ {
-i\
-\
-
-s/^\//	\//
-p
-}
-
-# keep any #if* #else or #endif lines, so we can include optional sections
-/^#(if|else|endif)/p
-
 # lose lines *not* starting with "void mu_"
 /^void mu_/!d
 

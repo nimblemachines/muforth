@@ -69,9 +69,9 @@ void mu_sp_store()  { SP = (cell *)TOP; }           /* set stack pointer */
 #endif
 
 /* So we can do return-stack magic. */
-void mu_rp_store()       { RP  = (cell *)TOP; DROP(1); }
-void mu_rp_plus_store()  { RP += TOP; DROP(1); }    /* TOP is cell count! */
-void mu_rp_fetch()       { PUSH_ADDR(RP); }
+void mu_runtime_rp_store()       { RP  = (cell *)TOP; DROP(1); }
+void mu_runtime_rp_plus_store()  { RP += TOP; DROP(1); }    /* TOP is cell count! */
+void mu_runtime_rp_fetch()       { PUSH_ADDR(RP); }
 
 /*
  * We don't need a ustar, since single-length star and ustar yield the same

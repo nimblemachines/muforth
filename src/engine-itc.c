@@ -72,19 +72,19 @@ void mu_set_colon_code() { *ph++ = (addr)&mu_do_colon; }
 void mu_set_does_code()  { *ph++ = (addr)&mu_do_does; }
 
 /* Normal exit */
-void mu_exit()      { UNNEST; }
+void mu_runtime_exit()      { UNNEST; }
 
 /* Push an inline literal */
-void mu_lit_()  { PUSH(*(cell *)IP++); }
+void mu_runtime_lit_()  { PUSH(*(cell *)IP++); }
 
 
 /*
  * These are the control structure runtime workhorses.
  */
-void mu_branch_()            { BRANCH; }
-void mu_equal_zero_branch_() { if (TOP == 0) BRANCH; else IP++; }
-void mu_zero_branch_()       { mu_equal_zero_branch_(); DROP(1); }
-void mu_qzero_branch_()      { if (TOP == 0) { BRANCH; DROP(1); } else IP++; }
+void mu_runtime_branch_()            { BRANCH; }
+void mu_runtime_equal_zero_branch_() { if (TOP == 0) BRANCH; else IP++; }
+void mu_runtime_zero_branch_()       { mu_runtime_equal_zero_branch_(); DROP(1); }
+void mu_runtime_qzero_branch_()      { if (TOP == 0) { BRANCH; DROP(1); } else IP++; }
 
 /*
  * (next)
@@ -102,7 +102,7 @@ void mu_qzero_branch_()      { if (TOP == 0) { BRANCH; DROP(1); } else IP++; }
  * 2^(#bits in CELL)!
  */
 
-void mu_next_()
+void mu_runtime_next_()
 {
     cell rtop = RP[0];                  /* counter on top of R stack */
 
@@ -132,7 +132,7 @@ void mu_next_()
  * 0. We'll see how that works.
  */
 
-void mu_do_()   /* (do)  ( limit start) */
+void mu_runtime_do_()   /* (do)  ( limit start) */
 {
     RPUSH((addr)_STAR(IP++));   /* push following branch address for (leave) */
     RPUSH(ST1);                 /* limit */
@@ -140,7 +140,7 @@ void mu_do_()   /* (do)  ( limit start) */
     DROP(2);
 }
 
-void mu_loop_()
+void mu_runtime_loop_()
 {
     cell rtop = RP[0];
 
@@ -151,7 +151,7 @@ void mu_loop_()
         { RP[0] = rtop; BRANCH; }       /* update index, branch back */
 }
 
-void mu_plus_loop_()    /* (+loop)  ( incr) */
+void mu_runtime_plus_loop_()    /* (+loop)  ( incr) */
 {
     cell rtop = RP[0];
     cell prev = rtop;
@@ -165,16 +165,16 @@ void mu_plus_loop_()    /* (+loop)  ( incr) */
 }
 
 /* leave the do loop early */
-void mu_leave()
+void mu_runtime_leave()
 {
     IP = (xtk_cell *)RP[2];     /* jump to address saved on R stack */
     RP += 3;                    /* pop "do" context */
 }
 
 /* conditionally leave */
-void mu_qleave()
+void mu_runtime_qleave()
 {
-    if (POP) mu_leave();
+    if (POP) mu_runtime_leave();
 }
 
 /*
@@ -182,28 +182,28 @@ void mu_qleave()
  * third-level (k) do-loops
  */
 
-void mu_i() { PUSH(RP[0] + RP[1]); }
-void mu_j() { PUSH(RP[3] + RP[4]); }
-void mu_k() { PUSH(RP[6] + RP[7]); }
+void mu_runtime_i() { PUSH(RP[0] + RP[1]); }
+void mu_runtime_j() { PUSH(RP[3] + RP[4]); }
+void mu_runtime_k() { PUSH(RP[6] + RP[7]); }
 
 /* R stack functions */
-void mu_to_r()   { RPUSH(POP); }
-void mu_r_from() { PUSH(RPOP); }
-void mu_rfetch() { PUSH(RP[0]); }
+void mu_runtime_to_r()   { RPUSH(POP); }
+void mu_runtime_r_from() { PUSH(RPOP); }
+void mu_runtime_rfetch() { PUSH(RP[0]); }
 
 /* These are Chuck's newfangled names for >r and r> */
 /* XXX Consider deprecating and removing these? */
-void mu_push()   { mu_to_r(); }
-void mu_pop()    { mu_r_from(); }
+void mu_runtime_push()   { mu_runtime_to_r(); }
+void mu_runtime_pop()    { mu_runtime_r_from(); }
 
 /* shunt is shorthand for r> drop */
-void mu_shunt()  { RP++; }
+void mu_runtime_shunt()  { RP++; }
 
 /*
  * I'm beginning to prefer rdrop, but until I change a bunch of existing
  * code, let's make it a synonym for shunt.
  */
-void mu_rdrop()  { mu_shunt(); }
+void mu_runtime_rdrop()  { mu_runtime_shunt(); }
 
 
 #if 0
@@ -216,7 +216,7 @@ void mu_rdrop()  { mu_shunt(); }
  * consumes TOP can be changed as well, depending on what seems to work
  * best. However, unnest-if-false should probably be called -?^ */
 
-void mu_qexit()  { if (TOP) UNNEST; DROP(1); }
+void mu_runtime_qexit()  { if (TOP) UNNEST; DROP(1); }
 
 /* So we can easily define compile and (lit) in Forth. Fetches and pushes
  * to D stack top value on R stack; increments that value by sizeof(cell).
@@ -225,6 +225,6 @@ void mu_qexit()  { if (TOP) UNNEST; DROP(1); }
  * r@+@ or something equally ungainly. Or maybe it could get a more
  * mnemonic (what it means), rather than functional (what it does) name.
  */
-static void mu_rfetch_plus()  { PUSH(RP[0]); RP[0]++; }
+static void mu_runtime_rfetch_plus()  { PUSH(RP[0]); RP[0]++; }
 #endif
 

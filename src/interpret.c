@@ -206,7 +206,7 @@ static void muboot_compile_token()
         EXECUTE;
         return;
     }
-    muboot_push_forth_chain();
+    muboot_push_runtime_chain();
     mu_find();
     if (POP)
     {

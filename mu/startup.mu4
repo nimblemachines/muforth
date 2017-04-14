@@ -19,6 +19,7 @@ new :
 : definitions  current !  ^ [
 : forth        .forth. definitions  ^ [
 : compiler  .compiler. definitions  ^ [
+: runtime    .runtime. definitions  ^ [
 
 : literal   (lit) (lit) ,  ,   ^ [
 
@@ -124,10 +125,11 @@ forth
 compiler
 ( XXX: should this and ' do the same thing?)
 ( : [']  .forth. chain' literal ;)
+( XXX should this search .runtime. rather than .forth. ??)
 : [']  ' literal ;
 
 ( XXX: is this useful? Here? Maybe in a target compiler...)
-: \f     .forth. \chain ;
+: \f   .runtime. \chain ;
 : \c  .compiler. \chain ;  ( until we have \ ; we need this for "if")
 
 ( Ok, now we can define our compiler comment char, ( .)
@@ -185,8 +187,10 @@ forth
 : 2dup  over over ;
 : 2swap  rot push  rot pop ;
 
+runtime
 : 2push  ( a b -> R: a b)  swap  pop -rot  push push      push ;
 : 2pop   ( R: a b -> a b)        pop       pop pop    rot push  swap ;
+forth
 
 : =    xor 0= ;
 : not      0= ;  ( warning! this is NOT 1's complement)
@@ -202,7 +206,9 @@ forth
   Since no UNNEST needs to be compiled, use of [ rather than ; to end the
   word is common.)
 
+runtime
 : jump  ( which)  cells pop + @execute ;
+forth
 
 
 ( Mark a branch source for later fixup.)
@@ -249,11 +255,11 @@ compiler
 
 ( Read a token out of the input stream. If the token is on the compiler
   chain, postpone its execution until the word we're compiling executes. If
-  the token is on the forth chain, postpone its compilation until the word
-  that we're compiling executes. Got that? ;-)
+  the token is on the runtime or forth chains, postpone its compilation
+  until the word that we're compiling executes. Got that? ;-)
 
 : \   .compiler. token'  if , ^ then
-         .forth. find  huh?  literal  ['] ,  , ;
+         .runtime. find  huh?  literal  ['] ,  , ;
 
 forth
 
@@ -556,6 +562,10 @@ forth
 : .not  0= ;
 
 
+-- -----------------------------------------------------------------------
+-- Schleisiek-style return stack words.
+-- -----------------------------------------------------------------------
+
 ( Trying out, after all these years, the techniques that Klaus Schleisiek
   presented in 1984 [at FORML] and that I read about in 1993.
 
@@ -582,6 +592,8 @@ forth
       +--------------------+
       |    ip of remove    |<--- rp      remove just calls unlink
       +--------------------+                                          )
+
+runtime
 
 variable fp    ( the "top" - most recently pushed - frame)
                ( fp points to a frame ptr, which pts to a frame ptr...)
@@ -785,6 +797,7 @@ comment catch-throw-resetting-sp
    remove >r  ( normal return - unlink and cleanup)
    >r ( ra) ;
 
+forth
 
 -- -----------------------------------------------------------------------
 -- End of fancy R-stack goodies, and back to pedestrian Forth.
@@ -936,7 +949,7 @@ forth
 
 -:   ( compile one token)
    .compiler. find  if  execute ^  then
-      .forth. find  if  ,       ^  then  number literal ;
+    .runtime. find  if  ,       ^  then  number literal ;
                                       -]  'compiler-mode [  !
 
 
@@ -1135,7 +1148,9 @@ variable sep  ( include "thousands" separators in numbers - or not.)
 
 ( all compiled strings have a zero terminator.)
 : count  ( z" - a u)  dup  cell- @ ;
+runtime
 : (")    ( - a u)  pop  cell+ count ( a u)  2dup + 1+ aligned push ;
+forth
 
 : _string  ( a u - z")  scrabble  count cell+ 1+  allot ;
 : string,   ( ch - z")  parse  _string ;
