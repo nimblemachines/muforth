@@ -69,6 +69,12 @@ forth  decimal
   linked to .lex. so we get the conditional compiler words, but is
   otherwise kept "pure". We don't want to get any host words by accident.
 
+  .target. contains the actual target words. .target-runtime. - which is
+  chained to .target. - contains target words that are compile-only - ie,
+  never executed "at the command line" while chatting. By putting stack
+  manipulation words on this chain as well, we make it easier to do
+  debugging: you'll get the host's swap or dup rather than the target's.
+
   Simple, right? ;-)
 
           sealed .csr.        ( definitions of CSRs)
@@ -78,15 +84,17 @@ forth  decimal
 
 .compiler. chain .definer.  ( like .compiler. but only for meta defining words)
 
-     sealed .lex.              ( comments and conditional interpretation)
-     sealed .target.           ( the target words - like `forth' on the host)
-.lex. chain .target-compiler.  ( the `meta' version of .compiler.)
+        sealed .lex.              ( comments and conditional interpretation)
+        sealed .target.           ( the target words - like `forth' on the host)
+.target. chain .target-runtime.   ( compile-only target words)
+   .lex. chain .target-compiler.  ( the `meta' version of .compiler.)
 
 : meta                         .meta. definitions ;
 : definer                   .definer. definitions ;
 : assembler               .assembler. definitions ;
 
 : target                     .target. definitions ;
+: target-runtime     .target-runtime. definitions ;
 : target-compiler   .target-compiler. definitions ;
 
 ( XXX Do we need all of these?)
@@ -95,7 +103,7 @@ compiler
 : \d   ( compile from definer)                  .definer. \chain ;
 : \a   ( compile from assembler)              .assembler. \chain ;
 : \eq  ( compile from equates)                  .equates. \chain ;
-: \t   ( compile from target)                    .target. \chain ;
+: \t   ( compile from target/runtime)    .target-runtime. \chain ;
 : \tc  ( compile from target-compiler)  .target-compiler. \chain ;
 forth
 
@@ -216,7 +224,7 @@ defer target-compile,  ( compile a target word into a colon definition)
 -:  ."  (compiling a target colon word)"  ;
 -:
    .target-compiler. find  if  execute                   ^  then
-            .target. find  if  execute  target-compile,  ^  then
+    .target-runtime. find  if  execute  target-compile,  ^  then
            .equates. find  if  execute  target-literal   ^  then
                                         target-number target-literal ;
 mode __target-colon
