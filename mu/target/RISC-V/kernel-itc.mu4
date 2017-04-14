@@ -298,6 +298,8 @@ code u<    x pop1   x top top sltu   makeflag j  ;c
 ( Another useful compare operator - equality!)
 : =   xor 0= ;
 
+.ifdef until-runtime-arrives
+
 ( Small constants.)
 -2 constant -2
 -1 constant -1
@@ -318,6 +320,78 @@ meta: incr   constant  ;code   0 w w lw   w top top add   next  ;c
 cell        incr cell+
 cell negate incr cell-
 
+.then  ( runtime)
+
+( Double numbers. Useful, among other things, for computing with RISC-V's
+  64-bit timers and counters.)
+
+( Double-length math register use.
+
+  Enter with d1 and d2 on the stack. Registers are first loaded as follows:
+
+    top = d2hi
+    w   = d2lo
+    x   = d1hi
+    y   = d1lo
+)
+
+code d+   ( d1 d2 - d1+d2)
+   0 sp w lw  ( d2lo)   cell sp x lw  ( d1hi)   2 cells sp y lw  ( d1lo)
+   y w w add  ( sumlo)   w y y sltu  ( y+w < y => carry)
+   x top top add  ( sumhi)   top y top add  ( +carry)
+label wput-pop2
+   2 cells sp w sw  ( lo)   2 cells sp sp addi  ( pop)
+   next   ;c
+
+code d-   ( d1 d2 - d1-d2)
+   0 sp w lw  ( d2lo)   cell sp x lw  ( d1hi)   2 cells sp y lw  ( d1lo)
+   y w w sub  ( difflo)   y w y sltu  ( y-w > y => borrow)
+   x top top sub  ( diffhi)   top y top sub  ( -borrow)
+   wput-pop2 j  ;c
+
+code dnegate   ( d - -d)
+   0 sp w lw  ( dlo)   w y snez  ( will borrow only if w != 0)   w w neg
+   0 sp w sw   top top neg   top y top sub  ( -borrow)   next  ;c
+
+( I've wracked my brain and I can't come up with a way to do 64-bit
+  compares without using a branch. Here is the basic idea:
+
+  Compare the high-order words. If they are _equal_, return as the result
+  the _unsigned_ comparison of the low-order words.
+
+  Otherwise, ignore the low-order words and:
+     For ud< return the _unsigned_ comparison of the high-order words 
+     For  d< return the _signed_ comparison of the high-order words 
+)
+( Compare high-order words; if equal, compare low-order, pop stack, push
+  flag, and run NEXT. If not equal, pop stack and return to caller.)
+
+label dless-common
+   cell sp x lw  ( d1hi)   x top = if  ( high-order words equal: compare low)
+            0 sp w lw  ( d2lo)
+      2 cells sp y lw  ( d1lo)
+      3 cells sp sp addi  ( pop)   y w top sltu  ( d1 d2 u<)   makeflag j
+   then
+   3 cells sp sp addi   0 ra jr  ;c
+
+code d<   ( d1 d2 - f)
+   dless-common ra jal   x top top slt    makeflag j  ;c
+
+code ud<  ( d1 d2 - f)
+   dless-common ra jal   x top top sltu   makeflag j  ;c
+
+( Host words to make it easier to deal with double numbers on the target.
+
+  >d   converts a host-side 64-bit number into two 32-bit target numbers
+  d>   goes the other way: target -> host
+  d.   prints a target double number as a signed 64-bit number
+  ud.  prints a target double number as an unsigned 64-bit number
+)
+
+meta: >d   ( host - tdlo tdhi)   dup "ffff_ffff and  ( lo)  swap #32 u>> ;
+meta: d>   ( tdlo tdhi - host)   #32 <<  swap "ffff_ffff and  + ;
+meta: ud.  ( tdlo tdhi)   d>     u. ;
+meta: d.   ( tdlo tdhi)   d>  \f  . ;
 
 ram
 
