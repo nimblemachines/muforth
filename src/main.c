@@ -40,7 +40,7 @@ static void convert_command_line(int argc, char *argv[])
     }
     pcmd_line->length = pline - pcmd_line->data;
 
-    /* 
+    /*
      * No need to null-terminate! This string is evaluated by the Forth
      * parser, not C code. Any pieces - like filenames - that get passed to
      * C are copied out of this string into the dictionary and
