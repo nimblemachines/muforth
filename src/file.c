@@ -105,6 +105,32 @@ void mu_push_cwd()   /* addr - addr count */
 
 #endif  /* WITH_CURRENT_DIR */
 
+#ifdef WITH_STAT
+
+void mu_stat_file()         /* C-string-name - mode-bits -1 | strerror 0 */
+{
+    struct stat s;
+    char pathbuf[1024];
+    char *path = abs_path((char *)TOP, pathbuf, 1024);
+
+    if (path == NULL)
+        return abort_zmsg("path too long");
+
+    DROP(-1);
+    if (stat(path, &s) == -1)
+    {
+        ST1 = (addr)strerror(errno);
+        TOP = 0;        /* failure */
+    }
+    else
+    {
+        ST1 = s.st_mode;
+        TOP = -1;       /* success */
+    }
+}
+
+#endif  /* WITH_STAT */
+
 void mu_create_file()       /* C-string-name - fd */
 {
     int fd;
