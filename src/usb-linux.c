@@ -94,13 +94,10 @@ static int foreach_dirent(char *path, path_ok_fn try_path,
         /* make sure this is a dirent we care about */
         if (try_path(pde))
         {
-            char *subpath;
             int matched;
 
-            /* build path right-to-left */
-            subpath = path_prefix(pde->d_name, pathbuf + USB_PATH_MAX, '\0', pathbuf);
-            subpath = path_prefix(path, subpath, '/', pathbuf);
-            matched = fn(subpath, pmatch);
+            concat_paths(pathbuf, USB_PATH_MAX, path, pde->d_name);
+            matched = fn(pathbuf, pmatch);
 
             /* 
              * matched < 0 means matched but error opening read/write

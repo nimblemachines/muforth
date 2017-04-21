@@ -55,16 +55,14 @@ static int enumerate_devices(int idVendor, int idProduct)
         {
 #define PATHMAX 32
             char path[PATHMAX];
-            char *devpath;
             int fd;
             int res;
             struct usb_device_descriptor dev_desc;
 
-            /* Found endpoint 0 device; build path right-to-left */
-            devpath = path_prefix(dev->d_name, path + PATHMAX, '\0', path);
-            devpath = path_prefix("/dev/usb", devpath, '/', path);
+            /* Found endpoint 0 device; build path */
+            concat_paths(path, PATHMAX, "/dev/usb", dev->d_name);
 
-            fd = open(devpath, O_RDONLY);
+            fd = open(path, O_RDONLY);
             if (fd == -1) continue;
             res = ioctl(fd, USB_GET_DEVICE_DESC, &dev_desc);
             close(fd);
@@ -74,7 +72,7 @@ static int enumerate_devices(int idVendor, int idProduct)
                 UGETW(dev_desc.idProduct) == idProduct)
             {
                 int timeout = 5000; /* ms */
-                fd = open(devpath, O_RDWR);   /* Re-open read-write */
+                fd = open(path, O_RDWR);    /* Re-open read-write */
                 if (fd == -1) return -1;
                 if (ioctl(fd, USB_SET_RX_TIMEOUT, &timeout) == -1)
                     return -1;

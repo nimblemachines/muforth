@@ -9,109 +9,89 @@
 #include "muforth.h"
 #include "muhome.h"     /* MU_DIR */
 
+#include <limits.h>     /* PATH_MAX */
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
-#include <string.h>     /* memcpy */
 
 /* XXX: for read, write; temporary? */
 #include <sys/uio.h>
 #include <unistd.h>
 #include <errno.h>
 
-char *path_prefix(char *src, char *dest, char sep, char *begin)
-{
-    int len;
-
-    /*
-     * Checking dest lets us cascade calls without checking for NULL.
-     * Checking src lets us pass results (say, of getenv) that could be
-     * NULL.
-     */
-    if (dest == NULL || src == NULL) return NULL;
-
-    len = strlen(src);
-    if (dest - len - 1 < begin) return NULL;
-    *--dest = sep;      /* add path separator */
-    dest -= len;        /* back up to make room for string at src */
-    memcpy(dest, src, len);
-    return dest;        /* new beginning */
-}
-
-#ifndef WITH_CURRENT_DIR
-
 /*
- * Convert path to an absolute path. If path starts with "/", then return
- * it unchanged; otherwise, prefix path with the muforth build directory.
- */
-static char* abs_path(char *path, char *pathbuf, int bufsize)
-{
-    /* If path is absolute, just return it as is. */
-    if (*path == '/') return path;
-
-    /* Otherwise, rewrite path as MU_DIR/path */
-    path = path_prefix(path, pathbuf+bufsize, '\0', pathbuf);
-    return path_prefix(MU_DIR, path, '/', pathbuf);
-}
-
-#else
-
-/*
- * NOTE: I think this is too complicated, which is why it isn't compiled by
- * default, but if you really want it, define WITH_CURRENT_DIR and
- * recompile.
+ * This is my version of stpcpy()
  *
+ * I'm defining my own just in case the C library we are linking with lacks
+ * stpcpy() - and because I already had this function when I discovered the
+ * *existence* of stpcpy(). ;-).
+ *
+ * Unlike memcpy, which STOOPIDLY returns dest, rather than something
+ * USEFUL, this routine copies strles(src) bytes to dest, appends a null,
+ * and then returns a pointer to the null terminator.
+ */
+char *string_copy(char *dest, char *src)
+{
+    size_t length = strlen(src);
+
+    memcpy(dest, src, length);
+    dest += length;
+    *dest = '\0';
+    return dest;
+}
+
+/*
+ * Concatenate two paths, separated by a '/' character, and return a
+ * pointer to dest. If the result is too long to fit in dest, return NULL.
+ *
+ * NOTE: Because we return dest and not a pointer to the null at the end,
+ * this routine is not as useful for *cascading*, but it's good for other
+ * uses, because its return value can be returned *directly* to a caller.
+ */
+char *concat_paths(char *dest, size_t destsize, char *p1, char *p2)
+{
+    if (strlen(p1) + strlen(p2) + 2 > destsize)
+        return NULL;
+
+    string_copy(string_copy(string_copy(dest, p1), "/"), p2);
+    return dest;
+}
+
+/*
  * Convert path to an absolute path.
+ *
  * If path starts with "/", return it unchanged.
- * If path starts with ".", prefix it with the current directory.
+ * If path starts with "./", prefix it with the current directory.
  * Otherwise, prefix it with the muforth build directory.
  */
-static char* abs_path(char *path, char *pathbuf, int bufsize)
+static char* abs_path(char *dest, size_t destsize, char *path)
 {
     /* If path is absolute, just return it as is. */
-    if (*path == '/') return path;
+    if (path[0] == '/') return path;
 
+    /*
+     * If path starts with "./", strip the "./" and then prepend the
+     * current working dir. If getcwd fails, or if the resulting path is
+     * too long, return NULL.
+     */
+    if (path[0] == '.' && path[1] == '/')
     {
-        char *p;
-
-        /* Get ready to add a path prefix. */
-        p = path_prefix(path, pathbuf+bufsize, '\0', pathbuf);
-
-        /* If path starts with ".", prepend the current working dir. */
-        if (*path == '.')
-        {
-            char pwd[1024];
-            if (getcwd(pwd, 1024) == NULL) return NULL;
-            return path_prefix(pwd, p, '/', pathbuf);
-        }
-
-        /* Otherwise, rewrite path as MU_DIR/path */
-        return path_prefix(MU_DIR, p, '/', pathbuf);
+        char pwd[PATH_MAX];
+        if (getcwd(pwd, PATH_MAX) == NULL) return NULL;
+        return concat_paths(dest, destsize, pwd, path + 2);
     }
+
+    /* Otherwise, rewrite path as MU_DIR/path */
+    return concat_paths(dest, destsize, MU_DIR, path);
 }
-
-/* For testing. Easiest way to use it:
- *   pad cwd type
- */
-void mu_push_cwd()   /* addr - addr count */
-{
-    char *dest = (char *)TOP;
-
-    if (getcwd(dest, 1024) == NULL)
-        PUSH(0);
-    else
-        PUSH(strlen(dest));
-}
-
-#endif  /* WITH_CURRENT_DIR */
 
 #ifdef WITH_STAT
 
 void mu_stat_file()         /* C-string-name - mode-bits -1 | strerror 0 */
 {
     struct stat s;
-    char pathbuf[1024];
-    char *path = abs_path((char *)TOP, pathbuf, 1024);
+    char pathbuf[PATH_MAX];
+    char *path = abs_path(pathbuf, PATH_MAX, (char *)TOP);
 
     if (path == NULL)
         return abort_zmsg("path too long");
@@ -134,8 +114,8 @@ void mu_stat_file()         /* C-string-name - mode-bits -1 | strerror 0 */
 void mu_create_file()       /* C-string-name - fd */
 {
     int fd;
-    char pathbuf[1024];
-    char *path = abs_path((char *)TOP, pathbuf, 1024);
+    char pathbuf[PATH_MAX];
+    char *path = abs_path(pathbuf, PATH_MAX, (char *)TOP);
 
     if (path == NULL)
         return abort_zmsg("path too long");
@@ -150,8 +130,8 @@ void mu_create_file()       /* C-string-name - fd */
 static void mu_open_file()     /* C-string-name flags - fd */
 {
     int fd;
-    char pathbuf[1024];
-    char *path = abs_path((char *)ST1, pathbuf, 1024);
+    char pathbuf[PATH_MAX];
+    char *path = abs_path(pathbuf, PATH_MAX, (char *)ST1);
 
     if (path == NULL)
         return abort_zmsg("path too long");

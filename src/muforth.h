@@ -157,12 +157,9 @@ void die(const char *zmsg);
 void abort_zmsg(const char *zmsg);
 void assert(int cond, const char *zmsg);
 
-/* kernel.c */
-int string_compare(const char *string1, size_t length1,
-                   const char *string2, size_t length2);
-
 /* file.c */
-char *path_prefix(char *src, char *dest, char sep, char *begin);
+char *string_copy(char *dest, char *src);
+char *concat_paths(char *dest, size_t destsize, char *p1, char *p2);
 
 /* Utility macros */
 #define MIN(a,b)    (((a) < (b)) ? (a) : (b))

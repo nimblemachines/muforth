@@ -209,13 +209,13 @@ void mu_aligned()  { TOP = ALIGNED(TOP); }
 typedef int (*match_fn_t)(const char*, const char*, size_t);
 
 /* Default at startup is case-sensitive */
-match_fn_t match = (match_fn_t)memcmp;
+match_fn_t match = strncmp;
 
 /*
  * +case  -- make dictionary searches case-sensitive -- DEFAULT
  * -case  -- make dictionary searches case-insensitive
  */
-void mu_plus_case()   { match = (match_fn_t)memcmp; }
+void mu_plus_case()   { match = strncmp; }
 void mu_minus_case()  { match = strncasecmp; }
 
 /*
