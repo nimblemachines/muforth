@@ -83,7 +83,6 @@ forth
 -- ------------------------------------------------------------------------
 __meta
 hex
-target
 
 label dodoes    nest  ip pop  ( fall thru to dovar/docreate)  ;c
 
@@ -100,10 +99,9 @@ meta: :          new  ]   ;code
 
 definer: does>   <;code>  asm{  dodoes # call  }  ] ;
 
-target-runtime
 
-code*  ^                          unnest       begin     next  ;c
-codes nope
+code*  ^     [r]                  unnest       begin     next  ;c
+codes nope   [r]
 
 ( Allocate buffer space _before_ defining the constant that pushes the
   buffer's address. This way we can define buffers in ram as well as in
@@ -112,29 +110,26 @@ codes nope
 meta: buffer   ( #bytes)   h @ push  ram  here  swap allot  pop h !  constant ;
 meta: variable    2 buffer ;  ( A variable is just a 2-byte buffer!)
 
-code* (lit)  ip )+ w mov  wpush jmp  ;c
+code* (lit)  [r]   ip )+ w mov  wpush jmp  ;c
 
-code*    (branch)      ip )   ip mov  next  ;c
-code*   (0branch)   top tst  top pop  ' (branch) 0!= until  ( fall thru)  ;c
+code*    (branch)   [r]     ip )   ip mov  next  ;c
+code*   (0branch)   [r]  top tst  top pop  ' (branch) 0!= until  ( fall thru)  ;c
 label        skip         2 # ip add  next  ;c
-code*  (?0branch)   top tst  skip 0= until  top pop  ' (branch) j  ;c
-code*  (=0branch)   top tst  skip 0= until           ' (branch) j  ;c
+code*  (?0branch)   [r]  top tst  skip 0= until  top pop  ' (branch) j  ;c
+code*  (=0branch)   [r]  top tst  skip 0= until           ' (branch) j  ;c
 
-target
 
 code execute   ( cfa)    top   w mov  begin  top pop  w )+ pc mov  ;c
 code @execute  ( 'cfa)   top ) w mov  again  ;c
-
-target-runtime
 
 
 .ifndef loop-on-stack
 
 ( Fast version, using loop register)
-code* (for)   ( u)
+code* (for)   [r]  ( u)
    loop rpush  top loop mov  top pop  next  ;c
 
-code* (next)
+code* (next)  [r]
    1 # loop sub  ' (branch) 0= until  loop rpop  skip j  ;c
 
 
@@ -149,7 +144,7 @@ code* (next)
    Current index is in loop register; current "user-visible" index is
    calculated as index + limit.)
 
-code* (do)   ( limit start)
+code* (do)   [r]  ( limit start)
    4 # rp sub  ( make room on R stack - all in one go)
      loop 2 rp +) mov  ( save loop reg on R)
    x pop  x rp  ) mov  ( save limit to R)
@@ -160,7 +155,7 @@ code* (do)   ( limit start)
   stack frame, skip backwards jump, and continue. If non-zero, simply take
   the backwards jump.)
 
-code* (loop)
+code* (loop)  [r]
    1 # loop add  ' (branch) 0= until
 label undo
    2 # rp add  loop rpop  skip j  ;c
@@ -169,19 +164,19 @@ label undo
   threshold, so restore index, pop frame, and skip jump. Otherwise, take
   the backwards jump.)
 
-code* (+loop)  ( incr)
+code* (+loop)  [r]  ( incr)
    loop x mov  ( save index value)
    top loop add   top pop   loop x xor  undo 0>= until
    ' (branch) j  ;c
 
 ( Push current loop index. User-visible index = index + limit)
-code i   ( - index)
+code i   [r]  ( - index)
   loop w mov  rp ) w add  wpush jmp  ;c
 
 .else  ( keeping for/next and do/loop index on R stack, not in a register)
 
 ( for is just >r. next is 3 cycles slower per iteration than fast next)
-code* (next)
+code* (next)  [r]
    1 # rp ) sub  ' (branch) 0= until  2 # rp add  skip j  ;c
 
 ( Do-loop frame looks like this:
@@ -194,7 +189,7 @@ code* (next)
 
    "User-visible" index is calculated as index + limit.)
 
-code* (do)   ( limit start)
+code* (do)   [r]  ( limit start)
    4 # rp sub  ( make room on R stack - all in one go)
    x pop      x 2 rp +) mov  ( save limit to R)
    x top sub  top rp  ) mov  ( index = start - limit)
@@ -203,7 +198,7 @@ code* (do)   ( limit start)
 ( Increment index. If it overflows to zero, pop stack frame, skip backwards
   jump, and continue. If non-zero, simply take the backwards jump.)
 
-code* (loop)
+code* (loop)  [r]
    1 # rp ) add  ' (branch) 0= until
 label undo
    4 # rp add  skip j  ;c
@@ -212,18 +207,16 @@ label undo
   threshold, so pop stack frame, skip backwards jump, and continue.
   Otherwise, take the backwards jump.)
 
-code* (+loop)  ( incr)
+code* (+loop)  [r]  ( incr)
    rp ) x mov  ( save index value)
    top rp ) add   top pop   rp ) x xor  undo 0>= until
    ' (branch) j  ;c
 
 ( Push current loop index. User-visible index = index + limit)
-code i   ( - index)
+code i   [r]  ( - index)
   rp ) w mov  2 rp +) w add  wpush jmp  ;c
 
 .then
-
-target
 
 
 ( Basic unary ops.)
@@ -242,28 +235,26 @@ code or    sp )+ top bis  next  ;c
 code xor   sp )+ top xor  next  ;c
 
 ( Stack ops.)
-target-runtime  ( !!)
-code dup    ( t - t t)  top push  next  ;c
-code drop   ( x t - x)  top pop   next  ;c
-code nip    ( x t - t)  2 # sp add  next  ;c
+code dup    [r]  ( t - t t)  top push  next  ;c
+code drop   [r]  ( x t - x)  top pop   next  ;c
+code nip    [r]  ( x t - t)  2 # sp add  next  ;c
 
-code over  ( w t - w t w)      sp ) w mov          wpush jmp  ;c
-code swap  ( w t - t w)             w pop          wpush jmp  ;c
-code rot   ( w x t - x t w)  x pop  w pop  x push  wpush jmp  ;c
+code over  [r]  ( w t - w t w)      sp ) w mov          wpush jmp  ;c
+code swap  [r]  ( w t - t w)             w pop          wpush jmp  ;c
+code rot   [r]  ( w x t - x t w)  x pop  w pop  x push  wpush jmp  ;c
 
-code tuck  (   x t - t x t)  x pop       top push  x push  next  ;c
+code tuck  [r]  (   x t - t x t)  x pop       top push  x push  next  ;c
 
-: 2dup   over over ;
-: -rot    rot  rot ;
+: 2dup   over over ;  [r]
+: -rot    rot  rot ;  [r]
 
 
 ( Return stack ops.)
 .ifdef loop-on-stack  implements (for)  .then
-code >r   ( w)    top rpush  top pop   next  ;c
-code r>   ( - w)      w rpop  wpush jmp  ;c
-code r@   ( - w)  rp ) w mov  wpush jmp  ;c
+code >r   [r]  ( w)    top rpush  top pop   next  ;c
+code r>   [r]  ( - w)      w rpop  wpush jmp  ;c
+code r@   [r]  ( - w)  rp ) w mov  wpush jmp  ;c
 
-target
 
 ( Memory access.)
 code @   ( a - w)  top ) top mov   next  ;c
@@ -296,14 +287,12 @@ code -           x pop  top x sub  x top mov  next  ;c
 : =   xor 0= ;
 
 
-target-runtime
-
 ( Small constants.)
--2 constant -2
--1 constant -1
- 0 constant 0
- 1 constant 1
- 2 constant 2
+-2 constant -2  [r]
+-1 constant -1  [r]
+ 0 constant 0   [r]
+ 1 constant 1   [r]
+ 2 constant 2   [r]
 
 ( Incrementers by small constants. Shared code means they take up very
   little space!)
@@ -311,13 +300,11 @@ target-runtime
 meta: incr   constant  ;code
 .ifdef microscope             w w' mov  ( make a copy)  .then
                               w ) top add  next  ;c
- 1 incr 1+
- 2 incr 2+
+ 1 incr 1+  [r]
+ 2 incr 2+  [r]
 
--1 incr 1-
--2 incr 2-
-
-target
+-1 incr 1-  [r]
+-2 incr 2-  [r]
 
 ram
 
@@ -333,7 +320,7 @@ ram
 ( The chat firmware pushes, at the very top of RAM, the chat entry point
   address.)
 
-code bug
+code bug  [r]
    top push  ( so all of D stack is in memory)
    ip push  ( capture Forth VM context)
 .ifdef loop-on-stack
@@ -410,7 +397,6 @@ forth
 
 __meta
 
-target
 
 comment ~~examples~~
 variable inc

@@ -121,7 +121,6 @@ forth
 -- ------------------------------------------------------------------------
 __meta
 hex
-target
 
 meta: constant  new  ,  ;code  label doconst
                                0 w w lw  ( fetch constant into w)
@@ -151,12 +150,10 @@ meta: buffer   ( #bytes)
 meta: variable     cell    buffer ;  ( A variable is a cell-sized buffer!)
 meta: 2variable    cell 2* buffer ;
 
-target-runtime
-code*  ^    ( unnest)   ip rpop1   begin   next,  ;c
-codes nope
+code*  ^    [r]  ( unnest)   ip rpop1   begin   next,  ;c
+codes nope  [r]
 
-code* (lit)   0 ip w lw   cell ip ip addi  ( fetch literal)   wpush j  ;c
-target
+code* (lit)   [r]   0 ip w lw   cell ip ip addi  ( fetch literal)   wpush j  ;c
 
 code execute   ( pfa)      top w mv   begin   top pop1
                     -1 cells w x lw   0 x jr  ;c
@@ -172,20 +169,19 @@ meta: next   asm{  shared-next j  } ;
 meta: next   asm{  next,  } ;
 .then
 
-target-runtime
 
-code*    (branch)
+code*    (branch)   [r]
 label branch        0 ip ip lw  ( follow branch)   next  ;c
-code*   (0branch)   top w mv   top pop1   branch w 0!= until  ( fall thru)  ;c
+code*   (0branch)   [r]  top w mv   top pop1   branch w 0!= until  ( fall thru)  ;c
 label  skip         cell ip ip addi   next  ;c
-code*  (?0branch)   skip top 0= until   top pop1   branch j  ;c
-code*  (=0branch)   skip top 0= until              branch j  ;c
+code*  (?0branch)   [r]  skip top 0= until   top pop1   branch j  ;c
+code*  (=0branch)   [r]  skip top 0= until              branch j  ;c
 
 ( Fast version, using loop register)
-code* (for)   ( u)
+code* (for)   [r]  ( u)
    ix rpush1   top ix mv   top pop1   next  ;c
 
-code* (next)
+code* (next)  [r]
    -1 ix ix addi  branch ix 0= until  ix rpop1   skip j  ;c
 
 ( Do-loop frame looks like this:
@@ -199,7 +195,7 @@ code* (next)
   Current index is in ix register; current "user-visible" index is
   calculated as index + limit.)
 
-code* (do)   ( limit start)
+code* (do)  [r]  ( limit start)
    top w mv     ( w = start)
    top x pop2   ( x = limit)
    ix x rpush2  ( push ix reg and limit onto R)
@@ -210,7 +206,7 @@ code* (do)   ( limit start)
   stack frame, skip backwards jump, and continue. If non-zero, simply take
   the backwards jump.)
 
-code* (loop)
+code* (loop)  [r]
    1 ix ix addi   branch ix 0= until
 label undo
    cell rp ix lw        ( restore saved ix from R stack)
@@ -221,16 +217,15 @@ label undo
   threshold, so restore index, pop frame, and skip jump. Otherwise, take
   the backwards jump.)
 
-code* (+loop)  ( incr)
+code* (+loop)  [r]  ( incr)
    ix x mv  ( save ix *before* adding incr)
    top ix ix add   top pop1   ix x x xor   undo x 0>= until
    branch j  ;c
 
 ( Push current loop index. User-visible index = index + limit)
-code i   ( - index)
+code i   [r]  ( - index)
    0 rp w lw   ix w w add   wpush j  ;c
 
-target
 
 ( Basic unary ops.)
 code invert   top top not   next  ;c
@@ -253,30 +248,27 @@ code or    x pop1   x top top or    next  ;c
 code xor   x pop1   x top top xor   next  ;c
 
 ( Stack ops.)
-target-runtime  ( !!)
+code dup    [r]  ( t - t t)  top push1   next  ;c
+code drop   [r]  ( x t - x)  top pop1    next  ;c
+code nip    [r]  ( x t - t)  cell sp sp addi   next  ;c
 
-code dup    ( t - t t)  top push1   next  ;c
-code drop   ( x t - x)  top pop1    next  ;c
-code nip    ( x t - t)  cell sp sp addi   next  ;c
+code over   [r]  ( w t - w t w)     0 sp w lw   wpush j  ;c
+code swap   [r]  ( w t - t w)       0 sp w lw   0 sp top sw
+                                           begin   w top mv   next  ;c
 
-code over   ( w t - w t w)     0 sp w lw   wpush j  ;c
-code swap   ( w t - t w)       0 sp w lw   0 sp top sw
-                                      begin   w top mv   next  ;c
+code rot    [r]  ( w x t - x t w)   0 sp   x lw   cell sp w lw
+                                    0 sp top sw   cell sp x sw   again  ;c
 
-code rot    ( w x t - x t w)   0 sp   x lw   cell sp w lw
-                               0 sp top sw   cell sp x sw   again  ;c
+code tuck  [r]  (   w t - t w t)    0 sp w lw   0 sp top sw   w push1   next  ;c
 
-code tuck  (   w t - t w t)    0 sp w lw   0 sp top sw   w push1   next  ;c
-
-: 2dup   over over ;
-: -rot    rot  rot ;
+: 2dup   over over ;  [r]
+: -rot    rot  rot ;  [r]
 
 ( Return stack ops.)
-code >r   ( w)    top rpush1   top pop1   next  ;c
-code r>   ( - w)     w rpop1   wpush j  ;c
-code r@   ( - w)   0 rp w lw   wpush j  ;c
+code >r   [r]  ( w)    top rpush1   top pop1   next  ;c
+code r>   [r]  ( - w)     w rpop1   wpush j  ;c
+code r@   [r]  ( - w)   0 rp w lw   wpush j  ;c
 
-target
 
 ( Memory access.)
 code   @   ( a -  w)  0 top top lw    next  ;c
@@ -306,29 +298,27 @@ code u<    x pop1   x top top sltu   makeflag j  ;c
 ( Another useful compare operator - equality!)
 : =   xor 0= ;
 
-target-runtime
 
 ( Small constants.)
--2 constant -2
--1 constant -1
- 0 constant 0
- 1 constant 1
- 2 constant 2
+-2 constant -2   [r]
+-1 constant -1   [r]
+ 0 constant 0    [r]
+ 1 constant 1    [r]
+ 2 constant 2    [r]
 
 ( Incrementers by small constants. Shared code means they take up very
   little space!)
 
 meta: incr   constant  ;code   0 w w lw   w top top add   next  ;c
-   1 incr 1+
-   2 incr 2+
+   1 incr 1+   [r]
+   2 incr 2+   [r]
 
-  -1 incr 1-
-  -2 incr 2-
+  -1 incr 1-   [r]
+  -2 incr 2-   [r]
 
-cell        incr cell+
-cell negate incr cell-
+cell        incr cell+   [r]
+cell negate incr cell-   [r]
 
-target
 
 ( Double numbers. Useful, among other things, for computing with RISC-V's
   64-bit timers and counters.)
@@ -409,7 +399,7 @@ ram
   stack, registers popped, words execute, re-push, copy back to host...
   Much easier than stuffing things into register slots on stack frame!)
 
-code bug
+code bug  [r]
    top ip rp ix push4   ebreak  ;c
 
 implements continue-forth  __asm
@@ -449,7 +439,6 @@ forth
 
 __meta
 
-target
 
 comment ~~examples~~
 variable inc
