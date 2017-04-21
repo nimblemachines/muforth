@@ -83,21 +83,26 @@ forth
 -- ------------------------------------------------------------------------
 __meta
 hex
+target
 
-implements dodoes    nest  ip pop  ( fall thru to dovar/docreate)  ;c
+label dodoes    nest  ip pop  ( fall thru to dovar/docreate)  ;c
 
 ( Note the structural similarities!)
-meta: create     name  0 ,   ;code   label wpush
-.ifdef microscope                    w w' mov  ( make a copy)  .then
-                                     top push  w   top mov  next  ;c
-meta: constant   create  ,   ;code
-.ifdef microscope                    w w' mov  ( make a copy)  .then
-                                     top push  w ) top mov  next  ;c
-meta: :          create  ]   ;code
-.ifdef microscope                    w w' mov  ( make a copy)  .then
-                                     nest      w    ip mov  next  ;c
+meta: create     new      ;code   label wpush
+.ifdef microscope                 w w' mov  ( make a copy)  .then
+                                  top push  w   top mov  next  ;c
+meta: constant   new  ,   ;code
+.ifdef microscope                 w w' mov  ( make a copy)  .then
+                                  top push  w ) top mov  next  ;c
+meta: :          new  ]   ;code
+.ifdef microscope                 w w' mov  ( make a copy)  .then
+                                  nest      w    ip mov  next  ;c
 
-code*  ^                           unnest         begin     next  ;c
+definer: does>   <;code>  asm{  dodoes # call  }  ] ;
+
+target-runtime
+
+code*  ^                          unnest       begin     next  ;c
 codes nope
 
 ( Allocate buffer space _before_ defining the constant that pushes the
@@ -110,13 +115,17 @@ meta: variable    2 buffer ;  ( A variable is just a 2-byte buffer!)
 code* (lit)  ip )+ w mov  wpush jmp  ;c
 
 code*    (branch)      ip )   ip mov  next  ;c
-code*   (0branch)   top tst  top pop  ' (branch) >body 0!= until  ( fall thru)  ;c
+code*   (0branch)   top tst  top pop  ' (branch) 0!= until  ( fall thru)  ;c
 label        skip         2 # ip add  next  ;c
-code*  (?0branch)   top tst  skip 0= until  top pop  ' (branch) >body j  ;c
-code*  (=0branch)   top tst  skip 0= until           ' (branch) >body j  ;c
+code*  (?0branch)   top tst  skip 0= until  top pop  ' (branch) j  ;c
+code*  (=0branch)   top tst  skip 0= until           ' (branch) j  ;c
+
+target
 
 code execute   ( cfa)    top   w mov  begin  top pop  w )+ pc mov  ;c
 code @execute  ( 'cfa)   top ) w mov  again  ;c
+
+target-runtime
 
 
 .ifndef loop-on-stack
@@ -126,7 +135,7 @@ code* (for)   ( u)
    loop rpush  top loop mov  top pop  next  ;c
 
 code* (next)
-   1 # loop sub  ' (branch) >body 0= until  loop rpop  skip j  ;c
+   1 # loop sub  ' (branch) 0= until  loop rpop  skip j  ;c
 
 
 ( Do-loop frame looks like this:
@@ -152,7 +161,7 @@ code* (do)   ( limit start)
   the backwards jump.)
 
 code* (loop)
-   1 # loop add  ' (branch) >body 0= until
+   1 # loop add  ' (branch) 0= until
 label undo
    2 # rp add  loop rpop  skip j  ;c
 
@@ -163,7 +172,7 @@ label undo
 code* (+loop)  ( incr)
    loop x mov  ( save index value)
    top loop add   top pop   loop x xor  undo 0>= until
-   ' (branch) >body j  ;c
+   ' (branch) j  ;c
 
 ( Push current loop index. User-visible index = index + limit)
 code i   ( - index)
@@ -173,7 +182,7 @@ code i   ( - index)
 
 ( for is just >r. next is 3 cycles slower per iteration than fast next)
 code* (next)
-   1 # rp ) sub  ' (branch) >body 0= until  2 # rp add  skip j  ;c
+   1 # rp ) sub  ' (branch) 0= until  2 # rp add  skip j  ;c
 
 ( Do-loop frame looks like this:
 
@@ -195,7 +204,7 @@ code* (do)   ( limit start)
   jump, and continue. If non-zero, simply take the backwards jump.)
 
 code* (loop)
-   1 # rp ) add  ' (branch) >body 0= until
+   1 # rp ) add  ' (branch) 0= until
 label undo
    4 # rp add  skip j  ;c
 
@@ -206,13 +215,15 @@ label undo
 code* (+loop)  ( incr)
    rp ) x mov  ( save index value)
    top rp ) add   top pop   rp ) x xor  undo 0>= until
-   ' (branch) >body j  ;c
+   ' (branch) j  ;c
 
 ( Push current loop index. User-visible index = index + limit)
 code i   ( - index)
   rp ) w mov  2 rp +) w add  wpush jmp  ;c
 
 .then
+
+target
 
 
 ( Basic unary ops.)
@@ -231,6 +242,7 @@ code or    sp )+ top bis  next  ;c
 code xor   sp )+ top xor  next  ;c
 
 ( Stack ops.)
+target-runtime  ( !!)
 code dup    ( t - t t)  top push  next  ;c
 code drop   ( x t - x)  top pop   next  ;c
 code nip    ( x t - t)  2 # sp add  next  ;c
@@ -250,6 +262,8 @@ code tuck  (   x t - t x t)  x pop       top push  x push  next  ;c
 code >r   ( w)    top rpush  top pop   next  ;c
 code r>   ( - w)      w rpop  wpush jmp  ;c
 code r@   ( - w)  rp ) w mov  wpush jmp  ;c
+
+target
 
 ( Memory access.)
 code @   ( a - w)  top ) top mov   next  ;c
@@ -282,6 +296,8 @@ code -           x pop  top x sub  x top mov  next  ;c
 : =   xor 0= ;
 
 
+target-runtime
+
 ( Small constants.)
 -2 constant -2
 -1 constant -1
@@ -301,6 +317,7 @@ meta: incr   constant  ;code
 -1 incr 1-
 -2 incr 2-
 
+target
 
 ram
 
@@ -341,6 +358,8 @@ implements trampoline  ( x0 .. xn cfa - y0 .. ym)
    ]  execute  begin  bug  again  [
 
 __host
+
+forth
 
 ( XXX show some indication of whether a word is still executing;
   IP != trampoline + 4)
@@ -390,6 +409,8 @@ __host
 .then
 
 __meta
+
+target
 
 comment ~~examples~~
 variable inc

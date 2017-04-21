@@ -46,7 +46,6 @@ variable (loop)
 variable (+loop)
 variable (lit)
 variable ^
-variable dodoes
 
 forth
 
@@ -56,13 +55,16 @@ forth
 : lookup  ( look up next token as forward-ref variable or label)
    .meta. chain' execute ( get addr) ;
 
+( implements should capture the pfa - parameter field address - of the word
+  it refers to.)
+
 : implements   \m here  lookup  !  __asm ;
 
 ( Fetch value of variable - a primitive - and complain if not yet defined.)
 : (p@)  ( var)  @  =if  ^  then  error" primitive not yet defined" ;
 
-( Fetch primitive and compile into target.)
-: (p,)  ( var)  (p@)  \m , ;
+( Fetch primitive and compile into target. cell- yields cfa from pfa.)
+: (p,)  ( var)  (p@)  \m cell-  \m , ;
 
 compiler
 : p,   .meta. \chain  compile (p,) ;
@@ -90,15 +92,21 @@ meta
    \m cell +loop ;
 
 ( Create new target names. A name is a target word which is defined as a
-  _constant_ equal to its code field address.)
+  _constant_ equal to its parameter field address.)
 
-: name    \m here  dup last-code !  current preserve  target constant ;
-: codes   ( 'code)  \m name  \m ,  __asm ;
+( labels are always created in .meta. but other names use current.)
+
+: label   current preserve  meta  \m here  constant  __asm ;
+: name    \m here  constant ;
+: code,   \m here last-code !  ( make a code field)  "dead \m , ;
+: new     \m code,  \m name ;  ( for words with code fields)
+
+: codes   ( 'code)  \m ,  \m name  __asm ;
 : code    \m here  \m cell+  \m codes ;
-: label   \m here  current preserve  meta constant  __asm ;
 
 ( For code words that implement forward-referenced meta-compiler primitives.)
-: code*   implements  untoken  \m code ;
+: code*   \m code  untoken  implements ;
+
 
 ( For forward references. Use hook to define the hook. This creates a label
   and compiles a long jump. Then resolve using hooks, which patches the jmp
@@ -162,8 +170,7 @@ forth
 
 
 definer
-: does>   <;code>  p@ dodoes  asm{  # call  }  __target-colon ;
-: ;code   <;code>                              __asm ;
+: ;code   <;code>  __asm ;
 forth
 
 
@@ -222,18 +229,23 @@ forth
 
 ( Define useful colon compilers:
       meta:  for defining new target defining words!
-     macro:  for defining assembler macros
-  compiler:  for defining target-compiler words
+   definer:  for defining meta-compiler-specific compiling words
 
-  We define another colon compiler - the actual target colon - in the
+  We will define another colon compiler - the actual target colon - in the
   kernel, using our meta-defining words!)
 
+( We need meta: so we can define defining words in the middle of target
+  code - eg, the kernel. It gives us an easy way to fire up a specific
+  colon compiler - the one specifically *tuned* for making target defining
+  words.
+
+  definer: is similar. It runs the same colon compiler as meta: but puts
+  the new word on the .definer. chain. Its use is rather obscure, and hard to
+  explain. ;-)
+
 meta
-
-: meta:      current preserve  meta               :  __definer-colon ;
-: compiler:  current preserve  target-compiler    :  __definer-colon ;
-: macro:                                          :  __inline-asm ;
-
+: meta:     current preserve  meta     :  __definer-colon ;
+: definer:  current preserve  definer  :  __definer-colon ;
 forth
 
 
@@ -242,9 +254,11 @@ forth
 -- ------------------------------------------------------------------------
 
 meta
-: '   .target. chain' execute ;  ( get target word's constant value: cfa)
-: >body   \m cell+ ;
-: >value  \m cell+  image-@ ;
+( ' get target word's constant value: its pfa
+  We search runtime words too, so we can du or dis them.)
+
+: '   .target-runtime. chain' execute ;
+: >value  image-@ ;
 
 : ]   __target-colon ;  ( does NOT create a literal!)
 
@@ -275,4 +289,4 @@ forth
 ( Patch target colon compiler.)
 .meta. chain' literal  is target-literal
              ' number  is target-number    ( use host's number)
--: \m , ;              is target-compile,  ( simply comma into image)
+-: \m cell-  \m , ;    is target-compile,  ( simply comma into image)
