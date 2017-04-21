@@ -49,9 +49,7 @@ forth  decimal
 
   .assembler. contains definitions of instructions, registers, addressing
   modes, and words to build control structures. It is searched when
-  building code words, and also when compiling macros. It is chained to
-  .meta., so searching .assembler. will also search .meta., .equates., and
-  .csr.
+  building code words, and also when compiling macros.
 
   .lex. contains words for delimiting comments and for doing conditional
   interpretation and compilation. They are in a separate chain so we don't
@@ -80,7 +78,7 @@ forth  decimal
           sealed .csr.        ( definitions of CSRs)
      .csr. chain .equates.    ( chip equates and other constants for target)
  .equates. chain .meta.       ( the `meta' version of .forth.)
-    .meta. chain .assembler.  ( the host-resident target assembler)
+          sealed .assembler.  ( the host-resident target assembler)
 
 .compiler. chain .definer.  ( like .compiler. but only for meta defining words)
 
@@ -140,10 +138,27 @@ forth
 ( Metacompiler token consumers. Let's put them all in one place so we can
   understand how they work in relation to each other.)
 
+( NOTE: While in general chaining vocab chains together works well, with
+  the assembler we have to be careful. Because there are structure words -
+  if/then/else, begin/until etc - in both the .assembler. and .compiler. chains,
+  and because we definitely want to find the assembler's versions *first*, we
+  have to put .assembler. before .definer./.compiler. here.
+
+  But there is a subtle problem. What if we decide, in some inline assembler
+  code, that we want to specify the use of a .forth. word, say, swap.
+  If we use \f - hoping to get the version from .compiler. - and if
+  .assembler. is chained to .meta. - we will fail. While searching
+  .assembler. for \f we will chain into .meta. and find its \f, which will
+  compile itself rather than the following word.
+
+  The easiest solution is simply to unchain .assembler. from .meta., and
+  search .meta. explicitly. We have to do that both here and in __asm.)
+
 -:  ."  (compiling inline assembler)" ;
 -:
     .assembler. find  if  ,        ^  then  ( find assembler's if/then etc)
       .definer. find  if  execute  ^  then  ( need } and ; to exit this mode)
+         .meta. find  if  ,        ^  then  ( labels are in .meta.)
       .runtime. find  if  ,        ^  then  ( utility and runtime words)
                                             number literal ;
 mode __inline-asm
@@ -152,6 +167,7 @@ mode __inline-asm
 -:  ."  (assembling)" ;
 -:
     .assembler. find  if  execute  ^  then
+         .meta. find  if  execute  ^  then  ( labels are in .meta.)
         .forth. find  if  execute  ^  then  ( utility words in .forth.)
                                             number ;
 mode __asm
