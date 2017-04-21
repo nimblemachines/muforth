@@ -160,6 +160,17 @@ void mu_cmove()  /* src dest count */
     DROP(3);
 }
 
+/* Fill count bytes at dest with bytes equal to value. */
+void mu_fill()  /* dest count value */
+{
+    void *dest = (void *) ST2;
+    size_t count = ST1;
+    int value = TOP;
+
+    memset(dest, value, count);
+    DROP(3);
+}
+
 /*
  * Since we're now re-allowing throw()ing of C-strings, we have to
  * calculate the length of a string when we want to print it out (in case
