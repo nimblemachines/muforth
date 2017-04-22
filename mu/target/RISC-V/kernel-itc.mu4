@@ -261,6 +261,10 @@ code rot    [r]  ( w x t - x t w)   0 sp   x lw   cell sp w lw
 
 code tuck  [r]  (   w t - t w t)    0 sp w lw   0 sp top sw   w push1   next  ;c
 
+( Make a copy of the nth stack item, where  0 nth  is  dup)
+code nth   [r]  ( w_n .. w_0 t - w_n .. w_0 w_t)
+   top cellshift top slli   sp top top add   0 top top lw   next  ;c
+
 : 2dup   over over ;  [r]
 : -rot    rot  rot ;  [r]
 
@@ -390,6 +394,65 @@ meta: >d   ( host - tdlo tdhi)   dup "ffff_ffff and  ( lo)  swap #32 u>> ;
 meta: d>   ( tdlo tdhi - host)   #32 <<  swap "ffff_ffff and  + ;
 meta: ud.  ( tdlo tdhi)   d>     u. ;
 meta: d.   ( tdlo tdhi)   d>  \f  . ;
+
+
+( Once we have double numbers, these come in handy.)
+: 2dup   ( a b     - a b a b)   over over ;  [r]
+: 2swap  ( a b c d - c d a b)   rot >r  rot r> ;  [r]
+: 2over  ( a b c d - a b c d a b)   3 nth  3 nth ;  [r]
+: 2tuck  ( a b c d - c d a b c d)   2swap  2over ;  [r]
+
+
+( Have both mcycle64@ and minstret64@ jump to the shared code so that when
+  we are comparing cycles to instruction counts we are sure to be comparing
+  apples and apples.)
+
+label xypush
+   top x push2   y top mv   next  ;c
+
+( Let's read the mcycle counter and push its 64-bit value.)
+code mcycle64@  ( - mcycle-lo mcycle-hi)
+   begin   mcycleh y csrr
+           mcycle  x csrr
+           mcycleh z csrr   y z = until
+   xypush j  ;c
+
+code minstret64@  ( - minstret-lo minstret-hi)
+   begin   minstreth y csrr
+           minstret  x csrr
+           minstreth z csrr   y z = until
+   xypush j  ;c
+
+( Running full bore it takes ~5 minutes for mcycle to overflow, so for the
+  following experiments we can stick with the low 32 bits of the counters.)
+
+code mcycle32@    ( - mcycle-lo)       mcycle w csrr   wpush j  ;c
+code minstret32@  ( - minstret-lo)   minstret w csrr   wpush j  ;c
+
+( Now for big fun. Let's read each counter four times, in quick succession,
+  leaving the values on the stack.)
+
+: 4c   mcycle32@  mcycle32@  mcycle32@  mcycle32@ ;
+: 4i   minstret32@  minstret32@  minstret32@  minstret32@ ;
+
+( With four timer or counter values on the stack, calculate the
+  differences, so we can see how many cycles or instructions "elapsed"
+  between each pair of reads.)
+
+: 4diff   ( a b c d - b-a c-b d-c)
+   over - >r  ( d-c)  over - >r  ( c-b)  swap -  r>  r> ;
+
+( For fun, and to see totally different timing behaviour, we can do the
+  same thing with full 64-bit reads of the counters. Read each one four
+  times in quick succession.)
+
+: 4cc   mcycle64@  mcycle64@  mcycle64@  mcycle64@ ;
+: 4ii   minstret64@  minstret64@  minstret64@  minstret64@ ;
+
+( Since the high words aren't necessary, drop them, leaving four lo words.)
+: 4lo  ( alo ahi blo bhi clo chi dlo dhi - alo blo clo dlo)
+   drop >r  drop >r  drop  nip  r>  r> ;
+
 
 ram
 
