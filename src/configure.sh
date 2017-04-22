@@ -23,7 +23,7 @@ top=$(dirname $(pwd))
 if [ -d ../.git ]; then
     # Create the hook script for Git
     cat <<EOT > /tmp/post-commit.sh
-#/bin/sh
+#!/bin/sh
 
 # This file is part of muforth: http://muforth.nimblemachines.com/
 #
