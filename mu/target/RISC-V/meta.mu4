@@ -5,6 +5,46 @@
 loading RISC-V meta-compiler (main)
 
 -- ------------------------------------------------------------------------
+-- Macros defining register conventions
+-- ------------------------------------------------------------------------
+
+assembler
+\a a0  constant top
+.ifdef native
+\a ra  constant ip  ( instruction pointer)
+.else
+\a s1  constant ip  ( instruction pointer)
+.then
+\a s0  constant rp  ( return stack pointer)
+-- \a sp  constant sp  ( data stack pointer)
+\a gp  constant kp  ( kernel origin pointer)  ( XXX needed?)
+\a tp  constant up  ( "user" pointer - points to per-thread data)
+
+( XXX these are outside of compressed instruction set's register range.)
+\a s2  constant ix  ( loop index)
+\a t0  constant w   ( scratch w, also "word" pointer)
+\a t1  constant x   ( scratch x, also "execute" pointer)
+\a t2  constant y   ( scratch y)
+\a t3  constant z   ( scratch z)
+forth
+
+( Tell the disassembler about these register names.)
+-:  ( reg)
+   dup 0= if  drop  ." zero"  ^  then
+   dup 16 u< if
+.ifdef native
+            z"    ip sp kp up w  x  y  rp s1 topa1 a2 a3 a4 a5 "
+.else
+            z"    ra sp kp up w  x  y  rp ip topa1 a2 a3 a4 a5 "
+.then
+   else
+      16 -  z" a6 a7 ix s3 s4 s5 s6 s7 s8 s9 s10s11z  t4 t5 t6 "
+   then
+   swap 3 * + 3 -trailing type ;
+
+: forth-regs  [ ] is .regname ;  forth-regs
+
+-- ------------------------------------------------------------------------
 -- Signatures - how we built the target image 
 -- ------------------------------------------------------------------------
 
@@ -45,7 +85,7 @@ variable (do)
 variable (loop)
 variable (+loop)
 variable (lit)
-variable ^
+variable (unnest)
 
 forth
 
@@ -57,11 +97,20 @@ forth
 
 : implements   \m here  lookup  ! ;
 
+( Compile a pfa - for ITC - or a cfa - for native - into a target colon word.)
+meta
+.ifdef native
+: compile,   asm{  ip jal  } ;
+.else
+: compile,   \m , ;  ( ITC)
+.then
+forth
+
 ( Fetch value of variable - a primitive - and complain if not yet defined.)
 : (p@)  ( var)  @  =if  ^  then  error" primitive not yet defined" ;
 
 ( Fetch primitive and compile into target.)
-: (p,)  ( var)  (p@)  \m , ;
+: (p,)  ( var)  (p@)  \m compile, ;
 
 compiler
 : p,   .meta. \chain  compile (p,) ;
@@ -95,7 +144,8 @@ meta
 variable last-code   ( for ;code and does> to fix up)
 
 ( Create new target names. A name is a target word which is defined as a
-  _constant_ equal to its parameter field address.)
+  _constant_ equal to its parameter field address, for ITC, or its code
+  field address, for native code.)
 
 ( labels are always created in .meta.
    names are always created in .target.
@@ -112,10 +162,21 @@ meta
 : label   current preserve  meta    \m here  constant  __asm ;
 : name    current preserve  target  \m here  constant ;
 : code,   \m here last-code !  ( make a code field)  "deadc0de \m , ;
-: new     \m code,  \m name ;  ( for words with code fields)
 
+.ifdef native
+
+( Created constant contains target cfa, not pfa!)
+: new    \m name  \m code, ;  ( for words with code fields)
+: code   \m name  __asm ;
+
+.else  ( ITC)
+
+( Created constant contains target pfa, not cfa!)
+: new     \m code,  \m name ;  ( for words with code fields)
 : codes   ( 'code)  \m ,  \m name  __asm ;
 : code    \m here  \m cell+  \m codes ;
+
+.then
 
 ( For code words that implement forward-referenced meta-compiler primitives.)
 : code*   \m code  untoken  implements ;
@@ -169,7 +230,12 @@ forth
   create, variable, constant, etc - by changing its runtime code. It gets
   -compiled- indirectly by both ;code and does>.)
 
-: (;code@)   pop @  last-code @  image-! ;
+.ifdef native
+( NOTE: Do the  pop @  before the  h @ preserve  else R stack mayhem ensues.)
+: (;code@)   pop @  h @ preserve  last-code @  \m there  asm{  w jal  } ;
+.else
+: (;code@)   pop @  last-code @  image-! ;  ( ITC)
+.then
 
 ( <;code> is used to switch from compiling -host- code [that will later run
   on the host, and build the target word] to compiling -target- code, that
@@ -321,7 +387,7 @@ assembler
 
 target-compiler
 : [   __meta ;
-: ^    p, ^ ;         ( compile target's exit)
+: ^    p, (unnest) ;  ( compile target's unnest)
 : ;   \tc ^  \tc [ ;  ( compile exit and return to meta)
 
 : [']        \m '  \m literal ;
@@ -333,6 +399,6 @@ definer
 forth
 
 ( Patch target colon compiler.)
-.meta. chain' literal  is target-literal
-             ' number  is target-number    ( use host's number)
--: \m , ;              is target-compile,  ( simply comma into image)
+.meta. chain' literal   is target-literal
+             ' number   is target-number    ( use host's number)
+.meta. chain' compile,  is target-compile,

@@ -2,7 +2,7 @@
 
   Copyright 2002-2017 David Frech. (Read the LICENSE for details.)
 
-loading RISC-V Forth kernel (ITC)
+loading RISC-V Forth kernel
 
 ( Yes, you guessed it: The guts of Forth for RISC-V!
 
@@ -33,44 +33,9 @@ loading RISC-V Forth kernel (ITC)
 
 
 -- ------------------------------------------------------------------------
--- Macros defining register conventions
--- ------------------------------------------------------------------------
-
-assembler
-\a a0  constant top
-\a s1  constant ip  ( instruction pointer)
-\a s0  constant rp  ( return stack pointer)
--- \a sp  constant sp  ( data stack pointer)
-\a gp  constant kp  ( kernel origin pointer)  ( XXX needed?)
-\a tp  constant up  ( "user" pointer - points to per-thread data)
-
-( XXX these are outside of compressed instruction set's register range.)
-\a s2  constant ix  ( loop index)
-\a t0  constant w   ( scratch w, also "word" pointer)
-\a t1  constant x   ( scratch x, also "execute" pointer)
-\a t2  constant y   ( scratch y)
-\a t3  constant z   ( scratch z)
-forth
-
-( Tell the disassembler about these register names.)
--:  ( reg)
-   dup 0= if  drop  ." zero"  ^  then
-   dup 16 u< if
-            z"    ra sp kp up w  x  y  rp ip topa1 a2 a3 a4 a5 "
-   else
-      16 -  z" a6 a7 ix s3 s4 s5 s6 s7 s8 s9 s10s11z  t4 t5 t6 "
-   then
-   swap 3 * + 3 -trailing type ;
-
-: forth-regs  [ ] is .regname ;  forth-regs
-
--- ------------------------------------------------------------------------
 -- Macros defining common VM operations
 -- ------------------------------------------------------------------------
 assembler
-
-( Compile NEXT inline.)
-: next,   asm{  0 ip w lw   cell ip ip addi   -1 cells w x lw   0 x jr  } ;
 
 ( XXX Macros or subroutines?)
 ( Data stack macros.)
@@ -120,7 +85,44 @@ forth
 -- The kernel begins here!
 -- ------------------------------------------------------------------------
 __meta
-hex
+
+
+.ifdef native
+
+assembler
+: dispatch  asm{     0  w jr  } ;
+:  next,    asm{     0 ip jr  } ;
+: +next,    asm{  cell ip jr  } ;  ( skip cell, then do next)
+:  next     asm{     0 ip jr  } ;
+forth
+
+meta: constant  new  ,  ;code  label doconst
+                               0 w w lw  ( fetch constant into w)
+                               ( fall thru)  ;c
+
+meta: create    new     ;code  label dovar
+                               label wpush
+                               top push1   w top mv  ( move pfa to top)
+                               next,  ;c
+
+meta: :         new  ]  ;code  label docolon
+                               ip rpush1   0 w jr  ;c
+
+                               label dodoes
+                               top push1   w top mv  ( move pfa to top)
+                               ip rpush1   0 x jr  ;c
+
+code nope       [r]   next,  ;c
+code* (unnest)  [r]   ip rpop1   next,  ;c
+
+.else  ( ITC)
+
+( Compile NEXT inline.)
+assembler
+: dispatch   asm{  -1 cells w x lw   0 x jr  } ;
+:  next,     asm{     0 ip w lw      cell ip ip addi   dispatch  } ;
+: +next,     asm{  cell ip w lw   2 cells ip ip addi   dispatch  } ;
+forth
 
 meta: constant  new  ,  ;code  label doconst
                                0 w w lw  ( fetch constant into w)
@@ -138,42 +140,33 @@ meta: create    new     ;code  label dovar
 meta: :         new  ]  ;code  label docolon
                                ip rpush1   w ip mv  ( pfa is new ip)   next,  ;c
 
-definer: does>   <;code>  asm{  dodoes x jal  }  ] ;
+code* (unnest)  [r]   ip rpop1   begin   next,  ;c
+codes nope      [r]
 
-( Allocate buffer space _before_ defining the constant that pushes the
-  buffer's address. This way we can define buffers in ram as well as in
-  flash!)
-
-meta: buffer   ( #bytes)
-   h preserve  ram  here  swap aligned allot  constant ;
-
-meta: variable     cell    buffer ;  ( A variable is a cell-sized buffer!)
-meta: 2variable    cell 2* buffer ;
-
-code*  ^    [r]  ( unnest)   ip rpop1   begin   next,  ;c
-codes nope  [r]
-
-code* (lit)   [r]   0 ip w lw   cell ip ip addi  ( fetch literal)   wpush j  ;c
-
-code execute   ( pfa)      top w mv   begin   top pop1
-                    -1 cells w x lw   0 x jr  ;c
-code @execute  ( 'pfa)   0 top w lw   again  ;c
-
-( Define one of two possible ways to compile NEXT for the rest of the
-  kernel.)
+( For ITC kernels, define one of two possible ways to compile NEXT for the
+  rest of the kernel.)
 
 .ifdef shared-next
-( Compile a jump to a previous inline NEXT.)
-meta: next   asm{  shared-next j  } ;
+meta: next   asm{  shared-next j  } ;  ( Compile a jump to a previous inline NEXT.)
 .else
-meta: next   asm{  next,  } ;
+meta: next   asm{  next,  } ;          ( Compile NEXT inline.)
 .then
 
+.then  ( ITC)
+
+definer: does>   <;code>  asm{  dodoes x jal  }  ] ;
+
+code* (lit)     [r]   0 ip w lw  ( fetch literal)
+                      top push1   w top mv  ( move literal to top)
+                      +next,  ( skip literal value)  ;c
+
+code execute   ( cfa/pfa)       top w mv   begin   top pop1   dispatch  ;c
+code @execute  ( 'cfa/'pfa)   0 top w lw   again  ;c
 
 code*    (branch)   [r]
-label branch        0 ip ip lw  ( follow branch)   next  ;c
+label branch        0 ip ip lw  ( follow branch)   next,  ;c
 code*   (0branch)   [r]  top w mv   top pop1   branch w 0!= until  ( fall thru)  ;c
-label  skip         cell ip ip addi   next  ;c
+label  skip         +next,  ( skip branch address)  ;c
 code*  (?0branch)   [r]  skip top 0= until   top pop1   branch j  ;c
 code*  (=0branch)   [r]  skip top 0= until              branch j  ;c
 
@@ -226,6 +219,15 @@ code* (+loop)  [r]  ( incr)
 code i   [r]  ( - index)
    0 rp w lw   ix w w add   wpush j  ;c
 
+( Allocate buffer space _before_ defining the constant that pushes the
+  buffer's address. This way we can define buffers in ram as well as in
+  flash!)
+
+meta: buffer   ( #bytes)
+   h preserve  ram  here  swap aligned allot  constant ;
+
+meta: variable     cell    buffer ;  ( A variable is a cell-sized buffer!)
+meta: 2variable    cell 2* buffer ;
 
 ( Basic unary ops.)
 code invert   top top not   next  ;c
@@ -323,7 +325,6 @@ meta: incr   constant  ;code   0 w w lw   w top top add   next  ;c
 cell        incr cell+   [r]
 cell negate incr cell-   [r]
 
-
 ( Double numbers. Useful, among other things, for computing with RISC-V's
   64-bit timers and counters.)
 
@@ -374,13 +375,13 @@ label dless-common
       2 cells sp y lw  ( d1lo)
       3 cells sp sp addi  ( pop)   y w top sltu  ( d1 d2 u<)   makeflag j
    then
-   3 cells sp sp addi   0 ra jr  ;c
+   3 cells sp sp addi   0 w jr  ;c
 
 code d<   ( d1 d2 - f)
-   dless-common ra jal   x top top slt    makeflag j  ;c
+   dless-common w jal   x top top slt    makeflag j  ;c
 
 code ud<  ( d1 d2 - f)
-   dless-common ra jal   x top top sltu   makeflag j  ;c
+   dless-common w jal   x top top sltu   makeflag j  ;c
 
 ( Host words to make it easier to deal with double numbers on the target.
 
@@ -390,8 +391,8 @@ code ud<  ( d1 d2 - f)
   ud.  prints a target double number as an unsigned 64-bit number
 )
 
-meta: >d   ( host - tdlo tdhi)   dup "ffff_ffff and  ( lo)  swap #32 u>> ;
-meta: d>   ( tdlo tdhi - host)   #32 <<  swap "ffff_ffff and  + ;
+meta: >d   ( host - tdlo tdhi)   dup "ffff_ffff and  ( lo)  swap 32 u>> ;
+meta: d>   ( tdlo tdhi - host)   32 <<  swap "ffff_ffff and  + ;
 meta: ud.  ( tdlo tdhi)   d>     u. ;
 meta: d.   ( tdlo tdhi)   d>  \f  . ;
 
@@ -452,7 +453,6 @@ code minstret32@  ( - minstret-lo)   minstret w csrr   wpush j  ;c
 ( Since the high words aren't necessary, drop them, leaving four lo words.)
 : 4lo  ( alo ahi blo bhi clo chi dlo dhi - alo blo clo dlo)
    drop >r  drop >r  drop  nip  r>  r> ;
-
 
 ram
 
