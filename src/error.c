@@ -9,7 +9,7 @@
 #include "muforth.h"
 
 #include <stdlib.h>     /* for exit() */
-#include <errno.h>
+#include <errno.h>      /* XXX should this be sys/errno.h ? */
 #include <stdio.h>
 
 /* A bit of a crock, but only called if we haven't set up a catch frame. */
@@ -40,7 +40,8 @@ void mu_push_tick_abort()
 }
 
 /*
- * abort_zmsg() is shorthand for PUSH(zmsg); mu_abort();
+ * abort_zmsg() pushes a pointer to a zero-terminated string, and then
+ * calls abort.
  */
 
 void abort_zmsg(const char *zmsg)

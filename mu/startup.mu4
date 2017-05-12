@@ -592,7 +592,7 @@ forth
   |   +--------------------+
   +---+     prev frame     |<--- fp
       +--------------------+
-      |    ip of remove    |<--- rp      remove just calls unlink
+      |    ip of remove    |<--- rp      remove calls unlink
       +--------------------+                                          )
 
 runtime
@@ -615,24 +615,31 @@ variable fp    ( the "top" - most recently pushed - frame)
   necessary to de-allocate the frame and undo any state changes made by the
   word that called link.)
 
-: unlink ( 'frame - 'prevframe)
-           r> swap       ( save return address)
-           rp!  r>       ( unlink frame)
-           r> execute    ( execute cleanup word)
-           swap >r       ( restore return address) ;
+: unlink   r>                 ( save return address)
+           fp @ rp!  r> fp !  ( unlink frame)
+           r> execute         ( execute cleanup word)
+           >r                 ( restore return address) ;
 
-( NOTE: Unlike in unwind, this does an rp@ before unlinking, rather than fp @)
-create remove  -]  rp@  unlink  fp ! ;   ( remove pushes IP when executed!)
+create remove  -]  unlink ;   ( remove pushes IP when executed!)
+
+
+.ifdef with-unwind
+
+( XXX We don't currently *ever* unwind everything, as this would cause
+  muforth to exit. Instead, we use catch and throw to do a more controlled
+  unwinding.)
 
 ( unwind is useful in the context of exceptions. It starts at fp and
   unlinks each frame in turn until fp points to a frame with a zero link.)
 
 variable 'unwind
 : unwind   r>  ( save return address)
-           -- begin  fp @ @  =while  unlink  repeat  drop
-           fp @  begin  =while  unlink  repeat  fp !
+           -- begin  fp @ @  while  unlink  repeat
+           begin  fp @ while  unlink  repeat
            r@ 'unwind !
            >r  ( restore return address) ;
+
+.then  ( with-unwind)
 
 
 ( Now some interesting applications.)
@@ -641,97 +648,33 @@ variable 'unwind
 -- Catch and throw
 -- -----------------------------------------------------------------------
 
-( NOTE: These first catch and throw are works-in-progress. I've tested the
-  simple versions below that ignore the other R stack frames, and they work
-  fine. Now to figure out how to combine them into one beautful whole.)
-
-create 'catch  ( create a unique address to identify catch frames)
-: nothrow   shunt  0 ;
+variable caught  ( set to resume address when unlinking a catch frame)
+: yo-la-tengo   r> ( ra)  r> ( resume)  caught !  ( ra) >r ;
 
 ( Create a catch frame, then execute the following word. If nothing is
   throw'n, return 0; otherwise return thrown value.)
 
 : catch
-   r> ( ra)  @+  ( fetch following cfa)
-   'catch >r     ( mark as a catch frame)
-   link nope     ( push cleanup - do nothing!)
-   remove >r     ( normal return - unlink and cleanup)
-   >r ( ra)  execute ;
+   r> ( ra)
+   @+  dup >r        ( fetch following cfa; skip and push as resume addr)
+   link yo-la-tengo  ( push cleanup - set caught to resume address)
+   remove >r         ( normal return - unlink and cleanup)
+   >r ( ra)  execute  0 ;
 
 ( If error is non-zero, unwind the R stack to the nearest enclosing catch
   frame, and return error. Otherwise, drop and return to caller.)
 
-: throw  ( error)
-   =if
-      ( Unwind to nearest catch frame)
-      begin  fp @  =while  unlink  'catch = until  ( XXX)  then  ( YYY)
-   then  drop ;
-
--- What about first doing catch and throw independently of the other return
--- stack words, and then trying to combine them?
-
-variable cf   ( catch frame pointer)
-
-
-comment catch-throw-resetting-sp
-
-( NOTE: I decided a while ago that I didn't like the exception handler to
-  muck about with the data stack. It's often nicer to see what was on the
-  stack when something failed - like a filename or file descriptor.
-
-  But for completeness' sake, I have pasted here the versions of catch and
-  throw that save and restore SP.)
-
-: catch
-   r>  @+  >r     ( fetch & skip following cfa)
-   sp@ cell+  >r  ( save SP)
-        cf @  >r  ( push prev catch frame pointer)
-   rp@  cf !      ( now point to this frame)
-   execute
-   r>  cf !       ( restore prev frame pointer)
-   shunt          ( toss saved SP)
-   0 ;
+forth
+defer uncaught
+runtime
 
 : throw  ( error)
-   =if
-          cf @  rp!  ( unwind to last catch frame)
-      r>  cf !       ( restore prev frame pointer)
-      r>  swap >r    ( fetch saved sp, push error onto R)
-      sp! r>  ^      ( reset D stack, get error)
-   then  drop ;
-
-comment catch-throw-resetting-sp
-
-
-( These don't save or restore SP.)
-: catch
-   r>  @+  >r     ( fetch & skip following cfa)
-        cf @  >r  ( push prev catch frame pointer)
-   rp@  cf !      ( now point to this frame)
-   execute
-   r>  cf !       ( restore prev frame pointer)
-   0 ;
-
-: throw  ( error)
-   =if
-      cf @           ( unwind to last catch frame)
-      fp @  begin  2dup swap u<  over and  while  unlink  repeat  fp !
-      rp!
-      r>  cf !  ^    ( restore prev frame pointer)
-   then  drop ;
-
-
--- -----------------------------------------------------------------------
--- Error trapping
--- -----------------------------------------------------------------------
-( Simply make a frame so we have a place to unwind to.)
-
-: trap
-   r> ( ra)
-   dup cell- >r  ( re-execute trap!)
-   link nope     ( push cleanup - do nothing!)
-   remove >r     ( normal return - unlink and cleanup)
-   >r ( ra) ;
+   ?if
+      ( Unwind to nearest catch frame, or until all frames unlinked.)
+      caught off  begin  fp @ while  unlink  caught @ ?until
+      ( Found catch frame)  >r ( push resume address)  ^  then
+      ( Unlinked everything)  uncaught
+   then ;
 
 
 -- -----------------------------------------------------------------------
@@ -1398,9 +1341,9 @@ variable zloading    ( C-string name of file being loaded)
   started loading _and_ zloading is non-zero - ie, we're loading a file.)
 
 : check-depth  ( saved-depth)
-   depth swap -  2 - ( use show-depths to see the "standard" difference!)
-      =if  zloading @ =if
-      ."  [ "  zcount type  ." : +depth " .  ." ]" ^  then  drop  then  drop ;
+   depth swap -  1- ( use show-depths to see the "standard" difference!)
+      ?if  zloading @ ?if
+      ."  [ "  zcount type  ." : +depth " .  ." ]"  then  then ;
 
 : show-depths  ( saved)   depth .  . ;
 
@@ -1556,19 +1499,21 @@ Copyright (c) 2002-2017 David Frech (read the LICENSE for details)
 Type 'settings' to see a few of muforth's tweakable behaviours.
 " ;
 
-( Don't print file & lineno if interactive - ie, zloading is zero)
+( Print filename if zloading non-zero; print linenumber if @line non-zero.)
 : .where
-   zloading @  =if  zcount type  ." , line "
-   @line  radix preserve decimal u.  ." : "  ^  then
-   drop ;
+   zloading @  =if  dup zcount type  then
+   @line  =if  ." , line "  radix preserve decimal  dup u.  then
+   or if  ." : "  then ;
 
-: .error
+: .error  ( z")
    >stderr  cr  .where  parsed type space  zcount type ;
 
 ' .error  is warn
+: ?error  ( z")   ?if  .error  then ;
 
--: ( z")  .error  -1 throw ;   'abort !
-
+z" startup.mu4" zloading !
+-:  .error  cr  ;  is uncaught
+.runtime. chain' throw  'abort !
 
 ( Now that all targets have been switched to the du-cached code, and
   du-cached has been fixed to work even without termios support, let's
@@ -1597,10 +1542,11 @@ ld lib/du-cached.mu4
 : warm
    decimal \ [
    >stderr banner
-   1 line !  ( so it's "correct" for interactive!)
    -consumed +sep +case +radix +stack ( defaults - reset these how you like)
-   command-line count  catch evaluate drop
-   begin  catch quit  drop  again ;
+   z" (command line)" zloading !  line off
+   command-line count  catch evaluate ?error
+   z" (interactive)" zloading !
+   begin  catch quit  ?error  again ;
 
 ( Identify ourselves.)
 -d  muforth
