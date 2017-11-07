@@ -35,72 +35,49 @@ hex
    usb-target  usb-control drop ;
 
 ( Commands)
-: u.Read   ( target-addr length buffer)  2push
+: u.ReadChunk   ( target-addr length buffer)  2push
            0c0 00 rot 0 2pop  usb ;
 
-: u.Write  ( target-addr length buffer)  2push
+: u.WriteChunk  ( target-addr length buffer)  2push
             40 01 rot 0 2pop  usb ;
 
-: u.Flash  ( target-addr length buffer cmd)  -rot 2push 2push
+: u.FlashWrite  ( target-addr length buffer cmd)  -rot 2push 2push
             40 01 2pop 2pop   usb ;
 
-: u.Run     40 02 0 0 0 0   usb ;
+: u.Run     40 02 0 0 0 0     usb ;
 
 : u.ReadSp  ( buffer)  push
-            0c0 03 0 0 2 pop   usb ;
-
-variable uaddr  ( current memory access address)
-
-: usb-c@  ( addr - byte)             1  pad  u.Read  pad c@ ;
-: usb-c!  ( byte addr)  swap pad c!  1  pad  u.Write ;
+           0c0 03 0 0 2 pop   usb ;
 
 : usb-sp  ( - sp)  pad u.ReadSp  pad beh@ ;
 
-: u.SetAddr  uaddr ! ;
-: u.GetAddr  uaddr @ ;
-: u.ReadNext   u.GetAddr usb-c@  1 uaddr +! ;
-: u.WriteNext  u.GetAddr usb-c!  1 uaddr +! ;
-
 : u.GetRegs  ( buf - sp)
-   usb-sp  dup push  6 rot  u.Read  pop ;
+   usb-sp  dup push  6 rot  u.ReadChunk  pop ;
 
 : u.SetRegs  ( buf)
-   usb-sp            6 rot  u.Write ;
+   usb-sp            6 rot  u.WriteChunk ;
 
 ( Order of regs in memory: H CC A X PC)
 ( XXX this is a huge kludge)
 : u.SetPC  ( pc)
-   usb-sp  4 +  swap  pad beh!
-   2 pad  u.Write ;
+   usb-sp  4 +  swap  pad beh!  2 pad  u.WriteChunk ;
 
-.ifdef t.Id  ( if we've loaded interact support)
+( XXX Are these only used in u.FlashChunk?)
+: usb-c@  ( addr - byte)             1  pad  u.ReadChunk   pad c@ ;
+: usb-c!  ( byte addr)  swap pad c!  1  pad  u.WriteChunk ;
 
-: u.FlashChunk   ( 'target len buffer cmd - status)
+: u.FlashChunk  ( target-addr length buffer cmd - status)
    30 \l FSTAT usb-c!  ( clear flash errors)
-   u.Flash
+   u.FlashWrite
    \l FSTAT usb-c@  ( return status) ;
 
-: u.Id   \l SDIDL usb-c@ ;
+.ifdef t.Hello  ( only if we've loaded the interact code)
 
 .ifdef usb-debug-via-serial
 : chat-usb  ( to distinguish between the usb and serial versions)
 .else
 : chat
 .then
-   ( Wire our versions into the interact code.)
-   ['] u.Id is t.Id
-   ['] u.Run is t.RunWait
-   ['] u.Run is t.Run
-   ['] u.SetRegs is t.SetRegs
-   ['] u.GetRegs is t.GetRegs
-   ['] u.SetAddr is t.SetAddr
-   ['] u.GetAddr is t.GetAddr
-   ['] u.ReadNext is t.Read
-   ['] u.WriteNext is t.Write
-   ['] u.Read is t.ReadChunk
-   ['] u.Write is t.WriteChunk
-   ['] u.FlashChunk is t.FlashChunk
-
-   +chat  hi ;
-
+   chat-via  nope  u.GetRegs  u.SetRegs  u.Run
+             u.ReadChunk  u.WriteChunk  u.FlashChunk ;
 .then
