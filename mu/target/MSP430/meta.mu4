@@ -55,16 +55,16 @@ forth
 : lookup  ( look up next token as forward-ref variable or label)
    .meta. chain' execute ( get addr) ;
 
-( implements should capture the pfa - parameter field address - of the word
-  it refers to.)
+( implements should capture the cfa - code field address - of the word it
+  refers to.)
 
 : implements   \m here  lookup  !  __asm ;
 
 ( Fetch value of variable - a primitive - and complain if not yet defined.)
 : (p@)  ( var)  @  =if  ^  then  error" primitive not yet defined" ;
 
-( Fetch primitive and compile into target. cell- yields cfa from pfa.)
-: (p,)  ( var)  (p@)  \m cell-  \m , ;
+( Fetch primitive and compile into target.)
+: (p,)  ( var)  (p@)  \m , ;
 
 compiler
 : p,   .meta. \chain  compile (p,) ;
@@ -92,7 +92,7 @@ meta
    \m cell +loop ;
 
 ( Create new target names. A name is a target word which is defined as a
-  _constant_ equal to its parameter field address.)
+  _constant_ equal to its code field address.)
 
 ( labels are always created in .meta.
    names are always created in .target.
@@ -109,13 +109,13 @@ meta
 : label   current preserve  meta    \m here  constant  __asm ;
 : name    current preserve  target  \m here  constant ;
 : code,   \m here last-code !  ( make a code field)  "dead \m , ;
-: new     \m code,  \m name ;  ( for words with code fields)
+: new     \m name  \m code, ;  ( for words with code fields)
 
-: codes   ( 'code)  \m ,  \m name  __asm ;
+: codes   ( 'code)  \m name  \m ,  __asm ;
 : code    \m here  \m cell+  \m codes ;
 
 ( For code words that implement forward-referenced meta-compiler primitives.)
-: code*   \m code  untoken  implements ;
+: code*   implements  untoken  \m code ;
 
 
 ( For forward references. Use hook to define the hook. This creates a label
@@ -264,11 +264,12 @@ forth
 -- ------------------------------------------------------------------------
 
 meta
-( ' get target word's constant value: its pfa
+( ' get target word's constant value: its cfa
   We search runtime words too, so we can du or dis them.)
 
 : '   .target-runtime. chain' execute ;
-: >value  image-@ ;
+: >body   \m cell+ ;
+: >value  >body  image-@ ;
 
 : ]   __target-colon ;  ( does NOT create a literal!)
 
@@ -299,4 +300,4 @@ forth
 ( Patch target colon compiler.)
 .meta. chain' literal  is target-literal
              ' number  is target-number    ( use host's number)
--: \m cell-  \m , ;    is target-compile,  ( simply comma into image)
+-: \m , ;              is target-compile,  ( simply comma the cfa into image)
