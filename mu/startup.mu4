@@ -189,11 +189,6 @@ forth
 : 2over  ( a b c d - a b c d a b)   [ 2 1+ ] nth  [ 2 1+ ] nth ;
 : 2tuck  ( a b c d - c d a b c d)   2swap  2over ;
 
-runtime
-: 2push  ( a b -> R: a b)  swap  pop -rot  push push      push ;
-: 2pop   ( R: a b -> a b)        pop       pop pop    rot push  swap ;
-forth
-
 : =    xor 0= ;
 : not      0= ;  ( warning! this is NOT 1's complement)
 : bic  invert and ;
@@ -1150,34 +1145,70 @@ being-defined -v  ( be verbose)
 ( !!!!-------------------- Add changes below this line -------------------!!!!)
 
 ( Word listing. Putting this in as soon as possible. Needs `space'.)
-( Word called for each word has the following stack comment:
-   ( 'link - counted? exit?)
 
-: forall-words  ( 'link 'code - count)
-   push   0 swap  ( count 'link)  0
-   begin  u+  @  =while  dup r@ execute  until  drop ( counted?)  then
+( Cross-referencing with the Forth 2012 draft standard, forall-words is
+  looking rather like the standard word TRAVERSE-WORDLIST, from the TOOLS
+  extension, which has the following stack effect:
+
+  ( i*x xt wid –– j*x )
+
+( wid represents a wordlist. xt is an "execution token". TRAVERSE-WORDLIST
+  executes xt with wid on the stack, and continues until the wordlist is
+  exhausted, or until xt returns false.
+
+  The invoked xt has the stack effect ( k*x nt –– l*x flag)
+
+( nt is a "name token"; flag is true if traversal should continue, and
+  false if it should terminate.
+
+  During the execution of TRAVERSE-WORDLIST there is nothing on the stack -
+  xt and wid have been popped - so that on each execution xt it is free to
+  modify the stack, which is why its stack effect shows i items on the
+  left, and j on the right.
+
+  Let's translate this into muforth's terms. The word called for each word
+  has the following stack effect:
+
+    ( k*x 'link - l*x continue?)
+
+( 'link is a link field address; ie, the address of a cell containing a
+  link. Since in muforth's dictionary links point to links, simply
+  executing  @  will follow the link.
+
+  One gotcha with all this: I don't see a good way for forall-words to skip
+  hidden words. It is left to the word that is called to process each word
+  on the chain whether to skip hidden entries or muchains.
+
+  In fact, .name-and-count-local *needs* to see hidden entries, since it
+  stops processing when it hits a muchain, and muchains are by definition
+  hidden. If the iterator skipped hidden entries it wouldn't know when to
+  stop!)
+
+: forall-words  ( i*x 'code 'link - j*x)
+   2push
+   begin  pop @ =while  push  2r@ swap execute  0= until  pop  then
    pop 2drop ;
 
 : hidden?   ( 'link - hidden?)      1- c@  ( len)  128 and ;
 : muchain?  ( 'link - muchain?)  cell- @  [ .forth. cell- @ ] = ;
 
-: .name-and-count-it  ( 'link - counted? exit?)
-   link>name  dup 2 + ?wrap  type space space  1  0 ;
+: .name-and-count-it  ( count 'link - count+1 continue?)
+   link>name  dup 2 + ?wrap  type space space  1+  -1 ;
 
 ( Push thru muchains and count everything except hidden words - which also
   means we don't count the muchains.)
 
-: .name-and-count-thru-muchains  ( 'link - counted? exit?)
-   dup  hidden? if  drop  0   0  ^  then
+: .name-and-count-thru-muchains  ( count 'link - count' continue?)
+   dup  hidden? if  drop  -1  ^  then
    .name-and-count-it ;
 
 ( Exit when we see the first muchain - we are joining another chain.)
-: .name-and-count-local  ( 'link - counted? exit?)
-   dup muchain? if  drop  0  -1  ^  then
+: .name-and-count-local  ( count 'link - count' continue?)
+   dup muchain? if  drop  0  ^  then
    .name-and-count-thru-muchains ;
 
 : (words)  ( 'code)
-   cr cr  current @  swap  ( 'link 'code)  forall-words
+   cr cr  0 swap ( count)  current @  ( count 'code 'link)  forall-words
    radix preserve  decimal  cr  ." ("  . ." words)" ;
 
 : words      ['] .name-and-count-local          (words) ;

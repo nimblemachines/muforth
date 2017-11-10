@@ -182,28 +182,37 @@ void mu_runtime_qleave()
  * third-level (k) do-loops
  */
 
-void mu_runtime_i() { PUSH(RP[0] + RP[1]); }
-void mu_runtime_j() { PUSH(RP[3] + RP[4]); }
-void mu_runtime_k() { PUSH(RP[6] + RP[7]); }
+void mu_runtime_i()  { PUSH(RP[0] + RP[1]); }
+void mu_runtime_j()  { PUSH(RP[3] + RP[4]); }
+void mu_runtime_k()  { PUSH(RP[6] + RP[7]); }
 
 /* R stack functions */
-void mu_runtime_to_r()   { RPUSH(POP); }
-void mu_runtime_r_from() { PUSH(RPOP); }
-void mu_runtime_rfetch() { PUSH(RP[0]); }
+void mu_runtime_rfetch()   { PUSH(RP[0]); }
+void mu_runtime_to_r()     { RPUSH(POP); }
+void mu_runtime_r_from()   { PUSH(RPOP); }
+
+void mu_runtime_2rfetch()  { PUSH(RP[1]); PUSH(RP[0]); }
+void mu_runtime_2to_r()    { RPUSH(SP[1]); RPUSH(SP[0]); DROP(2); }
+void mu_runtime_2r_from()  { mu_runtime_2rfetch(); RDROP(2); }
 
 /* These are Chuck's newfangled names for >r and r> */
 /* XXX Consider deprecating and removing these? */
 void mu_runtime_push()   { mu_runtime_to_r(); }
 void mu_runtime_pop()    { mu_runtime_r_from(); }
 
-/* shunt is shorthand for r> drop */
-void mu_runtime_shunt()  { RP++; }
+/* Similarly, 2push and 2pop are synonyms for 2>r and 2r>, resp. */
+void mu_runtime_2push()   { mu_runtime_2to_r(); }
+void mu_runtime_2pop()    { mu_runtime_2r_from(); }
+
+/* rdrop is shorthand for r> drop */
+void mu_runtime_rdrop()   { RDROP(1); }
+void mu_runtime_2rdrop()  { RDROP(2); }
 
 /*
  * I'm beginning to prefer rdrop, but until I change a bunch of existing
- * code, let's make it a synonym for shunt.
+ * code, let's make shunt a synonym for rdrop.
  */
-void mu_runtime_rdrop()  { mu_runtime_shunt(); }
+void mu_runtime_shunt()  { mu_runtime_rdrop(); }
 
 
 #if 0
