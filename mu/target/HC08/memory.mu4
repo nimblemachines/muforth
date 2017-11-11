@@ -16,80 +16,18 @@ loading HC08 memory image
   byte of the image buffer.)
 
 64 Ki constant #image
-#image buffer 'image
-
-: wrap   [ #image 1- ] and ;
-: +a  ( a1 a2 - sum)  +  wrap ;  ( add and wrap to 16bit address)
-
-: image+  ( target - host)  wrap  'image + ;
-: image-  ( host - target)        'image -  wrap ;
-
-
-( DEBUG: Define show-comma to show code as it's compiled.)
-.ifdef show-comma
-: .debug-comma  dup  .h8_ ;
-.else
-: .debug-comma ;
-.then
-
-( DEBUG: Define show-! to show writes to image.)
-.ifdef show-!
-: .debug-c!   cr  ( byte addr)  2dup .hcell_  .h8 ;
-: .debug-w!   cr  ( word addr)  2dup .hcell_  .hcell ;
-.else
-: .debug-c! ;
-: .debug-w! ;
-.then
-
-: image-c@             image+ c@ ;
-: image-c!  .debug-c!  image+ c! ;
 
 ( HC08s are big-endian, like all Motorola/Freescale processors!)
-: image-@  ( a - w)             image+  beh@ ;
-: image-!  ( w a)    .debug-w!  image+  beh! ;
+-d big-endian
+-d unaligned-words
 
--: ( buf a u)  swap image+ -rot  cmove ;
-: >image
-   [ ]       is |read    ( read from image buffer)
-   ['] beh@  is |cell@
-             16 |addr !  ( size of addr in bits)
-              2 |cell !  ( size of cell in bytes) ;
->image
+ld target/common/memory-small-flat.mu4
 
-( Dictionary operators.)
-variable h   ( image dictionary pointer pointer; points to one of:)
-: image-region  2variable  does>  h ! ;
-   image-region xram
-   image-region zram
-   image-region ram
-   image-region flash
-
-: region!  ( a)      dup  h @  2!  ( set pointer and origin) ;
-: region@  ( origin ptr)  h @  2@  ( get pointer and origin) ;
-
-meta
-: thither  ( a)       h @         !  ( set pointer - ie, "to there") ;
-: from     ( a)       h @  cell+  !  ( set origin) ;
-
-: here   ( - a)       h @         @ ;
-: allot  ( n)         h @        +! ;
-
-: c,    ( ch)   .debug-comma  \m here image-c!  1 \m allot ;
-: ,     ( n)    ( \m align)  >lohi  \m c, ( hi)  \m c, ( lo) ;
-
-2 constant cell
-: cells  2* ;
-: cell/  2/ ;
-: cell+  \m cell + ;
-: cell-  \m cell - ;
-
-forth
-( return the origin & number of bytes in current region)
-: region  ( - a u)  region@  ( origin ptr)  over - ;
-
-( Initialization.)
-: wipe   'image  #image  ( erase)   "ff  fill ;
-
+( h points to one of:)
+@ram    image-region zram   ( image-region sets origin and ptr)
+"100    image-region xram
+"100    image-region ram
+@flash  image-region flash
 
 ( xram is a bit odd. Sometimes we need to set aside a few bytes of zram
   for flash-based code - like the USB chat and BDM code - and never
@@ -116,9 +54,5 @@ forth
   it's already in flash, just so your code "knows" how much xram is
   allocated.)
 
-( Erase image, default origins: zram to @ram, ram and xram to "100, and
-  flash to @flash. Since we did not preserve h, this leaves us in the flash
-  region.)
-
-wipe  @ram zram region!  "100 dup xram region! ram region!
-   @flash flash region!
+( Erase image memory and default to ram region.)
+wipe  ram
