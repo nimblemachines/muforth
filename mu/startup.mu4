@@ -618,58 +618,50 @@ variable fp    ( the "top" - most recently pushed - frame)
 create remove  -]  unlink ;   ( remove pushes IP when executed!)
 
 
-.ifdef with-unwind
-
-( XXX We don't currently *ever* unwind everything, as this would cause
-  muforth to exit. Instead, we use catch and throw to do a more controlled
-  unwinding.)
-
-( unwind is useful in the context of exceptions. It starts at fp and
-  unlinks each frame in turn until fp points to a frame with a zero link.)
-
-variable 'unwind
-: unwind   r>  ( save return address)
-           -- begin  fp @ @  while  unlink  repeat
-           begin  fp @ while  unlink  repeat
-           r@ 'unwind !
-           >r  ( restore return address) ;
-
-.then  ( with-unwind)
-
-
 ( Now some interesting applications.)
 
 -- -----------------------------------------------------------------------
 -- Catch and throw
 -- -----------------------------------------------------------------------
 
-variable caught  ( set to resume address when unlinking a catch frame)
-: yo-la-tengo   r> ( ra)  r> ( resume)  caught !  ( ra) >r ;
+variable cf   ( catch frame pointer)
 
-( Create a catch frame, then execute the following word. If nothing is
-  throw'n, return 0; otherwise return thrown value.)
-
+( These don't save or restore SP.)
 : catch
-   r> ( ra)
-   @+  dup >r        ( fetch following cfa; skip and push as resume addr)
-   link yo-la-tengo  ( push cleanup - set caught to resume address)
-   remove >r         ( normal return - unlink and cleanup)
-   >r ( ra)  execute  0 ;
+   r>  @+  >r     ( fetch & skip following cfa)
+        cf @  >r  ( push prev catch frame pointer)
+   rp@  cf !      ( now point to this frame)
+   execute
+   r>  cf !       ( restore prev catch frame pointer)
+   0 ;
 
-( If error is non-zero, unwind the R stack to the nearest enclosing catch
-  frame, and return error. Otherwise, drop and return to caller.)
-
-forth
-defer uncaught
-runtime
+( throw returns to word after catch. It is up to this code to unwind the
+  stack!)
 
 : throw  ( error)
    ?if
-      ( Unwind to nearest catch frame, or until all frames unlinked.)
-      caught off  begin  fp @ while  unlink  caught @ ?until
-      ( Found catch frame)  >r ( push resume address)  ^  then
-      ( Unlinked everything)  uncaught
+      cf @  cell+ @  >r  ( pretend to return from catch!)
    then ;
+
+( unwind is useful in the context of exceptions. It starts at fp and
+  unlinks each frame in turn until fp is zero or points to a frame above
+  the current catch frame.)
+
+( XXX Right now we are using unwinding as an on/off toggle, but in the
+  future we could have different bits that could be tested by the various
+  cleanup routines.)
+
+variable unwinding
+: unwind  ( unwind-flags)
+   unwinding !
+   r>  ( ra)
+   ( While fp non-zero and pushed frames are below last catch frame, unlink them.)
+   begin  fp @ dup  cf @  u<  and  while  unlink  repeat
+   cf @  rp!
+   r>  cf ! ( restore prev catch frame pointer)
+   rdrop    ( discard return address from catch - we've already executed it!)
+   >r  ( ra)
+   unwinding off ;
 
 
 -- -----------------------------------------------------------------------
@@ -1380,9 +1372,10 @@ variable zloading    ( C-string name of file being loaded)
   started loading _and_ zloading is non-zero - ie, we're loading a file.)
 
 : check-depth  ( saved-depth)
+   unwinding @ if  drop  ^  then
    depth swap -  1- ( use show-depths to see the "standard" difference!)
-      ?if  zloading @ ?if
-      ."  [ "  zcount type  ." : +depth " .  ." ]"  then  then ;
+   ?if  zloading @ ?if
+      cr  ."   [ "  zcount type  ." : +depth " . ."  ] "  then  then ;
 
 : show-depths  ( saved)   depth .  . ;
 
@@ -1433,14 +1426,19 @@ variable zloading    ( C-string name of file being loaded)
 : ld!  token, raw-load-file ;
 
 defer load-stats  ( show space consumed, or simply close double parens)
+
 ( how much dictionary space was consumed?)
 -: ( show-consumed)  ( here)
+   unwinding @ if  drop  ^ then
    radix preserve  decimal
    out-channel preserve  >stderr
    here swap -  space .  ." bytes ))" ;
+
 : +consumed  [ ] is load-stats ;
 
--: ( dont-show-consumed)  ( here)  drop  ." ))" ;
+-: ( dont-show-consumed)  ( here)
+   drop  unwinding @ if ^ then  ." ))" ;
+
 : -consumed  [ ] is load-stats ;  -consumed
 
 ( Print some descriptive text and, at end of file, optionally show the
@@ -1548,11 +1546,12 @@ Type 'settings' to see a few of muforth's tweakable behaviours.
    >stderr  cr  .where  parsed type space  zcount type ;
 
 ' .error  is warn
-: ?error  ( z")   ?if  .error  then ;
+: ?error  ( z")   ?if  .error  r>  -1 unwind  >r  then ;
 
 z" startup.mu4" zloading !
--:  .error  cr  ;  is uncaught
+
 .runtime. chain' throw  'abort !
+
 
 ( Now that all targets have been switched to the du-cached code, and
   du-cached has been fixed to work even without termios support, let's
@@ -1584,8 +1583,8 @@ ld lib/du-cached.mu4
    -consumed +sep +case +radix +stack ( defaults - reset these how you like)
    z" (command line)" zloading !  line off
    command-line count  catch evaluate ?error
-   z" (interactive)" zloading !
-   begin  catch quit  ?error  again ;
+   zloading off
+   begin  catch quit ?error  again ;
 
 ( Identify ourselves.)
 -d  muforth
