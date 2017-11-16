@@ -58,12 +58,12 @@ hex
 __meta
 
 label get-byte
-   begin  01 # IFG2 & bitb  0!= until
-   UCA0RXBUF & top movb  ret  ;c
+   begin  01 # chat-uart-ifg & bitb  0!= until
+   chat-uart-rxbuf & top movb  ret  ;c
 
 label put-byte
-   begin  02 # IFG2 & bitb  0!= until
-   top UCA0TXBUF & movb  ret  ;c
+   begin  02 # chat-uart-ifg & bitb  0!= until
+   top chat-uart-txbuf & movb  ret  ;c
 
 label get-word
    get-byte c  top push  ( save low byte)
@@ -134,6 +134,8 @@ label run
    2 # sp add  ( skip return address to chat-entry)
    cp pop  ( context pointer)  reti  ;c
 
+.equates. .contains FCTL1 .if
+
 ( Write a word into flash, using the flash command passed to us by the
   host. It can be used to erase or program the flash.)
 
@@ -150,6 +152,15 @@ label flash-word
    FKEY FLOCK + # FCTL3 & mov    -- set FLOCK
    FCTL3 & top mov  put-word j   -- read status and return it
    ;c
+
+.else  ( dummy version)
+
+label flash-word
+   get-word c                    -- get value to write
+   get-word c                    -- get flash command + key
+   2 # mp add                    -- incr pointer
+   9658 # top mov  put-word j    -- return fake OK status
+.then
 
 ( Dispatch.)
 label command-table
@@ -204,36 +215,75 @@ Vreset handler
    -- disable watchdog timer
    WDTKEY 80 + # WDTCTL & mov
 
+( If this is an FRAM device, set the controller to insert 1 wait state. We
+  are about to switch to a 16 MHz CPU clock, which requires 1 wait state.)
+
+.equates. .contains FRCTL0 .if
+   FRKEY 1 4 << + # FRCTL0 & mov    -- unlock FRAM controller; set 1 wait state
+   FRCTL0 1+ ( high byte) & clrb    -- lock FRAM controller
+.then
+
+( If there is a 16 MHz calibration value in the info area, use it and set
+  the DCO to generate 16 MHz MCLK and SMCLK.)
+
+.equates. .contains CAL_BC1_16MHZ .if  ( we need to set up the DCO trim ourselves)
    -- Set clock to factory-calibrated 16 MHz
    -- See G2553 datasheet, p15
    CAL_BC1_16MHZ & BCSCTL1 & movb
    CAL_DCO_16MHZ & DCOCTL & movb
    BCSCTL2 & clrb
 
-   -- Configure UART for 115,200 bps, 8 bits, no parity
-   81 # UCA0CTL1 & bisb          -- enable SMCLK
-                                 -- hold UART in reset while configuring
-   UCA0CTL0 & clrb               -- reset to defaults: 8 bits, no parity, 1 stop
-   UCA0BR1 & clrb                -- set baud rate divisor
-.ifndef slow-chat
-   8 # UCA0BR0 & movb
-   %1011_0001 # UCA0MCTL & movb  -- 16x oversample; set modulator for 115,200
-                                 -- ie, UCBRF0=11 (decimal), UCBRS0=0
 .else
-   #104 # UCA0BR0 & movb
-   %0011_0001 # UCA0MCTL & movb  -- 16x oversample; set modulator for 9600
-                                 -- ie, UCBRF0=3, UCBRS0=0
+
+( If device contains a CS module, it has been factory calibrated. All we
+  need to do is to set the right divisors for the DCO to generate 16 MHz
+  MCLK and SMCLK clocks.)
+
+.equates. .contains CSCTL0 .if  ( DCO trimmed at factory; just choose divisors)
+   -- Right now this is for the FR6989. But other devices should work too.
+   CSKEY # CSCTL0 & mov          -- unlock CS module
+   %0100_1000 # CSCTL1 & mov     -- set DCORSEL=1, DCOFSEL=4 (16 MHz)
+   CSCTL3 & clr                  -- set DIVM and DIVS to /1
+   CSCTL0 1+ ( high byte) & clrb -- lock CS module
+
+.else
+
+z" No BCS calibration or CS module found. Your clock is unsupported."  abort
+
+.then .then
+
+   -- Configure UART for 115,200 bps, 8 bits, no parity
+   81 # chat-uart-ctl1 & bisb    -- enable SMCLK
+                                 -- hold UART in reset while configuring
+   chat-uart-ctl0 & clrb         -- reset to defaults: 8 bits, no parity, 1 stop
+   chat-uart-br1 & clrb          -- set baud rate divisor
+.ifndef slow-chat
+   8 # chat-uart-br0 & movb      -- 16,000,000/16/115,200
+.else
+   #104 # chat-uart-br0 & movb   -- 16,000,000/16/9600
 .then
-   01 # UCA0CTL1 & bicb          -- bring UART out of reset
+.ifdef chat-uart-mctlw
+   chat-uart-mctlw &  \f swap # \f swap  mov
+.else
+   chat-uart-mctl &  \f swap # \f swap  movb
+.then
 
-   -- Connect port pins P1.1 and P1.2 to UART
-   -- SEL=1 & SEL2=1
-   %0000_0110 # P1SEL & bisb
-   %0000_0110 # P1SEL2 & bisb
+.then
+   01 # chat-uart-ctl1 & bicb    -- bring UART out of reset
 
+   -- Connect correct port pins to UART RXD and TXD, based on chat-port-*
+   -- equates in the chip's equates file. Only two of the following lines
+   -- will match and get compiled.
+.ifdef chat-port-sel0-ones   chat-port-sel0-ones # chat-port-sel0 & bisb   .then
+.ifdef chat-port-sel1-ones   chat-port-sel1-ones # chat-port-sel1 & bisb   .then
+.ifdef chat-port-sel0-zeros  chat-port-sel0-zeros # chat-port-sel0 & bicb   .then
+.ifdef chat-port-sel1-zeros  chat-port-sel1-zeros # chat-port-sel1 & bicb   .then
+
+.equates. .contains FCTL2 .if  ( Flash control register)
    -- Set up flash clock; needs to be between 257 and 476 kHz (no joke)
    -- We're running at 16M, so set it to 16M/40 = 400k.
    FKEY #39 ( divisor-1) +  %0100_0000 ( MCLK)  + # FCTL2 & mov
+.then
 
 .then  ( not in-ram)
 
@@ -249,5 +299,12 @@ Vreset handler
   "hello" sequence.)
 
 here
+.equates. .contains Vbslkey .if
 Vbslkey goto  0 ,
+.else .equates. .contains Vbslsig1 .if
+Vbslsig1 goto  0aaaa dup , ,  ( sig1 and sig2)
+.else
+z" Do you have to do something special to prevent the BSL from erasing chip?"
+   abort
+.then .then
 goto

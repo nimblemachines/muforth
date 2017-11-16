@@ -18,12 +18,15 @@ hex
 : gen-ihex
    h preserve  flash
    out-channel preserve >stdout
-   region ( a u)  over +  ( a end)  @last-page over u< if
-      ( code reaches into last page; truncate length; need to flash vectors too)
-      ffc0 min  ( don't go beyond vectors)  over -  ( a u)  ihex-region
-      ffc0 40 ihex-region  ( vectors)  ihwend  ^
+   region ( a u)  over +  ( a end)  @vectors over u< if
+      ( code runs into vectors; truncate length; need to flash
+        vectors too, and don't want to write them *twice*.)
+      @vectors min  ( don't go beyond vectors)  over -  ( a u)  ihex-region
+      @vectors #vectors ihex-region  ( vectors)  ihwend  ^
    then  2drop
-   region ( a u)  ihex-region  ihwend ;
+   region ( a u)  ihex-region
+   region drop  @boot = if  @vectors #vectors ihex-region  then
+   ihwend ;
 
 
 ( On the reading side of the equation, let's hook into the intel hex file
@@ -38,7 +41,7 @@ hex
 
 -: ( count target base - count host)
    over +  image+ push ( host)
-   dup ffc0 u< if  ( ignore vectors etc)
+   dup @vectors u< if  ( ignore vectors etc)
       ihrextent cell+ @ 0< if  ( origin unset)  dup ihrextent cell+ !  then
       2dup + ihrextent !
    then  drop ( target)  pop ( host) ;  is ihraddr>host

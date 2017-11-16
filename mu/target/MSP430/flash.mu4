@@ -44,14 +44,6 @@ hex
       ( sum addr+)  over 0ff xor if  pop drop 2drop  0 ^  then  ( exit early)
    next  drop  0ff = ;
 
-( Where is the bootloader code?)
-( NOTE: this is currently the same as what @last-page calculates, but only
-  because the bootloader currently fits into the last page. If that
-  changes, @last-page will stay the same but this constant will change. Best
-  to keep them separate.)
-
-@flash #flash +  1 Ki 2/ -  constant @boot
-
 ( Check to see if we're going to clobber the bootloader and complain if
   we're not executing from RAM.)
 
@@ -61,26 +53,26 @@ hex
    error" You need to be running a RAM-based version of the chat code in
 order to re-flash it. Consult a local guru. ;-)" ;
 
-( Target address of first byte of the last page of flash.)
-@flash #flash +  /page -  constant @last-page
+( Target address of first byte of the flash page containing the vectors.)
+1_0000  /page -  constant @vector-page
 
 : flash-vectors
    cr ." flashing vectors"
-   0ffc0 40  ( 0ffc0 - 0ffff)  program-row ;
+   @vectors #vectors  program-row ;
 
 ( When we are about to program the _first_ row of a page, we erase the
-  page. If it's the last page of the flash, we save the trims, erase the
-  page, and then flash the vectors and trims.)
+  page. If it's the page of the flash that contains the vectors, we erase
+  the page and then flash the vectors.)
 
 : erased  ( 'target)
    dup [ /page 1- ] and  if  drop ^  then  ( do nothing if not first byte)
    dup erase-page
-   @last-page = if  ( erasing last page)  flash-vectors  then ;
+   @vector-page = if  ( erasing vector page)  flash-vectors  then ;
 
 ( Avoid flashing vectors _twice_.)
 : row  ( 'target len - 'target+len)
    2dup + push
-   over 0ffc0 = if  skip-row  pop  ^  then
+   over @vectors = if  skip-row  pop  ^  then
    over erased  program-row  pop ;
 
 : flash-region  ( a len)
@@ -111,6 +103,6 @@ order to re-flash it. Consult a local guru. ;-)" ;
 : verify
    h preserve  flash
    region ( a len)  verify-region  ( program image)
-   region drop  @last-page = if
-      0ffc0 40  ( 0ffc0 - 0ffff)  verify-region  ( vectors)
+   region drop  @vector-page = if
+      @vectors #vectors  verify-region
    then ;
