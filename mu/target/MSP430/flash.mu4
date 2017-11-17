@@ -6,6 +6,8 @@ loading MSP430 flash programming
 
 hex
 
+.equates. .contains FCTL1 .if  ( chip has Flash memory!)
+
 ( The MSP430 has two areas of flash: main and info. Main memory is
   divided into 512 byte pages - which TI annoyingly calls "segments" -
   which are further divided into 64 byte rows - which TI annoyingly calls
@@ -32,8 +34,24 @@ hex
    cr ." erase-page " dup u.
    [ \eq FERASE \eq FKEY + ]  t.ErasePage   check-flash-status ;
 
-: skip-row  ( 'target len)
-   cr ."    skip-row "  swap u.  u. ;
+.else  ( no Flash. FRAM?)
+
+( These are necessary for the code that checks to see if we need to flash
+  the vectors. /row means nothing for FRAM parts, so let's set it to 256.)
+#512 constant /page   ( this is the erase size of main memory)
+#256 constant /row    ( max size of row to program)
+
+: program-row  ( 'target len)
+   cr ." program-row "  over u.  dup u.
+   over image+ -rot  ( buf a u)  t.WriteChunk ;
+
+: program-row  ( 'target len)
+   cr ." program-row (no-op) "  swap u.  u. ;
+
+: erase-page  ( 'target)
+   cr ." erase-page (no-op) " u. ;
+
+.then
 
 : flash-buffer   pad  1 Ki  + ;    ( scratch space)
 : blank?  ( addr - flag)
@@ -44,49 +62,48 @@ hex
       ( sum addr+)  over 0ff xor if  pop drop 2drop  0 ^  then  ( exit early)
    next  drop  0ff = ;
 
-( Check to see if we're going to clobber the bootloader and complain if
-  we're not executing from RAM.)
-
-: ?clobbering-loader  ( a u - a u)
-   2dup +  @boot  swap u< not  if ^ then  ( not touching bootloader - Ok)
-   .PC reg@  @ram  [ @ram #ram + ] within  if ^ then  ( running in RAM - Ok)
-   error" You need to be running a RAM-based version of the chat code in
-order to re-flash it. Consult a local guru. ;-)" ;
-
-( Target address of first byte of the flash page containing the vectors.)
-1_0000  /page -  constant @vector-page
-
-: flash-vectors
-   cr ." flashing vectors"
-   @vectors #vectors  program-row ;
-
-( When we are about to program the _first_ row of a page, we erase the
-  page. If it's the page of the flash that contains the vectors, we erase
-  the page and then flash the vectors.)
-
 : erased  ( 'target)
    dup [ /page 1- ] and  if  drop ^  then  ( do nothing if not first byte)
-   dup erase-page
-   @vector-page = if  ( erasing vector page)  flash-vectors  then ;
+   erase-page ;
 
-( Avoid flashing vectors _twice_.)
 : row  ( 'target len - 'target+len)
-   2dup + push
-   over @vectors = if  skip-row  pop  ^  then
-   over erased  program-row  pop ;
+   2dup + push  over erased  program-row  pop ;
 
 : flash-region  ( a len)
    /row /mod  ( r q)  swap push  for   /row row  next
                            pop  =if  ( rem) row  drop ^  then  2drop ;
 
+( Check to see if we're going to clobber the bootloader and complain if
+  we're not executing from RAM.)
+
+: ?clobbering-loader
+   @boot  \m here  u< not  if ^ then  ( not touching bootloader - Ok)
+   .PC reg@  @ram  [ @ram #ram + ] within  if ^ then  ( running in RAM - Ok)
+   error" You need to be running a RAM-based version of the chat code in
+order to re-flash it. Consult a local guru. ;-)" ;
+
+: ?clobbering-vectors
+   @vectors  \m here  u< if
+      error" Your boot code runs into the vectors. Are you sure this is right?"
+   then ;
+
+( Target address of first byte of the flash page containing the vectors.)
+1_0000  /page -  constant @vector-page
+
 : flash-image
+   radix preserve hex
    h preserve  flash
-   region ( a u)  ?clobbering-loader  flash-region ;
+   region ( a u)  ?clobbering-loader  ?clobbering-vectors  flash-region
+   @vector-page  \m here  u< if
+      cr ." flashing vectors"
+      @vectors #vectors  flash-region
+   then ;
 
 ( Be careful about setting p. Some chunked read implementations use it, so
   set it *after* doing the read.)
 
 : verify-chunk  ( 'target len - 'target+len)
+   cr ." verifying "  over u.  dup u.  ." : "
    2dup + push
    2dup flash-buffer -rot t.ReadChunk
    ( 'target len)  swap image+ m !  ( we'll use m* to read image)
@@ -101,8 +118,9 @@ order to re-flash it. Consult a local guru. ;-)" ;
    100 /mod  ( r q)  swap push  for  100 verify-chunk  next
                         pop  =if  ( rem) verify-chunk  drop ^  then  2drop ;
 : verify
+   radix preserve hex
    h preserve  flash
    region ( a len)  verify-region  ( program image)
-   region drop  @vector-page = if
+   @vector-page  \m here  u< if
       @vectors #vectors  verify-region
    then ;
