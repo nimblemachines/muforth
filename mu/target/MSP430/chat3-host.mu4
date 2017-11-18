@@ -1,0 +1,65 @@
+( This file is part of muforth: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2017 David Frech. (Read the LICENSE for details.)
+
+loading MSP430 serial chat protocol v3 (host)
+
+hex
+
+( Trying something simple and traditional.
+
+  Responds to the following commands. NOTE: these are hex values!
+
+00 - 2f  Idle   - these command bytes are ignored
+
+30  GetVersion  - get the chat firmware commit
+31  GetStatus   - get PC and SR
+32  ReadWords   - set address, then read N words
+33  WriteWords  - set address, then write N words
+34  Run         - set PC and SR and execute
+
+35 - ff  Idle   - these command bytes are ignored
+)
+
+: >b   send ;
+: b>   recv ;
+
+: >w             >hilo  send send ;
+: w>   recv recv  lohi> ;
+
+
+: c.Idle                       0 >b             ;
+: c.GetVersion  ( - n)        30 >b             w> w>  ( lo hi)  10 << + ;
+: c.GetStatus   ( - pc sr)    31 >b             w> w> ;
+: c.ReadWords   ( a n)        32 >b  swap >w >b ;  ( then read streamed bytes)
+: c.WriteWords  ( a n)        33 >b  swap >w >b ;
+: c.Run         ( pc sr)      34 >b  swap >w >w ;
+
+( Send two no-ops, let them transmit, _then_ throw away any input bytes.)
+: resync  c.Idle  c.Idle  drain  flush ;
+
+: c.setup-chunk  ( buf a u - #words a #words)  rot m !  1+ 2/ ( words)  tuck ;
+
+( Hook into interact code.)
+: c.Hello
+   #115200 bps  resync
+.ifndef ignore-version
+   cr ." Chat firmware version "  c.GetVersion
+   radix preserve  hex  sep preserve  -sep   u.
+.then ;
+
+: c.ReadChunk    ( buf a u)
+   c.setup-chunk  c.ReadWords  for  b> m&  b> m&  next ;
+
+: c.WriteChunk   ( buf a u)
+   c.setup-chunk  c.WriteWords  for  m* >b  m* >b  next ;
+
+.ifdef notyet
+
+( NOTE: We don't define RunWait separately. Since we will always be reading
+  the registers back after Run, that first command - the GetSP in GetRegs -
+  will block until the target is ready.)
+
+: chat
+   chat-via  c.Hello  c.GetRegs  c.SetRegs  c.ReadChunk  c.WriteChunk  c.Run ;
+.then
