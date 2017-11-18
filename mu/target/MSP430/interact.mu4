@@ -46,11 +46,6 @@ variable ram-copied  ( pointer to first un-copied byte)
    \m here  ram-copied ! ;
 
 
-( For reading and writing target cells.)
-: t@  ( addr - h)  t.ReadWord ;
-: t!  ( h addr)    t.WriteWord ;
-
-
 ( The chat firmware has pushed an "exception frame" onto the stack.)
 
 ( Let's call these "chatregs" so we don't conflict with the assembler's
@@ -252,13 +247,18 @@ forth
 
   In general then, in order to ensure that we can pass up to 8 "user" data
   values to target code, we need to copy a max of 10 values - plus the cafe
-  sentinel value that is copied no matter what.)
+  sentinel value that is copied no matter what.
+
+  stack> *first* builds a local image of the target stack - in the RAM
+  image - and *then* copies it, in one chunk, to the target.)
 
 : stack>  ( "push" stack to target)
    depth 0 max #10 min
    \m sp0  over 1+  \m cells -  dup \m sp! ( top of D stack)  swap
-   for  tuck t!  \m cell+  next  ( copy each cell as a word to D stack)
-   "cafe swap t! ( sentinel) ;
+   for  tuck image-!  \m cell+  next  ( copy each cell as a word to D stack)
+   "cafe swap image-! ( sentinel)
+   ( Now copy stack image to target)
+   \m sp@ image+  \m sp@  \m sp0  over -  t.WriteChunk ;
 
 ( XXX add a way to automagically sign-extend or zero-extend values coming
   from the target stack?)
@@ -275,10 +275,16 @@ meta
 constant max-pop
 forth
 
+( stack< *first* copies the target stack, in one chunk, to the host's RAM
+  image, and *then* pulls the values out and pushes them onto the host's stack.)
+
 : stack<  ( "pop" stack from target)
    \m depth 0 max \m max-pop min  =if
+      push
+      \m sp@ image+  \m sp@  r@ \m cells  t.ReadChunk  ( read target stack)
+      pop
       \m sp@ over  ( n sp n)
-      for  dup t@  pop 2push  \m cell+  next ( starting with top, push to R)
+      for  dup image-@  pop 2push  \m cell+  next ( starting with top, push to R)
       drop ( sp)
       for  2pop push  next  ( pop from R to reverse order)
       0
