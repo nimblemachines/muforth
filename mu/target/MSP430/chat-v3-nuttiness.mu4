@@ -11,10 +11,10 @@ loading MSP430 serial chat protocol v3 (core)
 00 - 2f  Idle   - these command bytes are ignored
 
 30  GetVersion  - get the chat firmware commit
-31  GetStatus   - get PC and SR
-32  ReadWords   - set address, then read N words
-33  WriteWords  - set address, then write N words
-34  Run         - set PC and SR and execute
+31  GetStatus   - get SP, PC, SR, and CP
+32  Run         - set PC, SR, and CP and execute
+33  ReadWords   - set address, then read N words
+34  WriteWords  - set address, then write N words
 
 35 - ff  Idle   - these command bytes are ignored
 )
@@ -22,6 +22,13 @@ loading MSP430 serial chat protocol v3 (core)
 decimal
 
 assembler
+( The chat code passes back and forth between host and target - but does
+  not otherwise touch - the context pointer, cp. It is used to pass
+  execution context between the host and target. By default we assume it is
+  the first "callee-saved" register, r4.)
+
+ 04 reg cp     ( context pointer)
+
 ( These are all considered "caller saved" registers. They are scratch.
   Called code can freely clobber them.)
 
@@ -71,15 +78,17 @@ label get-version
    ( commit-hi) # top mov  put-word j  ;c
 
 label get-status
+     sp    top mov  ( SP)
+       2 # top add  ( skip return address to chat-entry)  put-word c
    4 sp +) top mov  ( PC)  put-word c
-   2 sp +) top mov  ( SR)  put-word j  ;c
-   -- sp top mov  2 # top add  put-word j  ;c
+   2 sp +) top mov  ( SR)  put-word c
+     cp    top mov  ( CP)  put-word j  ;c
 
 label run
-   2 # sp add
-   get-word c  ( PC)  2 top sp +) mov
-   get-word c  ( SR)    top sp  ) mov  reti  ;c
-   -- get-word c  top sp mov  reti  ;c
+   2 # sp add  ( skip return address to chat-entry)
+   get-word c  ( PC)  top 2 sp +) mov
+   get-word c  ( SR)  top   sp  ) mov
+   get-word c  ( CP)  top   cp    mov  reti  ;c
 
 comment TI-is-a-bunch-of-fucking-liars!
 
@@ -112,9 +121,9 @@ label write-words
 label command-table
    ( 30) get-version ,
    ( 31) get-status ,
-   ( 32) read-words ,
-   ( 33) write-words ,
-   ( 34) run ,
+   ( 32) run ,
+   ( 33) read-words ,
+   ( 34) write-words ,
 
 label process
    get-byte c  ( cmd)

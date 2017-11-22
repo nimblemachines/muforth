@@ -13,6 +13,16 @@ variable chat-vector
 
 : chat-fail   error" Chat command not implemented" ;
 
+.ifdef chat-v3-host
+
+ 0 chat-cmd t.Hello
+ 1 chat-cmd t.GetStatus    ( - sp pc sr cp)
+ 2 chat-cmd t.Run          ( pc sr cp)
+ 3 chat-cmd t.ReadChunk    ( buf a u)  ( XXX order??)
+ 4 chat-cmd t.WriteChunk   ( buf a u)
+
+.else  ( v2 or v1)
+
  0 chat-cmd t.Hello
  1 chat-cmd t.GetRegs      ( buf - sp)
  2 chat-cmd t.SetRegs      ( buf)
@@ -24,6 +34,7 @@ variable chat-vector
  8 chat-cmd t.FlashChunk   ( buf a u cmd - status)
  9 chat-cmd t.Run
 
+.then
 
 : >chat
    ['] t.ReadChunk  is |read    ( read from connected target)
@@ -95,12 +106,21 @@ variable ram-copied  ( pointer to first un-copied byte)
 .SIZE buffer chat-frame  ( local copy of target's stack frame)
     variable chat-sp     ( current value of target's SP)
 
-: get-regs   chat-frame t.GetRegs  chat-sp ! ;
-: set-regs   chat-frame t.SetRegs ;
-
 ( These index into our local chat-frame, _not_ into target memory!)
 : reg@   ( offset - reg)   chat-frame +  leh@ ;
 : reg!   ( reg offset)     chat-frame +  leh! ;
+
+.ifdef chat-v3-host
+
+: get-regs   t.GetStatus  .CP reg!  .SR reg!  .PC reg!  chat-sp ! ;
+: set-regs                                    .PC reg@  .SR reg@  .CP reg@ ;
+
+.else  ( chat v2 or v1)
+
+: get-regs   chat-frame t.GetRegs  chat-sp ! ;
+: set-regs   chat-frame t.SetRegs ;
+
+.then
 
 : 2sp  space space ;
 : .b9  binary  <#  # # # #  # # # #  #  #> type ;
@@ -113,7 +133,7 @@ defer .regs
 
 .ifndef chat-v1
 
--: ( chat v2 version of .regs)
+-: ( chat v2/v3 version of .regs)
    radix preserve
 
    cr  ." V----INZC    CP    SP    PC"

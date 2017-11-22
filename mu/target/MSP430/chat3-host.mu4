@@ -13,10 +13,10 @@ hex
 00 - 2f  Idle   - these command bytes are ignored
 
 30  GetVersion  - get the chat firmware commit
-31  GetStatus   - get PC and SR
-32  ReadWords   - set address, then read N words
-33  WriteWords  - set address, then write N words
-34  Run         - set PC and SR and execute
+31  GetStatus   - get SP, PC, SR, and CP
+32  Run         - set PC, SR, and CP and execute
+33  ReadWords   - set address, then read N words
+34  WriteWords  - set address, then write N words
 
 35 - ff  Idle   - these command bytes are ignored
 )
@@ -28,12 +28,13 @@ hex
 : w>   recv recv  lohi> ;
 
 
-: c.Idle                       0 >b             ;
-: c.GetVersion  ( - n)        30 >b             w> w>  ( lo hi)  10 << + ;
-: c.GetStatus   ( - pc sr)    31 >b             w> w> ;
-: c.ReadWords   ( a n)        32 >b  swap >w >b ;  ( then read streamed bytes)
-: c.WriteWords  ( a n)        33 >b  swap >w >b ;
-: c.Run         ( pc sr)      34 >b  swap >w >w ;
+: c.Idle                           0 >b  ;
+: c.GetVersion  ( - n)            30 >b  w> w>  ( lo hi)  10 << + ;
+: c.GetStatus   ( - sp pc sr cp)  31 >b  w> w> w> w> ;
+
+: c.Run         ( pc sr cp)       32 >b  rot >w swap >w >w ;
+: c.ReadWords   ( a n)            33 >b  swap >w >b ;  ( then read bytes)
+: c.WriteWords  ( a n)            34 >b  swap >w >b ;  ( then write bytes)
 
 ( Send two no-ops, let them transmit, _then_ throw away any input bytes.)
 : resync  c.Idle  c.Idle  drain  flush ;
@@ -54,12 +55,9 @@ hex
 : c.WriteChunk   ( buf a u)
    c.setup-chunk  c.WriteWords  for  m* >b  m* >b  next ;
 
-.ifdef notyet
-
 ( NOTE: We don't define RunWait separately. Since we will always be reading
   the registers back after Run, that first command - the GetSP in GetRegs -
   will block until the target is ready.)
 
 : chat
-   chat-via  c.Hello  c.GetRegs  c.SetRegs  c.ReadChunk  c.WriteChunk  c.Run ;
-.then
+   chat-via  c.Hello  c.GetStatus  c.Run  c.ReadChunk  c.WriteChunk ;
