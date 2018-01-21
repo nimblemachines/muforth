@@ -97,20 +97,18 @@ dofile 'target/HC08/device/string.lua'
 fmt = string.format
 
 function fix_comment(c)
-    c = c:gsub("%(", "/")
-    c = c:gsub("%)", "/")
+    c = c:gsub("%(", "[")
+    c = c:gsub("%)", "]")
     return c
 end
 
 function gen_csr(addr, perm, name, comment)
-    comment = fix_comment(comment)
-    comment = comment:gsub("%)", "/")
-    return fmt("0%s ( %s) csr %s   ( %s)", addr, perm, name, comment)
+    return fmt("0%s ( %s) csr %s   ( %s)", addr, perm, name, fix_comment(comment))
 end
 
 function line(l)
     if l == "" then return end
-    local section = l:match "^%-%-( .+)"
+    local section = l:match "^%-%- (.+)"
     if section then
         print(fmt("\n( %s)", fix_comment(section)))
         return
@@ -149,8 +147,7 @@ print [[
 ( Let's define names for the well-known CSRs. This will help both with
   writing code - as these are available to the assembler and compiler - and
   also with disassembling code - as instructions that modify CSRs will be
-  able to look up the name by searching the .csr-equates. dictionary
-  chain.)
+  able to look up the name by searching the .csr. dictionary chain.)
 
 : csr  ( offset)   current preserve  .csr. definitions  constant ;
 
