@@ -1,7 +1,7 @@
 /*
  * This file is part of muforth: http://muforth.nimblemachines.com/
  *
- * Copyright (c) 2002-2017 David Frech. (Read the LICENSE for details.)
+ * Copyright (c) 2002-2018 David Frech. (Read the LICENSE for details.)
  */
 
 /* investigations into LFSRs - linear feedback shift registers - for

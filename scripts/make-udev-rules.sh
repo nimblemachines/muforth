@@ -2,7 +2,7 @@
 
 # This file is part of muforth: http://muforth.nimblemachines.com/
 #
-# Copyright (c) 2002-2017 David Frech. (Read the LICENSE for details.)
+# Copyright (c) 2002-2018 David Frech. (Read the LICENSE for details.)
 
 # Create a udev rules file that matches all the USB devices we care about:
 #   0403  - FTDI (Future Technology Devices International)
