@@ -106,11 +106,18 @@ h0 1 Ki Ki cells +  cl-last !
       dup cl-root !  ( root.prev=new)  dup @ cell+ ! ( new.prev.next=new)  ^
    then  drop ;
 
-: >cl  ( 'cl - len)
-   [ 2 cells ] +  c@+ swap  ( a len)  tuck  cl swap  cmove ;
+: cl-show  ( a len)
+   tuck  cl swap  cmove
+   curs-bol  curs-erase-eol  cl swap type ;
 
-: cl-show  ( len - len idx)
-   curs-bol  curs-erase-eol  cl over type  dup ;
+: >cl  ( 'cl - len idx)
+   dup cl-cur !  [ 2 cells ] +  c@+ swap  ( a len)  tuck  cl-show  dup ;
+
+: cl-key-up  ( len idx - len' idx')
+   2drop  cl-cur @        @ ( prev)  >cl ;
+
+: cl-key-dn  ( len idx - len' idx')
+   2drop  cl-cur @  cell+ @ ( next)  >cl ;
 
 : cl-left?   ( len idx - len idx flag)  ( can we move left?)     dup ;
 : cl-right?  ( len idx - len idx flag)  ( can we move right?)   2dup swap u< ;
@@ -121,12 +128,6 @@ h0 1 Ki Ki cells +  cl-last !
 : cl-key-left   ( len idx - len' idx')  cl-left?  if  cl-left   then ;
 : cl-key-right  ( len idx - len' idx')  cl-right? if  cl-right  then ;
 
-: cl-key-up  ( len idx - len' 0)
-   2drop  cl-cur @        @ ( prev)  dup cl-cur !  >cl  cl-show ;
-
-: cl-key-dn  ( len idx - len' 0)
-   2drop  cl-cur @  cell+ @ ( next)  dup cl-cur !  >cl  cl-show ;
-
 : cl-key-del  ( len idx - len' idx')  ( ^D)
    cl-right? if  curs-del  cl-del  then ;
 
@@ -136,6 +137,8 @@ h0 1 Ki Ki cells +  cl-last !
 : cl-key-home  ( len idx - len idx)  curs-bol  drop 0 ;
 : cl-key-end   ( len idx - len idx)  curs-eol  drop dup ;
 
+: cl-key-erase  ( len idx - 0 0)  curs-bol  curs-erase-eol  2drop  0 0 ;
+
 : cl-key-ret  ( len idx - addr len)
    curs-eol  space  drop
    dup 1+ [ stderr >col ] !
@@ -144,7 +147,7 @@ h0 1 Ki Ki cells +  cl-last !
 : cl-key-add  ( len idx ch - len' idx')
    push  over cl-width 1- u< if
       curs-ins  r@ emit  pop cl-ins  ^  then
-   shunt ;
+   rdrop ;
 
 : read-esc-seq   key
    char [ = if  key
@@ -158,14 +161,20 @@ h0 1 Ki Ki cells +  cl-last !
       then  then  drop
    then ;
 
-: process-key   ( len idx - len' idx')  key
-    dup #ESC =     if  drop  read-esc-seq  0 ^  then
-    dup #BS  =
+( What to do with unmatched control character?)
+defer cl-key-unmatched
+-: ( len idx key - len' idx' exit?)
+   drop  0 ;  is cl-key-unmatched  ( default is to ignore)
+
+: process-key   ( len idx - len' idx' 0 | a u -1)  key
+   dup  #ESC =     if  drop  read-esc-seq  0 ^  then
+   dup  #BS  =
    over #DEL = or  if  drop  cl-key-bs    0 ^  then
-    dup ctrl D =   if  drop  cl-key-del   0 ^  then
-    dup #CR  =     if  drop  cl-key-ret  -1 ^  then
-    31 over  u<    if        cl-key-add   0 ^  then
-   drop  ( default)  0 ;
+   dup  ctrl D =   if  drop  cl-key-del   0 ^  then
+   dup  #CR  =     if  drop  cl-key-ret  -1 ^  then
+   dup  ctrl U =   if  drop  cl-key-erase 0 ^  then
+   31 over  u<     if        cl-key-add   0 ^  then
+                             cl-key-unmatched ;
 
 : editline  ( - addr len)
    cl-root cl-cur !
