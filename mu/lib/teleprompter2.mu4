@@ -1,0 +1,123 @@
+( This file is part of muforth: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2018 David Frech. (Read the LICENSE for details.)
+
+( This is version 2 of the teleprompter code. Use it rather than the
+  version 1 code in lib/teleprompter.mu4.)
+
+( This is code to make it easier to paste into the command line, one by one
+  and in sequence, previously-written chunks of text. It can be especially
+  useful for making screencasts, so that the viewer isn't stuck watching the
+  author painfully type and correct.
+
+  This is the second edition of the teleprompter. The original is only a
+  few hours old and is obsolete already. By rewriting the prompter code as
+  compiled Forth code, the compiler becomes trivially simple and obvious -
+  though the underlying words are a bit tricky.
+
+  The teleprompter interacts with the command line history in the following
+  way. Each time ^N is pressed, the next teleprompter line is pasted into the
+  command line buffer, and if it is an 'X' line, it is also copied into the
+  command line history and executed. "~" lines are shown but not executed.
+  Their display is exactly like what happens using the up and down arrow keys
+  to explore the command-line history.
+
+  The teleprompter sequence is compiled muforth code, but because it is
+  executed in a co-routine style with the command-line editing code, it's a
+  bit tricky to understand, and it makes it impossible to use 'do' or 'for'
+  loops in the prompter sequence.
+
+  The 'tp' variable actually holds a muforth IP address during execution.
+  After a prompt is displayed or executed, the current position in the
+  sequence is saved in tp and the code returns to the 'editline' loop. This
+  "misuse" of the return stack makes using words that store state on the R
+  stack - 'do' and 'for' in particular - impossible. A shame.
+
+  I'm thinking of writing a third edition of this code and keeping all
+  three around in the tree so that their implementations and the ideas and
+  approaches behind them can be compared.
+
+  This third edition would step through a prompter sequence more the way
+  the interactive memory dump and disassembly code works: it would have its
+  own loop, and its own keybindings, separate from the editline loop. Instead
+  of being a co-routine with editline, the "awaiting input from the user"
+  loop would be executed as a normal Forth colon word. This should make
+  counted loops usable and would remove the need to have both ." and ~ lines
+  in a prompt sequence. The difference in their behaviour in the current code
+  is subtle and hard to explain - also a shame.)
+
+
+variable tp  ( teleprompter pointer - muforth IP that points into a prompter)
+
+: prompter             pop  tp ! ;
+: end-prompter  ( - a u -1)   0 0  -1 ;
+
+: prompt>cl  ( a len - len)  tuck  cl-show  space ;
+
+( Runtimes for compiled strings. Whether to simply *show* the text or to
+  paste into the command line buffer, add it to the history, and execute it.)
+
+: (~)  ( a len - len idx 0)    ( show)  prompt>cl  dup                      pop tp !  0 ;
+: (X)  ( a len - a len -1)  ( execute)  prompt>cl  dup cl>history  cl swap  pop tp ! -1 ;
+
+: text,  ( compile a line of text)   \ (")  #LF string, drop ;
+
+compiler
+: ~  ( compile a new text line)        text,  \ (~) ;
+: X  ( compile a new executable line)  text,  \ (X) ;
+forth
+
+( Hook into editline code. When we see a ^N, paste/exec the next prompt.)
+-: ( len idx key - len' idx' 0 | a u -1)
+   ctrl N = if  2drop  tp @ push  ^  then  0 ;  is cl-key-unmatched
+
+( In case the user types ^N after loading the file but before loading any
+  teleprompter sequences of their own.)
+
+: catch-22
+prompter
+." Nothing interesting to read. Sorry. You could try the gospel."
+end-prompter ;
+
+catch-22
+
+( Here is an example teleprompter sequence.)
+
+: gospel
+." Press ^N to start reading."
+prompter
+~ In the beginning was the Forth
+~ And the Forth was with Chuck
+~ And the Forth *was* Chuck
+~   (the very short Gospel of Forth)
+~ It's possible to execute code as well as show text.
+X ld lib/rational-approx.mu4  phi
+~ That last bit of code (use up arrow to read it, then ^N to read on)
+~ just calculated two integer factors
+~ that when divided yield phi (the golden ratio)
+~ to 9 decimal digits of precision!
+~ By adding a lot of zeros at the end of the numerator
+~ we can calculate this ourselves, using only integer math.
+X   75,025,000,000,000 46,368 / .
+~ The decimal point is the first comma.
+~ Let's try executing some more code. How about calculating powers of 5?
+X 5
+  ( This is Forth code, so we can loop!)
+  ( Ok, maybe not. The co-routine nature of this code makes executing
+    any Forth code that messes with the return stack - which means
+    *both* do and for loops - a no-no.)
+  ( 11 for)
+X 5 * dup u.
+X 5 * dup u.
+X 5 * dup u.
+X 5 * dup u.
+X 5 * dup u.
+X 5 * dup u.
+X 5 * dup u.
+X 5 * dup u.
+X 5 * dup u.
+X 5 * dup u.
+X 5 * dup u.
+  ( next)
+end-prompter
+." That's it. To re-read, just type gospel again." ;
