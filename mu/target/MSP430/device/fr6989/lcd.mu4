@@ -2,9 +2,10 @@
 
   Copyright 2002-2018 David Frech. (Read the LICENSE for details.)
 
-loading MSP430FR6989 LCD_C support
+loading MSP430 FR6989 LCD_C support
 
 __meta
+hex
 
 ram
 
@@ -35,3 +36,92 @@ code lcd-init
    -- Fire it up!!
    1 # LCDCCTL0 & bis      -- set LCD_ON
    next  ;c
+
+( Here are the names of the segments:
+
+   +---a---+
+   |\  |  /|
+   f h j k b
+   |  \|/  |
+   +-g-+-m-+
+   |  /|\  |
+   e q p n c
+   |/  |  \|
+   +---d---+
+
+  As a word value, we can represent them thus:
+
+    abcd_efgm_hjkp_qXnY
+
+  NOTE: X and Y are decimal points, colons, negative signs, and other
+  punctuation - mostly. When writing a character value to display memory we
+  should be careful not to clobber X and Y.
+
+  For completeness, here is a map of each character position, and what each
+  of the bits means, segment-wise:
+
+  0  abcd_efgm_hjkp_q-n.   neg, dp
+  1  abcd_efgm_hjkp_q:n.   colon, dp
+  2  abcd_efgm_hjkp_q^n.   antenna, dp
+  3  abcd_efgm_hjkp_q:n.   colon, dp
+  4  abcd_efgm_hjkp_q*n.   degree, dp
+  5  abcd_efgm_hjkp_qTnR   Tx, Rx
+)
+
+( Map character position to memory offset. pos is 0 to 5, counting
+  left-to-right.)
+
+label pos>off  ;c  9 c,  5 c,  3 c,  #18 c, #14 c,  7 c,
+
+code lcd  ( pos - addr)
+   pos>off top +) top movb  LCDM # top add  next  ;c
+
+( Because TI's engineers screwed the pooch on how they laid out the
+  segment lines, it's not always possible to read or write a single
+  "character" - the word-wide bitmap of segments illustrated above - as a
+  single 16-bit word, because sometimes it crosses a word boundary - ie, it
+  starts on an odd address and ends on the next higher even address.
+
+  You can see from the pos>off table that only positions 3 and 4 start on
+  even addresses.
+
+  So we can't use @ and !. We have to have special words instead. Grr.)
+
+code l@  ( addr - segments)
+   top )+ x movb  x swpb  top ) y movb  y x bis  x top mov  next  ;c
+   
+code l!  ( segments addr)
+   x pop  x 1 top +) movb  x swpb  x top ) movb  top pop  next  ;c
+
+( Battery segments:  b5 b3 b1 []  0000  b6 b4 b2 batt  0000)
+( XXX set and clear, rather than store? And do we want to fetch?)
+code lcd-batt!  ( segments)
+   top LCDM #13 + & movb  top swpb
+   top LCDM #17 + & movb  top pop  next  ;c
+
+( Special segments:  0000 tmr hrt rec !)
+( XXX set and clear, rather than store? And do we want to fetch?)
+code lcd-special!  ( segments)
+   top LCDM #2 + & movb  top pop  next  ;c
+
+( Now we need two tables to map digits and letters to bitmaps of segments.
+  Easy! But first - we need some help from the meta-compiler! How about a
+  word to create tables? Since these are read-only lookup tables, it makes
+  sense to do the "fetch" as part of the shared "behaviour". We pass an index
+  to the table, and it gives us the [word] value at that index.)
+
+meta: table  create  ;code  ( index - value)
+                     top top add  w top add  top ) top mov  next  ;c
+
+( Map 0 to 0, 1 to 1, etc.)
+( XXX alt 7's: 8028 8328)
+table digit>seg
+   fc28 , 6020 , db00 , f300 , 6700 ,
+   b700 , bf00 , e400 , ff00 , f700 ,
+
+( Map 0 to @, 1 to A, 26 to Z.)
+table letter>seg
+   fa02 , ef00 , f150 , 9c00 , f050 , 9f00 , 8f00 , bd00 ,
+   6f00 , 9050 , 7800 , 0e22 , 1c00 , 6ca0 , 6c82 , fc00 ,
+   cf00 , fc02 , cf02 , b700 , 8050 , 7c00 , 0c28 , 6c0a ,
+   00aa , 00b0 , 9028 ,
