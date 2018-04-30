@@ -9,11 +9,15 @@ hex
 
 ram
 
-code lcd-init
+%011_101_00 equ lcd-blink-rate   ( /3, /16384)
+
+code lcd-init-hardware
    -- Turn off LCD controller before making any changes.
    1 # LCDCCTL0 & bic      -- clear LCD_ON
 
    %00000_100_00_011_100 # LCDCCTL0 & mov    -- /1, /16, ACLK, 4-mux, LCDSON
+
+   lcd-blink-rate # LCDCBLKCTL & mov         -- set blink rate, turn blinking off
 
    -- Grab S4, S6-21, S27-31, and S35-39 as LCD segment pins.
    %1111_1111_1101_0000 # LCDCPCTL0 & mov    -- 4, 6 to 15
@@ -32,6 +36,10 @@ code lcd-init
    -- Enable clock sync for charge pump, and allow ADC12 to turn charge
    -- pump off during conversions (for lower noise).
    %1000_0000_0000_0001 # LCDCCPCTL & mov
+
+   -- Clear main and blinking memories.
+   6 # LCDCMEMCTL & mov                -- set LCDCLRBM and LCDCLRM
+   begin  LCDCMEMCTL & tst  0= until   -- wait until both bits are zero
 
    -- Fire it up!!
    1 # LCDCCTL0 & bis      -- set LCD_ON
@@ -62,19 +70,11 @@ code lcd-init
 
   0  abcd_efgm_hjkp_q-n.   neg, dp
   1  abcd_efgm_hjkp_q:n.   colon, dp
-  2  abcd_efgm_hjkp_q^n.   antenna, dp
+  2  abcd_efgm_hjkp_q^n.   antenna [^], dp
   3  abcd_efgm_hjkp_q:n.   colon, dp
-  4  abcd_efgm_hjkp_q*n.   degree, dp
+  4  abcd_efgm_hjkp_q*n.   degree [*], dp
   5  abcd_efgm_hjkp_qTnR   Tx, Rx
 )
-
-( Map character position to memory offset. pos is 0 to 5, counting
-  left-to-right.)
-
-label pos>off  ;c  9 c,  5 c,  3 c,  #18 c, #14 c,  7 c,
-
-code lcd  ( pos - addr)
-   pos>off top +) top movb  LCDM # top add  next  ;c
 
 ( Because TI's engineers screwed the pooch on how they laid out the
   segment lines, it's not always possible to read or write a single
@@ -93,16 +93,52 @@ code l@  ( addr - segments)
 code l!  ( segments addr)
    x pop  x 1 top +) movb  x swpb  x top ) movb  top pop  next  ;c
 
+( lcd-mem stores the address of the beginning of the *current* LCD memory;
+  either the main memory or the blinking memory.)
+
+variable lcd-mem
+: >lcd    LCDM  lcd-mem ! ;  ( XXX create/;code/does> words instead?)
+: >blink  LCDBM lcd-mem ! ;
+
+: lcd-init  lcd-init-hardware  >lcd ;
+
+meta: blink-style  create ,  ;code
+   w ) w mov  lcd-blink-rate # w bis  w LCDCBLKCTL & mov  next  ;c
+                             
+( Set a blinking style:
+
+  steady      - no blinking
+  blinking    - segments that are on in the blinking memory blink
+  alternating - display alternates between main and blinking memories
+)
+%00 blink-style lcd-steady
+%01 blink-style lcd-blinking
+%11 blink-style lcd-alternating
+
+( Map character position to memory offset. pos is 0 to 5, counting
+  left-to-right.)
+
+here equ pos>off  9 c,  5 c,  3 c,  #18 c, #14 c,  7 c,
+
+code lcd  ( pos - addr)
+   ' lcd-mem >value & x mov ( fetch lcd-mem value)
+   pos>off top +) top movb  x top add  next  ;c
+
+: lcd!  ( segments pos)    lcd l! ;
+: lcd@  ( pos - segments)  lcd l@ ;
+
 ( Battery segments:  b5 b3 b1 []  0000  b6 b4 b2 batt  0000)
 ( XXX set and clear, rather than store? And do we want to fetch?)
 code lcd-batt!  ( segments)
-   top LCDM #13 + & movb  top swpb
-   top LCDM #17 + & movb  top pop  next  ;c
+   ' lcd-mem >value & x mov ( fetch lcd-mem value)
+   top #13 x +) movb  top swpb
+   top #17 x +) movb  top pop  next  ;c
 
 ( Special segments:  0000 tmr hrt rec !)
 ( XXX set and clear, rather than store? And do we want to fetch?)
 code lcd-special!  ( segments)
-   top LCDM #2 + & movb  top pop  next  ;c
+   ' lcd-mem >value & x mov ( fetch lcd-mem value)
+   top #2 x +) movb  top pop  next  ;c
 
 ( Now we need two tables to map digits and letters to bitmaps of segments.
   Easy! But first - we need some help from the meta-compiler! How about a
@@ -125,3 +161,26 @@ table letter>seg
    6f00 , 9050 , 7800 , 0e22 , 1c00 , 6ca0 , 6c82 , fc00 ,
    cf00 , fc02 , cf02 , b700 , 8050 , 7c00 , 0c28 , 6c0a ,
    00aa , 00b0 , 9028 ,
+
+( Four characters to make a "spinner": - \ | / )
+table twiddle
+   0300 , 0082 , 0050 , 0028 ,
+
+( twiddle demo)
+: delay  ( n)  for  -1 for next  next ;
+: spin  ( n)  0 do  i 3 and twiddle  5 lcd l!  2 delay  loop ;
+
+( Other characters and punctuation to try out:
+   comma     0008
+   6-star    03aa
+   8-star    03fa
+   Gamma     8c00
+   Sigma     9088
+   lambda    008a
+   slash     0028
+   backslash 0082
+   bottom    1050
+   turnstile 0150
+   plus      0350
+   minus     0300
+)
