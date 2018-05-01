@@ -1,0 +1,42 @@
+( This file is part of muforth: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2018 David Frech. (Read the LICENSE for details.)
+
+loading MSP430 Linear-feedback shift registers
+
+__meta
+
+( 32-bit Galois-type shift register. Taps at bits 32, 30, 26, 25.)
+code lfsr-galois  ( lo hi #bits - lo' hi')
+   y pop  x pop
+   begin
+      clrc  y ror  x ror  ( lsb now in carry)
+      CS if  %1010_0011_0000_0000 # y xor  then
+   1 # top sub  0= until
+   x push  y top mov  next  ;c
+
+( This takes about 50 minutes to run, so don't get impatient! After 50
+  minutes or so, run "rechat" to re-connect to the target and fetch its
+  stack. The value on the stack should be the double number ffff ffff - the
+  number of states in a 32-bit LFSR.)
+
+code lfsr-galois-len  ( - lo hi)
+   top push  top clr  w clr  ( counter)
+   "ffff # y mov   "ffff x mov
+   begin  begin
+      1 # w add  0 # top addc  ( incr count)
+      clrc  y ror  x ror  ( lsb now in carry)
+      CS if  %1010_0011_0000_0000 # y xor  then
+   "ffff # y cmp 0= until
+   "ffff # x cmp 0= until
+   w push  next  ;c
+
+( If you load the FR6989 LCD code you can get an indication that the
+  computation has finished. The display will show 0 while it is running and
+  1 when it finishes.)
+
+.target. .contains lcd-init .if
+
+: mondo  lcd-init  0 digit>seg 0 lcd!  lfsr-galois-len  1 digit>seg 0 lcd! ;
+
+.then
