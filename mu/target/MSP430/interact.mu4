@@ -221,13 +221,11 @@ defer .regs
              d.ReadChunk  d.WriteChunk  d.ErasePage  d.FlashChunk
              ( Run) nope ;
 
-: _run      copy-ram  set-regs  t.Run ;  ( don't wait for target)
-: _runwait  _run  get-regs ;   ( wait for target)
-
-: runwait   _runwait  .regs ;
+: run      copy-ram  set-regs  t.Run ;  ( don't wait for target)
+: runwait  run  get-regs ;              ( wait for target)
 
 ( For running random code that doesn't return.)
-: kick  ( pc)  .PC reg!  _run ;
+: kick  ( pc)  .PC reg!  run ;
 
 ( when the code you're calling doesn't speak the same protocol as running code)
 : go   \eq Vreset image-@  kick ;
@@ -235,7 +233,7 @@ defer .regs
 : reset    go  0 #100,000,000 nanosleep ( 100ms)  get-regs .regs ;
 
 ( For running random bits of code.)
-: call  ( pc)  .PC reg!  runwait ;
+: call  ( pc)  .PC reg!  runwait .regs ;
 
 
 .ifndef chat-v1
@@ -320,14 +318,20 @@ forth
 : ?chat
    chatting @ 0= if  error" not connected to target"  then ;
 
-( NOTE: For initial execution of a Forth word, xn is cfa!)
-: continue  ( x0 .. xn ip - y0 .. yn ip loop)
-   ?chat
-   stack>  _runwait  stack<
+: rechat
+.ifndef chat-v3-host
+   depth if  dup chat-frame = if  drop  then then
+.then
+   get-regs  stack<
 .ifdef microscope  ( x0 .. xn ip - y0 .. yn ip loop z y x w')
    .W reg!  .X reg!  .Y reg!  .Z reg!
 .then
    .LOOP reg!  .IP reg!  .regs ;
+
+( NOTE: For initial execution of a Forth word, xn is cfa!)
+: continue  ( x0 .. xn ip - y0 .. yn ip loop)
+   ?chat
+   stack>  run  rechat ;
 
 ( These are implement'ed by the kernel code.)
 meta
