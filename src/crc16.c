@@ -23,23 +23,32 @@
  * shifting and xoring the CRC accumulator with itself. In order to change
  * the polynomial, two lines of code would have to change.
  */
-uint16_t crc16(uint8_t *p, size_t len)
+static uint16_t crc16_byte(uint16_t crc, uint8_t b)
 {
-    uint16_t crc = 0xFFFF;
-
-    for (; len > 0; len--)
-    {
-        uint16_t x;
-        x = ((crc >> 8) ^ *p++) & 0xff;
-        x ^= x >> 4;    /* feed back high 4 bits of x^12 */
-        crc = (crc << 8) ^ (x << 12) ^ (x << 5) ^ x;
-    }
+    uint16_t x;
+    x = ((crc >> 8) ^ b) & 0xff;
+    x ^= x >> 4;    /* feed back high 4 bits of x^12 */
+    crc = (crc << 8) ^ (x << 12) ^ (x << 5) ^ x;
 
     return crc;
 }
 
-void mu_crc16_c(void)
+static uint16_t crc16_buf(uint16_t crc, uint8_t *p, size_t len)
 {
-    ST1 = crc16((uint8_t *)ST1, TOP);
+    for (; len > 0; len--)
+        crc = crc16_byte(crc, *p++);
+
+    return crc;
+}
+
+void mu_c_crc16_byte(void)  /* c-crc16-byte  ( crc byte - crc' */
+{
+    ST1 = crc16_byte(ST1, TOP);
     DROP(1);
+}
+
+void mu_c_crc16_buf(void)   /* c-crc16-buf   ( crc buf n - crc' */
+{
+    ST2 = crc16_buf(ST2, (uint8_t *)ST1, TOP);
+    DROP(2);
 }
