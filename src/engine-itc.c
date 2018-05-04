@@ -81,10 +81,10 @@ void mu_runtime_lit_()  { PUSH(*(cell *)IP++); }
 /*
  * These are the control structure runtime workhorses.
  */
-void mu_runtime_branch_()            { BRANCH; }
-void mu_runtime_equal_zero_branch_() { if (TOP == 0) BRANCH; else IP++; }
-void mu_runtime_zero_branch_()       { mu_runtime_equal_zero_branch_(); DROP(1); }
-void mu_runtime_qzero_branch_()      { if (TOP == 0) { BRANCH; DROP(1); } else IP++; }
+void mu_runtime_branch_()           { BRANCH; }
+void mu_runtime_equal_0branch_()    { if (TOP == 0) BRANCH; else IP++; }
+void mu_runtime_0branch_()          { mu_runtime_equal_0branch_(); DROP(1); }
+void mu_runtime_q0branch_()         { if (TOP == 0) { BRANCH; DROP(1); } else IP++; }
 
 /*
  * (next)

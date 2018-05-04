@@ -57,8 +57,8 @@ void mu_drops()  { DROP(TOP+1); }
 void mu_uless()  { ST1 = (ST1 < (ucell) TOP) ? -1 : 0; DROP(1); }
 void mu_less()   { ST1 = (ST1 <         TOP) ? -1 : 0; DROP(1); }
 
-void mu_zero_less()   { TOP = (TOP <  0) ? -1 : 0; }
-void mu_zero_equal()  { TOP = (TOP == 0) ? -1 : 0; }
+void mu_0less()   { TOP = (TOP <  0) ? -1 : 0; }
+void mu_0equal()  { TOP = (TOP == 0) ? -1 : 0; }
 
 void mu_depth()     { cell d = S0 - SP; PUSH(d); }
 void mu_sp_reset()  { SP = S0; SP[0] = 0xdecafbad; }
