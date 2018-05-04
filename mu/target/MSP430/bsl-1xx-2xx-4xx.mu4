@@ -59,15 +59,21 @@ variable checksum
   See SLAU144, Sec 7.4.1, p324.
 
   Since the BSL apparently _clears_ LOCKA, using 06 and doing a mass erase
-  will erase the info memory.)
+  will erase the info memory. Using 04 and doing a mass erase *also* erases
+  the info memory. Just FYI. ;-)
+
+( Since it is a tool of last resort, the mass-erase is commented out so
+  that it is not called accidentally. Uncomment and reload if you
+  absolutely need it.)
 
 : bsl-unlock              20 10 <bsl  0 >w  0 >w  10 for  0ffff >w  next  bsl> ?ack ;
 : bsl-unlock-image        20 10 <bsl  0 >w  0 >w  ffe0 image+ 20  >buf    bsl> ?ack ;
 : bsl-txbuf  ( buf a u)  dup 12 <bsl  swap >w  dup >w  >buf  bsl>  ?ack ;
 : bsl-rxbuf  ( buf a u)    0 14 <bsl  swap >w  dup >w        bsl>  hdr>  buf>  chk> ;
 : bsl-erase  ( a)          0 16 <bsl    >w  0a502 >w         bsl>  ?ack ;
-( mass-erase               0 18 <bsl  0 >w  0a506 >w         bsl>  ?ack )
+-- mass-erase               0 18 <bsl  0 >w  0a504 >w         bsl>  ?ack ;
 : bsl-loadpc  ( pc)        0 1a <bsl       >w    0 >w        bsl>  ?ack ;
+: bsl-version ( buf)       0 1e <bsl     0 >w    0 >w        bsl>  hdr>  buf>  chk> ;
 
 
 ( Let's make sure we're not writing the flash inadvertently - until we know
@@ -77,24 +83,6 @@ variable checksum
 : bsl-txbuf-checked   ( buf a u)
    over in-ram? if  2dup + in-ram?  if  bsl-txbuf  ^  then  then
    cr  ." write to "  over u.  dup u.  ." blocked"  drop 2drop ;
-
-( Do an operation in 64 byte chunks. This is compatible with the BSL
-  protocol - which has a max payload of 250 bytes - and also with the
-  process of writing the flash, which can be done by byte, word, or by
-  64-byte block.)
-
-variable 'doit  ( buf a u)
-variable blow-chunks
-: chunk  ( buf a u - buf+u a+u)  push
-   blow-chunks @  if
-      cr  ." chunk "  over u.  dup u.  r@ u.
-   then
-   2dup r@  'doit @execute  pop dup v+ ;
-
-: chunked  ( buf a u 'code - buf+u a+u)  'doit !
-   40 u/mod  ( r q)  swap push  for  40 chunk  next
-                        pop =if  ( rem) chunk  ^  then  drop ;
-
 
 ( Naming convention note: All the following b.Foobar commands are the BSL
   _implementations_ of the chat command interface.)
@@ -108,14 +96,13 @@ variable blow-chunks
 : b.ReadWord  ( a - w)                 pad swap \m cell  bsl-rxbuf  pad leh@ ;
 : b.WriteWord ( w a)    push  pad leh!  pad pop \m cell  bsl-txbuf-checked ;
 
-: b.ReadChunk    ( buf a u)  ['] bsl-rxbuf          chunked  2drop ;
-: b.WriteChunk   ( buf a u)  ['] bsl-txbuf-checked  chunked  2drop ;
+: b.ReadChunk    ( buf a u)  bsl-rxbuf ;
+: b.WriteChunk   ( buf a u)  bsl-txbuf-checked ;
 
 .equates. .contains FCTL1 .if
 
 : b.FlashChunk  ( buf a u erase? - ok?)
-   if  over bsl-erase  then
-   ['] bsl-txbuf  chunked  2drop  -1 ;
+   if  over bsl-erase  then  bsl-txbuf  -1 ;
 
 .else  ( FRAM?)
 
