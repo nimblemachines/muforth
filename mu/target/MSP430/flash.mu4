@@ -6,8 +6,6 @@ loading MSP430 flash programming
 
 hex
 
-.equates. .contains FCTL1 .if  ( chip has Flash memory!)
-
 ( The MSP430 has two areas of flash: main and info. Main memory is
   divided into 512 byte pages - which TI annoyingly calls "segments" -
   which are further divided into 64 byte rows - which TI annoyingly calls
@@ -21,50 +19,16 @@ hex
 #512 constant /page   ( this is the erase size of main memory)
  #64 constant /row    ( max size of row to program)
 
-: check-flash-status  ( status)
-   ." FCTL3=" dup u.
-   84 and if error" flash access or protection violation" then ;
+: program-row  ( 'target len erase?)
+   push  cr ." program-row "  over u.  dup u.
+   r@  =if  ." +erase"  then
+   over image+ -rot  ( buf a u)  pop  t.FlashChunk
+   0= if  error" flash access or protection error"  then ;
 
-: program-row  ( 'target len)
-   cr ." program-row "  over u.  dup u.
-   over image+ -rot  ( buf a u)
-   [ \eq FWRT   \eq FKEY + ]  t.FlashChunk  check-flash-status ;
-
-: erase-page  ( 'target)
-   cr ." erase-page " dup u.
-   [ \eq FERASE \eq FKEY + ]  t.ErasePage   check-flash-status ;
-
-.else  ( no Flash. FRAM?)
-
-( These are necessary for the code that checks to see if we need to flash
-  the vectors. /row means nothing for FRAM parts, so let's set it to 128.)
-#512 constant /page   ( this is the erase size of main memory)
-#128 constant /row    ( max size of row to program)
-
-: program-row  ( 'target len)
-   cr ." program-row "  over u.  dup u.
-   over image+ -rot  ( buf a u)  0 ( bogus fcmd)  t.FlashChunk  drop ;
-
-: erase-page  ( 'target)
-   cr ." erase-page (no-op) " u. ;
-
-.then
-
-: flash-buffer   pad  1 Ki  + ;    ( scratch space)
-: blank?  ( addr - flag)
-   cr ." blank? "  dup u.
-   -1  swap  [ /page  100 / ] for  ( do it in chunks of 256)
-      ( sum addr)  dup 100 flash-buffer -rot  t.ReadChunk  100 + swap
-      ( addr+ sum)  flash-buffer m !  100 for  m* and  next  swap
-      ( sum addr+)  over 0ff xor if  pop drop 2drop  0 ^  then  ( exit early)
-   next  drop  0ff = ;
-
-: erased  ( 'target)
-   dup [ /page 1- ] and  if  drop ^  then  ( do nothing if not first byte)
-   erase-page ;
+: erase?  ( 'target - f)   [ /page 1- ] and  0= ;
 
 : row  ( 'target len - 'target+len)
-   2dup + push  over erased  program-row  pop ;
+   2dup + push  over erase?  program-row  pop ;
 
 : flash-region  ( a len)
    /row /mod  ( r q)  swap push  for   /row row  next
@@ -95,6 +59,9 @@ order to re-flash it. Consult a local guru. ;-)" ;
       cr ." flashing vectors"
       @vectors #vectors  flash-region
    then ;
+
+
+: flash-buffer   pad  1 Ki  + ;    ( scratch space)
 
 ( Be careful about setting p. Some chunked read implementations use it, so
   set it *after* doing the read.)

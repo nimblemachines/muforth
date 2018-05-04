@@ -65,8 +65,8 @@ variable checksum
 : bsl-unlock-image        20 10 <bsl  0 >w  0 >w  ffe0 image+ 20  >buf    bsl> ?ack ;
 : bsl-txbuf  ( buf a u)  dup 12 <bsl  swap >w  dup >w  >buf  bsl>  ?ack ;
 : bsl-rxbuf  ( buf a u)    0 14 <bsl  swap >w  dup >w        bsl>  hdr>  buf>  chk> ;
-: bsl-erase  ( a fcmd)     0 16 <bsl  swap >w      >w        bsl>  ?ack ;
--- : mass-erase               0 18 <bsl  0 >w  0a506 >w      bsl> ;
+: bsl-erase  ( a)          0 16 <bsl    >w  0a502 >w         bsl>  ?ack ;
+( mass-erase               0 18 <bsl  0 >w  0a506 >w         bsl>  ?ack )
 : bsl-loadpc  ( pc)        0 1a <bsl       >w    0 >w        bsl>  ?ack ;
 
 
@@ -102,30 +102,26 @@ variable blow-chunks
 : b.Hello  ( start things going)
    #9600 bps  ignore-parity  even-parity  bsl-unlock ;
 
+: b.GetStatus  ( - sp pc sr cp)  "dead @ram 0 "dead ;
+: b.Run             ( pc sr cp)  2drop  bsl-loadpc ;
+
 : b.ReadWord  ( a - w)                 pad swap \m cell  bsl-rxbuf  pad leh@ ;
 : b.WriteWord ( w a)    push  pad leh!  pad pop \m cell  bsl-txbuf-checked ;
 
 : b.ReadChunk    ( buf a u)  ['] bsl-rxbuf          chunked  2drop ;
 : b.WriteChunk   ( buf a u)  ['] bsl-txbuf-checked  chunked  2drop ;
 
-( NOTE: fcmd already has FKEY set!)
-( XXX sleazy status - always fine)
-: b.ErasePage   ( a fcmd - status)
-   bsl-erase  9658 ;
+.equates. .contains FCTL1 .if
 
-: b.FlashChunk  ( buf a u fcmd - status)
-   drop  ['] bsl-txbuf  chunked  2drop  9658 ;
+: b.FlashChunk  ( buf a u erase? - ok?)
+   if  over bsl-erase  then
+   ['] bsl-txbuf  chunked  2drop  -1 ;
 
-( The order, low to high: context status pc)
-variable bsl-frame  ( chat frame is 6 bytes; this will fit into a variable!)
-   dead_dead_dead_dead bsl-frame !
-   220 bsl-frame .PC +  leh!  ( pretend PC is in RAM, so flash-image won't complain)
+.else  ( FRAM?)
 
-: b.GetRegs  ( buf - sp)      bsl-frame @  swap !  "0dead ;
-: b.SetRegs  ( buf)        @  bsl-frame ! ;
+: b.FlashChunk  ( buf a u erase? - ok?)   drop  bsl-txbuf  -1 ;
 
-: b.Run  bsl-frame .PC + leh@  bsl-loadpc ;
+.then
 
-: bsl
-   chat-via  b.Hello  b.GetRegs  b.SetRegs  b.ReadWord  b.WriteWord
-             b.ReadChunk  b.WriteChunk  b.ErasePage  b.FlashChunk  b.Run ;
+: bsl  chat-via  b.Hello  b.GetStatus  b.Run
+                 b.ReadChunk  b.WriteChunk  b.FlashChunk ;

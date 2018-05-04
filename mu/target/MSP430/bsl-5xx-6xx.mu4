@@ -72,8 +72,6 @@ variable checksum
 : bsl-version             19 01 <bsl                          bsl>  pad corebuf> ;
 : bsl-crc        ( a u)   16 06 <bsl  swap >addr >w           bsl>  pad corebuf> ;
 
-: safe?  ( a - f)  @flash u< ;
-
 ( Naming convention note: All the following b.Foobar commands are the BSL
   _implementations_ of the chat command interface.)
 
@@ -81,6 +79,11 @@ variable checksum
    #9600 bps  ignore-parity  even-parity  bsl-unlock
    pad on  bsl-version  cr ." BSL version "
    pad 4 for  c@+ swap .h8_  next  drop ;
+
+: b.GetStatus  ( - sp pc sr cp)  "dead @ram 0 "dead ;
+: b.Run             ( pc sr cp)  2drop  bsl-loadpc ;
+
+: safe?  ( a - f)  @flash u< ;
 
 : b.ReadWord  ( a - w)                 pad swap \m cell  bsl-rxbuf  pad leh@ ;
 : b.WriteWord ( w a)    dup safe? if
@@ -92,36 +95,17 @@ variable checksum
    over safe? if              bsl-txbuf  ^  then
    2drop drop ;
 
-( NOTE: fcmd already has FKEY set!)
-( XXX sleazy status - always fine)
-.equates. .contains FCTL1 
-: b.ErasePage   ( a fcmd - status)
-.if  drop  bsl-erase  .else  2drop  .then  9658 ;
+.equates. .contains FCTL1 .if
 
-: b.FlashChunk  ( buf a u fcmd - status)
-   drop  bsl-txbuf  9658 ;
+: b.FlashChunk  ( buf a u erase? - ok?)
+   if  over bsl-erase  then  bsl-txbuf  -1 ;
 
-.ifdef chat-v3-host
+.else  ( FRAM?)
 
-: b.GetStatus  ( - sp pc sr cp)  "dead @ram 0 "dead ;
-: b.Run             ( pc sr cp)  2drop  bsl-loadpc ;
+: b.FlashChunk  ( buf a u erase? - ok?)
+   drop                      bsl-txbuf  -1 ;
 
-: bsl
-   chat-via  b.Hello  b.GetStatus  b.Run  b.ReadChunk  b.WriteChunk  b.FlashChunk ;
-
-.else
-
-( The order, low to high: context status pc)
-variable bsl-frame  ( chat frame is 6 bytes; this will fit into a variable!)
-   dead_dead_dead_dead bsl-frame !
-   @ram bsl-frame .PC +  leh!  ( pretend PC is in RAM, so flash-image won't complain)
-
-: b.GetRegs  ( buf - sp)      bsl-frame @  swap !  "0dead ;
-: b.SetRegs  ( buf)        @  bsl-frame ! ;
-
-: b.Run  bsl-frame .PC + leh@  bsl-loadpc ;
-
-: bsl
-   chat-via  b.Hello  b.GetRegs  b.SetRegs  b.ReadWord  b.WriteWord
-             b.ReadChunk  b.WriteChunk  b.ErasePage  b.FlashChunk  b.Run ;
 .then
+
+: bsl  chat-via  b.Hello  b.GetStatus  b.Run
+                 b.ReadChunk  b.WriteChunk  b.FlashChunk ;
