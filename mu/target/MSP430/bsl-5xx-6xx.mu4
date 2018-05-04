@@ -1,0 +1,127 @@
+( This file is part of muforth: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2018 David Frech. (Read the LICENSE for details.)
+
+loading MSP430 bootstrap loader (BSL) support (5xx and 6xx devices)
+
+hex
+
+( This version of the BSL uses CRC16-CCITT as a checksum.)
+variable checksum
+: sum!  0ffff checksum ! ;
+: sum  ( b)  checksum @  swap  crc16-byte  checksum ! ;
+
+: >b   ( b)          dup sum  send ;
+: b>   ( - b)  recv  dup sum ;
+
+: >w   >hilo  >b >b ;
+: w>          b> b>  lohi> ;
+
+( Send an address - 3 bytes!)
+: >addr   ( a)  >hilo >b  >w ;
+
+: ?match  ( want got)  2dup = if  2drop ^  then
+   ."  expected "  .h8_  ." got " .h8_ ;
+
+( >buf reads bytes from buf and sends them;
+  buf> recvs bytes and writes them into buf.)
+
+: >buf  ( buf u)  swap m !  for  m* >b  next ;
+: buf>  ( buf u)  swap m !  for  b> m&  next ;
+
+: ?ack  recv
+   dup   0= if  drop  ^ then  ( Ok)
+   dup 51 = if  drop  ."  Header incorrect"  rdrop ^  then
+   dup 52 = if  drop  ."  Checksum incorrect"  rdrop ^  then
+   dup 53 = if  drop  ."  Packet size zero"  rdrop ^  then
+   dup 54 = if  drop  ."  Packet too big"  rdrop ^  then
+   dup 55 = if  drop  ."  Unknown error"  rdrop ^  then
+   dup 56 = if  drop  ."  Unknown baud rate"  rdrop ^  then
+       57 = if        ."  Packet size error"  rdrop ^  then ;
+
+: ?core  b>
+   dup   0= if  drop  ."  Success"  ^  then
+   dup 01 = if  drop  ."  Memory write check failed"  ^  then
+   dup 04 = if  drop  ."  BSL locked"  ^  then
+   dup 05 = if  drop  ."  BSL password error"  ^  then
+       07 = if        ."  Unknown command"  ^  then ;
+
+( If we crc the checksum bytes, high order byte *first*, and the received checksum
+  is correct, then the result will be 0.)
+
+: ?chk  recv ( lo)  recv sum ( hi)  sum ( lo)
+   checksum @  if  ."  Bad checksum received"  then ;
+
+: hdr>  ( - len)  recv 80 ?match  w> ;
+: core>   ?ack  hdr>  2 ?match ( length should be 2)
+   sum!  b>  3b ?match  ?core  ?chk ;
+
+: corebuf>  ( a)  ?ack  hdr>  1- ( length includes status)
+   sum!  b>  3b = if  ?core  ?chk  ^  then  buf>  ?chk ;
+
+: <bsl  ( cmd length)  80 send  >w  sum!  >b ;
+: bsl>  checksum @  >w ;
+
+                       ( cmd len)
+: bsl-txbuf  ( buf a u)   10 over 4 + <bsl  swap >addr  >buf  bsl>  core> ;
+: bsl-rxbuf  ( buf a u)   18 06 <bsl  swap >addr  >w          bsl>  corebuf> ;
+: bsl-unlock              11 21 <bsl  10 for  0ffff >w  next  bsl>  core> ;
+: bsl-unlock-image        11 21 <bsl  ffe0 image+ 20  >buf    bsl>  core> ;
+: bsl-erase   ( a)        12 04 <bsl  >addr                   bsl>  core> ;
+: bsl-loadpc  ( pc)       17 04 <bsl  >addr                   bsl> ;
+: bsl-version             19 01 <bsl                          bsl>  pad corebuf> ;
+: bsl-crc        ( a u)   16 06 <bsl  swap >addr >w           bsl>  pad corebuf> ;
+
+: safe?  ( a - f)  @flash u< ;
+
+( Naming convention note: All the following b.Foobar commands are the BSL
+  _implementations_ of the chat command interface.)
+
+: b.Hello  ( start things going)
+   #9600 bps  ignore-parity  even-parity  bsl-unlock
+   pad on  bsl-version  cr ." BSL version "
+   pad 4 for  c@+ swap .h8_  next  drop ;
+
+: b.ReadWord  ( a - w)                 pad swap \m cell  bsl-rxbuf  pad leh@ ;
+: b.WriteWord ( w a)    dup safe? if
+                        push  pad leh!  pad pop \m cell  bsl-txbuf  ^  then
+   2drop ;
+
+: b.ReadChunk    ( buf a u)   bsl-rxbuf ;
+: b.WriteChunk   ( buf a u)
+   over safe? if              bsl-txbuf  ^  then
+   2drop drop ;
+
+( NOTE: fcmd already has FKEY set!)
+( XXX sleazy status - always fine)
+.equates. .contains FCTL1 
+: b.ErasePage   ( a fcmd - status)
+.if  drop  bsl-erase  .else  2drop  .then  9658 ;
+
+: b.FlashChunk  ( buf a u fcmd - status)
+   drop  bsl-txbuf  9658 ;
+
+.ifdef chat-v3-host
+
+: b.GetStatus  ( - sp pc sr cp)  "dead @ram 0 "dead ;
+: b.Run             ( pc sr cp)  2drop  bsl-loadpc ;
+
+: bsl
+   chat-via  b.Hello  b.GetStatus  b.Run  b.ReadChunk  b.WriteChunk  b.FlashChunk ;
+
+.else
+
+( The order, low to high: context status pc)
+variable bsl-frame  ( chat frame is 6 bytes; this will fit into a variable!)
+   dead_dead_dead_dead bsl-frame !
+   @ram bsl-frame .PC +  leh!  ( pretend PC is in RAM, so flash-image won't complain)
+
+: b.GetRegs  ( buf - sp)      bsl-frame @  swap !  "0dead ;
+: b.SetRegs  ( buf)        @  bsl-frame ! ;
+
+: b.Run  bsl-frame .PC + leh@  bsl-loadpc ;
+
+: bsl
+   chat-via  b.Hello  b.GetRegs  b.SetRegs  b.ReadWord  b.WriteWord
+             b.ReadChunk  b.WriteChunk  b.ErasePage  b.FlashChunk  b.Run ;
+.then
