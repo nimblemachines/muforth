@@ -352,10 +352,17 @@ variable #xfers
 -- These are addresses in the chip's memory map.
 -- -----------------------------------------------------------------------
 ( SCS debug registers)
+( These are documented starting on p285 of the ARMv6-M architecture manual.)
 e000_edf0 constant DHCSR  ( debug halting control/status reg)
 e000_edf4 constant DCRSR  ( debug core register selector reg)
 e000_edf8 constant DCRDR  ( debug core register data reg)
 e000_edfc constant DEMCR  ( debug exception and monitor ctrl reg)
+
+( Defines for DHCSR)
+1 #19 << constant S_LOCKUP
+1 #18 << constant S_SLEEP
+1 #17 << constant S_HALT
+1 #16 << constant S_REGRDY
 
 ( Defines for AHB.CSW)
 comment %%hardwired%%
@@ -419,28 +426,35 @@ comment %%hardwired%%
    xfer>  w> ;
 
 
-( The interface for the interact code. Implemented by all debug transports.)
+: _debugregs
+   300_0002 AHB.CSW AP.Wr  DHCSR AHB.TAR AP.Wr ;
 
-: t.chat  ( connect to device)
+: _dhcsr@  AHB.DRW AP.Rd ;
+
+( Add debug key to command bits and store into DHCSR.)
+: _dhcsr!  ( value)  a05f_0000 +  AHB.DRW AP.Wr ;
+
+: _run    1  ( C_DEBUGEN)           _dhcsr! ;
+: _halt   3  ( C_DEBUGEN + C_HALT)  _dhcsr! ;
+: _step   5  ( C_DEBUGEN + C_STEP)  _dhcsr! ;
+
+: dhcsr!   ( value)  <xfer  _debugregs  _dhcsr!  xfer> ;
+
+: run    1  ( C_DEBUGEN)           dhcsr! ;
+: halt   3  ( C_DEBUGEN + C_HALT)  dhcsr! ;
+: step   5  ( C_DEBUGEN + C_STEP)  dhcsr! ;
+
+
+: dap.hello  ( connect to device)
    spy on  led off
    DAP.Connect  00 DAP.SWD_Configure  DAP.Transfer_Configure
    DAP.Connect_Sequence
    <xfer  _DP.IDCODE  xfer>  w>  u.
    -fault
    <xfer  0 _DP.SELECT  5000_0000 _DP.CTRL ( pwr up sys & dbg)  xfer>
+   halt
    spy off
 ;
-
-: _debugregs
-   300_0002 AHB.CSW AP.Wr  DHCSR AHB.TAR AP.Wr ;
-
-( Add debug key to command bits and store into DHCSR.)
-: dhcsr!   ( value)  <xfer  _debugregs  a05f_0000 +  AHB.DRW AP.Wr  xfer> ;
-
-: t.run    1  ( C_DEBUGEN)           dhcsr! ;
-: t.halt   3  ( C_DEBUGEN + C_HALT)  dhcsr! ;
-: t.step   5  ( C_DEBUGEN + C_STEP)  dhcsr! ;
-
 
 ( Instead of reading and writing all regs when we stop and start - a lot of
   slowish USB traffic - just read and write the regs we care about. We
@@ -457,7 +471,7 @@ comment %%hardwired%%
    1+  38 #send u< if  xfer>  for  w>  next  0 ( count)  <xfer  then ;
 
 ( Keeping this till I decide...)
-: t.getregs_lohi  ( regmask - v0 v1 ...)   ( low to high)
+: bogus.getregs_lohi  ( regmask - v0 v1 ...)   ( low to high)
    <xfer  _debugregs  0 0 rot ( regcount regindex regmask)
       begin  dup 1 and if  over _readreg  2push  ?xfer-read-words  2pop  then
       1 u+  u2/  dup 0= until
@@ -465,7 +479,7 @@ comment %%hardwired%%
    2drop  for  w>  next ;  ( read remaining regs from recvbuf)
 
 ( This version "interoperates" better with t.setregs.)
-: t.getregs  ( regmask - ... v1 v0)   ( high to low)
+: bogus.getregs  ( regmask - ... v1 v0)   ( high to low)
    <xfer  _debugregs  0 14 rot ( regcount regindex regmask)
       [ 3f 14 - ] <<  ( "left justify" regmask)
       begin  dup 0< if  over _readreg  2push  ?xfer-read-words  2pop  then
@@ -477,7 +491,7 @@ comment %%hardwired%%
 : ?xfer-write  ( after 30 bytes, start a new xfer)
    30 #send u< if  xfer>  <xfer  then ;
 
-: t.setregs  ( ... v1 v0 regmask)  ( high to low)
+: bogus.setregs  ( ... v1 v0 regmask)  ( high to low)
    <xfer  _debugregs  0 swap ( regindex regmask)
       begin  dup 1 and if  push  tuck _writereg  ?xfer-write  pop  then
       1 u+  u2/  dup 0= until
@@ -510,13 +524,13 @@ comment %%hardwired%%
    <xfer  over  AHB.TAR  AP.Wr  300_0012  AHB.CSW  AP.Wr
       rot swap ( a buf u) ;
 
-: t.read   ( buf a u)
+: dap.read   ( buf a u)
    xfer-setup
       0 ( count)  swap  2 >> for  AHB.DRW  AP.Rd
          ?xfer-read-buf  rot ?tar -rot  next  xfer>
    xfer-read-buf  2drop  drop ;
 
-: t.write  ( buf a u)
+: dap.write  ( buf a u)
    xfer-setup
       2 >> for  dup 4 +  swap lew@  AHB.DRW  AP.Wr
          ?xfer-write    swap ?tar swap  next  xfer>
@@ -612,14 +626,14 @@ comment %%hardwired%%
       over  AHB.TAR  AP.Wr  300_0012  AHB.CSW  AP.Wr
       rot swap ( a buf u) ;
 
-: t.bigread   ( buf a u)
+: dap.bigread   ( buf a u)
    bigxfer-setup  ( a buf u)
       0 ( count)  swap  2 >> for  AHB.DRW  AP.Rd
          ?bigxfer-read  rot ?tar -rot  next  bigxfer>
    bigxfer-read
    2drop  drop ;
 
-: t.bigwrite  ( buf a u)
+: dap.bigwrite  ( buf a u)
    bigxfer-setup  ( a buf u)
       2 >> for  dup 4 +  swap lew@  AHB.DRW  AP.Wr
          ?bigxfer-write  swap ?tar swap  next  bigxfer>
@@ -714,5 +728,36 @@ comment %%hardwired%%
                      <xfer          __writereg  drop  xfer> ;
 
 .then  ( debugdebug)
+
+( Register indices for _readreg and _writereg:
+   0  R0
+  ..  ..
+  12  R12
+  13  Current SP
+  14  Link register [LR]
+  15  DebugReturnAddress
+  16  xPSR
+  17  Main stack pointer, MSP
+  18  Process stack pointer, PSP
+  20  CONTROL.PRIMASK)
+
+: dap.get-sp  ( - sp)
+   <xfer  _debugregs  xfer>
+   begin
+      <xfer  _dhcsr@  xfer> w>  S_HALT and
+   until
+   <xfer  #13 _readreg  xfer> w> ;
+
+: dap.set-sp  ( sp)
+   <xfer  _debugregs  #13 _writereg  xfer> ;
+
+: get-pc  ( - pc)
+   <xfer  _debugregs  #15 _readreg  xfer> w> ;
+
+: dap.run  ( pc)
+   <xfer  _debugregs  #15 _writereg  _run  xfer> ;
+
+: jtag
+   chat-via  dap.hello  dap.get-sp  dap.set-sp  dap.read  dap.write  dap.run ;
 
 .then  ( ifdef cmsis)

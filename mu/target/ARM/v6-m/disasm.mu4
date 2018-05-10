@@ -45,14 +45,29 @@ variable instr-pc  ( points to _start_ of current instruction)
 : .[     ." [ " ;
 : .]     ."  ]" ;
 
+( Standard ways of printing different "types".)
+: .udec  radix preserve  decimal  (u.) type ;
+: .hex   radix preserve  hex       (.) type ;
+
 ( #op takes an index, a string of ops, and a "width", and prints the op,
   but with *no* trailing whitespace.)
 : #op  ( index z" width)  push  swap r@ *  +  pop type ;
 
-: .reg  ( reg)
-   radix preserve decimal
-   0f and  dup 0d u< if  char r emit  (u.) type  ^  then
-   0d - z" splrpc" 2 #op ;
+: -trailing  ( a u - a u')  ( strip trailing blanks)
+   over + ( end)  begin  1-  dup c@ bl -  until  over -  1+ ;
+
+defer .reg  ( reg)
+-: ( reg)
+   0f and  dup #13 u< if  char r emit  .udec  ^  then
+   #13 - z" splrpc" 2 #op ;
+
+: raw-regs  [ ] is .reg ;  raw-regs
+
+( From http://infocenter.arm.com/help/topic/com.arm.doc.ihi0042f/IHI0042F_aapcs.pdf p14.)
+-:  ( reg)
+   z" a1a2a3a4v1v2v3v4v5v6v7v8ipsplrpc"  2 #op ;
+
+: abi-regs  [ ] is .reg ;
 
 : 4#   # # # # ;
 : .u32  radix preserve hex  <# 4#  char _ hold  4# #> type ;
@@ -241,6 +256,9 @@ variable instr-pc  ( points to _start_ of current instruction)
 
 : .bl  ( op - op)   ." bl     "  .bl-dest ;
 
+: .barrier  ( op - op)
+   dup 4 >>  3 and  z" dsbdmbisb???"  3 #op ;
+
 ( Is this a 16-bit instruction?)
 : thumb16?  ( op - f)   e800 u< ;
 
@@ -283,6 +301,7 @@ variable instr-pc  ( points to _start_ of current instruction)
 : shred32-v6m  ( op - op)
    ( All the 32-bit v6-m instructions!)
    f800_d000 f000_d000 match  .bl
+   ffff_ffc0 f3bf_8f40 match  .barrier
    0  ( no match) ;
 
 ( Support for interactive disassembly.)
