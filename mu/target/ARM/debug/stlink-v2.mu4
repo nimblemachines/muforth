@@ -4,7 +4,7 @@
 
 ld target/common/endian.mu4
 
-loading ARM target support:
+loading ST-LINK debug
 
 hex
 
@@ -105,11 +105,6 @@ variable spy
 : dfu>         07 0f3 cmd2 ;  ( exit dfu mode)
 : get-mode        0f5 cmd1  2 expect  b> ;
 
-
-( Do this ASAP so we know if we can use v2 debug api commands.)
-ver .ver  #10 > .if  -d apiv2  .then
-
-
 ( For simple two-byte debug commands.)
 : dbg  ( subcmd)  <dbg  cmd> ;
 
@@ -168,7 +163,7 @@ defer doit  ( buf target len)
 
 
 ( Read and write "debug" registers. What is this?)
-.ifdef apiv2
+.ifdef stlink-debug-regs
 
 ( XXX these don't work yet! ReadPipe errors out.)
 : writedebug  ( w a)    35 <dbg  >w >w  cmd>  check ;
@@ -199,16 +194,26 @@ defer doit  ( buf target len)
    dup  pad 800 write  close-file ;
 
 
-( The interface for the interact code. Implemented by all debug transports.)
-
-: t.chat  ( connect to device)
+: st.hello  ( connect to device)
+   cr  ver .ver  drop
    cr  tell-mode
    dup  0=  if  drop  ." => "  dfu>  tell-mode  then
    dup  1 = if  drop  ." => "  >swd  tell-mode  then
-        2 - if  ." Tried, but didn't succeed. "  then ;
+        2 - if  ." Tried, but didn't succeed. "  then
+   halt ;
 
-: t.read   ( buf a u)    read32 ;  ( Easy peasy!)
-: t.write  ( buf a u)   write32 ;
+: st.read   ( buf a u)    read32 ;  ( Easy peasy!)
+: st.write  ( buf a u)   write32 ;
+
+( The interface for the interact code. Implemented by all debug transports.)
+
+: st.get-sp  begin  core-state  80 xor  until
+             #13 reg@ ;
+: st.set-sp  #13 reg! ;
+: st.run     #15 reg!  run ;
+
+: jtag
+   chat-via  st.hello  st.get-sp  st.set-sp  st.read  st.write  st.run ;
 
 
 .else  ( no device found)
