@@ -289,20 +289,32 @@ code c!  ( b a)     w dpop1   0 top +) w strb   poptop j  ;c
 code +!  ( w a)     w dpop1   0 top +) x ldr   w x x add
                               0 top +) x str   poptop j  ;c
 
-.ifdef notyet  ( unconverted RISC-V code)
+( Comparison and flag operators.)
+code 0<  ( n - f)   31 # top top asrs   next  ;c
 
-( The slt/u/i instructions set a register to 1 if the comparison is true,
-  and to 0 otherwise. We want to use -1 as a true flag, so we always negate
-  the result of the test.)
+( These are a bit tricky, esp since borrow is ~carry. The idea is: get the
+  inverse of the flag value we want into carry, then subtract top from
+  itself - yielding zero - minus borrow, or -1 for true, 0 for false. It's
+  efficient but non-obvious.)
 
-code 0=               top top seqz   label makeflag   top top neg   next  ;c
-code 0<               top top sltz   makeflag j  ;c
-code  <    x pop1   x top top slt    makeflag j  ;c
-code u<    x pop1   x top top sltu   makeflag j  ;c
+code 0=  ( n - f)
+label eqzero     1 # top top subs  ( ~Z -> C)
+label makeflag   top top top sbcs   next  ;c
+
+code u<  ( x t - x u< t)
+          x dpop1   top x cmp  ( ~uless -> C)  makeflag j  ;c
+
+( Since it's tricky to directly set or clear the carry flag, let's instead
+  conditionally pass a zero or one to eqzero, to create a true or false
+  flag, resp.)
+
+code  <  ( x t - x < t)
+          0 # w movs  ( true)
+          x dpop1   top x cmp   w top mov    eqzero >= until
+                              1 # top movs   eqzero j  ;c
 
 ( Another useful compare operator - equality!)
 : =   xor 0= ;
-
 
 ( Small constants.)
 -2 constant -2   [r]
@@ -314,7 +326,7 @@ code u<    x pop1   x top top sltu   makeflag j  ;c
 ( Incrementers by small constants. Shared code means they take up very
   little space!)
 
-meta: incr   constant  ;code   0 w w lw   w top top add   next  ;c
+meta: incr   constant  ;code   0 w +) w ldr   w top top adds   next  ;c
    1 incr 1+   [r]
    2 incr 2+   [r]
 
@@ -323,6 +335,8 @@ meta: incr   constant  ;code   0 w w lw   w top top add   next  ;c
 
 cell        incr cell+   [r]
 cell negate incr cell-   [r]
+
+.ifdef notyet  ( unconverted RISC-V code)
 
 ( Double numbers. Useful, among other things, for computing with RISC-V's
   64-bit timers and counters.)
