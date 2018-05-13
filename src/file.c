@@ -150,6 +150,12 @@ void mu_open_file_ro()
     mu_open_file();
 }
 
+void mu_open_file_wo()
+{
+    PUSH(O_WRONLY);
+    mu_open_file();
+}
+
 void mu_open_file_rw()
 {
     PUSH(O_RDWR);
