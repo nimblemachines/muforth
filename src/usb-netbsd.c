@@ -70,19 +70,34 @@ static int enumerate_devices(char *dev_ep0, int devoff, int vid, int pid)
     {
         dev_ep0[devoff] = devnum;
         fd = open(dev_ep0, O_RDONLY);
-        if (fd == -1) continue;
+        if (fd == -1)
+        {
+            fprintf(stderr, "Couldn't open %s; skipping\n", dev_ep0);
+            continue;
+        }
         res = ioctl(fd, USB_GET_DEVICE_DESC, &dev_desc);
         close(fd);
-        if (res == -1) continue;
+        if (res == -1)
+        {
+            fprintf(stderr, "Couldn't get device descriptor from %s; skipping\n", dev_ep0);
+            continue;
+        }
 
         if (UGETW(dev_desc.idVendor) == vid &&
             UGETW(dev_desc.idProduct) == pid)
         {
             int timeout = 5000; /* ms */
             fd = open(dev_ep0, O_RDWR);   /* Re-open read-write */
-            if (fd == -1) return -1;
-            if (ioctl(fd, USB_SET_TIMEOUT, &timeout) == -1)
+            if (fd == -1)
+            {
+                fprintf(stderr, "Couldn't re-open %s read/write; giving up\n", dev_ep0);
                 return -1;
+            }
+            if (ioctl(fd, USB_SET_TIMEOUT, &timeout) == -1)
+            {
+                fprintf(stderr, "Couldn't set timeout for %s; giving up\n", dev_ep0);
+                return -1;
+            }
             return fd;
         }
     }
@@ -146,9 +161,9 @@ static void mu_usb_open_pipe(int flags)     /* ( dev pipe# - pipe) */
     char dev[UGEN_MAXLEN];
 
 #if defined(__NetBSD__) || defined(__OpenBSD__)
-    snprintf(dev, UGEN_MAXLEN, "/dev/ugen%d.%.2ld", d->devnum, TOP);
+    snprintf(dev, UGEN_MAXLEN, "/dev/ugen%d.%.2lld", d->devnum, TOP);
 #else
-    snprintf(dev, UGEN_MAXLEN, "/dev/ugen%d.%ld", d->devnum, TOP);
+    snprintf(dev, UGEN_MAXLEN, "/dev/ugen%d.%lld", d->devnum, TOP);
 #endif
     pipe_fd = open(dev, flags);
     if (pipe_fd == -1) return abort_strerror();
