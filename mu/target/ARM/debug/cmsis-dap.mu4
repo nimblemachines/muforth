@@ -142,6 +142,8 @@ comment CMSIS-DAP-commands
 end CMSIS-DAP-commands
 
 
+.ifdef hid-find-device  ( OSX and Linux have this, BSDs don't)
+
 0d28 0204 hid-find-device  ( MBED CMSIS-DAP)  .if  constant cmsis  .else
 c251 f002 hid-find-device  ( Keil CMSIS-DAP)  .if  constant cmsis  .else
 
@@ -149,16 +151,32 @@ c251 f002 hid-find-device  ( Keil CMSIS-DAP)  .if  constant cmsis  .else
 
 .then .then
 
-
-.ifdef cmsis
-
- -- hid-read  ( 'buffer size dev - #read)
- -- hid-write ( 'buffer size dev)
+.ifdef cmsis  ( ie, we matched one of the two devices above)
 
 ( Device found - load support)
 
 : uread   ( buf len - #read)  cmsis  hid-read ;
 : uwrite  ( buf len)          cmsis  hid-write ;
+
+.then
+
+.else  ( no hid-find-device; we must be running some flavour of BSD)
+
+( Try shooting in the dark. The user can also tweak this by reading the
+  output of
+
+    usbdevs -d
+)
+z" /dev/uhid0" open-file-rw   constant cmsis
+
+: uread   ( buf len - #read)  cmsis  -rot read ;
+: uwrite  ( buf len)          cmsis  -rot write ;
+
+.then
+
+( Did we find a target we can talk to?)
+
+.ifdef uread
 
 ( A simple buffer for chatty communication protocols. Words for putting
   values into a buffer and taking them out again.)
@@ -762,4 +780,4 @@ comment %%hardwired%%
 : jtag
    chat-via  dap.hello  dap.get-sp  dap.set-sp  dap.read  dap.write  dap.run ;
 
-.then  ( ifdef cmsis)
+.then  ( ifdef uread)
