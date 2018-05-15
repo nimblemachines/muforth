@@ -152,16 +152,19 @@ EOF
     fi
 fi
 
-if [ "$os" = "FreeBSD" -o "$os" = "NetBSD" -o "$os" = "OpenBSD" ]; then
+if [ "$os" = "FreeBSD" ]; then
+    # For FreeBSD, include both old-style and new-style USB drivers. Let
+    # the C preprocessor decide which code to include. ;-)
     archobjs="file.o main.o time.o tty.o select.o pty.o usb-netbsd.o usb-freebsd.o"
     if [ "$cpu" = "amd64" ]; then
         Wnarrowing=""
     fi
 fi
 
-if [ "$os" = "DragonFly" ]; then
+if [ "$os" = "DragonFly" -o "$os" = "NetBSD" -o "$os" = "OpenBSD" ]; then
+    # DragonFly, NetBSD, and OpenBSD all have a NetBSD-like USB stack.
     archobjs="file.o main.o time.o tty.o select.o pty.o usb-netbsd.o"
-    if [ "$cpu" = "x86_64" ]; then
+    if [ "$cpu" = "amd64" -o "$cpu" = "x86_64" ]; then
         Wnarrowing=""
     fi
 fi

@@ -16,7 +16,7 @@
  * systems.
  */
 
-#if defined(__NetBSD__) || defined(__DragonFly__) || (__FreeBSD__ < 8)
+#if defined(__NetBSD__) || defined(__OpenBSD__) || defined(__DragonFly__) || (defined(__FreeBSD__) && (__FreeBSD__ < 8))
 
 #include "muforth.h"
 
@@ -41,7 +41,7 @@
  * endpoints 10 to 15.
  */
 
-#ifdef __NetBSD__
+#if defined(__NetBSD__) || defined(__OpenBSD__)
 #define UGEN_EP0    "/dev/ugen0.00"
 #else
 #define UGEN_EP0    "/dev/ugen0"
