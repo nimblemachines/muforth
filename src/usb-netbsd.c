@@ -61,7 +61,7 @@ struct mu_usb_dev
 
 static int enumerate_devices(char *dev_ep0, int devoff, int vid, int pid)
 {
-    usb_device_descriptor_t dev_desc;
+    struct usb_device_info udi;
     int fd;
     int res;
     int devnum;
@@ -75,16 +75,16 @@ static int enumerate_devices(char *dev_ep0, int devoff, int vid, int pid)
             fprintf(stderr, "Couldn't open %s; skipping\n", dev_ep0);
             continue;
         }
-        res = ioctl(fd, USB_GET_DEVICE_DESC, &dev_desc);
+        res = ioctl(fd, USB_GET_DEVICEINFO, &udi);
         close(fd);
         if (res == -1)
         {
-            fprintf(stderr, "Couldn't get device descriptor from %s; skipping\n", dev_ep0);
+            fprintf(stderr, "Couldn't get device info from %s; skipping\n", dev_ep0);
             continue;
         }
 
-        if (UGETW(dev_desc.idVendor) == vid &&
-            UGETW(dev_desc.idProduct) == pid)
+        if (udi.udi_vendorNo == vid &&
+            udi.udi_productNo == pid)
         {
             int timeout = 5000; /* ms */
             fd = open(dev_ep0, O_RDWR);   /* Re-open read-write */
