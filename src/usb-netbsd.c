@@ -70,34 +70,19 @@ static int enumerate_devices(char *dev_ep0, int devoff, int vid, int pid)
     {
         dev_ep0[devoff] = devnum;
         fd = open(dev_ep0, O_RDONLY);
-        if (fd == -1)
-        {
-            fprintf(stderr, "Couldn't open %s; skipping\n", dev_ep0);
-            continue;
-        }
+        if (fd == -1) { continue; }
         res = ioctl(fd, USB_GET_DEVICEINFO, &udi);
         close(fd);
-        if (res == -1)
-        {
-            fprintf(stderr, "Couldn't get device info from %s; skipping\n", dev_ep0);
-            continue;
-        }
+        if (res == -1) { continue; }
 
         if (udi.udi_vendorNo == vid &&
             udi.udi_productNo == pid)
         {
             int timeout = 5000; /* ms */
             fd = open(dev_ep0, O_RDWR);   /* Re-open read-write */
-            if (fd == -1)
-            {
-                fprintf(stderr, "Couldn't re-open %s read/write; giving up\n", dev_ep0);
-                return -1;
-            }
-            if (ioctl(fd, USB_SET_TIMEOUT, &timeout) == -1)
-            {
-                fprintf(stderr, "Couldn't set timeout for %s; giving up\n", dev_ep0);
-                return -1;
-            }
+            if (fd == -1) { return -1; }
+            /* Try to set timeout, but don't give up if it fails. */
+            ioctl(fd, USB_SET_TIMEOUT, &timeout);
             return fd;
         }
     }
