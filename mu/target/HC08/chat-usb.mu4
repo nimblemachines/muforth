@@ -20,6 +20,14 @@ __meta
 
 .ifndef in-ram
 
+( Compile the first 32 bits of the current muforth Git commit. The host can
+  grab these four bytes and print them out. However, the host has to
+  somehow know to read from fe00, not fc00. And there isn't room to add
+  another command to "queue up" the version for reading...)
+
+label version
+   muforth-commit drop 8 evaluate  >0123  c, c, c, c,
+
 ( Our device descriptor. Note: all USB data is little-endian.) 
 label device-descriptor
    12 c, ( bLength)
@@ -29,8 +37,8 @@ label device-descriptor
    00 c, ( bDeviceSubClass)
    00 c, ( bDeviceProtocol)
    buflen0 c, ( bMaxPacketSize0)
-  0a2 c,  15 c, ( idVendor = Freescale)
-  0de c, 0c0 c, ( idProduct = c0de)
+  0ff c,  0f0 c,  ( idVendor = F0FF)
+   01 c,   00 c,  ( idProduct = 0001)
    01 c,  00 c, ( bcdDevice = 00.01)
    00 c, ( iManufacturer - string index = none)
    00 c, ( iProduct - string index = none)
@@ -113,10 +121,9 @@ label parse-address-length
    wValue 1+ ) lda  memptr    ) sta   ( 10 bytes)
    ( fall thru)  ;c
 
-( We store the count negated!)
 label parse-length
-   .a clr  wLength    ) sub  memcount 1+ ) sta
-   .a clr  wLength 1+ ) sbc  memcount    ) sta   ( 10 bytes)
+   wLength    ) lda  memcount 1+ ) sta
+   wLength 1+ ) lda  memcount    ) sta   ( 10 bytes)
    rts  ;c
 
 ( We always want to queue up either a short packet or a zero-length packet
@@ -128,13 +135,14 @@ label parse-length
 ( Exit with in-count in X)
 label prepare-next-in
    memcount ) ldhx  0!= if
-      buflen0 negate # cphx  u< if  ( whole packet)  buflen0 negate # ldx  then
-      bufptr ) clr  .x neg  .x psh ( count)
+      buflen0 # cphx  u> if  ( whole packet)  buflen0 # ldx  then
+      bufptr ) clr  .x psh ( count)
       begin
          memptr ) ldhx  0 ,x lda  1 # aix  memptr ) sthx
          .h clr  bufptr ) ldx  in-buffer ,x sta  .x inc  bufptr ) stx
-         memcount 1+ ) inc  0= if  memcount ) inc  then
+         memcount ) ldhx  -1 # aix ( decr count)  memcount ) sthx
       0 ,s decz? until  .a pul
+      bufptr ) ldx  ( in count)
    then
    ( fall thru)  ;c
 
@@ -164,23 +172,31 @@ label prepare-next-out
    expect-out-token j  ;c
 
 label read-sp
-   tsx  2 # aix  in-buffer ) sthx  2 # ldx
+   tsx  2 # aix
+label read-hx
+   in-buffer ) sthx  2 # ldx
    prepare-in-xcount j  ;c
 
 .ifndef in-ram
+
+label get-status
+   0 # ldhx  read-hx j  ;c
 
 label get-device-descriptor
    device-descriptor # ldhx
    ( fall thru)  ;c
 
-label prepare-descriptor
-   memptr ) sthx
-   parse-length c  -12 # ldhx
-   memcount ) cphx  u> if  memcount ) sthx  then
+label prepare-descriptor-12  ( length of 12 hex, 18 bytes)
+   memptr ) sthx  12 # ldhx
+   ( fall thru)  ;c
+
+label prepare-descriptor  ( addr in memptr, length in hx)
+   parse-length c
+   memcount ) cphx  u< if  memcount ) sthx  then  ( XXX check)
    prepare-next-in j  ;c
 
 label get-config-descriptor
-   config-descriptor # ldhx  prepare-descriptor j  ;c
+   config-descriptor # ldhx  prepare-descriptor-12 j  ;c
 
 label get-descriptor
    wValue 1+ ) lda  ( get descriptor type requested)
@@ -241,6 +257,7 @@ label finish-control-write
 
 label standard-request
    bRequest ) lda
+   0!=          get-status  until
    05 # cmpne?  set-address  until
    06 # cmpne?  get-descriptor  until
    09 # cmpne?  set-config  until
@@ -286,7 +303,7 @@ label setup-or-out-token
    begin
       .h clr  bufptr ) ldx  out-buffer ,x lda  .x inc  bufptr ) stx
       memptr ) ldhx  write-byte c  1 # aix  memptr ) sthx
-      memcount 1+ ) inc  0= if  memcount ) inc  then
+      memcount ) ldhx  -1 # aix ( decr count)  memcount ) sthx
    0 ,s decz? until  .a pul
 
    ( If memcount zero, we've received all the data; queue up status IN token.)
