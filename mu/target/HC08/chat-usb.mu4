@@ -18,15 +18,14 @@ __meta
 
 10 constant buflen0  ( buffer length, and hence max packet size, for endpoint 0)
 
-.ifndef in-ram
-
 ( Compile the first 32 bits of the current muforth Git commit. The host can
-  grab these four bytes and print them out. However, the host has to
-  somehow know to read from fe00, not fc00. And there isn't room to add
-  another command to "queue up" the version for reading...)
+  grab these four bytes and print them out. It gets the address by
+  executing the get-version-addr command.)
 
 label version
    muforth-commit drop 8 evaluate  >0123  c, c, c, c,
+
+.ifndef in-ram
 
 ( Our device descriptor. Note: all USB data is little-endian.) 
 label device-descriptor
@@ -177,10 +176,10 @@ label read-hx
    in-buffer ) sthx  2 # ldx
    prepare-in-xcount j  ;c
 
-.ifndef in-ram
+label get-version-addr
+   version # ldhx  read-hx j  ;c
 
-label get-status
-   0 # ldhx  read-hx j  ;c
+.ifndef in-ram
 
 label get-device-descriptor
    device-descriptor # ldhx
@@ -223,6 +222,7 @@ label vendor-request
    ( 01)  write-memory  .a dec 0!= until
    ( 02)  cut-and-run   .a dec 0!= until
    ( 03)  read-sp       .a dec 0!= until
+   ( 04)  get-version-addr   .a dec 0!= until 
 .ifdef in-ram
    ( unknown, fall thru)
 
@@ -257,7 +257,6 @@ label finish-control-write
 
 label standard-request
    bRequest ) lda
-   0!=          get-status  until
    05 # cmpne?  set-address  until
    06 # cmpne?  get-descriptor  until
    09 # cmpne?  set-config  until
