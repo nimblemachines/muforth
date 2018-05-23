@@ -13,6 +13,8 @@ loading HCS08 USB chat (testbed)
    z" Selected device doesn't support USB."  abort
 .then
 
+ld lib/utf8.mu4
+
 meta
 : le16,  ( w)  dup \m c,  8 >> \m c, ;
 
@@ -32,6 +34,13 @@ hex
 __meta
 
 10 constant buflen0  ( buffer length, and hence max packet size, for endpoint 0)
+
+( Compile the first 32 bits of the current muforth Git commit. The host can
+  grab these four bytes and print them out. It gets the address by
+  executing the get-version-addr command.)
+
+label version
+   muforth-commit drop 8 evaluate  >0123  c, c, c, c,
 
 .ifndef in-ram
 
@@ -178,11 +187,15 @@ label prepare-in-xcount
    in-count ) stx
    ( toggle DATA0/1)  in-control # ldhx  toggle-data c  ( fall thru)  ;c
 
-( Get ready to receive another SETUP token.)
+( Get ready to receive another SETUP DATA0 token, or an OUT DATA1 token.
+  The host will send an empty DATA1 as a status stage.)
+
 label expect-setup-token
-   match-data1 # lda
+   .a clr  out-control ) sta  ( fall through)  ;c
+
 label expect-out-token  ( expect OUT or SETUP, really)
-   buflen0 # ldx  out-count ) stx  ( .A has value)  out-control ) sta
+   buflen0 # ldx  out-count ) stx
+   ( toggle DATA0/1)  out-control # ldhx  toggle-data c
    CTL 5 bclr ( TSUSPEND off - resume processing)
    rts  ;c
 
@@ -192,11 +205,7 @@ label read-memory
 
 label write-memory
    wIndex ) lda  flash-command ) sta
-   parse-address-length c  ( fall thru)  ;c
-
-label prepare-next-out
-   ( toggle DATA0/1)  out-control # ldhx  toggle-data c
-   expect-out-token j  ;c
+   parse-address-length c  expect-out-token j  ;c
 
 label read-sp
    tsx  2 # aix
@@ -204,10 +213,10 @@ label read-hx
    in-buffer ) sthx  2 # ldx
    prepare-in-xcount j  ;c
 
-.ifndef in-ram
+label get-version-addr
+   version # ldhx  read-hx j  ;c
 
-label get-status
-   0 # ldhx  read-hx j  ;c
+.ifndef in-ram
 
 label get-device-descriptor
    device-descriptor # ldhx
@@ -219,7 +228,7 @@ label prepare-descriptor-12  ( length of 12 hex, 18 bytes)
 
 label prepare-descriptor  ( addr in memptr, length in hx)
    parse-length c
-   memcount ) cphx  u< if  memcount ) sthx  then  ( XXX check)
+   memcount ) cphx  u< if  memcount ) sthx  then
    prepare-next-in j  ;c
 
 label get-config-descriptor
@@ -257,6 +266,7 @@ label vendor-request
    ( 01)  write-memory  .a dec 0!= until
    ( 02)  cut-and-run   .a dec 0!= until
    ( 03)  read-sp       .a dec 0!= until
+   ( 04)  get-version-addr   .a dec 0!= until 
 .ifdef in-ram
    ( unknown, fall thru)
 
@@ -291,7 +301,6 @@ label finish-control-write
 
 label standard-request
    bRequest ) lda
-   0!=          get-status  until
    05 # cmpne?  set-address  until
    06 # cmpne?  get-descriptor  until
    09 # cmpne?  set-config  until
@@ -344,7 +353,7 @@ label setup-or-out-token
    memcount ) ldhx   finish-control-write 0!= until
 
    ( memcount non-zero; expect more data.)
-   prepare-next-out j  ;c
+   expect-out-token j  ;c
 
 
 ( An IN token is either part of a data stage of a control read, or it is
