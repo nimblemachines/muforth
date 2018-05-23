@@ -1,0 +1,70 @@
+( This file is part of muforth: http://muforth.nimblemachines.com/
+
+  Copyright 2002-2018 David Frech. (Read the LICENSE for details.)
+
+( Words to make writing USB descriptors easier. These are intended to work
+  with a meta-compiler, and will get compiled into the .meta. chain.)
+
+loading Target USB descriptors
+
+( We need UTF-8 to UCS-16LE support if we use any string descriptors.)
+ld lib/utf8.mu4
+
+meta
+
+: le16,  ( w)  dup \m c,  8 >> \m c, ;
+
+( Compile a USB UCS-16LE string descriptor.)
+: descr,  ( a u)
+   \m here  -rot  0 \m c,  ( length)  3 \m c, ( string descriptor type)
+   over + push
+   begin  dup r@ u< while  utf8@+ swap  \m le16,  repeat
+   drop  rdrop
+   \m here  over - swap  image-c! ;
+
+: descr"   char " parse  ( a u)  \m descr, ;
+
+hex
+
+( Compile a USB endpoint descriptor.)
+00 constant out
+80 constant in
+
+01 constant iso ( -chronous)
+02 constant bulk
+03 constant interrupt
+
+: endpoint  ( bufsize type in/out number)
+   9 \m c, ( len)  05 \m c, ( ENDPOINT)  or  \m c, ( num+direction)
+   \m c, ( type)  >hilo  \m c,  \m c, ( bufsize)
+   0 \m c,  0 \m c,  0 \m c, ;
+
+( Compile a USB MIDI Jack descriptor.)
+
+( Jack types.)
+01 constant embedded
+02 constant external
+
+: in-jack  ( string-id id type)
+   6 \m c, ( len)  24 \m c, ( CS_INTERFACE)  02 \m c, ( MIDI_IN_JACK)
+   \m c, ( type)  \m c, ( jackId)  \m c, ( string descr) ;
+
+( Define an out jack. Out jacks can have as many inputs as you like. They
+  act like "mixers" - merging the MIDI streams on their input pins into a
+  single stream.)
+
+: out-jack  ( string-id source-idN .. source-id1 #sources id type )
+   2 nth ( #sources) 2* 7 + \m c, ( len)
+   24 \m c, ( CS_INTERFACE)  03 \m c, ( MIDI_OUT_JACK)
+   \m c, ( type)  \m c, ( jackId)
+   dup \m c, ( #inputs)  for  \m c, ( source-id)  01 \m c, ( source pin)  next
+   \m c, ( string descr) ;
+
+( Connect an endpoint to one or more embedded jacks. This must directly
+  follow the standard USB endpoint descriptor.)
+
+: midi-endpoint  ( jackN .. jack1 #jacks)
+   dup 4 + \m c, ( len)  25 \m c, ( CS_ENDPOINT)  01 \m c, ( MS_GENERAL)
+   dup \m c, ( #jacks)  for  \m c,  next ;
+
+forth
