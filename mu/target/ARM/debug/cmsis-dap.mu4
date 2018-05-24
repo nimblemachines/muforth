@@ -382,6 +382,11 @@ e000_edfc constant DEMCR  ( debug exception and monitor ctrl reg)
 1 #17 << constant S_HALT
 1 #16 << constant S_REGRDY
 
+1  #3 << constant C_MASKINTS
+1  #2 << constant C_STEP
+1  #1 << constant C_HALT
+1  #0 << constant C_DEBUGEN
+
 ( Defines for AHB.CSW)
 comment %%hardwired%%
 0 constant CSW.byte    ( memory bus transaction sizes)
@@ -452,16 +457,19 @@ comment %%hardwired%%
 ( Add debug key to command bits and store into DHCSR.)
 : _dhcsr!  ( value)  a05f_0000 +  AHB.DRW AP.Wr ;
 
-: _run    1  ( C_DEBUGEN)           _dhcsr! ;
-: _halt   3  ( C_DEBUGEN + C_HALT)  _dhcsr! ;
-: _step   5  ( C_DEBUGEN + C_STEP)  _dhcsr! ;
+: _run    [ C_DEBUGEN C_MASKINTS +          ]  _dhcsr! ;
+: _halt   [ C_DEBUGEN C_MASKINTS + C_HALT + ]  _dhcsr! ;
+: _step   [ C_DEBUGEN C_MASKINTS + C_STEP + ]  _dhcsr! ;
 
 : dhcsr!   ( value)  <xfer  _debugregs  _dhcsr!  xfer> ;
 
-: run    1  ( C_DEBUGEN)           dhcsr! ;
-: halt   3  ( C_DEBUGEN + C_HALT)  dhcsr! ;
-: step   5  ( C_DEBUGEN + C_STEP)  dhcsr! ;
+: run    [ C_DEBUGEN C_MASKINTS +          ]  dhcsr! ;
+: halt   [ C_DEBUGEN C_MASKINTS + C_HALT + ]  dhcsr! ;
+: step   [ C_DEBUGEN C_MASKINTS + C_STEP + ]  dhcsr! ;
 
+
+( Have to have set _debugregs already.)
+: _halted?  ( - f)   <xfer  _dhcsr@  xfer> w>  S_HALT and ;
 
 : dap.hello  ( connect to device)
    spy on  led off
@@ -471,6 +479,7 @@ comment %%hardwired%%
    -fault
    <xfer  0 _DP.SELECT  5000_0000 _DP.CTRL ( pwr up sys & dbg)  xfer>
    halt
+   begin  _halted?  until
    spy off
 ;
 
@@ -759,11 +768,10 @@ comment %%hardwired%%
   18  Process stack pointer, PSP
   20  CONTROL.PRIMASK)
 
+( XXX Time out after a while?)
 : dap.get-sp  ( - sp)
    <xfer  _debugregs  xfer>
-   begin
-      <xfer  _dhcsr@  xfer> w>  S_HALT and
-   until
+   begin  _halted?  until
    <xfer  #13 _readreg  xfer> w> ;
 
 : dap.set-sp  ( sp)
