@@ -128,6 +128,7 @@ should be available to udev.
 EOF
         else
             ../scripts/make-udev-rules.sh $USER > 99-muforth.rules
+            ../scripts/make-udev-rules.sh $UID > 99-muforth-uid.rules
             cat <<EOF
 A udev rules file has just been generated, which will be of interest to you
 if you want to use USB devices with muforth.
@@ -139,6 +140,23 @@ Please do the following as root:
 
 (or possibly some other command to tell udevd to reload its rules files;
 'man udev' for the whole story).
+
+If you are running this on a Chromebook, things are slightly more
+complicated. /etc is on a read-only filesystem. The udev rules live in a
+volatile filesystem (/run) and have to be re-copied every time you restart
+your Chromebook, so you'll want to make a script. But the basic steps are:
+
+In a non-chroot shell,
+
+  $ sudo mkdir -p /run/udev/rules.d
+  $ sudo cp ${muforth}/src/99-muforth-uid.rules /run/udev/rules.d
+  $ sudo udevadm control --reload
+
+Note that this way uses a different rules file; this one has a numeric UID
+rather than a user name for each rule, since the Chromebook's /etc/passwd
+and /etc/group files aren't going to have the user name info that lives in
+your chroot.
+
 EOF
         fi
     elif [ -d /proc/bus/usb ]; then
