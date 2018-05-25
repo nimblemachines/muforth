@@ -2,15 +2,32 @@
 
   Copyright 2002-2018 David Frech. (Read the LICENSE for details.)
 
-( The USB version of the serial byteloader. Trying to fit it into less than
-  512 bytes - I actually have 428 bytes of room!)
+( A "testbed" version of the S08 USB chat code. Allowing for 1 KiB of
+  space so there is room for strings, more interfaces and endpoints, end
+  experimentation in general.)
 
-loading HCS08 USB chat (target)
+loading HCS08 USB chat (testbed)
 
 ( Check for compatibility with device.)
 .reg EPCTL0 .not .if
    z" Selected device doesn't support USB."  abort
 .then
+
+ld lib/utf8.mu4
+
+meta
+: le16,  ( w)  dup \m c,  8 >> \m c, ;
+
+( Compile a USB UCS-16LE string descriptor.)
+: descr,  ( a u)
+   \m here  -rot  0 \m c,  ( length)  3 \m c, ( string descriptor type)
+   over + push
+   begin  dup r@ u< while  utf8@+ swap  \m le16,  repeat
+   drop  rdrop
+   \m here  over - swap  image-c! ;
+
+: descr"   char " parse  ( a u)  \m descr, ;
+forth
 
 hex
 
@@ -37,11 +54,11 @@ label device-descriptor
    00 c, ( bDeviceProtocol)
    buflen0 c, ( bMaxPacketSize0)
   0ff c,  0f0 c,  ( idVendor = F0FF)
-   01 c,   00 c,  ( idProduct = 0001)
+  0d0 c,  0be c,  ( idProduct = BED0)
    01 c,  00 c, ( bcdDevice = 00.01)
-   00 c, ( iManufacturer - string index = none)
-   00 c, ( iProduct - string index = none)
-   00 c, ( iSerialNumber - string index = none)
+   01 c, ( iManufacturer - string index = 1)
+   02 c, ( iProduct - string index = 2)
+   03 c, ( iSerialNumber - string index = 3)
    01 c, ( bNumConfigurations)
 
 label config-descriptor
@@ -65,6 +82,26 @@ label interface-descriptor
    00 c, ( bInterfaceSubClass)
    00 c, ( bInterfaceProtocol)
    00 c, ( iInterface - string index = none)
+
+label string0
+   04 c, ( bLength)
+   03 c, ( bDescriptorType = string)
+   09 c, 04 c, ( LANGID = 0409 = US English)
+
+label string1
+   descr" Fücken Awesöme Innövation Lab"
+
+label string2
+   descr" S08 USB testbed"
+
+label string3
+   muforth-commit drop #12  descr,
+
+label string-table
+   string0 ,
+   string1 ,
+   string2 ,
+   string3 ,
 ;c
 
 .then
@@ -197,10 +234,17 @@ label prepare-descriptor  ( addr in memptr, length in hx)
 label get-config-descriptor
    config-descriptor # ldhx  prepare-descriptor-12 j  ;c
 
+label get-string-descriptor
+   wValue ) ldx  ( descriptor index)  .x lsl  .h clr
+   string-table ,x ldhx  memptr ) sthx
+   0 ,x ldx  ( length)  .h clr  ( length into hx)
+   prepare-descriptor j  ;c
+
 label get-descriptor
    wValue 1+ ) lda  ( get descriptor type requested)
    01 # cmpne?  get-device-descriptor  until
    02 # cmpne?  get-config-descriptor  until
+   03 # cmpne?  get-string-descriptor  until
    ( unknown, fall thru)
 
 label stall

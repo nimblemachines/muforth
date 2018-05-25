@@ -29,22 +29,21 @@ QB4/8     $88   $2809   $2806   $2803   $2800  $280C )
 2809 constant 'program-range
 
 ( HX points to first byte of data to Flash.)
-88 constant control-block
+88 constant @control-block
    1 6 << constant mass-erase
         0 constant page-erase
 -- 89 constant cpu-speed    ( 4*bus_speed_in_mhz, rounded up to nearest int)
 -- 8a constant lastH   ( Last address to program - 1)
 -- 8b constant lastL
-8c constant write-buffer  ( 1-16 bytes of data to write to Flash)
+8c constant @write-buffer  ( 1-16 bytes of data to write to Flash)
+
+( We build the control block on the host and then copy it over.)
+4 buffer control-block
 
 ( NOTE: the ROM routines can write up to 32 bytes at a time, but in the
   interest of more comfortably fitting our byteloader around the control
   block, in the limited RAM of the 908QB8, we only allow room for 16
   bytes.)
-
-
-: control-block!  control-block t.SetAddr ;
-: write-buffer!   write-buffer  t.SetAddr ;
 
 
 -- Rescue mode -----------------------------------------------------------
@@ -58,64 +57,61 @@ QB4/8     $88   $2809   $2806   $2803   $2800  $280C )
 
 : rescue-flash-setup  ( 'target len erase-cmd 'code )
    ( write PC to stack frame) pc!
-   control-block!
-      ( erase-cmd) t.Write
-                #5 t.Write ( running @ 4.9152M)
-   over + 1-  >lohi  t.Write  t.Write  ( last addr)
-   ( write HX to stack frame:) hx! ;
+   control-block m !
+      ( erase-cmd) m&
+                #5 m& ( running @ 4.9152M)
+   over + -1 +a  >lohi  m& m&  ( last addr - 1)
+   ( write HX to stack frame:) hx!
+   @control-block 4 control-block  t.WriteChunk ;
 
 : rescue-mass-erase
    0ffbe ( flash protect register)  1 ( bogus length)
-   mass-erase  'erase-range  rescue-flash-setup  _runwait ;
+   mass-erase  'erase-range  rescue-flash-setup  runwait ;
 
 : rescue-trim   ( trim)
-   write-buffer! t.Write
-   0ffc0 1 0 'program-range rescue-flash-setup  _runwait ;
+   pad c!  @write-buffer 1 pad  t.WriteChunk
+   0ffc0 1 0 'program-range rescue-flash-setup  runwait ;
 
 -- -----------------------------------------------------------------------
 
 : flash-setup  ( 'target 'len 'code)
    ( write PC to stack frame) pc!
-   control-block!
-       0 t.Write ( page erase)
-     #18 t.Write ( running @ 18.432M) 
-   over + 1-  >lohi  t.Write  t.Write  ( last addr)
+   control-block m !
+       0 m& ( page erase)
+     #18 m& ( running @ 18.432M) 
+   over + -1 +a  >lohi  m&  m&  ( last addr)
    ( write HX to stack frame:)
-   ( 'target) hx! ;
+   ( 'target) hx!
+   @control-block 4 control-block  t.WriteChunk ;
 
-: copy-row  ( 'image len)
-   swap image+ m !
-   write-buffer!  for  m* t.Write  next ;
+: copy-flash-chunk  ( 'target len)
+   swap image+  @write-buffer -rot  t.WriteChunk ;
 
-( Flash a row of 16 bytes or less.)
-: program-row  ( 'target len)
-   cr ." program-row "  2dup swap u. u.
-   2dup copy-row
-   'program-range flash-setup  _runwait ;
+( Flash a chunk of 16 bytes or less.)
+: program-chunk  ( 'target len)
+   cr ." program "  2dup swap u. u.
+   2dup copy-flash-chunk
+   'program-range flash-setup  runwait ;
 
 ( The length - from which we calc last-addr for the control block - doesn't
   matter for erase-range. The ROM routine always erases an entire page;
   also HX can point anywhere in the page.)
 
 : erase-page  ( 'target)
-   cr ." erase-page " dup u.
-   1 'erase-range flash-setup  _runwait ;
-
-: blank?  ( addr - flag)
-   cr ." blank? "  dup u.
-   t.SetAddr  -1  /page  for  t.Read and  next  0ff = ;
+   cr ." erase " dup u.
+   1 'erase-range flash-setup  runwait ;
 
 ( When we are about to program the _first_ row of a page, we erase the page.)
 : erased  ( 'target)
    dup [ /page 1- ] and  if  drop ^  then  ( do nothing if not first byte)
    erase-page ;
 
-: row  ( 'target len - 'target+len)
-   2dup + push  over erased  program-row  pop ;
+: program-row  ( 'target len - 'target+len)
+   2dup + push  over erased  program-chunk  pop ;
 
 : flash-region  ( a len)
-   /row /mod  ( r q)  swap push  for  /row row  next
-                         pop  =if   ( rem) row  drop ^  then  2drop ;
+   /row /mod  ( r q)  swap push  for  /row program-row  next
+                         pop  =if   ( rem) program-row  drop ^  then  2drop ;
 
 ( Where is the bootloader code?)
 @flash #flash +  1 Ki 2/ -  constant @boot
@@ -138,7 +134,7 @@ order to re-flash it. Consult a local guru. ;-)" ;
 
 : copy-trim  ( save from the wrecking ball)
    cr ." copy-trim"
-   0ffc0 dup t.SetAddr  t.Read  swap image-c! ;
+   0ffc0 1 over image+  t.ReadChunk ;
 
 ( I could flash all the vectors, but I only use the reset.)
 : flash-vectors
@@ -147,10 +143,17 @@ order to re-flash it. Consult a local guru. ;-)" ;
    0ffc0 1 program-row  ( trim)
    0fffe 2 program-row  ( reset vector) ;
 
-( XXX This is a bit of a hack, but seems to work.)
+: verify-chunk  ( 'target len - 'target+len)
+   -- cr ." verify "  over u.  dup u.
+   2dup + push
+   2dup pad t.ReadChunk  pad m !
+   for  dup image-c@ m* xor  if  dup u.  then  1+  next  drop
+   pop ;
+
+( Verify in chunks of 256 bytes.)
 : verify-region
-   over t.SetAddr  swap image+ m !
-   for  m* t.Read xor  if  m @ image-  -1 +a u.  then  next ;
+   100 /mod  ( r q)  swap push  for  100 verify-chunk  next
+                        pop  =if  ( rem) verify-chunk  drop ^  then  2drop ;
 
 : verify
    h preserve  flash

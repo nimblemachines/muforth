@@ -50,60 +50,40 @@ RUN:    Send 28
 : tgRun                  28 send  ;
   ( target _seems_ to send a 00 or break when code that has been run
   returns to the ROM monitor. This is undocumented behaviour.)
+
 decimal
-
-variable addr  ( we can't fetch it from target, so keep a shadow copy)
-: +addr  ( n)  addr @  +a  addr ! ;
-
-variable leftover  ( single byte, since tgIread returns two)
-variable #leftover
 
 : m.SetAddr
-   dup addr !
-   -1 +a  tgRead drop  ( simple, brutal, and inefficient!)
-   #leftover off ;
+   -1 +a  tgRead drop  ( simple, brutal, and inefficient!) ;
 
-: m.GetAddr  addr @ ;
+( This can read from and write to arbitrary buffers on the host side, not
+  just pieces of the image.)
 
-: m.GetRegs  ( - SP H CC A X PCH PCL)
-   tgReadSp dup  m.SetAddr  tgIread  tgIread  tgIread
-   6 +addr ;
+: m.setup-chunk  ( 'target len buffer - len)   m !  swap m.SetAddr ;
 
-: m.SetRegs  ( PCL PCH X A CC H)
-   ( We can't set SP using the ROM monitor!)
-   ( Instead, get current SP - which points to SWI frame - and put regs there)
-   tgReadSp  m.SetAddr  6 for  tgIwrite  next
-   6 +addr ;
+( Since we can only easily read two bytes at a time, round up any odd
+  lengths we are given. But complain too.)
 
-: m.Read  ( - byte)
-   1 +addr
-   #leftover @ if  leftover @  ( return cached byte)  #leftover off  ^  then
-   tgIread  ( b0 b1)  leftover !  1 #leftover ! ;
+: ?odd  ( len - len')
+   dup 1 and if  cr  ." hmm. odd length for m.ReadChunk; rounding up"  1+ then ;
 
-: m.Write  tgIwrite  1 +addr ;
+: m.ReadChunk    ( 'target len buffer)
+   m.setup-chunk  ?odd  2/ for  tgIRead  swap  m& m&  next ;
 
-( XXX I need better names for these... esp since they already called their
-  command "run")
+: m.WriteChunk   ( 'target len buffer)
+   m.setup-chunk  for  m* tgIWrite  next ;
 
-( m.Go  tgRun ; )
+: m.GetRegs  ( buf - sp)
+   tgReadSp  dup push  6 rot  c.ReadChunk  pop ;
+
+: m.SetRegs  ( buf)
+   tgReadSp            6 rot  c.WriteChunk ;
+
 : m.Run  ( wait for target)  tgRun  breakCheck ;
 
-( Return 0ff for 908 chip id)
-: m.Id  "0ff ;
-
-decimal
+: m.Hello
+   9600 bps  flush  security ;
 
 : chat
-   ( Wire our versions into the interact code.)
-   ['] m.Id  is t.Id
-   ['] m.Run is t.RunWait
-   ['] tgRun is t.Run
-   ['] m.GetRegs is t.GetRegs
-   ['] m.SetRegs is t.SetRegs
-   ['] m.SetAddr is t.SetAddr
-   ['] m.GetAddr is t.GetAddr
-   ['] m.Read is t.Read
-   ['] m.Write is t.Write
-
-   9600 bps  flush  security
-   +chat  hi ;
+   chat-via  m.Hello  m.GetRegs  m.SetRegs  m.Run
+             m.ReadChunk  m.WriteChunk  complain ;

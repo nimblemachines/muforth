@@ -2,21 +2,23 @@
 
   Copyright 2002-2018 David Frech. (Read the LICENSE for details.)
 
-( The USB version of the serial byteloader. Trying to fit it into less than
-  512 bytes - I actually have 428 bytes of room!)
+( Trying to create a USB MIDI device.)
 
-loading HCS08 USB chat (target)
+loading HCS08 USB MIDI (experimental!)
 
 ( Check for compatibility with device.)
 .reg EPCTL0 .not .if
    z" Selected device doesn't support USB."  abort
 .then
 
+ld target/common/usb-descriptors.mu4
+
 hex
 
 __meta
 
 10 constant buflen0  ( buffer length, and hence max packet size, for endpoint 0)
+40 constant buflen1  ( buffer length, and hence max packet size, for endpoint 1)
 
 ( Compile the first 32 bits of the current muforth Git commit. The host can
   grab these four bytes and print them out. It gets the address by
@@ -25,49 +27,156 @@ __meta
 label version
    muforth-commit drop 8 evaluate  >0123  c, c, c, c,
 
-.ifndef in-ram
+( For the USB MIDI descriptors, I've cribbed a lot of this from Appendix B
+  of the USB MIDI class spec, version 1.0, p37ff.)
 
 ( Our device descriptor. Note: all USB data is little-endian.) 
 label device-descriptor
    12 c, ( bLength)
    01 c, ( bDescriptorType = device)
    00 c, 02 c, ( bcdUSB = 02.00)
+
+.ifdef iad
+         ( The following triple forces Interface Association.)
+  0ef c, ( bDeviceClass)
+   02 c, ( bDeviceSubClass)
+   01 c, ( bDeviceProtocol)
+.else
    00 c, ( bDeviceClass - composite device - look to interfaces for class)
    00 c, ( bDeviceSubClass)
    00 c, ( bDeviceProtocol)
+.then
+
    buflen0 c, ( bMaxPacketSize0)
   0ff c,  0f0 c,  ( idVendor = F0FF)
-   01 c,   00 c,  ( idProduct = 0001)
+   02 c,   00 c,  ( idProduct = 0002)
    01 c,  00 c, ( bcdDevice = 00.01)
-   00 c, ( iManufacturer - string index = none)
-   00 c, ( iProduct - string index = none)
-   00 c, ( iSerialNumber - string index = none)
+   01 c, ( iManufacturer - string index = 1)
+   02 c, ( iProduct - string index = 2)
+   03 c, ( iSerialNumber - string index = 3)
    01 c, ( bNumConfigurations)
 
 label config-descriptor
    09 c, ( bLength)
    02 c, ( bDescriptorType = configuration)
-   12 c, 00 c, ( wTotalLength = configuration + interfaces + endpts)
-   01 c, ( bNumInterfaces)
+   here  00 c, 00 c, ( wTotalLength = configuration + interfaces + endpts)
+.ifdef spy-on-midi-out
+   03 c, ( bNumInterfaces)
+.else
+   02 c, ( bNumInterfaces)
+.then
    01 c, ( bConfigurationValue; starts from 1, unlike string indices)
    00 c, ( iConfiguration - string index = none)
    80 c, ( bmAttributes)
    32 c, ( bMaxPower, in 2mA increments = 100mA - one "unit load")
    -- 64 c, ( bMaxPower, in 2mA increments = 200mA - two "unit loads")
 
-label interface-descriptor
+( Mandatory, but kind of a no-op.)
+label audio-control-interface-descriptor
    09 c, ( bLength)
    04 c, ( bDescriptorType = interface)
    00 c, ( bInterfaceNum)
    00 c, ( bAlternateSetting)
    00 c, ( bNumEndpoints - in _addition_ to endpoint pair 0)
+   01 c, ( bInterfaceClass = AUDIO)
+   01 c, ( bInterfaceSubClass = AUDIO_CONTROL)
+   00 c, ( bInterfaceProtocol = UNUSED)
+   00 c, ( iInterface - string index = none)
+
+label audio-control-cs-interface-descriptor
+   09 c, ( bLength)
+   24 c, ( bDescriptorType = class-specific interface)
+   01 c, ( bDescriptorSubtype = HEADER)
+   00 c, 01 c, ( bcdADC = 01.00 ??)
+   09 c, 00 c, ( wTotalLength of class-specific descriptors)
+   01 c, ( bInCollection - number of streaming interfaces)
+   01 c, ( baInterfaceNr[1] - the MIDI STREAMING interface)
+
+label midi-streaming-interface-descriptor
+   09 c, ( bLength)
+   04 c, ( bDescriptorType = interface)
+   01 c, ( bInterfaceNum)
+   00 c, ( bAlternateSetting)
+   01 c, ( bNumEndpoints - in _addition_ to endpoint pair 0)
+   01 c, ( bInterfaceClass = AUDIO)
+   03 c, ( bInterfaceSubClass = MIDI_STREAMING)
+   00 c, ( bInterfaceProtocol = UNUSED)
+   00 c, ( iInterface - string index = none)
+
+label midi-streaming-cs-interface-descriptor
+   07 c, ( bLength)
+   24 c, ( bDescriptorType = class-specific interface)
+   01 c, ( bDescriptorSubtype = HEADER)
+   00 c, 01 c, ( bcdADC = 01.00 ??)
+   here  00 c,  00 c, ( wTotalLength of class-specific descriptors)
+   ;c
+
+( Jacks.)
+
+( string-id id type)
+0    1 embedded in-jack
+0    3 embedded in-jack
+0    5 embedded in-jack
+0    7 embedded in-jack
+
+( string-id source-idN .. source-id1 #sources id type )
+0  1 1  2 external out-jack
+0  3 1  4 external out-jack
+0  5 1  6 external out-jack
+0  7 1  8 external out-jack
+
+( Endpoints.)
+label midi-out
+   buflen1 bulk out 01 endpoint
+
+   ( Now we connect our OUT endpoint to our embedded in jacks.)
+   7 5 3 1  4  midi-endpoint
+
+   ( Fix-up length of class-specific descriptors.)
+   here  midi-streaming-cs-interface-descriptor -  swap  image+ leh!
+
+.ifdef spy-on-midi-out
+
+label spy-on-midi-out-interface-descriptor
+   09 c, ( bLength)
+   04 c, ( bDescriptorType = interface)
+   02 c, ( bInterfaceNum)
+   00 c, ( bAlternateSetting)
+   01 c, ( bNumEndpoints - in _addition_ to endpoint pair 0)
   0ff c, ( bInterfaceClass = vendor-specific)
    00 c, ( bInterfaceSubClass)
    00 c, ( bInterfaceProtocol)
    00 c, ( iInterface - string index = none)
-;c
+
+   #64 bulk in 02 endpoint
 
 .then
+
+   ( Fix-up length of configuration descriptor.)
+   here  config-descriptor -  swap  image+ leh!  ;c
+
+label config-descriptor-end  ;c
+
+label string0
+   04 c, ( bLength)
+   03 c, ( bDescriptorType = string)
+   09 c, 04 c, ( LANGID = 0409 = US English)
+
+label string1
+   descr" Fücken Awesöme Innövation Lab"
+
+label string2
+   descr" S08 USB-MIDI experiment"
+
+label string3
+   muforth-commit drop #12  descr,
+
+label string-table
+   string0 ,
+   string1 ,
+   string2 ,
+   string3 ,
+;c
 
 1860 equ 'usb            ( USB RAM origin; buffer descriptors live here)
 1880 equ 'usb-buffers    ( endpoint RAM from here to 195f)
@@ -80,9 +189,14 @@ __host
 
 __meta
 
+( In buffer descriptor control byte, OWN is 80, DATA1 is 40, and DTS is 08.)
+
 ( Buffer descriptor control byte to match _any_ SETUP, or an OUT with a
-  DATA1 packet.)
-0c8 equ match-data1
+  DATA1 packet. When we hand the buffer over to the USB controller, we
+  always want to set OWN and DTS.)
+
+      40    equ data1
+data1 88 +  equ match-data1
 
 ( USB buffer descriptors)
 1860 equ in-control
@@ -92,8 +206,21 @@ __meta
 1864 equ out-count
 1865 equ out-bufaddr
 
-'usb-buffers            equ in-buffer
-'usb-buffers buflen0 +  equ out-buffer
+( USB buffer descriptors - JS16-specific)
+1866 equ ep1-control  ( MIDI OUT)
+1867 equ ep1-count
+1868 equ ep1-bufaddr
+
+1869 equ ep2-control  ( UNUSED)
+186a equ ep2-count
+186b equ ep2-bufaddr
+
+'usb-buffers
+          dup  equ in-buffer
+buflen0 + dup  equ out-buffer
+buflen0 + dup  equ ep1-buffer
+buflen1 +  ( XXX more buffers here)
+drop
 
 ( Useful aliases for buffer addresses - for control requests.)
 out-buffer 0 + equ bmRequestType
@@ -179,8 +306,6 @@ label read-hx
 label get-version-addr
    version # ldhx  read-hx j  ;c
 
-.ifndef in-ram
-
 label get-device-descriptor
    device-descriptor # ldhx
    ( fall thru)  ;c
@@ -195,18 +320,25 @@ label prepare-descriptor  ( addr in memptr, length in hx)
    prepare-next-in j  ;c
 
 label get-config-descriptor
-   config-descriptor # ldhx  prepare-descriptor-12 j  ;c
+   config-descriptor # ldhx  memptr ) sthx
+   config-descriptor-end  config-descriptor - # ldhx
+   prepare-descriptor j  ;c
+
+label get-string-descriptor
+   wValue ) ldx  ( descriptor index)  .x lsl  .h clr
+   string-table ,x ldhx  memptr ) sthx
+   0 ,x ldx  ( length)  .h clr  ( length into hx)
+   prepare-descriptor j  ;c
 
 label get-descriptor
    wValue 1+ ) lda  ( get descriptor type requested)
    01 # cmpne?  get-device-descriptor  until
    02 # cmpne?  get-config-descriptor  until
+   03 # cmpne?  get-string-descriptor  until
    ( unknown, fall thru)
 
 label stall
    EPCTL0 1 bset ( STALL)  rts  ;c
-
-.then
 
 ( IN requests will return NAK.)
 label nak-in
@@ -222,16 +354,19 @@ label vendor-request
    ( 01)  write-memory  .a dec 0!= until
    ( 02)  cut-and-run   .a dec 0!= until
    ( 03)  read-sp       .a dec 0!= until
-   ( 04)  get-version-addr   .a dec 0!= until 
-.ifdef in-ram
-   ( unknown, fall thru)
-
-label stall
-   EPCTL0 1 bset ( STALL)  rts  ;c
-
-.else
+   ( 04)  get-version-addr   .a dec 0!= until
    ( unknown) stall j  ;c
-.then
+
+label expect-ep1-out
+   buflen1 # ldx  ep1-count ) stx
+   ep1-control # ldhx  toggle-data j  ;c
+
+label set-config
+   ( This should set all toggle bits to DATA0. Let's set ep1 to DATA1, with OWN
+     bit clear. toggle-data will toggle it to DATA0.)
+   data1 # lda  ep1-control ) sta
+   expect-ep1-out c
+   ( fall thru to set-address)
 
 ( Set address is a bit tricky. We can't set the address immediately. The
   USB spec says that at every stage of a control transfer the device
@@ -241,7 +376,6 @@ label stall
   IN if ADDR is still zero; if it is, we set the address _then_.)
 
 label set-address
-label set-config
    ( do nothing, but return status)  ( fall thru)
 
 ( Prepare to return status - a zero-length IN transaction. Also be ready to
@@ -253,8 +387,6 @@ label finish-control-write
    .x clr  ( zero-length DATA1 transaction)
    prepare-in-xcount j  ;c
 
-.ifndef in-ram
-
 label standard-request
    bRequest ) lda
    05 # cmpne?  set-address  until
@@ -262,26 +394,15 @@ label standard-request
    09 # cmpne?  set-config  until
    ( unknown) stall j  ;c
 
-.then
-
 
 ( Receipt of SETUP has set out-control's data toggle to 0. Set in-control's
   as well.)
 
 label setup-token
    nak-in c
-
-.ifdef in-ram   ( assume vendor request)
-
-   vendor-request j  ;c
-
-.else  ( parse request)
-
    bmRequestType ) lda  60 # and   standard-request 0!= until
                         40 # cmpne?  vendor-request     until
             ( unknown)  stall j  ;c
-
-.then
 
 ( write-byte either simply copies a byte to memory - if flash-command is
   zero - or runs the flash code if flash-command is non-zero.)
@@ -311,7 +432,6 @@ label setup-or-out-token
    ( memcount non-zero; expect more data.)
    expect-out-token j  ;c
 
-
 ( An IN token is either part of a data stage of a control read, or it is
   the status stage of a control write. Status IN's are always zero bytes
   long; sometimes the last IN of the data stage is also zero bytes long -
@@ -324,23 +444,39 @@ label in-token
    ( If last IN was a full packet, ready some more data.)
    in-count ) lda  buflen0 # cmp  0= if  prepare-next-in j  then
 
-.ifndef in-ram
-
    ( If last packet was zero-length, check to make sure our address has
      been set.)
    .a tst 0= if
       ADDR ) tst  0= if  wValue ) lda  ADDR ) sta  then
    then
 
-.then
-
    ( Last packet was partial or zero-length; no further IN's expected.)
 label nak-in-expect-setup
    nak-in c  ( further IN's will return NAK)
    expect-setup-token j  ;c
 
+1 xvar ep1-count-saved
 
-.ifndef in-ram
+label ep1-out-token
+   ( STALL if we get a SETUP token on this endpoint. We only want OUTs.)
+   ep1-control ) lda  3c # and  34 # cmpne?  if
+.ifdef copy-ep1-contents
+      ( Got an OUT token)
+      ( Copy from USB buffer to elsewhere in RAM.)
+      ep1-count ) lda  .a psh  ( count)
+      .x clr  .h clr
+      begin
+         ep1-buffer ,x lda
+         ep1-copy   ,x sta  .x inc
+      0 ,s decz? until  .a pul
+.else
+      ( Just get the count so we have some idea what we are looking at when
+        we dump the ep1-buffer.)
+
+      ep1-count ) lda  ep1-count-saved ) sta
+.then
+      expect-ep1-out j
+   then  ( We got a SETUP token)  stall j  ;c
 
 label finish-config
 
@@ -362,18 +498,24 @@ label finish-config
    in-buffer >bufaddr # lda  in-bufaddr ) sta
    out-buffer >bufaddr # lda  out-bufaddr ) sta
 
+   ( Set up EP 1.)
+   ep1-buffer >bufaddr # lda  ep1-bufaddr ) sta
+
    01 # CTL ) mov          -- enable USB module
    45 # USBCTL0 ) mov      -- turn on pullup, vreg, and PHY
    begin  INTSTAT 0 bset?  until  ( wait for USBRSTF)
    ( fall thru)
 
+10 zvar token-buf  ( capture last 16 tokens)
+ 1 zvar token-index
+
 label after-usb-reset
    ADDR ) clr
    0ff # INTSTAT ) mov     -- clear all flags
    0d # EPCTL0 ) mov       -- enable ep0 as control endpt
+   09 # EPCTL1 ) mov       -- enable ep1 as OUT endpt
+   token-index ) clr
    rts  ;c
-
-.then
 
 ( XXX To convert process-usb into an interrupt handler, jumps to
   setup-or-out-token, in-token, and nak-in-expect-setup should really be
@@ -383,16 +525,19 @@ label after-usb-reset
 
 label process-usb
    INTSTAT 0 bset? if ( USBRSTF - USB bus reset seen)
-.ifndef in-ram
       after-usb-reset c
-.then
       nak-in-expect-setup j  ( get ready to receive SETUP)
    then
    INTSTAT 3 bset? if ( TOKDNEF)
       STAT ) lda  INTSTAT 3 bset  ( ack TOKDNEF)
-      0f8 # and  setup-or-out-token 0!= until
-       08 # cmpne?  in-token  until
-      ( not EP0; ignore)  ( fall thru)
+      token-index ) ldx  .h clr
+      token-buf ,x sta  .x inc
+      10 # cpx  0= if  .x clr  then  token-index ) stx
+       0f8 # and
+                 0= if  setup-or-out-token j  then
+       08 # cmp  0= if  in-token j  then
+       10 # cmp  0= if  ep1-out-token j  then
+      ( not EP0 or EP1 OUT; ignore)  ( fall thru)
    then
    INTSTAT 7 bset? if ( STALLF)
       EPCTL0 1 bclr ( remove EPSTALL)
@@ -424,13 +569,6 @@ label emulated-swi
 
 label interact
    begin  emulated-swi c  again  ;c
-
-.ifdef in-ram
-
-Vreset handler
-   begin  interact c  again  ;c
-
-.else
 
 here
 0ffc0 goto
@@ -492,14 +630,3 @@ Vreset handler
    begin  interact c  again  ;c
 
 goto ( back to saved)
-.then
-
-( Test code to try to execute)
-here  ( save)
-2000 goto
-label testing
-   c0de # ldhx  88 ) sthx
-   cafe # ldhx  8a ) sthx
-   babe # ldhx  8c ) sthx  rts  ;c
-
-goto  ( back to saved)

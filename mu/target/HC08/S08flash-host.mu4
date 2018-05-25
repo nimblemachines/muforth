@@ -44,63 +44,9 @@ forth
    cr ." erase " dup u.
    1  over image+  mPageErase  t.FlashChunk  check-flash-status ;
 
-( Read 256 bytes at a time. See comment for verify, below.)
-: blank?  ( addr - flag)
-   0ff swap  ( bits addr)  [ /page 100 / ] for
-      dup 100 + push
-      100 pad  t.ReadChunk  pad m !  100 for  m* and  next
-      pop
-   next  drop  0ff = ;
-
-( Where is the bootloader code?)
-( NOTE: this is currently the same as what last-page? calculates, but only
-  because the bootloader currently fits into the last page. If that
-  changes, last-page will stay the same but this constant will change. Best
-  to keep them separate.)
-
-@flash #flash +  1 Ki 2/ -  constant @boot
-
-( Check to see if we're going to clobber the bootloader and complain if
-  we're not executing from RAM.)
-
-: ?clobbering-loader  ( a u - a u)
-   2dup +  @boot  swap u< not  if ^ then  ( not touching bootloader - Ok)
-   pc@  [ @ram #ram + ] u<  if ^ then  ( running in RAM - Ok)
-   error" You need to be running a RAM-based version of the chat code in
-order to re-flash it. Consult a local guru. ;-)" ;
-
-( If target address is first byte of the last page of flash, return true)
-: last-page?  ( 'target - f)  [ @flash #flash +  /page - ]  = ; 
-
-( On S08, erasing the vectors means erasing the TRIM bytes, the secure
-  bits, and the bootloader. So be careful about re-programming things, esp
-  the TRIMs and the secure bits. Copy from ffac to ffaf.
-
-  If we've put trims into the image, don't overwrite these with the values
-  from the chip.)
-
-variable trims
-: save-trims  ( save them from the wrecking ball)
-   cr ." save-trims"
-   0ffac 4  2dup  trims  t.ReadChunk  trims m !
-   for
-      m*  over image-c@ 0ff =  if  over image-c!  else  drop  then
-      1+  next  drop ;
-
-( Flash vectors, security bytes, & trims)
-: flash-vectors
-   cr ." flashing vectors, security bytes, and trims"
-   0ffac 14  ( 0ffac - 0ffcf)  program-chunk  ( trims and security bytes)
-   0ffc0 40  ( 0ffc0 - 0ffff)  program-chunk  ( vectors) ;
-
-( When we are about to program the _first_ row of a page, we erase the
-  page. If it's the last page of the flash, we save the trims, erase the
-  page, and then flash the vectors and trims.)
-
+( Before we program the _first_ row of a page, we erase the page.)
 : erased  ( 'target)
    dup [ /page 1- ] and  if  drop ^  then  ( do nothing if not first byte)
-   dup last-page? if  ( erasing last page)
-      save-trims  erase-page  flash-vectors  ^  then
    erase-page ;
 
 : program-row  ( 'target len - 'target+len)
@@ -114,22 +60,70 @@ variable trims
    40 /mod  ( r q)  swap push  for   40 program-row  next
                        pop  =if  ( rem) program-row  drop ^  then  2drop ;
 
-: flash-image
-   h preserve  flash
-   region ( a u)  ?clobbering-loader  flash-region ;
+( Where is the bootloader code?)
+( NOTE: this is currently the same as what last-page? calculates, but only
+  because the bootloader currently fits into the last page. If that
+  changes, last-page will stay the same but this constant will change. Best
+  to keep them separate.)
 
+@flash #flash +  1 Ki 2/ -  constant @boot
 
-( Fast verify! Using chunked reads.)
-( Be careful about setting m. Some chunked read implementations use it, so
+( Which page of the Flash are the vectors on? NOTE: this is currently the
+  same as @boot, but only because the bootloader currently fits into the
+  last page. If that changes, @vector-page will stay the same but @boot will
+  change. Best to keep them separate.)
+
+@flash #flash +  1 Ki 2/ -  constant @vector-page
+
+( Check to see if we're going to clobber the bootloader and complain if
+  we're not executing from RAM.)
+
+: ?clobbering-loader  ( a u - a u)
+   2dup +  @boot  swap u< not  if ^ then  ( not touching bootloader - Ok)
+   pc@  [ @ram #ram + ] u<  if ^ then  ( running in RAM - Ok)
+   error" You need to be running a RAM-based version of the chat code in
+order to re-flash it. Consult a local guru. ;-)" ;
+
+( Prepare to do a comparison or computation between data read from the
+  target into a buffer, and data in our memory image. Read a chunk from the
+  target into buf, and set m to point to the beginning of buf.
+
+  Be careful about setting m. Some chunked read implementations use it, so
   set it *after* doing the read.)
 
+: setup-comparison  ( 'target len buf - 'target len)
+   push  2dup  r@ t.ReadChunk  ( 'target len)  pop m ! ;
+
+( On the S08, erasing the vectors means erasing the TRIM bytes, the secure
+  bits, and the bootloader. So be careful about re-programming things, esp
+  the TRIMs and the secure bits. Copy from ffac to ffaf.
+
+  If we've put trims into the image, don't overwrite these with the values
+  from the chip. Use bitwise AND to merge the chip and the image!)
+
+: save-trims  ( save them from the wrecking ball)
+   -- cr ." save-trims"
+   0ffac 4 pad  setup-comparison
+   for  dup image-c@ m* and  over image-c!  1+  next  drop ;
+
+( Flash vectors, security bytes, & trims)
+: flash-vectors
+   cr ." flashing vectors, security bytes, and trims"
+   0ffac 14  ( 0ffac - 0ffcf)  program-chunk  ( trims and security bytes)
+   0ffc0 40  ( 0ffc0 - 0ffff)  program-chunk  ( vectors) ;
+
+: flash-image
+   h preserve  flash
+   save-trims ( before erasing anything!)
+   region ( a u)  ?clobbering-loader  flash-region
+   @vector-page  \m here  u< if  flash-vectors  then ;
+
+( Fast verify! Using chunked reads.)
 : verify-chunk  ( 'target len - 'target+len)
    -- cr ." verify "  over u.  dup u.
    2dup + push
-   2dup  pad t.ReadChunk
-   ( 'target len)  swap image+ m !  ( we'll use m* to read image)
-   ( len)  pad swap
-   for  c@+ swap  m*  xor  if  m @ image-  -1 +a u.  then  next  drop
+   ( 'target len) pad  setup-comparison
+   for  dup image-c@ m* xor  if  dup u.  then  1+  next  drop
    pop ;
 
 ( Verify in chunks of 256 bytes. While the USB chat can now read really big
@@ -140,23 +134,20 @@ variable trims
    100 /mod  ( r q)  swap push  for  100 verify-chunk  next
                         pop  =if  ( rem) verify-chunk  drop ^  then  2drop ;
 
-: ?empty-region ( a len - a len)  dup 0= if
-      ."
+: ?empty-region ( a u - a u)  =if ^ then
+   cr ." WARNING: The flash region is empty. verify will always report no change." ;
 
-WARNING: The flash region is empty. verify will always report no change."
-   then ;
+.ifndef chat2
+: ?skip-commit  ( a u - a u)  over @boot =  if  4 -4 v+  then ;
+.else
+: ?skip-commit ;
+.then
 
 : verify
-   h preserve  flash region ( a len)  ?empty-region
-
-                                  verify-region  ( program image)
-   region drop  last-page? if
+   h preserve  flash
+   region ( a len)  ?empty-region  ?skip-commit
+   verify-region  ( program image)
+   @vector-page  \m here  u< if
+      save-trims
       0ffac 54  ( 0ffac - 0ffff)  verify-region  ( trims, security bytes, vectors)
-.ifndef chat2
-      ."
-
-If you saw mismatches from fe00 to fe03, don't worry. This is where the
-commit is stored that identifies the version of the chat code. If there
-were no other differences, your chat code does not need updating."
-.then
    then ;

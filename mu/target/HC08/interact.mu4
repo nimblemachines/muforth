@@ -8,23 +8,26 @@
 
 loading HC08 Interaction (common)
 
-
 variable chatting
-
 variable chat-vector
-: chat-cmd   ( index)  cells  constant
-             does> @  chat-vector @  =if  +  @execute  ^  then  2drop
+
+: chat-cmd   ( index - index+1)  dup cells  constant  1+
+             does> @  chat-vector @ =if  +  @execute  ^  then  2drop
                 error" Not connected to a chat-capable target" ;
 
 : chat-fail   error" Chat command not implemented" ;
 
- 0 chat-cmd t.Hello
- 1 chat-cmd t.GetRegs      ( buf - sp)
- 2 chat-cmd t.SetRegs      ( buf)
- 3 chat-cmd t.Run
- 4 chat-cmd t.ReadChunk    ( target len buf)  ( XXX order??)
- 5 chat-cmd t.WriteChunk   ( target len buf)
- 6 chat-cmd t.FlashChunk   ( target len buf cmd - status)
+0  ( initial command index)
+
+chat-cmd t.Hello
+chat-cmd t.GetRegs      ( frame - sp)
+chat-cmd t.SetRegs      ( frame)
+chat-cmd t.Run          ( )
+chat-cmd t.ReadChunk    ( target len buf)  ( XXX order??)
+chat-cmd t.WriteChunk   ( target len buf)
+chat-cmd t.FlashChunk   ( target len buf fcmd - status)
+
+drop ( index)
 
 -:  ( buf addr len)  rot t.ReadChunk ;
 : >chat  [ ]       is |read
@@ -34,8 +37,10 @@ variable chat-vector
 
 
 variable ipad  ( "interact" pad)
-: t@  ( a - w)                \m cell  ipad  t.ReadChunk  ipad beh@ ;
-: t!  ( w a)  swap ipad beh!  \m cell  ipad  t.WriteChunk ;
+: t@   ( a - w)                \m cell  ipad  t.ReadChunk  ipad beh@ ;
+: tc@  ( a - b)                      1  ipad  t.ReadChunk  ipad c@ ;
+: t!   ( w a)  swap ipad beh!  \m cell  ipad  t.WriteChunk ;
+: tc!  ( b a)  swap ipad c!          1  ipad  t.WriteChunk ;
 
 
 ( We keep a local copy of the target's registers in the same order as they
@@ -60,14 +65,15 @@ variable chat-sp     ( current value of target's SP)
 05 reg .PCL
 
 ( These are handy.)
-: pc!  .PCH beh! ;
-: pc@  .PCH beh@ ;
+: pc!  .PC beh! ;
+: pc@  .PC beh@ ;
 
-: hx!  >lohi    .H c!    .X c! ;
-: hx@           .H c@    .X c@  hilo> ;
+: hx!   >lohi  .H c!  .X c! ;
+: hx@          .H c@  .X c@  hilo> ;
 
-: .bits8  binary  <#  # # # #  # # # #  #> type ;
-: .h16       hex  <#  # # # #  #> type ;
+: 4#  # # # # ;
+: .bits8  binary  <#  4#  4#  #> type ;
+: .h16       hex  <#  4#  #> type ;
 
 : .b  ( a)  c@    .h8_ ;
 : .w  ( a)  beh@  .h16  space ;
@@ -79,28 +85,25 @@ variable chat-sp     ( current value of target's SP)
 
 -- : .x  ( like .s)  .X c@ du ;
 
-: put-chunk  ( 'target len - 'target+len)
-   -- cr ." put-chunk "  2dup swap u. u.
+: copy-chunk  ( 'target len - 'target+len)
+   -- cr ." copy-chunk "  2dup swap u. u.
    2dup + push  over image+  t.WriteChunk  pop ;
 
-: put-region  ( a len)
-   -- cr ." put-region "  2dup swap u. u.
-   256 /mod ( r q)  swap push  for   256 put-chunk  next
-                        pop  =if  ( rem) put-chunk  drop ^  then  2drop ;
+: copy-region  ( a len)
+   -- cr ." copy-region "  2dup swap u. u.
+   256 /mod ( r q)  swap push  for   256 copy-chunk  next
+                        pop  =if  ( rem) copy-chunk  drop ^  then  2drop ;
 
-( If we haven't copied it yet, copy a ram region to target.)
-: put
-   region@ ( origin current)  u< if
-      region ( a u)  put-region
-      \m here  region!  ( synchronize origin & current)
-   then ;
+variable ram-copied  ( pointer to first un-copied byte)
 
 : copy-ram
-   h preserve
-   zram put  ( crashes if connected chip has different @ram from target)
-    ram put ;
+   h preserve  ram
+   ram-copied @  dup 0= if  drop  region drop  then
+   \m here  over -  copy-region
+   \m here  ram-copied ! ;
 
-: hi   chatting on  >chat  t.Hello  get-regs  .regs  copy-ram ;
+( t.Hello will copy the flash code to RAM.)
+: hi   ram-copied off  chatting on  >chat  t.Hello  get-regs  .regs ;
 
 : chat-via   pop  chat-vector !  hi ;
 
@@ -133,13 +136,23 @@ host-seekeys hc08-seekeys  128 cells cmove
    then
    drop ( a) ;
 
-hc08-seekeys  -1  du-mode dumping    >target  skip+  skip-  1dump  ( a - a')
-hc08-seekeys  -1  du-mode disasming  >target  dis+   dis-   1dis   ( a - a')
+( So we can easily look at the signature embedded into the image.)
+: 1dump-chars  ( a)
+   hex-bytes
+   >target
+   dup _addr  dup .chars
+   dup .addr  dup .hex-bytes
+   drop ;
+
+hc08-seekeys  -1  du-mode dumping        >target  skip+  skip-  1dump        ( a - a')
+hc08-seekeys  -1  du-mode dumping-chars  >target  skip+  skip-  1dump-chars  ( a - a')
+hc08-seekeys  -1  du-mode disasming      >target  dis+   dis-   1dis         ( a - a')
 
 hc08-seekeys 'seekeys !    ( switch over to our bindings)
 
-key: d  ( a - a 0)   dumping    0 ;
-key: i  ( a - a 0)   disasming  0 ;
+key: d  ( a - a 0)   dumping        0 ;
+key: C  ( a - a 0)   dumping-chars  0 ;  ( small c is "call")
+key: i  ( a - a 0)   disasming      0 ;
 
 host-seekeys 'seekeys !  ( back to host bindings)
 
@@ -155,16 +168,16 @@ host-seekeys 'seekeys !  ( back to host bindings)
 forth
 : .r   .regs ;
 
-: _run      set-regs  t.Run ;  ( don't wait for target)
-: _runwait  _run  get-regs ;   ( wait for target)
+: run      copy-ram  set-regs  t.Run ;  ( don't wait for target)
+: runwait  run  get-regs ;   ( wait for target)
 
-: runwait   _runwait  .regs ;
-: call  pc!  runwait ;
+: call  ( pc)  pc!  runwait .regs ;
+: kick  ( pc)  pc!  run ;  ( when the code you're calling doesn't speak
+                             the same protocol as running code)
 
 : 'reset   \l Vreset image-@ ;
-: reset    'reset  call ;
-: go       'reset  pc!  _run ;  ( when the code you're calling doesn't speak
-                                  the same protocol as running code)
+: reset    'reset  call ;  ( MSP430 version has a delay between run and get-regs)
+: go       'reset  kick ;
 
 
 ( Getting ready to test interactively - time for a real meta-compiler!)
@@ -260,14 +273,14 @@ forth
 .then
 
 ( XXX Should we try to automatically connect to target?)
-: ?chatting  
+: ?chatting
    chatting @ 0= if  error" not connected to target"  then ;
 
 : remote  ( cfa)  ( execute target word on stack)
-   ?chatting  copy-ram  pc!  stack>  runwait  stack< ;
+   ?chatting  pc!  stack>  runwait  stack< ;
 
 : rx  ( cfa)  ( execute target non-forth word)
-   ?chatting  copy-ram  pc!          runwait ;
+   ?chatting  pc!          runwait ;
 
 -:  ."  (interacting with target)"  ;
 -:
