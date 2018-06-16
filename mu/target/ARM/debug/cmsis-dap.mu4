@@ -397,8 +397,7 @@ comment %%hardwired%%
 4002_0008 constant FDATA0   ( varies)
 4002_000c constant FDATA1   ( varies)
 
-: _flashregs
-   300_0002 AHB.CSW AP.Wr  FSTAT AHB.TAR AP.Wr ;
+: _flashregs   FSTAT AHB.TAR AP.Wr ;
 
 ( Even though we only need to write a byte, it's easier and causes way
   fewer transfers to write the whole word.)
@@ -439,8 +438,7 @@ comment %%hardwired%%
    xfer>  w> ;
 
 
-: _debugregs
-   300_0002 AHB.CSW AP.Wr  DHCSR AHB.TAR AP.Wr ;
+: _debugregs   DHCSR AHB.TAR AP.Wr ;
 
 : _dhcsr@  AHB.DRW AP.Rd ;
 
@@ -461,6 +459,11 @@ comment %%hardwired%%
 ( Have to have set _debugregs already.)
 : _halted?  ( - f)   <xfer  _dhcsr@  xfer> w>  S_HALT and ;
 
+variable ahb.csw@reset  ( capture this value and use it for later xfers)
+
+: _xfer-word        ahb.csw@reset @  02 or  AHB.CSW AP.Wr ;
+: _xfer-word-incr   ahb.csw@reset @  12 or  AHB.CSW AP.Wr ;
+
 : dap.hello  ( connect to device)
    -- spy on  ( uncomment for more verbosity)
    led off
@@ -473,14 +476,62 @@ comment %%hardwired%%
    (     0000_0000  0000_0000  0000_0000  0000_0000  0000_0000 )
    cr  .h16_16__
    <xfer  AHB.IDR AP.Rd  xfer>  w>  .h16_16__
-   <xfer  AHB.CSW AP.Rd  xfer>  w>  .h16_16__
+   <xfer  AHB.CSW AP.Rd  xfer>  w>  dup  3f bic  ahb.csw@reset !  .h16_16__
    <xfer  MDM.IDR AP.Rd  xfer>  w>  .h16_16__
-   <xfer  CPUID AHB.TAR AP.Wr  AHB.DRW AP.Rd  xfer>  w>  .h16_16__
+   <xfer  _xfer-word
+          CPUID AHB.TAR AP.Wr  AHB.DRW AP.Rd  xfer>  w>  .h16_16__
    cr
    halt
    begin  _halted?  until
    spy off
 ;
+
+
+( When reading words from the target, we have to worry about the recv
+  buffer filling up long before the xmit buffer does. It takes one byte to
+  request a read from AHB.DRW; but this requires 4 bytes in the recv buffer.
+  By sending lots of reads all at once we exceed the capacity of our recv
+  buffer. So be much more careful: only read hex 14 words at a time.)
+
+: xfer-read-buf  ( buf u - buf+4u 0)
+   2 <<  2dup +  ( buf+4u)  -rot  ( buf+4u buf 4u)
+   bp @  -rot  cmove  0 ;
+
+: ?xfer-read-buf  ( buf u - buf' u')  ( after hex 14 words, start a new xfer)
+   1+  #14 over = if  xfer>  xfer-read-buf  <xfer  then ;
+
+: ?xfer-write  ( after hex 30 bytes, start a new xfer)
+   30 #send u< if  xfer>  <xfer  then ;
+
+( Another problem! The AHB.TAR register incrementer only affects the bottom
+  bits - on the KL25, it wraps every 1 Ki - so only the low 10 bits are
+  getting incremented! Thus we need to reset TAR every once in a while...
+
+  Let's be conservative and reset AHB.TAR every 256 bytes.)
+
+: ?tar  ( a - a+4)
+   4 +  dup 0ff and  0= if  ( rolled over)  dup  AHB.TAR  AP.Wr  then ;
+
+: xfer-setup  ( buf a u - a buf u)
+   <xfer  over  AHB.TAR  AP.Wr  _xfer-word-incr
+      rot swap ( a buf u) ;
+
+: xfer-end  ( return AHB.CSW to xfer word, no incr)
+   <xfer  _xfer-word  xfer> ;
+
+: dap.read   ( buf a u)
+   xfer-setup
+      0 ( count)  swap  2 >> for  AHB.DRW  AP.Rd
+         ?xfer-read-buf  rot ?tar -rot  next  xfer>
+   xfer-read-buf
+   xfer-end  2drop  drop ;
+
+: dap.write  ( buf a u)
+   xfer-setup
+      2 >> for  dup 4 +  swap lew@  AHB.DRW  AP.Wr
+         ?xfer-write    swap ?tar swap  next  xfer>
+   xfer-end  2drop ;
+
 
 ( Instead of reading and writing all regs when we stop and start - a lot of
   slowish USB traffic - just read and write the regs we care about. We
@@ -493,7 +544,7 @@ comment %%hardwired%%
    swap  AHB.BD2 ( DCRDR) AP.Wr  1_0000 + AHB.BD1 ( DCRSR) AP.Wr ;
 
 
-: ?xfer-read-words  ( u - u')  ( after 38 bytes, start a new xfer)
+: ?xfer-read-words  ( u - u')  ( after hex 38 bytes, start a new xfer)
    1+  38 #send u< if  xfer>  for  w>  next  0 ( count)  <xfer  then ;
 
 ( Keeping this till I decide...)
@@ -513,10 +564,6 @@ comment %%hardwired%%
    xfer>
    2drop  for  w>  next ;  ( read remaining regs from recvbuf)
 
-
-: ?xfer-write  ( after 30 bytes, start a new xfer)
-   30 #send u< if  xfer>  <xfer  then ;
-
 : bogus.setregs  ( ... v1 v0 regmask)  ( high to low)
    <xfer  _debugregs  0 swap ( regindex regmask)
       begin  dup 1 and if  push  tuck _writereg  ?xfer-write  pop  then
@@ -524,43 +571,37 @@ comment %%hardwired%%
    xfer>
    2drop ;
 
+( Register indices for _readreg and _writereg:
+   0  R0
+  ..  ..
+  12  R12
+  13  Current SP
+  14  Link register [LR]
+  15  DebugReturnAddress
+  16  xPSR
+  17  Main stack pointer, MSP
+  18  Process stack pointer, PSP
+  20  CONTROL.PRIMASK)
 
-: xfer-read-buf  ( buf u - buf+4u 0)
-   2 <<  2dup +  ( buf+4u)  -rot  ( buf+4u buf 4u)
-   bp @  -rot  cmove  0 ;
+( XXX Time out after a while?)
+: dap.get-sp  ( - sp)
+   <xfer  _debugregs  xfer>
+   begin  _halted?  until
+   <xfer  #13 _readreg  xfer> w> ;
 
-( Unlike with register transfers, we have to worry about the recv buffer
-  filling up long before the xmit buffer does. It takes one byte to request
-  a read from AHB.DRW; but this requires 4 bytes in the recv buffer. By
-  sending lots of reads all at once we exceed the capacity of our recv
-  buffer. So be much more careful: only read 14 words at a time.)
+: dap.set-sp  ( sp)
+   <xfer  _debugregs  #13 _writereg  xfer> ;
 
-( Another problem! The AHB.TAR register incrementer only affects the bottom
-  bits - on the KL25, it wraps every 1 Ki - so only the low 10 bits are
-  getting incremented! Thus we need to reset TAR every once in a while...)
+: get-pc  ( - pc)
+   <xfer  _debugregs  #15 _readreg  xfer> w> ;
 
-: ?xfer-read-buf  ( buf u - buf' u')  ( after 14 words, start a new xfer)
-   1+  #14 over = if  xfer>  xfer-read-buf  <xfer  then ;
+: dap.run  ( pc)
+   <xfer  _debugregs  #15 _writereg  _run  xfer> ;
 
-( Let's be conservative and reset AHB.TAR every 256 bytes.)
-: ?tar  ( a - a+4)
-   4 +  dup 0ff and  0= if  ( rolled over)  dup  AHB.TAR  AP.Wr  then ;
+( The interface for the interact code. Implemented by all debug transports.)
 
-: xfer-setup  ( buf a u - a buf u)
-   <xfer  over  AHB.TAR  AP.Wr  300_0012  AHB.CSW  AP.Wr
-      rot swap ( a buf u) ;
-
-: dap.read   ( buf a u)
-   xfer-setup
-      0 ( count)  swap  2 >> for  AHB.DRW  AP.Rd
-         ?xfer-read-buf  rot ?tar -rot  next  xfer>
-   xfer-read-buf  2drop  drop ;
-
-: dap.write  ( buf a u)
-   xfer-setup
-      2 >> for  dup 4 +  swap lew@  AHB.DRW  AP.Wr
-         ?xfer-write    swap ?tar swap  next  xfer>
-   2drop ;
+: jtag
+   chat-via  dap.hello  dap.get-sp  dap.set-sp  dap.read  dap.write  dap.run ;
 
 
 .ifdef debugdebug
@@ -647,38 +688,5 @@ comment %%hardwired%%
                      <xfer          __writereg  drop  xfer> ;
 
 .then  ( debugdebug)
-
-
-( Register indices for _readreg and _writereg:
-   0  R0
-  ..  ..
-  12  R12
-  13  Current SP
-  14  Link register [LR]
-  15  DebugReturnAddress
-  16  xPSR
-  17  Main stack pointer, MSP
-  18  Process stack pointer, PSP
-  20  CONTROL.PRIMASK)
-
-( XXX Time out after a while?)
-: dap.get-sp  ( - sp)
-   <xfer  _debugregs  xfer>
-   begin  _halted?  until
-   <xfer  #13 _readreg  xfer> w> ;
-
-: dap.set-sp  ( sp)
-   <xfer  _debugregs  #13 _writereg  xfer> ;
-
-: get-pc  ( - pc)
-   <xfer  _debugregs  #15 _readreg  xfer> w> ;
-
-: dap.run  ( pc)
-   <xfer  _debugregs  #15 _writereg  _run  xfer> ;
-
-( The interface for the interact code. Implemented by all debug transports.)
-
-: jtag
-   chat-via  dap.hello  dap.get-sp  dap.set-sp  dap.read  dap.write  dap.run ;
 
 .then  ( ifdef uread)
