@@ -397,7 +397,7 @@ comment %%hardwired%%
 4002_0008 constant FDATA0   ( varies)
 4002_000c constant FDATA1   ( varies)
 
-: _flashregs   FSTAT AHB.TAR AP.Wr ;
+: _flashregs   FSTAT  AHB.TAR AP.Wr ;
 
 ( Even though we only need to write a byte, it's easier and causes way
   fewer transfers to write the whole word.)
@@ -405,7 +405,6 @@ comment %%hardwired%%
 : _fstat!  ( bits)    AHB.BD0 ( FSTAT) AP.Wr ;
 : _fstat@  ( - bits)  AHB.BD0 ( FSTAT) AP.Rd ;
 
-( NOTE: must have done _fstat! before to set CSW properly.)
 ( Also: this does its own xfer.)
 : fstat@  ( - bits)   AHB.BD0 ( FSTAT) AP.Read ;
 
@@ -438,16 +437,11 @@ comment %%hardwired%%
    xfer>  w> ;
 
 
-: _debugregs   DHCSR AHB.TAR AP.Wr ;
-
-: _dhcsr@  AHB.DRW AP.Rd ;
+: _debugregs   DHCSR  AHB.TAR AP.Wr ;
 
 ( Add debug key to command bits and store into DHCSR.)
-: _dhcsr!  ( value)  a05f_0000 +  AHB.DRW AP.Wr ;
-
-: _run    [ C_DEBUGEN C_MASKINTS +          ]  _dhcsr! ;
-: _halt   [ C_DEBUGEN C_MASKINTS + C_HALT + ]  _dhcsr! ;
-: _step   [ C_DEBUGEN C_MASKINTS + C_STEP + ]  _dhcsr! ;
+: _dhcsr!  ( value)  a05f_0000 +  AHB.BD0 AP.Wr ;
+: _dhcsr@  ( - value)             AHB.BD0 AP.Rd ;
 
 : dhcsr!   ( value)  <xfer  _debugregs  _dhcsr!  xfer> ;
 
@@ -455,9 +449,7 @@ comment %%hardwired%%
 : halt   [ C_DEBUGEN C_MASKINTS + C_HALT + ]  dhcsr! ;
 : step   [ C_DEBUGEN C_MASKINTS + C_STEP + ]  dhcsr! ;
 
-
-( Have to have set _debugregs already.)
-: _halted?  ( - f)   <xfer  _dhcsr@  xfer> w>  S_HALT and ;
+: halted?  ( - f)   <xfer  _debugregs  _dhcsr@  xfer> w>  S_HALT and ;
 
 variable ahb.csw@reset  ( capture this value and use it for later xfers)
 
@@ -482,7 +474,7 @@ variable ahb.csw@reset  ( capture this value and use it for later xfers)
           CPUID AHB.TAR AP.Wr  AHB.DRW AP.Rd  xfer>  w>  .h16_16__
    cr
    halt
-   begin  _halted?  until
+   begin  halted?  until
    spy off
 ;
 
@@ -537,39 +529,16 @@ variable ahb.csw@reset  ( capture this value and use it for later xfers)
   slowish USB traffic - just read and write the regs we care about. We
   don't keep a local copy of regs.)
 
-: _readreg  ( regindex)
-   AHB.BD1 ( DCRSR) AP.Wr  AHB.BD2 ( DCRDR) AP.Rd ;
+: readreg  ( regindex)
+   <xfer  _debugregs
+      AHB.BD1 ( DCRSR) AP.Wr  AHB.BD2 ( DCRDR) AP.Rd
+   xfer> w> ;
 
-: _writereg  ( value regindex)
-   swap  AHB.BD2 ( DCRDR) AP.Wr  1_0000 + AHB.BD1 ( DCRSR) AP.Wr ;
+: writereg  ( value regindex)
+   <xfer  _debugregs
+      swap  AHB.BD2 ( DCRDR) AP.Wr  1_0000 + AHB.BD1 ( DCRSR) AP.Wr
+   xfer> ;
 
-
-: ?xfer-read-words  ( u - u')  ( after hex 38 bytes, start a new xfer)
-   1+  38 #send u< if  xfer>  for  w>  next  0 ( count)  <xfer  then ;
-
-( Keeping this till I decide...)
-: bogus.getregs_lohi  ( regmask - v0 v1 ...)   ( low to high)
-   <xfer  _debugregs  0 0 rot ( regcount regindex regmask)
-      begin  dup 1 and if  over _readreg  2push  ?xfer-read-words  2pop  then
-      1 u+  u2/  dup 0= until
-   xfer>
-   2drop  for  w>  next ;  ( read remaining regs from recvbuf)
-
-( This version "interoperates" better with t.setregs.)
-: bogus.getregs  ( regmask - ... v1 v0)   ( high to low)
-   <xfer  _debugregs  0 14 rot ( regcount regindex regmask)
-      [ 3f 14 - ] <<  ( "left justify" regmask)
-      begin  dup 0< if  over _readreg  2push  ?xfer-read-words  2pop  then
-      -1 u+  2*  dup 0= until
-   xfer>
-   2drop  for  w>  next ;  ( read remaining regs from recvbuf)
-
-: bogus.setregs  ( ... v1 v0 regmask)  ( high to low)
-   <xfer  _debugregs  0 swap ( regindex regmask)
-      begin  dup 1 and if  push  tuck _writereg  ?xfer-write  pop  then
-      1 u+  u2/  dup 0= until
-   xfer>
-   2drop ;
 
 ( Register indices for _readreg and _writereg:
    0  R0
@@ -585,18 +554,12 @@ variable ahb.csw@reset  ( capture this value and use it for later xfers)
 
 ( XXX Time out after a while?)
 : dap.get-sp  ( - sp)
-   <xfer  _debugregs  xfer>
-   begin  _halted?  until
-   <xfer  #13 _readreg  xfer> w> ;
+   begin  halted?  until  #13 readreg ;
 
-: dap.set-sp  ( sp)
-   <xfer  _debugregs  #13 _writereg  xfer> ;
+: dap.set-sp  ( sp)       #13 writereg ;
 
-: get-pc  ( - pc)
-   <xfer  _debugregs  #15 _readreg  xfer> w> ;
-
-: dap.run  ( pc)
-   <xfer  _debugregs  #15 _writereg  _run  xfer> ;
+: get-pc   ( - pc)   #15 readreg ;
+: dap.run  ( pc)     #15 writereg  run ;
 
 ( The interface for the interact code. Implemented by all debug transports.)
 
