@@ -183,22 +183,8 @@ z" /dev/uhid0" open-file-rw   constant cmsis
 ( A simple buffer for chatty communication protocols. Words for putting
   values into a buffer and taking them out again.)
 
-.ifdef bigxfer  ( 8 buffers each way)
-
-40 8 * buffer 'sendbuf
-40 8 * buffer 'recvbuf
-
-variable whichbuf  ( offset)
-
-: sendbuf   whichbuf @  'sendbuf + ;
-: recvbuf   whichbuf @  'recvbuf + ;
-
-.else  ( single buffer)
-
 40 buffer sendbuf
 40 buffer recvbuf
-
-.then
 
 variable bp  ( buf pointer)
 : !send  sendbuf  bp !  sendbuf 40 55 fill ;
@@ -413,8 +399,7 @@ comment %%hardwired%%
 4002_0008 constant FDATA0   ( varies)
 4002_000c constant FDATA1   ( varies)
 
-: _flashregs
-   300_0002 AHB.CSW AP.Wr  FSTAT AHB.TAR AP.Wr ;
+: _flashregs   FSTAT  AHB.TAR AP.Wr ;
 
 ( Even though we only need to write a byte, it's easier and causes way
   fewer transfers to write the whole word.)
@@ -422,7 +407,6 @@ comment %%hardwired%%
 : _fstat!  ( bits)    AHB.BD0 ( FSTAT) AP.Wr ;
 : _fstat@  ( - bits)  AHB.BD0 ( FSTAT) AP.Rd ;
 
-( NOTE: must have done _fstat! before to set CSW properly.)
 ( Also: this does its own xfer.)
 : fstat@  ( - bits)   AHB.BD0 ( FSTAT) AP.Read ;
 
@@ -455,17 +439,11 @@ comment %%hardwired%%
    xfer>  w> ;
 
 
-: _debugregs
-   300_0002 AHB.CSW AP.Wr  DHCSR AHB.TAR AP.Wr ;
-
-: _dhcsr@  AHB.DRW AP.Rd ;
+: _debugregs   DHCSR  AHB.TAR AP.Wr ;
 
 ( Add debug key to command bits and store into DHCSR.)
-: _dhcsr!  ( value)  a05f_0000 +  AHB.DRW AP.Wr ;
-
-: _run    [ C_DEBUGEN C_MASKINTS +          ]  _dhcsr! ;
-: _halt   [ C_DEBUGEN C_MASKINTS + C_HALT + ]  _dhcsr! ;
-: _step   [ C_DEBUGEN C_MASKINTS + C_STEP + ]  _dhcsr! ;
+: _dhcsr!  ( value)  a05f_0000 +  AHB.BD0 AP.Wr ;
+: _dhcsr@  ( - value)             AHB.BD0 AP.Rd ;
 
 : dhcsr!   ( value)  <xfer  _debugregs  _dhcsr!  xfer> ;
 
@@ -473,9 +451,12 @@ comment %%hardwired%%
 : halt   [ C_DEBUGEN C_MASKINTS + C_HALT + ]  dhcsr! ;
 : step   [ C_DEBUGEN C_MASKINTS + C_STEP + ]  dhcsr! ;
 
+: halted?  ( - f)   <xfer  _debugregs  _dhcsr@  xfer> w>  S_HALT and ;
 
-( Have to have set _debugregs already.)
-: _halted?  ( - f)   <xfer  _dhcsr@  xfer> w>  S_HALT and ;
+variable ahb.csw@reset  ( capture this value and use it for later xfers)
+
+: _xfer-word        ahb.csw@reset @  02 or  AHB.CSW AP.Wr ;
+: _xfer-word-incr   ahb.csw@reset @  12 or  AHB.CSW AP.Wr ;
 
 : dap.hello  ( connect to device)
    -- spy on  ( uncomment for more verbosity)
@@ -489,202 +470,107 @@ comment %%hardwired%%
    (     0000_0000  0000_0000  0000_0000  0000_0000  0000_0000 )
    cr  .h16_16__
    <xfer  AHB.IDR AP.Rd  xfer>  w>  .h16_16__
-   <xfer  AHB.CSW AP.Rd  xfer>  w>  .h16_16__
+   <xfer  AHB.CSW AP.Rd  xfer>  w>  dup  3f bic  ahb.csw@reset !  .h16_16__
    <xfer  MDM.IDR AP.Rd  xfer>  w>  .h16_16__
-   <xfer  CPUID AHB.TAR AP.Wr  AHB.DRW AP.Rd  xfer>  w>  .h16_16__
+   <xfer  _xfer-word
+          CPUID AHB.TAR AP.Wr  AHB.DRW AP.Rd  xfer>  w>  .h16_16__
    cr
    halt
-   begin  _halted?  until
+   begin  halted?  until
    spy off
 ;
 
-( Instead of reading and writing all regs when we stop and start - a lot of
-  slowish USB traffic - just read and write the regs we care about. We
-  don't keep a local copy of regs.)
 
-: _readreg  ( regindex)
-   AHB.BD1 ( DCRSR) AP.Wr  AHB.BD2 ( DCRDR) AP.Rd ;
-
-: _writereg  ( value regindex)
-   swap  AHB.BD2 ( DCRDR) AP.Wr  1_0000 + AHB.BD1 ( DCRSR) AP.Wr ;
-
-
-: ?xfer-read-words  ( u - u')  ( after 38 bytes, start a new xfer)
-   1+  38 #send u< if  xfer>  for  w>  next  0 ( count)  <xfer  then ;
-
-( Keeping this till I decide...)
-: bogus.getregs_lohi  ( regmask - v0 v1 ...)   ( low to high)
-   <xfer  _debugregs  0 0 rot ( regcount regindex regmask)
-      begin  dup 1 and if  over _readreg  2push  ?xfer-read-words  2pop  then
-      1 u+  u2/  dup 0= until
-   xfer>
-   2drop  for  w>  next ;  ( read remaining regs from recvbuf)
-
-( This version "interoperates" better with t.setregs.)
-: bogus.getregs  ( regmask - ... v1 v0)   ( high to low)
-   <xfer  _debugregs  0 14 rot ( regcount regindex regmask)
-      [ 3f 14 - ] <<  ( "left justify" regmask)
-      begin  dup 0< if  over _readreg  2push  ?xfer-read-words  2pop  then
-      -1 u+  2*  dup 0= until
-   xfer>
-   2drop  for  w>  next ;  ( read remaining regs from recvbuf)
-
-
-: ?xfer-write  ( after 30 bytes, start a new xfer)
-   30 #send u< if  xfer>  <xfer  then ;
-
-: bogus.setregs  ( ... v1 v0 regmask)  ( high to low)
-   <xfer  _debugregs  0 swap ( regindex regmask)
-      begin  dup 1 and if  push  tuck _writereg  ?xfer-write  pop  then
-      1 u+  u2/  dup 0= until
-   xfer>
-   2drop ;
-
+( When reading words from the target, we have to worry about the recv
+  buffer filling up long before the xmit buffer does. It takes one byte to
+  request a read from AHB.DRW; but this requires 4 bytes in the recv buffer.
+  By sending lots of reads all at once we exceed the capacity of our recv
+  buffer. So be much more careful: only read hex 14 words at a time.)
 
 : xfer-read-buf  ( buf u - buf+4u 0)
    2 <<  2dup +  ( buf+4u)  -rot  ( buf+4u buf 4u)
    bp @  -rot  cmove  0 ;
 
-( Unlike with register transfers, we have to worry about the recv buffer
-  filling up long before the xmit buffer does. It takes one byte to request
-  a read from AHB.DRW; but this requires 4 bytes in the recv buffer. By
-  sending lots of reads all at once we exceed the capacity of our recv
-  buffer. So be much more careful: only read 14 words at a time.)
+: ?xfer-read-buf  ( buf u - buf' u')  ( after hex 14 words, start a new xfer)
+   1+  #14 over = if  xfer>  xfer-read-buf  <xfer  then ;
+
+: ?xfer-write  ( after hex 30 bytes, start a new xfer)
+   30 #send u< if  xfer>  <xfer  then ;
 
 ( Another problem! The AHB.TAR register incrementer only affects the bottom
   bits - on the KL25, it wraps every 1 Ki - so only the low 10 bits are
-  getting incremented! Thus we need to reset TAR every once in a while...)
+  getting incremented! Thus we need to reset TAR every once in a while...
 
-: ?xfer-read-buf  ( buf u - buf' u')  ( after 14 words, start a new xfer)
-   1+  #14 over = if  xfer>  xfer-read-buf  <xfer  then ;
+  Let's be conservative and reset AHB.TAR every 256 bytes.)
 
-( Let's be conservative and reset AHB.TAR every 256 bytes.)
 : ?tar  ( a - a+4)
    4 +  dup 0ff and  0= if  ( rolled over)  dup  AHB.TAR  AP.Wr  then ;
 
 : xfer-setup  ( buf a u - a buf u)
-   <xfer  over  AHB.TAR  AP.Wr  300_0012  AHB.CSW  AP.Wr
+   <xfer  over  AHB.TAR  AP.Wr  _xfer-word-incr
       rot swap ( a buf u) ;
+
+: xfer-end  ( return AHB.CSW to xfer word, no incr)
+   <xfer  _xfer-word  xfer> ;
 
 : dap.read   ( buf a u)
    xfer-setup
       0 ( count)  swap  2 >> for  AHB.DRW  AP.Rd
          ?xfer-read-buf  rot ?tar -rot  next  xfer>
-   xfer-read-buf  2drop  drop ;
+   xfer-read-buf
+   xfer-end  2drop  drop ;
 
 : dap.write  ( buf a u)
    xfer-setup
       2 >> for  dup 4 +  swap lew@  AHB.DRW  AP.Wr
          ?xfer-write    swap ?tar swap  next  xfer>
-   2drop ;
+   xfer-end  2drop ;
 
 
-.ifdef bigxfer
+( Instead of reading and writing all regs when we stop and start - a lot of
+  slowish USB traffic - just read and write the regs we care about. We
+  don't keep a local copy of regs.)
 
-( NOTE!!
+: readreg  ( regindex)
+   <xfer  _debugregs
+      AHB.BD1 ( DCRSR) AP.Wr  AHB.BD2 ( DCRDR) AP.Rd
+   xfer> w> ;
 
-  This code _almost_ works! It fails to read the target memory properly,
-  because it is using the count of xfers as a _read count_, but the xfer
-  count includes such things as setting AHB.CSW and AHB.TAR. So it ends up
-  being wrong.
-
-  Also, reading 128 KiB and then doing anything else seg faults, so the
-  code is trampling on the muforth heap somewhere.
-
-  And, worst of all, all this complexity brings the time to read 128 KiB
-  down from 12s to 6.6s. It's just not worth it in any case. Too bad. It was
-  fun to try!)
-
-( Support for "big xfers" - ie, using a chain of 64-byte HID buffers
-  instead of one at a time. For moving lots of memory, the overhead of
-  calling into the OS for each 64 byte buffer, and the USB turnaround
-  overhead is just too high. It took 12 secs to move 128 KiB using a single
-  buffer.
-
-  So we're trying an experiment. It's a bit more complicated, but it's also
-  a fun challenge. ;-)
-
-: ?usbread  ( count)
-   40 xor if  ." USB read too short "  then ;
-
-: bigsend-recv  ( - #bufs)
-   whichbuf @  6 >>  push  whichbuf off
-   'sendbuf r@  for  dup 40 uwrite            40 +  next  drop
-   'recvbuf r@  for  dup 40 uread   ?usbread  40 +  next  drop
-   pop ;
-
-: check-subxfer
-   !recv
-   sendbuf     c@ ( cmd)     b>  xor if  ." ?cmd "  then
-   sendbuf 2 + c@ ( #xfers)  b>  xor if  ." transactions not completed "  then
-   b> dup 1 = if  drop  ( " OK "              ?type  )        ^  then
-      dup 2 = if  drop  " WAIT "            ?type          ^  then
-      dup 4 = if  drop  " FAULT "           ?type  -fault  ^  then
-      dup 8 = if  drop  " Protocol error "  ?type          ^  then
-         10 = if        " Value mismatch "  ?type          ^  then
-                        " BOGUS return"     ?type          ;
-
-: check-bigxfer  ( #bufs)
-   for  check-subxfer  40 whichbuf +!  next
-   whichbuf off ;
-
-: do-bigxfer  ( - #bufs)
-   bigsend-recv  ( #bufs)  dup check-bigxfer ;
-
-: subxfer>  ( - #bufs)  ( end prev sub-xfer, start new sub-xfer)
-   #xfers @  =if  ( do nothing if no xfers queued up)
-      sendbuf 2 + c!  40 whichbuf +!
-      whichbuf @  [ 40 10 * ] = if ( big buffer full)  do-bigxfer  ^  then
-   0  ^
-   then  ( 0) ;
-
-( Just like <xfer but doesn't toggle led.)
-: <subxfer
-   05 <cmd  00 ( DAP#) >b  00 ( count placeholder) >b  #xfers off ;
-
-: <bigxfer   whichbuf off  <subxfer ;
-:  bigxfer>  ( - #bufs)
-   subxfer>  0= if  whichbuf @  if  do-bigxfer  ^  then  then  0 ;
-
-: ?bigxfer-write  ( after 30 bytes, start a new xfer)
-   30 #send u< if  subxfer>  drop  <subxfer  then ;
-
-: read-subxfer  ( destbuf - destbuf')
-   recvbuf 1+ c@ ( #xfers)
-   2 <<  2dup +  ( buf+4u)  -rot  ( buf+4u buf 4u)
-   recvbuf 3 +  -rot  cmove ;
-
-: bigxfer-read   ( buf u #bufs - buf' 0)
-   nip  =if
-      for  read-subxfer  40 whichbuf +!  next
-      whichbuf off  0  ^
-   then  ( 0) ;
-
-: ?bigxfer-read   ( buf u - buf' u')  ( after 14 words, start a new subxfer)
-   1+  #14 over = if  subxfer>  bigxfer-read  <subxfer  then ;
-
-: bigxfer-setup  ( buf a u - a buf u)
-   <bigxfer
-      over  AHB.TAR  AP.Wr  300_0012  AHB.CSW  AP.Wr
-      rot swap ( a buf u) ;
-
-: dap.bigread   ( buf a u)
-   bigxfer-setup  ( a buf u)
-      0 ( count)  swap  2 >> for  AHB.DRW  AP.Rd
-         ?bigxfer-read  rot ?tar -rot  next  bigxfer>
-   bigxfer-read
-   2drop  drop ;
-
-: dap.bigwrite  ( buf a u)
-   bigxfer-setup  ( a buf u)
-      2 >> for  dup 4 +  swap lew@  AHB.DRW  AP.Wr
-         ?bigxfer-write  swap ?tar swap  next  bigxfer>
-   drop ( #bufs)  2drop ;
-
-.then  ( bigxfer)
+: writereg  ( value regindex)
+   <xfer  _debugregs
+      swap  AHB.BD2 ( DCRDR) AP.Wr  1_0000 + AHB.BD1 ( DCRSR) AP.Wr
+   xfer> ;
 
 
-( XXX The following is mostly intended for debugging the debugger. ;-)
+( Register indices for _readreg and _writereg:
+   0  R0
+  ..  ..
+  12  R12
+  13  Current SP
+  14  Link register [LR]
+  15  DebugReturnAddress
+  16  xPSR
+  17  Main stack pointer, MSP
+  18  Process stack pointer, PSP
+  20  CONTROL.PRIMASK)
+
+( XXX Time out after a while?)
+: dap.get-sp  ( - sp)
+   begin  halted?  until  #13 readreg ;
+
+: dap.set-sp  ( sp)       #13 writereg ;
+
+: get-pc   ( - pc)   #15 readreg ;
+: dap.run  ( pc)     #15 writereg  run ;
+
+( The interface for the interact code. Implemented by all debug transports.)
+
+: jtag
+   chat-via  dap.hello  dap.get-sp  dap.set-sp  dap.read  dap.write  dap.run ;
+
+
+.ifdef debugdebug
+( Hacks and such to test out the debug connection.)
 
 ( To and from byte lane(s)
 : a>shift  ( a - #shifts)  3 and 8 * ;
@@ -705,9 +591,6 @@ comment %%hardwired%%
 : wh  ( h a)  ( write hword to target)  addr!  1 size!  drw! ;
 : ww  ( w a)  ( write word to target)   addr!  2 size!  drw! ;
 
-
-.ifdef debugdebug
-( Hacks and such to test out the debug connection.)
 
 : readreg  ( reg-index - value)
    <xfer  300_0002 AHB.CSW AP.Wr
