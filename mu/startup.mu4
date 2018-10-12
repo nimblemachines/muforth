@@ -2,18 +2,18 @@ here
    .forth. ,
 
 token current  .forth.  (linked-name)
-   <:> -]   (lit)  [  ,  -]  ^ [
+   <:> ]   (lit)  [  ,  ]  ^ [
 
 token new  current @  (linked-name)
-   <:> -]
+   <:> ]
       token
       nope
       current @  (linked-name)
    ^ [
 
 new :
-   <:> -]
-      new <:>  nope  -]
+   <:> ]
+      new <:>  nope  ]
    ^ [
 
 : definitions  current !  ^ [
@@ -21,18 +21,17 @@ new :
 : compiler  .compiler. definitions  ^ [
 : runtime    .runtime. definitions  ^ [
 
-: literal   (lit) (lit) ,  ,   ^ [
-
-: ]   literal -]  ^ [
-
 compiler
 : ;   nope
-      (lit) ^ ,
-      [  token [ .compiler. find huh?  ,  -]  ^ [
+      compile ^
+      [  token [  .compiler. find huh?  ,  ]  ^ [
 forth
 
+: literal   compile (lit)  , ;
+: #]        literal  ] ;
+
 : char   token  drop  c@ ;
-: (    [ char ) ]  parse  2drop ;
+: (    [ char ) #]  parse  2drop ;
 
 ( Phew! now we can have comments!)
 
@@ -126,7 +125,7 @@ compiler
 ( XXX: should this and ' do the same thing?)
 ( : [']  .forth. chain' literal ;)
 ( XXX should this search .runtime. rather than .forth. ??)
-: [']  ' literal ;
+: [']  '  literal ;
 
 ( XXX: is this useful? Here? Maybe in a target compiler...)
 : \f   .runtime. \chain ;
@@ -138,18 +137,18 @@ forth
 
 
 ( We don't even have any constants yet! So we make the easiest one first...)
-: 0   [ dup dup xor ] ;
-: -1  [ 0 invert ] ;
-: 1   [ -1 negate ] ;
-: 2   [ 1 2* ] ;
+: 0   [ dup dup xor #] ;
+: -1  [ 0 invert #] ;
+: 1   [ -1 negate #] ;
+: 2   [ 1 2* #] ;
 
 ( On and off)
 : on   -1 swap !  ;
 : off   0 swap !  ;
 
-: bl  [ 2 2* 2* 2* 2* ] ;  ( space character)
+: bl  [ 2 2* 2* 2* 2* #] ;  ( space character)
 
-: ctrl   char  [ bl 2* ( 64) ]  xor ;  ( how you get ^? = 127.)
+: ctrl   char  [ bl 2* ( 64) #]  xor ;  ( how you get ^? = 127.)
 compiler
 : char   \f char literal ;
 : ctrl   \f ctrl literal ;
@@ -157,7 +156,7 @@ forth
 
 ( Before I figured out the trick above, which yields the correct answer for
   ctrl ?, I defined ctrl thus:)
-( : ctrl   char  [ bl 1- ]  and ;  ( 31 and)
+( : ctrl   char  [ bl 1- #]  and ;  ( 31 and)
 
 
 ( Some useful tidbits.)
@@ -168,9 +167,9 @@ forth
 : 1+   1 + ;  ( these are common)
 : 1-  -1 + ;
 
-: cell   [ 1 cells ] ;
-: cell+  [ cell ] + ;
-: cell-  [ cell negate ] + ;
+: cell   [ 1 cells #] ;
+: cell+  [ cell #] + ;
+: cell-  [ cell negate #] + ;
 
 ( For fetching and storing a series of bytes.)
 : c@+  ( a - b a+1)   dup c@  swap 1+ ;
@@ -186,7 +185,7 @@ forth
 
 : 2dup   ( a b     - a b a b)   over over ;
 : 2swap  ( a b c d - c d a b)   rot push  rot pop ;
-: 2over  ( a b c d - a b c d a b)   [ 2 1+ ] nth  [ 2 1+ ] nth ;
+: 2over  ( a b c d - a b c d a b)   [ 2 1+ #] nth  [ 2 1+ #] nth ;
 : 2tuck  ( a b c d - c d a b c d)   2swap  2over ;
 
 : =    xor 0= ;
@@ -215,9 +214,6 @@ forth
 ( When using absolute branch addresses, this is easy: just store dest at src.)
 : <resolve  ( dest src)  ! ;
 : >resolve  ( src dest)  swap <resolve ;
-
-( Going back to fig-FORTH!)
-: compile   pop  @+  push  , ;
 
 compiler
 : then   ( src)          here >resolve ;
@@ -299,7 +295,7 @@ forth
   its byte-sized length. Remember: high bit of length is hidden bit!)
 
 : link>name    ( 'link - a u)
-   1- dup c@ [ bl 2* 2* 1- ] and  ( 'len len)  tuck -  swap ;
+   1- dup c@ [ bl 2* 2* 1- #] and  ( 'len len)  tuck -  swap ;
 
 ( These words all assume we're calculating to or from a code field
   address.)
@@ -352,7 +348,7 @@ forth
 
 ( last-created contains the ip address of the last <does> word defined)
 here 0 ,
-: last-created  [ ] ;  ( make the variable by hand!)
+: last-created  [ #] ;  ( make the variable by hand!)
 
 ( does> fixes up the does ip of the last <does> word to point to the code
   after "does>" in the caller.)
@@ -395,10 +391,10 @@ here 0 ,
 
 
 ( "nameless" colon words.)
-: -:  here <:>        -] ;
+: -:  here <:>        ] ;
 
 ( For comparison, the regular : compiler is defined thus:
-:  :   new <:>  nope  -] ;
+:  :   new <:>  nope  ] ;
 where nope is a placeholder for code to hide the newly created colon word.)
 
 
@@ -498,8 +494,8 @@ forth
   The link field points to the link field within the name entry of the last
   word defined on the chain.)
 
-: chain   create  [ token muchain  drop @ ] ,
-                  [ bl 2* 2* ( 128)  2 2* 2* 1- ( 7) + ]  here 1- c!
+: chain   create  [ token muchain  drop @ #] ,
+                  [ bl 2* 2* ( 128)  2 2* 2* 1- ( 7) + #]  here 1- c!
                   ( link) ,
           does>  cell+ ;  ( return address of link field)
 
@@ -618,7 +614,7 @@ variable fp    ( the "top" - most recently pushed - frame)
            r> execute         ( execute cleanup word)
            >r                 ( restore return address) ;
 
-create remove  -]  unlink ;   ( remove pushes IP when executed!)
+create remove  ]  unlink ;    ( remove pushes IP when executed!)
 
 
 ( Now some interesting applications.)
@@ -797,13 +793,13 @@ decimal
 ( This is scary. We need a bunch of literals for `digit>'.)
 
 : digit>   ( ch - digit | junk)
-   char 0 -  [ 2 2* 2* 1+ ]  ( 9)   over u< if  ( !decimal)
-          [ 2 2* 2* 2* 1+ ]  ( 17)  -
-     [ 2 1+  2* 2* 2*  1+ ]  ( 25)  over u< if  ( !hex, UPPERCASE)
-          [ 2 2* 2* 2* 2* ]  ( 32)  -
-     [ 2 1+  2* 2* 2*  1+ ]  ( 25)  over u< if  ( !hex, lowercase)
+   char 0 -  [ 2 2* 2* 1+ #]  ( 9)   over u< if  ( !decimal)
+          [ 2 2* 2* 2* 1+ #]  ( 17)  -
+     [ 2 1+  2* 2* 2*  1+ #]  ( 25)  over u< if  ( !hex, UPPERCASE)
+          [ 2 2* 2* 2* 2* #]  ( 32)  -
+     [ 2 1+  2* 2* 2*  1+ #]  ( 25)  over u< if  ( !hex, lowercase)
       ( junk)  ^
-   then  then  ( hex) [ 2 2* 1+ 2* ]  ( 10) +  then  ( decimal) ;
+   then  then  ( hex) [ 2 2* 1+ 2* #]  ( 10) +  then  ( decimal) ;
 
 :  digit?   ( ch -   digit T |   junk F)  digit>  dup radix @  u< ;
 : @digit?   ( a  - a digit T | a junk F)  dup c@  digit? ;
@@ -885,7 +881,7 @@ forth
 -:   ( compile one token)
    .compiler. find  if  execute ^  then
     .runtime. find  if  ,       ^  then  number literal ;
-                                      -]  'compiler-mode [  !
+                                      ]  'compiler-mode [  !
 
 
 : >    swap <  ;
@@ -1109,7 +1105,7 @@ forth
 
 ( Words that do something with each word being defined.)
 ( hook into new by rewriting its second cell!)
-: being-defined  constant  does> @  [ ' new cell+ cell+ ]  ! ;
+: being-defined  constant  does> @  [ ' new cell+ cell+ #]  ! ;
 
 ( To warn of re-defining a word.)
 -: ( a u)  2dup current @ find if  out-channel preserve  >stderr
@@ -1193,7 +1189,7 @@ being-defined -v  ( be verbose)
    pop 2drop ;
 
 : hidden?   ( 'link - hidden?)      1- c@  ( len)  128 and ;
-: muchain?  ( 'link - muchain?)  cell- @  [ .forth. cell- @ ] = ;
+: muchain?  ( 'link - muchain?)  cell- @  [ .forth. cell- @ #] = ;
 
 : .name-and-count-it  ( count 'link - count+1 exit?)
    link>name  dup 2 + ?wrap  type space space  1+  0 ;
@@ -1310,7 +1306,7 @@ being-defined -v  ( be verbose)
   s->smhdy and smhdy->s. ;-)
 
 : smhq->s  6 * +  smh->s ;  ( sec min hr quarter-day)
-: smhdy->s  [ 365 3 * 366 + ] * ( quarter-days/yr)  push 4 * pop +  smhq->s ;
+: smhdy->s  [ 365 3 * 366 + #] * ( quarter-days/yr)  push 4 * pop +  smhq->s ;
 
 .then ( time support)
 
@@ -1325,7 +1321,7 @@ defer ?show-radix
    dup 16 = if  drop  ."  (hex)"      ^  then
    radix preserve  decimal  ."  (radix " 0 u.r ." )" ;
 
-: +radix       [ ]  is ?show-radix ;
+: +radix      [ #]  is ?show-radix ;
 : -radix  now nope  is ?show-radix ;
 
 
@@ -1344,7 +1340,7 @@ defer ?show-stack
    0  stderr >width @  4 -  18 / 1-  ( # of stack items to print)
    do  i nth  18 u.r  -1 +loop ;
 
-: +stack       [ ]  is ?show-stack ;
+: +stack      [ #]  is ?show-stack ;
 : -stack  now nope  is ?show-stack ;
 
 
@@ -1357,7 +1353,7 @@ defer ?show-stack
 
 : ?stack
    depth 0< if  sp-reset  error" tried to pop an empty stack"  then
-   depth [ 4096 64 - ] > if   ." too many items on the stack"  then ;
+   depth [ 4096 64 - #] > if   ." too many items on the stack"  then ;
 
 
 ( Forth re-implementation of C interpret; semantics are exactly the same!)
@@ -1442,12 +1438,12 @@ defer load-stats  ( show space consumed, or simply close double parens)
    out-channel preserve  >stderr
    here swap -  space .  ." bytes ))" ;
 
-: +consumed  [ ] is load-stats ;
+: +consumed  [ #] is load-stats ;
 
 -: ( dont-show-consumed)  ( here)
    drop  unwinding @ if ^ then  ." ))" ;
 
-: -consumed  [ ] is load-stats ;  -consumed
+: -consumed  [ #] is load-stats ;  -consumed
 
 ( Print some descriptive text and, at end of file, optionally show the
   amount of dictionary space consumed by loading. Consumes and prints the

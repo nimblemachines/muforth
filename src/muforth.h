@@ -140,8 +140,6 @@ struct counted_string
 extern int parsed_lineno;       /* captured with first character of token */
 extern struct string parsed;    /* for errors */
 
-extern cell  *ph;      /* ptr to next free byte in heap space */
-
 /* declare common functions */
 
 /* public.h is automagically generated, and can match every public function

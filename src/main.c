@@ -18,7 +18,8 @@ static void convert_command_line(int argc, char *argv[])
     argc--;
     argv++;
 
-    pcmd_line = (struct counted_string *)ph;
+    mu_here();
+    pcmd_line = (struct counted_string *)POP;
     pline = pcmd_line->data;
 
     while (argc--)
@@ -34,7 +35,8 @@ static void convert_command_line(int argc, char *argv[])
      * C are copied out of this string into the dictionary and
      * null-terminated first - just like input from _any other_ source.
      */
-    ph = (cell *)ALIGNED(pline);
+    PUSH(pline - (char *)pcmd_line);
+    mu_allot();
 }
 
 void mu_push_command_line()
