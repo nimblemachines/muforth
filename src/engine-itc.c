@@ -77,6 +77,9 @@ void mu_runtime_exit()      { UNNEST; }
 /* Push an inline literal */
 void mu_runtime_lit_()  { PUSH(*(cell *)IP++); }
 
+/* Compile the following word */
+void mu_runtime_compile()  { mu_runtime_lit_(); mu_comma(); }
+
 
 /*
  * These are the control structure runtime workhorses.

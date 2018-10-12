@@ -251,7 +251,7 @@ void mu_compiler_lbracket()
     _(state) = &forth_interpreter;
 }
 
-void mu_minus_rbracket()
+void mu_rbracket()
 {
     _(state) = &forth_compiler;
 }
