@@ -2,7 +2,7 @@
 
 # We are now serving content over HTTPS!
 
-s/This file is part of muforth: https:/This file is part of muforth: https:/
+s/This file is part of muforth: http:/This file is part of muforth: https:/
 
 # skip the rest - it's only of historical interest
 b skip
