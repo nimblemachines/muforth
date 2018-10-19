@@ -1,11 +1,15 @@
 # Make a link to muforth home page in all the source code.
 
-# The most egregious: fix the banner line in every source file
-# to say "muforth" rather than "muFORTH".
-s/This file is part of muFORTH:/This file is part of muforth:/
+# We are now serving content over HTTPS!
+
+s/This file is part of muforth: https:/This file is part of muforth: https:/
 
 # skip the rest - it's only of historical interest
 b skip
+
+# The most egregious: fix the banner line in every source file
+# to say "muforth" rather than "muFORTH".
+s/This file is part of muFORTH:/This file is part of muforth:/
 
 # I think every file has good links; now we just need to keep them updated.
 s#http://sites\.nimblemachines\.com/muforth#http://muforth.nimblemachines.com/#
@@ -23,7 +27,7 @@ s/^(.*)\n(.*)/\1\
 /^[#* ]*This file is part of muFORTH; for project details, visit/ {
 N
 N
-s/^([#* ]*).*/\1This file is part of muforth: http:\/\/pages.nimblemachines.com\/muforth/
+s/^([#* ]*).*/\1This file is part of muforth: https:\/\/pages.nimblemachines.com\/muforth/
 }
 
 # for any files which still refer to "muforth", convert them and put it a

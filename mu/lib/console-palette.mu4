@@ -1,8 +1,10 @@
-( This file is part of muforth: http://muforth.nimblemachines.com/
+( This file is part of muforth: https://muforth.nimblemachines.com/
 
   Copyright 2002-2018 David Frech. (Read the LICENSE for details.)
 
 ( Fiddle around with the console colour palette, on Linux.)
+
+ld target/common/endian.mu4  ( need >3210)
 
 48 buffer palette  ( 16 colours, one byte each of R, G, B)
 
@@ -13,18 +15,75 @@
 : pal!  ( r g b n)    >pal push  r@ 2 + c!  r@ 1+ c!  pop c! ;
 : pal@  ( n - r g b)  >pal push  r@ c@  r@ 1+ c@  pop 2 + c@ ;
 
-( from colorforth code:)
+( Loading a sequence of colors into the palette.)
+: palette!  ( rgbn .. rgbn+m-1 n n+m-1)   do  >3210 i pal!  drop  -1 +loop ;
+
+( Generate a new palette, using a simple technique to "whiten" colors.)
+( Four byte values: floor ceil +floor +ceil)
+variable component
+   "dd77_aa55 component !  ( Little-endian hack!)
+   -- "dd77_aa44 component !  ( Little-endian hack!)
+
+: comp@  ( 'component exists - color 'component)
+   over swap if  1+  then  c@  swap ;
+
+: get-components  ( i - r g b)
+   push  component
+   r@ 8 and if  2 +  then  ( use "bright" versions)
+   r@ 1 and comp@ ( red)
+   r@ 2 and comp@ ( green)
+   pop 4 and comp@ ( blue)
+   drop ;
+
+( Generate a new palette.)
+( XXX We don't always want black to be #000000.)
+: gen
+   ( black is special)  0 0 0  0 pal!
+   16 1 do  i get-components  i pal!  loop ;
+
+
 ( terminal ESC sequences)
-: <esc  <#  char m hold ;
-: esc>  char [ hold  ctrl [ hold  0  #> type ;
 
-: attrib   #s drop ;
-: attrib;  attrib  char ; hold ;
+( print-in-order style - easier to read than pictured numeric?)
+: <esc   ." [" ;
+-- : <esc   ." ESC[" ;  ( uncomment this line to see the escape sequences)
 
-( NOTE: 39 sets default fg; 49 default bg)
-: color  ( bright foregd backgd)
+: esc>   char m emit ;
+
+: attrib    (u.) type ;
+: attrib;   attrib  char ; emit ;
+: 2attrib;  ( fg/bg attrib)  swap 8 + attrib;  attrib; ;
+
+defer .ansi
+
+( ANSI escape sequence)
+( NOTE: This code can erroneously generate bold+bg - eg "1;43" - when given
+  a color number greater than 7.)
+
+-: ( color# fg/bg)
+   radix preserve  decimal  <esc
+   over  16 u< if  swap 8 u/mod  ?if attrib; then  + attrib  esc>  ^ then
+                                 5  2attrib;         attrib  esc> ;
+
+( -truecolor means use the terminal's existing colors - 8, 16, or 256.)
+: -truecolor  [ #]  is .ansi ;   -truecolor ( default)
+
+( Truecolor escape sequence)
+: .true   ( r g b fg/bg)
    radix preserve  decimal
-   <esc  40 + attrib;  30 + attrib;  attrib  esc> ;
+   <esc  2  2attrib;  swap rot  ( b g r)  attrib;  attrib;  attrib  esc> ;
+
+( +truecolor means read the color from our palette table at a particular
+  index, and set it as the current foreground using the "truecolor" escape
+  sequence.)
+
+-: ( color# fg/bg)   push  pal@  ( r g b)  pop  .true ;
+: +truecolor  [ #]  is .ansi ;
+
+: fg  ( color#)  30 .ansi ;
+: bg  ( color#)  40 .ansi ;
+
+: normal  <esc  0 attrib  esc> ;
 
 ( Sequence of each subset of 8 colors.
   Index, in binary, is 421
@@ -39,25 +98,72 @@
 6 constant cyan     ( -red   = blue  + green      )
 7 constant white
 
-( Generate a new palette.)
-( Four byte values: floor ceil +floor +ceil)
-variable component  "dd77_aa55 component !  ( Little-endian hack!)
+( Show all colors.)
+: +fg  ( color# - boldcolor#)  8 +  fg ;  ( assume color# was 0 to 7; use "bold" color)
+: .color  ( n)  dup fg  7 and  char 0 + dup emit emit ;  ( double digit)
+: cc  normal  16 0 do  i .color  loop  normal ;
 
-: comp@  ( 'component exists - color 'component)
-   over swap if  1+  then  c@  swap ;
+( Test "close" colors. These pairs - red + magenta, green + cyan, yellow +
+  white - all differ in that one has a blue component, and the other lacks
+  blue. For good measure, I put the two pure blues in there as well.)
 
-: get-components  ( i - r g b)
-   push  component
-   r@ 8 and if  2 +  then  ( use "bright" versions)
-   r@ 1 and comp@ ( red)
-   r@ 2 and comp@ ( green)
-   pop 4 and comp@ ( blue)
-   drop ;
+: tt
+   normal
+   cr    red fg  ."  red "    magenta fg  ."  magenta "
+       green fg  ."  green "     cyan fg  ."  cyan "   blue fg  ."  blue "
+      yellow fg  ."  yellow "   white fg  ."  white"
+   cr   red +fg  ." +red "   magenta +fg  ." +magenta "
+      green +fg  ." +green "    cyan +fg  ." +cyan "  blue +fg  ." +blue "
+     yellow +fg  ." +yellow "  white +fg  ." +white"
+   normal ;
 
-( Generate a new palette.)
-: gen
-   ( black is special)  0 0 0  0 pal!
-   16 1 do  i get-components  i pal!  loop ;
+
+( cube666 shows the 6x6x6 color cube that exists inside the "standard set"
+  of 256 colors, which are organized as follows:
+
+  * the first 16 are the "ansi" palette;
+  * the next 216 are the 6x6x6 cube;
+  * the last  24 are a greyscale ramp.
+
+  cube666 only prints the 216 colors that are part of the color cube.
+
+  NOTE: this requires a 256-color-capable terminal or emulator.)
+
+: cube666
+   radix preserve  6 radix !  ( base 6!!)
+   normal  6 0 do  cr  6 0 do  cr  6 0 do
+      k  6 *  j +   6 *  i +  dup  16 + fg  ( set color)
+      <#  # # #  #> type space  ( print color number)
+   loop  loop  loop  normal ;
+
+( Print the greyscale ramp subset of the 256-color space.)
+: grey24
+   normal  cr  24 0 do
+      i [ 16  6 6 6 * *  + #] + fg  ( set color)
+      i <#  # #  #> type space  ( print color number)
+   loop  normal ;
+
+( What about a 16x16x16 cube? We need to use truecolor escape sequences to
+  print this, so it will look terrible if you terminal or emulator does not
+  understand these sequences.)
+
+: cube-true
+   radix preserve  hex
+   normal  16 0 do  cr  16 0 do  cr  16 0 do
+      k 16 *  j 16 *   i 16 *  ( r g b)  30 .true  ( set color)
+      k 16 *  j +   16 *  i +   <#  # # #  #> type space  ( print color number)
+   loop  loop  loop  normal ;
+
+( Print the 16-color greyscale "diagonal" of the above cube.)
+: grey-true
+   radix preserve  hex
+   normal  cr  16 0 do
+      i 16 *  i 16 *   i 16 *  ( r g b)  30 .true  ( set color)
+      i 16 *  i +  16 *  i +   <#  # # #  #> type space  ( print color number)
+   loop  normal ;
+
+
+( Exporting palettes in textual form.)
 
 compiler  ( We want to print a string with embedded " chars.)
 : .string   \ (")  \f char string,  drop  \ type ;
@@ -108,23 +214,35 @@ fi
    15 8 do  i pal@  ."#rgb ,_  loop
            15 pal@  ."#rgb  ."  ]"  cr ;
 
-( Show all colors.)
-: +fg  ( bright color8)  9  color ;
-: fg  ( n)  8 /mod swap  ( bright color8)  +fg ;
-: .color  ( n)  dup fg  7 and  char 0 + dup emit emit ;
-: cc  16 0 do  i .color  loop  0 9 9 color  ( back to defaults) ;
 
-( Test "close" colors. These pairs - red + magenta, green + cyan, yellow +
-  white - all differ in that one has a blue component, and the other lacks
-  blue. For good measure, I put the two pure blues in there as well.)
+( Color schemes.)
 
-: tt
-   cr  0 red +fg  ."  red "   0 magenta +fg  ."  magenta "
-       0 green +fg  ."  green "  0 cyan +fg  ."  cyan "
-       0 blue +fg  ."  blue "
-       0 yellow +fg  ."  yellow "  0 white +fg  ."  white"
-   cr  1 red +fg  ." +red "   1 magenta +fg  ." +magenta "
-       1 green +fg  ." +green "  1 cyan +fg  ." +cyan "
-       1 blue +fg  ." +blue "
-       1 yellow +fg  ." +yellow "  1 white +fg  ." +white"
-   0 9 9 color ;
+hex
+
+( Based on Monokai from base16 collection - https://github.com/chriskempson/base16
+  I got them from asciinema, who borrowed from above URL.)
+
+: monokai
+   272822 f92672 a6e22e f4bf75 66d9ef ae81ff a1efe4 f8f8f2
+   75715e f92672 a6e22e f4bf75 66d9ef ae81ff a1efe4 f9f8f5  0 #15 palette! ;
+
+( Solarized!
+
+  color: #839496;
+  background-color: #002b36;
+
+  NOTE: the background color cannot be set using ANSI 16-color sequences
+  because it is *not* one of the first 8 colors! Not sure what Ethan S was
+  thinking ...
+)
+: solarized-original
+   073642 dc322f 859900 b58900 268bd2 d33682 2aa198 eee8d5
+   002b36 cb4b16 586e75 657b83 839496 6c71c4 93a1a1 fdf6e3  0 #15 palette! ;
+
+( Copied over from Comonad, an iMac. I came up with this by futzing with
+  the color settings in the Terminal app.)
+( Highlight/cursor: EEAB3B (iMac profile)
+: comonad
+   2E2E2E  9F2138  8DA61F  B29249  555CA9  99619B  678C96  D2D2D2
+   2E2E2E  9F2138  8DA61F  B29249  555CA9  99619B  678C96  D2D2D2  0 #15 palette! ;
+                                                           ( ^-should be 88% grey)
