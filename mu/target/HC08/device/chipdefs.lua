@@ -1044,60 +1044,60 @@ qg_vec = [[
 dofile 'target/HC08/device/string.lua'
 
 function show_vectors(v)
-vt = {}
-name_max = 0  -- width of name field
-for addr, desc, name in v:gmatch("(0x%x+):0?x?%x+ ([%w ]-) ([%w%-]+)%s-\n") do
-   if desc ~= "Reserved" then
-      table.insert(vt, 1, { addr=addr, desc=desc, name=name })
-   end
-   if #name > name_max then name_max = #name end
-   --print (addr, desc, name)
-end
+    local vt = {}
+    name_max = 0  -- width of name field
+    for addr, desc, name in v:gmatch("(0x%x+):0?x?%x+ ([%w ]-) ([%w%-]+)%s-\n") do
+        if desc ~= "Reserved" then
+            table.insert(vt, 1, { addr=addr, desc=desc, name=name })
+        end
+        if #name > name_max then name_max = #name end
+        --print (addr, desc, name)
+    end
 
---print (name_max)
+    --print (name_max)
 
-for _,vec in ipairs(vt) do
-   -- print(string.format("#%02d  %05x  vec  %s  ( %s)",
-   -- 0x10000-vec.addr, vec.addr, vec.name..(" "):rep(name_max-#vec.name), vec.desc))
-   print(string.format("%05x vector  %s  ( %s)",
-      vec.addr, vec.name..(" "):rep(name_max-#vec.name), vec.desc))
-end
-print()
+    for _,vec in ipairs(vt) do
+        -- print(string.format("#%02d  %05x  vec  %s  ( %s)",
+        -- 0x10000-vec.addr, vec.addr, vec.name..(" "):rep(name_max-#vec.name), vec.desc))
+        print(string.format("%05x vector  %s  ( %s)",
+            vec.addr, vec.name..(" "):rep(name_max-#vec.name), vec.desc))
+    end
+    print()
 end
 
 function show_sfrs(s)
-   local pat = "(0x%x+) ([%w_]+)" .. (" ([%w<-]+)"):rep(8)
+    local pat = "(0x%x+) ([%w_]+)" .. (" ([%w<-]+)"):rep(8)
 
-   local function show_line(l)
-      if l:match "^%s*$" then return end    -- skip whitespace-only lines
-      local addr, reg, b7, b6, b5, b4, b3, b2, b1, b0 = l:match(pat)
-      if addr then
-         print (string.format("%04x reg  %-8s | "..("%-7s "):rep(8),
-                              addr, reg, b7, b6, b5, b4, b3, b2, b1, b0))
-         return
-      end
+    local function show_line(l)
+        if l:match "^%s*$" then return end    -- skip whitespace-only lines
+        local addr, reg, b7, b6, b5, b4, b3, b2, b1, b0 = l:match(pat)
+        if addr then
+            print (string.format("%04x reg  %-8s | "..("%-7s "):rep(8),
+                                 addr, reg, b7, b6, b5, b4, b3, b2, b1, b0))
+            return
+        end
 
-      addr, reg = l:match "(0x%x+) ([%w_]+)"
-       print (string.format("! %s failed to match - need exactly 8 items after name",
-             reg))
-   end
+        addr, reg = l:match "(0x%x+) ([%w_]+)"
+        print (string.format("! %s failed to match - need exactly 8 items after name",
+            reg))
+    end
 
-   for l in s:lines() do
-      show_line(l)
-   end
-   print()
+    for l in s:lines() do
+        show_line(l)
+    end
+    print()
 end
 
 function show_heading(s)
-   print (string.format(
-      "( Equates for S08%s. Extracted from the datasheet using Lua!)", s))
-   print()
+    print (string.format(
+        "( Equates for S08%s. Extracted from the datasheet using Lua!)", s))
+    print()
 end
 
 function show_part(name, vec, sfr)
-   show_heading(name)
-   show_vectors(vec)
-   show_sfrs(sfr)
+    show_heading(name)
+    show_vectors(vec)
+    show_sfrs(sfr)
 end
 
 show_part(" (common)", common_vec, common_sfr)
