@@ -1,7 +1,8 @@
 -- Like we did with the S08, try to generate some of the equates
 -- automatically. Or at least automatically-ish.
 
-fr6989_ds = [[
+-- Scraped from MSP430FR6989 datasheet, pp135--151.
+fr6989_regs = [[
 =0340 Timer_A TA0
 TA0 control TA0CTL 00h
 Capture/compare control 0 TA0CCTL0 02h
@@ -82,7 +83,7 @@ TA3 interrupt vector TA3IV 2Eh
 =0470 Capacitive Touch I/O 1 Registers
 Capacitive Touch I/O 1 control CAPTIO1CTL 0Eh
 
-=04a0 RTC_C
+=04a0 RTC_C real-time clock
 RTC control 0 RTCCTL0 00h
 RTC password RTCPWD 01h
 RTC control 1 RTCCTL1 02h
@@ -281,9 +282,9 @@ AES accelerator XORed data in (no trigger) AESAXIN 00Eh
 
 dofile 'target/HC08/device/string.lua'
 
-function s_to_equates(s)
+function show_regs(regs)
     local drop = ""
-    for l in s:lines() do
+    for l in regs:lines() do
         if l ~= "" then
             local addr, peripheral = l:match "^=(%x%x%x%x) (..-)$"
             if addr then
@@ -299,7 +300,16 @@ function s_to_equates(s)
             end
         end
     end
-    print "drop"
+    print "drop\n"
 end
 
-s_to_equates(fr6989_ds)
+function show_part(name, vecs, regs)
+    print (string.format(
+        "( Equates for MSP430%s. Extracted from the datasheet using Lua!)\n", name))
+    --show_vectors(vecs)
+    show_regs(regs)
+    print (string.format(
+        "( End of auto-generated equates for MSP430%s.)\n", name))
+end
+
+show_part("FR6989", nil, fr6989_regs)
