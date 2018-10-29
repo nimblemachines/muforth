@@ -252,22 +252,26 @@ Comparator interrupt CEINT 0Ch
 Comparator interrupt vector word CEIV 0Eh
 
 =0980 CRC32
-CRC32 data input CRC32DIW0 00h
+# Edited because it's a huge mess
+# Removed "W0" from the end of the CRC32 input reg names
+# Removed "W0" from the end of the CRC16 reg names
+# CRC32RESRW0 was shown as CRC32RESRW1 - fixed this
+CRC32 data input CRC32DI 00h
 Reserved 02h
 Reserved 04h
-CRC32 data input reverse CRC32DIRBW0 06h
+CRC32 data input reverse CRC32DIRB 06h
 CRC32 initialization and result word 0 CRC32INIRESW0 08h
 CRC32 initialization and result word 1 CRC32INIRESW1 0Ah
 CRC32 result reverse word 1 CRC32RESRW1 0Ch
-CRC32 result reverse word 0 CRC32RESRW1 0Eh
-CRC16 data input CRC16DIW0 10h
+CRC32 result reverse word 0 CRC32RESRW0 0Eh
+CRC16 data input CRC16DI 10h
 Reserved 12h
 Reserved 14h
-CRC16 data input reverse CRC16DIRBW0 16h
-CRC16 initialization and result word 0 CRC16INIRESW0 18h
+CRC16 data input reverse CRC16DIRB 16h
+CRC16 initialization and result word 0 CRC16INIRES 18h
 Reserved 1Ah
 Reserved 1Ch
-CRC16 result reverse word 0 CRC16RESRW1 1Eh
+CRC16 result reverse word 0 CRC16RESR 1Eh
 
 =09c0 AES accelerator
 AES accelerator control 0 AESACTL0 00h
@@ -286,16 +290,18 @@ function show_regs(regs)
     local drop = ""
     for l in regs:lines() do
         if l ~= "" then
-            local addr, peripheral = l:match "^=(%x%x%x%x) (..-)$"
-            if addr then
-                print(fmt("%s( %s)\n%s", drop, peripheral, addr))
-                drop = "drop\n\n"
-            else
-                local comment, reg, offset = l:match "^(..-) (%w+) (%x+)h$"
-                if comment then
-                    local padding = math.max(16 - reg:len(), 3)
-                    print(fmt("%s preg %s%s| %s",
-                        offset:lower(), reg, (" "):rep(padding), comment))
+            if not l:match "^#" then    -- skip comment lines
+                local addr, peripheral = l:match "^=(%x%x%x%x) (..-)$"
+                if addr then
+                    print(fmt("%s( %s)\n%s", drop, peripheral, addr))
+                    drop = "drop\n\n"
+                else
+                    local comment, reg, offset = l:match "^(..-) (%w+) (%x+)h$"
+                    if comment then
+                        local padding = math.max(16 - reg:len(), 3)
+                        print(fmt("%s preg %s%s| %s",
+                            offset:lower(), reg, (" "):rep(padding), comment))
+                    end
                 end
             end
         end
