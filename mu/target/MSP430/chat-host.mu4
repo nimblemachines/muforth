@@ -130,27 +130,18 @@ variable checksum
            c.GetSP      c.SetAddr  c.WriteWord  c.WriteWord  c.WriteWord
    c.Run ;
 
-.equates. .contains FCTL1 .if  ( chip has Flash memory!)
+: ?flash-status  ( status - fail?)   84 and ;
 
-: flash-failed?  ( status - failed?)
-   ." FCTL3=" dup u.
-   84 and ;
+: c.ErasePage   (     a   - fail?)
+   c.SetAddr  [ \eq FERASE  \eq FKEY + #]  0  c.FlashWord  ?flash-status  ?ok ;
 
-: erase-page  ( 'target - status)
-   c.SetAddr  [ \eq FERASE \eq FKEY + #]  0 c.FlashWord ;
+( OR together returned flash statuses for the chunk.)
+: c.FlashChunk  ( buf a u - fail?)
+   c.setup-chunk  ( #words)
+   [ \eq FWRT   \eq FKEY + #]  0 rot  ( fcmd status #words)
+   for  over ( fcmd)  m* m* lohi> ( data)  c.FlashWord  or  next  nip
+   ?flash-status  ?ok ;
 
-( Or together the statuses from each FlashWord command and return it.)
-: c.FlashChunk   ( buf a u erase? - ok?)
-   if  over erase-page  flash-failed? if  drop 2drop 0  ^  then  then
-   c.setup-chunk  0 swap  ( 0 #words)
-   for  [ \eq FWRT \eq FKEY + #]  m* m* lohi>  c.FlashWord  or  next
-   flash-failed? 0=  ?ok ;
-
-.else
-
-: c.FlashChunk  ( buf a u erase? - ok?)  drop  c.WriteChunk  -1 ;
-
-.then
 
 ( NOTE: We don't define RunWait separately. Since we will always be reading
   the registers back after Run, that first read command will block until
@@ -158,4 +149,4 @@ variable checksum
 
 : chat
    chat-via  c.Hello  c.GetStatus  chat-run
-             c.ReadChunk  c.WriteChunk  c.FlashChunk ;
+             c.ReadChunk  c.WriteChunk  c.ErasePage  c.FlashChunk ;

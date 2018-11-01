@@ -17,22 +17,26 @@ hex
 
 ( XXX These are for main memory. Do we want to treat info memory separately?)
 #512 constant /page   ( this is the erase size of main memory)
- #64 constant /row    ( max size of row to program)
 
-: program-row  ( 'target len erase?)
-   push  r@ if  cr ." erase "  over u.  then
-   cr ." program-row "  over u.  dup u.
-   over image+ -rot  ( buf a u)  pop  t.FlashChunk
-   0= if  error" flash access or protection error"  then ;
+: ?flash-status  ( status)
+   if error" flash access or protection violation" then ;
+
+: erase-page   ( 'target)
+   cr ." erase "  dup u.
+   t.ErasePage  ?flash-status ;
+
+: program-chunk  ( 'target len)
+   cr ." program "  over u.  dup u.
+   over image+ -rot  ( buf a u)  t.FlashChunk  ?flash-status ;
 
 : erase?  ( 'target - erase?)   [ /page 1- #] and  0= ;
 
-: row  ( 'target len - 'target+len)
-   2dup + push  over erase?  program-row  pop ;
+: flash-chunk  ( 'target len - 'target+len)
+   2dup + push  over erase? if  over erase-page  then  program-chunk  pop ;
 
 : flash-region  ( a len)
-   /row /mod  ( r q)  swap push  for   /row row  next
-                           pop  =if  ( rem) row  drop ^  then  2drop ;
+   100 /mod  ( r q)  swap push  for   100 flash-chunk  next
+                         pop  =if  ( rem) flash-chunk  drop ^  then  2drop ;
 
 ( Check to see if we're going to clobber the bootloader and complain if
   we're not executing from RAM.)
