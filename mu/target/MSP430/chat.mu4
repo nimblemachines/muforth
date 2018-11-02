@@ -57,6 +57,17 @@ hex
 
 __meta
 
+( Compile the first 32 bits of the current muforth Git commit.
+  These will always be the first four bytes of the file, so verify can be
+  smart about ignoring them.)
+
+label version
+   muforth-commit drop 8 evaluate
+   dup 10 >>  swap  ( high low)  ,  ,
+
+( The commit is followed by a pointer to the chat entry code.)
+label chat-entry-vector   0 ,
+
 label get-byte
    begin  01 # chat-uart-ifg & bitb  0!= until
    chat-uart-rxbuf & top movb  ret  ;c
@@ -77,16 +88,10 @@ label put-word
    top check xor  ( xor into checksum)
    put-byte c  top swpb  put-byte j  ;c
 
-( Compile the first 32 bits of the current muforth Git commit.
-  When asked for the version, return these two 16-bit words, in
-  little-endian order.)
-
-muforth-commit drop 8 evaluate
-   dup 10 >>  swap  ( high low)
-
 label get-version
-   ( commit-lo) # top mov  put-word c
-   ( commit-hi) # top mov  put-word j  ;c
+   version # mp mov ( address of commit)
+   mp )+ top mov  put-word c
+   mp )+ top mov  put-word j  ;c
 
 label set-addr
    get-word c  top mp mov  ret  ;c
@@ -153,13 +158,10 @@ label flash-word
    FKEY FLOCK + # FCTL3 & mov    -- set FLOCK
    put-word j  ;c                -- return status to host
 
-.else  ( dummy version)
+.else
 
-label flash-word
-   get-word c                    -- get value to write
-   get-word c                    -- get flash command + key
-   2 # mp add                    -- incr pointer
-   9658 # top mov  put-word j    -- return fake OK status
+z" No way to program the flash. You should probably use chat-v3." abort
+
 .then
 
 ( Dispatch.)
@@ -196,6 +198,8 @@ label chat-entry
    ( call has already pushed PC)
    sr push  sr clr  ( disable interrupts!)  cp push
    begin  process c  again  ;c
+
+chat-entry chat-entry-vector image-!  ( patch the vector)
 
 ( This creates a slot for the PC which can be replaced with the address of
   native code to execute. That code can end with a return instruction, which
@@ -296,8 +300,6 @@ z" No BCS calibration or CS module found. Your clock is unsupported."  abort
 .then
 
 .then  ( not in-ram)
-
-   chat-entry # push  ( so it's always available at the top of the stack)
 
    ( This is here so that native code can simply return and it will
      re-enter the chat code with a proper stack.)
