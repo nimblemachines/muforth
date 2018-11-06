@@ -1,0 +1,83 @@
+( This file is part of muforth: https://muforth.nimblemachines.com/
+
+  Copyright 2002-2018 David Frech. (Read the LICENSE for details.)
+
+loading Spoken Word (really just some exploratory code)
+
+__meta
+ram
+hex
+
+( Connecting an S08QG8 to an HC595 to drive 10 LEDs. The idea is that the
+  LEDs will be mounted vertically along the spoke of a bicycle wheel, and
+  as the wheel spins, can spell words or make patterns.
+
+  I've hooked the top 8 LEDs to the outputs of the HC595. Assuming that the
+  8 bits are shifted in MSB first, the MSB - output QH - is on top.
+
+  The bottom two are connected to PTB7 and PTB6, B7 being the upper one.
+
+  The two chips are connected thus:
+
+  QG8   Pin     595  Pin
+  ====  ===     ===  ===
+  PTB5    7    RCLK   12   storage register clock
+  MOSI    9     SER   14   serial data in
+ SPSCK   10   SRCLK   11   shift register clock
+
+             nSRCLR   10   High
+                nOE   13   Low
+
+  LEDs, top to bottom:
+                 QH    7
+                 QG    6
+                 QF    5
+                 QE    4
+                 QD    3
+                 QC    2
+                 QB    1
+                 QA   15
+  PTB7    5
+  PTB6    6
+)
+
+label ports-init
+   SPIC1 ) clr  ( disable SPI)
+   PTBD ) clr  %1110_1100 # PTBDD ) mov  rts  ;c
+
+label spi-init
+   %0101_0000 # ( cpol=0, cpha=0, enable spi, master mode) SPIC1 ) mov
+   ( 8-bit mode, /SS disable, separate pins) SPIC2 ) clr
+   %1110_1100 # lda  PTBDS ) sta ( high drive on SCK, MOSI, B7, and B6)
+   01 # SPIBR ) mov  ( 9.216M / 1 / 4 = 2.304M - hopefully not too fast!)
+   rts  ;c
+
+( XXX We can't know when it's done shifting... Xmit empty becomes true
+  immediately, as xmitter is double-buffered.)
+
+label xxxhi8!
+   SPID ) sta  rts  ;c
+
+( Nice commands/macros to make things pretty.)
+macro  sr/  PTBD 2 bset  ;m  ( bring SRCLK high)
+macro  sr\  PTBD 2 bclr  ;m  ( bring SRCLK low)
+macro   r/  PTBD 5 bset  ;m  ( bring RCLK high)
+macro   r\  PTBD 5 bclr  ;m  ( bring RCLK low)
+
+macro   d!  .a rol  CS if  PTBD 3 bset
+                     else  PTBD 3 bclr  ( SERIN)  then  ;m
+
+( MOSI = B3, SPSCK = B2)
+label hi8!
+   .x psh  8 # ldx  ( count)
+   begin  d!  sr/ sr\  .x decz? until
+   .x pul  r/ r\  rts  ;c
+
+( Since RCLK idles low, just mask the top two bits and write the whole
+  register.)
+
+label lo8!
+   0c0 # and  PTBD ) sta  rts  ;c
+
+label show  ( value in HX, left justified)
+   .h psh  .a pul  hi8! c  txa  lo8! j  ;c
