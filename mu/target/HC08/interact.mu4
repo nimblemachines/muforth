@@ -36,13 +36,6 @@ drop ( index)
                     2 |cell !  ( size of cell in bytes) ;
 
 
-variable ipad  ( "interact" pad)
-: t@   ( a - w)                \m cell  ipad  t.ReadChunk  ipad beh@ ;
-: tc@  ( a - b)                      1  ipad  t.ReadChunk  ipad c@ ;
-: t!   ( w a)  swap ipad beh!  \m cell  ipad  t.WriteChunk ;
-: tc!  ( b a)  swap ipad c!          1  ipad  t.WriteChunk ;
-
-
 ( We keep a local copy of the target's registers in the same order as they
   appear in an exception frame.
 
@@ -83,8 +76,6 @@ variable chat-sp     ( current value of target's SP)
    cr  ." V--HINZC  A  H  X   SP   PC"
    cr  .CC c@ .bits8 space  .A .b  .H .b  .X .b  chat-sp @ .h16 space  .PC .w ;
 
--- : .x  ( like .s)  .X c@ du ;
-
 : copy-chunk  ( 'target len - 'target+len)
    -- cr ." copy-chunk "  2dup swap u. u.
    2dup + push  over image+  t.WriteChunk  pop ;
@@ -106,6 +97,65 @@ variable ram-copied  ( pointer to first un-copied byte)
 : hi   ram-copied off  chatting on  >chat  t.Hello  get-regs  .regs ;
 
 : chat-via   pop  chat-vector !  hi ;
+
+
+forth
+: run      copy-ram  set-regs  t.Run ;  ( don't wait for target)
+: runwait  run  get-regs ;   ( wait for target)
+
+: call  ( pc)  pc!  runwait .regs ;
+: kick  ( pc)  pc!  run ;  ( when the code you're calling doesn't speak
+                             the same protocol as running code)
+
+: 'reset   \l Vreset image-@ ;
+: reset    'reset  call ;  ( MSP430 version has a delay between run and get-regs)
+: go       'reset  kick ;
+
+
+( NOTE: top cell of target stack is *scratch* - so allocate it but don't
+  copy it back and forth.)
+
+2 constant #scratch  ( number of "scratch" bytes on top of target stack)
+
+meta
+: sp0   [ @ram #ram +  #48 - #] ;
+: sp!   #scratch -  hx! ;
+: sp@               hx@  #scratch + ;
+: depth  \m sp0  \m sp@ -  \m cell/ ;
+forth
+
+( stack> *first* builds a local image of the target stack - in the RAM
+  image - and *then* copies it, in one chunk, to the target.)
+
+: stack>  ( "push" stack to target)
+   depth 0 max 8 min  ( more than that would be silly)
+   \m sp0  over  \m cells -  dup \m sp! ( top of D stack)  image+  m !
+   for  >lohi m& m&  next  ( copy each cell as a word to D stack)
+   ( Now copy stack image to target)
+   \m sp@  dup image+  m @ over - swap  t.WriteChunk ;
+
+( stack< *first* copies the target stack, in one chunk, to the host's RAM
+  image, and *then* pulls the values out and pushes them onto the host's stack.)
+
+: stack<  ( "pop" stack from target)
+   \m depth 0 max 8 min  ( more than that would be silly)  =if
+   \m sp@ ( target)  over \m cells  ( len)  over image+  t.ReadChunk
+   dup  ( depth)  \m sp@ image+  m ! ( do this after ReadChunk)
+   for  m* m* hilo>  pop 2push  next  ( starting with top, push to R)
+   for  2pop push  next  ( pop from R to reverse order)  ^  then  drop ;
+
+: cont   stack>  runwait  stack<  .regs ;
+: remote  ( cfa)  ( execute target word on stack)  pc!  cont ;
+
+-:  ."  (interacting with target)"  ;
+-:
+      .meta. find  if  execute  ^  then
+    .target. find  if  execute  remote  ^  then
+     .forth. find  if  execute  ^  then
+.ifdef no-number  complain ; .else
+                                                 number ;
+.then
+mode __target
 
 
 ( Set |@ and |c@ to _some_ form of target fetch. Prefer to get bytes from
@@ -165,129 +215,3 @@ host-seekeys 'seekeys !  ( back to host bindings)
 : dis  ( a - a')   disasming  inspect ;
 
 
-forth
-: .r   .regs ;
-
-: run      copy-ram  set-regs  t.Run ;  ( don't wait for target)
-: runwait  run  get-regs ;   ( wait for target)
-
-: call  ( pc)  pc!  runwait .regs ;
-: kick  ( pc)  pc!  run ;  ( when the code you're calling doesn't speak
-                             the same protocol as running code)
-
-: 'reset   \l Vreset image-@ ;
-: reset    'reset  call ;  ( MSP430 version has a delay between run and get-regs)
-: go       'reset  kick ;
-
-
-( Getting ready to test interactively - time for a real meta-compiler!)
-
-.ifdef threaded
-
-__meta
-
-2 zvar ip  ( interpretation pointer; _pre_incremented)
-2 zvar rp  ( return stack pointer; also _pre_incremented)
-2 zvar up  ( user pointer; I hope to have multi-tasking support!)
-
-( These are for communication, but not for standalone targets.)
-2 zvar s0  ( data stack pointer - bottom)
-2 zvar sp  ( data stack pointer - top)
-
-__host
-
-0 constant #scratch  ( number of "scratch" bytes on top of target stack)
-
-meta
-: s0  chat-sp @ ;    ( bottom of target's D stack)
-: r0  \m s0  64 - ;  ( bottom of target's R stack; room for 32 values on D)
-: sp!  ( target-sp)    \l sp t! ;
-: sp@  ( - target-sp)  \l sp t@ ;
-
-( XXX Use chat-sp as bottom of stack; swi frame is above it. Push data
-  stack values below chat-sp. Target stub will do -6 # ais to set initial
-  stack, and 6 # ais before returning to monitor - and to host. A kludge,
-  but not being able to set the target SP, this is what we can do.
-
-  Except that doesn't work. It sets SP to the stack _bottom_ not to the
-  top.)
-
-.else
-
-( NOTE: top cell of target stack is _scratch_ - so allocate it but don't
-  copy it back and forth.)
-
-2 constant #scratch  ( number of "scratch" bytes on top of target stack)
-
-meta
-: r0  chat-sp @ ;    ( bottom of target's R stack)
-: s0  \m r0  64 - ;  ( bottom of target's D stack; room for 32 values on R)
-: sp!  ( target-sp)    #scratch -  hx! ;
-: sp@  ( - target-sp)              hx@  #scratch + ;
-
-.then  ( not threaded)
-
-: depth  \m s0 \m sp@ -  \m cell/ ;
-: u.  u. ;
-: .  . ;
-: .s  .s ;
-: du   du ;
-: dis  dis ;
-
-forth
-.ifdef post-increment-read-write
-
-: stack>  ( "push" stack to target)
-   depth 8 min  ( more than that would be silly)
-   \m s0 over \m cells -  dup \m sp! ( top of D stack) t.SetAddr
-   for  t.WriteW  next  ( copy each cell as a word to D stack) ;
-
-( XXX should this set hx when done?)
-: stack<  ( "pop" stack from target)
-   \m depth 0 max 8 min  ( more than that would be silly)  =if
-   \m sp@ t.SetAddr  dup ( depth)
-   for  t.ReadW  pop 2push  next  ( starting with top, push to R)
-   for  2pop push  next  ( pop from R to reverse order)  ^  then  drop ;
-
-.else
-
-( XXX Build stacks on pad then read/write in one go?)
-( Or build them in the image?)
-
-#16 buffer stackpad
-
-: stack>  ( "push" stack to target)
-   stackpad m !  depth 8 min  ( more than that would be silly)
-   for  >lohi m& m&  next  ( copy each cell as a word to stackpad)
-   m @ stackpad - ( len)  \m s0 over -  ( target)  dup \m sp!  swap  stackpad
-   ( target len buf) t.WriteChunk ;
-
-( XXX should this set hx when done?)
-: stack<  ( "pop" stack from target)
-   \m depth 0 max 8 min  ( more than that would be silly)  =if
-   \m sp@ ( target)  over \m cells  ( len)  stackpad  t.ReadChunk
-   dup  ( depth)  stackpad m ! ( do this after ReadChunk)
-   for  m* m* hilo>  pop 2push  next  ( starting with top, push to R)
-   for  2pop push  next  ( pop from R to reverse order)  ^  then  drop ;
-
-.then
-
-( XXX Should we try to automatically connect to target?)
-: ?chatting
-   chatting @ 0= if  error" not connected to target"  then ;
-
-: remote  ( cfa)  ( execute target word on stack)
-   ?chatting  pc!  stack>  runwait  stack< ;
-
-: rx  ( cfa)  ( execute target non-forth word)
-   ?chatting  pc!          runwait ;
-
--:  ."  (interacting with target)"  ;
--:
-      .meta. find  if  execute  ^  then
-    .labels. find  if  execute  remote  ^  then
-    .target. find  if  execute  remote  ^  then
-.ifdef no-number  complain ; .else
-                                                 number ;
-.then
-mode __target
