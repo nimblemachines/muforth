@@ -1,0 +1,604 @@
+( This file is part of muforth: https://muforth.nimblemachines.com/
+
+  Copyright 2002-2018 David Frech. (Read the LICENSE for details.)
+
+( Trying to create a USB CDC serial device.)
+
+loading HCS08 USB CDC serial device (experimental!)
+
+( Check for compatibility with device.)
+.reg EPCTL0 .not .if
+   z" Selected device doesn't support USB."  abort
+.then
+
+ld target/common/usb-descriptors.mu4
+
+hex
+
+__meta
+
+10 constant buflen0  ( buffer length, and hence max packet size, for endpoint 0)
+10 constant buflen1  ( buffer length, and hence max packet size, for endpoint 1)
+
+( Compile the first 32 bits of the current muforth Git commit. The host can
+  grab these four bytes and print them out. It gets the address by
+  executing the get-version-addr command.)
+
+label version
+   muforth-commit drop 8 evaluate  >0123  c, c, c, c,
+
+( For the USB descriptors, I've cribbed a lot of this from the USB CDC
+  class spec, version 1.2, p23ff.)
+
+( Our device descriptor. Note: all USB data is little-endian.) 
+label device-descriptor
+   12 c, ( bLength)
+   01 c, ( bDescriptorType = device)
+ 0200 le, ( bcdUSB = 02.00)
+
+   00 c, ( bDeviceClass - composite device - look to interfaces for class)
+   00 c, ( bDeviceSubClass)
+   00 c, ( bDeviceProtocol)
+
+   buflen0 c, ( bMaxPacketSize0)
+ f0ff le,  ( idVendor  = F0FF)
+ 0003 le,  ( idProduct = 0003)
+ 0001 le,  ( bcdDevice = 00.01)
+   01 c, ( iManufacturer - string index = 1)
+   02 c, ( iProduct - string index = 2)
+   03 c, ( iSerialNumber - string index = 3)
+   01 c, ( bNumConfigurations)
+
+label config-descriptor
+   09 c, ( bLength)
+   02 c, ( bDescriptorType = configuration)
+   here  0 le, ( wTotalLength = configuration + interfaces + endpts)
+   02 c, ( bNumInterfaces)
+   01 c, ( bConfigurationValue; starts from 1, unlike interface numbers)
+   00 c, ( iConfiguration - string index = none)
+   80 c, ( bmAttributes)
+ #100 2/ c, ( bMaxPower, in 2mA increments = 100mA - one "unit load")
+ -- #200 2/ c, ( bMaxPower, in 2mA increments = 200mA - two "unit loads")
+
+label communications-class-interface
+   09 c, ( bLength)
+   04 c, ( bDescriptorType = INTERFACE)
+   00 c, ( bInterfaceNum)
+   00 c, ( bAlternateSetting)
+   01 c, ( bNumEndpoints - in _addition_ to endpoint pair 0)
+   02 c, ( bInterfaceClass = Communications)
+   02 c, ( bInterfaceSubClass = Abstract Control Model)
+   00 c, ( bInterfaceProtocol = UNUSED; most serial code has 01: AT V.250 here)
+   00 c, ( iInterface - string index = none)
+
+label cdc-header-descriptor
+   05 c, ( bFunctionLength)
+   24 c, ( bDescriptorType = CS_INTERFACE)
+   00 c, ( bDescriptorSubtype = HEADER)
+ 0110 le, ( bcdCDC = 1.10; Class Definitions for Communications Devices
+            Specification release number in binary-coded decimal. Why is this
+            1.10 and not 1.20?)
+
+label cdc-acm-descriptor
+   04 c, ( bFunctionLength)
+   24 c, ( bDescriptorType = CS_INTERFACE)
+   02 c, ( bDescriptorSubtype = Abstract Control Model functional descriptor subtype)
+   02 c, ( bmCapabilities =  D1 = 1: Device supports the request
+           combination of Set_Line_Coding, Set_Control_Line_State, Get_Line_Coding,
+           and the notification Serial_State.
+           See CDC 1.2 PSTN, p20.)
+
+label cdc-union-descriptor
+   05 c, ( bFunctionLength)
+   24 c, ( bDescriptorType = CS_INTERFACE)
+   06 c, ( bDescriptorSubtype = Union Descriptor Functional Descriptor subtype)
+   00 c, ( bControlInterface = 0)
+   01 c, ( bSubordinateInterface0 = 1; this is the Data Class interface)
+
+label cdc-call-management-descriptor
+   05 c, ( bFunctionLength)
+   24 c, ( bDescriptorType = CS_INTERFACE)
+   01 c, ( bDescriptorSubtype = Call Management Functional Descriptor subtype)
+   00 c, ( bmCapabilities = device does *not* handle call management!)
+   01 c, ( bDataInterface = 1; again, the Data Class interface)
+
+( XXX NOTE: There is no notification interrupt endpoint!!)
+( Linux doesn't seem to like this... Let's put one in and see if it gets
+  better!)
+
+( interval bufsize type in/out number)
+         1      16  interrupt    in      1  endpoint
+
+label data-class-interface
+   09 c, ( bLength)
+   04 c, ( bDescriptorType = INTERFACE)
+   01 c, ( bInterfaceNum)
+   00 c, ( bAlternateSetting)
+   02 c, ( bNumEndpoints - in _addition_ to endpoint pair 0)
+   0a c, ( bInterfaceClass = Data Class)
+   00 c, ( bInterfaceSubClass = None)
+   00 c, ( bInterfaceProtocol = None)
+   00 c, ( iInterface - string index = none)
+
+( interval bufsize type in/out number)
+         0      40  bulk    in      2  endpoint
+         0      40  bulk   out      2  endpoint
+
+   ( Fix-up length of configuration descriptor.)
+   config-descriptor  end-descriptor
+
+label config-descriptor-end  ;c
+
+label string0
+   04 c, ( bLength)
+   03 c, ( bDescriptorType = string)
+ 0409 le, ( LANGID = 0409 = US English)
+
+label string1
+   u" Fücken Awesöme Innövation Lab"
+
+label string2
+   u" S08 USB-CDC experiment"
+
+label string3
+   muforth-commit drop #12  ucs16-string,
+
+label string-table
+   string0 ,
+   string1 ,
+   string2 ,
+   string3 ,
+;c
+
+1860 equ 'usb            ( USB RAM origin; buffer descriptors live here)
+1880 equ 'usb-buffers    ( endpoint RAM from here to 195f)
+
+__host
+
+: >bufaddr  ( buffer - bufaddr)
+   dup 0f and if  error" endpoint buffer must be on a 16-byte boundary"  then
+   \l 'usb -  2 >> ;
+
+__meta
+
+( In buffer descriptor control byte, OWN is 80, DATA1 is 40, and DTS is 08.)
+
+( Buffer descriptor control byte to match _any_ SETUP, or an OUT with a
+  DATA1 packet. When we hand the buffer over to the USB controller, we
+  always want to set OWN and DTS.)
+
+      40    equ data1
+data1 88 +  equ match-data1
+
+( USB buffer descriptors)
+1860 equ in-control
+1861 equ in-count
+1862 equ in-bufaddr
+1863 equ out-control
+1864 equ out-count
+1865 equ out-bufaddr
+
+( USB buffer descriptors - JS16-specific)
+1866 equ ep1-control  ( MIDI OUT)
+1867 equ ep1-count
+1868 equ ep1-bufaddr
+
+1869 equ ep2-control  ( UNUSED)
+186a equ ep2-count
+186b equ ep2-bufaddr
+
+'usb-buffers
+          dup  equ in-buffer
+buflen0 + dup  equ out-buffer
+buflen0 + dup  equ ep1-buffer
+buflen1 +  ( XXX more buffers here)
+drop
+
+( Useful aliases for buffer addresses - for control requests.)
+out-buffer 0 + equ bmRequestType
+out-buffer 1 + equ bRequest
+out-buffer 2 + equ wValue
+out-buffer 4 + equ wIndex
+out-buffer 6 + equ wLength
+
+2 xvar memptr
+2 xvar memcount
+1 xvar bufptr
+
+label toggle-data  ( HX points to EP buffer control byte)
+   0 ,x lda  40 # and ( data0/1)  match-data1 # eor  0 ,x sta  rts  ;c
+
+( Be careful! Values in standard USB requests are _little-endian_. To read
+  word values - like addresses and counts - we cannot use ldhx!
+
+  wValue = memory address
+  wLength = byte count)
+
+label parse-address-length
+   wValue    ) lda  memptr 1+ ) sta
+   wValue 1+ ) lda  memptr    ) sta   ( 10 bytes)
+   ( fall thru)  ;c
+
+label parse-length
+   wLength    ) lda  memcount 1+ ) sta
+   wLength 1+ ) lda  memcount    ) sta   ( 10 bytes)
+   rts  ;c
+
+( We always want to queue up either a short packet or a zero-length packet
+  as the last packet. In particular this means that if the last part of the
+  string _exactly_ fills a packet, we queue up a zero-length to follow it,
+  to make sure to signal to the host that this is the end of the data
+  stage. See USB spec 8.5.3.2.)
+
+( Exit with in-count in X)
+label prepare-next-in
+   memcount ) ldhx  0!= if
+      buflen0 # cphx  u> if  ( whole packet)  buflen0 # ldx  then
+      bufptr ) clr  .x psh ( count)
+      begin
+         memptr ) ldhx  0 ,x lda  1 # aix  memptr ) sthx
+         .h clr  bufptr ) ldx  in-buffer ,x sta  .x inc  bufptr ) stx
+         memcount ) ldhx  -1 # aix ( decr count)  memcount ) sthx
+      0 ,s decz? until  .a pul
+      bufptr ) ldx  ( in count)
+   then
+   ( fall thru)  ;c
+
+( Enter with in-count in X)
+label prepare-in-xcount
+   in-count ) stx
+   ( toggle DATA0/1)  in-control # ldhx  toggle-data c  ( fall thru)  ;c
+
+( Get ready to receive another SETUP DATA0 token, or an OUT DATA1 token.
+  The host will send an empty DATA1 as a status stage.)
+
+label expect-setup-token
+   .a clr  out-control ) sta  ( fall through)  ;c
+
+label expect-out-token  ( expect OUT or SETUP, really)
+   buflen0 # ldx  out-count ) stx
+   ( toggle DATA0/1)  out-control # ldhx  toggle-data c
+   CTL 5 bclr ( TSUSPEND off - resume processing)
+   rts  ;c
+
+label read-memory
+   parse-address-length c
+   prepare-next-in j  ;c
+
+label write-memory
+   wIndex ) lda  flash-command ) sta
+   parse-address-length c  expect-out-token j  ;c
+
+label read-sp
+   tsx  2 # aix
+label read-hx
+   in-buffer ) sthx  2 # ldx
+   prepare-in-xcount j  ;c
+
+label get-version-addr
+   version # ldhx  read-hx j  ;c
+
+label get-device-descriptor
+   device-descriptor # ldhx
+   ( fall thru)  ;c
+
+label prepare-descriptor-12  ( length of 12 hex, 18 bytes)
+   memptr ) sthx  12 # ldhx
+   ( fall thru)  ;c
+
+label prepare-descriptor  ( addr in memptr, length in hx)
+   parse-length c
+   memcount ) cphx  u< if  memcount ) sthx  then
+   prepare-next-in j  ;c
+
+label get-config-descriptor
+   config-descriptor # ldhx  memptr ) sthx
+   config-descriptor-end  config-descriptor - # ldhx
+   prepare-descriptor j  ;c
+
+label get-string-descriptor
+   wValue ) ldx  ( descriptor index)  .x lsl  .h clr
+   string-table ,x ldhx  memptr ) sthx
+   0 ,x ldx  ( length)  .h clr  ( length into hx)
+   prepare-descriptor j  ;c
+
+label get-descriptor
+   wValue 1+ ) lda  ( get descriptor type requested)
+   01 # cmpne?  get-device-descriptor  until
+   02 # cmpne?  get-config-descriptor  until
+   03 # cmpne?  get-string-descriptor  until
+   ( unknown, fall thru)
+
+label stall
+   EPCTL0 1 bset ( STALL)  rts  ;c
+
+( IN requests will return NAK.)
+label nak-in
+   .a clr  in-control ) sta  rts  ;c
+
+label cut-and-run
+   nak-in c  ( don't send status IN until we return!)
+   2 # ais  ( skip return from process-usb)  .h pul  rti  ;c
+
+label vendor-request
+   bRequest ) lda
+   ( 00)  read-memory          0!= until
+   ( 01)  write-memory  .a dec 0!= until
+   ( 02)  cut-and-run   .a dec 0!= until
+   ( 03)  read-sp       .a dec 0!= until
+   ( 04)  get-version-addr   .a dec 0!= until
+   ( unknown) stall j  ;c
+
+label expect-ep1-out
+   buflen1 # ldx  ep1-count ) stx
+   ep1-control # ldhx  toggle-data j  ;c
+
+label set-config
+   ( This should set all toggle bits to DATA0. Let's set ep1 to DATA1, with OWN
+     bit clear. toggle-data will toggle it to DATA0.)
+   data1 # lda  ep1-control ) sta
+   expect-ep1-out c
+   ( fall thru to set-address)
+
+( Set address is a bit tricky. We can't set the address immediately. The
+  USB spec says that at every stage of a control transfer the device
+  address must remain constant. Before the set-address command we are at
+  the default address - 0. We can't change this until after the status
+  stage of this control transfer, so we always check when handling a status
+  IN if ADDR is still zero; if it is, we set the address _then_.)
+
+label set-address
+   ( do nothing, but return status)  ( fall thru)
+
+( Prepare to return status - a zero-length IN transaction. Also be ready to
+  accept another SETUP even if it would mean abandoning the current
+  transfer. This is what the USB spec says we have to do.)
+
+label finish-control-write
+   ( Setup IN status stage)
+   .x clr  ( zero-length DATA1 transaction)
+   prepare-in-xcount j  ;c
+
+label standard-request
+   bRequest ) lda
+   05 # cmpne?  set-address  until
+   06 # cmpne?  get-descriptor  until
+   09 # cmpne?  set-config  until
+   ( unknown) stall j  ;c
+
+
+( Receipt of SETUP has set out-control's data toggle to 0. Set in-control's
+  as well.)
+
+label setup-token
+   nak-in c
+   bmRequestType ) lda  60 # and   standard-request 0!= until
+                        40 # cmpne?  vendor-request     until
+            ( unknown)  stall j  ;c
+
+( write-byte either simply copies a byte to memory - if flash-command is
+  zero - or runs the flash code if flash-command is non-zero.)
+label write-byte
+   flash-command ) tst
+   0= if  0 ,x sta  rts  then
+   flash-byte j  ;c
+
+label setup-or-out-token
+   out-control ) lda  3c # and  34 # cmpne?  setup-token  until
+   ( OUT)
+   ( If last OUT was zero-length, it was a status transaction for a
+     control read, so get ready for a new SETUP.)
+   out-count ) lda  0= if  expect-setup-token j  then
+
+   ( Otherwise, we've got a data payload. Copy it.)
+   bufptr ) clr  .a psh  ( count)
+   begin
+      .h clr  bufptr ) ldx  out-buffer ,x lda  .x inc  bufptr ) stx
+      memptr ) ldhx  write-byte c  1 # aix  memptr ) sthx
+      memcount ) ldhx  -1 # aix ( decr count)  memcount ) sthx
+   0 ,s decz? until  .a pul
+
+   ( If memcount zero, we've received all the data; queue up status IN token.)
+   memcount ) ldhx   finish-control-write 0!= until
+
+   ( memcount non-zero; expect more data.)
+   expect-out-token j  ;c
+
+( An IN token is either part of a data stage of a control read, or it is
+  the status stage of a control write. Status IN's are always zero bytes
+  long; sometimes the last IN of the data stage is also zero bytes long -
+  see copy-to-in for details.
+
+  The upshot is that if the last packet wasn't full we should expect no
+  more IN transactions.)
+
+label in-token
+   ( If last IN was a full packet, ready some more data.)
+   in-count ) lda  buflen0 # cmp  0= if  prepare-next-in j  then
+
+   ( If last packet was zero-length, check to make sure our address has
+     been set.)
+   .a tst 0= if
+      ADDR ) tst  0= if  wValue ) lda  ADDR ) sta  then
+   then
+
+   ( Last packet was partial or zero-length; no further IN's expected.)
+label nak-in-expect-setup
+   nak-in c  ( further IN's will return NAK)
+   expect-setup-token j  ;c
+
+1 xvar ep1-count-saved
+
+label ep1-out-token
+   ( STALL if we get a SETUP token on this endpoint. We only want OUTs.)
+   ep1-control ) lda  3c # and  34 # cmpne?  if
+.ifdef copy-ep1-contents
+      ( Got an OUT token)
+      ( Copy from USB buffer to elsewhere in RAM.)
+      ep1-count ) lda  .a psh  ( count)
+      .x clr  .h clr
+      begin
+         ep1-buffer ,x lda
+         ep1-copy   ,x sta  .x inc
+      0 ,s decz? until  .a pul
+.else
+      ( Just get the count so we have some idea what we are looking at when
+        we dump the ep1-buffer.)
+
+      ep1-count ) lda  ep1-count-saved ) sta
+.then
+      expect-ep1-out j
+   then  ( We got a SETUP token)  stall j  ;c
+
+label finish-config
+
+.ifdef usb-debug-via-serial
+   -- Configure SCI for 115200 bps
+
+   SCIBDH ) clr        ( baud rate divisor, high)
+   #13 # SCIBDL ) mov  ( baud rate divisor, low)
+                       ( yields 115200 from 24M bus clock)
+   0c # SCIC2 ) mov    ( enable rcvr, xmitter)
+.then
+
+.ifdef usb-reset
+   80 # USBCTL0 ) mov
+   begin  USBCTL0 7 bclr?  until
+.then
+
+   ( Set up USB registers and buffer descriptors)
+   in-buffer >bufaddr # lda  in-bufaddr ) sta
+   out-buffer >bufaddr # lda  out-bufaddr ) sta
+
+   ( Set up EP 1.)
+   ep1-buffer >bufaddr # lda  ep1-bufaddr ) sta
+
+   01 # CTL ) mov          -- enable USB module
+   45 # USBCTL0 ) mov      -- turn on pullup, vreg, and PHY
+   begin  INTSTAT 0 bset?  until  ( wait for USBRSTF)
+   ( fall thru)
+
+10 zvar token-buf  ( capture last 16 tokens)
+ 1 zvar token-index
+
+label after-usb-reset
+   ADDR ) clr
+   0ff # INTSTAT ) mov     -- clear all flags
+   0d # EPCTL0 ) mov       -- enable ep0 as control endpt
+   09 # EPCTL1 ) mov       -- enable ep1 as OUT endpt
+   token-index ) clr
+   rts  ;c
+
+( XXX To convert process-usb into an interrupt handler, jumps to
+  setup-or-out-token, in-token, and nak-in-expect-setup should really be
+  _calls_; we should handle all the flags that are set all at once, rather
+  than only one per call. Also, interrupt flags - like TOKDNEF and STALLF -
+  should be cleared after being handled.)
+
+label process-usb
+   INTSTAT 0 bset? if ( USBRSTF - USB bus reset seen)
+      after-usb-reset c
+      nak-in-expect-setup j  ( get ready to receive SETUP)
+   then
+   INTSTAT 3 bset? if ( TOKDNEF)
+      STAT ) lda  INTSTAT 3 bset  ( ack TOKDNEF)
+      token-index ) ldx  .h clr
+      token-buf ,x sta  .x inc
+      10 # cpx  0= if  .x clr  then  token-index ) stx
+       0f8 # and
+                 0= if  setup-or-out-token j  then
+       08 # cmp  0= if  in-token j  then
+       10 # cmp  0= if  ep1-out-token j  then
+      ( not EP0 or EP1 OUT; ignore)  ( fall thru)
+   then
+   INTSTAT 7 bset? if ( STALLF)
+      EPCTL0 1 bclr ( remove EPSTALL)
+      INTSTAT 7 bset  ( ack STALL)
+      nak-in-expect-setup j  ( get ready to receive SETUP)
+   then
+   rts  ;c
+
+label emulated-swi
+   ( jsr/bsr has already pushed PC)
+   .x psh  .a psh  tpa ( flags to A)  .a psh  sei
+   .h psh
+   finish-control-write c  ( ready status IN; also prepare for SETUP)
+
+.ifdef usb-debug-via-serial
+   begin  process-serial c
+          process-usb c      again  ;c
+.else
+   begin  process-usb c  again  ;c
+.then
+
+( If the chat interaction changes the PC on this stack frame to point
+  somewhere other than _after_ the __swi, not all is lost - since we got
+  here via a _call_ from reset, we'll return to _that_ loop, and re-enter
+  the SWI.
+
+  On the other hand, if the PC remains unaltered, an RTI from the SWI's
+  stack frame wil simply return here, and we'll take the "exception" again.)
+
+label interact
+   begin  emulated-swi c  again  ;c
+
+here
+0ffc0 goto
+
+Vreset handler
+   @ram #ram + # ldhx
+   txs
+
+   -- Turn off watchdog
+   -- Can't use bit ops! SOPT1 not in z-page.
+   -- Clear bits 6 & 7. These have different meanings on different chips,
+   -- but at least for the JS and QG clearing both bits will shut off the
+   -- watchdog.
+   SOPT1 ) lda  3f # and  SOPT1 ) sta
+
+   ( Set up the xtal oscillator and PLL. For USB we need a 48M clock - 24M
+     bus clock. Getting there takes a few steps...)
+
+   -- FEI ==> FBE
+   -- Start xtal osc - we've got a 4M xtal on the board.
+   -- Datasheet and appnotes have you set BDIV to /1 here, but since we're
+   -- running off untrimmed internal osc still, that's a bad idea. We leave
+   -- that until the end.
+   %01_11_0110 # MCGC2 ) mov  ( keep BDIV at /2, start ext osc)
+   -- wait for osc to start (OSCINIT)
+   begin  MCGSC 1  bset? until
+   -- switch to ext clock (FBE): CLKS=01 (ext), RDIV=001 (/2), IREFS=0
+   -- NOTE: We've set RDIV for PLL (4M/2 == 2M), but we're still running
+   -- the FLL, so this will temporarily run it out of spec... DS says this
+   -- is ok, as long as we switch quickly!
+   -- %10_111_000 # MCGC1 ) mov  -- from when I thought I needed to keep
+                                 -- RDIV set for FLL
+   %10_001_000 # MCGC1 ) mov
+
+   -- Wait until we've switched clocks
+   begin  MCGSC ) lda  %0001_1100 # and  ( mask IREFST and CLKST)
+          %0000_1000 # cmp  0= until  ( IREFST=0, CLKST=10)
+
+   -- FBE ==> PBE
+   -- We're spinning up the PLL. We're set up to divide our 4M xtal by two
+   -- (RDIV) to get 2M (PLL freq); let's multiply that by 24 (VDIV) to get
+   -- 48M, which is our target clock.
+   %0100_0110 # MCGC3 ) mov    -- PLLS=1, VDIV=0110 (*24)
+
+   begin  MCGSC 5 bset?  until   -- loop until PLLST set
+   begin  MCGSC 6 bset?  until   -- loop until LOCK set
+
+   -- PBE ==> PEE
+   MCGC1 7 bclr  -- set CLKS to 00 (PLL)
+   begin  MCGSC 2 bset?  until
+   begin  MCGSC 3 bset?  until   -- loop until CLKST=11
+
+   -- Lastly, set BDIV to /1
+   MCGC2 6 bclr
+
+   #24000 khz>fcdiv  # lda   FCDIV ) sta
+
+   finish-config c
+   begin  interact c  again  ;c
+
+goto ( back to saved)
