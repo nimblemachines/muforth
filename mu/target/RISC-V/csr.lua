@@ -92,7 +92,7 @@ scraped = [[
 0x7B2 DRW dscratch Debug scratch register.
 ]]
 
-dofile 'target/HC08/device/string.lua'
+dofile 'target/S08/device/string.lua'
 
 fmt = string.format
 

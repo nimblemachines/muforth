@@ -219,7 +219,7 @@ pic_1xk50_configs = [[
 3FFFFFh DEVID2(1) DEV10 DEV9 DEV8 DEV7 DEV6 DEV5 DEV4 DEV3 0000 1100
 ]]
 
-dofile 'target/HC08/device/string.lua'
+dofile 'target/S08/device/string.lua'
 
 -- S08
 -- UNUSED currently for PIC18

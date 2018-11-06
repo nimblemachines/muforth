@@ -436,7 +436,7 @@ mega8515_vec = [[
 17 $010 SPM_READY Store Program memory Ready
 ]]
 
-dofile 'target/HC08/device/string.lua'
+dofile 'target/S08/device/string.lua'
 
 function show_vectors(v, size)
 vt = {}

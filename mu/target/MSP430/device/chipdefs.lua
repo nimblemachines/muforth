@@ -284,7 +284,7 @@ AES accelerator XORed data in AESAXDIN 00Ch
 AES accelerator XORed data in (no trigger) AESAXIN 00Eh
 ]]
 
-dofile 'target/HC08/device/string.lua'
+dofile 'target/S08/device/string.lua'
 
 function show_regs(regs)
     local drop = ""

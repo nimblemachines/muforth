@@ -1041,7 +1041,7 @@ qg_vec = [[
 0xFFFE:FFFF Reset Vreset
 ]]
 
-dofile 'target/HC08/device/string.lua'
+dofile 'target/S08/device/string.lua'
 
 function show_vectors(v)
     local vt = {}
