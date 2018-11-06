@@ -34,7 +34,7 @@ label version
 label device-descriptor
    12 c, ( bLength)
    01 c, ( bDescriptorType = device)
-   00 c, 02 c, ( bcdUSB = 02.00)
+ 0200 le, ( bcdUSB = 02.00)
 
 .ifdef iad
          ( The following triple forces Interface Association.)
@@ -48,9 +48,9 @@ label device-descriptor
 .then
 
    buflen0 c, ( bMaxPacketSize0)
-  0ff c,  0f0 c,  ( idVendor = F0FF)
-   02 c,   00 c,  ( idProduct = 0002)
-   01 c,  00 c, ( bcdDevice = 00.01)
+ f0ff le,  ( idVendor  = F0FF)
+ 0002 le,  ( idProduct = 0002)
+ 0001 le,  ( bcdDevice = 00.01)
    01 c, ( iManufacturer - string index = 1)
    02 c, ( iProduct - string index = 2)
    03 c, ( iSerialNumber - string index = 3)
@@ -59,17 +59,18 @@ label device-descriptor
 label config-descriptor
    09 c, ( bLength)
    02 c, ( bDescriptorType = configuration)
-   here  00 c, 00 c, ( wTotalLength = configuration + interfaces + endpts)
+   here ( address to fix up with actual length)
+ 0000 le, ( wTotalLength = configuration + interfaces + endpts)
 .ifdef spy-on-midi-out
    03 c, ( bNumInterfaces)
 .else
    02 c, ( bNumInterfaces)
 .then
-   01 c, ( bConfigurationValue; starts from 1, unlike string indices)
+   01 c, ( bConfigurationValue; starts from 1, unlike interface numbers)
    00 c, ( iConfiguration - string index = none)
    80 c, ( bmAttributes)
-   32 c, ( bMaxPower, in 2mA increments = 100mA - one "unit load")
-   -- 64 c, ( bMaxPower, in 2mA increments = 200mA - two "unit loads")
+ #100 2/ c, ( bMaxPower, in 2mA increments = 100mA - one "unit load")
+ -- #200 2/ c, ( bMaxPower, in 2mA increments = 200mA - two "unit loads")
 
 ( Mandatory, but kind of a no-op.)
 label audio-control-interface-descriptor
@@ -87,8 +88,8 @@ label audio-control-cs-interface-descriptor
    09 c, ( bLength)
    24 c, ( bDescriptorType = class-specific interface)
    01 c, ( bDescriptorSubtype = HEADER)
-   00 c, 01 c, ( bcdADC = 01.00 ??)
-   09 c, 00 c, ( wTotalLength of class-specific descriptors)
+ 0100 le, ( bcdADC = 01.00 ??)
+ 0009 le, ( wTotalLength of class-specific descriptors)
    01 c, ( bInCollection - number of streaming interfaces)
    01 c, ( baInterfaceNr[1] - the MIDI STREAMING interface)
 
@@ -107,8 +108,9 @@ label midi-streaming-cs-interface-descriptor
    07 c, ( bLength)
    24 c, ( bDescriptorType = class-specific interface)
    01 c, ( bDescriptorSubtype = HEADER)
-   00 c, 01 c, ( bcdADC = 01.00 ??)
-   here  00 c,  00 c, ( wTotalLength of class-specific descriptors)
+ 0100 le, ( bcdADC = 01.00 ??)
+   here ( address to fix up with actual length)
+ 0000 le, ( wTotalLength of class-specific descriptors)
    ;c
 
 ( Jacks.)
@@ -127,13 +129,13 @@ label midi-streaming-cs-interface-descriptor
 
 ( Endpoints.)
 label midi-out
-   buflen1 bulk out 01 endpoint
+   0 buflen1 bulk out 01 endpoint
 
    ( Now we connect our OUT endpoint to our embedded in jacks.)
    7 5 3 1  4  midi-endpoint
 
    ( Fix-up length of class-specific descriptors.)
-   here  midi-streaming-cs-interface-descriptor -  swap  image+ leh!
+   midi-streaming-cs-interface-descriptor  end-descriptor
 
 .ifdef spy-on-midi-out
 
@@ -148,28 +150,28 @@ label spy-on-midi-out-interface-descriptor
    00 c, ( bInterfaceProtocol)
    00 c, ( iInterface - string index = none)
 
-   #64 bulk in 02 endpoint
+   0 buflen1 bulk in 02 endpoint
 
 .then
 
    ( Fix-up length of configuration descriptor.)
-   here  config-descriptor -  swap  image+ leh!  ;c
+   config-descriptor  end-descriptor
 
 label config-descriptor-end  ;c
 
 label string0
    04 c, ( bLength)
    03 c, ( bDescriptorType = string)
-   09 c, 04 c, ( LANGID = 0409 = US English)
+ 0409 le, ( LANGID = 0409 = US English)
 
 label string1
-   descr" Fücken Awesöme Innövation Lab"
+   u" Fücken Awesöme Innövation Lab"
 
 label string2
-   descr" S08 USB-MIDI experiment"
+   u" S08 USB-MIDI experiment"
 
 label string3
-   muforth-commit drop #12  descr,
+   muforth-commit drop #12  ucs16-string,
 
 label string-table
    string0 ,

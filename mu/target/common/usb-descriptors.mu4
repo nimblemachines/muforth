@@ -10,19 +10,27 @@ loading Target USB descriptors
 ( We need UTF-8 to UCS-16LE support if we use any string descriptors.)
 ld lib/utf8.mu4
 
+( We need >hilo too.)
+ld target/common/endian.mu4
+
 meta
 
-: le16,  ( w)  dup \m c,  8 >> \m c, ;
+( Compile a little-endian 16 bit value.)
+: le,  ( w)  >hilo  \m c, \m c, ;
 
 ( Compile a USB UCS-16LE string descriptor.)
-: descr,  ( a u)
-   \m here  -rot  0 \m c,  ( length)  3 \m c, ( string descriptor type)
-   over + push
-   begin  dup r@ u< while  utf8@+ swap  \m le16,  repeat
+: ucs16-string,  ( a u)
+   \m here  ( address of length byte)
+   0 \m c, ( length)  3 \m c, ( string descriptor type)
+   -rot  ( 'len a u)  over + push  ( 'len a)
+   begin  dup r@ u< while  utf8@+ swap  \m le,  repeat
    drop  rdrop
-   \m here  over - swap  image-c! ;
+   \m here  over - ( calc length)  swap image-c! ( store at 'len) ;
 
-: descr"   char " parse  ( a u)  \m descr, ;
+: u"   char " parse  ( a u)  \m ucs16-string, ;
+
+: end-descriptor  ( 'length 'descriptor-start)
+   \m here  swap -  swap image+ leh! ;
 
 hex
 
@@ -34,10 +42,12 @@ hex
 02 constant bulk
 03 constant interrupt
 
-: endpoint  ( bufsize type in/out number)
-   9 \m c, ( len)  05 \m c, ( ENDPOINT)  or  \m c, ( num+direction)
-   \m c, ( type)  >hilo  \m c,  \m c, ( bufsize)
-   0 \m c,  0 \m c,  0 \m c, ;
+: endpoint  ( interval bufsize type in/out number)
+   7 \m c, ( len)  05 \m c, ( ENDPOINT)
+   or  \m c, ( num+direction)
+   \m c, ( type)
+   \m le, ( bufsize)
+   \m c, ( interval) ;
 
 ( Compile a USB MIDI Jack descriptor.)
 
