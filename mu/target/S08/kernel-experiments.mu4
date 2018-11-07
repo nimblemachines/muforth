@@ -1,0 +1,49 @@
+( This file is part of muforth: https://muforth.nimblemachines.com/
+
+  Copyright 2002-2018 David Frech. (Read the LICENSE for details.)
+
+loading S08 kernel experiments
+
+__meta
+hex
+ram
+
+( test code - from kernel.mu4)
+code r@  ( copy from R; needs to be value above return address)
+   2 ,s lda  xh sta  3 ,s lda  push-literal-alt  rts  ;c
+
+code ?zero
+   tl lda  th ora  0= if  2 # aix  then  rts  ( Z set)  ;c
+
+( What if for pushed the negation of the count, and next *incremented*?
+  We would have a carry when ffff incremented to 0000. Easy to check.)
+
+code r!  ( move to R; needs to be room above return address)
+   th lda  begin  2 ,s sta  tl lda  3 ,s sta  2 # aix  rts  ;c
+
+code (for)  ( n)
+   tl neg  .a clr  th sbc  again  ;c
+
+( Increment negated count on S stack. Carry set when count overflows to zero.)
+code (next)  ( carry set when done)
+   3 ,s lda  1 # add  3 ,s sta
+   2 ,s lda  0 # adc  2 ,s sta  rts  ;c
+
+( Increment negated count on S stack. If low byte rolls over to zero,
+  increment high byte. Z bit set when both bytes are zero!)
+
+code (next2)  ( zero set when done)
+   3 ,s inc  0= if  2 ,s inc  then  rts  ;c
+
+{
+target-compiler
+: bug   code{  swi } ;
+: drop  code{  2 # aix } ;
+
+: for     ( - src dest)  code{  \t ?zero c    0!= if }   code{  -2 # ais  \t (for) c  begin } ;
+: next    ( src dest -)  code{  \t (next) c  CS until }  code{   2 # ais  then } ;
+: next2   ( src dest -)  code{  \t (next2) c  0= until }  code{   2 # ais  then } ;
+forth
+}
+
+: frob  for  r@ bug drop  next2 ;
