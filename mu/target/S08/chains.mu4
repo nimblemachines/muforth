@@ -2,13 +2,20 @@
 
   Copyright 2002-2018 David Frech. (Read the LICENSE for details.)
 
--- loading HC08 Meta-compiler (chains)
+loading S08 meta-compiler (chains and token consumers)
 
 forth  decimal
 
-( Metacompiler vocabs)
+( Metacompiler vocabulary chains.)
 
-( .meta. is where meta-compiler specific words go - esp if they would
+( Since we are now "chaining" chains together, let's do this bottom-up.
+
+  .equates. contains chip equates and any other constants that should be
+  visible to both the assembler and target compiler. When used interactively,
+  or in the assembler, these push their value. When used in a target colon
+  word, these compile literals.
+
+  .meta. is where meta-compiler specific words go - esp if they would
   otherwise shadow a host word of the same name. @ is a good example - the
   meta version writes into the target image, using a local, image-relative
   address. .meta. contains special versions of : to compile macros [though
@@ -16,65 +23,83 @@ forth  decimal
   words during target compilation. It will also, once the kernel starts
   loading, contain a : that compiles target colon words!
 
-  .assembler. contains definitions of instructions, registers, addressing
-  modes, and words to build control structures. It is searched when
-  building code words, and also when compiling macros.
+  Labels - like temporary locations defined in assembler that do not
+  represent target words - are in .meta., and are invisible to the target
+  compiler.
 
-  .labels. contains any labels defined during assembly - these are
-  constants - and also a handful of variables that refer to key pieces of
+  Also in .meta. are a handful of variables that refer to key pieces of
   target infrastructure that won't get defined until the kernel is loaded.
   Having these as forward-reference variables allows us to write the
   metacompiler using variable references; compilation of the kernel will
   patch these with actual addresses of target code.
 
-  Labels used to be in .meta. but having them separate is cleaner and
-  safer.
+  .meta. is chained to .equates., so searching .meta. will also search
+  .equates.
 
-  .meta-compiler. is like .compiler. but for the -target- colon compiler.
+  .assembler. contains definitions of instructions, registers, addressing
+  modes, and words to build control structures. It is searched when
+  building code words, and also when compiling macros.
+
+  .lex. contains words for delimiting comments and for doing conditional
+  interpretation and compilation. They are in a separate chain so we don't
+  have to keep making synonyms; instead, we just search the .lex. chain.
+
+  .definer. is slightly exotic. It's like .compiler. but it's specifically
+  for making new defining words for the meta-compiler. It contains special
+  definitions of words like does> and perhaps others - eg,  ;  [  etc. It
+  is chained to .compiler. so searching .definer. will search both. Since
+  .compiler. contains all of the conditional compiler words we do not have
+  to also search .lex.
+
+  .target-compiler. is like .compiler. but for the -target- colon compiler.
   This will contain target versions of [ ; if then begin while etc. It is
-  sealed since we don't want to get any host words by accident.)
+  linked to .lex. so we get the conditional compiler words, but is
+  otherwise kept "pure". We don't want to get any host words by accident.
 
-sealed .meta.           ( the `meta' version of .forth.)
-sealed .meta-compiler.  ( the `meta' version of .compiler.)
-sealed .assembler.      ( the host-resident target assembler)
-sealed .labels.         ( labels & forward reference variables for target)
-sealed .lex.            ( comments and conditional interpretation)
+  .target. contains the actual target words. .target-runtime. - which is
+  chained to .target. - contains target words that are compile-only - ie,
+  never executed "at the command line" while chatting. By putting stack
+  manipulation words on this chain as well, we make it easier to do
+  debugging: you'll get the host's swap or dup rather than the target's.
 
-( Chains created with parallel have an extra field, which points directly
-  into the meta-compiled image at the names compiled there, rather than
-  linking to the names in muforth's dictionary.)
+  Simple, right? ;-)
 
-: parallel  sealed  0 , ( parallel link field) ;
-: >parallel   ( 'link - 'link2)  cell+  ( parallel link field) ;
+          sealed .equates.    ( chip equates and other constants for target)
+ .equates. chain .meta.       ( the `meta' version of .forth.)
+          sealed .assembler.  ( the host-resident target assembler)
 
+.compiler. chain .definer.    ( like .compiler. but only for meta defining words)
 
-parallel .target.           ( the target words - like `forth' on the host)
-parallel .target-compiler.  ( the target-resident compiler words -
-                              .target-compiler. is to .target.
-                                 as  .compiler. is to .forth. )
+        sealed .lex.              ( comments and conditional interpretation)
+        sealed .target.           ( the target words - like `forth' on the host)
+.target. chain .target-runtime.   ( compile-only target words)
+   .lex. chain .target-compiler.  ( the `meta' version of .compiler.)
 
-: meta                        .meta. definitions ;
-: meta-compiler      .meta-compiler. definitions ;
-: assembler              .assembler. definitions ;
-: labels                    .labels. definitions ;
-: lex                          .lex. definitions ;
-: target                    .target. definitions ;
-: target-compiler  .target-compiler. definitions ;
+: meta                         .meta. definitions ;
+: definer                   .definer. definitions ;
+: assembler               .assembler. definitions ;
 
+: target                     .target. definitions ;
+: target-runtime     .target-runtime. definitions ;
+: target-compiler   .target-compiler. definitions ;
+
+( XXX Do we need all of these?)
 compiler
 : \m   ( compile from meta)                        .meta. \chain ;
-: \mc  ( compile from meta-compiler)      .meta-compiler. \chain ;
+: \d   ( compile from definer)                  .definer. \chain ;
 : \a   ( compile from assembler)              .assembler. \chain ;
-: \l   ( compile from labels)                    .labels. \chain ;
-: \t   ( compile from target)                    .target. \chain ;
+: \eq  ( compile from equates)                  .equates. \chain ;
+: \t   ( compile from target/runtime)    .target-runtime. \chain ;
+: \tc  ( compile from target-compiler)  .target-compiler. \chain ;
 forth
 
 meta
-: \f               ' execute ;  ( execute a forth word from meta)
+: \f                  ' execute ;  ( execute a forth word from meta)
 forth
-: \m   .meta. chain' execute ;  ( execute a meta word from forth)
+: \m      .meta. chain' execute ;  ( execute a meta word from forth)
+: \eq  .equates. chain' execute ;  ( execute an equates word from forth)
 
-lex
+.lex. definitions
 ( Comments are nice to have!)
 : (     \ ( ;
 : --    \ -- ;
@@ -95,3 +120,110 @@ lex
 : .and  .and ;
 : .not  .not ;
 forth
+
+
+( Metacompiler token consumers. Let's put them all in one place so we can
+  understand how they work in relation to each other.)
+
+( NOTE: While in general chaining vocab chains together works well, with
+  the assembler we have to be careful. Because there are structure words -
+  if/then/else, begin/until etc - in both the .assembler. and .compiler. chains,
+  and because we definitely want to find the assembler's versions *first*, we
+  have to put .assembler. before .definer./.compiler. here.
+
+  But there is a subtle problem. What if we decide, in some inline assembler
+  code, that we want to specify the use of a .forth. word, say, swap.
+  If we use \f - hoping to get the version from .compiler. - and if
+  .assembler. is chained to .meta. - we will fail. While searching
+  .assembler. for \f we will chain into .meta. and find its \f, which will
+  compile itself rather than the following word.
+
+  The easiest solution is simply to unchain .assembler. from .meta., and
+  search .meta. explicitly. We have to do that both here and in __asm.)
+
+-:  ."  (compiling inline assembler)" ;
+-:
+    .assembler. find  if  ,        ^  then  ( find assembler's if/then etc)
+      .definer. find  if  execute  ^  then  ( need } and ; to exit this mode)
+         .meta. find  if  ,        ^  then  ( labels are in .meta.)
+      .runtime. find  if  ,        ^  then  ( utility and runtime words)
+                                            number literal ;
+mode __inline-asm
+
+
+-:  ."  (assembling)" ;
+-:
+    .assembler. find  if  execute  ^  then
+         .meta. find  if  execute  ^  then  ( labels are in .meta.)
+        .forth. find  if  execute  ^  then  ( utility words in .forth.)
+                                            number ;
+mode __asm
+
+
+( There are two slightly different "meta" modes we can be in. When
+  _building_ the target image, we are in __building. When interacting -
+  after connecting via chat - we are in __chatting. Since all the compilation
+  words want to return to __meta when they are done - eg, this is what the
+  meta  ; and  ;c  do - let's just defer what __meta means.)
+
+defer __meta  ( will be either __building or __chatting)
+
+( The build meta-interpreter. We're in this mode when we're building the
+  target image, and when in between [ and ] when running the target colon
+  compiler.)
+
+-:  ."  (building)" ;
+-:
+         .meta. find  if  execute  ^  then  ( labels are in .meta.)
+        .forth. find  if  execute  ^  then
+                                            number ;
+mode __building
+
+now __building  is __meta
+
+( Interacting with a chatty, connected target. This differs from __building
+  in two ways:
+
+  * we actually try to execute target words remotely
+  * we potentially convert numbers in a target-specific way
+
+  Both __building and __chatting try, as a last resort, to find and execute
+  words in .forth.)
+
+defer target-number    ( convert token to a number, specific to target)
+defer remote
+-:  error" tried to remotely execute a target word while not chatting" ;
+    is remote
+
+-:  ."  (chatting)" ;
+-:
+        ( NOTE: if we want to remove .forth., replace it with .lex. .)
+       .target. find  if  execute  remote  ^  then  ( execute on target)
+         .meta. find  if  execute          ^  then  ( labels are in .meta.)
+        .forth. find  if  execute          ^  then
+                                                     target-number ;
+mode __chatting
+
+
+( __definer-colon is for compiling new defining words that are part of the
+  meta-compiler. __definer-colon is to __meta as __inline-asm is to __asm.)
+
+-:  ."  (compiling a meta defining word)" ;
+-:
+      .definer. find  if  execute  ^  then  ( does>, ;code, special ;)
+         .meta. find  if  ,        ^  then
+      .runtime. find  if  ,        ^  then  ( utility and runtime words)
+                                            number literal ;
+mode __definer-colon
+
+
+defer target-literal   ( compile a target literal)
+defer target-compile,  ( compile a target word into a colon definition)
+
+-:  ."  (compiling a target colon word)"  ;
+-:
+   .target-compiler. find  if  execute                   ^  then
+    .target-runtime. find  if  execute  target-compile,  ^  then
+           .equates. find  if  execute  target-literal   ^  then
+                                        target-number target-literal ;
+mode __target-colon
