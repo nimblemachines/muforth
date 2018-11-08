@@ -4,36 +4,40 @@
 
 loading S08 Forth kernel
 
+( Convenient compiler shortcuts.)
+target-compiler
+: bug    asm{  swi } ;   ( Put a bug anywhere in your code!)
+: drop   asm{  2 # aix } ;
+forth
+
 __meta
 
 ( Stack ops.)
-macro _drop  2 # aix  ;m
-
 code dup  ( a - a a)
-   th lda  xh sta  tl lda  ( fall through)
-
-label push-lit
-   push-literal  rts  ;c
+   th lda  xh sta  tl lda  begin  push-literal  rts  ;c
 
 code over  ( a b - a b a)
-   sh lda  xh sta  sl lda  push-lit j  ;c
+   sh lda  xh sta  sl lda  again  ;c
 
 code nip  ( a b - b)
    tl lda  sl sta  th lda  sh sta  ( top -> sec)  ( fall through)  ;c
 
+( NOTE: In Forth we will directly compile 2 # aix rather than calling drop!
+  But it's here if you need to take its address.)
 code drop
-   _drop  rts  ;c
+   2 # aix  rts  ;c
 
 code swap  ( a b - b a)
    th lda  xh sta  sh lda  th sta  xh lda  sh sta
    tl lda  xh sta  sl lda  tl sta  xh lda  sl sta  rts  ;c
 
+
 ( Return stack ops.)
 code r!  ( move to R; needs to be room above return address)
-   th lda  2 ,s sta  tl lda  3 ,s sta  ' drop j  ;c
+   th lda  2 ,s sta  tl lda  3 ,s sta  2 # aix  rts  ;c
 
 code r@  ( copy from R; needs to be value above return address)
-   2 ,s lda  xh sta  3 ,s lda  push-lit j  ;c
+   2 ,s lda  xh sta  3 ,s lda  push-literal  rts  ;c
 
 ( >r aka push will _compile_ -2 # ais, then call to r! )
 ( r> aka pop will _compile_ call to r@, then 2 # ais )
@@ -185,6 +189,26 @@ label push-constant  ( - word)
    pshhx  2 ,s ldhx  fetch j  ;c
 
 
+( for, next)
+
+( Pop the stack if top is zero; state of Z flag reflects top of stack.
+  Currently used in for/next loops, and to compile  ?if .)
+
+code ?zero
+   tl lda  th ora  0= if  2 # aix  then  rts  ( Z set)  ;c
+
+( (for) ( pushes the negation of the count, and (next) ( increments and tests it.)
+
+code (for)  ( n)
+   tl neg  .a clr  th sbc  ' r! 2 + j ( jump into r!) ;c
+
+( Increment negated count on S stack. If low byte rolls over to zero,
+  increment high byte. Z bit set when both bytes are zero!)
+
+code (next)  ( zero set when done)
+   3 ,s inc  0= if  2 ,s inc  then  rts  ;c
+
+
 ( do, loop, +loop)
 
 ( do/loop stack frame on S:
@@ -232,81 +256,64 @@ code j
    push-result j  ;c
 
 
-( for, ?for, next)
-
-( Pop the stack if top is zero; state of Z flag reflects top of stack.
-  Currently used as set up for ?for.)
-
-code ?zero
-   tl lda  th ora  0= if  2 # aix  then  rts  ( Z set)  ;c
-
-code (next)
-   ( Decrement count on S stack.)
-   3 ,s lda  1 # sub  3 ,s sta
-   2 ,s lda  0 # sbc  2 ,s sta
-   3 ,s ora  1 # sub ( Z -> C)  rts  ;c
-
-
-( XXX What if for pushed the negation of the count, and next _incremented_?
-  We would have a carry when ffff incremented to 0000. Easy to check.)
-
-code (for-incr)  ( n)  ( XXX push negated count)  ;c
-code (next-incr)
-   ( Increment count on S stack.)
-   3 ,s lda  1 # add  3 ,s sta
-   2 ,s lda  0 # adc  2 ,s sta  rts  ;c
-
 
 {
 
 ( Control structures.)
 
-( If the last compiled call was to a relational operator, it left a flag
-  value on the stack [-1 true, 0 false], and set the carry flag accordingly
-  [carry is SET for true]. In order to test this truth value, compile a
-  "carry SET if" clause, which will compile a branch if carry CLEAR. Like
-  all tests and jumps, the sense of the branch is opposite that of the
-  test.
+( Relop words do two things: push a flag value - 0 for false, -1 for true -
+  and set or clear the Z flag. If we don't want to immediately to test the
+  flag value and branch, we can simply leave its value on the stack and go on
+  our way.
 
-  If we didn't just call a relop, compile code to test the top of the
-  stack, and compile a "0!= if" clause, which will compile a branch if NOT
-  zero.
+  For the following control structures, using  if  or  =if , the "branch if
+  zero" compilation strategy goes like this:
 
-  In both cases, if passed-in pop? param is true, compile code to pop the
-  stack right before compiling the branch.)
+  * If we didn't just call a relop, compile code to test the top of the
+    stack.
+
+  * If pop? is true, compile code to pop the stack.
+
+  * Compile a "0!= if" clause, which will compile a branch if zero.
+
+  ?if  is a bit trickier, so its code is custom. First it compiles a call to
+  a word that tests the top of the stack and pops it if it equals zero. It
+  also sets or clears the Z flag. Then it compiles a "branch if zero".
+)
 
 forth
-: ?pop   if  code{  2 # aix }  then ;
 : ?relop  ( pop?)
-   called  \m relop-start  \m relop-end  within
-                        if  ?pop  code{  CS  if } ^  then
-   code{  tl lda  th ora }  ?pop  code{  0!= if } ;
+   called  \m relop-start  \m relop-end  within 0= if
+      asm{  tl lda  th ora }  then
+   if  asm{  2 # aix }  then
+   asm{  0!= if } ;
 
 target-compiler
+: ?if   ( - src)  \t ?zero \m compile,  asm{  0!= if } ; 
 : =if   ( - src)   0 ?relop ;
 : if    ( - src)  -1 ?relop ;
-: then  ( src)          code{  then } ;  ( resets last-code)
-: else  ( src0 - src1)  code{  else } ;
+: then  ( src)          \a then  notag ;
+: else  ( src0 - src1)  \a else ;
 
-: begin   ( - dest)     code{  begin } ;
+: begin   ( - dest)     \a begin ;
+: ?until  ( dest -)  \tc ?if  \a <resolve ;
 : =until  ( dest -)  \tc =if  \a <resolve ;
 : until   ( dest -)   \tc if  \a <resolve ;
-: again   ( dest -)     code{  again } ;
+: again   ( dest -)     \a again ;
+: ?while  ( dest - src dest)  \tc ?if  swap ;
 : =while  ( dest - src dest)  \tc =if  swap ;
 : while   ( dest - src dest)   \tc if  swap ;
 : repeat  ( src dest -)   \tc again  \tc then ;
 
-( n for .. next         goes n times; 64 Ki if n=0 )
-( n ?for .. next then   goes n times; 0 if n=0 )
+( n for .. next  goes n times; 0 if n=0 )
 
-: for     ( - dest)      code{  -2 # ais  \t r! c }  \tc begin ;
-: ?for    ( - src dest)  code{  \t ?zero  c  0!= if }  \tc for ;
-: next    ( dest -)      code{  \t (next) c }   code{  CS until  2 # ais } ;
+: for     ( - src dest)  asm{  \t ?zero c    0!= if  -2 # ais  \t (for) c  begin } ;
+: next    ( src dest -)  asm{  \t (next) c  0= until  2 # ais  then } ;
 
 ( do, loop, +loop)
-: do      ( - src dest)   code{  -4 # ais }  \tc (do)  \tc begin ;
-: loop    ( src dest)     code{  \t (loop) c }  code{  0< until  4 # ais } ;
-: +loop   ( src dest)           \tc (+loop)     code{  0< until  4 # ais } ;
+: do      ( - src dest)   asm{  -4 # ais }  \tc (do)  \tc begin ;
+: loop    ( src dest)     asm{  \t (loop) c }  asm{  0< until  4 # ais } ;
+: +loop   ( src dest)         \tc (+loop)      asm{  0< until  4 # ais } ;
 forth
 
 }
@@ -394,15 +401,19 @@ prime-pump resolve>>
 
   Stack layout:)
 
-macro s_sl   8 ,s  ;m -- sl
-macro s_sh   7 ,s  ;m -- sh
-macro s_tl   6 ,s  ;m -- tl
-macro s_th   5 ,s  ;m -- th
-macro s_p0   4 ,s  ;m -- prod0 - lsb
-macro s_p1   3 ,s  ;m -- prod1
-macro s_p2   2 ,s  ;m -- prod2
-macro s_p3   1 ,s  ;m -- prod3 - msb
-        --   0 ,s  ;m -- saved X
+{
+assembler
+: s_sl   asm{  8 ,s } ; -- sl
+: s_sh   asm{  7 ,s } ; -- sh
+: s_tl   asm{  6 ,s } ; -- tl
+: s_th   asm{  5 ,s } ; -- th
+: s_p0   asm{  4 ,s } ; -- prod0 - lsb
+: s_p1   asm{  3 ,s } ; -- prod1
+: s_p2   asm{  2 ,s } ; -- prod2
+: s_p3   asm{  1 ,s } ; -- prod3 - msb
+    --   asm{  0 ,s } ; -- saved X
+forth
+}
 
 code um*4  ( umer umcand - uprodlo uprodhi)
    ( Move everything to S)

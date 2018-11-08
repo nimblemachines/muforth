@@ -13,22 +13,10 @@ forth
 : .reg   \ .reg ;
 
 
-( Support for looking back at previously compiled code.)
-variable last-code  ( pointer to beginning of last snippet of code)
-: code!   \m here  last-code ! ;
-
 compiler
-: asm{                   __inline-asm ;  ( don't reset last-code)
-: code{   compile code!  __inline-asm ;  ( reset last-code)
+: asm{                   __inline-asm ;
 : }       ] ;  ( exit inline assembler mode and restart colon compiler)
-
-
-( Make it easy to make assembler macros.)
-meta
-: macro           current preserve       assembler  :  __inline-asm ;
-
 forth
-: macro   \m macro ;
 
 
 -- ------------------------------------------------------------------------
@@ -49,23 +37,55 @@ forth
      +------+------+
 )
 
-macro sl  5 ,x ;
-macro sh  4 ,x ;
-macro tl  3 ,x ;
-macro th  2 ,x ;
-macro xl  1 ,x ;
-macro xh  0 ,x ;
+( Useful stack macros.)
+assembler
+: sl  asm{  5 ,x } ;
+: sh  asm{  4 ,x } ;
+: tl  asm{  3 ,x } ;
+: th  asm{  2 ,x } ;
+: xl  asm{  1 ,x } ;
+: xh  asm{  0 ,x } ;
 
 ( And for double-length values:)
 
-macro ds0  9 ,x ;  ( double second, lsb)
-macro ds1  8 ,x ;
-macro ds2  7 ,x ;
-macro ds3  6 ,x ;  ( double second, msb)
-macro dt0  5 ,x ;  ( double top, lsb)
-macro dt1  4 ,x ;
-macro dt2  3 ,x ;
-macro dt3  2 ,x ;  ( double top, msb)
+: ds0  asm{  9 ,x } ;  ( double second, lsb)
+: ds1  asm{  8 ,x } ;
+: ds2  asm{  7 ,x } ;
+: ds3  asm{  6 ,x } ;  ( double second, msb)
+: dt0  asm{  5 ,x } ;  ( double top, lsb)
+: dt1  asm{  4 ,x } ;
+: dt2  asm{  3 ,x } ;
+: dt3  asm{  2 ,x } ;  ( double top, msb)
+forth
+
+
+-- ------------------------------------------------------------------------
+-- Peephole optimiser tags
+-- ------------------------------------------------------------------------
+
+( Tags tell the meta-compiler what kind of special code, if any, was just
+  compiled. Currently used to identify literals and calls, for simple
+  peephole optimisations.
+
+  We store the tag byte at \m here. No tag is represented by an "empty"
+  image byte - 0ff - _not_ by a tag of zero.)
+
+( Tags used:)
+  1 constant $lit    ( $ suggests price tag ;-)
+"ad constant $bsr
+"bd constant $jsr1   ( jsr dir)
+"cd constant $jsr2   ( jsr ext)
+
+: tag!  ( tag)     \m here image-c! ;
+: tag@  ( - tag)   \m here image-c@ ;
+: notag  "ff tag! ;
+
+( We also want to cleanly uncompile code, so instead of simply backing up
+  and leaving the cruft - instructions and tags - behind, let's back up and
+  "uncompile" the code, leaving behind untagged code.)
+
+: uncompile  ( #bytes)
+   \m here  over -  dup \m goto image+  swap ( #bytes)  1+ ( include tag)  "ff fill ;
 
 
 -- ------------------------------------------------------------------------
@@ -91,77 +111,75 @@ macro dt3  2 ,x ;  ( double top, msb)
 -- ------------------------------------------------------------------------
 
 : load-hi  ( hi)
-   dup              0= if  drop  code{  xh clr } ^  then
-   dup             1 = if  drop  code{  xh clr  xh inc } ^  then
-   dup "0ff and "0ff = if  drop  code{  xh clr  xh dec } ^  then
-                                 code{   # lda  xh sta } ;
-
+   dup              0= if  drop  asm{  xh clr } ^  then
+   dup             1 = if  drop  asm{  xh clr  xh inc } ^  then
+   dup "0ff and "0ff = if  drop  asm{  xh clr  xh dec } ^  then
+                                 asm{   # lda  xh sta } ;
 : load-lo  ( lo)
-    ?if  code{  # lda } ^  then
-         code{ .a clr } ;
+    ?if  asm{  # lda } ^  then
+         asm{ .a clr } ;
 
 : load-literal  ( n)
    >lohi  2dup = if  =if  ( if hi & lo are equal and non-zero)
-      drop  code{  # lda  xh sta } ^  then  then
+      drop  asm{  # lda  xh sta } ^  then  then
    load-hi  load-lo ;
 
 ( XXX - does it make more sense - it certainly makes the generated code
   more readable - to store A in xl and then promote the scratch cell to top?
-  And to do the reverse with pop-literal?)
+  And to do the reverse with pop-literal?
+
+  I think the original versions of push-literal and pop-literal came from a
+  time when I was flirting with only have *one* scratch byte available at the
+  top of the stack. I'm leaving the -alt versions here for now, but still
+  using the originals.)
 
 ( With a literal in A and xh, push it onto the D stack.)
-macro push-literal  ( A -> tl, xh -> th)
-   -2 # aix ( xh -> th)  tl sta ;
+: push-literal  ( A -> tl, xh -> th)
+   asm{  -2 # aix ( xh -> th)  tl sta } ;
 
-macro push-literal-alt  ( A -> xl, then promote scratch to top)
-   xl sta  -2 # aix ;
+: push-literal-alt  ( A -> xl, then promote scratch to top)
+   asm{  xl sta  -2 # aix } ;
 
 ( Pop top of D stack into A and xh, just as if they were loaded by
   load-literal. This is used to make versions of binary operations that
   work either with true literals, or with a value sitting on the D stack.)
 
-macro pop-literal   ( tl -> A, th -> xh)
-   tl lda  2 # aix  ( th -> xh) ;
+: pop-literal   ( tl -> A, th -> xh)
+   asm{  tl lda  2 # aix  ( th -> xh) } ;
 
-macro pop-literal-alt   ( top -> scratch, then load A from xl)
-   2 # aix  ( demote top to scratch)  xl lda ;
+: pop-literal-alt   ( top -> scratch, then load A from xl)
+   asm{  2 # aix  ( demote top to scratch)  xl lda } ;
 
 meta
-: literal  ( n)  code{  load-literal }
-                 code{  push-literal } ;
-
-: compile,  ( target-cfa)  code{  c }  ( compile call) ;
-
+: literal   ( n)  load-literal  push-literal  $lit tag! ;
+: compile,  ( target-cfa)  \m here swap  \a c ( compile call)  image-c@ tag! ;
 forth
 
-( Since address 0 is in the i/o register range, we will never jsr there, so
-  we can return 0 as "no call found".)
 : called  ( - dest-addr)
-   last-code @  dup image-c@  ( op)
-   dup "ad = if ( bsr)  drop  dup 1+ image-c@ ( offset)  sext  2 + +a ^ then
-   dup "bd = if ( jsr dir)  drop  1+ image-c@ ^  then
-   dup "cd = if ( jsr ext)  drop  1+ image-@  ^  then
+   \m here  tag@
+   dup $bsr  = if ( bsr)      drop  dup 1- image-c@ ( offset)  sext  +a ^ then
+   dup $jsr1 = if ( jsr dir)  drop      1- image-c@ ^  then
+   dup $jsr2 = if ( jsr ext)  drop     2 - image-@  ^  then
    2drop  0 ;
 
-: replace  ( addr jsr-op jmp-op - -1)
-   rot image-c!  drop  -1 ;
+: replace  ( jsr-op jmp-op offset - -1)
+   \m here +a image-c!  drop  notag  -1 ;
 
 ( If last code compiled was a call, rewrite it to a jump and return true;
   else return false.)
 
 : tail?  ( - f)
-   last-code @  dup image-c@  ( op)
-   dup "ad = if ( bsr)      "20 ( bra)      replace ^  then
-   dup "bd = if ( jsr dir)  "bc ( jmp dir)  replace ^  then
-   dup "cd = if ( jsr ext)  "cc ( jmp ext)  replace ^  then
-   2drop  0 ;
+   tag@
+   dup $bsr  = if ( bsr)      "20 ( bra)      -2 replace ^  then
+   dup $jsr1 = if ( jsr dir)  "bc ( jmp dir)  -2 replace ^  then
+   dup $jsr2 = if ( jsr ext)  "cc ( jmp ext)  -3 replace ^  then
+   drop  0 ;
 
 target-compiler
-: ^   tail? if ^ then  code{  rts } ;
+: ^   tail? if ^ then  asm{  rts } ;
 
 forth
-: ?retreat  ( f)  if  last-code @  \m goto ^  then ;
-: lit?   last-code @  image-c@ "af ( aix) =  dup ?retreat ;
+: lit?   ( - lit?)  tag@ $lit =  dup if  4 uncompile  then ;
 
 : _litop  current preserve  target-compiler  create  __asm
           does>  lit?  if  cell+  then  @  \m compile, ;
@@ -170,13 +188,13 @@ meta
 : litop
    _litop
       \m here  ( stack entry point)  ,
-      code{  pop-literal }
+      pop-literal
       \m here  ( literal entry point)  , ;
 
 : relop
    _litop
       \m here  ( literal entry point)
-      code{  push-literal }
+      push-literal
       \m here  ( stack entry point)  ,  , ;
 
 forth
@@ -191,7 +209,7 @@ meta
 : code    \m name  __asm ;
 : :       \m name  __target-colon ;
 
-:  ]   __target-colon ;
+:  ]   __target-colon  notag ;
 : #]   \m literal  \m ] ;
 
 ( For forward references)
@@ -213,9 +231,6 @@ assembler
 target-compiler
 : [   __meta ;
 : ;   \tc ^  \tc [ ;  ( return to meta)
-
-compiler
-: ;m   \ ;  __meta ;  ( exit macro compilation and return to __meta)
 
 forth
 
@@ -246,8 +261,8 @@ meta
 forth
 
 ( Utility macros.)
-macro pshhx  .x psh  .h psh         ;
-macro pulhx          .h pul  .x pul ;
+: pshhx  asm{  .x psh  .h psh         } ;
+: pulhx  asm{          .h pul  .x pul } ;
 
 
 ( Calculation of FCDIV - flash clock divider [sic]
