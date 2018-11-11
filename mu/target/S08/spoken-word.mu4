@@ -19,33 +19,31 @@ hex
 
   The two chips are connected thus:
 
-  QG8   Pin     595  Pin
-  ====  ===     ===  ===
-  PTB5    7    RCLK   12   storage register clock
-  MOSI    9     SER   14   serial data in
- SPSCK   10   SRCLK   11   shift register clock
+  QG8        Pin     595  Pin
+  ====       ===     ===  ===
+  PTB5         7    RCLK   12   storage register clock
+  PTB4         8  nSRCLR   10   serial register clear
+  PTB3/MOSI    9     SER   14   serial data in
+  PTB2/SPSCK  10   SRCLK   11   shift register clock
 
-             nSRCLR   10   High
-                nOE   13   Low
+                     nOE   13   Low
 
   LEDs, top to bottom:
-                 QH    7
-                 QG    6
-                 QF    5
-                 QE    4
-                 QD    3
-                 QC    2
-                 QB    1
-                 QA   15
-  PTB7    5
-  PTB6    6
+                      QH    7
+                      QG    6
+                      QF    5
+                      QE    4
+                      QD    3
+                      QC    2
+                      QB    1
+                      QA   15
+  PTB7         5
+  PTB6         6
 )
 
-label ports-init
-   SPIC1 ) clr  ( disable SPI)
-   PTBD ) clr  %1110_1100 # PTBDD ) mov  rts  ;c
+.ifdef use-spi
 
-label spi-init
+code spi-init
    %0101_0000 # ( cpol=0, cpha=0, enable spi, master mode) SPIC1 ) mov
    ( 8-bit mode, /SS disable, separate pins) SPIC2 ) clr
    %1110_1100 # lda  PTBDS ) sta ( high drive on SCK, MOSI, B7, and B6)
@@ -55,29 +53,40 @@ label spi-init
 ( XXX We can't know when it's done shifting... Xmit empty becomes true
   immediately, as xmitter is double-buffered.)
 
-label xxxhi8!
+code hi8!
    SPID ) sta  rts  ;c
 
+.then
+
 ( Nice commands/macros to make things pretty.)
-macro  sr/  PTBD 2 bset  ;m  ( bring SRCLK high)
-macro  sr\  PTBD 2 bclr  ;m  ( bring SRCLK low)
-macro   r/  PTBD 5 bset  ;m  ( bring RCLK high)
-macro   r\  PTBD 5 bclr  ;m  ( bring RCLK low)
+macro    r/  PTBD 5 bset  ;m  ( bring RCLK high)
+macro    r\  PTBD 5 bclr  ;m  ( bring RCLK low)
+macro  clr/  PTBD 4 bset  ;m  ( bring nSRCLR high)
+macro  clr\  PTBD 4 bclr  ;m  ( bring nSRCLR low)
 
 macro   d!  .a rol  CS if  PTBD 3 bset
                      else  PTBD 3 bclr  ( SERIN)  then  ;m
 
-( MOSI = B3, SPSCK = B2)
-label hi8!
+macro   sr/  PTBD 2 bset  ;m  ( bring SRCLK high)
+macro   sr\  PTBD 2 bclr  ;m  ( bring SRCLK low)
+
+code ports-init
+   SPIC1 ) clr  ( disable SPI)
+   PTBD ) clr  %1111_1100 # PTBDD ) mov
+               %1111_1100 # lda  PTBDS ) sta
+   clr/   ( stop clearing shift regs)
+   r/ r\  ( clock cleared shift regs onto output regs)  rts  ;c
+
+code hi8!  ( bits - bits)
+   th lda
    .x psh  8 # ldx  ( count)
    begin  d!  sr/ sr\  .x decz? until
    .x pul  r/ r\  rts  ;c
 
-( Since RCLK idles low, just mask the top two bits and write the whole
-  register.)
+( Since RCLK and SRCLK idle low, and nSRCLR idles high, mask the top two
+  bits, OR in nSRCLR, and write the whole register.)
 
-label lo8!
-   0c0 # and  PTBD ) sta  rts  ;c
+code lo8!  ( bits)
+   tl lda  2 # aix  0c0 # and  10 # ora  PTBD ) sta  rts  ;c
 
-label show  ( value in HX, left justified)
-   .h psh  .a pul  hi8! c  txa  lo8! j  ;c
+: show  hi8!  lo8! ;

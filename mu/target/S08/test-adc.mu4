@@ -6,46 +6,28 @@
   values.)
 
 __meta
-
 hex
-
 ram
 
-label adc-enable-bandgap
-   SPMSC1 ) lda  01 # ora ( BGBE)  SPMSC1 ) sta  rts  ;c
-
-label port-init
-   0ff # lda  PTAPE ) sta  ( set pullups on all pins)
-
-   ( If a chip has a pullup register for a port, set the pullups.)
-   .reg PTBPE .if  PTBPE ) sta  .then
-   .reg PTCPE .if  PTCPE ) sta  .then
-   .reg PTDPE .if  PTDPE ) sta  .then
-   .reg PTEPE .if  PTEPE ) sta  .then
-   .reg PTFPE .if  PTFPE ) sta  .then
-   .reg PTGPE .if  PTGPE ) sta  .then
-   rts  ;c
-
-( Enter with ADC channel number in low 5 bits of A; exit with ADC value in
-  HX.)
-
-label adc-read-channel
-   ADCSC1 ) sta  ( Set channel and start conversion)
-   begin  ADCSC1 7 ( COCO) bset?  until  ( loop until conversion completes)
-   ADCRH ) ldhx  ( read ADCRH into H, ADCRL into X)  rts  ;c
-
-label adc-init
-   -- port-init c  ( seems to cause trouble - do we need this?)
-   adc-enable-bandgap c
+code adc-init
+   SPMSC1 ) lda  01 # ora ( BGBE)  SPMSC1 ) sta  ( enable bandgap)
+.ifdef QG8
+   %1001_1011 # ADCCFG ) mov  ( 10 bits; use asynch clock)
+.then
+.ifdef QE32
    %1001_0111 # ADCCFG ) mov  ( 12 bits; use asynch clock)
-   -- %1001_1011 # ADCCFG ) mov  ( 10 bits; use asynch clock)
+.then
    rts  ;c
 
-label read-temp
-   #26 # lda  ( temp channel)  adc-read-channel j  ;c
+code adc@  ( channel# -- adc-value)
+   tl lda  ADCSC1 ) sta  ( Set channel and start conversion)
+   begin  ADCSC1 7 ( COCO) bset?  until  ( loop until conversion completes)
+   ADCRH ) lda  th sta   ( read high result, put on stack)
+   ADCRL ) lda  tl sta   ( read low result, put on stack)
+   rts  ;c
 
-label read-bandgap
-   #27 # lda  ( bandgap channel)  adc-read-channel j  ;c
+: temp@      #26 ( temp channel)  adc@ ;
+: bandgap@   #27 ( bandgap channel)  adc@ ;
 
 
 ( Now that we can read the chip, lets convert ADC values to temperature.)
@@ -57,10 +39,18 @@ decimal
 : C>F  ( celsius - fahrenheit)            9 5 */  32,000 +  ;
 : F>C  ( fahrenheit - celsius)  32,000 -  5 9 */ ;
 
+.ifdef QG8
+       10 constant adc-bits ( adjust to your chip)
+1,200,000 constant Vgap     ( bandgap voltage in uV - change this for your setup)
+.then
+
+.ifdef QE32
        12 constant adc-bits ( adjust to your chip)
+1,170,000 constant Vgap     ( bandgap voltage in uV - change this for your setup)
+.then
+
           variable Vrail    ( Vdd voltage in uV - change this for your setup)
 3,300,000          Vrail !  ( but we can use bandgap to trim this!)
-1,170,000 constant Vgap     ( bandgap voltage in uV - change this for your setup)
   701,200 constant Vtemp25  ( uV reading at 25C)
     1,646 constant m-cold   ( cold slope: mV/degree C)
     1,769 constant m-hot    (  hot slope: mV/degree C)
@@ -85,8 +75,8 @@ where
 Formulas!!
 
 
-: adc>V      ( adc     - V)       Vrail @  swap  1 adc-bits <<       */ ;
-: gap>Vrail  ( bandgap - Vrail)   Vgap           1 adc-bits <<  rot  */ ;
+: adc>V      ( adc     - V)       Vrail @  swap  1 adc-bits << 1-       */ ;
+: gap>Vrail  ( bandgap - Vrail)   Vgap           1 adc-bits << 1-  rot  */ ;
 
 : slope  ( Vtemp - slope)
    Vtemp25 u< if  m-hot  ( hot slope)  ^ then
