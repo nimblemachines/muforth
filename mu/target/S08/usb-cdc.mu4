@@ -17,8 +17,11 @@ hex
 
 __meta
 
+( Endpoint buffers have to be 16-byte aligned.)
 10 constant buflen0  ( buffer length, and hence max packet size, for endpoint 0)
-10 constant buflen1  ( buffer length, and hence max packet size, for endpoint 1)
+10 constant buflen1  ( buffer length for endpoint 1)
+40 constant buflen4  ( buffer length for endpoint 4)
+40 constant buflen5  ( buffer length for endpoint 5; ping/pong)
 
 ( Compile the first 32 bits of the current muforth Git commit. The host can
   grab these four bytes and print them out. It gets the address by
@@ -52,7 +55,8 @@ label device-descriptor
 label config-descriptor
    09 c, ( bLength)
    02 c, ( bDescriptorType = configuration)
-   here  0 le, ( wTotalLength = configuration + interfaces + endpts)
+   here  ( fill in later)
+ 0000 le, ( wTotalLength = configuration + interfaces + endpts)
    02 c, ( bNumInterfaces)
    01 c, ( bConfigurationValue; starts from 1, unlike interface numbers)
    00 c, ( iConfiguration - string index = none)
@@ -68,7 +72,7 @@ label communications-class-interface
    01 c, ( bNumEndpoints - in _addition_ to endpoint pair 0)
    02 c, ( bInterfaceClass = Communications)
    02 c, ( bInterfaceSubClass = Abstract Control Model)
-   00 c, ( bInterfaceProtocol = UNUSED; most serial code has 01: AT V.250 here)
+   01 c, ( bInterfaceProtocol = AT V.250 commands)
    00 c, ( iInterface - string index = none)
 
 label cdc-header-descriptor
@@ -99,15 +103,11 @@ label cdc-call-management-descriptor
    05 c, ( bFunctionLength)
    24 c, ( bDescriptorType = CS_INTERFACE)
    01 c, ( bDescriptorSubtype = Call Management Functional Descriptor subtype)
-   00 c, ( bmCapabilities = device does *not* handle call management!)
+   03 c, ( bmCapabilities = device handles call management, over Data interface)
    01 c, ( bDataInterface = 1; again, the Data Class interface)
 
-( XXX NOTE: There is no notification interrupt endpoint!!)
-( Linux doesn't seem to like this... Let's put one in and see if it gets
-  better!)
-
 ( interval bufsize type in/out number)
-         1      16  interrupt    in      1  endpoint
+   1 buflen1 interrupt in 1 endpoint
 
 label data-class-interface
    09 c, ( bLength)
@@ -121,8 +121,8 @@ label data-class-interface
    00 c, ( iInterface - string index = none)
 
 ( interval bufsize type in/out number)
-         0      40  bulk    in      2  endpoint
-         0      40  bulk   out      2  endpoint
+   0 buflen4 bulk out 4 endpoint
+   0 buflen5 bulk in  5 endpoint  ( 5 and 6 have ping/pong buffers)
 
    ( Fix-up length of configuration descriptor.)
    config-descriptor  end-descriptor
@@ -171,35 +171,53 @@ __meta
 data1 88 +  equ match-data1
 
 ( USB buffer descriptors)
-1860 equ in-control
-1861 equ in-count
-1862 equ in-bufaddr
-1863 equ out-control
-1864 equ out-count
-1865 equ out-bufaddr
+'usb
+dup 0 + equ in0-control
+dup 1 + equ in0-count
+dup 2 + equ in0-bufaddr
+3 +
 
-( USB buffer descriptors - JS16-specific)
-1866 equ ep1-control  ( MIDI OUT)
-1867 equ ep1-count
-1868 equ ep1-bufaddr
+dup 0 + equ out0-control
+dup 1 + equ out0-count
+dup 2 + equ out0-bufaddr
+3 +
 
-1869 equ ep2-control  ( UNUSED)
-186a equ ep2-count
-186b equ ep2-bufaddr
+dup 0 + equ in1-control  ( interrupt in)
+dup 1 + equ in1-count
+dup 2 + equ in1-bufaddr
+3 +
+6 +  ( skip 2 and 3)
+
+dup 0 + equ out4-control  ( bulk OUT)
+dup 1 + equ out4-count
+dup 2 + equ out4-bufaddr
+3 +
+
+dup 0 + equ in5-even-control  ( bulk IN EVEN)
+dup 1 + equ in5-even-count
+dup 2 + equ in5-even-bufaddr
+3 +
+
+dup 0 + equ in5-odd-control  ( bulk IN ODD)
+dup 1 + equ in5-odd-count
+dup 2 + equ in5-odd-bufaddr
+drop
 
 'usb-buffers
-          dup  equ in-buffer
-buflen0 + dup  equ out-buffer
-buflen0 + dup  equ ep1-buffer
-buflen1 +  ( XXX more buffers here)
+          dup  equ in0-buffer
+buflen0 + dup  equ out0-buffer
+buflen0 + dup  equ in1-buffer
+buflen1 + dup  equ out4-buffer
+buflen4 + dup  equ in5-even-buffer
+buflen5 + dup  equ in5-odd-buffer
 drop
 
 ( Useful aliases for buffer addresses - for control requests.)
-out-buffer 0 + equ bmRequestType
-out-buffer 1 + equ bRequest
-out-buffer 2 + equ wValue
-out-buffer 4 + equ wIndex
-out-buffer 6 + equ wLength
+out0-buffer 0 + equ bmRequestType
+out0-buffer 1 + equ bRequest
+out0-buffer 2 + equ wValue
+out0-buffer 4 + equ wIndex
+out0-buffer 6 + equ wLength
 
 2 xvar memptr
 2 xvar memcount
@@ -237,7 +255,7 @@ label prepare-next-in
       bufptr ) clr  .x psh ( count)
       begin
          memptr ) ldhx  0 ,x lda  1 # aix  memptr ) sthx
-         .h clr  bufptr ) ldx  in-buffer ,x sta  .x inc  bufptr ) stx
+         .h clr  bufptr ) ldx  in0-buffer ,x sta  .x inc  bufptr ) stx
          memcount ) ldhx  -1 # aix ( decr count)  memcount ) sthx
       0 ,s decz? until  .a pul
       bufptr ) ldx  ( in count)
@@ -246,18 +264,18 @@ label prepare-next-in
 
 ( Enter with in-count in X)
 label prepare-in-xcount
-   in-count ) stx
-   ( toggle DATA0/1)  in-control # ldhx  toggle-data c  ( fall thru)  ;c
+   in0-count ) stx
+   ( toggle DATA0/1)  in0-control # ldhx  toggle-data c  ( fall thru)  ;c
 
 ( Get ready to receive another SETUP DATA0 token, or an OUT DATA1 token.
   The host will send an empty DATA1 as a status stage.)
 
 label expect-setup-token
-   .a clr  out-control ) sta  ( fall through)  ;c
+   .a clr  out0-control ) sta  ( fall through)  ;c
 
 label expect-out-token  ( expect OUT or SETUP, really)
-   buflen0 # ldx  out-count ) stx
-   ( toggle DATA0/1)  out-control # ldhx  toggle-data c
+   buflen0 # ldx  out0-count ) stx
+   ( toggle DATA0/1)  out0-control # ldhx  toggle-data c
    CTL 5 bclr ( TSUSPEND off - resume processing)
    rts  ;c
 
@@ -272,7 +290,7 @@ label write-memory
 label read-sp
    tsx  2 # aix
 label read-hx
-   in-buffer ) sthx  2 # ldx
+   in0-buffer ) sthx  2 # ldx
    prepare-in-xcount j  ;c
 
 label get-version-addr
@@ -314,7 +332,7 @@ label stall
 
 ( IN requests will return NAK.)
 label nak-in
-   .a clr  in-control ) sta  rts  ;c
+   .a clr  in0-control ) sta  rts  ;c
 
 label cut-and-run
    nak-in c  ( don't send status IN until we return!)
@@ -329,15 +347,15 @@ label vendor-request
    ( 04)  get-version-addr   .a dec 0!= until
    ( unknown) stall j  ;c
 
-label expect-ep1-out
-   buflen1 # ldx  ep1-count ) stx
-   ep1-control # ldhx  toggle-data j  ;c
+label expect-out4
+   buflen4 # ldx  out4-count ) stx
+   out4-control # ldhx  toggle-data j  ;c
 
 label set-config
    ( This should set all toggle bits to DATA0. Let's set ep1 to DATA1, with OWN
      bit clear. toggle-data will toggle it to DATA0.)
-   data1 # lda  ep1-control ) sta
-   expect-ep1-out c
+   data1 # lda  out4-control ) sta
+   expect-out4 c
    ( fall thru to set-address)
 
 ( Set address is a bit tricky. We can't set the address immediately. The
@@ -384,16 +402,16 @@ label write-byte
    flash-byte j  ;c
 
 label setup-or-out-token
-   out-control ) lda  3c # and  34 # cmpne?  setup-token  until
+   out0-control ) lda  3c # and  34 # cmpne?  setup-token  until
    ( OUT)
    ( If last OUT was zero-length, it was a status transaction for a
      control read, so get ready for a new SETUP.)
-   out-count ) lda  0= if  expect-setup-token j  then
+   out0-count ) lda  0= if  expect-setup-token j  then
 
    ( Otherwise, we've got a data payload. Copy it.)
    bufptr ) clr  .a psh  ( count)
    begin
-      .h clr  bufptr ) ldx  out-buffer ,x lda  .x inc  bufptr ) stx
+      .h clr  bufptr ) ldx  out0-buffer ,x lda  .x inc  bufptr ) stx
       memptr ) ldhx  write-byte c  1 # aix  memptr ) sthx
       memcount ) ldhx  -1 # aix ( decr count)  memcount ) sthx
    0 ,s decz? until  .a pul
@@ -414,7 +432,7 @@ label setup-or-out-token
 
 label in-token
    ( If last IN was a full packet, ready some more data.)
-   in-count ) lda  buflen0 # cmp  0= if  prepare-next-in j  then
+   in0-count ) lda  buflen0 # cmp  0= if  prepare-next-in j  then
 
    ( If last packet was zero-length, check to make sure our address has
      been set.)
@@ -427,11 +445,11 @@ label nak-in-expect-setup
    nak-in c  ( further IN's will return NAK)
    expect-setup-token j  ;c
 
-1 xvar ep1-count-saved
+1 xvar out4-count-saved
 
-label ep1-out-token
+label out4-token
    ( STALL if we get a SETUP token on this endpoint. We only want OUTs.)
-   ep1-control ) lda  3c # and  34 # cmpne?  if
+   out4-control ) lda  3c # and  34 # cmpne?  if
 .ifdef copy-ep1-contents
       ( Got an OUT token)
       ( Copy from USB buffer to elsewhere in RAM.)
@@ -445,9 +463,9 @@ label ep1-out-token
       ( Just get the count so we have some idea what we are looking at when
         we dump the ep1-buffer.)
 
-      ep1-count ) lda  ep1-count-saved ) sta
+      out4-count ) lda  out4-count-saved ) sta
 .then
-      expect-ep1-out j
+      expect-out4 j
    then  ( We got a SETUP token)  stall j  ;c
 
 label finish-config
@@ -467,11 +485,18 @@ label finish-config
 .then
 
    ( Set up USB registers and buffer descriptors)
-   in-buffer >bufaddr # lda  in-bufaddr ) sta
-   out-buffer >bufaddr # lda  out-bufaddr ) sta
+   in0-buffer >bufaddr # lda  in0-bufaddr ) sta
+   out0-buffer >bufaddr # lda  out0-bufaddr ) sta
 
-   ( Set up EP 1.)
-   ep1-buffer >bufaddr # lda  ep1-bufaddr ) sta
+   ( Set up EP 1 IN.)
+   in1-buffer >bufaddr # lda  in1-bufaddr ) sta
+
+   ( Set up EP 4 OUT.)
+   out4-buffer >bufaddr # lda  out4-bufaddr ) sta
+
+   ( Set up EP 5 INs.)
+   in5-even-buffer >bufaddr # lda  in5-even-bufaddr ) sta
+   in5-odd-buffer >bufaddr # lda  in5-odd-bufaddr ) sta
 
    01 # CTL ) mov          -- enable USB module
    45 # USBCTL0 ) mov      -- turn on pullup, vreg, and PHY
@@ -485,7 +510,7 @@ label after-usb-reset
    ADDR ) clr
    0ff # INTSTAT ) mov     -- clear all flags
    0d # EPCTL0 ) mov       -- enable ep0 as control endpt
-   09 # EPCTL1 ) mov       -- enable ep1 as OUT endpt
+   09 # EPCTL4 ) mov       -- enable ep4 as OUT endpt
    token-index ) clr
    rts  ;c
 
@@ -508,8 +533,8 @@ label process-usb
        0f8 # and
                  0= if  setup-or-out-token j  then
        08 # cmp  0= if  in-token j  then
-       10 # cmp  0= if  ep1-out-token j  then
-      ( not EP0 or EP1 OUT; ignore)  ( fall thru)
+       40 # cmp  0= if  out4-token j  then
+      ( not EP0 or EP4 OUT; ignore)  ( fall thru)
    then
    INTSTAT 7 bset? if ( STALLF)
       EPCTL0 1 bclr ( remove EPSTALL)
