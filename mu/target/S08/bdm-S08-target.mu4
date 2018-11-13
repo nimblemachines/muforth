@@ -218,8 +218,7 @@ variable bdm-flash-command
   default BDM freq of 8M, and divided by two again - because of reset BDIV
   setting - to give a reset bus clock of 4M.)
 
-: TrimOsc
-   0ffaf ( factory trim) b.ReadByte  \eq TRIM b.WriteByte ;
+: TrimOsc ( trim)   \eq TRIM b.WriteByte ;
 
 ( Set FCDIV to correspond to bus clock at power-on-reset. As an added
   bonus, we don't subtract one from the divisor, so it's one bigger than it
@@ -227,36 +226,24 @@ variable bdm-flash-command
   the clock running fast. In the case of QG parts - 4M bus clock out of POR
   - this puts the Flash clock at 190k instead of 200k.)
 
-: SetFCDIV
-   \eq FCDIV b.ReadByte  80 and if ^ then  ( already set)
-   [ \eq POR-bus-clock  khz>fcdiv #]  ( divide freq by 200k, rounding up)
-   \eq FCDIV b.WriteByte ;
+: SetFCDIV  ( khz)
+   \eq FCDIV b.ReadByte  80 and if  drop ^  then  ( already set)
+   khz>fcdiv ( divide freq by 200k, rounding up)  \eq FCDIV b.WriteByte ;
 
-(  If trim found in flash, trim oscillator and also set FCDIV. If not found,
-  print a message and leave everything alone.)
+( If trim - either the factory [8Mhz] trim, or our 9.216Mhz trim - found in
+  flash, trim oscillator and also set FCDIV. If not found, print a message
+  and leave everything alone.)
 
 : SetupClock
-   0ffaf ( factory trim) b.ReadByte  0ff = if
+   0ffad ( our 9.216M trim) b.ReadByte  dup 0ff xor if
+      TrimOsc  [ #9,216 2/ #] ( khz)  SetFCDIV  ^  then  drop
+
+   0ffaf ( factory trim) b.ReadByte  dup 0ff xor if
+      TrimOsc  \eq POR-bus-clock  SetFCDIV  ^  then  drop
+
    ." 
-Trim in flash is 0ff; didn't set TRIM or FCDIV. You have to do this by hand.
-"  ^  then
-   TrimOsc  SetFCDIV ;
-
-comment misguided
-( Based on what we get back from b.Sync, match BDM clock)
-( XXX - this is currently based on 908's 4.608M clock)
-: MatchBDMClock
-   b.Sync 70 - 21 u< if  ( within +/- "10 of 80 - running at 4M)
-      b.Clock4M ^ then
-   b.Clock8M ;
-
-: FastBusClock
-   ( assume osc trimmed)
-   MatchBDMClock
-   \eq ICSC2 b.ReadByte  3f and ( clear BDIV)  \eq ICSC2 b.WriteByte
-   b.Clock8M ;
-
-comment misguided
+Both trims in flash are 0ff; didn't set TRIM or FCDIV. You have to do this by hand.
+"  ;
 
 ( Get target into a known, safe state. Chat code will have done this for
   itself at reset, so this is only necessary for BDM targets.)
@@ -266,8 +253,9 @@ comment misguided
 
 : b.Hi
    SetupClock ( trim & fcdiv)  NoWatchdog  ResetSP
+   9d ( nop) \m flash-exit  image-c!  ( patch flash routine)
    \m flash-byte  \m bdm-flash-end  over -  copy-region
-   9d ( nop) \m flash-exit  b.WriteByte ;
+   \m flash-end  ram-copied ! ( pretend we've copied, but only up to flash-end) ;
 
 : try-clock
    b.ReadStatus dup u.  0c8 = if  b.Hi  -1 ^  then  0 ;
@@ -301,8 +289,8 @@ hex
 .else
       b.BkgdHiZ   b.Sync u.  b.Sync u.
 .then
-      b.Clock4M try-clock  if ^ then
-      b.Clock8M try-clock  if ^ then
+      b.Clock4M ." trying 4M: " try-clock  if ^ then
+      b.Clock8M ." trying 8M: " try-clock  if ^ then
       ." Didn't get a valid status over BDM."
    again ;
 
