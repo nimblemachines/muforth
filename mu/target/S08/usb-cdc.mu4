@@ -4,7 +4,7 @@
 
 ( Trying to create a USB CDC serial device.)
 
-loading S08 USB CDC serial device (experimental!)
+loading S08 USB CDC ACM FBI LBJ serial device (experimental!)
 
 ( Check for compatibility with device.)
 .reg EPCTL0 .not .if
@@ -20,7 +20,7 @@ __meta
 ( Endpoint buffers have to be 16-byte aligned.)
 10 constant buflen0  ( buffer length, and hence max packet size, for endpoint 0)
 10 constant buflen1  ( buffer length for endpoint 1)
-40 constant buflen4  ( buffer length for endpoint 4)
+20 constant buflen4  ( buffer length for endpoint 4)
 40 constant buflen5  ( buffer length for endpoint 5; ping/pong)
 
 ( Compile the first 32 bits of the current muforth Git commit. The host can
@@ -61,8 +61,7 @@ label config-descriptor
    01 c, ( bConfigurationValue; starts from 1, unlike interface numbers)
    00 c, ( iConfiguration - string index = none)
    80 c, ( bmAttributes)
- #100 2/ c, ( bMaxPower, in 2mA increments = 100mA - one "unit load")
- -- #200 2/ c, ( bMaxPower, in 2mA increments = 200mA - two "unit loads")
+ #200 2/ c, ( bMaxPower, in 2mA increments = 200mA - two "unit loads")
 
 label communications-class-interface
    09 c, ( bLength)
@@ -122,7 +121,11 @@ label data-class-interface
 
 ( interval bufsize type in/out number)
    0 buflen4 bulk out 4 endpoint
+.ifdef pp
    0 buflen5 bulk in  5 endpoint  ( 5 and 6 have ping/pong buffers)
+.else
+   0 buflen5 bulk in  3 endpoint  ( no ping-pong)
+.then
 
    ( Fix-up length of configuration descriptor.)
    config-descriptor  end-descriptor
@@ -186,7 +189,13 @@ dup 0 + equ in1-control  ( interrupt in)
 dup 1 + equ in1-count
 dup 2 + equ in1-bufaddr
 3 +
-6 +  ( skip 2 and 3)
+
+3 +  ( skip 2)
+
+dup 0 + equ in3-control  ( bulk IN test)
+dup 1 + equ in3-count
+dup 2 + equ in3-bufaddr
+3 +
 
 dup 0 + equ out4-control  ( bulk OUT)
 dup 1 + equ out4-count
@@ -208,8 +217,12 @@ drop
 buflen0 + dup  equ out0-buffer
 buflen0 + dup  equ in1-buffer
 buflen1 + dup  equ out4-buffer
+.ifdef pp
 buflen4 + dup  equ in5-even-buffer
 buflen5 + dup  equ in5-odd-buffer
+.else
+buflen4 + dup  equ in3-buffer
+.then
 drop
 
 ( Useful aliases for buffer addresses - for control requests.)
@@ -219,18 +232,185 @@ out0-buffer 2 + equ wValue
 out0-buffer 4 + equ wIndex
 out0-buffer 6 + equ wLength
 
-2 xvar memptr
-2 xvar memcount
-1 xvar bufptr
+( XXX pattern throughout:
+
+  1. Load a count into X, and store into ep-count.
+  2. Load a ptr to a ep-control into hx
+  3. Call/jump to toggle-data
+
+  Why not instead: load count into A, ep-control into HX, then call/jump to
+  ready-endpoint:)
+
+( Enter with count in A, pointer to ep control byte in HX.)
+( XXX just rename this to toggle-data?)
+label ready-endpoint
+   1 ,x sta  ( count)  ( fall through)  ;c
 
 label toggle-data  ( HX points to EP buffer control byte)
    0 ,x lda  40 # and ( data0/1)  match-data1 # eor  0 ,x sta  rts  ;c
+
+1 xvar frame-count   ( incremented every USB frame - every 1ms)
+1 xvar overflows
+
+1 xvar rxroom
+2 xvar rxptr      ( points into one of two ping-pong IN buffers)
+
+1 xvar txcount
+2 xvar txptr
+
+label reset-serial
+   frame-count ) clr    ( start the clock ticking...)
+   txcount ) clr
+   buflen5 # rxroom ) mov
+.ifdef pp
+   in5-even-buffer # ldhx  rxptr ) sthx
+.else
+   in3-buffer # ldhx  rxptr ) sthx
+.then
+
+   data1 # lda
+   in1-control ) sta
+   out4-control ) sta
+.ifdef pp
+   in5-even-control ) sta
+   in5-odd-control ) sta
+.else
+   in3-control ) sta
+.then
+   rts  ;c
+
+label in1-token
+   rts  ;c
+
+.ifdef pp
+
+( XXX two words?  ping-pong-control sets HX to one or other;
+                  ping-pong-buffer  sets HX to one or other)
+
+label ping-pong
+   buflen5 # lda  rxroom ) sub  buflen5 # rxroom ) mov   ready-endpoint j  ;c
+
+( X has orig value from STAT register.)
+label in5-token
+   frame-count ) clr
+   txa  04 # bit  0= if  ( EVEN)
+      in5-even-buffer # ldhx  rxbuffer ) sthx  ( make EVEN current)
+      in5-odd-control # ldhx  ping-pong j
+   then
+   ( ODD)
+   in5-odd-buffer # ldhx  rxbuffer ) sthx  ( make ODD current)
+   in5-even-control # ldhx  ping-pong j  ;c
+
+.else
+
+( XXX not ping ponging!!)
+label in3-token
+   frame-count ) clr
+   buflen5 # rxroom ) mov
+   in3-buffer # ldhx  rxptr ) sthx  rts  ;c
+
+( Return in HX the address of the control byte for the even or odd buffer.)
+label ping-or-pong?
+   ( We are not ping-ponging in this test version, so always return the
+     same buffer.)
+   in3-control # ldhx  rts  ;c
+
+.then
+
+( Section 8.4.6.4 of the USB 2.0 spec has this to say: "If a non-control
+  endpoint receives a SETUP token, it must ignore the transaction and
+  return no response.")
+
+label out4-token
+   out4-count ) lda  txcount ) sta   ( copy the count to txcount)
+   out4-buffer # ldhx  txptr ) sthx  ( and reset the buffer ptr)
+   rts
+
+label expect-out4
+   buflen4 # lda  out4-control # ldhx  ready-endpoint j  ;c
+
+( Address of control byte in HX)
+( XXX clear frame-count here?? instead of in in5-token?)
+label ready-rx-in
+   buflen5 # lda  ready-endpoint j  ;c
+
+label xlat
+   .a psh  #-32 # and  .a psh  1 ,s lda  3 # add  #31 # and  0 ,s ora
+   2 # ais  rts  ;c
+
+.ifdef fake-uart
+
+( char in A)
+label do-rx
+   rxroom ) tst  0= if  ( buffer already full)
+      overflows ) inc  rts
+   then
+   rxptr ) ldhx  xlat c  0 ,x sta  1 # aix  rxptr ) sthx
+   rxroom ) dec  0= if  ( buffer now full)
+      ping-or-pong? c  ready-rx-in j
+   then  rts  ;c
+
+label process-serial
+   txcount ) tst  0!= if  ( still something left)
+      txptr ) ldhx  0 ,x lda  1 # aix  txptr ) sthx
+      do-rx c  txcount ) dec
+   then
+   0= if  ( out4-buffer is empty)
+      expect-out4 j
+   then  rts  ;c
+
+.else
+
+( XXX for testing? tx'ed bytes will get rx'ed!)
+label loopback
+   SCIC1 7 bset  ( set LOOPS bit)  rts  ;c
+
+label check-tx
+   SCIS1 7 bset? if  ( TDRE)  ( xmit a byte from out4-buffer, if we can)
+      txcount ) lda  0!= if  ( still something left)
+         txptr ) ldhx  0 ,x SCID ) mov  txptr ) sthx
+         txcount ) dec
+      then
+      0= if  ( out4-buffer is empty)
+         expect-out4 j
+      then
+   then  rts  ;c
+
+label check-rx
+   SCIS1 5 bset? if  ( RDRF)  ( put rxed byte in IN buffer, increment count)
+      rxroom ) tst  0= if  ( buffer already full)
+         overflows ) inc  rts
+      then
+      -- rxptr ) ldhx  SCID ) 0 ,x mov  rxptr ) sthx
+      rxptr ) ldhx  SCID ) lda  xlat c  0 ,x sta  1 # aix  rxptr ) sthx
+      rxroom ) dec  0= if  ( buffer now full)
+         ping-or-pong? c  ready-rx-in j
+      then
+   then
+
+   ( Check to see if 16ms has elapsed. If so, send buffer anyway.)
+   frame-count ) lda  10 # cmp  u>= if
+      ping-or-pong? c  0 ,x tst  0>= if  ( we own it)
+         ready-rx-in j
+      then
+   then
+   rts  ;c
+
+label process-serial
+   ( What's happenin with the serial port?)
+   check-tx c  check-rx j  ;c
+
+.then
+
 
 ( Be careful! Values in standard USB requests are _little-endian_. To read
   word values - like addresses and counts - we cannot use ldhx!
 
   wValue = memory address
   wLength = byte count)
+
+2 xvar memptr
+2 xvar memcount
 
 label parse-address-length
    wValue    ) lda  memptr 1+ ) sta
@@ -252,20 +432,20 @@ label parse-length
 label prepare-next-in
    memcount ) ldhx  0!= if
       buflen0 # cphx  u> if  ( whole packet)  buflen0 # ldx  then
-      bufptr ) clr  .x psh ( count)
+      .a clr  .a psh ( bufptr)  .x psh ( count)
       begin
          memptr ) ldhx  0 ,x lda  1 # aix  memptr ) sthx
-         .h clr  bufptr ) ldx  in0-buffer ,x sta  .x inc  bufptr ) stx
+         .h clr  1 ,s ( bufptr) ldx  in0-buffer ,x sta  1 ,s ( bufptr) inc
          memcount ) ldhx  -1 # aix ( decr count)  memcount ) sthx
       0 ,s decz? until  .a pul
-      bufptr ) ldx  ( in count)
+      .x pul ( bufptr == in count)
    then
    ( fall thru)  ;c
 
 ( Enter with in-count in X)
 label prepare-in-xcount
-   in0-count ) stx
-   ( toggle DATA0/1)  in0-control # ldhx  toggle-data c  ( fall thru)  ;c
+   txa  ( toggle DATA0/1)  in0-control # ldhx  ready-endpoint c
+   ( fall thru)  ;c
 
 ( Get ready to receive another SETUP DATA0 token, or an OUT DATA1 token.
   The host will send an empty DATA1 as a status stage.)
@@ -274,8 +454,7 @@ label expect-setup-token
    .a clr  out0-control ) sta  ( fall through)  ;c
 
 label expect-out-token  ( expect OUT or SETUP, really)
-   buflen0 # ldx  out0-count ) stx
-   ( toggle DATA0/1)  out0-control # ldhx  toggle-data c
+   buflen0 # lda  ( toggle DATA0/1)  out0-control # ldhx  ready-endpoint c
    CTL 5 bclr ( TSUSPEND off - resume processing)
    rts  ;c
 
@@ -347,15 +526,12 @@ label vendor-request
    ( 04)  get-version-addr   .a dec 0!= until
    ( unknown) stall j  ;c
 
-label expect-out4
-   buflen4 # ldx  out4-count ) stx
-   out4-control # ldhx  toggle-data j  ;c
+( This should set all endpoint toggle bits to DATA0. Let's set them to
+  DATA1, with OWN bit clear. When we ready an endpoint, toggle-data will
+  toggle it to DATA0.)
 
 label set-config
-   ( This should set all toggle bits to DATA0. Let's set ep1 to DATA1, with OWN
-     bit clear. toggle-data will toggle it to DATA0.)
-   data1 # lda  out4-control ) sta
-   expect-out4 c
+   reset-serial c
    ( fall thru to set-address)
 
 ( Set address is a bit tricky. We can't set the address immediately. The
@@ -377,6 +553,13 @@ label finish-control-write
    .x clr  ( zero-length DATA1 transaction)
    prepare-in-xcount j  ;c
 
+label class-request
+   bRequest ) lda
+   -- 05 # cmpne?  set-address  until
+   -- 06 # cmpne?  get-descriptor  until
+   -- 09 # cmpne?  set-config  until
+   ( unknown) stall j  ;c
+
 label standard-request
    bRequest ) lda
    05 # cmpne?  set-address  until
@@ -391,6 +574,7 @@ label standard-request
 label setup-token
    nak-in c
    bmRequestType ) lda  60 # and   standard-request 0!= until
+                        20 # cmpne?   class-request     until
                         40 # cmpne?  vendor-request     until
             ( unknown)  stall j  ;c
 
@@ -409,12 +593,12 @@ label setup-or-out-token
    out0-count ) lda  0= if  expect-setup-token j  then
 
    ( Otherwise, we've got a data payload. Copy it.)
-   bufptr ) clr  .a psh  ( count)
+   .x clr  .x psh ( bufptr)  .a psh  ( count)
    begin
-      .h clr  bufptr ) ldx  out0-buffer ,x lda  .x inc  bufptr ) stx
+      .h clr  1 ,s ( bufptr) ldx  out0-buffer ,x lda  1 ,s ( bufptr) inc
       memptr ) ldhx  write-byte c  1 # aix  memptr ) sthx
       memcount ) ldhx  -1 # aix ( decr count)  memcount ) sthx
-   0 ,s decz? until  .a pul
+   0 ,s decz? until  2 # ais
 
    ( If memcount zero, we've received all the data; queue up status IN token.)
    memcount ) ldhx   finish-control-write 0!= until
@@ -430,7 +614,7 @@ label setup-or-out-token
   The upshot is that if the last packet wasn't full we should expect no
   more IN transactions.)
 
-label in-token
+label in0-token
    ( If last IN was a full packet, ready some more data.)
    in0-count ) lda  buflen0 # cmp  0= if  prepare-next-in j  then
 
@@ -445,39 +629,13 @@ label nak-in-expect-setup
    nak-in c  ( further IN's will return NAK)
    expect-setup-token j  ;c
 
-1 xvar out4-count-saved
-
-label out4-token
-   ( STALL if we get a SETUP token on this endpoint. We only want OUTs.)
-   out4-control ) lda  3c # and  34 # cmpne?  if
-.ifdef copy-ep1-contents
-      ( Got an OUT token)
-      ( Copy from USB buffer to elsewhere in RAM.)
-      ep1-count ) lda  .a psh  ( count)
-      .x clr  .h clr
-      begin
-         ep1-buffer ,x lda
-         ep1-copy   ,x sta  .x inc
-      0 ,s decz? until  .a pul
-.else
-      ( Just get the count so we have some idea what we are looking at when
-        we dump the ep1-buffer.)
-
-      out4-count ) lda  out4-count-saved ) sta
-.then
-      expect-out4 j
-   then  ( We got a SETUP token)  stall j  ;c
-
 label finish-config
 
-.ifdef usb-debug-via-serial
-   -- Configure SCI for 115200 bps
-
-   SCIBDH ) clr        ( baud rate divisor, high)
-   #13 # SCIBDL ) mov  ( baud rate divisor, low)
-                       ( yields 115200 from 24M bus clock)
-   0c # SCIC2 ) mov    ( enable rcvr, xmitter)
-.then
+   ( Configure SCI for 115200 bps)
+   SCIBDH ) clr         ( baud rate divisor, high)
+   #13 # SCIBDL ) mov   ( baud rate divisor, low)
+                        ( yields 115200 from 24M bus clock)
+   0c # SCIC2 ) mov     ( enable rcvr, xmitter)
 
 .ifdef usb-reset
    80 # USBCTL0 ) mov
@@ -494,25 +652,31 @@ label finish-config
    ( Set up EP 4 OUT.)
    out4-buffer >bufaddr # lda  out4-bufaddr ) sta
 
+.ifdef pp
    ( Set up EP 5 INs.)
    in5-even-buffer >bufaddr # lda  in5-even-bufaddr ) sta
    in5-odd-buffer >bufaddr # lda  in5-odd-bufaddr ) sta
+.else
+   in3-buffer >bufaddr # lda  in3-bufaddr ) sta
+.then
 
    01 # CTL ) mov          -- enable USB module
    45 # USBCTL0 ) mov      -- turn on pullup, vreg, and PHY
    begin  INTSTAT 0 bset?  until  ( wait for USBRSTF)
    ( fall thru)
 
-10 zvar token-buf  ( capture last 16 tokens)
- 1 zvar token-index
-
 label after-usb-reset
    ADDR ) clr
    0ff # INTSTAT ) mov     -- clear all flags
    0d # EPCTL0 ) mov       -- enable ep0 as control endpt
    09 # EPCTL4 ) mov       -- enable ep4 as OUT endpt
-   token-index ) clr
-   rts  ;c
+.ifdef pp
+   05 # EPCTL5 ) mov       -- enable ep5 as IN endpt
+.else
+   05 # EPCTL3 ) mov       -- enable ep3 as IN endpt
+.then
+
+   reset-serial j  ;c
 
 ( XXX To convert process-usb into an interrupt handler, jumps to
   setup-or-out-token, in-token, and nak-in-expect-setup should really be
@@ -525,16 +689,23 @@ label process-usb
       after-usb-reset c
       nak-in-expect-setup j  ( get ready to receive SETUP)
    then
+   INTSTAT 2 bset? if ( SOFTOKF - start-of-frame token)
+      INTSTAT 2 bset  ( ack SOFTOKF)
+      frame-count ) inc
+   then
    INTSTAT 3 bset? if ( TOKDNEF)
-      STAT ) lda  INTSTAT 3 bset  ( ack TOKDNEF)
-      token-index ) ldx  .h clr
-      token-buf ,x sta  .x inc
-      10 # cpx  0= if  .x clr  then  token-index ) stx
-       0f8 # and
-                 0= if  setup-or-out-token j  then
-       08 # cmp  0= if  in-token j  then
-       40 # cmp  0= if  out4-token j  then
-      ( not EP0 or EP4 OUT; ignore)  ( fall thru)
+      STAT ) lda  tax  INTSTAT 3 bset  ( ack TOKDNEF)
+      0f8 # and
+                0= if  setup-or-out-token j  then
+      08 # cmp  0= if  in0-token j  then
+      18 # cmp  0= if  in1-token j  then
+      40 # cmp  0= if  out4-token j  then
+.ifdef pp
+      58 # cmp  0= if  in5-token j  then
+.else
+      38 # cmp  0= if  in3-token j  then
+.then
+      ( not EP0, EP1, EP4 or EP5: ignore)  ( fall thru)
    then
    INTSTAT 7 bset? if ( STALLF)
       EPCTL0 1 bclr ( remove EPSTALL)
@@ -543,17 +714,23 @@ label process-usb
    then
    rts  ;c
 
+.ifdef in-ram
+
 label emulated-swi
    ( jsr/bsr has already pushed PC)
    .x psh  .a psh  tpa ( flags to A)  .a psh  sei
+
+.else
+
+Vswi handler
+
+.then
+
    .h psh
    finish-control-write c  ( ready status IN; also prepare for SETUP)
 
-.ifdef usb-debug-via-serial
    begin  process-serial c
           process-usb c      again  ;c
-.else
-   begin  process-usb c  again  ;c
 .then
 
 ( If the chat interaction changes the PC on this stack frame to point
@@ -565,10 +742,14 @@ label emulated-swi
   stack frame wil simply return here, and we'll take the "exception" again.)
 
 label interact
+.ifdef in-ram
    begin  emulated-swi c  again  ;c
+.else
+   begin  swi  again  ;c
+.then
 
-here
-0ffc0 goto
+-- here
+-- 0ffc0 goto
 
 Vreset handler
    @ram #ram + # ldhx
@@ -626,4 +807,4 @@ Vreset handler
    finish-config c
    begin  interact c  again  ;c
 
-goto ( back to saved)
+-- goto ( back to saved)
