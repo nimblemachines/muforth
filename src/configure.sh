@@ -2,7 +2,7 @@
 
 # This file is part of muforth: https://muforth.nimblemachines.com/
 #
-# Copyright (c) 2002-2018 David Frech. (Read the LICENSE for details.)
+# Copyright (c) 2002-2019 David Frech. (Read the LICENSE for details.)
 
 # This NOT a GNU configure script!
 
@@ -27,7 +27,7 @@ if [ -d ../.git ]; then
 
 # This file is part of muforth: https://muforth.nimblemachines.com/
 #
-# Copyright (c) 2002-2018 David Frech. (Read the LICENSE for details.)
+# Copyright (c) 2002-2019 David Frech. (Read the LICENSE for details.)
 
 # So that we always have an accurate git commit available to Forth code,
 # after commit, checkout or merge generate a muforth file that defines the
