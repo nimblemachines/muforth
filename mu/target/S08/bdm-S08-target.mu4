@@ -1,0 +1,314 @@
+( This file is part of muforth: https://muforth.nimblemachines.com/
+
+  Copyright 2002-2019 David Frech. (Read the LICENSE for details.)
+
+loading S08 BDM target (host)
+
+( This file contains the host-side code to talk to a BDM transport layer --
+  either over serial or USB -- and expects to talk to an S08 target. There
+  will eventually also be a ColdFire V1 version of this file.)
+
+hex
+
+( Non-intrusive)
+: b.Background                                90 Send1  Expect0 ;
+: b.WriteByte     ( byte a)           >lohi  0c0 Send4  Expect0 ;
+: b.WriteByteS    ( byte a - status)  >lohi  0c1 Send4  Expect1 ;
+: b.WriteControl  ( status)                  0c4 Send2  Expect0 ;
+: b.ReadByte      ( a - byte)         >lohi  0e0 Send3  Expect1 ;
+: b.ReadByteS     ( a - status byte)  >lohi  0e1 Send3  Expect2 ;
+: b.ReadStatus    ( - status)                0e4 Send1  Expect1 ;
+
+( Active - must be in "active BDM" mode to use.)
+: b.Go           08 Send1  Expect0 ;
+: b.Trace        10 Send1  Expect0 ;
+: b.ReadA        68 Send1  Expect1 ;
+: b.ReadCC       69 Send1  Expect1 ;
+: b.ReadPC       6b Send1  Expect2  hilo> ;
+: b.ReadHX       6c Send1  Expect2  hilo> ;
+: b.ReadSP       6f Send1  Expect2  hilo>  1+ ( normalised!) ;
+: b.ReadNext     70 Send1  Expect1 ; ( inc HX, then read byte)
+: b.ReadNextS    71 Send1  Expect2 ; ( inc HX, read status, read byte)
+
+: b.WriteA               48 Send2  Expect0 ;
+: b.WriteCC              49 Send2  Expect0 ;
+: b.WritePC       >lohi  4b Send3  Expect0 ;
+: b.WriteHX       >lohi  4c Send3  Expect0 ;
+: b.WriteSP   1-  >lohi  4f Send3  Expect0 ; ( normalised!)
+: b.WriteNext            50 Send2  Expect0 ; ( inc HX, write byte)
+: b.WriteNextS           51 Send2  Expect1 ; ( inc HX, write byte, read status)
+
+comment Commands
+d = delay 16 BDM cycles
+r = read one byte
+w = write one byte
+
+Non-intrusive
+=============
+Background   90 d
+ReadStatus   e4 r
+WriteControl c4 w
+ReadByte     e0 w w d r    -- write addr, read byte
+ReadByteS    e1 w w d r r  -- write addr, read status, read byte
+ReadLast     e8 r r        -- read status, read last byte read
+WriteByte    c0 w w w d
+WriteByteS   c1 w w w d r  -- write addr, write byte, read status
+ReadBkpt     e2 r r
+WriteBkpt    c2 w w
+
+Active mode
+===========
+Go           08 d
+Trace        10 d
+ReadA        68 d r
+ReadCC       69 d r
+ReadPC       6b d r r
+ReadHX       6c d r r
+ReadSP       6f d r r
+ReadNext     70 d r         -- inc HX, then read byte
+ReadNextS    71 d r r       -- inc HX, read status, read byte
+WriteA       48 w d
+WriteCC      49 w d
+WritePC      4b w w d
+WriteHX      4c w w d
+WriteSP      4f w w d
+WriteNext    50 w d         -- inc HX, write byte
+WriteNextS   51 w d r       -- inc HX, write byte, read status
+
+comment Commands
+
+
+( BDM versions of interact operations)
+
+( Since WriteNext and ReadNext _pre-increment_, let's subtract one when we
+  set the address, and add one when we read it.)
+: b.SetAddr           -1 +a  b.WriteHX ;
+: b.GetAddr  b.ReadHX  1 +a ;  ( XXX UNUSED)
+
+: b.setup-chunk  ( 'target len buffer - len)
+   m !  swap b.SetAddr ;
+
+( It's a bummer to have to have this ifdef here, but otherwise splitting up
+  the serial and USB code for doing fast chunked reads and writes gets way
+  too complicated. We need to have, eg, b.SetAddr defined for both
+  versions, but it gets defined in *this* file, so we define the serial and
+  USB words separately *before* loading this file. Ugh.)
+
+.ifdef usb-target
+
+( Currently we can only read or write 16 bytes at a time. Our chunk might
+  be bigger, so we have to break it up.)
+
+: read-usb-buffer  ( len)
+   -- cr ." rd-usb-buf "  m @ u.  dup u.
+   push  70  1  r@  m @  u.BdmRead  pop  m +! ;
+
+: b.ReadChunk    ( 'target len buffer)
+   b.setup-chunk
+   #128 /mod ( r q)  for  #128 read-usb-buffer  next
+                  ( rem)  =if  read-usb-buffer  ^     then  drop ;
+
+: write-usb-buffer  ( len)
+   -- cr ." wr-usb-buf "  m @ u.  dup u.
+   push  50  1  0  r@  m @  u.BdmWrite  pop  m +! ;
+
+: b.WriteChunk   ( 'target len buffer)
+   -- cr ." write-chunk "  rot dup u. rot dup u. rot dup u.
+   b.setup-chunk
+   #128 /mod ( r q)  for  #128 write-usb-buffer  next
+                  ( rem)  =if  write-usb-buffer  ^     then  drop ;
+
+.else
+
+: b.ReadChunk    ( 'target len buffer)
+   b.setup-chunk  for  b.ReadNext m&  next ;
+
+: b.WriteChunk   ( 'target len buffer)
+   b.setup-chunk  for  m* b.WriteNext  next ;
+
+.then
+
+( XXX should be a limited number of tries)
+: b.Ready  begin  b.ReadStatus  40 and until ;
+
+( Order of regs in memory: H CC A X PC)
+( NOTE: Since we no longer wait for target in b.RunWait - it doesn't exist
+  - let's wait for the target here, before reading the regs.)
+
+: b.GetRegs  ( buf - sp)  m !  b.Ready
+   b.ReadHX >lohi ( X H) m&  b.ReadCC m&  b.ReadA m& ( X) m&
+   b.ReadPC >lohi m& m&  b.ReadSP ;
+
+: b.SetRegs  ( buf)  m !
+   m* ( H)  m* b.WriteCC  m* b.WriteA  m* ( H X ) hilo> b.WriteHX
+   m* m* hilo> b.WritePC ;
+
+.ifdef bdm-flash-no-ram
+
+( Let's do this over BDM again, instead of running a ram routine. Warning:
+  doing it this way is *really* slow!)
+
+variable bdm-flash-command
+: b.flash-byte  ( byte)
+   b.WriteNext  bdm-flash-command @  \eq FCMD b.WriteByte
+   80 \eq FSTAT b.WriteByte
+   begin  \eq FSTAT b.ReadByte  40 and  until ;
+
+: b.FlashChunk   ( 'target len buffer cmd - status)
+   bdm-flash-command !
+   30 \eq FSTAT b.WriteByte  ( clear flash errors)
+   b.setup-chunk  for  m* b.flash-byte  next
+   \eq FSTAT b.ReadByte  ( return flash status) ;
+
+.else  ( bdm-flash-using-ram)
+
+: b.FlashChunk   ( 'target len buffer cmd - status)
+   30 \eq FSTAT b.WriteByte  ( clear flash errors)
+   ( cmd) \m flash-command  b.WriteByte
+   \m bdm-flash-row b.WritePC
+   push ( buffer)
+   dup ( len) \m bdm-flash-count b.WriteByte
+
+   ( copy buffer to ram just after the flash-row routine)
+   \m bdm-flash-end  ( rambuf)  dup b.WriteSP  ( 'target len rambuf)
+   swap ( len)  pop  b.WriteChunk  ( clobbers HX)
+   ( 'target)  b.WriteHX
+   b.Go  b.Ready  ( flash the buffer)
+   \eq FSTAT b.ReadByte  ( return flash status) ;
+
+.then
+
+: ResetSP
+   @ram #ram +  b.WriteSP ;
+
+( Bollocks! Even this is different between variants. The JS/JM/SH uses two bits
+  to select which kind of watchdog; setting both to zero is required to
+  disable it. It looks like it's safe to write both bits 7 and 6 to zero to
+  disable the dog on the parts I've looked at...
+
+  It looks like newer parts are using this more sophisticated watchdog.
+  Rather than just write to a memory location, you have to write 55 then
+  AA.)
+
+: NoWatchdog
+   \eq SOPT1 b.ReadByte  3f and  \eq SOPT1 b.WriteByte ;
+
+( I've decided we shouldn't do this. It's too complicated. Not only do
+  different parts use different clocks - ICG, ICS, MCG - but even the parts
+  that have ICS put the registers in different places! So ICSTRM is _not_
+  always at 003a.
+
+  How about instead we simply leave the part untrimmed, in its BDIV=2 state
+  - running at half speed - and set FCDIV so that no matter what, its value
+  makes sense.
+
+  Using a divisor of 25 seems safe. The untrimmed speed of the DCO should
+  fall between 16M and 20M, putting the bus clock between 4M and 5M. A
+  divisor of 25 puts the flash clock into the range of 160k to 200k, which
+  is perfect.
+
+  But this is specific to the QG! I need a table of values somewhere...
+
+  Another approach is to have the device file set TRIM to ICSTRM, ICGTRM,
+  MCGTRM. I still need to know what each part's POR bus clock speed and BDM
+  clock are... put these into the device file!)
+
+( Trim internal oscillator to factory setting; on QG parts this is 31.25k,
+  which results in 16M FLL frequency; this is divided by two to give a
+  default BDM freq of 8M, and divided by two again - because of reset BDIV
+  setting - to give a reset bus clock of 4M.)
+
+: TrimOsc ( trim)   \eq TRIM b.WriteByte ;
+
+( Set FCDIV to correspond to bus clock at power-on-reset. As an added
+  bonus, we don't subtract one from the divisor, so it's one bigger than it
+  needs to be; this gives us a bit of cushion in case the factory trim has
+  the clock running fast. In the case of QG parts - 4M bus clock out of POR
+  - this puts the Flash clock at 190k instead of 200k.)
+
+: SetFCDIV  ( khz)
+   \eq FCDIV b.ReadByte  80 and if  drop ^  then  ( already set)
+   khz>fcdiv ( divide freq by 200k, rounding up)  \eq FCDIV b.WriteByte ;
+
+( If trim - either the factory [8Mhz] trim, or our 9.216Mhz trim - found in
+  flash, trim oscillator and also set FCDIV. If not found, print a message
+  and leave everything alone.)
+
+: SetupClock
+.ifdef try-our-trim
+   0ffad ( our 9.216M trim) b.ReadByte  dup 0ff xor if
+      TrimOsc  [ #9,216 2/ #] ( khz)  SetFCDIV  ^  then  drop
+.then
+
+.ifndef skip-factory-trim
+   0ffaf ( factory trim) b.ReadByte  dup 0ff xor if
+      TrimOsc  \eq POR-bus-clock  SetFCDIV  ^  then  drop
+.then
+
+   ." 
+Both trims in flash are 0ff; didn't set TRIM or FCDIV. You have to do this by hand.
+"  ;
+
+( Get target into a known, safe state. Chat code will have done this for
+  itself at reset, so this is only necessary for BDM targets.)
+
+( Since we are flashing - even via BDM - by executing code from RAM, we
+  have to initialise the chip first.)
+
+: b.Hi
+   SetupClock ( trim & fcdiv)  NoWatchdog  ResetSP
+   9d ( nop) \m flash-exit  image-c!  ( patch flash routine)
+   \m flash-byte  \m bdm-flash-end  over -  copy-region
+   \m flash-end  ram-copied ! ( pretend we've copied, but only up to flash-end) ;
+
+: try-clock
+   b.ReadStatus dup u.  0c8 = if  b.Hi  -1 ^  then  0 ;
+
+.ifdef show-target-clock
+decimal
+
+: target-clock ( sync-count - clockfreq)
+   .ifdef S08
+      .ifdef  4.9152m  4,915,200  .else
+      .ifdef  9.8304m  9,830,400  .else
+      .ifdef 24m      24,000,000  .else
+            ( 9.216m)  9,216,000  .then .then .then
+   .else  ( 908 running at 4.608M from 18.432M xtal)
+      4,608,000
+   .then
+   128 rot */ ;
+
+hex
+.then
+
+: pwr
+   begin
+      b.BkgdLow  cr ." power cycle S08, then press a key (q to give up)..."
+      tty user-raw  key  tty cooked  cr
+      char q = if  error" failed to connect. Run bdm to try again." then
+
+.ifdef show-target-clock
+      b.BkgdHiZ   b.Sync dup u.  b.Sync dup u.  ( sync1 sync2)
+      + 2/ target-clock  radix preserve decimal  u.
+.else
+      b.BkgdHiZ   b.Sync u.  b.Sync u.
+.then
+      b.Clock4M ." trying 4M: " try-clock  if ^ then
+      b.Clock8M ." trying 8M: " try-clock  if ^ then
+      ." Didn't get a valid status over BDM."
+   again ;
+
+decimal
+
+( Handy shortcuts - esp for testing.)
+: s  b.Sync u. ;
+: t  b.Trace  get-regs .r ;
+: w  b.WriteByte ;
+: r  b.ReadByte ;
+
+: b.Hello
+   b.Start  ( start BDM firmware)  pwr ;
+
+: bdm
+   chat-via  b.Hello  b.GetRegs  b.SetRegs  b.Go ( Run)
+             b.ReadChunk  b.WriteChunk  b.FlashChunk ;

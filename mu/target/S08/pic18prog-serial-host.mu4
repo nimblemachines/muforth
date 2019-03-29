@@ -1,0 +1,43 @@
+( This file is part of muforth: https://muforth.nimblemachines.com/
+
+  Copyright 2002-2019 David Frech. (Read the LICENSE for details.)
+
+loading PIC18 programmer over serial (host)
+
+( Host-side code to drive the PIC18 programmer code in
+  target/S08/pic18prog-serial-core.mu4.)
+
+hex
+
+( Commands
+
+0-1f  Bye        - exit PIC18 prog code and return to chat loop
+  20  Read       - send 4-bit command, send dummy byte, read 1 byte
+  21  Write      - send 4-bit command, send 2 bytes
+  22  Program    - send 4-bit command, send 2 dummy bytes
+  23  Config     - send 4-bit command, send 2 dummy bytes
+  24  +Prog      - enter programming mode
+  25  -Prog      - exit programming mode
+)
+
+: pic.Bye  ( End session, return to chat command loop)
+   00 send  00 send   00 send  resync ;
+
+: @status    recv drop ;
+: send-key   55 send  @status ;
+
+: pic.Read   ( cmd - b1)     20 send  send  recv ;
+: pic.Write  ( b1 b0 cmd)    21 send  send  send  send  ; -- drain ;
+: pic.Program                22 send                    send-key ;
+: pic.Config                 23 send                    send-key ;
+: pic.+Prog                  24 send                    @status ;
+: pic.-Prog                  25 send ;
+
+: pic.Hello  ( start the PIC18 programming firmware on the connected device)
+   #115200 bps  resync
+.ifdef in-ram
+   0112 c.SetPC c.Run  ( run from ram - loads right after flash routine)
+.else
+   @pic18prog c.SetPC c.Run
+.then
+   " P18p1" await  ( match signature) ;

@@ -1,6 +1,6 @@
 ( This file is part of muforth: https://muforth.nimblemachines.com/
 
-  Copyright 2002-2018 David Frech. (Read the LICENSE for details.)
+  Copyright 2002-2019 David Frech. (Read the LICENSE for details.)
 
 loading MSP430 flash programming
 
@@ -17,22 +17,26 @@ hex
 
 ( XXX These are for main memory. Do we want to treat info memory separately?)
 #512 constant /page   ( this is the erase size of main memory)
- #64 constant /row    ( max size of row to program)
 
-: program-row  ( 'target len erase?)
-   push  cr ." program-row "  over u.  dup u.
-   r@  if  ." +erase "  then
-   over image+ -rot  ( buf a u)  pop  t.FlashChunk
-   0= if  error" flash access or protection error"  then ;
+: ?flash  ( fail?)
+   if error" flash access or protection violation" then ;
 
-: erase?  ( 'target - f)   [ /page 1- #] and  0= ;
+: erase-page   ( 'target)
+   cr ." erase "  dup u.
+   t.ErasePage  ?flash ;
 
-: row  ( 'target len - 'target+len)
-   2dup + push  over erase?  program-row  pop ;
+: program-chunk  ( 'target len)
+   cr ." program "  over u.  dup u.
+   over image+ -rot  ( buf a u)  t.FlashChunk  ?flash ;
+
+: erase?  ( 'target - erase?)   [ /page 1- #] and  0= ;
+
+: flash-chunk  ( 'target len - 'target+len)
+   2dup + push  over erase? if  over erase-page  then  program-chunk  pop ;
 
 : flash-region  ( a len)
-   /row /mod  ( r q)  swap push  for   /row row  next
-                           pop  =if  ( rem) row  drop ^  then  2drop ;
+   100 /mod  ( r q)  swap push  for   100 flash-chunk  next
+                         pop  =if  ( rem) flash-chunk  drop ^  then  2drop ;
 
 ( Check to see if we're going to clobber the bootloader and complain if
   we're not executing from RAM.)
@@ -63,7 +67,7 @@ order to re-flash it. Consult a local guru. ;-)" ;
 
 : flash-buffer   pad  1 Ki  + ;    ( scratch space)
 
-( Be careful about setting p. Some chunked read implementations use it, so
+( Be careful about setting m. Some chunked read implementations use it, so
   set it *after* doing the read.)
 
 : verify-chunk  ( 'target len - 'target+len)
@@ -81,10 +85,16 @@ order to re-flash it. Consult a local guru. ;-)" ;
 : verify-region
    100 /mod  ( r q)  swap push  for  100 verify-chunk  next
                         pop  =if  ( rem) verify-chunk  drop ^  then  2drop ;
+
+: ?empty-region ( a u - a u)  =if ^ then
+   cr ." WARNING: The flash region is empty. verify will always report no change." ;
+
+: ?skip-commit  ( a u - a u)  over @boot =  if  4 -4 v+  then ;
+
 : verify
    radix preserve hex
    h preserve  flash
-   region ( a len)  verify-region  ( program image)
+   region ( a len)  ?empty-region  ?skip-commit  verify-region  ( program image)
    @vector-page  \m here  u< if
       @vectors #vectors  verify-region
    then ;

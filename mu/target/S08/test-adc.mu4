@@ -1,0 +1,88 @@
+( This file is part of muforth: https://muforth.nimblemachines.com/
+
+  Copyright 2002-2019 David Frech. (Read the LICENSE for details.)
+
+( Code to test the ADC subsystem, by reading temperature and bandgap
+  values.)
+
+__meta
+hex
+ram
+
+code adc-init
+   SPMSC1 ) lda  01 # ora ( BGBE)  SPMSC1 ) sta  ( enable bandgap)
+.ifdef QG8
+   %1001_1011 # ADCCFG ) mov  ( 10 bits; use asynch clock)
+.then
+.ifdef QE32
+   %1001_0111 # ADCCFG ) mov  ( 12 bits; use asynch clock)
+.then
+   rts  ;c
+
+code adc@  ( channel# -- adc-value)
+   tl lda  ADCSC1 ) sta  ( Set channel and start conversion)
+   begin  ADCSC1 7 ( COCO) bset?  until  ( loop until conversion completes)
+   ADCRH ) lda  th sta   ( read high result, put on stack)
+   ADCRL ) lda  tl sta   ( read low result, put on stack)
+   rts  ;c
+
+: temp@      #26 ( temp channel)  adc@ ;
+: bandgap@   #27 ( bandgap channel)  adc@ ;
+
+
+( Now that we can read the chip, lets convert ADC values to temperature.)
+
+__host  ( same as doing { )
+
+decimal
+( These two routine take temperature in milli-degrees.)
+: C>F  ( celsius - fahrenheit)            9 5 */  32,000 +  ;
+: F>C  ( fahrenheit - celsius)  32,000 -  5 9 */ ;
+
+.ifdef QG8
+       10 constant adc-bits ( adjust to your chip)
+1,200,000 constant Vgap     ( bandgap voltage in uV - change this for your setup)
+.then
+
+.ifdef QE32
+       12 constant adc-bits ( adjust to your chip)
+1,170,000 constant Vgap     ( bandgap voltage in uV - change this for your setup)
+.then
+
+          variable Vrail    ( Vdd voltage in uV - change this for your setup)
+3,300,000          Vrail !  ( but we can use bandgap to trim this!)
+  701,200 constant Vtemp25  ( uV reading at 25C)
+    1,646 constant m-cold   ( cold slope: mV/degree C)
+    1,769 constant m-hot    (  hot slope: mV/degree C)
+
+comment Formulas!!
+
+Basic conversion formulas. NOTE: all temp values are in Celsius.
+
+  temp = 25 - ((Vtemp - Vtemp25) / m_cold)  if Vtemp > Vtemp25
+  temp = 25 - ((Vtemp - Vtemp25) / m_hot)   if Vtemp < Vtemp25
+
+What about Vtemp?
+
+  Vtemp = rail * ADCtemp / resolution  ( uV)
+
+where
+
+  ADCtemp  is the raw data read from the ADC (0 to resolution-1)
+  resolution is 2^adc-bits  (ie, 256 for  8 bit
+                                1024 for 10 bit
+                                4096 for 12 bit)
+Formulas!!
+
+
+: adc>V      ( adc     - V)       Vrail @  swap  1 adc-bits << 1-       */ ;
+: gap>Vrail  ( bandgap - Vrail)   Vgap           1 adc-bits << 1-  rot  */ ;
+
+: slope  ( Vtemp - slope)
+   Vtemp25 u< if  m-hot  ( hot slope)  ^ then
+                 m-cold  ( cold slope) ;
+
+: temp   ( adc-temp - mC)
+   adc>V  dup Vtemp25 -  1000 rot slope  */  25,000 swap - ;
+
+__meta

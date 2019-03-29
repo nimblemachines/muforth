@@ -1,6 +1,6 @@
 ( This file is part of muforth: https://muforth.nimblemachines.com/
 
-  Copyright 2002-2018 David Frech. (Read the LICENSE for details.)
+  Copyright 2002-2019 David Frech. (Read the LICENSE for details.)
 
 loading MSP430 serial chat protocol v3 (host)
 
@@ -79,7 +79,7 @@ variable checksum
 : c.Hello
    #115200 bps  ?reset
    cr ." Chat firmware version "  c.GetVersion  ?ok
-   radix preserve  hex  sep preserve  -sep   u. ;
+   radix preserve  hex  sep preserve  -sep   <# 4# 4# #> type ;
 
 ( This is for the sake of the G2553 and other chips that have bytewide i/o
   ports from 0020 to 00ff, and wordwide i/o from 0100 to 01ff.)
@@ -93,29 +93,11 @@ variable checksum
 : c.WriteChunk   ( buf a u)
    c.setup-chunk  c.WriteWords  for  m* m* lohi> >w  next  ?ok ;
 
-.equates. .contains FCTL1 .if  ( chip has Flash memory!)
+: deprecated    ( - -1)
+   cr ." Don't use this code! Use chat-v2 or chat-v4 instead."  -1 ;
 
-: flash-failed?  ( status - failed?)
-   ." FCTL3=" dup u.
-   84 and ;
-
-: erase-page  ( 'target - status)
-   [ \eq FERASE \eq FKEY + #]  swap  1  ( fcmd a u)  c.FlashWords  0 >w  w> ;
-
-( Or together returned flash statuses for the chunk, then check it once.)
-: c.FlashChunk  ( buf a u erase? - ok?)
-   if  over erase-page  flash-failed? if  drop 2drop 0  ^  then  then
-   c.setup-chunk  ( #words a #words)
-   [ \eq FWRT   \eq FKEY + #]  -rot  ( fcmd a u)  c.FlashWords
-   0 swap  ( 0 #words)
-   for  m* m* lohi>  >w  w> or  next
-   flash-failed? 0=  ?ok ;
-
-.else
-
-: c.FlashChunk  ( buf a u erase? - ok?)  drop  c.WriteChunk  -1  ?ok ;
-
-.then
+: c.ErasePage   (     a   - fail?)  drop  deprecated ;
+: c.FlashChunk  ( buf a u - fail?)  drop  2drop  deprecated ;
 
 ( NOTE: We don't define RunWait separately. Since we will always be reading
   the registers back after Run, that first read command will block until
@@ -123,4 +105,4 @@ variable checksum
 
 : chat
    chat-via  c.Hello  get-status  c.Run
-             c.ReadChunk  c.WriteChunk  c.FlashChunk ;
+             c.ReadChunk  c.WriteChunk  c.ErasePage  c.FlashChunk ;

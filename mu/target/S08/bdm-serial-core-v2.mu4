@@ -1,0 +1,283 @@
+( This file is part of muforth: https://muforth.nimblemachines.com/
+
+  Copyright 2002-2019 David Frech. (Read the LICENSE for details.)
+
+loading S08 BDM support v2 (core)
+
+__meta
+
+hex
+
+( Support for Freescale's S08 Background Debug Mode - or BDM.)
+
+( This is "version 2" which means I re-imagined it to be more like the
+  byteloader protocol, where the target is never waiting for more than one
+  byte.)
+
+( I've split out the bit routines into two other files - one for the 908,
+  and one for the S08. Look at bdm-bit-908.mu4 and bdm-bit-S08.mu4.)
+
+( It turns out that because the 9S08QG8, when mostly blank, is hard to get
+  into Active BDM mode. On POR - power on reset - it starts running random
+  code and either gets a COP - watchdog - reset, or an illegal instruction,
+  or illegal address. So it resets and starts all over again. Trying to get
+  into Active BDM via the BKGD pin is basically impossible. There is a
+  forum posting about this here:
+
+  http://forums.freescale.com/freescale/board/message?message.uid=11435#U11435
+
+  So, given that, we have to hold BKGD/MS low during POR in order to force
+  the chip into Active BDM mode. A side-effect of this is that it selects
+  the bus clock - rather than the "alternate" BDM clock - ICSLCLK - so the
+  BDM will be running at 4MHz instead of 8. This makes life simpler in some
+  ways, but it turns out that it's pretty easy to meet the timing specs for
+  both 4M and 8M BDM with a "host" running at less than 6M.)
+
+( Our signature.)
+label id
+   char S c,  char 0 c,  char 8 c,  ( S08 architecture)
+   char b c,                        ( BDM)
+   char 2 c,                        ( version 2)
+
+( The SCI code is identical between 908 and S08 except for the names - and
+  offsets - of the SCI status and data regs ... so let's abstract them.)
+
+.ifdef S08
+
+aka SCIS1 SciStatus
+aka SCID  SciData
+
+.else   -- 908
+
+aka SCS1 SciStatus
+aka SCDR SciData
+
+.then
+
+macro SciRx?
+   \a begin  SciStatus  5 ( recvr full)  bset? \a until  ;m
+
+macro SciRx
+   SciRx?
+   SciData )  lda  ;m
+
+macro SciRxBuf
+   SciRx?
+   SciData )  0 ,x  mov  ;m  ( the mov does post-incr of HX)
+
+macro SciTxBuf
+   \a begin  SciStatus  7 ( xmit empty)  bset? \a until
+   0 ,x  SciData )  mov  ;m  ( the mov does post-incr of HX)
+
+
+( NOTE: Command numbers are all given in HEX.)
+
+( Misc commands)
+label BdmMisc
+   .a decz? if  ( 28 BkgdLow)
+      BdmDriveLow ) jmp  -- drive BKGD/MS low
+   then
+
+   .a decz? if  ( 29 BkgdHiZ)
+      BdmHiZ ) jmp
+   then
+
+   .a decz? if  ( 2a Set4M)
+      BdmRx1 # ldhx
+      SetRx1_4M ) jsr
+      SetTx1_4M ) jmp
+   then
+
+   .a decz? if  ( 2b Set8M)
+      BdmRx1 # ldhx
+      SetRx1_8M ) jsr
+      SetTx1_8M ) jmp
+   then
+
+.ifdef bdm-16m-target
+   .a decz? if  ( 2c Set16M)
+      BdmRx1 # ldhx
+      SetRx1_16M ) jsr
+      SetTx1_16M ) jmp
+   then
+.then
+
+   ( Unknown)  ( do nothing at all!)  rts  ;c
+
+( BdmChat uses the following stack frame:
+  0,s to 3,s   read and write buffer
+  4,s          write count
+  5,s          read count
+  6,s          current count)
+
+\m bdm-chat-loop resolve>>  ( jump at start of Flash points here)
+
+( Return a signature of who we are and what we're doing.)
+label signon
+   id # ldhx  5 # lda
+   begin  SciTxBuf  .a decz? until
+   ( fall thru)
+
+label BdmChat
+   -7 # ais   ( room for read and write counts, cur count, and buffer)
+   BdmHiZ ) jsr  ( make sure BKGD high and tri-stated)
+label BdmLoop
+   SciRx
+
+   20 # sub   ( BDM commands start at 20 hex; anything below that, we exit)
+   u< if  ( 00 Bye up to 1f)  ( return to byteloader)  7 # ais  rts  then
+
+   0= if  ( 20 Idle)
+      BdmLoop again
+   then
+
+   .a decz? if  ( 21 Send1, aka SendFirst)
+      4 ,s sta  ( set write count to 0)
+      tsx  ( point HX at start of buffer)
+      .a inc  ( so we execute the WriteNext code!)
+      ( fall through...)
+   then
+
+   .a decz? if  ( 22 SendNext)
+      4 ,s inc  ( incr write count)
+      SciRxBuf  BdmLoop again
+   then
+
+   .a decz? if  ( 23 RecvNext)
+label RecvNext
+      SciTxBuf  BdmLoop again
+   then
+
+   .a dec
+   03 # cmp  u< if  ( 24..26 Execute BDM, Expect 0..2)
+      5 ,s sta  ( read count)
+
+      4 ,s lda  ( get write count)
+      6 ,s sta  ( count)
+      tsx  ( point HX at start of buffer)
+      begin  BdmTx ) jsr  6 ,s decz? until  ( write bytes via BDM)
+
+      ( Delay a bit - we're supposed to wait 16 target BDM cycles after)
+      ( writing and before reading. Instruction overhead between here and)
+      ( driving BKGD is at least 16 host cycles.)
+.ifdef S08
+      0 ,x tst  0 ,x tst
+.else
+      nsa  nsa
+.then
+
+      5 ,s lda  0!= if  ( read count non-zero)
+         6 ,s sta  ( count)
+         tsx  ( point HX at start of buffer)
+         begin  BdmRx ) jsr  6 ,s decz? until  ( read bytes via BDM)
+      then
+
+      tsx  ( point HX at start of buffer)
+      ( send back first byte of response, or junk byte for Expect0)
+      RecvNext again
+   then
+
+   03 # sub
+   0= if  ( 27 SyncPulse)
+      tsx  ( point HX at start of buffer)
+      SyncPulse ) jsr
+      RecvNext again
+   then
+
+   BdmMisc ) jsr
+   BdmLoop again  ;c
+
+comment dispatch-ideas
+
+Included here for historio-comic relief.
+
+How about the following commands:
+0 Bye - escape back to byteloader
+1 Write 1 byte from SCI -> buffer
+2 ditto, 2 bytes
+3 ditto, 3
+4 ditto, 4
+5 write to BDM, read nothing
+6 ditto, read 1, write to SCI
+7 ditto, read 2, write to SCI
+8 send sync pulse, return two byte count
+9+ Sync/No-op
+
+Ten commands!
+
+Read Status: 01 E4 05
+Read A: 01 68 06
+Read HX: 01 6C 07
+WriteHX: 03 4C hi lo 05
+
+We can always re-sync by writing 00 00 00 00.
+
+Wanting to keep same "almost stateless" design as the byteloader. So, we
+have the following commands:
+
+Set write count
+Set read count
+Set byte (0..3)
+Read byte (0..1)
+Execute
+Bye  ( escape back to byteloader)
+
+So, for example, to execute the Read Status command, we do the following:
+SetWriteCount(1)
+SetReadCount(0)
+SetByte0(0e4)
+Execute
+
+And to Read HX we do this:
+SetWriteCount(1)
+SetReadCount(2)
+SetByte0(6c)
+Execute
+GetByte0 -> H
+GetByte1 -> X
+
+To Write a Byte (in background mode):
+SetWriteCount(4)
+SetReadCount(0)
+SetByte0(0c0)
+SetByte1(hi)
+SetByte2(lo)
+SetByte3(data)
+Execute
+
+Seems a bit inefficient, though - right?
+
+How about a hybrid approach? We keep as much state as possible.. We'll
+still need Set0..2 and Get0..1. But if the commands are mapped to the
+actual BDM commands, and the "logic" is on the 908, that might be better.
+The above examples would then look more like this:
+
+ReadStatus
+Get0
+
+ReadHX
+Get0 -> H
+Get1 -> X
+
+Set0(a_hi)
+Set1(a_lo)
+Set2(data)
+WriteByte
+
+That seems better... and common commands (running in Active mode) would
+look like this:
+
+ReadA
+Get0
+
+Set0
+WriteA
+
+All this is crazy - we just implement things the "normal" way - with the
+exception that we number the commands from zero, for easier dispatching,
+and we make command 0 be "Sync", which is a no-op. This is so we can easily
+resync the protocol. By sending three 0 chars we fulfil any commands need
+for bytes and if we exceed it, we loop at Sync.
+
+comment dispatch-ideas
+

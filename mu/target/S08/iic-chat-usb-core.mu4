@@ -1,0 +1,438 @@
+( This file is part of muforth: https://muforth.nimblemachines.com/
+
+  Copyright 2002-2019 David Frech. (Read the LICENSE for details.)
+
+loading IIC chat over USB (core)
+
+__meta
+
+hex
+
+( Support for chatting with slave devices over IIC, using my JS16 as a
+  USB-based IIC master. The difference between this and iic-usb-core.mu4 is
+  that this is more high-level. That code is more for experimentation.)
+
+( Ok, so I'm giving up in frustration. I've been beaten, for the first
+  time, by a piece of S08 hardware - in this case, the IIC peripheral. Not
+  only is the documentation silent on important issues, but the existing
+  app notes - and even a webinar on the Freescale site - do nothing to
+  clarify. They just muddy the waters further. And their code makes no
+  sense.
+
+  After two days of trying to get an S08QG part to talk to an Atmel mega168
+  via IIC I give up. I'm going to go the bitbang route, which means I can
+  do this over USB, which is actually awesome. I meant to do this anyway -
+  I definitely wanted the USB capability - but hesitated to jump into
+  trying to interface a bitbanged IIC with a totally unfamiliar chip... but
+  my failure to get the IIC on the QG working has given me no choice.
+
+  Maybe I should be thankful that my USB part of choice, the S08JS16, lacks
+  a hardware IIC interface. So, with that prelude, here goes.)
+
+
+.ifndef S08JS
+   z" This code will currently only work on an S08JS device."  abort
+.then
+
+( Because we want to be independent of the USB byteloader code, we have to
+  re-implement a lot of that code: the command dispatch table, and the
+  basic handling of SETUP, IN, and OUT tokens. But code to enumerate the
+  device, and the device descriptors, are *not* repeated here. We only
+  implement the "vendor specific" requests required to do BDM.)
+
+10 constant buflen0  ( buffer length, and hence max packet size, for endpoint 0)
+
+1860 equ 'usb            ( USB RAM origin; buffer descriptors live here)
+1880 equ 'usb-buffers    ( endpoint RAM from here to 195f)
+
+__host
+
+: >bufaddr  ( buffer - bufaddr)
+   dup 0f and if  error" endpoint buffer must be on a 16-byte boundary"  then
+   \eq 'usb -  2 >> ;
+
+__meta
+
+( Buffer descriptor control byte to match _any_ SETUP transaction, or an IN
+  or OUT transaction with a DATA1 packet.)
+0c8 equ match-data1
+
+( USB buffer descriptors)
+1860 equ in-control
+1861 equ in-count
+1862 equ in-bufaddr
+1863 equ out-control
+1864 equ out-count
+1865 equ out-bufaddr
+
+'usb-buffers            equ in-buffer
+'usb-buffers buflen0 +  equ out-buffer
+
+( Useful aliases for buffer addresses - for control requests.)
+out-buffer 0 + equ bmRequestType
+out-buffer 1 + equ bRequest
+out-buffer 2 + equ wValue
+out-buffer 3 + equ wValueHi
+out-buffer 4 + equ wIndex
+out-buffer 5 + equ wIndexHi
+out-buffer 6 + equ wLength
+out-buffer 7 + equ wLengthHi
+
+( Create a forward jump at the start of the flash sector.)
+forward-jmp iic-chat-loop
+
+( Port pins.)
+
+.ifndef iic-on-bdm  ( default to iic-on-uart - cabling is easier!)
+
+( SCL is connected to PTA7/TxD, pin 20.
+  SDA is connected to PTA6/RxD, pin 19.
+
+  Neither pin is ever driven high. They are either driven low, or
+  tri-stated. So we can set the value to 0, and use the direction bits as
+  drive or not. Note that a DD bit of 1 drives low, and 0 lets line float
+  high. So for sending a byte of data, we want to complement it.
+
+  NOTE: Be *very* careful using r/m/w instructions - like bset or bclr - on
+  the port pins! The value *read* is the voltage on the pins, not the value
+  in the output register. It kind of works to set a single pin this way, but
+  esp if you want to *preset* the output register, before the data direction
+  register is set to *drive* the pin value, if you do the pins one at a time
+  you'll lose all your previous settings, and only the last one will stick!
+
+  To set multiple pins to 0, read the register, which yields a combination
+  of output register bits and pin values - depending on the data direction
+  register - and then mask off the bits you want to zero, and write this back
+  to the data register, all at once.
+
+  Ideally we would have a byte in RAM representing the driven values on each
+  port. You would then do r/m/w on that, and then copy its value to the
+  port.
+
+  However, it's ok to do bset and bclr on the direction register - aka
+  -drive - bits. And we do!)
+
+macro SCL-drive  PTADD 7  ;m
+macro SDA-drive  PTADD 6  ;m
+macro SCL-pin    PTAD  7  ;m
+macro SDA-pin    PTAD  6  ;m
+
+label init-pins
+   ( set value and drive to 0)
+   PTAD ) lda  3f # and  PTAD ) sta
+   SCL-drive bclr  SDA-drive bclr
+   PTADS ) lda  0c0 # ora  PTADS ) sta  ( set high drive on the pins)
+   PTAPE ) lda  0c0 # ora  PTAPE ) sta  ( enable pullups on the pins)
+   SCIC2 ) clr  ( disable UART rcvr, xmitter)
+   rts  ;c
+
+.else  -- iic-on-bdm, no longer the default!
+
+( SCL is connected to the BDM /RESET out, PTB0, pin 4
+  SDA is connected to the BDM BKGD out,   PTA0, pin 8
+
+  Neither pin is ever driven high. They are either driven low, or
+  tri-stated. So we can set the value to 0, and use the direction bits as
+  drive or not. Note that a DD bit of 1 drives low, and 0 lets line float
+  high. So for sending a byte of data, we want to complement it.
+
+  NOTE: Be *very* careful using r/m/w instructions - like bset or bclr - on
+  the port pins! The value *read* is the voltage on the pins, not the value
+  in the output register. It kind of works to set a single pin this way, but
+  esp if you want to *preset* the output register, before the data direction
+  register is set to *drive* the pin value, if you do the pins one at a time
+  you'll lose all your previous settings, and only the last one will stick!
+
+  To set multiple pins to 0, read the register, which yields a combination
+  of output register bits and pin values - depending on the data direction
+  register - and then mask off the bits you want to zero, and write this back
+  to the data register, all at once.
+
+  Ideally we would have a byte in RAM representing the driven values on each
+  port. You would then do r/m/w on that, and then copy its value to the
+  port.
+
+  However, it's ok to do bset and bclr on the direction register - aka
+  -drive - bits. And we do!
+
+  NOTE ALSO: For some reason it is not possible to change either slew rate
+  or drive strength on pin B0. So we leave it alone.)
+
+macro SCL-drive  PTBDD 0  ;m
+macro SDA-drive  PTADD 0  ;m
+macro SCL-pin    PTBD  0  ;m
+macro SDA-pin    PTAD  0  ;m
+
+label init-pins
+   ( set value and drive to 0)
+   SCL-pin   bclr  SDA-pin   bclr
+   SCL-drive bclr  SDA-drive bclr
+   PTADS ) lda  01 # ora  PTADS ) sta  ( set high drive on A0)
+   PTAPE ) lda  01 # ora  PTAPE ) sta  ( enable pullups on A0)
+   -- PTBDS ) lda  01 # ora  PTBDS ) sta  ( set high drive on B0)
+   PTBPE ) lda  01 # ora  PTBPE ) sta  ( enable pullups on B0)
+   rts  ;c
+
+.then
+
+( The building blocks.)
+
+label half-cycle-delay
+   here 2 + c  ( fall thru)
+
+( These delays assume our JS16 is running at 24M.)
+
+.ifdef fast-iic
+
+( To achieve a 400k IIC clock at 24M means a quarter cycle delay time of
+  24,000,000 / 400,000 / 4 = 15 cycles. Call + rts already takes 11. The
+  following code takes 16, so our IIC clock is 24,000,000 / 64 = 375k.)
+
+label quarter-cycle-delay
+   .x psh  .x pul  rts  ;c
+
+.else  ( .ifndef fast-iic; try for 100k)
+
+( Total delay time, including call and rts: 18 + 4*delaycount. So with
+  count of 10, we have quarter-cycle time of 58 cycles; whole cycle is
+  232, so bit speed is 24,000,000 / 232 = 103k.)
+
+( Save and restore X around the loop so callers don't have to worry.)
+label quarter-cycle-delay
+   .x psh  #10 # ldx
+   begin  .x decz? until  .x pul  rts  ;c
+
+.then  ( .ifdef fast-iic)
+
+( Since the slave can hold SCL low to give it more processing time, we need
+  to be careful when letting SCL go high. We should only start our delay
+  after it has risen.)
+
+label c-rising
+   SCL-drive bclr   begin  SCL-pin bset? until  rts  ;c  ( clobbers C)
+
+( Now for some spiffy macros that let us define the bit send and receive
+  words so that they look like timing diagrams!)
+
+macro Q   quarter-cycle-delay c  ;m
+macro H   half-cycle-delay c     ;m
+
+macro D/  SDA-drive bclr   ;m
+macro D\  SDA-drive bset   ;m
+macro C/  c-rising c     ;m
+macro C\  SCL-drive bset   ;m
+
+label drive-d  ( drive value of C onto bus)
+   CS if  D/  rts  then
+          D\  rts  ;c
+
+macro D@  SDA-pin bset? if then  ( sets C with pin value!)  ;m
+macro D!  drive-d c    ;m
+
+label stop-bit      Q  D\  Q  C/     H      D/   rts  ( line now idle)  ;c
+label send-bit      Q  D!  Q  C/     H      C\   rts  ;c
+label recv-bit      Q  D/  Q  C/  Q  D@  Q  C\   rts  ;c
+label restart-bit   Q  D/  Q  C/                 ( fall thru)
+label start-bit                      H      D\    H    C\  rts  ;c
+
+( Byte to send in A. Send MSB first. Return ACK bit in A.)
+label send-byte
+   .a psh  ( byte to send)
+   8 # lda  .a psh  ( bit count)
+   begin  1 ,s rol  send-bit c  0 ,s decz? until  2 # ais
+   recv-bit c  .a clr  .a rol ( ACK into LSB)  rts  ;c
+
+( Enter with ACK bit in A. Read byte from slave into A. Send ACK.)
+label recv-byte
+   .a psh ( ACK)
+   .a psh ( byte accumulator)
+   8 # lda  .a psh  ( bit count)
+   begin  recv-bit c  1 ,s rol  0 ,s decz? until
+   2 ,s ror ( ACK -> C)  send-bit c  1 ,s lda  ( byte)  3 # ais
+   rts  ;c
+
+1 zvar total-count
+
+label toggle-control  ( HX points to EP buffer control byte)
+   0 ,x lda  40 # and ( data0/1)  match-data1 # eor  0 ,x sta  rts  ;c
+
+( Read data from chip and copy into IN buffer.)
+label prepare-next-in
+   total-count ) lda  0!= if  ( still data to read)
+      .h clr  .x clr  ( bufptr)
+      buflen0 # cmp  u>= if  ( whole packet)  buflen0 # lda  then
+      .a psh  begin
+         .a clr  total-count ) dec  0= if  .a inc  then  ( ACK)
+         recv-byte c
+         in-buffer ,x sta  .x inc
+      0 ,s decz? until  .a pul
+      txa  ( in-count to a)
+      total-count ) tst  0= if  stop-bit c  then
+   then
+   ( fall thru)
+
+( Enter with in-count in A)
+label prepare-fixed-in
+   in-count ) sta
+   ( toggle DATA0/1)  in-control # ldhx  toggle-control c  ( fall thru)
+
+( Get ready to receive another SETUP token.)
+label expect-setup-token
+   match-data1 # lda  out-control ) sta
+   ( fall thru)
+
+( Jump here if out-control has already been toggled.)
+label expect-out-token  ( expect OUT or SETUP, really)
+   buflen0 # lda  out-count ) sta
+   CTL 5 bclr ( TSUSPEND off - resume processing)
+   rts  ;c
+
+label finish-iic-write
+   stop-bit c
+   ( fall thru)
+
+( Prepare to return status - a zero-length IN transaction. Also be ready to
+  accept another SETUP even if it would mean abandoning the current
+  transfer. This is what the USB spec says we have to do.)
+
+label finish-control-write
+   ( Setup IN status stage)
+   .a clr  in-count ) sta  ( zero-length DATA1 transaction)
+   match-data1 # lda  in-control ) sta
+   expect-setup-token j  ;c
+
+( wValue is iic-cmd and wIndex is slave-addr.)
+
+( Slave addr is sent to us already shifted left, but don't assume the LSB
+  is zero!)
+( XXX all send-byte's should really check ACK bits!)
+
+label slave+write
+   start-bit c
+   wIndex ) lda  1 invert # and ( slave addr + write)  send-byte j  ;c
+
+label send-command
+   wLength ) lda  total-count ) sta
+   slave+write c
+   wValue ) lda  ( iic-cmd)  send-byte j  ;c
+
+label bulk-write
+   send-command c  ( save wLength, send START, slave addr+write, cmd)
+   wLength ) lda  0!=  finish-iic-write  until
+   expect-setup-token j  ( wait for OUT or new SETUP)  ;c
+
+( Don't start talking to the slave at all for 0-length reads. It would just
+  break things.)
+
+label bulk-read
+   wLength ) lda  0!=  prepare-fixed-in  until
+   send-command c  ( save wLength, send START, slave addr+write, cmd)
+   restart-bit c
+   wIndex ) lda  1 # ora  ( slave addr + read)  send-byte c
+   prepare-next-in j  ;c
+
+( Read last IN buffer of ACK bits from chip.)
+label read-acks
+   wLength ) lda  prepare-fixed-in j  ;c
+
+( Ping slave. Just send START bit, slave address+write, and STOP bit, and
+  return the value of the ACK bit.)
+
+label ping-slave
+   slave+write c  ( returns ACK in A)  stop-bit c
+   in-buffer ) sta  1 # lda  prepare-fixed-in j  ;c
+
+( Return NAK on IN.)
+label nak-in
+   .a clr  in-control ) sta  rts  ;c
+
+label setup-token
+   nak-in c
+
+( NOTE: Command numbers are all given in HEX.)
+( assume vendor request)
+   bRequest ) lda
+   40 # sub   ( IIC commands start at 40 hex; anything below that, we exit)
+   u< if  ( 00 - 3f Bye)  2 # ais  ( skip return from process-usb)  rts  then
+
+   ( 40 Read)              0!=   bulk-read   until
+   ( 41 ReadAcks)  .a dec  0!=   read-acks   until
+   ( 42 Write)     .a dec  0!=   bulk-write  until
+   ( 43 Ping)      .a dec  0!=   ping-slave  until
+
+   ( unknown, fall thru)
+
+label stall
+   EPCTL0 1 bset ( STALL)  rts  ;c
+
+label setup-or-out-token
+   out-control ) lda  3c # and  34 # cmpne?  setup-token  until
+
+   ( OUT token)
+   ( If last OUT was zero-length, it was a status transaction for a
+     control read, so get ready for a new SETUP.)
+   out-count ) lda  0= if  expect-setup-token j  then
+
+   ( Otherwise, we've got a bulk write data payload. Write bytes to slave
+     via IIC. Put ACK bit into in-buffer, just in case the host wants to
+     read it back - though it'll only see the ACK bits of the last OUT.)
+
+   .h clr  .x clr  ( bufptr)
+   .a psh  ( repeat out-count times)
+   begin
+      ( send byte from out-buffer)
+      ( XXX logical OR all the ACK bits?)
+      out-buffer ,x lda  send-byte c  ( send byte, recv ACK bit)
+       in-buffer ,x sta  .x inc  total-count ) dec  ( affects Z)
+   0 ,s decz? until  .a pul
+
+   ( If total-count zero, we've received all the data; send STOP bit and
+     queue up status IN token.)
+   0= if  finish-iic-write j  then
+
+   ( total-count non-zero; expect more data.)
+   ( toggle DATA0/1)  out-control # ldhx  toggle-control c
+   expect-out-token j  ;c
+
+( An IN token is either part of a data stage of a control read, or it is
+  the status stage of a control write. Status IN's are always zero bytes
+  long; sometimes the last IN of the data stage is also zero bytes long -
+  see copy-to-in for details.
+
+  The upshot is that if the last packet wasn't full we should expect no
+  more IN transactions.)
+
+label in-token
+   ( If last IN was a full packet, ready some more data.)
+   in-count ) lda  buflen0 # cmp  0= if  prepare-next-in j  then
+   ( fall thru)
+
+label nak-in-expect-setup
+   nak-in c  ( further IN's will return NAK)
+   expect-setup-token j  ;c
+
+( XXX To convert process-usb into an interrupt handler, jumps to
+  setup-or-out-token, in-token, and nak-in-expect-setup should really be
+  _calls_; we should handle all the flags that are set all at once, rather
+  than only one per call. Also, interrupt flags - like TOKDNEF and STALLF -
+  should be cleared after being handled.)
+
+label process-usb
+   INTSTAT 3 bset? if ( TOKDNEF)
+      STAT ) lda  INTSTAT 3 bset  ( ack TOKDNEF)
+      0f8 # and  setup-or-out-token 0!= until
+       08 # cmpne?  in-token  until
+      ( not EP0; ignore)  ( fall thru)
+   then
+   INTSTAT 7 bset? if ( STALLF)
+      EPCTL0 1 bclr ( remove EPSTALL)
+      INTSTAT 7 bset  ( ack STALL)
+      nak-in-expect-setup j  ( get ready to receive SETUP)
+   then
+   rts  ;c
+
+\m iic-chat-loop resolve>>  ( jump at start of Flash points here)
+label main-loop
+   init-pins c    ( setup IIC bitbang interface)
+   finish-control-write c  ( ready status IN; also prepare for SETUP)
+   begin  process-usb c  again  ;c

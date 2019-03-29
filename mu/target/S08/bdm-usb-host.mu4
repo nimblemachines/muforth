@@ -1,0 +1,115 @@
+( This file is part of muforth: https://muforth.nimblemachines.com/
+
+  Copyright 2002-2019 David Frech. (Read the LICENSE for details.)
+
+loading S08 BDM-over-USB transport (host)
+
+( Host-side - ie PC - code to drive the BDM-over-USB implementation in
+  target/S08/bdm2-usb.mu4.)
+
+( NOTE: Before loading this file, load an S08 variant device file. This
+  code requires several of the register defines, and needs to know where to
+  find the clock trim register.)
+
+hex
+
+-- : usb  ( bmRequest bRequest wValue wIndex wLength 'buffer)
+.ifdef test-usb
+: usb  ( bmRequest bRequest wValue wIndex wLength 'buffer)
+   cr  6 for  u.  next ;
+.then
+
+( For u.BdmRead and u.BdmWrite, cmd is passed in wValue; size in wIndexLo;
+  and expect in wIndexHi.)
+
+( Commands)
+: u.Result  ( #expect)  push  ( fetch BDM result)
+   0c0 20  0 0   pop  pad  usb ;
+
+: u.BdmRead    ( cmd size len buffer)
+   2push ( len buffer)
+   2push ( cmd size)
+   0c0 21  2pop  2pop  usb ;
+
+: u.BdmWrite   ( cmd size expect len buffer)
+   2push ( len buffer)
+   lohi> 2push
+    40 22  2pop  2pop  usb ;
+
+: u.Sync    0c0 23  0  0  2 pad  usb ;
+
+: control-write
+   create ,  ( bRequest)
+   does> @   40 swap  0 0 0 0  usb ;
+
+00  control-write  b.Bye  ( End session, return to chat command loop)
+24  control-write  b.BkgdLow
+25  control-write  b.BkgdHiZ
+26  control-write  b.ResetLow
+27  control-write  b.ResetHiZ
+28  control-write  b.Clock4M
+29  control-write  b.Clock8M
+2a  control-write  b.Clock16M
+
+
+( Core commands that generate BDM traffic. These no longer overlap with the
+  chat commands. Start instead with 20 hex - 32 decimal. Anything < 20 will
+  exit the BDM loop and return to chat.)
+
+-- : b.Idle ;
+
+( A simple buffer for chatty communication protocols. Words for putting
+  values into a buffer -- at pad -- and taking them out again.)
+
+: !chat  <# ;
+: #chat  hld @  pad - ;
+: +hld   1 hld +! ;
+
+: b>  ( byte)    hld @  c!  +hld ;
+: b<  ( - byte)  hld @  c@  +hld ;
+
+( For S08 targets, we send up to four bytes, and expect up to two.)
+variable bdm-cmd
+: Send1    bdm-cmd !  !chat ;
+: Send2    Send1  b> ;
+: Send3    Send2  b> ;
+: Send4    Send3  b> ;
+
+( How to determine whether a cmd should be a control write, a control read,
+  or a write followed by a read.
+
+  If expect = 0, then
+    pure control write
+  else if #chat = 0
+    pure control read
+  else
+    control write, then
+    control read)
+
+( expect generates BDM commands with a repeat of 1. We have to use separate
+  words to get repeated reads or writes.)
+
+: expect  ( #expect)
+   =if  ( expecting *something*, so read or write-then-read)
+      #chat if  ( we're writing too, so write-then-read)
+         push ( #expect)
+         bdm-cmd @  #chat  r@  over  pad  u.BdmWrite
+         pop ( #expect)  u.Result  !chat  ^
+      then
+
+      ( control read)
+      bdm-cmd @  swap ( expect) dup  pad  u.BdmRead  !chat  ^
+   then
+   drop  ( 0)
+
+   ( control write)
+   bdm-cmd @  #chat  0  over  pad  u.BdmWrite ;
+
+: Expect0   0 expect ;
+: Expect1   1 expect  b< ;
+: Expect2   2 expect  b< b< ;
+
+: b.Sync    u.Sync  pad beh@ ;
+
+: b.Start  ( start the BDM firmware on the connected device)
+   @bdm u.SetPC u.Run ;

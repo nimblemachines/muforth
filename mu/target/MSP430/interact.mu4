@@ -1,6 +1,6 @@
 ( This file is part of muforth: https://muforth.nimblemachines.com/
 
-  Copyright 2002-2018 David Frech. (Read the LICENSE for details.)
+  Copyright 2002-2019 David Frech. (Read the LICENSE for details.)
 
 loading MSP430 interaction
 
@@ -20,7 +20,8 @@ chat-cmd t.GetStatus    ( - sp pc sr cp)
 chat-cmd t.Run          ( pc sr cp)
 chat-cmd t.ReadChunk    ( buf a u)
 chat-cmd t.WriteChunk   ( buf a u)
-chat-cmd t.FlashChunk   ( buf a u erase? - ok?)
+chat-cmd t.ErasePage    (     a   - fail?)
+chat-cmd t.FlashChunk   ( buf a u - fail?)
 
 drop  ( last command index)
 
@@ -67,8 +68,9 @@ variable .Z
 : set-regs                .PC @  .SR @  .CP @ ;
 
 : 2sp  space space ;
-: .b9  binary  <#  # # # #  # # # #  #  #> type ;
-: .h16    hex  <#  # # # #  #> type ;
+: 4#  # # # # ;
+: .b9  binary  <#  4#  4#  #  #> type ;
+: .h16    hex  <#  4#  #> type ;
 : .h16__  .h16  2sp ;
 : .r   ( offset)  @  .h16__ ;
 : .sr         .SR @  .b9   2sp ;
@@ -90,31 +92,6 @@ defer .regs
       now __chatting is __meta  __meta ;
 
 : chat-via   pop  chat-vector !  hi ;
-
-
-( NOTE: All the following d.Foobar commands are the dummy _implementations_
-  of the chat command interface.)
-
-: d.Hello  ." Connecting to dummy chat target." ;
-
-: d.ReadChunk    ( buf a u)
-   -- cr  ." Dummy read chunk "  2 nth u.  over u.  dup u.
-   push  image+  2dup xor if  swap pop cmove  ^  then
-   rdrop  2drop ;
-
-: d.WriteChunk   ( buf a u)
-   -- cr  ." Dummy write chunk "  2 nth u.  over u.  dup u.
-   push  image+  2dup xor if       pop cmove  ^  then
-   rdrop  2drop ;
-
-: d.FlashChunk  ( buf a u erase? - ok?)  drop  d.WriteChunk  -1 ;
-
-: d.GetStatus   ( - sp pc sr cp)   "dead @ram 0 "dead ;
-: d.Run         ( pc sr cp)   drop 2drop ;
-
-: dummy
-   chat-via  d.Hello  d.GetStatus  d.Run
-             d.ReadChunk  d.WriteChunk  d.FlashChunk ;
 
 
 : run      copy-ram  set-regs  t.Run ;  ( don't wait for target)
@@ -237,6 +214,7 @@ forth
 
 -: ( cfa)  ( execute target forth word)
    p@ continue-forth .PC !
+   [ @ram #ram +  2 \m cells - #] .SP !  ( room for SR and PC *only*)
    p@ trampoline  ( ip)  continue ;  is remote
 
 

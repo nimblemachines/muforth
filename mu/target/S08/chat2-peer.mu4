@@ -1,0 +1,125 @@
+( This file is part of muforth: https://muforth.nimblemachines.com/
+
+  Copyright 2002-2019 David Frech. (Read the LICENSE for details.)
+
+loading S08 serial chat protocol v2 (peer)
+
+( NOTE: This might seem a bit odd, but this file implements the side of the
+  chat protocol normally implemented by firmware in a target chip! The
+  reason for doing this here, in muforth, is to test out the protocol by
+  having both sides running on the host.)
+
+hex
+
+( chat2 commands:
+
+  0  Idle       - ignored by chat; force other command loops to return to chat;
+                  can be used as an Idle
+  1  Run        - does an RTI - pops stack frame and runs
+  2  SetHX      - reads two bytes from SCI, writes them into H & X registers
+  3  GetHX      - writes H then X register to SCI
+  4  HXtoSP     - sets SP from HX -- deprecated, but I'm leaving it in
+  5  SPtoHX     - sets HX from SP
+  6  ReadNext   - reads a byte from memory @ HX, writes it to SCI, inc HX
+  7  WriteNext  - reads a byte from SCI, writes into memory @ HX, inc HX
+
+ ~~ The following are S08-only commands ~~
+
+  8  ReadN      - reads a length from SCI, reads that many bytes from
+                  memory, and writes them to SCI [S08 only!]
+  9  FlashNext  - reads a byte from SCI, writes to flash @ HX, inc HX
+                - calls a routine at @ram that host downloads to device
+ 10  FlashStatus - returns FSTAT
+                 - need this as a way to "ping" the device for the
+                 - completion of long operations, such as erase
+)
+
+
+variable pty-master
+: pty-send  ( b)     pty-master @ >emit ;
+: pty-recv  ( - b)   pty-master @ <key ;
+
+( Spying on the protocol.)
+variable spy  spy on
+: send             spy @ if ." >"  dup .h8_ then  pty-send ;
+: recv   pty-recv  spy @ if ." <"  dup .h8_ then ;
+
+: >b   send ;
+: b>   recv ;
+: >w   >lohi  >b >b ;
+: w>           b> b>  hilo> ;
+
+( Location of flash command in zero-page RAM.)
+0ff constant fcmd
+
+: swi
+   0 fcmd image-c! ( set flash command to 0 - an illegal value) ;
+
+( Emulate S08 stack _exactly_: it pushes _then_ decrements; increments
+  _then_ pops.)
+
+variable peer-sp  ( holds an image address, not a target address!)
+: p.push  ( b)     peer-sp @  dup  1-       peer-sp !  c! ;
+: p.pop   ( - b)   peer-sp @       1+  dup  peer-sp !  c@ ;
+
+: p.pushw  ( w)    >hilo  p.push  p.push ;
+
+( Stack frame: H CC A X PC)
+: peer-push-frame
+   ff4c p.pushw  ( outer PC)
+   fefe p.pushw  ( frame PC)
+     80 p.push ( X)  58 p.push ( A)  68 p.push ( CC)  02 p.push ( H) ;
+
+: p.SetHX      w>  image+  m ! ;
+: p.GetHX                  m @  image-  >w ;
+
+( These emulate txs and tsx, resp.)
+: p.HXtoSP      m @  1-  peer-sp ! ;
+: p.SPtoHX               peer-sp @  1+  m ! ;
+
+: p.ReadNext     m* >b ;
+: p.WriteNext        b> m& ;
+
+( We send the target zero counts to read 256 bytes, so let's do that here
+  as well.)
+
+: p.ReadN    b>  dup 0= if  drop #256  then  for  p.ReadNext  next ;
+
+: p.Run   swi ;
+
+: peer-erase-page
+   m @  image-  ( 'target)  [ /page 1- invert #] and  image+  m !
+   /page for  0ff m&  next  [ /page negate #]  m +! ;
+
+( If fcmd not a valid flash command, read a byte but do nothing.)
+variable flash-status
+: p.FlashNext
+   0c0 flash-status !  ( assume ok)
+   fcmd image-c@
+   dup mByteProgram = if  drop  p.WriteNext  ^  then
+   b> drop
+       mPageErase   = if  peer-erase-page  ^  then
+   0d0 flash-status !  ( done + ACCERR) ;
+
+: p.FlashStatus   flash-status @  >b ;
+
+
+: peer-command
+   b>  dup #11 u< if  jump
+      nope  p.Run  p.SetHX  p.GetHX
+      p.HXtoSP  p.SPtoHX  p.ReadNext  p.WriteNext
+      p.ReadN  p.FlashNext  p.FlashStatus
+   then  drop ;
+
+: re-peer
+   open-pty  cr  ." Connect to "  zcount type  ."  to chat with this peer."
+   pty-master !  swi  begin  peer-command  again ;
+
+: peer
+   @ram #ram +  image+  1-  peer-sp !  peer-push-frame
+   0 fcmd image-c!  ( set flash command to 0 - an illegal value)
+   6e ffad image-c!  97 ffaf image-c!  ( fake trims)
+   begin  catch re-peer  pty-master @ close-file  again ;
+
+( Let's run it!)
+peer

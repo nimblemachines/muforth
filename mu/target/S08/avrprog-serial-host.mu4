@@ -1,0 +1,52 @@
+( This file is part of muforth: https://muforth.nimblemachines.com/
+
+  Copyright 2002-2019 David Frech. (Read the LICENSE for details.)
+
+loading AVR SPI-over-serial programmer (host)
+
+( Host-side code to drive the AVR programmer code in
+  target/S08/avrprog-serial-core.mu4.)
+
+hex
+
+: !chat   <# ;  ( init hld)
+: b>   hld @  c!  1 hld +! ;
+
+: shuffle  ( b0 b1 b2 b3 - b3 b2 b1 b0)  swap  2swap  swap ;
+
+( Commands)
+
+( Send 4 bytes over SPI; receive 4 back, save in pad)
+: avr.Read   ( b0 b1 b2 b3)
+   shuffle
+   !chat  21 send  4 for  send  recv b>  next ;
+
+: avr.Write  ( b0 b1 b2 b3)  avr.Read ;
+
+: avr.Bye  ( End session, return to chat command loop)  00 send ;
+: avr.ResetLow   22 send ;
+: avr.ResetHigh  23 send ;
+: avr.SlowClock  ( 250k)  24 send ;
+: avr.FastClock  ( 2M)    25 send ;
+
+: setup-bulk   ( avr-cmd ahi alo toggle buf len cmd - len)
+   2push ( len cmd)  m !
+   shuffle  pop send ( cmd)  4 for  send  next
+   pop ( len)  dup send ;
+
+: avr.BulkRead   ( cmd ahi alo toggle buf len)
+   m preserve
+   26 setup-bulk   for  recv m&  next ;
+
+: avr.BulkWrite  ( cmd ahi alo toggle buf len)
+   m preserve
+   27 setup-bulk   for  m* send  next ;
+
+: avr.Hello  ( start the AVR programming firmware on the connected device)
+   #115200 bps  resync
+.ifdef in-ram
+   0112 c.SetPC c.Run  ( run from ram - loads right after flash routine)
+.else
+   @avrprog c.SetPC c.Run
+.then
+   " AVRp1" await  ( match signature) ;

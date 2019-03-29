@@ -1,0 +1,89 @@
+( This file is part of muforth: https://muforth.nimblemachines.com/
+
+  Copyright 2002-2019 David Frech. (Read the LICENSE for details.)
+
+( I want to use the bootloader on my MC908QB8 chips to bootstrap my 9S08
+  chips. This is support for talking to the ROM monitor/bootloader resident
+  on all 908 microcontrollers.)
+
+loading HC908 Chat (ROM monitor)
+
+( Spying on the protocol.)
+variable spy  spy off
+
+: recv  _recv  spy @ if dup .h8_ then ;
+
+( The hardware we're using means that we should recv sent chars _twice_ -
+  once because of hardware loopback, and again because the target is -
+  hopefully - echoing them.)
+
+: expect  ( ch)  "0ff and  push ( expected)
+   spy @ if  cr ." expected " r@ .h8_ r@ .  ." received "  then
+   recv recv ( loopback, target)
+   r@ =  swap pop = and if ^ then  error"  - mismatch" ;
+
+: send  ( byte -)  ( Send a byte, read back echoed and verify)
+   dup _send  expect ;
+
+: addr>  ( a)  >lohi send send ;
+
+hex
+: breakCheck  recv 0= if ." (break received)" then ;
+: security  ( send 8 security bytes, initally FF)  8 for  0ff send  next
+   breakCheck ( target sends break after security bytes recvd) ;
+
+( Target monitor commands.)
+comment
+==========================================================================
+READ:   Send 4a addrhi addrlo, recv byte; target sets index ptr to addr+1
+WRITE:  Send 49 addrhi addrlo  data; target sets index ptr to addr+1
+IREAD:  Send 1a, recv two bytes; target increments index ptr by 2
+IWRITE: Send 19 byte; target increments index ptr by 1
+READSP: Send 0c, recv sphi splo
+RUN:    Send 28
+==========================================================================
+: tgRead    ( a - byte)  4a send  addr>  recv ;
+: tgWrite   ( byte a)    49 send  addr>  send ;
+: tgIread   ( - b0 b1)   1a send  recv recv ;
+: tgIwrite  ( byte -)    19 send  send ;
+: tgReadSp  ( - sp)      0c send  recv recv  hilo> ;
+: tgRun                  28 send  ;
+  ( target _seems_ to send a 00 or break when code that has been run
+  returns to the ROM monitor. This is undocumented behaviour.)
+
+decimal
+
+: m.SetAddr
+   -1 +a  tgRead drop  ( simple, brutal, and inefficient!) ;
+
+( This can read from and write to arbitrary buffers on the host side, not
+  just pieces of the image.)
+
+: m.setup-chunk  ( 'target len buffer - len)   m !  swap m.SetAddr ;
+
+( Since we can only easily read two bytes at a time, round up any odd
+  lengths we are given. But complain too.)
+
+: ?odd  ( len - len')
+   dup 1 and if  cr  ." hmm. odd length for m.ReadChunk; rounding up"  1+ then ;
+
+: m.ReadChunk    ( 'target len buffer)
+   m.setup-chunk  ?odd  2/ for  tgIRead  swap  m& m&  next ;
+
+: m.WriteChunk   ( 'target len buffer)
+   m.setup-chunk  for  m* tgIWrite  next ;
+
+: m.GetRegs  ( buf - sp)
+   tgReadSp  dup push  6 rot  c.ReadChunk  pop ;
+
+: m.SetRegs  ( buf)
+   tgReadSp            6 rot  c.WriteChunk ;
+
+: m.Run  ( wait for target)  tgRun  breakCheck ;
+
+: m.Hello
+   9600 bps  flush  security ;
+
+: chat
+   chat-via  m.Hello  m.GetRegs  m.SetRegs  m.Run
+             m.ReadChunk  m.WriteChunk  complain ;
