@@ -197,49 +197,13 @@ else
     cflags="${Wnarrowing}${cflags}"
 fi
 
-# Figure out which version of sed we're running, so we can properly specify
-# the use of extended (ie, sane) regular expressions.
-
-# XXX Do this a different way? How about _trying_ to run sed -E and if that
-# works, we have BSD sed; if sed -r works, then we have GNU. If neither one
-# works, complain that the person has a weird sed and that they need to
-# find a better one.
-
-echo
-
-if sed --version 2> /dev/null | grep -q "not GNU sed"; then
-  cat <<EOF
-You are running a funky version of sed - probably built into busybox - that
-does not support extended regular expressions. Please install a sed that
-does, like GNU sed, and then re-run configure.sh.
-EOF
-  exit 1
-elif sed --version 2> /dev/null | grep -q "GNU sed"; then
-  cat <<EOF
-Found GNU sed; using "-r" for extended regular expressions.
-EOF
-  sedext="-r"
-else
-  cat <<EOF
-Found BSD sed; using "-E" for extended regular expressions.
-EOF
-  sedext="-E"
-fi
-
 # Now, put all our variables into an "architecture-specific" make file.
 cat <<EOT > arch.mk
-SEDEXT=     ${sedext}
 ARCH_C=     ${cflags}
 ARCH_LD=    ${ldflags}
 ARCHOBJS=   ${archobjs}
 MU_DIR=     ${top}/mu
 EOT
-
-# fix up use of sed in scripts/do_sed.sh
-sed ${sedext} \
-  -e "s/%sedext%/${sedext}/g" \
-  ../scripts/do_sed.sh.in > ../scripts/do_sed.sh
-chmod 755 ../scripts/do_sed.sh
 
 # Touch local.mk, which we'll need regardless of which kind of Make the
 # user has. Also, this allows us to use .include rather than .sinclude,
@@ -262,7 +226,7 @@ re-run configure.sh like this:
 Then run your BSD make.
 
 EOF
-  sed ${sedext} \
+  sed -E \
     -f ../scripts/make.sed \
     -f ../scripts/gnu-make.sed \
     -e 's/^### Makefile/### GNU Makefile/' Makefile.in > Makefile
@@ -276,7 +240,7 @@ If the build fails, try re-running configure like this:
 Then type "gmake" instead of "make".
 
 EOF
-  sed ${sedext} \
+  sed -E \
     -f ../scripts/make.sed \
     -e 's/^### Makefile/### BSD Makefile/' Makefile.in > Makefile
 fi
