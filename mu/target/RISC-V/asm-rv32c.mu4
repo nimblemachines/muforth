@@ -1,0 +1,120 @@
+( This file is part of muforth: https://muforth.nimblemachines.com/
+
+  Copyright 2002-2019 David Frech. (Read the LICENSE for details.)
+
+loading RISC-V RV32 assembler (C subset)
+
+( Since the RISC-V instruction set is modular, I want to make the assembler
+  - and disassembler - modular as well.
+
+  This file only defines the RV32C subset - the 16-bit wide encoding of the
+  32-bit integer instructions.)
+
+( Shifting bits into position.)
+: >crs2     ( op bits - op')   2 <<  or ;
+: >cimm5    ( op bits - op')   5 <<  or ;
+: >crs1     ( op bits - op')   7 <<  or ;
+: >cimm10   ( op bits - op')  10 <<  or ;
+: >cfunct4  ( op bits - op')  12 <<  or ;
+: >cfunct3  ( op bits - op')  13 <<  or ;
+
+( Dealing with register fields.)
+: >reg8  ( reg op - op reg-masked)  swap  7 and ;
+: ?reg8  ( reg op - op reg-masked)
+   over x8 x16 within if  ( valid reg8)  >reg8  ^  then
+   error" expected a register between x8 and x15" ;
+
+: rd   ( reg op - op')  ?reg  >rd ;
+: rs1  ( reg op - op')  ?reg  >rs1 ;
+: rs2  ( reg op - op')  ?reg  >rs2 ;
+
+: rs1-imm  ( zimm op - op')  >reg  >rs1 ;
+: rs2-imm  ( zimm op - op')  >reg  >rs2 ;
+
+( Does an unsigned value fit into a bit field?)
+: ufits?  ( value bits - f)   u>>  0= ;  ( unsigned)
+
+: cop,  ( op)  \m h, ;
+
+: offset-too-large  error" offset too large" ;
+
+( All the C-extension immediates are scrambled and complicated.)
+( Instruction bits:  12 .11 10  9  8 . 7  6  5  4 . 3  2  1  0
+       Offset bits:   5                   4  3  2   7  6       )
+: CI-imm-x4  ( imm op - op')
+   over 8 ufits? if
+      over %1100_0000 and  4 >>  or  ( imm[7:6])
+      over 5 bit@  >cfunct4  ( imm[5])
+      swap %0001_1100 and  >crs2  ( imm[4:2])
+   ^ then  offset-too-large ;
+
+( Instruction bits:  12 .11 10  9  8 . 7  6  5  4 . 3  2  1  0
+       Offset bits:   5   4  3  2  7   6                       )
+: CSS-imm-x4  ( imm op - op')
+   over 8 ufits? if
+      over %1100_0000 and  2/  or  ( imm[7:6])
+      swap %0011_1100 and  >crs1  ( imm[5:2])
+   ^ then  offset-too-large ;
+
+( Instruction bits:  12 .11 10  9  8 . 7  6  5  4 . 3  2  1  0
+       Offset bits:   5   4  3            2  6                 )
+: CL-imm-x4  ( imm op - op')
+   over 7 ufits? if
+      over %0011_1000 and  >crs1  ( imm[5:3])
+      over 2 bit@ 2*  rot 6 bit@  or  >cimm5  ( imm[2|6])
+   ^ then  offset-too-large ;
+
+( This one is pretty crazy!)
+( Instruction bits:  12 .11 10  9  8 . 7  6  5  4 . 3  2  1  0
+       Offset bits:  11   4  9  8 10   6  7  3  2   1  5       )
+: CJ-imm  ( offset op - op')
+   over 12 sfits? if
+      over %1011_0100_0000 and  2* or  ( off[11|-|9:8|-|6|])
+      over 10 bit@   8 << or
+      over  7 bit@   6 << or
+      over  5 bit@  >crs2
+      over  4 bit@  11 << or
+      swap %1110 and >crs2  ( off[3:1])
+   ^ then  offset-too-large ;
+
+( Instruction bits:  12 .11 10  9  8 . 7  6  5  4 . 3  2  1  0
+       Offset bits:   8   4  3            7  6  2   1  5       )
+: CB-imm  ( offset op - op')
+   over 9 sfits? if
+      over 8 bit@  >cfunct4 ( [8] => bit 12)
+      over %1100_0000 and  2/ or  ( [7:6] => bit 5)
+      over 5 bit@  >crs2  ( [5] => bit 2)
+      over %0001_1000 and  >crs1  ( [4:3] => bit 10)
+      swap %0110 and  >crs2  ( [2:1] => bit 3)
+   ^ then  offset-too-large ;
+
+( Instruction bits:  12 .11 10  9  8 . 7  6  5  4 . 3  2  1  0
+       Offset bits:   5                   4  3  2   1  0       )
+: CI-imm  ( offset op - op')
+   over 6 sfits? if
+      over 5 bit@  >cfunct4
+      swap %0001_1111 and  >crs2  ( [4:0] => bit 2)
+   ^ then  offset-too-large ;
+
+( Instruction bits:  12 .11 10  9  8 . 7  6  5  4 . 3  2  1  0
+       Offset bits:   9                   4  6  8   7  5       )
+: CI-imm-x16  ( offset op - op')
+   over 10 sfits? if
+      over 9 bit@  >cfunct4
+      over %0001_1000_0000 and  4 >> or  ( imm[8:7])
+      over 6 bit@  >cimm5
+      over 5 bit@  >crs2
+      swap 4 bit@  6 << or
+   ^ then  offset-too-large ;
+
+( Instruction bits:  12 .11 10  9  8 . 7  6  5  4 . 3  2  1  0
+       Offset bits:   5   4  9  8  7   6  2  3                 )
+: CIW-imm  ( offset op - op')
+   over 10 ufits? if
+      over %0011_1100_0000 and  2* or  ( imm[9:6])
+      over 5 bit@  >cfunct4
+      over 4 bit@  11 << or
+      over 3 bit@  >cimm5
+      swap 2 bit@  6 << or
+   ^ then  offset-too-large ;
+
