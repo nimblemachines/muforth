@@ -16,20 +16,30 @@ loading RISC-V RV32 assembler (C subset)
 : >crs1     ( op bits - op')   7 <<  or ;
 : >cimm10   ( op bits - op')  10 <<  or ;
 : >cfunct4  ( op bits - op')  12 <<  or ;
-: >cfunct3  ( op bits - op')  13 <<  or ;
+-- : >cfunct3  ( op bits - op')  13 <<  or ;
 
 ( Dealing with register fields.)
 : >reg8  ( reg op - op reg-masked)  swap  7 and ;
 : ?reg8  ( reg op - op reg-masked)
-   over x8 x16 within if  ( valid reg8)  >reg8  ^  then
+   over \a x8 \a x16 within if  ( valid reg8)  >reg8  ^  then
    error" expected a register between x8 and x15" ;
 
-: rd   ( reg op - op')  ?reg  >rd ;
-: rs1  ( reg op - op')  ?reg  >rs1 ;
-: rs2  ( reg op - op')  ?reg  >rs2 ;
+( Sometimes we want to make sure we have a nonzero register.)
+: ?regnz  ( reg op - op reg-masked)
+   ?reg  =if ^ then  error" can't use x0 register" ;
 
-: rs1-imm  ( zimm op - op')  >reg  >rs1 ;
-: rs2-imm  ( zimm op - op')  >reg  >rs2 ;
+( Ditto about immediates.)
+: ?immnz  ( imm op - imm op)
+   over =if ^ then  error" immediate value can't be zero" ;
+
+: crs1  ( reg op - op')  ?reg  >crs1 ;
+: crs2  ( reg op - op')  ?reg  >crs2 ;
+
+( Since the RISC-V docs use rs1', rs2', and rd' to represent 8-bit register
+  fields, let's do the same.)
+
+: crs1'  ( reg8 op - op')  ?reg8  >crs1 ;
+: crs2'  ( reg8 op - op')  ?reg8  >crs2 ;
 
 ( Does an unsigned value fit into a bit field?)
 : ufits?  ( value bits - f)   u>>  0= ;  ( unsigned)
@@ -38,7 +48,20 @@ loading RISC-V RV32 assembler (C subset)
 
 : offset-too-large  error" offset too large" ;
 
+-- --------------------------------------------------------------------------
+-- Immediate encodings
+-- --------------------------------------------------------------------------
+
 ( All the C-extension immediates are scrambled and complicated.)
+
+( Instruction bits:  12 .11 10  9  8 . 7  6  5  4 . 3  2  1  0
+        Immed bits:   5                   4  3  2   1  0       )
+: CI-imm  ( imm op - op')
+   over 6 sfits? if
+      over 5 bit@  >cfunct4
+      swap %0001_1111 and  >crs2  ( [4:0] => bit 2)
+   ^ then  offset-too-large ;
+
 ( Instruction bits:  12 .11 10  9  8 . 7  6  5  4 . 3  2  1  0
        Offset bits:   5                   4  3  2   7  6       )
 : CI-imm-x4  ( imm op - op')
@@ -46,6 +69,17 @@ loading RISC-V RV32 assembler (C subset)
       over %1100_0000 and  4 >>  or  ( imm[7:6])
       over 5 bit@  >cfunct4  ( imm[5])
       swap %0001_1100 and  >crs2  ( imm[4:2])
+   ^ then  offset-too-large ;
+
+( Instruction bits:  12 .11 10  9  8 . 7  6  5  4 . 3  2  1  0
+       Offset bits:   9                   4  6  8   7  5       )
+: CI-imm-x16  ( offset op - op')
+   over 10 sfits? if
+      over 9 bit@  >cfunct4
+      over %0001_1000_0000 and  4 >> or  ( imm[8:7])
+      over 6 bit@  >cimm5
+      over 5 bit@  >crs2
+      swap 4 bit@  6 << or
    ^ then  offset-too-large ;
 
 ( Instruction bits:  12 .11 10  9  8 . 7  6  5  4 . 3  2  1  0
@@ -89,25 +123,6 @@ loading RISC-V RV32 assembler (C subset)
    ^ then  offset-too-large ;
 
 ( Instruction bits:  12 .11 10  9  8 . 7  6  5  4 . 3  2  1  0
-       Offset bits:   5                   4  3  2   1  0       )
-: CI-imm  ( offset op - op')
-   over 6 sfits? if
-      over 5 bit@  >cfunct4
-      swap %0001_1111 and  >crs2  ( [4:0] => bit 2)
-   ^ then  offset-too-large ;
-
-( Instruction bits:  12 .11 10  9  8 . 7  6  5  4 . 3  2  1  0
-       Offset bits:   9                   4  6  8   7  5       )
-: CI-imm-x16  ( offset op - op')
-   over 10 sfits? if
-      over 9 bit@  >cfunct4
-      over %0001_1000_0000 and  4 >> or  ( imm[8:7])
-      over 6 bit@  >cimm5
-      over 5 bit@  >crs2
-      swap 4 bit@  6 << or
-   ^ then  offset-too-large ;
-
-( Instruction bits:  12 .11 10  9  8 . 7  6  5  4 . 3  2  1  0
        Offset bits:   5   4  9  8  7   6  2  3                 )
 : CIW-imm  ( offset op - op')
    over 10 ufits? if
@@ -118,3 +133,112 @@ loading RISC-V RV32 assembler (C subset)
       swap 2 bit@  6 << or
    ^ then  offset-too-large ;
 
+-- --------------------------------------------------------------------------
+-- Instruction encoding types
+-- --------------------------------------------------------------------------
+
+( XXX since in the C formats rd == rs1, should I change the order of rs1
+  and rs2 in the regular RV32I assembler so that it matches? Ie, rs1 on
+  top, rs2 below?)
+
+: CR-type-2op  ( opcode)  constant
+   does> @  ( rs2 rs1/rd op)  ?regnz  >rd  ?regnz  >crs2  cop, ;
+
+: CR-type-1op  ( opcode)  constant
+   does> @  ( rd op)          ?regnz  >rd                 cop, ;
+
+: CR-type-0op  ( opcode)  constant
+   does> @  ( op)                                         cop, ;
+
+: CI-type  ( opcode)  constant
+   does> @  ( imm rd op)  rd  CI-imm  cop, ;
+
+( lwsp - word-sized values; offsets multiplied by 4)
+: CI-type-x4  ( opcode)  constant
+   does> @  ( imm rd op)  rd  CI-imm-x4  cop, ;
+
+( swsp - word-sized values; offsets multiplied by 4)
+: CSS-type-x4  ( opcode)  constant
+   does> @  ( imm rs2 op)  crs2  CSS-imm-x4  cop, ;
+
+: CIW-type  ( opcode)  constant
+   does> @  ( imm rd' op)  crs2'  ?immnz  CIW-imm  cop, ;
+
+( lw/sw - word-sized values; offsets multiplied by 4)
+: CL-type-x4  ( opcode)  constant
+   does> @  ( offset rs1' rs2'/rd' op)  crs2'  crs1'  CL-imm-x4  cop, ;
+
+( For reg-reg computation using 3-bit registers.)
+: CL-type-misc  ( opcode)  constant
+   does> @  ( rs1' rs2'/rd' op)  crs2'  crs1'  cop, ;
+
+: CB-type  ( opcode)  constant
+   does> @  ( dest rs1' op)  crs1'  >pc-rel  CB-imm  cop, ;
+
+: CJ-type  ( opcode)  constant
+   does> @  ( dest op)  >pc-rel  CJ-imm  cop, ;
+
+assembler hex
+
+  0000 CR-type-0op c.illegal
+  0000 CIW-type    c.addi4spn
+
+( 2000             c.fld / c.lq)
+  4000  CL-type-x4 c.lw
+( 6000             c.flw / c.ld)
+( 8000             *reserved*)
+( a000             c.fsd / c.sq)
+  c000  CL-type-x4 c.sw
+( e000             c.fsw / c.sd)
+
+  0001  CI-type c.addi
+  2001  CJ-type c.jal    ( also encodes c.addiw for rv64/rv128)
+  4001  CI-type c.li
+
+: c.lui  ( imm rd)
+  6001  ?regnz  dup 2 xor if
+           >rd  swap #12 >> swap  ?immnz  CI-imm  cop,
+        ^ then  error" can't use x0 or x2 registers" ;
+
+: c.addi16sp  ( imm)
+  6101  ?immnz  CI-imm-x16  cop, ;
+
+  8001  CI-type c.srli
+  8401  CI-type c.srai
+  8801  CI-type c.andi
+
+  8c01  CL-type-misc c.sub
+  8c21  CL-type-misc c.xor
+  8c41  CL-type-misc c.or
+  8c61  CL-type-misc c.and
+
+( 9c01          c.subw  ( rv64/128)
+( 9c21          c.addw  ( rv64/128)
+( 9c41          *reserved* )
+( 9c61          *reserved* )
+
+  a001  CJ-type c.j
+  c001  CB-type c.beqz
+  e001  CB-type c.bnez
+
+  0002  CI-type    c.slli    ( also encodes c.slli64 for rv128)
+( 2002             c.fldsp / c.lqsp)
+  4002  CI-type-x4 c.lwsp
+( 6002             c.flwsp / c.ldsp)
+
+  8002  CR-type-2op c.mv
+  8002  CR-type-1op c.jr
+  9002  CR-type-2op c.add
+  9002  CR-type-1op c.jalr
+  9002  CR-type-0op c.ebreak
+
+( a002              c.fsdsp / c.sqsp)
+  c002  CSS-type-x4 c.swsp
+( e002              c.fswsp / c.sdsp)
+
+( Synthetic instructions.)
+: c.nop  asm{  0 x0 c.addi } ;
+
+forth decimal
+
+( That's all, folks!)
