@@ -1,0 +1,332 @@
+( This file is part of muforth: https://muforth.nimblemachines.com/
+
+  Copyright 2002-2019 David Frech. (Read the LICENSE for details.)
+
+loading RISC-V RV32 disassembler (C subset)
+
+( All the op printing words have the stack signature: op - op)
+
+( For 3-bit reg fields. Recovers the actual reg value: x8 to x15.)
+: reg8>     ( bits - reg)   7 and  8 + ;
+
+: crs2>     ( op - rs2)   2 >>  reg> ;
+: crs2'>    ( op - rs2)   2 >>  reg8> ;
+: crs1>     ( op - rs1)   7 >>  reg> ;
+: crs1'>    ( op - rs1)   7 >>  reg8> ;
+
+: sext6  ( n -n')   dup  "20 and if  "-40 +  then ;
+
+( All the C-extension immediates are fiendishly scrambled.)
+
+( Instruction bits:  12 .11 10  9  8 . 7  6  5  4 . 3  2  1  0
+        Immed bits:   5                   4  3  2   1  0       )
+: CI-imm>  ( op - op imm)
+   dup 12 bit@  5 <<
+   over crs2>   or  sext6 ;
+
+( Instruction bits:  12 .11 10  9  8 . 7  6  5  4 . 3  2  1  0
+       Offset bits:   5                   4  3  2   7  6       )
+: CI-imm-x4>  ( op - op imm)
+   dup  %0_0000_0000_1100 and  4 <<  ( 76)
+   over 12 bit@  5 <<  or
+   over %0_0000_0111_0000 and  crs2>  or  ( 432) ;
+
+( Instruction bits:  12 .11 10  9  8 . 7  6  5  4 . 3  2  1  0
+       Offset bits:   9                   4  6  8   7  5
+       Offset/16:     5                   0  2  4   3  1       )
+: CI-imm-x16>  ( op - op imm)
+   dup  12 bit@  5 <<
+   over %0_0000_0001_1000 and  or  ( 87)
+   over 5 bit@  2 <<  or
+   over 2 bit@  2*  or
+   over 6 bit@  or  sext6  4 <<  ( 16 *) ;
+
+( Instruction bits:  12 .11 10  9  8 . 7  6  5  4 . 3  2  1  0
+       Offset bits:   5   4  3  2  7   6                       )
+: CSS-imm-x4>  ( op - op imm)
+   dup  %0_0001_1000_0000 and  2/  ( 76)
+   over %1_1110_0000_0000 and  7 >>  or  ( 5432) ;
+
+( Instruction bits:  12 .11 10  9  8 . 7  6  5  4 . 3  2  1  0
+       Offset bits:   5   4  3            2  6                 )
+: CL-imm-x4>  ( op - op imm)
+   dup  5 bit@  6 <<
+   over %1_1100_0000_0000 and  7 >>  or  ( 543)
+   over 6 bit@  2 <<  or ;
+
+( This one is pretty crazy!)
+( Instruction bits:  12 .11 10  9  8 . 7  6  5  4 . 3  2  1  0
+       Offset bits:  11   4  9  8 10   6  7  3  2   1  5       )
+: CJ-imm>  ( op - op imm)
+   dup  %1_0110_1000_0000 and  2/  ( 11-98-6)
+   over 8 bit@  10 <<  or  ( syns?)
+   over 6 bit@   7 <<  or
+   over 2 bit@   5 <<  or
+   over 11 bit@  4 <<  or
+   over %0_0000_0011_1000 and  crs2>  or  ( 321)  sext12 ;
+
+( Instruction bits:  12 .11 10  9  8 . 7  6  5  4 . 3  2  1  0
+       Offset bits:   8   4  3            7  6  2   1  5       )
+: CB-imm>  ( op - op imm)
+   dup  12 bit@  8 <<
+   over %0_0000_0110_0000 and  2*  or  ( 76)
+   over 2 bit@  5 <<  or
+   over %0_1100_0000_0000 and  7 >>  or  ( 43)
+   over %0_0000_0001_1000 and  crs2>  or  ( 21)
+   3 <<  sext12  3 >>  ( essentially, sext9 ;-) ;
+
+( Instruction bits:  12 .11 10  9  8 . 7  6  5  4 . 3  2  1  0
+       Offset bits:   5   4  9  8  7   6  2  3                 )
+: CIW-imm>  ( op - op imm)
+   dup  %0_0111_1000_0000 and  2/  ( 9876)
+   over %1_1000_0000_0000 and  7 >>  or  ( 54)
+   over 5 bit@  3 <<  or
+   over 6 bit@  2 <<  or ;
+
+.ifdef from-rv32i
+
+( Trailing underscore signifies the following space.)
+: .rd_   ( op - op)  dup rd>   .regname space ;
+: .rs1   ( op - op)  dup rs1>  .regname ;
+: .rs2   ( op - op)  dup rs2>  .regname ;
+
+: .rs1_  ( op - op)  .rs1 space ;
+: .rs2_  ( op - op)  .rs2 space ;
+
+( Show immediates as signed hex values.)
+: .imm   .hex ;
+
+: .3reg   .rd_  .rs1_  .rs2 ;
+: .rs1-off  ( op imm - op)   .imm  ." ("  .rs1  ." )" ;
+
+: .rel-dest  ( off)   instr-pc @ +  dup ea !  .u32 ;
+
+: .undecoded   ." *undecoded*" ;
+
+: .load
+   dup funct3>  4 *  z" lb  lh  lw  ??? lbu lhu ??? ??? "  +
+   3 -trailing type space  .rd_  I-imm>  .rs1-off ;
+
+( Two "special case" 3-regs. They have slightly odd encodings and are
+  matched specially.)
+: .sub   ." sub "  .3reg ;
+: .sra   ." sra "  .3reg ;
+
+( neg is encoded as sub rd, x0, rs2)
+: .neg   ." neg "  .rd_  .rs2 ;
+
+: .op-reg
+   dup funct3>  4 *  z" add sll slt sltuxor srl or  and "  +
+   4 -trailing type space  .3reg ;
+
+: .muldiv
+   dup funct3>  6 *  z" mul   mulh  mulhsumulhu div   divu  rem   remu  "  +
+   6 -trailing type space  .3reg ;
+
+: .store
+   dup funct3>  2*  z" sbshsw??"  +  2 type space  .rs2_  S-imm>  .rs1-off ;
+
+( Shift immediates are special.)
+( NOTE: for the 64-bit version of these, the shift amount field is 6 bits
+  wide, not 5.)
+
+: .shift-imm   .rd_  .rs1_  dup rs2> .imm ;
+: .slli   ." slli "  .shift-imm ;
+: .srli   ." srli "  .shift-imm ;
+: .srai   ." srai "  .shift-imm ;
+
+: .nop  ( encoded as addi x0 x0 0)     ." nop" ;
+
+( load immediate)
+: .li  ( encoded as addi rd x0 imm)    ." li "   .rd_  I-imm> .imm ;
+
+( register move)
+: .mv  ( encoded as addi rd rs1 0)     ." mv "   .rd_  .rs1 ;
+
+( 1's complement)
+( Calling this .nnot to not conflict with .not, the conditional op.)
+: .nnot  ( encoded as xori rd rs1 -1)  ." not "  .rd_  .rs1 ;
+
+: .ui   ( op pc - op pc+ui)   push  .rd_  U-imm>  dup .imm  pop +  dup ea ! ;
+
+: .(hex)   ." ("  .hex  ." )" ;
+: .auipc   ." auipc "  instr-pc @  .ui  space space  .(hex) ;
+: .lui     ." lui "             0  .ui  drop ;
+
+: .branch
+   dup funct3>  4 *  z" beq bne ??? ??? blt bge bltubgeu"  +
+   4 -trailing type space  .rs1_  .rs2_  SB-imm>  .rel-dest ;
+
+: .uj-dest  UJ-imm>  .rel-dest ;
+: .jal   dup rd> 0= if
+   ." j "          .uj-dest  ^  then
+   ." jal "  .rd_  .uj-dest ;
+
+: .jr    ." jr "          I-imm> .rs1-off ;
+: .jalr  ." jalr "  .rd_  I-imm> .rs1-off ;
+
+( keeping for inspiration for the C-extension version...)
+
+binary  ( !!)
+
+: .misc-mem
+   dup funct3>
+   111  000  submatch .fence
+   111  001  submatch .fence.i
+   drop
+   .undecoded ;
+
+( We need to look at high-order bits of OP instructions to figure out what
+  they are. We do that here rather than in the main "shred32" routine.)
+
+: .op  ( op - op)
+   dup #12 >>              ( funct7  rs2   rs1  f3)
+   1111111_00000_11111_111  0100000_00000_00000_000  submatch .neg  ( sub rd x0 rs)
+   1111111_00000_00000_111  0100000_00000_00000_000  submatch .sub
+   1111111_00000_00000_111  0100000_00000_00000_101  submatch .sra
+   1111111_00000_00000_000  0000000_00000_00000_000  submatch .op-reg
+   1111111_00000_00000_000  0000001_00000_00000_000  submatch .muldiv
+   drop
+   .undecoded ;
+
+( The shift-with-immediate-count instructions have a slightly unusual
+  encoding. Let's match and handle those before doing the "normal"
+  immediate instructions.)
+
+: .op-imm  ( op - op)
+   dup #7 >>                      (    imm12     rs1  f3   rd)
+   1111111_11111_11111_111_11111  0000000_00000_00000_000_00000
+                                                     submatch .nop  ( addi x0 x0 0)
+
+   drop  dup #12 >>         (    imm12     rs1  f3)
+   0000000_00000_11111_111  0000000_00000_00000_000  submatch .li    ( addi rd x0 imm)
+   1111111_11111_00000_111  0000000_00000_00000_000  submatch .mv    ( addi rd rs 0)
+   1111111_11111_00000_111  1111111_11111_00000_100  submatch .nnot  ( xori rd rs -1)
+
+                          ( funct7  shamt  rs1  f3)
+   1111111_00000_00000_111  0000000_00000_00000_001  submatch .slli
+   1111111_00000_00000_111  0000000_00000_00000_101  submatch .srli
+   1111111_00000_00000_111  0100000_00000_00000_101  submatch .srai
+
+   ( Nothing special matched. Must be a "normal" immediate op.)
+   #7 and  #6 *  z" addi  ????  slti  sltiu xori  ????  ori   andi  "  +
+   #5 -trailing type space  .rd_  .rs1_  I-imm> .imm ;
+
+: .jalr-jr
+   dup #7 >>
+   111_11111  000_00000  submatch .jr
+   111_00000  000_00000  submatch .jalr
+   drop
+   .undecoded ;
+
+: .system
+   dup #7 >>
+   1111111_11111_00000_111_00000  0000000_00000_00000_000_00000  submatch .ecall
+   1111111_11111_00000_111_00000  0000000_00001_00000_000_00000  submatch .ebreak
+
+   1111111_11111_00000_111_00000  0111101_10010_00000_000_00000  submatch .dret  ( debug)
+   1100111_11111_00000_111_00000  0000000_00010_00000_000_00000  submatch .ret
+
+   1111111_11111_00000_111_00000  0001000_00101_00000_000_00000  submatch .wfi
+
+   ( Match any other system instruction with f3=000 or 100)
+   00000_011_00000  00000_000_00000  submatch .undecoded
+
+  ( rs1       rd     rs1       rd)
+   11111_111_00000  00000_010_00000  submatch .csr_r   ( read-only: rs1 is x0)
+
+   00000_100_11111  00000_000_00000  submatch .csr_w   ( write-only: rd is x0)
+   00000_100_11111  00000_100_00000  submatch .csr_wi  ( write-only imm)
+
+   00000_100_00000  00000_000_00000  submatch .csr_rw   ( read/write)
+   00000_100_00000  00000_100_00000  submatch .csr_rwi  ( read/write imm)
+   drop
+   .undecoded ;
+
+( To be filled in by subset disassemblers.)
+
+( Compressed - C - subset. The entire 16-bit encoding space.)
+subset shred16  ( op - op)
+
+( subset A - atomic)
+subset .amo
+
+( subsets FD - floating point)
+subset .load-fp
+subset .store-fp
+subset .madd
+subset .msub
+subset .nmsub
+subset .nmadd
+subset .op-fp
+
+( These two are for RV64 additions to base - I - subset.)
+subset .op-imm-32
+subset .op-32
+
+.then  ( from-rv32i)
+
+( Also keeping this for inspiration. Need similar tests for all the crazy
+  compressed immediate formats.)
+
+.ifdef testing
+
+decimal
+
+( I'd like to be able to test the immediate encoding and decoding routines
+  are proper inverses. The easiest way to test this is to create a series
+  of 1-bit immediate values, each corresponding to one bit in the "space" of
+  immediate values. The highest bit should be represented by a negative,
+  sign-extended value.
+
+  For each of these, encode using the assembler's routine, and decode using
+  the disassembler's and make sure the values match. A quirk of the code: S
+  and SB forms encode a 12-bit field, but in the case of SB it actually
+  encodes a 13-bit value with the LSB 0. So we 2* before doing the SB test.
+
+  UJ is similar. The field is 20 bits wide, but the values encoded by it
+  are also shifted left by one bit.
+
+  The routines that are most likely to be wrong are the SB and UJ
+  immediates - they are pretty complex.)
+
+( Test the 12-bit and 20-bit immediates.)
+: check  ( in encoded out which - imm)
+   cr  count type space  swap .hex space  over .hex space  dup .hex space
+   over = if  ." OK" ^  then  ." failed" ;
+
+: check-u5
+   4 *  dup 0 CL-imm-x4 ( op)  dup  CL-imm-x4> nip  z"  CL-x4" check
+   2/ ;
+
+: check-u6
+   4 * dup 0 CI-imm-x4 ( op)  dup  CI-imm-x4> nip  z"  CI-x4" check
+       dup 0 CSS-imm-x4 ( op)  dup  CSS-imm-x4> nip  z"  CSS-x4" check
+   2/ ;
+
+: check-u8
+   4 *  dup 0 CIW-imm ( op)  dup  CIW-imm> nip  z"  CIW" check
+   2/ ;
+
+: check-s6  ( imm - imm*2)
+   dup 0 CI-imm ( op)  dup  CI-imm> nip  z"  CI" check
+   4 << dup 0 CI-imm-x16 ( op)  dup  CI-imm-x16> nip  z"  CI-x16" check
+   3 >> ;
+
+: check-s8
+   2*  dup 0 CB-imm ( op)  dup  CB-imm> nip  z"  CB" check ;
+
+: check-s11
+   2*  dup 0 CJ-imm ( op)  dup  CJ-imm> nip  z"  CJ" check ;
+
+: test
+   1  5 for  check-u5  next  drop
+   1  6 for  check-u6  next  drop
+   1  8 for  check-u8  next  drop
+
+   1  5 for  check-s6  next  negate  check-s6  drop
+   1  7 for  check-s8  next  negate  check-s8  drop
+   1  10 for  check-s11  next  negate  check-s11  drop
+;
+
+.then  ( testing)
