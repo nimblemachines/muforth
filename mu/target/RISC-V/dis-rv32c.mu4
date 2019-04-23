@@ -4,6 +4,8 @@
 
 loading RISC-V RV32 disassembler (C subset)
 
+decimal
+
 ( All the op printing words have the stack signature: op - op)
 
 ( For 3-bit reg fields. Recovers the actual reg value: x8 to x15.)
@@ -11,10 +13,22 @@ loading RISC-V RV32 disassembler (C subset)
 
 : crs2>     ( op - rs2)   2 >>  reg> ;
 : crs2'>    ( op - rs2)   2 >>  reg8> ;
-: crs1>     ( op - rs1)   7 >>  reg> ;
 : crs1'>    ( op - rs1)   7 >>  reg8> ;
 
+( Trailing underscore signifies the following space.)
+: .crs1'   ( op - op)  dup crs1'>  .regname ;
+: .crs1'_  ( op - op)  .crs1' space ;
+
+: .crs2   ( op - op)  dup crs2>  .regname ;
+: .crs2_  ( op - op)  .crs2 space ;
+
+: .crs2'   ( op - op)  dup crs2'>  .regname ;
+: .crs2'_  ( op - op)  .crs2' space ;
+
 : sext6  ( n -n')   dup  "20 and if  "-40 +  then ;
+
+: .uhex  radix preserve  hex  (u.) type ;
+: .uimm   .uhex ;
 
 ( All the C-extension immediates are fiendishly scrambled.)
 
@@ -83,241 +97,158 @@ loading RISC-V RV32 disassembler (C subset)
    over 5 bit@  3 <<  or
    over 6 bit@  2 <<  or ;
 
-.ifdef from-rv32i
+: .crs1'-uoff  ( op imm - op)   .uimm  ." ("  .crs1'  ." )" ;
 
-( Trailing underscore signifies the following space.)
-: .rd_   ( op - op)  dup rd>   .regname space ;
-: .rs1   ( op - op)  dup rs1>  .regname ;
-: .rs2   ( op - op)  dup rs2>  .regname ;
+: .c.illegal   ." *c.illegal*" ;
+: .c.reserved   ." *c.reserved*" ;
 
-: .rs1_  ( op - op)  .rs1 space ;
-: .rs2_  ( op - op)  .rs2 space ;
+: .c.addi4spn   ." c.addi4spn "  .crs2'_  2 .regname space  CIW-imm> .uimm ;
 
-( Show immediates as signed hex values.)
-: .imm   .hex ;
+: .c-load-store  .crs2'_  CL-imm-x4> .crs1'-uoff ;
+: .c.lw   ." c.lw "  .c-load-store ;
+: .c.sw   ." c.sw "  .c-load-store ;
 
-: .3reg   .rd_  .rs1_  .rs2 ;
-: .rs1-off  ( op imm - op)   .imm  ." ("  .rs1  ." )" ;
+: .c.nop   ." c.nop" ;
+: .c.addi   ." c.addi "  .rd_  CI-imm> .imm ;
 
-: .rel-dest  ( off)   instr-pc @ +  dup ea !  .u32 ;
+: .c-jump   CJ-imm> .rel-dest ;
+: .c.jal   ." c.jal "  .c-jump ;
+: .c.j     ." c.j "  .c-jump ;
 
-: .undecoded   ." *undecoded*" ;
+: .c.li   ." c.li "  .rd_  CI-imm> .imm ;
+: .c.addi16sp   ." c.addi16sp "  .rd_  CI-imm-x16> .imm ;
+: .c.lui   ." c.lui "  .rd_  CI-imm>  12 <<  .imm ;
 
-: .load
-   dup funct3>  4 *  z" lb  lh  lw  ??? lbu lhu ??? ??? "  +
-   3 -trailing type space  .rd_  I-imm>  .rs1-off ;
+: .c-shift-amount   CI-imm>  63 and  .uimm ;
+: .c-shift  .crs1'_  .c-shift-amount ;
+: .c.srli   ." c.srli "  .c-shift ;
+: .c.srai   ." c.srai "  .c-shift ;
+: .c.andi   ." c.andi "  .crs1'_  CI-imm> .imm ;
 
-( Two "special case" 3-regs. They have slightly odd encodings and are
-  matched specially.)
-: .sub   ." sub "  .3reg ;
-: .sra   ." sra "  .3reg ;
+: .c-2op-reg8
+   ." c."  dup 5 >> 3 and 4 *  z" sub xor or  and " +  3 -trailing type space
+   .crs1'_  .crs2' ;
 
-( neg is encoded as sub rd, x0, rs2)
-: .neg   ." neg "  .rd_  .rs2 ;
+: .c-branch   .crs1'_  CB-imm> .rel-dest ;
+: .c.beqz   ." c.beqz "  .c-branch ;
+: .c.bnez   ." c.bnez "  .c-branch ;
 
-: .op-reg
-   dup funct3>  4 *  z" add sll slt sltuxor srl or  and "  +
-   4 -trailing type space  .3reg ;
+: .c.slli   ." c.slli "  .rd_  .c-shift-amount ;
 
-: .muldiv
-   dup funct3>  6 *  z" mul   mulh  mulhsumulhu div   divu  rem   remu  "  +
-   6 -trailing type space  .3reg ;
+: .c-sp-uoff   .uimm  ." ("  2 .regname  ." )" ;
+: .c.lwsp   ." c.lwsp "  .rd_  CI-imm-x4>  .c-sp-uoff ;
+: .c.swsp   ." c.swsp "  .crs2_  CSS-imm-x4>  .c-sp-uoff ;
 
-: .store
-   dup funct3>  2*  z" sbshsw??"  +  2 type space  .rs2_  S-imm>  .rs1-off ;
+: .c.jr   ." c.jr "  .rd ;
+: .c.jalr   ." c.jalr "  .rd ;
 
-( Shift immediates are special.)
-( NOTE: for the 64-bit version of these, the shift amount field is 6 bits
-  wide, not 5.)
+: .c-2op-reg32   .rd_  .crs2 ;
+: .c.mv   ." c.mv "  .c-2op-reg32 ;
+: .c.add   ." c.add "  .c-2op-reg32 ;
 
-: .shift-imm   .rd_  .rs1_  dup rs2> .imm ;
-: .slli   ." slli "  .shift-imm ;
-: .srli   ." srli "  .shift-imm ;
-: .srai   ." srai "  .shift-imm ;
+: .c.ebreak   ." c.ebreak" ;
 
-: .nop  ( encoded as addi x0 x0 0)     ." nop" ;
+hex
 
-( load immediate)
-: .li  ( encoded as addi rd x0 imm)    ." li "   .rd_  I-imm> .imm ;
+-: ( op - op)
+   ffff 0000 match .c.illegal
+   ffe3 0000 match .reserved    ( c.addi4spn when imm=0)
+   e003 0000 match .c.addi4spn
 
-( register move)
-: .mv  ( encoded as addi rd rs1 0)     ." mv "   .rd_  .rs1 ;
+   e003 4000 match .c.lw
+   e003 8000 match .c.reserved
+   e003 c000 match .c.sw
 
-( 1's complement)
-( Calling this .nnot to not conflict with .not, the conditional op.)
-: .nnot  ( encoded as xori rd rs1 -1)  ." not "  .rd_  .rs1 ;
+   0003 0000 match .unimplemented
 
-: .ui   ( op pc - op pc+ui)   push  .rd_  U-imm>  dup .imm  pop +  dup ea ! ;
+   ffff 0001 match .c.nop
+   e003 0001 match .c.addi
+   e003 2001 match .c.jal     ( c.addiw for non-rv32)
+   e003 4001 match .c.li
+   ffff 6101 match .reserved  ( c.addi16sp when imm=0)
+   ef83 6101 match .c.addi16sp
+   e003 6001 match .c.lui
 
-: .(hex)   ." ("  .hex  ." )" ;
-: .auipc   ." auipc "  instr-pc @  .ui  space space  .(hex) ;
-: .lui     ." lui "             0  .ui  drop ;
+   ec03 8001 match .c.srli
+   ec03 8401 match .c.srai
+   ec03 8801 match .c.andi
+   fc03 8c01 match .c-2op-reg8
+   fc43 9c01 match .unimplemented  ( c.subw and c.addw for non-rv32)
+   fc43 9c81 match .reserved
 
-: .branch
-   dup funct3>  4 *  z" beq bne ??? ??? blt bge bltubgeu"  +
-   4 -trailing type space  .rs1_  .rs2_  SB-imm>  .rel-dest ;
+   e003 a001 match .c.j
+   e003 c001 match .c.beqz
+   e003 e001 match .c.bnez
 
-: .uj-dest  UJ-imm>  .rel-dest ;
-: .jal   dup rd> 0= if
-   ." j "          .uj-dest  ^  then
-   ." jal "  .rd_  .uj-dest ;
+   e003 0002 match .c.slli  ( also c.slli64 for non-rv32)
+   ef83 4002 match .reserved   ( c.lwsp when rd=0)
+   e003 4002 match .c.lwsp
 
-: .jr    ." jr "          I-imm> .rs1-off ;
-: .jalr  ." jalr "  .rd_  I-imm> .rs1-off ;
+   ffff 8002 match .reserved   ( c.jr when rs1=0)
+   f07f 8002 match .c.jr
+   f003 8002 match .c.mv
 
-( keeping for inspiration for the C-extension version...)
+   ffff 9002 match .c.ebreak
+   f07f 9002 match .c.jalr
+   f003 9002 match .c.add
 
-binary  ( !!)
-
-: .misc-mem
-   dup funct3>
-   111  000  submatch .fence
-   111  001  submatch .fence.i
-   drop
-   .undecoded ;
-
-( We need to look at high-order bits of OP instructions to figure out what
-  they are. We do that here rather than in the main "shred32" routine.)
-
-: .op  ( op - op)
-   dup #12 >>              ( funct7  rs2   rs1  f3)
-   1111111_00000_11111_111  0100000_00000_00000_000  submatch .neg  ( sub rd x0 rs)
-   1111111_00000_00000_111  0100000_00000_00000_000  submatch .sub
-   1111111_00000_00000_111  0100000_00000_00000_101  submatch .sra
-   1111111_00000_00000_000  0000000_00000_00000_000  submatch .op-reg
-   1111111_00000_00000_000  0000001_00000_00000_000  submatch .muldiv
-   drop
-   .undecoded ;
-
-( The shift-with-immediate-count instructions have a slightly unusual
-  encoding. Let's match and handle those before doing the "normal"
-  immediate instructions.)
-
-: .op-imm  ( op - op)
-   dup #7 >>                      (    imm12     rs1  f3   rd)
-   1111111_11111_11111_111_11111  0000000_00000_00000_000_00000
-                                                     submatch .nop  ( addi x0 x0 0)
-
-   drop  dup #12 >>         (    imm12     rs1  f3)
-   0000000_00000_11111_111  0000000_00000_00000_000  submatch .li    ( addi rd x0 imm)
-   1111111_11111_00000_111  0000000_00000_00000_000  submatch .mv    ( addi rd rs 0)
-   1111111_11111_00000_111  1111111_11111_00000_100  submatch .nnot  ( xori rd rs -1)
-
-                          ( funct7  shamt  rs1  f3)
-   1111111_00000_00000_111  0000000_00000_00000_001  submatch .slli
-   1111111_00000_00000_111  0000000_00000_00000_101  submatch .srli
-   1111111_00000_00000_111  0100000_00000_00000_101  submatch .srai
-
-   ( Nothing special matched. Must be a "normal" immediate op.)
-   #7 and  #6 *  z" addi  ????  slti  sltiu xori  ????  ori   andi  "  +
-   #5 -trailing type space  .rd_  .rs1_  I-imm> .imm ;
-
-: .jalr-jr
-   dup #7 >>
-   111_11111  000_00000  submatch .jr
-   111_00000  000_00000  submatch .jalr
-   drop
-   .undecoded ;
-
-: .system
-   dup #7 >>
-   1111111_11111_00000_111_00000  0000000_00000_00000_000_00000  submatch .ecall
-   1111111_11111_00000_111_00000  0000000_00001_00000_000_00000  submatch .ebreak
-
-   1111111_11111_00000_111_00000  0111101_10010_00000_000_00000  submatch .dret  ( debug)
-   1100111_11111_00000_111_00000  0000000_00010_00000_000_00000  submatch .ret
-
-   1111111_11111_00000_111_00000  0001000_00101_00000_000_00000  submatch .wfi
-
-   ( Match any other system instruction with f3=000 or 100)
-   00000_011_00000  00000_000_00000  submatch .undecoded
-
-  ( rs1       rd     rs1       rd)
-   11111_111_00000  00000_010_00000  submatch .csr_r   ( read-only: rs1 is x0)
-
-   00000_100_11111  00000_000_00000  submatch .csr_w   ( write-only: rd is x0)
-   00000_100_11111  00000_100_00000  submatch .csr_wi  ( write-only imm)
-
-   00000_100_00000  00000_000_00000  submatch .csr_rw   ( read/write)
-   00000_100_00000  00000_100_00000  submatch .csr_rwi  ( read/write imm)
-   drop
-   .undecoded ;
-
-( To be filled in by subset disassemblers.)
-
-( Compressed - C - subset. The entire 16-bit encoding space.)
-subset shred16  ( op - op)
-
-( subset A - atomic)
-subset .amo
-
-( subsets FD - floating point)
-subset .load-fp
-subset .store-fp
-subset .madd
-subset .msub
-subset .nmsub
-subset .nmadd
-subset .op-fp
-
-( These two are for RV64 additions to base - I - subset.)
-subset .op-imm-32
-subset .op-32
-
-.then  ( from-rv32i)
-
-( Also keeping this for inspiration. Need similar tests for all the crazy
-  compressed immediate formats.)
-
-.ifdef testing
+   e003 c002 match .c.swsp
+   .unimplemented
+;  is shred16
 
 decimal
+
+.ifdef testing
 
 ( I'd like to be able to test the immediate encoding and decoding routines
   are proper inverses. The easiest way to test this is to create a series
   of 1-bit immediate values, each corresponding to one bit in the "space" of
-  immediate values. The highest bit should be represented by a negative,
-  sign-extended value.
+  immediate values. For the signed immediate fields, the highest bit should
+  be represented by a negative, sign-extended value.
 
   For each of these, encode using the assembler's routine, and decode using
-  the disassembler's and make sure the values match. A quirk of the code: S
-  and SB forms encode a 12-bit field, but in the case of SB it actually
-  encodes a 13-bit value with the LSB 0. So we 2* before doing the SB test.
+  the disassembler's and make sure the values match. A quirk of the code:
+  several of the fields encode values with low bits zero. I've added some
+  comments to hopefully clarify this.)
 
-  UJ is similar. The field is 20 bits wide, but the values encoded by it
-  are also shifted left by one bit.
-
-  The routines that are most likely to be wrong are the SB and UJ
-  immediates - they are pretty complex.)
-
-( Test the 12-bit and 20-bit immediates.)
 : check  ( in encoded out which - imm)
    cr  count type space  swap .hex space  over .hex space  dup .hex space
    over = if  ." OK" ^  then  ." failed" ;
 
-: check-u5
+( CL-imm-x4 is a 5-bit unsigned field that encodes a multiple of 4.)
+: check-u5  ( bit - bit*2)
    4 *  dup 0 CL-imm-x4 ( op)  dup  CL-imm-x4> nip  z"  CL-x4" check
    2/ ;
 
-: check-u6
+( CI-imm-x4 and CSS-imm-x4 are 6-bit unsigned fields that encode a multiple of 4.)
+: check-u6  ( bit - bit*2)
    4 * dup 0 CI-imm-x4 ( op)  dup  CI-imm-x4> nip  z"  CI-x4" check
        dup 0 CSS-imm-x4 ( op)  dup  CSS-imm-x4> nip  z"  CSS-x4" check
    2/ ;
 
-: check-u8
+( CIW-imm is an 8-bit unsigned field that encodes a multiple of 4.)
+: check-u8  ( bit - bit*2)
    4 *  dup 0 CIW-imm ( op)  dup  CIW-imm> nip  z"  CIW" check
    2/ ;
 
-: check-s6  ( imm - imm*2)
+( CI-imm is a 6-bit signed field. CI-imm-x16 is a 6-bit signed field that
+  encodes a multiple of 16.)
+
+: check-s6  ( bit - bit*2)
    dup 0 CI-imm ( op)  dup  CI-imm> nip  z"  CI" check
    4 << dup 0 CI-imm-x16 ( op)  dup  CI-imm-x16> nip  z"  CI-x16" check
    3 >> ;
 
-: check-s8
+( CB-imm is an 8-bit signed field that encodes a multiple of 2.)
+: check-s8  ( bit - bit*2)
    2*  dup 0 CB-imm ( op)  dup  CB-imm> nip  z"  CB" check ;
 
-: check-s11
+( CJ-imm is an 11-bit signed field that encodes a multiple of 2.)
+: check-s11  ( bit - bit*2)
    2*  dup 0 CJ-imm ( op)  dup  CJ-imm> nip  z"  CJ" check ;
+
+( For each field type, start with just the lowest bit set. Each call to a
+  check-xxx routine will shift the bit left by one.)
 
 : test
    1  5 for  check-u5  next  drop
