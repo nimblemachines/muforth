@@ -1,0 +1,289 @@
+( This file is part of muforth: https://muforth.nimblemachines.com/
+
+  Copyright 2002-2019 David Frech. (Read the LICENSE for details.)
+
+loading Chip equates for SiFive FE310-G000
+
+hex
+
+0000_0100 constant @debug
+     0f00 constant #debug
+0000_1000 constant @mask-rom
+     1000 constant #mask-rom
+0002_0000 constant @otp-rom
+     2000 constant #otp-rom
+
+2000_0000 constant @flash
+#128 Mi ( 128 MBit SPI chip)  8 / ( bytes)
+          constant #flash
+
+@flash           constant @boot
+@flash 40_0000 + constant @app
+
+8000_0000 constant @ram
+   #16 Ki constant #ram
+
+( FE310 is an RV32IMAC core.)
+-d xlen32
+-d M-ext  -d A-ext  -d C-ext
+
+( A few defining words, which we'll use to load the "equates".)
+: equ     ( offset)  current preserve  .equates. definitions  constant ;
+: vector  ( offset)  equ ;
+: preg    ( base offset - base)  over + equ ;
+: |  \ -- ;  ( | ignores the bit-fields that follow each register name)
+: aka   .equates. chain' execute ;  ( for making synonyms)
+
+( mcause exception codes:
+Interrupt   Code  Description
+   1         0–2  Reserved
+   1           3  Machine software interrupt
+   1         4–6  Reserved
+   1           7  Machine timer interrupt
+   1        8–10  Reserved
+   1          11  Machine external interrupt
+   1       12–15  Reserved
+
+   0           0  Instruction address misaligned
+   0           1  Instruction access fault
+   0           2  Illegal instruction
+   0           3  Breakpoint
+   0           4  Load address misaligned
+   0           5  Load access fault
+   0           6  Store/AMO address misaligned
+   0           7  Store/AMO access fault
+   0        8–10  Reserved
+   0          11  Environment call from M-mode
+   0       12–31  Reserved )
+
+0200_0000 equ CLINT
+0C00_0000 equ PLIC
+
+( XXX add CLINT and PLIC registers.)
+
+-- --------------------------------------------------------------------------
+-- AON block - always on
+-- --------------------------------------------------------------------------
+
+1000_0000 ( AON base address)
+
+( Watchdog registers.)
+000 preg wdogcfg
+008 preg wdogcount
+010 preg wdogs
+018 preg wdogfeed
+01C preg wdogkey
+020 preg wdogcmp
+
+( RTC registers.)
+040 preg rtccfg
+048 preg rtclo
+04C preg rtchi
+050 preg rtcs
+060 preg rtccmp
+
+( Low-frequency oscillator - LFROSC - register(s)
+070 preg lfrosccfg      ( AON Clock Configuration.)
+
+( Backup registers. FE310-G000 has 16 32-bit backup regs.)
+080 preg backup0
+0bc preg backup15
+0c0 preg backup16          ( These are in the AON memory map but are)
+0FC preg backup31          ( *not* implemented on the FE310-G000!)
+
+( Power management unit - PMU - registers.)
+100 preg pmuwakeupi0       ( Wakeup program instruction 0)
+11c preg pmuwakeupi7       ( Wakeup program instruction 7)
+120 preg pmusleepi0        ( Sleep program instruction 0)
+13c preg pmusleepi7        ( Sleep program instruction 7)
+140 preg pmuie             ( PMU interrupt enables)
+144 preg pmucause          ( PMU wakeup cause)
+148 preg pmusleep          ( Initiate sleep sequence)
+14c preg pmukey            ( PMU key register)
+
+drop ( base)
+
+-- --------------------------------------------------------------------------
+-- end of AON block - always on
+-- --------------------------------------------------------------------------
+
+( PRCI registers.)
+1000_8000 ( PRCI base)
+000 preg hfrosccfg
+004 preg hfxosccfg
+008 preg pllcfg
+00c preg plloutdiv
+drop ( base)
+
+( GPIO registers.)
+1001_2000 ( GPIO base)
+000 preg gpio.value        ( pin value)
+004 preg gpio.input_en     ( pin input enable)
+008 preg gpio.output_en    ( pin output enable)
+00C preg gpio.port         ( output port value)
+010 preg gpio.pue          ( internal pull-up enable)
+014 preg gpio.ds           ( Pin Drive Strength)
+018 preg gpio.rise_ie      ( rise interrupt enable)
+01C preg gpio.rise_ip      ( rise interrupt pending)
+020 preg gpio.fall_ie      ( fall interrupt enable)
+024 preg gpio.fall_ip      ( fall interrupt pending)
+028 preg gpio.high_ie      ( high interrupt enable)
+02C preg gpio.high_ip      ( high interrupt pending)
+030 preg gpio.low_ie       ( low interrupt enable)
+034 preg gpio.low_ip       ( low interrupt pending)
+038 preg gpio.iof_en       ( HW I/O Function enable)
+03C preg gpio.iof_sel      ( HW I/O Function select)
+040 preg gpio.out_xor      ( Output XOR (invert)
+drop ( base)
+
+( PWM registers.)
+1001_5000 ( PWM0 base)
+000 preg pwm0.cfg
+008 preg pwm0.count
+010 preg pwm0.s
+020 preg pwm0.cmp0
+024 preg pwm0.cmp1
+028 preg pwm0.cmp2
+02C preg pwm0.cmp3
+drop ( base)
+
+1002_5000 ( PWM1 base)
+000 preg pwm1.cfg
+008 preg pwm1.count
+010 preg pwm1.s
+020 preg pwm1.cmp0
+024 preg pwm1.cmp1
+028 preg pwm1.cmp2
+02C preg pwm1.cmp3
+drop ( base)
+
+1003_5000 ( PWM2 base)
+000 preg pwm2.cfg
+008 preg pwm2.count
+010 preg pwm2.s
+020 preg pwm2.cmp0
+024 preg pwm2.cmp1
+028 preg pwm2.cmp2
+02C preg pwm2.cmp3
+drop ( base)
+
+( UART registers.)
+1001_3000 ( UART0 base)
+000 preg uart0.txdata      ( Transmit data register)
+004 preg uart0.rxdata      ( Receive data register)
+008 preg uart0.txctrl      ( Transmit control register)
+00C preg uart0.rxctrl      ( Receive control register)
+010 preg uart0.ie          ( UART interrupt enable)
+014 preg uart0.ip          ( UART Interrupt pending)
+018 preg uart0.div         ( Baud rate divisor)
+drop ( base)
+
+( NOTE: UART1 is *not* pinned out on the QFN48 package.)
+1002_3000 ( UART1 base)
+000 preg uart1.txdata      ( Transmit data register)
+004 preg uart1.rxdata      ( Receive data register)
+008 preg uart1.txctrl      ( Transmit control register)
+00C preg uart1.rxctrl      ( Receive control register)
+010 preg uart1.ie          ( UART interrupt enable)
+014 preg uart1.ip          ( UART Interrupt pending)
+018 preg uart1.div         ( Baud rate divisor)
+drop ( base)
+
+( QSPI registers.)
+1001_4000 ( QSPI0 base)
+000 preg spi0.sckdiv       ( Serial clock divisor)
+004 preg spi0.sckmode      ( Serial clock mode)
+010 preg spi0.csid         ( Chip select ID)
+014 preg spi0.csdef        ( Chip select default)
+018 preg spi0.csmode       ( Chip select mode)
+028 preg spi0.delay0       ( Delay control 0)
+02C preg spi0.delay1       ( Delay control 1)
+040 preg spi0.fmt          ( Frame format)
+048 preg spi0.txdata       ( Tx FIFO data)
+04C preg spi0.rxdata       ( Rx FIFO data)
+050 preg spi0.txmark       ( Tx FIFO watermark)
+054 preg spi0.rxmark       ( Rx FIFO watermark)
+060 preg spi0.fctrl        ( SPI flash interface control)
+064 preg spi0.ffmt         ( SPI flash instruction format)
+070 preg spi0.ie           ( SPI interrupt enable)
+074 preg spi0.ip           ( SPI interrupt pending)
+drop ( base)
+
+1002_4000 ( QSPI1 base)
+000 preg spi1.sckdiv       ( Serial clock divisor)
+004 preg spi1.sckmode      ( Serial clock mode)
+010 preg spi1.csid         ( Chip select ID)
+014 preg spi1.csdef        ( Chip select default)
+018 preg spi1.csmode       ( Chip select mode)
+028 preg spi1.delay0       ( Delay control 0)
+02C preg spi1.delay1       ( Delay control 1)
+040 preg spi1.fmt          ( Frame format)
+048 preg spi1.txdata       ( Tx FIFO data)
+04C preg spi1.rxdata       ( Rx FIFO data)
+050 preg spi1.txmark       ( Tx FIFO watermark)
+054 preg spi1.rxmark       ( Rx FIFO watermark)
+070 preg spi1.ie           ( SPI interrupt enable)
+074 preg spi1.ip           ( SPI interrupt pending)
+drop ( base)
+
+( NOTE: QSPI2 is *not* pinned out on the QFN48 package.)
+1003_4000 ( QSPI2 base)
+000 preg spi2.sckdiv       ( Serial clock divisor)
+004 preg spi2.sckmode      ( Serial clock mode)
+010 preg spi2.csid         ( Chip select ID)
+014 preg spi2.csdef        ( Chip select default)
+018 preg spi2.csmode       ( Chip select mode)
+028 preg spi2.delay0       ( Delay control 0)
+02C preg spi2.delay1       ( Delay control 1)
+040 preg spi2.fmt          ( Frame format)
+048 preg spi2.txdata       ( Tx FIFO data)
+04C preg spi2.rxdata       ( Rx FIFO data)
+050 preg spi2.txmark       ( Tx FIFO watermark)
+054 preg spi2.rxmark       ( Rx FIFO watermark)
+070 preg spi2.ie           ( SPI interrupt enable)
+074 preg spi2.ip           ( SPI interrupt pending)
+drop ( base)
+
+( GPIO i/o functions:
+GPIO  IOF0        IOF1
+====  =========   =========
+0                 PWM0_PWM0
+1                 PWM0_PWM1
+2     SPI1_CS0    PWM0_PWM2
+3     SPI1_DQ0    PWM0_PWM3
+4     SPI1_DQ1
+5     SPI1_SCK
+6     SPI1_DQ2
+7     SPI1_DQ3
+8     SPI1_CS1
+9     SPI1_CS2
+10    SPI1_CS3    PWM2_PWM0
+11                PWM2_PWM1
+12    I2C0_SDA    PWM2_PWM2
+13    I2C0_SCL    PWM2_PWM3
+14
+15
+16    UART0_RX
+17    UART0_TX
+18    UART1_RX
+19                PWM1_PWM1   Green LED
+20                PWM1_PWM0
+21                PWM1_PWM2   Blue LED
+22                PWM1_PWM3   Red LED
+23    UART1_TX
+24
+25
+26    SPI2_CS0
+27    SPI2_DQ0
+28    SPI2_DQ1
+29    SPI2_SCK
+30    SPI2_DQ2
+31    SPI2_DQ3
+
+NOTE: This table is from the FE310-G002 documentation. This table is
+*missing* from the FE310-G000 manual. Since UART1 and SPI2 are not pinned
+on the G000, and because it lacks an I2C peripheral, you can safely ignore
+those parts of the table. ;-)
+
+( The main idea is this: "communication" peripherals are IOF0,
+                                             and PWM are IOF1.)
