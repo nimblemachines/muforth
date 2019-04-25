@@ -1,0 +1,78 @@
+( This file is part of muforth: https://muforth.nimblemachines.com/
+
+  Copyright 2002-2019 David Frech. (Read the LICENSE for details.)
+
+loading HiFive1 SPI flash experiments
+
+__meta
+
+hex
+
+: 2drop  drop drop ;
+
+: lohi>  ( lo hi - h)   8 << or ;
+: >hilo  ( h - hi lo)   dup 8 u>>  swap 0ff and ;
+
+: hilo>  ( hi lo - h)   swap  lohi> ;
+: >lohi  ( h - lo hi)        >hilo  swap ;
+
+: +bits  ( bits a)   ( turn on bits in a word in memory)
+   tuck               @ or  swap ! ;
+
+: -bits  ( bits a)   ( turn off bits in a word in memory)
+   swap  invert  over @ and  swap ! ;
+
+: tx  ( set dir to tx)  8 spi0.fmt +bits ;
+: rx  ( set dir to rx)  8 spi0.fmt -bits ;
+
+( something easy to type)
+: gg
+   0 spi0.fctrl !  ( put spi0 back into programmed i/o mode)
+   rx ;
+
+: hh
+   1 spi0.fctrl !  ( put spi0 back into XIP mode)
+   tx ;
+
+: not  0= ;
+: spi!  ( b)
+   begin  spi0.txdata @  0< not until  spi0.txdata ! ;
+
+: spi@  ( - b)
+   0  begin  drop  spi0.rxdata @  dup 0< not until ;
+
+: spi-get  ( - b0 b1 ...)
+   begin  spi0.rxdata @  dup 0< until  drop ;
+
+: send  tx    spi! ;
+: recv  rx  0 spi! ;
+
+: wait-for-txwm
+   begin  spi0.ip @  1 and  until ;
+
+: cs\  ( assert CS)     2 ( HOLD) spi0.csmode ! ;
+: cs/  ( de-assert CS)  wait-for-txwm  0 ( AUTO) spi0.csmode ! ;
+
+: >addr  ( a)  >lohi >lohi  send send send ;
+
+: wrdi  04 send ;
+: rdsr  cs\  05 send recv cs/ ;
+: wren  06 send ;
+
+: jedec  cs\  9f send  recv recv hilo>  recv hilo>  cs/ ;
+
+: read4  ( addr - b0 b1 b2 b3)
+   cs\  03 send  >addr  recv recv recv recv  cs/ ;
+
+-- -------------------------------------------------------
+
+: spi-get  ( - b0 b1 ...)
+   begin  spi0.rxdata @  dup 0< until  drop ;
+
+: >addr  ( a)  >lohi >lohi  send send send ;
+
+: jedec  cs\  9f send  recv recv recv  spi-get  >r  hilo>  r> hilo>  cs/ ;
+
+: r4   recv recv recv recv  spi-get  lohi> lohi> lohi> ;
+: read16
+   cs\  03 send  >addr  r4 r4 r4 r4  cs/ ;
