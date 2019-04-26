@@ -4,25 +4,10 @@
 
 loading HiFive1 clock generation experiments
 
-( FE310-G000/002 datasheet contains some pointers about the contents of the
-  OTP memory, but it's confusing. It shows offsets in *decimal*, but, used
-  directly, they point to nothing.
-
-  It turns out those decimal offsets are *word indexes*, not byte indexes.)
-
-#2041 2 << @otp-rom +  equ device-stamp  ( not guaranteed unique)
-#2043 2 << @otp-rom +  equ hfrosc-trim
-
 __meta
 
-: +bits  ( bits a)   ( turn on bits in a word in memory)
-   tuck               @ or  swap ! ;
-
-: -bits  ( bits a)   ( turn off bits in a word in memory)
-   swap  invert  over @ and  swap ! ;
-
 ( mtime is a 64-bit counter, clocked by the LFCLK - which, in the case of
-  the HiFiv1, is driven by a 32768 Hz external oscillator.
+  the HiFive1, is driven by a 32768 Hz external oscillator.
 
   mtime @  gives us the low 32 bits, which is all we need.)
 
@@ -41,7 +26,7 @@ __meta
    begin  hfrosccfg @  0< until  ( until ready bit)
    "1_0000 ( pllsel) pllcfg -bits  ( hfrosc drives hfclk) ;
 
-( Now let's fire up the PLL, and switch to it. Let's start with 160MHz.)
+( Now let's fire up the PLL, and switch to it. Let's go for 320 MHz!)
 : >pll
    >hfrosc  ( switch to internal osc while fiddling with PLL)
    "100 plloutdiv !  ( /1)
@@ -49,3 +34,13 @@ __meta
    %0010_0000_01_100111_0_001 pllcfg !  33 ticks ( about 1ms)
    begin  pllcfg @  0< until  ( wait until PLL lock)
    "1_0000 ( pllsel) pllcfg +bits  ( PLL drives hfclk) ;
+
+( In case we want to return to a more "modest" state, we can go back to
+  using the 16 MHz HFXOSC output as the HFCLK.)
+: >hfxosc
+   >hfrosc  ( switch to internal osc while fiddling with PLL and XOSC)
+   "4000_0000 ( enable)  hfxosccfg !  ( turn HFXOSC on)
+   begin  hfxosccfg @  0< until  ( until ready bit)
+   "6_0000 ( pllbypass+pllrefsel) pllcfg +bits  ( bypass PLL, use HFXOSC as pllref)
+   1 ticks  ( wait a bit, just to be sure)
+   "1_0000 ( pllsel) pllcfg +bits  ( HFXOSC drives hfclk - via bypassed PLL) ;
