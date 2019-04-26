@@ -8,19 +8,16 @@ __meta
 
 hex
 
-: 2drop  drop drop ;
-
 : lohi>  ( lo hi - h)   8 << or ;
 : >hilo  ( h - hi lo)   dup 8 u>>  swap 0ff and ;
 
 : hilo>  ( hi lo - h)   swap  lohi> ;
 : >lohi  ( h - lo hi)        >hilo  swap ;
 
-: +bits  ( bits a)   ( turn on bits in a word in memory)
-   tuck               @ or  swap ! ;
+( XXX c@+ should probably be in the kernel, and should probably be
+  assembler.)
 
-: -bits  ( bits a)   ( turn off bits in a word in memory)
-   swap  invert  over @ and  swap ! ;
+: c@+  ( a - b a+1)  dup c@  swap 1+ ;
 
 : tx  ( set dir to tx)  8 spi0.fmt +bits ;
 : rx  ( set dir to rx)  8 spi0.fmt -bits ;
@@ -39,40 +36,47 @@ hex
    begin  spi0.txdata @  0< not until  spi0.txdata ! ;
 
 : spi@  ( - b)
-   0  begin  drop  spi0.rxdata @  dup 0< not until ;
-
-: spi-get  ( - b0 b1 ...)
-   begin  spi0.rxdata @  dup 0< until  drop ;
+   0  begin  drop  spi0.rxdata @  dup 0< not until
+   0ff and ;
 
 : send  tx    spi! ;
-: recv  rx  0 spi! ;
+: recv  rx  0 spi! spi@ ;
 
 : wait-for-txwm
    begin  spi0.ip @  1 and  until ;
 
-: cs\  ( assert CS)     2 ( HOLD) spi0.csmode ! ;
-: cs/  ( de-assert CS)  wait-for-txwm  0 ( AUTO) spi0.csmode ! ;
+: cs\  ( cmd)  ( assert CS, send command byte)
+                  2 ( HOLD) spi0.csmode !  send ;
+: cs/  ( de-assert CS)
+   wait-for-txwm  0 ( AUTO) spi0.csmode ! ;
+
+( For sending 1-byte commands)
+: cmd   ( cmd)  cs\  cs/ ;
 
 : >addr  ( a)  >lohi >lohi  send send send ;
+: r4     ( - w)  recv recv recv recv  lohi> lohi> lohi> ;
 
-: wrdi  04 send ;
-: rdsr  cs\  05 send recv cs/ ;
-: wren  06 send ;
+( SPI commands.)
+: wrdi  04 cmd ;
+: rdsr  05 cs\  recv  cs/ ;
+: wren  06 cmd ;
 
-: jedec  cs\  9f send  recv recv hilo>  recv hilo>  cs/ ;
+: read4   ( addr - w)             03 cs\  >addr  r4           cs/ ;
+: read16  ( addr - w0 w1 w2 w3)   03 cs\  >addr  r4 r4 r4 r4  cs/ ;
 
-: read4  ( addr - b0 b1 b2 b3)
-   cs\  03 send  >addr  recv recv recv recv  cs/ ;
+: -busy  ( wait until busy flag is clear)
+   begin  rdsr  1 and  0= until ;
 
--- -------------------------------------------------------
+: erase  ( a)  ( 4k sector erase)
+        20 cs\  >addr  cs/  -busy ;
 
-: spi-get  ( - b0 b1 ...)
-   begin  spi0.rxdata @  dup 0< until  drop ;
+( For many chips, command 02 programs only a single byte. SST/Microchip
+  25-series flash is in this category. The ISSI chip on the HiFive1 board
+  can do *page* programming of up to 256 bytes at a time. This makes our
+  job much easier!)
 
-: >addr  ( a)  >lohi >lohi  send send send ;
+: prog  ( buf a u)
+        02 cs\  swap >addr  for  c@+ swap  send  next  drop  cs/  -busy ;
 
-: jedec  cs\  9f send  recv recv recv  spi-get  >r  hilo>  r> hilo>  cs/ ;
-
-: r4   recv recv recv recv  spi-get  lohi> lohi> lohi> ;
-: read16
-   cs\  03 send  >addr  r4 r4 r4 r4  cs/ ;
+: reset-chip  66 cs\  99 send  cs/ ;
+: jedec  9f cs\  recv recv hilo>  recv hilo>  cs/ ;
