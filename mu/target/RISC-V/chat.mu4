@@ -1,0 +1,354 @@
+( This file is part of muforth: https://muforth.nimblemachines.com/
+
+  Copyright 2002-2019 David Frech. (Read the LICENSE for details.)
+
+loading RISC-V serial chat protocol (core)
+
+( Taking inspiration from the wildly successful S08 serial chat protocol.
+
+  Responds to the following commands. NOTE: these are hex values!
+
+00 - 0f  Idle   - these command bytes are ignored
+
+10  Version     - get the 32-bit version commit
+11  SetAddr     - set the memory address pointer
+12  GetStatus   - get regs
+13  Run         - set regs and execute
+14  ReadWords   - read N words, incrementing by 4 as we go
+15  WriteWord   - write a word to memory, incr pointer by 4
+
+16 - ff  Idle   - these command bytes are ignored
+)
+
+-- ------------------------------------------------------------------------
+-- Macros defining common VM operations
+-- ------------------------------------------------------------------------
+assembler
+
+( Data stack macros.)
+: push1  ( r1)            asm{  -1 cells sp sp addi   0 sp rot ( r1) sw  } ;
+
+: push4  ( r4 r3 r2 r1)   asm{  -4 cells sp sp addi   0 sp rot ( r1) sw
+                                                   cell sp rot ( r2) sw
+                                                2 cells sp rot ( r3) sw
+                                                3 cells sp rot ( r4) sw  } ;
+
+: pop1  ( r1)             asm{  0 sp rot ( r1) lw      cell sp sp addi  } ;
+
+: pop4  ( r4 r3 r2 r1)    asm{  0 sp rot ( r1) lw
+                             cell sp rot ( r2) lw
+                          2 cells sp rot ( r3) lw
+                          3 cells sp rot ( r4) lw   4 cells sp sp addi  } ;
+
+( Return stack macros.)
+: rpush1  ( r1)      asm{   -1 cells rp rp addi   0 rp rot ( r1) sw  } ;
+
+: rpop1  ( r1)       asm{  0 rp rot ( r1) lw      cell rp rp addi  } ;
+
+forth
+
+
+-- ------------------------------------------------------------------------
+-- Necessary Forth "engine" bits.
+-- ------------------------------------------------------------------------
+__meta
+
+
+assembler
+: dispatch  asm{     0  w jr  } ;
+:  next     asm{     0 ip jr  } ;
+: +next     asm{  cell ip jr  } ;  ( skip cell, then do next)
+forth
+
+meta: create    new     ;code  label dovar
+                               label pushw
+                               top push1   w top mv  ( move pfa to top)
+                               next  ;c
+
+meta: :         new  ]  ;code  label docolon
+                               ip rpush1   0 w jr  ;c
+
+code* (unnest)  [r]   label unnest   ip rpop1   next  ;c
+
+code* (lit)     [r]   0 ip w lw  ( fetch literal)   4 ip ip addi   pushw j  ;c
+
+-- code execute   ( cfa/pfa)       top w mv   begin   top pop1   dispatch  ;c
+-- code @execute  ( 'cfa/'pfa)   0 top w lw   again  ;c
+
+code*    (branch)   [r]
+label branch        0 ip ip lw  ( follow branch)   next  ;c
+code*   (0branch)   [r]  top w mv   top pop1   branch w 0!= until  ( fall thru)  ;c
+label  skip         +next  ( skip branch address)  ;c
+code*  (?0branch)   [r]  skip top 0= until   top pop1   branch j  ;c
+-- code*  (=0branch)   [r]  skip top 0= until              branch j  ;c
+
+( Fast version, using loop register)
+code* (for)   [r]  ( u)
+   ix rpush1   top ix mv   label poptop   top pop1   next  ;c
+
+code* (next)  [r]
+   -1 ix ix addi  branch ix 0= until  ix rpop1   skip j  ;c
+
+-- ------------------------------------------------------------------------
+-- The real guts of the chat code.
+-- ------------------------------------------------------------------------
+
+hex
+
+code b>  ( - b)
+   uart0.rxdata x lui   begin   uart0.rxdata x w lw   w 0>= until
+   0ff w w andi   pushw j  ;c
+
+code >b  ( b)
+   uart0.txdata x lui   begin   uart0.txdata x w lw   w 0>= until
+   uart0.txdata x top sw   poptop j  ;c
+
+code >hilo   ( hi:lo - hi lo)
+   top w mv   0ff w w andi   top 8 top srli   pushw j  ;c
+
+code lohi>   ( lo hi - hi:lo)
+   x pop1   top 8 top slli   x top top add   next  ;c
+
+( or mset, m@, m!)
+code m!  ( set addr)
+   top mp mv   poptop j  ;c
+
+code m*  ( read addr, incr)
+   0 mp w lw   4 mp mp addi   pushw j   ;c
+
+code m&  ( write addr, incr)
+   0 mp top sw   4 mp mp addi   poptop j  ;c
+
+: >w   >hilo >b  >hilo >b  >hilo >b >b ;
+: w>   b> b> b> b>  lohi> lohi> lohi> ;
+
+( Compile the first 32 bits of the current muforth Git commit.)
+: version
+   [ muforth-commit drop 8 evaluate  literal ]  >w ;
+
+: set-address  w> m! ;
+: read-words   b> for  m* >w  next ;
+: write-word   w> m& ;
+
+comment %context?!?%
+( or something like this)
+: get-status  SP put-word  PC put-word  CP put-word ;
+  ( OR     stack>  put-word  put-word ...)
+: run  get-word ... >stack  execute ;
+%context?!?%
+: get-status  -1 >w ;
+: run   -2 >w ;
+
+( For ease of compilation I've cheated and hardwired in both the command
+  offset and the max index of the table. Tread carefully if you change
+  either of these!)
+
+( XXX if we change to compiling 16-bit jal's, change the shamt to 1.)
+( XXX backwards u>= jump to existing next?)
+( XXX popping ip the way we would if doing this in Forth?)
+code dispatch ( cmd)
+   -10 top w addi ( 00 to 0f become large unsigned numbers)   top pop1
+   6 x li   w x u< if
+      w 2 w slli ( word index)   ip w w add   0 w jr
+   then   next ;c
+
+: process
+   -- b> ( cmd)  dispatch
+   dispatch
+   ( 10) version
+   ( 11) set-address
+   ( 12) get-status
+   ( 13) run
+   ( 14) read-words
+   ( 15) write-word  [  show
+
+: doit   begin  b> ( cmd)  process  again ;
+
+( For debugging and interactive execution.)
+
+ram
+
+( The host can push things onto host stack; they get copied to target
+  stack, registers popped, words execute, re-push, copy back to host...
+  Much easier than stuffing things into register slots on stack frame!)
+
+code bug  [r]
+   top ip rp ix push4   ebreak  ;c
+
+implements continue-forth  __asm
+   top ip rp ix pop4   fence.i   next  ;c
+
+code execute   ( cfa/pfa)       top w mv   top pop1   dispatch  ;c
+implements trampoline  ( x0 .. xn pfa - y0 .. ym)
+   ]  execute  begin  bug  again  [
+
+__host
+
+( Make it easy to get to the key target registers from meta.)
+meta
+: sp@   tsp @  3 \m cells  +  ;  ( skip IP, RP, and IX)
+: rp@   trp @ ;
+: ip@   tip @ ;
+forth
+
+( Show some indication of whether a word is still executing. If IP is
+  anything other than two cells past trampoline, we've hit "bug" somewhere
+  other than the trampoline. Show this by annotating IP with a "*".)
+
+: executing?   ( ip - f)   [ \m trampoline @  2 \m cells + #]  - ;
+
+: .ip
+   \m ip@  dup .h32  executing? if  ." * "  ^  then  ( done)  2sp ;
+
+: .sp
+   \m sp@  .h32__ ;
+
+
+-: ( forth version of .regs)
+   cr  ."       IX        SP        RP        IP"
+       (  00000000  00000000  00000000  00000000 )
+   cr      tix .tr       .sp   trp .tr       .ip ;
+   is .regs
+
+
+__meta
+
+
+.ifdef later
+
+( Push registers and start conversing with host.)
+label chat-entry
+   ( call has already pushed PC)
+   sr push  sr clr  ( disable interrupts!)
+   begin  process c  again  ;c
+
+chat-entry chat-entry-vector image-!  ( patch the vector)
+
+( This creates a slot for the PC which can be replaced with the address of
+  native code to execute. That code can end with a return instruction, which
+  will return to the call to interact below, and then re-enter chat with
+  the same stack layout: a PC slot below a "protective" return address. It's
+  easier to visualize than to explain. ;-)
+
+label interact
+   begin  chat-entry c  again  ;c
+
+Vreset handler
+   -- set SP to end of RAM
+   @ram #ram +  # sp mov
+
+.ifndef in-ram  ( the flash-based code already did all this)
+
+   -- disable watchdog timer
+   WDTKEY 80 + # WDTCTL & mov
+
+.equates. .contains MPUCTL0 .if     -- FRAM part with memory protection
+   -- let segment3 cover everything for now
+   MPUKEY 0001 + # MPUCTL0 & mov    -- unlock and enable MPU
+   0200 # MPUSAM & bic              -- turn off W bit for segment 3
+   MPUCTL0 1+ ( high byte) & clrb   -- re-lock MPU
+.then
+
+.equates. .contains PM5CTL0 .if
+   1 # PM5CTL0 & bic                -- unlock i/o port pins
+.then
+
+( If this is an FRAM device, set the controller to insert 1 wait state. We
+  are about to switch to a 16 MHz CPU clock, which requires 1 wait state.)
+
+.equates. .contains FRCTL0 .if
+   FRKEY 1 4 << + # FRCTL0 & mov    -- unlock FRAM controller; set 1 wait state
+   FRCTL0 1+ ( high byte) & clrb    -- lock FRAM controller
+.then
+
+( If there is a 16 MHz calibration value in the info area, use it and set
+  the DCO to generate 16 MHz MCLK and SMCLK.)
+
+.equates. .contains CAL_BC1_16MHZ .if  ( we need to set up the DCO trim ourselves)
+   "0ffff # CAL_DCO_16MHZ & cmp     -- if Info A has been erased, don't use trim
+   0= if
+      -- Set defaults that might work to get chat going...
+      %10_00_1111 # BCSCTL1 & movb  -- RSEL=15
+      a0 # DCOCTL & movb            -- not quite the middle?
+   else
+      -- Set clock to factory-calibrated 16 MHz
+      -- See G2553 datasheet, p15
+      CAL_BC1_16MHZ & BCSCTL1 & movb
+      CAL_DCO_16MHZ & DCOCTL & movb
+   then
+   BCSCTL2 & clrb
+
+.else
+
+( If device contains a CS module, it has been factory calibrated. All we
+  need to do is to set the right divisors for the DCO to generate 16 MHz
+  MCLK and SMCLK clocks.)
+
+.equates. .contains CSCTL0 .if  ( DCO trimmed at factory; just choose divisors)
+   -- Right now this is for the FR6989. But other devices should work too.
+   CSKEY # CSCTL0 & mov          -- unlock CS module
+   %0100_1000 # CSCTL1 & mov     -- set DCORSEL=1, DCOFSEL=4 (16 MHz)
+   CSCTL3 & clr                  -- set DIVM and DIVS to /1
+   CSCTL0 1+ ( high byte) & clrb -- lock CS module
+
+.else
+
+z" No BCS calibration or CS module found. Your clock is unsupported."  abort
+
+.then .then
+
+   -- Configure UART for 115,200 bps, 8 bits, no parity
+   81 # chat-uart-ctl1 & bisb    -- enable SMCLK
+                                 -- hold UART in reset while configuring
+   chat-uart-ctl0 & clrb         -- reset to defaults: 8 bits, no parity, 1 stop
+   chat-uart-br1 & clrb          -- set baud rate divisor
+.ifndef slow-chat
+   8 # chat-uart-br0 & movb      -- 16,000,000/16/115,200
+.else
+   #104 # chat-uart-br0 & movb   -- 16,000,000/16/9600
+.then
+.ifdef chat-uart-mctlw
+   chat-uart-mctlw &  \f swap # \f swap  mov
+.else
+   chat-uart-mctl &  \f swap # \f swap  movb
+.then
+
+   01 # chat-uart-ctl1 & bicb    -- bring UART out of reset
+
+   -- Connect correct port pins to UART RXD and TXD, based on chat-port-*
+   -- equates in the chip's equates file. Only two of the following lines
+   -- will match and get compiled.
+.ifdef chat-port-sel0-ones   chat-port-sel0-ones # chat-port-sel0 & bisb   .then
+.ifdef chat-port-sel1-ones   chat-port-sel1-ones # chat-port-sel1 & bisb   .then
+.ifdef chat-port-sel0-zeros  chat-port-sel0-zeros # chat-port-sel0 & bicb   .then
+.ifdef chat-port-sel1-zeros  chat-port-sel1-zeros # chat-port-sel1 & bicb   .then
+
+.equates. .contains FCTL1 .if  ( Flash control register)
+   -- Set up flash clock; needs to be between 257 and 476 kHz (no joke)
+   -- We're running at 16M, so set it to 16M/40 = 400k.
+   FKEY #39 ( divisor-1) +  %0100_0000 ( MCLK)  + # FCTL2 & mov
+.then
+
+.then  ( not in-ram)
+
+   ( This is here so that native code can simply return and it will
+     re-enter the chat code with a proper stack.)
+
+   begin  interact c  again  ;c
+
+
+( Set BSL flag to _not_ mass erase if wrong password entered during BSL
+  "hello" sequence.)
+
+here
+.equates. .contains Vbslkey .if
+Vbslkey goto  0 ,
+.else .equates. .contains Vbslsig1 .if
+Vbslsig1 goto  0aaaa dup , ,  ( sig1 and sig2)
+.else
+z" Do you have to do something special to prevent the BSL from erasing chip?"
+   abort
+.then .then
+goto
+
+.then

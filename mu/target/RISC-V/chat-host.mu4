@@ -1,0 +1,75 @@
+( This file is part of muforth: https://muforth.nimblemachines.com/
+
+  Copyright 2002-2019 David Frech. (Read the LICENSE for details.)
+
+loading RISC-V serial chat protocol (host)
+
+hex
+
+( Taking inspiration from the wildly successful S08 serial chat protocol.
+
+  Responds to the following commands. NOTE: these are hex values!
+
+00 - 0f  Idle   - these command bytes are ignored
+
+10  Version     - get the 32-bit version commit
+11  SetAddr     - set the memory address pointer
+12  GetStatus   - get regs
+13  Run         - set regs and execute
+14  ReadWords   - read N words, incrementing by 4 as we go
+15  WriteWord   - write a word to memory, incr pointer by 4
+
+16 - ff  Idle   - these command bytes are ignored
+)
+
+: >b   send ;
+: b>   recv ;
+
+: >w               >3210  >b >b >b >b ;
+: w>   b> b> b> b>  0123> ;
+
+: c.Idle                   0 >b     ;
+: c.Version     ( - w)    10 >b      w> ;
+: c.SetAddr     ( a)      11 >b  >w ;
+
+-- : c.GetStatus   ( - sp pc sr cp)
+--                          12 >b  w> w> w> w> ;
+-- : c.Run         ( pc sr cp)
+--                          13 >b  rot >w  swap >w  >w ;
+
+: c.ReadWords   ( n)      14 >b  >b ;  ( then read streamed bytes)
+: c.WriteWord   ( w)      15 >b  >w ;
+
+( Send two no-ops, let them transmit, _then_ throw away any input bytes.)
+: resync   c.Idle  c.Idle  drain  flush ;
+
+: c.hello
+   #115200 bps  resync
+   cr ." Chat firmware version "  c.Version
+   radix preserve  hex  sep preserve  -sep   <# 4# 4# #> type ;
+
+: c.setup-chunk  ( buf a u - #words)
+   swap c.SetAddr  swap m !  3 + 2 >> ( #words) ;
+
+: c.read    ( buf a u)
+   c.setup-chunk  dup c.ReadWords  for  w> >3210  m& m& m& m&  next ;
+
+: c.write   ( buf a u)
+   c.setup-chunk  for  m* m* m* m*  0123>  c.WriteWord  next ;
+
+: c.write  drop 2drop ;  ( so we don't clobber ram)
+: c.get-sp   "deadbeef ;
+: c.set-sp   drop ;
+: c.go  drop ;
+
+comment %commands%
+chat-cmd t.hello
+chat-cmd t.get-sp   ( - sp)
+chat-cmd t.set-sp   ( sp)
+chat-cmd t.read     ( buf a u)
+chat-cmd t.write    ( buf a u)
+chat-cmd t.run      ( pc)
+%commands%
+
+: chat
+   chat-via  c.hello  c.get-sp  c.set-sp  c.read  c.write  c.go ;
