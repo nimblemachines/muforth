@@ -1,0 +1,162 @@
+( This file is part of muforth: https://muforth.nimblemachines.com/
+
+  Copyright 2002-2019 David Frech. (Read the LICENSE for details.)
+
+loading RISC-V serial chat protocol (core)
+
+( Taking inspiration from the wildly successful S08 serial chat protocol.
+
+  Responds to the following commands. NOTE: these are hex values!
+
+00 - 0f  idle   - these command bytes are ignored
+
+10  version     - get the 32-bit version commit
+11  set address - set the memory address pointer
+12  read words  - read N words, incrementing by 4 as we go
+13  write word  - write a word to memory, incr pointer by 4
+14  get regs    - get regs
+15  run         - set regs and execute
+
+16 - ff  idle   - these command bytes are ignored
+)
+
+__meta
+hex
+
+abi-regs
+
+( Our two "millicode" routines.)
+label nest
+   -2 cells sp c.addi   0 ra c.swsp  cell s0 c.swsp   a5 c.jr  ;c
+
+label unnest
+   0 ra c.lwsp  cell s0 c.lwsp   2 cells sp c.addi   a5 c.jr  ;c
+
+label exit
+   unnest a5 jal   ra c.jr  ;c
+
+assembler
+: c     asm{  c.jal  } ;
+: j     asm{  c.j    } ;
+: ret   asm{  ra c.jr  } ;
+
+: {{    asm{    nest a5 jal  } ;
+: }}    asm{  unnest a5 jal  } ;
+: }};   asm{    exit    c.j  } ;
+forth
+
+( XXX need a word to split 32-bit addresses into 20-bit and 12-bit chunks,
+  to make this lui/addi code more readable.)
+
+label b>  ( - b)
+   uart0.rxdata a1 lui   begin   uart0.rxdata 0fff \f and  a1 a0 c.lw   a0 0>= until
+   "0ff a0 a0 andi   ret  ;c
+
+label >b  ( b)
+   uart0.txdata a1 lui   begin   uart0.txdata 0fff \f and  a1 a2 c.lw   a2 0>= until
+   uart0.txdata 0fff \f and  a1 a0 c.sw   ret  ;c
+
+label w>
+   {{  b> c                   a0 s0 c.mv
+       b> c    #8 a0 c.slli   a0 s0 c.add
+       b> c   #16 a0 c.slli   a0 s0 c.add
+       b> c   #24 a0 c.slli   s0 a0 c.add  }};
+
+label >w
+   {{  a0 s0 c.mv          >b c
+       s0  #8 a0 srli      >b c
+       s0 #16 a0 srli      >b c
+       s0 #24 a0 srli  }}  >b j  ;c
+
+( Compile the first 32 bits of the current muforth Git commit.)
+label version
+   muforth-commit drop 8  evaluate
+   dup   a0 lui   a0 a0 addi   >w j  ;c
+
+label set-address
+   {{  w> c   a0 s1 c.mv  }};
+
+label read-words
+   {{  b> c ( count)  a0 0!= if   a0 s0 c.mv
+       begin    0 s1 a0 c.lw   cell s1 c.addi   >w c
+               -1 s0 c.addi   s0 0= until
+       then
+   }};
+
+label write-word
+   {{  w> c   0 s1 a0 c.sw   cell s1 c.addi  }};
+
+label get-regs
+   {{  mepc a0 csrr      >w c
+         sp a0 c.mv  }}  >w j  ;c
+
+label run
+   {{  w> c   a0 mepc csrw
+       w> c   a0   sp c.mv   }}  mret  ;c
+
+( For ease of compilation I've cheated and hardwired in both the command
+  offset and the max index of the table. Tread carefully if you change
+  either of these!)
+
+label dispatch
+   -10 a0 c.addi  ( 00 to 0f become large unsigned numbers)
+    6 a1 c.li   a0 a1 u< if                  (  4             2           4)
+       a0 a0 c.add ( halfword index)   0 a1 auipc   a1 a0 c.add   #10 a0 jr
+
+      ( cmd table)
+      ( 10) version c.j
+      ( 11) set-address c.j
+      ( 12) read-words c.j
+      ( 13) write-word c.j
+      ( 14) get-regs c.j
+      ( 15) run c.j
+
+   then  ret  ;c
+
+( Since process never returns, it doesn't need to save its ra.)
+label process
+   begin   b> c ( cmd)   dispatch c   c.j  ( again)  ;c
+
+( XXX for testing)
+label one
+   {{  b> c  }}  dispatch j  ;c
+
+label exec
+   0 a0 c.lwsp   a0 c.jalr   0 a0 c.swsp   ebreak  ;c
+
+__host
+
+variable ta0
+: rx   ( 'code)  stack>  \m exec runwait  stack<  ta0 !  .regs ;
+
+-:
+   cr  ."       A0        SP        PC"
+       (  00000000  00000000  00000000)
+   cr      ta0 .tr   tsp .tr   tpc .tr ;
+   is .regs
+
+__meta
+
+
+.ifdef notyet
+
+label handle-interrupt
+   ( ignore for now)
+label exit-handler
+   w x y pop3   mret  ;c
+
+code handler
+   w x y push3
+   mcause w csrr  w 0>=  handle-interrupt until
+
+( At "reset" we jump here.)
+code reset
+   @ram #ram +  sp lui  ( locate stack at end of ram)
+
+   ( set up clock - 16M HFXOSC)
+
+   ( set up uart - 115200 - divisor 138)
+
+   ( set up mtvec to point to a handler that includes chat-entry)
+
+.then
