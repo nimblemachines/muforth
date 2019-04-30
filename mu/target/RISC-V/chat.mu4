@@ -2,22 +2,22 @@
 
   Copyright 2002-2019 David Frech. (Read the LICENSE for details.)
 
-loading RISC-V serial chat protocol (core)
+loading RISC-V serial chat protocol (core) (DEPRECATED)
 
 ( Taking inspiration from the wildly successful S08 serial chat protocol.
 
   Responds to the following commands. NOTE: these are hex values!
 
-00 - 0f  Idle   - these command bytes are ignored
+00 - 0f  idle   - these command bytes are ignored
 
-10  Version     - get the 32-bit version commit
-11  SetAddr     - set the memory address pointer
-12  GetStatus   - get regs
-13  Run         - set regs and execute
-14  ReadWords   - read N words, incrementing by 4 as we go
-15  WriteWord   - write a word to memory, incr pointer by 4
+10  version     - get the 32-bit version commit
+11  set address - set the memory address pointer
+12  read words  - read N words, incrementing by 4 as we go
+13  write word  - write a word to memory, incr pointer by 4
+14  get regs    - get regs
+15  run         - set regs and execute
 
-16 - ff  Idle   - these command bytes are ignored
+16 - ff  idle   - these command bytes are ignored
 )
 
 -- ------------------------------------------------------------------------
@@ -27,6 +27,9 @@ assembler
 
 ( Data stack macros.)
 : push1  ( r1)            asm{  -1 cells sp sp addi   0 sp rot ( r1) sw  } ;
+
+: push2  ( r2 r1)         asm{  -2 cells sp sp addi   0 sp rot ( r1) sw
+                                                   cell sp rot ( r2) sw  } ;
 
 : push4  ( r4 r3 r2 r1)   asm{  -4 cells sp sp addi   0 sp rot ( r1) sw
                                                    cell sp rot ( r2) sw
@@ -130,39 +133,56 @@ code m&  ( write addr, incr)
 : read-words   b> for  m* >w  next ;
 : write-word   w> m& ;
 
-comment %context?!?%
-( or something like this)
-: get-status  SP put-word  PC put-word  CP put-word ;
-  ( OR     stack>  put-word  put-word ...)
-: run  get-word ... >stack  execute ;
-%context?!?%
-: get-status  -1 >w ;
-: run   -2 >w ;
+: code regs@   ( - pc sp)
+   mepc x csrr   top x push2   sp top mv   next  ;c
+
+: code regs!   ( pc sp)
+   top sp mv   top x pop2   x mepc csrw   next  ;c
+
+: get-regs   regs@ >w >w ;
+: run        w> w> regs!  ( ??) ;
+
+label cmd-table
+   ( 10) ' version ,
+   ( 11) ' set-address ,
+   ( 12) ' read-words ,
+   ( 13) ' write-word ,
+   ( 14) ' get-regs ,
+   ( 15) ' run ,
 
 ( For ease of compilation I've cheated and hardwired in both the command
   offset and the max index of the table. Tread carefully if you change
   either of these!)
 
-( XXX if we change to compiling 16-bit jal's, change the shamt to 1.)
-( XXX backwards u>= jump to existing next?)
-( XXX popping ip the way we would if doing this in Forth?)
 code dispatch ( cmd)
-   -10 top w addi ( 00 to 0f become large unsigned numbers)   top pop1
+   -10 top w addi ( 00 to 0f become large unsigned numbers)
+   top pop1
    6 x li   w x u< if
-      w 2 w slli ( word index)   ip w w add   0 w jr
+      w 2 w slli ( word index)   cmd-table x lui   x w w add   cmd-table w w lw
+      0 w jr
    then   next ;c
 
-: process
-   -- b> ( cmd)  dispatch
-   dispatch
-   ( 10) version
-   ( 11) set-address
-   ( 12) get-status
-   ( 13) run
-   ( 14) read-words
-   ( 15) write-word  [  show
+: doit   begin  b> dispatch  again ;
 
-: doit   begin  b> ( cmd)  process  again ;
+label handle-interrupt
+   ( ignore for now)
+label exit-handler
+   w x y pop3   mret  ;c
+
+code handler
+   w x y push3
+   mcause w csrr  w 0>=  handle-interrupt until
+
+( At "reset" we jump here.)
+code reset
+   @ram #ram +  sp lui  ( locate stack at end of ram)
+
+   ( set up clock - 16M HFXOSC)
+
+   ( set up uart - 115200 - divisor 138)
+
+   ( set up mtvec to point to a handler that includes chat-entry)
+
 
 ( For debugging and interactive execution.)
 
