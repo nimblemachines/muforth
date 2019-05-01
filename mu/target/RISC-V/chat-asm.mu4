@@ -14,8 +14,8 @@ loading RISC-V serial chat protocol (core)
 11  set address - set the memory address pointer
 12  read words  - read N words, incrementing by 4 as we go
 13  write word  - write a word to memory, incr pointer by 4
-14  get regs    - get regs
-15  run         - set regs and execute
+14  get sp      - get sp
+15  run         - set pc and sp and execute
 
 16 - ff  idle   - these command bytes are ignored
 )
@@ -24,6 +24,9 @@ __meta
 hex
 
 abi-regs
+
+( A forward reference that we'll fix up later.)
+hook entry
 
 ( Our two "millicode" routines.)
 label nest
@@ -70,7 +73,7 @@ label >w
 
 ( Compile the first 32 bits of the current muforth Git commit.)
 label version
-   muforth-commit drop 8  evaluate
+   muforth-commit drop 8 evaluate
    dup   a0 lui   a0 a0 addi   >w j  ;c
 
 label set-address
@@ -86,13 +89,24 @@ label read-words
 label write-word
    {{  w> c   0 s1 a0 c.sw   cell s1 c.addi  }};
 
-label get-regs
-   {{  mepc a0 csrr      >w c
-         sp a0 c.mv  }}  >w j  ;c
+label get-sp
+   sp a0 c.mv   >w j  ;c
 
+.ifdef using-ecall
+
+( We don't return, so we don't bother to save our ra.)
 label run
-   {{  w> c   a0 mepc csrw
-       w> c   a0   sp c.mv   }}  mret  ;c
+   w> c  ( pc)   a0 mepc csrw
+   w> c  ( sp)   a0   sp c.mv   mret  ;c
+
+.else
+
+( We don't return, so we don't bother to save our ra.)
+label run
+   w> c  ( pc)  a0 s0 c.mv
+   w> c  ( sp)  a0 sp c.mv   s0 c.jr  ;c
+
+.then
 
 ( For ease of compilation I've cheated and hardwired in both the command
   offset and the max index of the table. Tread carefully if you change
@@ -113,9 +127,11 @@ label dispatch
 
    then  ret  ;c
 
-( Since process never returns, it doesn't need to save its ra.)
-label process
+label chat-entry   hooks entry
    begin   b> c ( cmd)   dispatch c   c.j  ( again)  ;c
+
+label reset
+   @ram #ram + sp lui   chat-entry j  ;c
 
 ( XXX for testing)
 label one
@@ -130,9 +146,9 @@ variable ta0
 : rx   ( 'code)  stack>  \m exec runwait  stack<  ta0 !  .regs ;
 
 -:
-   cr  ."       A0        SP        PC"
-       (  00000000  00000000  00000000)
-   cr      ta0 .tr   tsp .tr   tpc .tr ;
+   cr  ."       A0        SP"
+       (  00000000  00000000 )
+   cr      ta0 .tr   tsp .tr ;
    is .regs
 
 __meta
