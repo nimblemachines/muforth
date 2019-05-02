@@ -132,7 +132,7 @@ label dispatch
    then  cret  ;c
 
 label interact   hooks chat-entry
-   drain cc   begin   b> cc ( cmd)   dispatch cc   c.j  ( again)  ;c
+   begin   b> cc ( cmd)   dispatch cc   cj  ( again)  ;c
 
 label uart-init
    uart0.txdata >ui a1 lui  ( get address of UART0 block)
@@ -160,10 +160,23 @@ label >hfxosc
       a2 a0 x0 amoor.w
    cret  ;c
 
+( At reset the SPI interface that reads the flash is set to run at 1/8 of
+  the cpu/bus clock speed. The formula is f/2*[div+1], where f is the
+  CPU/bus clock speed, and div is the value stored in the spi0.sckdiv
+  register. At reset sckdiv is set to 3.
+
+  We are planning to run at 16 MHz. It would be nice to run the SPI also at
+  16 MHz but the minimum divisor we can get is 2, by setting div to zero.)
+
+label set-spi-speed
+   0 a0 li   spi0.sckdiv dup >ui a1 lui   >li a1 a0 sw   cret  ;c
+
 label reset   hooks reset-entry
    @ram #ram + sp lui
    uart-init cc
    >hfxosc cc
+   set-spi-speed cc
+   drain cc
    interact cj  ;c
 
 { h @ } ram
@@ -177,8 +190,17 @@ label one
 .then
 
 label exec
-   @ram #ram + sp lui
-   0 tp a0 lw   a0 c.jalr   0 tp a0 sw   ebreak  ;c
+   -- @ram #ram + sp lui
+   0 tp a0 lw   a0 c.jalr   0 tp a0 sw
+.ifdef openocd
+   ebreak
+.else
+   .ifdef chat-in-ram
+      "8000_3004 j
+   .else
+      @app 4 +  dup >ui a0 lui   >li a0 jr
+   .then
+.then  ;c
 
 { h ! }
 
