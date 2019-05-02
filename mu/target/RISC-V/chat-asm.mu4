@@ -25,86 +25,90 @@ hex
 
 abi-regs
 
-( A forward reference that we'll fix up later.)
-hook entry
+( Forward references.)
+hook reset-entry
+hook chat-entry
 
 ( Our two "millicode" routines.)
+( lr should be something outside of C reg set; we are using standard ABI
+  "alternate link register" x5/t0.)
 label nest
-   -2 cells sp c.addi   0 ra c.swsp  cell s0 c.swsp   a5 c.jr  ;c
+   -2 cells sp c.addi   0 ra c.swsp  cell s0 c.swsp   t0 c.jr  ;c
 
 label unnest
-   0 ra c.lwsp  cell s0 c.lwsp   2 cells sp c.addi   a5 c.jr  ;c
+   0 ra c.lwsp  cell s0 c.lwsp   2 cells sp c.addi   t0 c.jr  ;c
 
 label exit
-   unnest a5 jal   ra c.jr  ;c
+   unnest t0 jal   ra c.jr  ;c
 
 assembler
-: c     asm{  c.jal  } ;
-: j     asm{  c.j    } ;
-: ret   asm{  ra c.jr  } ;
+: cc     asm{  c.jal  } ;     ( compressed call)
+: cj     asm{  c.j    } ;     ( compressed jump)
+: cret   asm{  ra c.jr  } ;   ( compressed return)
 
-: {{    asm{    nest a5 jal  } ;
-: }}    asm{  unnest a5 jal  } ;
+: {{    asm{    nest t0 jal  } ;
+: }}    asm{  unnest t0 jal  } ;
 : }};   asm{    exit    c.j  } ;
 forth
 
-( XXX need a word to split 32-bit addresses into 20-bit and 12-bit chunks,
-  to make this lui/addi code more readable.)
+label drain
+   uart0.rxdata >ui a1 lui   begin   uart0.rxdata >li a1 a0 c.lw   a0 0< until
+   cret  ;c
 
 label b>  ( - b)
-   uart0.rxdata a1 lui   begin   uart0.rxdata 0fff \f and  a1 a0 c.lw   a0 0>= until
-   "0ff a0 a0 andi   ret  ;c
+   uart0.rxdata >ui a1 lui   begin   uart0.rxdata >li a1 a0 c.lw   a0 0>= until
+   "0ff a0 a0 andi   cret  ;c
 
 label >b  ( b)
-   uart0.txdata a1 lui   begin   uart0.txdata 0fff \f and  a1 a2 c.lw   a2 0>= until
-   uart0.txdata 0fff \f and  a1 a0 c.sw   ret  ;c
+   uart0.txdata >ui a1 lui   begin   uart0.txdata >li a1 a2 c.lw   a2 0>= until
+   uart0.txdata >li a1 a0 c.sw   cret  ;c
 
 label w>
-   {{  b> c                   a0 s0 c.mv
-       b> c    #8 a0 c.slli   a0 s0 c.add
-       b> c   #16 a0 c.slli   a0 s0 c.add
-       b> c   #24 a0 c.slli   s0 a0 c.add  }};
+   {{  b> cc                   a0 s0 c.mv
+       b> cc    #8 a0 c.slli   a0 s0 c.add
+       b> cc   #16 a0 c.slli   a0 s0 c.add
+       b> cc   #24 a0 c.slli   s0 a0 c.add  }};
 
 label >w
-   {{  a0 s0 c.mv          >b c
-       s0  #8 a0 srli      >b c
-       s0 #16 a0 srli      >b c
-       s0 #24 a0 srli  }}  >b j  ;c
+   {{      a0 s0 c.mv      >b cc
+       s0  #8 a0 srli      >b cc
+       s0 #16 a0 srli      >b cc
+       s0 #24 a0 srli  }}  >b cj  ;c
 
 ( Compile the first 32 bits of the current muforth Git commit.)
 label version
    muforth-commit drop 8 evaluate
-   dup   a0 lui   a0 a0 addi   >w j  ;c
+   dup >ui a0 lui   >li a0 a0 addi   >w cj  ;c
 
 label set-address
-   {{  w> c   a0 s1 c.mv  }};
+   {{  w> cc   a0 s1 c.mv  }};
 
 label read-words
-   {{  b> c ( count)  a0 0!= if   a0 s0 c.mv
-       begin    0 s1 a0 c.lw   cell s1 c.addi   >w c
+   {{  b> cc ( count)  a0 0!= if   a0 s0 c.mv
+       begin    0 s1 a0 c.lw   cell s1 c.addi   >w cc
                -1 s0 c.addi   s0 0= until
        then
    }};
 
 label write-word
-   {{  w> c   0 s1 a0 c.sw   cell s1 c.addi  }};
+   {{  w> cc   0 s1 a0 c.sw   cell s1 c.addi  }};
 
 label get-sp
-   sp a0 c.mv   >w j  ;c
+   tp a0 c.mv   >w cj  ;c
 
 .ifdef using-ecall
 
 ( We don't return, so we don't bother to save our ra.)
 label run
-   w> c  ( pc)   a0 mepc csrw
-   w> c  ( sp)   a0   sp c.mv   mret  ;c
+   w> cc  ( pc)   a0 mepc csrw
+   w> cc  ( sp)   a0   tp c.mv   mret  ;c
 
 .else
 
 ( We don't return, so we don't bother to save our ra.)
 label run
-   w> c  ( pc)  a0 s0 c.mv
-   w> c  ( sp)  a0 sp c.mv   s0 c.jr  ;c
+   w> cc  ( pc)  a0 s0 c.mv
+   w> cc  ( sp)  a0 tp c.mv   s0 c.jr  ;c
 
 .then
 
@@ -122,23 +126,61 @@ label dispatch
       ( 11) set-address c.j
       ( 12) read-words c.j
       ( 13) write-word c.j
-      ( 14) get-regs c.j
+      ( 14) get-sp c.j
       ( 15) run c.j
 
-   then  ret  ;c
+   then  cret  ;c
 
-label chat-entry   hooks entry
-   begin   b> c ( cmd)   dispatch c   c.j  ( again)  ;c
+label interact   hooks chat-entry
+   drain cc   begin   b> cc ( cmd)   dispatch cc   c.j  ( again)  ;c
 
-label reset
-   @ram #ram + sp lui   chat-entry j  ;c
+label uart-init
+   uart0.txdata >ui a1 lui  ( get address of UART0 block)
+   1 a0 li   uart0.txctrl >li a1 a0 sw  ( set txen)
+             uart0.rxctrl >li a1 a0 sw  ( set rxen)
+   #16,000,000 2* #115200 / 1+ 2/ 1-  ( divisor) a0 li   uart0.div >li a1 a0 sw
+
+   ( Set GPIO IOF bits to allow UART to talk to pins. UART0 is pins 16 & 17.)
+   gpio.iof_en >ui a1 lui
+   gpio.iof_en >li a1 a2 addi  ( full address)
+      0003_0000 a0 lui   ( mask with bits 16 and 17 set)
+      a2 a0 x0 amoor.w   ( addr src dest)
+   gpio.iof_sel >li a1 a2 addi  ( full address)
+      a0 a0 not          ( mask with bits 16 and 17 clear)
+      a2 a0 x0 amoand.w  ( addr src dest)
+   cret  ;c
+
+label >hfxosc
+   hfxosccfg >ui a1 lui
+   hfxosccfg >li a1 a2 addi  ( full address)
+      4000_0000 a0 lui  ( enable)
+      begin   a2 a0 a3 amoswap.w   a3 0< until  ( until ready bit)
+   pllcfg >li a1 a2 addi  ( full address)
+      0007_0000 a0 lui  ( pllbypass+pllrefsel+pllsel)
+      a2 a0 x0 amoor.w
+   cret  ;c
+
+label reset   hooks reset-entry
+   @ram #ram + sp lui
+   uart-init cc
+   >hfxosc cc
+   interact cj  ;c
+
+{ h @ } ram
+
+.ifdef in-ram
 
 ( XXX for testing)
 label one
-   {{  b> c  }}  dispatch j  ;c
+   {{  b> cc  }}  dispatch cj  ;c
+
+.then
 
 label exec
-   0 a0 c.lwsp   a0 c.jalr   0 a0 c.swsp   ebreak  ;c
+   @ram #ram + sp lui
+   0 tp a0 lw   a0 c.jalr   0 tp a0 sw   ebreak  ;c
+
+{ h ! }
 
 __host
 
