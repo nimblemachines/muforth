@@ -245,8 +245,31 @@ assembler
 11_100_11  111  II-type csrrci  ( CSR read/clear immediate)
 
 ( Utility.)
-: >ui  ( a - hi20bits)  ( "to upper immediate")  "0fff bic ;
-: >li  ( a - lo12bits)  ( "to lower immediate")  "0fff and ;
+
+( There is some subtlety involved in the way that RISC-V immediate values
+  work. Many instructions contain a 12-bit *signed* offset. A few
+  instructions allow loading a 20-bit immediate into the highest 20 bits of a
+  register.
+
+  But because the low 12 are *signed*, one has to be careful when splitting
+  a 32-bit immediate value into a high 20-bit part and a low 12-bit part
+
+  If the low part is negative - bit 11 is set - hex 1000 needs to be added
+  to the high part to compensate! When the negative low part is
+  sign-extended, that is equivalent to adding ffff_f000 to the whole value -
+  and this is precisely -1000. Tricky!
+
+  An easy way to adjust the high part is essentially to "round up" by
+  adding "800 and then throwing away the low 12 bits. If bit 11 was set,
+  adding "800 carries into bit 12, and we add the "1000 that we need. If bit
+  11 was clear, adding "800 and truncating does nothing.
+
+  I couldn't think of a clever way to adjust the low part. Basically I'm
+  sign extending, by isolating the sign bit, doubling its value, and then
+  subtracting it.)
+
+: >ui  ( a - hi20)  ( "to upper immediate") "800 + "0fff bic ;
+: >li  ( a - lo12)  ( "to lower immediate")        "0fff and  dup "800 and 2* - ;
 
 ( Synthetic instructions.)
 : nop             asm{  0 x0 x0 addi  } ;
