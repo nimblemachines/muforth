@@ -33,50 +33,49 @@ hook chat-entry
 ( lr should be something outside of C reg set; we are using standard ABI
   "alternate link register" x5/t0.)
 label nest
-   -2 cells sp c.addi   0 ra c.swsp  cell s0 c.swsp   t0 c.jr  ;c
+   -2 cells sp sp addi   0 sp ra sw   cell sp s0 sw   0 t0 jr  ;c
 
 label unnest
-   0 ra c.lwsp  cell s0 c.lwsp   2 cells sp c.addi   t0 c.jr  ;c
+   0 sp ra lw  cell sp s0 lw   2 cells sp sp addi   0 t0 jr  ;c
 
 label exit
-   unnest t0 jal   ra c.jr  ;c
+   unnest t0 jal   0 ra jr  ;c
 
 assembler
-: cc     asm{  c.jal  } ;     ( compressed call)
-: cj     asm{  c.j    } ;     ( compressed jump)
-: cret   asm{  ra c.jr  } ;   ( compressed return)
+: c     asm{    ra jal  } ;
+: ret   asm{  0 ra jr  } ;
 
 : {{    asm{    nest t0 jal  } ;
 : }}    asm{  unnest t0 jal  } ;
-: }};   asm{    exit    c.j  } ;
+: }};   asm{    exit    j  } ;
 forth
 
 label drain
    uart0.rxdata >ui a1 lui
-   begin   uart0.rxdata >li a1 a0 c.lw   a0 0< until
-   cret  ;c
+   begin   uart0.rxdata >li a1 a0 lw   a0 0< until
+   ret  ;c
 
 label b>  ( - b)
    uart0.rxdata >ui a1 lui
-   begin   uart0.rxdata >li a1 a0 c.lw   a0 0>= until
-   "0ff a0 a0 andi   cret  ;c
+   begin   uart0.rxdata >li a1 a0 lw   a0 0>= until
+   "0ff a0 a0 andi   ret  ;c
 
 label >b  ( b)
    uart0.txdata >ui a1 lui
-   begin   uart0.txdata >li a1 a2 c.lw   a2 0>= until
-   uart0.txdata >li a1 a0 c.sw   cret  ;c
+   begin   uart0.txdata >li a1 a2 lw   a2 0>= until
+   uart0.txdata >li a1 a0 sw   ret  ;c
 
 label w>
-   {{  b> cc                   a0 s0 c.mv
-       b> cc    #8 a0 c.slli   a0 s0 c.add
-       b> cc   #16 a0 c.slli   a0 s0 c.add
-       b> cc   #24 a0 c.slli   s0 a0 c.add  }};
+   {{  b> c                       a0 s0 mv
+       b> c   a0  #8 a0 slli   a0 s0 s0 add
+       b> c   a0 #16 a0 slli   a0 s0 s0 add
+       b> c   a0 #24 a0 slli   s0 a0 a0 add  }};
 
 label >w
-   {{      a0 s0 c.mv      >b cc
-       s0  #8 a0 srli      >b cc
-       s0 #16 a0 srli      >b cc
-       s0 #24 a0 srli  }}  >b cj  ;c
+   {{      a0 s0 mv        >b c
+       s0  #8 a0 srli      >b c
+       s0 #16 a0 srli      >b c
+       s0 #24 a0 srli  }}  >b j  ;c
 
 ( Compile the first 32 bits of the current muforth Git commit. When called,
   send the commit and our PC so the host can tell if we are running from
@@ -84,62 +83,63 @@ label >w
 
 label version
    {{  muforth-commit drop 8 evaluate
-       dup >ui a0 lui   >li a0 a0 addi       >w cc
-                             0 a0 auipc  }}  >w cj  ;c
+       dup >ui a0 lui   >li a0 a0 addi       >w c
+                             0 a0 auipc  }}  >w j  ;c
 
 label set-address
-   {{  w> cc   a0 s1 c.mv  }};
+   {{  w> c   a0 s1 mv  }};
 
 label read-words
-   {{  b> cc ( count)  a0 0!= if   a0 s0 c.mv
-       begin    0 s1 a0 c.lw   cell s1 c.addi   >w cc
-               -1 s0 c.addi   s0 0= until
+   {{  b> c ( count)  a0 0!= if   a0 s0 mv
+       begin    0 s1 a0 lw   cell s1 s1 addi   >w c
+               -1 s0 s0 addi   s0 0= until
        then
    }};
 
 label write-word
-   {{  w> cc   0 s1 a0 c.sw   cell s1 c.addi  }};
+   {{  w> c   0 s1 a0 sw   cell s1 s1 addi  }};
 
 label get-sp
-   tp a0 c.mv   >w cj  ;c
+   tp a0 mv   >w j  ;c
 
 .ifdef using-ecall
 
 ( We don't return, so we don't bother to save our ra.)
 label run
-   w> cc  ( pc)   a0 mepc csrw
-   w> cc  ( sp)   a0   tp c.mv   mret  ;c
+   w> c  ( pc)   a0 mepc csrw
+   w> c  ( sp)   a0   tp mv   mret  ;c
 
 .else
 
 ( We don't return, so we don't bother to save our ra.)
 label run
-   w> cc  ( pc)  a0 s0 c.mv
-   w> cc  ( sp)  a0 tp c.mv   s0 c.jr  ;c
+   w> c  ( pc)  a0 s0 mv
+   w> c  ( sp)  a0 tp mv   fence.i   0 s0 jr  ;c
 
 .then
 
-( For ease of compilation I've cheated and hardwired in both the command
-  offset and the max index of the table. Tread carefully if you change
-  either of these!)
+label cmd-table
+   ( 10) version j
+   ( 11) set-address j
+   ( 12) read-words j
+   ( 13) write-word j
+   ( 14) get-sp j
+   ( 15) run j
+;c
 
 label dispatch
-   -10 a0 c.addi  ( 00 to 0f become large unsigned numbers)
-    6 a1 c.li   a0 a1 u< if                  (  4             2           4)
-       a0 a0 c.add ( halfword index)   0 a1 auipc   a1 a0 c.add   #10 a0 jr
-
-      ( cmd table)
-      ( 10) version c.j
-      ( 11) set-address c.j
-      ( 12) read-words c.j
-      ( 13) write-word c.j
-      ( 14) get-sp c.j
-      ( 15) run c.j
-
-   then  cret  ;c
+   -10 a0 a0 addi  ( 00 to 0f become large unsigned numbers)
+   dispatch cmd-table - cell/ ( #cmds) a1 li   a0 a1 u< if
+.ifdef use-compressed
+      a0 a0 a0 add  ( halfword index)
+.else
+      a0 2 a0 slli  ( word index)
+.then
+      here   0 a1 auipc   a1 a0 a0 add   cmd-table swap - a0 jr
+   then  ret  ;c
 
 label interact   hooks chat-entry
-   begin   b> cc ( cmd)   dispatch cc   cj  ( again)  ;c
+   begin   b> c ( cmd)   dispatch c   again  ;c
 
 label uart-init
    uart0.txdata >ui a1 lui  ( get address of UART0 block)
@@ -155,7 +155,7 @@ label uart-init
    gpio.iof_sel >li a1 a2 addi  ( full address)
       a0 a0 not          ( mask with bits 16 and 17 clear)
       a2 a0 x0 amoand.w  ( addr src dest)
-   cret  ;c
+   ret  ;c
 
 label >hfxosc
    hfxosccfg >ui a1 lui
@@ -165,7 +165,7 @@ label >hfxosc
    pllcfg >li a1 a2 addi  ( full address)
       0007_0000 a0 lui  ( pllbypass+pllrefsel+pllsel)
       a2 a0 x0 amoor.w
-   cret  ;c
+   ret  ;c
 
 ( At reset the SPI interface that reads the flash is set to run at 1/8 of
   the cpu/bus clock speed. The formula is f/2*[div+1], where f is the
@@ -176,15 +176,15 @@ label >hfxosc
   16 MHz but the minimum divisor we can get is 2, by setting div to zero.)
 
 label set-spi-speed
-   0 a0 li   spi0.sckdiv dup >ui a1 lui   >li a1 a0 sw   cret  ;c
+   0 a0 li   spi0.sckdiv dup >ui a1 lui   >li a1 a0 sw   ret  ;c
 
 label do-reset   hooks reset-entry
    @ram #ram + sp lui
-   uart-init cc
-   >hfxosc cc
-   set-spi-speed cc
-   drain cc
-   interact cj  ;c
+   uart-init c
+   >hfxosc c
+   set-spi-speed c
+   drain c
+   interact j  ;c
 
 { h @ }  ram
 
@@ -207,19 +207,19 @@ label spi-packet
 
 ( XXX for testing)
 label one
-   {{  b> cc  }}  dispatch cj  ;c
+   {{  b> c  }}  dispatch j  ;c
 
 .then
 
 label push2
-   -8 tp c.addi   0 tp a0 sw   4 tp a1 sw   cret  ;c
+   -8 tp tp addi   0 tp a0 sw   4 tp a1 sw   ret  ;c
 
 label my-get-regs
-   ra a0 c.mv   sp a1 c.mv   push2 cj  ;c
+   ra a0 mv   sp a1 mv   push2 j  ;c
 
 label exec
    -- @ram #ram + sp lui
-   0 tp a0 lw   a0 c.jalr   0 tp a0 sw
+   0 tp a0 lw   0 a0 ra jalr   0 tp a0 sw
 .ifdef openocd
    ebreak
 .else
@@ -231,7 +231,7 @@ label exec
 .then  ;c
 
 label exec2
-   0 tp a0 lw   a0 c.jalr
+   0 tp a0 lw   0 a0 ra jalr
 .ifdef openocd
    ebreak
 .else
