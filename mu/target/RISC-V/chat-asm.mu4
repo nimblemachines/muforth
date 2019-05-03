@@ -52,15 +52,18 @@ assembler
 forth
 
 label drain
-   uart0.rxdata >ui a1 lui   begin   uart0.rxdata >li a1 a0 c.lw   a0 0< until
+   uart0.rxdata >ui a1 lui
+   begin   uart0.rxdata >li a1 a0 c.lw   a0 0< until
    cret  ;c
 
 label b>  ( - b)
-   uart0.rxdata >ui a1 lui   begin   uart0.rxdata >li a1 a0 c.lw   a0 0>= until
+   uart0.rxdata >ui a1 lui
+   begin   uart0.rxdata >li a1 a0 c.lw   a0 0>= until
    "0ff a0 a0 andi   cret  ;c
 
 label >b  ( b)
-   uart0.txdata >ui a1 lui   begin   uart0.txdata >li a1 a2 c.lw   a2 0>= until
+   uart0.txdata >ui a1 lui
+   begin   uart0.txdata >li a1 a2 c.lw   a2 0>= until
    uart0.txdata >li a1 a0 c.sw   cret  ;c
 
 label w>
@@ -75,10 +78,14 @@ label >w
        s0 #16 a0 srli      >b cc
        s0 #24 a0 srli  }}  >b cj  ;c
 
-( Compile the first 32 bits of the current muforth Git commit.)
+( Compile the first 32 bits of the current muforth Git commit. When called,
+  send the commit and our PC so the host can tell if we are running from
+  flash or ram.)
+
 label version
-   muforth-commit drop 8 evaluate
-   dup >ui a0 lui   >li a0 a0 addi   >w cj  ;c
+   {{  muforth-commit drop 8 evaluate
+       dup >ui a0 lui   >li a0 a0 addi       >w cc
+                             0 a0 auipc  }}  >w cj  ;c
 
 label set-address
    {{  w> cc   a0 s1 c.mv  }};
@@ -171,7 +178,7 @@ label >hfxosc
 label set-spi-speed
    0 a0 li   spi0.sckdiv dup >ui a1 lui   >li a1 a0 sw   cret  ;c
 
-label reset   hooks reset-entry
+label do-reset   hooks reset-entry
    @ram #ram + sp lui
    uart-init cc
    >hfxosc cc
@@ -179,7 +186,22 @@ label reset   hooks reset-entry
    drain cc
    interact cj  ;c
 
-{ h @ } ram
+{ h @ }  ram
+
+( Support for programming the SPI flash. We only compile these words when
+  in-ram is defined. We can't run this code while executing chat from
+  flash, because the memory-mapped mode of the SPI controller has been
+  switched off.)
+
+( Room for opcode, 3 address bytes, and 256 bytes of data.)
+label spi-buf   104 allot
+
+label >spi-prog-io
+label >spi-mem-mapped
+label cs\
+label cs/
+label spi-packet
+
 
 .ifdef in-ram
 
@@ -189,9 +211,27 @@ label one
 
 .then
 
+label push2
+   -8 tp c.addi   0 tp a0 sw   4 tp a1 sw   cret  ;c
+
+label my-get-regs
+   ra a0 c.mv   sp a1 c.mv   push2 cj  ;c
+
 label exec
    -- @ram #ram + sp lui
    0 tp a0 lw   a0 c.jalr   0 tp a0 sw
+.ifdef openocd
+   ebreak
+.else
+   .ifdef chat-in-ram
+      "8000_3004 j
+   .else
+      @app 4 +  dup >ui a0 lui   >li a0 jr
+   .then
+.then  ;c
+
+label exec2
+   0 tp a0 lw   a0 c.jalr
 .ifdef openocd
    ebreak
 .else
@@ -208,6 +248,8 @@ __host
 
 variable ta0
 : rx   ( 'code)  stack>  \m exec runwait  stack<  ta0 !  .regs ;
+
+: rx2   ( 'code)  stack>  \m exec2 runwait  stack< ;
 
 -:
    cr  ."       A0        SP"
