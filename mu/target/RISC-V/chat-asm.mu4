@@ -29,14 +29,27 @@ abi-regs
 hook reset-entry
 hook chat-entry
 
+( Stack macros.)
+assembler
+: push1  ( r1)            asm{  -1 cells sp sp addi   0 sp rot ( r1) sw  } ;
+
+: push2  ( r2 r1)         asm{  -2 cells sp sp addi   0 sp rot ( r1) sw
+                                                   cell sp rot ( r2) sw  } ;
+
+: pop1  ( r1)             asm{  0 sp rot ( r1) lw      cell sp sp addi  } ;
+
+: pop2  ( r2 r1)          asm{  0 sp rot ( r1) lw
+                             cell sp rot ( r2) lw   2 cells sp sp addi  } ;
+forth
+
 ( Our two "millicode" routines.)
 ( lr should be something outside of C reg set; we are using standard ABI
   "alternate link register" x5/t0.)
 label nest
-   -2 cells sp sp addi   0 sp ra sw   cell sp s0 sw   0 t0 jr  ;c
+   s0 ra push2   0 t0 jr  ;c
 
 label unnest
-   0 sp ra lw  cell sp s0 lw   2 cells sp sp addi   0 t0 jr  ;c
+   s0 ra pop2    0 t0 jr  ;c
 
 label exit
    unnest t0 jal   0 ra jr  ;c
@@ -99,8 +112,12 @@ label read-words
 label write-word
    {{  w> c   0 s1 a0 sw   cell s1 s1 addi  }};
 
-label get-sp
-   tp a0 mv   >w j  ;c
+label get-status
+   {{  tp a0 mv                           >w c
+       @ram #ram + s0 lui
+       -4 s0 a0 lw  ( saved mcause)       >w c
+       0 a0 li   -4 s0 a0 sw  ( zero mcause)
+       -8 s0 a0 lw  ( saved mepc)     }}  >w j  ;c
 
 .ifdef using-ecall
 
@@ -123,7 +140,7 @@ label cmd-table
    ( 11) set-address j
    ( 12) read-words j
    ( 13) write-word j
-   ( 14) get-sp j
+   ( 14) get-status j
    ( 15) run j
 ;c
 
@@ -178,8 +195,28 @@ label >hfxosc
 label set-spi-speed
    0 a0 li   spi0.sckdiv dup >ui a1 lui   >li a1 a0 sw   ret  ;c
 
+label interrupt
+   ( ignore for now)
+label exception-exit
+   a1 a0 pop2   mret  ;c
+
+label exception-entry
+   a1 a0 push2
+   mcause a0 csrr   interrupt  a0 0>= until
+   @ram #ram + a1 lui   -4 a1 a0 sw  ( save mcause)
+.ifdef in-ram
+      8000_3004
+.else
+      @app 4 +
+.then
+   dup >ui a0 lui   >li a0 a0 addi
+   mepc a0 a0 csrrw  -8 a1 a0 sw   ( swap chat-entry with mepc)
+   exception-exit j   ;c
+
 label do-reset   hooks reset-entry
    @ram #ram + sp lui
+   0 a0 li   -8 sp sp addi   0 sp a0 sw   4 sp a0 sw  ( slots to save mcause and mepc)
+   exception-entry dup >ui a0 lui   >li a0 a0 addi   a0 mtvec csrw
    uart-init c
    >hfxosc c
    set-spi-speed c
@@ -211,11 +248,13 @@ label one
 
 .then
 
-label push2
+label trap-test   ecall   ret  ;c
+
+label my-push2
    -8 tp tp addi   0 tp a0 sw   4 tp a1 sw   ret  ;c
 
 label my-get-regs
-   ra a0 mv   sp a1 mv   push2 j  ;c
+   ra a0 mv   sp a1 mv   my-push2 j  ;c
 
 label exec
    -- @ram #ram + sp lui
@@ -252,33 +291,9 @@ variable ta0
 : rx2   ( 'code)  stack>  \m exec2 runwait  stack< ;
 
 -:
-   cr  ."       A0        SP"
-       (  00000000  00000000 )
-   cr      ta0 .tr   tsp .tr ;
+   cr  ."       A0        SP    mcause      mepc"
+       (  00000000  00000000  00000000  00000000 )
+   cr      ta0 .tr   tsp .tr  tmcause .tr  tmepc .tr ;
    is .regs
 
 __meta
-
-
-.ifdef notyet
-
-label handle-interrupt
-   ( ignore for now)
-label exit-handler
-   w x y pop3   mret  ;c
-
-code handler
-   w x y push3
-   mcause w csrr  w 0>=  handle-interrupt until
-
-( At "reset" we jump here.)
-code reset
-   @ram #ram +  sp lui  ( locate stack at end of ram)
-
-   ( set up clock - 16M HFXOSC)
-
-   ( set up uart - 115200 - divisor 138)
-
-   ( set up mtvec to point to a handler that includes chat-entry)
-
-.then
