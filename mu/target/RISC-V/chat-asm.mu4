@@ -27,7 +27,6 @@ abi-regs
 
 ( Forward references.)
 hook reset-entry
-hook chat-entry
 
 ( Stack macros.)
 assembler
@@ -119,7 +118,23 @@ label get-status
        0 a0 li   -4 s0 a0 sw  ( zero mcause)
        -8 s0 a0 lw  ( saved mepc)     }}  >w j  ;c
 
-.ifdef using-ecall
+( XXX Right now exceptions are handled a bit oddly, and this probably needs
+  to change. Returning from Forth code, in bug [in kernel-itc.mu4] a bunch
+  of registers get pushed *before* the ebreak/ecall that causes an exception.
+  Any other exception will *not* have pushed that state, and so the host
+  stack will end up messed up.
+
+  Also, the way ebreak/ecall works is that I do an mret *to* the chat-entry
+  routine. So the exception is *over* before the chat conversation with the
+  host begins.
+
+  Both of these are probably wrong. I should probably stack some
+  "interesting" registers on exception entry, have the chat conversation
+  occur in the context of the exception - with the register frame still on
+  the stack - and when we go to execute code, we pop the "interesting" regs
+  and mret.)
+
+.ifdef chatting-in-exception-context
 
 ( We don't return, so we don't bother to save our ra.)
 label run
@@ -155,7 +170,7 @@ label dispatch
       here   0 a1 auipc   a1 a0 a0 add   cmd-table swap - a0 jr
    then  ret  ;c
 
-label interact   hooks chat-entry
+label chat-entry
    begin   b> c ( cmd)   dispatch c   again  ;c
 
 label uart-init
@@ -196,32 +211,32 @@ label set-spi-speed
    0 a0 li   spi0.sckdiv dup >ui a1 lui   >li a1 a0 sw   ret  ;c
 
 label interrupt
-   ( ignore for now)
+   ( ignore interrupts for now)
+   ( fall thru)  ;c
+
 label exception-exit
    a1 a0 pop2   mret  ;c
 
 label exception-entry
    a1 a0 push2
-   mcause a0 csrr   interrupt  a0 0>= until
+   mcause a0 csrr   interrupt  a0 0>= until  ( branch back if interrupt)
+   ( exception, not interrupt)
    @ram #ram + a1 lui   -4 a1 a0 sw  ( save mcause)
-.ifdef in-ram
-      8000_3004
-.else
-      @app 4 +
-.then
-   dup >ui a0 lui   >li a0 a0 addi
+   chat-entry  here -
+      dup >ui a0 auipc   >li a0 a0 addi
    mepc a0 a0 csrrw  -8 a1 a0 sw   ( swap chat-entry with mepc)
-   exception-exit j   ;c
+   exception-exit j  ;c
 
 label do-reset   hooks reset-entry
    @ram #ram + sp lui
    0 a0 li   -8 sp sp addi   0 sp a0 sw   4 sp a0 sw  ( slots to save mcause and mepc)
-   exception-entry dup >ui a0 lui   >li a0 a0 addi   a0 mtvec csrw
+   exception-entry  here -
+      dup >ui a0 auipc   >li a0 a0 addi   a0 mtvec csrw
    uart-init c
    >hfxosc c
    set-spi-speed c
    drain c
-   interact j  ;c
+   chat-entry j  ;c
 
 { h @ }  ram
 
@@ -240,46 +255,8 @@ label cs/
 label spi-packet
 
 
-.ifdef in-ram
-
-( XXX for testing)
-label one
-   {{  b> c  }}  dispatch j  ;c
-
-.then
-
-label trap-test   ecall   ret  ;c
-
-label my-push2
-   -8 tp tp addi   0 tp a0 sw   4 tp a1 sw   ret  ;c
-
-label my-get-regs
-   ra a0 mv   sp a1 mv   my-push2 j  ;c
-
 label exec
-   -- @ram #ram + sp lui
-   0 tp a0 lw   0 a0 ra jalr   0 tp a0 sw
-.ifdef openocd
-   ebreak
-.else
-   .ifdef chat-in-ram
-      "8000_3004 j
-   .else
-      @app 4 +  dup >ui a0 lui   >li a0 jr
-   .then
-.then  ;c
-
-label exec2
-   0 tp a0 lw   0 a0 ra jalr
-.ifdef openocd
-   ebreak
-.else
-   .ifdef chat-in-ram
-      "8000_3004 j
-   .else
-      @app 4 +  dup >ui a0 lui   >li a0 jr
-   .then
-.then  ;c
+   0 tp a0 lw   0 a0 ra jalr   0 tp a0 sw   ebreak  ;c
 
 { h ! }
 
@@ -287,8 +264,6 @@ __host
 
 variable ta0
 : rx   ( 'code)  stack>  \m exec runwait  stack<  ta0 !  .regs ;
-
-: rx2   ( 'code)  stack>  \m exec2 runwait  stack< ;
 
 -:
    cr  ."       A0        SP    mcause      mepc"
