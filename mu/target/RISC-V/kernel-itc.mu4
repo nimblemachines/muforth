@@ -245,9 +245,11 @@ code u>>   ( n shamt - n')   x pop1   x top top srl   next  ;c
 code +   ( x t - x+t)   x pop1   x top top add   next  ;c
 code -   ( x t - x-t)   x pop1   x top top sub   next  ;c
 
-code and   x pop1   x top top and   next  ;c
-code or    x pop1   x top top or    next  ;c
-code xor   x pop1   x top top xor   next  ;c
+code and   begin   x pop1   x top top and   next  ;c
+code or            x pop1   x top top or    next  ;c
+code xor           x pop1   x top top xor   next  ;c
+
+code bic   top top not   again  ( invert top, then do and)  ;c
 
 ( Stack ops.)
 code dup    [r]  ( t - t t)  top push1   next  ;c
@@ -287,6 +289,13 @@ code c!  ( b a)     0 sp w lw   0 top w sb   poptwo j  ;c
 
 code +!  ( w a)     0 sp w lw   0 top x lw   w x x add   0 top x sw
                     poptwo j  ;c
+
+( XXX Should use AMOxxx instructions here...)
+: +bits  ( bits a)   ( turn on bits in a word in memory)
+   tuck               @ or  swap ! ;
+
+: -bits  ( bits a)   ( turn off bits in a word in memory)
+   swap  invert  over @ and  swap ! ;
 
 ( The slt/u/i instructions set a register to 1 if the comparison is true,
   and to 0 otherwise. We want to use -1 as a true flag, so we always negate
@@ -400,6 +409,55 @@ meta: d.   ( tdlo tdhi)   d>  \f  . ;
 : 2tuck  ( a b c d - c d a b c d)   2swap  2over ;  [r]
 
 
+( Multiply and divide.)
+code um*  ( x t - x*t_lo x*t_hi)
+   0 sp x lw   x top w mulhu   x top y mul
+   begin   0 sp y sw ( lo)   w top mv ( hi)   next  ;c
+
+code m*   ( x t - x*t_lo x*t_hi)
+   0 sp x lw   x top w mulh   x top y mul   again  ;c
+
+code *   ( x t - x*t)   x pop1   x top top mul   next  ;c
+
+code u/mod   ( x t - x-mod-t x/t)
+   0 sp x lw   x top w divu   x top y remu
+   0 sp y sw ( mod)   w top mv ( quot)   next  ;c
+
+code /mod   ( x t - x-mod-t x/t)
+   0 sp x lw   x top w div   x top y rem
+   y 0!= if   x top z xor   z 0< if
+      -1 w w addi   top y y add  ( floor quotient if mod != 0 and x xor top < 0)
+   then  then
+   0 sp y sw ( mod)   w top mv ( quot)   next  ;c
+
+: /   /mod  nip ;
+
+.ifdef unfinished-do-not-use
+
+( Does an unsigned division of x:y by t, resulting in an unsigned double
+  quotient, and an unsigned remainder.)
+code ud/mod   ( y x t - urem uquot-lo uquot-hi)
+   0 sp x lw   cell sp y lw   top z mv
+   x z top divu   x z w remu   ( top = qhi, w = rhi)
+   w y y add ( add rhi to y)  ( XXX what about carry?!?)
+   y z x divu   y z w remu   0 sp x sw ( qlo)  cell sp w sw ( urem)  next  ;c
+
+( XXX on RISC-V, div and rem only take single-length dividend. We have to
+  make our own double-len divide...)
+( XXX can we use /mod to make fm/mod?)
+code fm/mod   ( y x t - x:y-mod-t x:y/t)
+   0 sp x lw   cell sp y lw   x top w div   x top y rem
+   y 0!= if   x top z xor   z 0< if
+      -1 w w addi   top y y add  ( floor quotient if mod != 0 and x xor top < 0)
+   then  then
+   0 sp y sw ( mod)   w top mv ( quot)   next  ;c
+
+: */mod   m*  fm/mod ;
+: */      */mod  nip ;
+
+.then
+
+
 ( Have both mcycle64@ and minstret64@ jump to the shared code so that when
   we are comparing cycles to instruction counts we are sure to be comparing
   apples and apples.)
@@ -459,10 +517,11 @@ ram
   Much easier than stuffing things into register slots on stack frame!)
 
 code bug  [r]
-   top ip rp ix push4   ebreak  ;c
+   top ip rp ix push4   sp tp mv   rp sp mv   ebreak  ;c
 
 implements continue-forth  __asm
-   top ip rp ix pop4   fence.i   next  ;c
+   tp sp mv
+   top ip rp ix pop4   "888 w li   w mie csrc   fence.i   next  ;c
 
 implements trampoline  ( x0 .. xn pfa - y0 .. ym)
    ]  execute  begin  bug  again  [
@@ -490,9 +549,9 @@ forth
 
 
 -: ( forth version of .regs)
-   cr  ."       IX        SP        RP        IP"
-       (  00000000  00000000  00000000  00000000 )
-   cr      tix .tr       .sp   trp .tr       .ip ;
+   cr  ."       IX        SP        RP        IP    mcause      mepc"
+       (  00000000  00000000  00000000  00000000  00000000  00000000 )
+   cr      tix .tr       .sp   trp .tr       .ip  tmcause .tr  tmepc .tr ;
    is .regs
 
 
@@ -508,5 +567,3 @@ meta: grog  ( start n)  0 do  \t 1+ remote  loop ;
 ( try: 44 10 grog)
 
 ~~examples~~
-
-flash

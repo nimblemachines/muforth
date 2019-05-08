@@ -1,0 +1,274 @@
+( This file is part of muforth: https://muforth.nimblemachines.com/
+
+  Copyright 2002-2019 David Frech. (Read the LICENSE for details.)
+
+loading RISC-V serial chat protocol (core)
+
+( Taking inspiration from the wildly successful S08 serial chat protocol.
+
+  Responds to the following commands. NOTE: these are hex values!
+
+00 - 0f  idle   - these command bytes are ignored
+
+10  version     - get the 32-bit version commit
+11  set address - set the memory address pointer
+12  read words  - read N words, incrementing by 4 as we go
+13  write word  - write a word to memory, incr pointer by 4
+14  get sp      - get sp
+15  run         - set pc and sp and execute
+
+16 - ff  idle   - these command bytes are ignored
+)
+
+__meta
+hex
+
+abi-regs
+
+( Forward references.)
+hook reset-entry
+
+( Stack macros.)
+assembler
+: push1  ( r1)            asm{  -1 cells sp sp addi   0 sp rot ( r1) sw  } ;
+
+: push2  ( r2 r1)         asm{  -2 cells sp sp addi   0 sp rot ( r1) sw
+                                                   cell sp rot ( r2) sw  } ;
+
+: pop1  ( r1)             asm{  0 sp rot ( r1) lw      cell sp sp addi  } ;
+
+: pop2  ( r2 r1)          asm{  0 sp rot ( r1) lw
+                             cell sp rot ( r2) lw   2 cells sp sp addi  } ;
+forth
+
+( Our two "millicode" routines.)
+( lr should be something outside of C reg set; we are using standard ABI
+  "alternate link register" x5/t0.)
+label nest
+   s0 ra push2   0 t0 jr  ;c
+
+label unnest
+   s0 ra pop2    0 t0 jr  ;c
+
+label exit
+   unnest t0 jal   0 ra jr  ;c
+
+assembler
+: c     asm{    ra jal  } ;
+: ret   asm{  0 ra jr  } ;
+
+: {{    asm{    nest t0 jal  } ;
+: }}    asm{  unnest t0 jal  } ;
+: }};   asm{    exit    j  } ;
+forth
+
+label drain
+   uart0.rxdata >ui a1 lui
+   begin   uart0.rxdata >li a1 a0 lw   a0 0< until
+   ret  ;c
+
+label b>  ( - b)
+   uart0.rxdata >ui a1 lui
+   begin   uart0.rxdata >li a1 a0 lw   a0 0>= until
+   "0ff a0 a0 andi   ret  ;c
+
+label >b  ( b)
+   uart0.txdata >ui a1 lui
+   begin   uart0.txdata >li a1 a2 lw   a2 0>= until
+   uart0.txdata >li a1 a0 sw   ret  ;c
+
+label w>
+   {{  b> c                       a0 s0 mv
+       b> c   a0  #8 a0 slli   a0 s0 s0 add
+       b> c   a0 #16 a0 slli   a0 s0 s0 add
+       b> c   a0 #24 a0 slli   s0 a0 a0 add  }};
+
+label >w
+   {{      a0 s0 mv        >b c
+       s0  #8 a0 srli      >b c
+       s0 #16 a0 srli      >b c
+       s0 #24 a0 srli  }}  >b j  ;c
+
+( Compile the first 32 bits of the current muforth Git commit. When called,
+  send the commit and our PC so the host can tell if we are running from
+  flash or ram.)
+
+label version
+   {{  muforth-commit drop 8 evaluate
+       dup >ui a0 lui   >li a0 a0 addi       >w c
+                             0 a0 auipc  }}  >w j  ;c
+
+label set-address
+   {{  w> c   a0 s1 mv  }};
+
+label read-words
+   {{  b> c ( count)  a0 0!= if   a0 s0 mv
+       begin    0 s1 a0 lw   cell s1 s1 addi   >w c
+               -1 s0 s0 addi   s0 0= until
+       then
+   }};
+
+label write-word
+   {{  w> c   0 s1 a0 sw   cell s1 s1 addi  }};
+
+label get-status
+   {{  tp a0 mv                           >w c
+       @ram #ram + s0 lui
+       -4 s0 a0 lw  ( saved mcause)       >w c
+       0 a0 li   -4 s0 a0 sw  ( zero mcause)
+       -8 s0 a0 lw  ( saved mepc)     }}  >w j  ;c
+
+( XXX Right now exceptions are handled a bit oddly, and this probably needs
+  to change. Returning from Forth code, in bug [in kernel-itc.mu4] a bunch
+  of registers get pushed *before* the ebreak/ecall that causes an exception.
+  Any other exception will *not* have pushed that state, and so the host
+  stack will end up messed up.
+
+  Also, the way ebreak/ecall works is that I do an mret *to* the chat-entry
+  routine. So the exception is *over* before the chat conversation with the
+  host begins.
+
+  Both of these are probably wrong. I should probably stack some
+  "interesting" registers on exception entry, have the chat conversation
+  occur in the context of the exception - with the register frame still on
+  the stack - and when we go to execute code, we pop the "interesting" regs
+  and mret.)
+
+.ifdef chatting-in-exception-context
+
+( We don't return, so we don't bother to save our ra.)
+label run
+   w> c  ( pc)   a0 mepc csrw
+   w> c  ( sp)   a0   tp mv   mret  ;c
+
+.else
+
+( We don't return, so we don't bother to save our ra.)
+label run
+   w> c  ( pc)  a0 s0 mv
+   w> c  ( sp)  a0 tp mv   fence.i   0 s0 jr  ;c
+
+.then
+
+label cmd-table
+   ( 10) version j
+   ( 11) set-address j
+   ( 12) read-words j
+   ( 13) write-word j
+   ( 14) get-status j
+   ( 15) run j
+;c
+
+label dispatch
+   -10 a0 a0 addi  ( 00 to 0f become large unsigned numbers)
+   dispatch cmd-table - cell/ ( #cmds) a1 li   a0 a1 u< if
+.ifdef use-compressed
+      a0 a0 a0 add  ( halfword index)
+.else
+      a0 2 a0 slli  ( word index)
+.then
+      here   0 a1 auipc   a1 a0 a0 add   cmd-table swap - a0 jr
+   then  ret  ;c
+
+label chat-entry
+   begin   b> c ( cmd)   dispatch c   again  ;c
+
+label uart-init
+   uart0.txdata >ui a1 lui  ( get address of UART0 block)
+   1 a0 li   uart0.txctrl >li a1 a0 sw  ( set txen)
+             uart0.rxctrl >li a1 a0 sw  ( set rxen)
+   #16,000,000 2* #115200 / 1+ 2/ 1-  ( divisor) a0 li   uart0.div >li a1 a0 sw
+
+   ( Set GPIO IOF bits to allow UART to talk to pins. UART0 is pins 16 & 17.)
+   gpio.iof_en >ui a1 lui
+   gpio.iof_en >li a1 a2 addi  ( full address)
+      0003_0000 a0 lui   ( mask with bits 16 and 17 set)
+      a2 a0 x0 amoor.w   ( addr src dest)
+   gpio.iof_sel >li a1 a2 addi  ( full address)
+      a0 a0 not          ( mask with bits 16 and 17 clear)
+      a2 a0 x0 amoand.w  ( addr src dest)
+   ret  ;c
+
+label >hfxosc
+   hfxosccfg >ui a1 lui
+   hfxosccfg >li a1 a2 addi  ( full address)
+      4000_0000 a0 lui  ( enable)
+      begin   a2 a0 a3 amoswap.w   a3 0< until  ( until ready bit)
+   pllcfg >li a1 a2 addi  ( full address)
+      0007_0000 a0 lui  ( pllbypass+pllrefsel+pllsel)
+      a2 a0 x0 amoor.w
+   ret  ;c
+
+( At reset the SPI interface that reads the flash is set to run at 1/8 of
+  the cpu/bus clock speed. The formula is f/2*[div+1], where f is the
+  CPU/bus clock speed, and div is the value stored in the spi0.sckdiv
+  register. At reset sckdiv is set to 3.
+
+  We are planning to run at 16 MHz. It would be nice to run the SPI also at
+  16 MHz but the minimum divisor we can get is 2, by setting div to zero.)
+
+label set-spi-speed
+   0 a0 li   spi0.sckdiv dup >ui a1 lui   >li a1 a0 sw   ret  ;c
+
+label interrupt
+   ( ignore interrupts for now)
+   ( fall thru)  ;c
+
+label exception-exit
+   a1 a0 pop2   mret  ;c
+
+label exception-entry
+   a1 a0 push2
+   mcause a0 csrr   interrupt  a0 0>= until  ( branch back if interrupt)
+   ( exception, not interrupt)
+   @ram #ram + a1 lui   -4 a1 a0 sw  ( save mcause)
+   chat-entry  here -
+      dup >ui a0 auipc   >li a0 a0 addi
+   mepc a0 a0 csrrw  -8 a1 a0 sw   ( swap chat-entry with mepc)
+   exception-exit j  ;c
+
+label do-reset   hooks reset-entry
+   @ram #ram + sp lui
+   0 a0 li   -8 sp sp addi   0 sp a0 sw   4 sp a0 sw  ( slots to save mcause and mepc)
+   exception-entry  here -
+      dup >ui a0 auipc   >li a0 a0 addi   a0 mtvec csrw
+   uart-init c
+   >hfxosc c
+   set-spi-speed c
+   drain c
+   chat-entry j  ;c
+
+{ h @ }  ram
+
+( Support for programming the SPI flash. We only compile these words when
+  in-ram is defined. We can't run this code while executing chat from
+  flash, because the memory-mapped mode of the SPI controller has been
+  switched off.)
+
+( Room for opcode, 3 address bytes, and 256 bytes of data.)
+label spi-buf   104 allot
+
+label >spi-prog-io
+label >spi-mem-mapped
+label cs\
+label cs/
+label spi-packet
+
+
+label exec
+   0 tp a0 lw   0 a0 ra jalr   0 tp a0 sw   ebreak  ;c
+
+{ h ! }
+
+__host
+
+variable ta0
+: rx   ( 'code)  stack>  \m exec runwait  stack<  ta0 !  .regs ;
+
+-:
+   cr  ."       A0        SP    mcause      mepc"
+       (  00000000  00000000  00000000  00000000 )
+   cr      ta0 .tr   tsp .tr  tmcause .tr  tmepc .tr ;
+   is .regs
+
+__meta
