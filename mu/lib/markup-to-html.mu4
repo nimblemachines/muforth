@@ -1,0 +1,175 @@
+( This file is part of muforth: https://muforth.nimblemachines.com/
+
+  Copyright 2002-2019 David Frech. (Read the LICENSE for details.)
+
+( Quick and dirty HTML generator. Takes in a file of markup -- consisting
+  of tokens and directives -- and copies the tokens verbatim while
+  "executing" the directives, thereby generating an output file. In this
+  case it will an HTML rendering of the document.)
+
+sealed .directive.
+: directive  .directive. definitions ;
+compiler
+: \d   ( compile from directive)   .directive. \chain ;
+forth
+
+variable space-before  ( points to nope or space)
+: +space   ['] space  space-before ! ;
+: -space   ['] nope   space-before ! ;  -space
+: ?space   space-before @execute ;
+
+: html-escape-char  ( ch)
+   dup  char & = if  drop  ." &amp;"       ^  then
+   dup  char < = if  drop  ." &lt;"        ^  then
+   dup  char > = if  drop  ." &gt;"        ^  then
+   emit ;
+
+: html-rsquo-escape-char  ( ch)
+   dup  char ' = if  drop  ." &rsquo;"     ^  then  ( hack)
+   html-escape-char ;
+
+: foreach  ( a u 'code)
+   swap for
+      push  c@+ swap  r@ execute  pop
+   next  2drop ;
+
+: html         ( a u)   ['] html-escape-char  foreach ;
+: html-rsquo   ( a u)   ['] html-rsquo-escape-char  foreach ;
+
+( XXX need to escape URIs too! The following doesn't really work -- it
+  doesn't do enough!)
+: uri   html ;
+
+compiler
+: .(   \ (")  char ) string, drop  \ type ;  ( XXX should this be html?)
+forth
+
+-: ."  (markup to HTML)" ;
+-: ( a u)
+   .directive. find if  execute  ^  then
+   ?space  +space  html-rsquo ;
+mode __html
+
+: markup
+   out-channel preserve  >stdout
+   state preserve  __html
+   token,  raw-load-file ;
+
+( XXX should we pass a z" rather than a u?)
+: .open   ( a u)   .( <)   type  .( >) ;
+: .close  ( a u)   .( </)  type  .( >) ;
+
+( Given the address of a memory cell, invert the value in the cell and
+  return its new value.)
+
+: toggle  ( a - new)  dup  @ invert  dup rot ! ;
+
+( Inline markup.)
+
+( Now for the interesting bits!)
+
+: inline
+   create  0 , ( toggle)  token, drop ( element)
+   does>  push ( body)  r@ toggle
+   pop cell+ ( element) @+ swap  rot
+   if  ?space  .open   -space  ^  then
+               .close  +space ;
+
+: punct   create  does> body> >name type  +space ;
+
+directive
+: __host  \ [ ;
+
+inline __ em
+inline ** strong
+inline || code
+
+punct .
+punct ,
+punct ;
+punct :
+punct !
+punct ?
+
+( Doin it TeX style?)
+: ``  ?space  ." &ldquo;"  -space ;
+: ''          ." &rdquo;"  +space ;
+
+: '           ." &rsquo;"  -space ;
+
+: -    ."  &ndash;"  +space ;
+: --   \d - ;
+: ---  ."  &mdash;"  +space ;  ( if you *really* want it)
+
+forth
+variable dquo?  dquo? off
+directive
+: "   dquo? toggle  if  \d ``  ^  then  \d '' ;
+
+: [[   ?space  .( <a href=")  token uri  .( ">)  -space ;
+: ]]   .( </a>)  +space ;
+
+( Block markup.)
+
+forth
+variable block-elem  block-elem off
+
+: <cr>
+   block-elem @ ?if  count .close  then  cr  -space ;
+
+: block   ( z")
+   <cr>  dup block-elem !  ?if  count .open  then ;
+
+( XXX should heading instead just echo words until another kind of block
+  markup comes along and closes the heading?)
+: heading
+   create
+   does> body> >name nip 1+ push ( heading level)
+      ctrl J parse  ( grab whole line)  0 block
+      .( <h)  r@ (.) type
+      -- .(  id=")  2dup .heading-id  .( ")
+      .( >)  html-rsquo  .( </h)  pop (.) type  .( >) ;
+
+directive
+
+: ..  ( para)   z" p" block ;
+
+heading #
+heading ##
+heading ###
+heading ####
+
+: ----   0 block  .( <hr />) ;
+
+forth
+
+__html
+
+# Introduction
+.. Let's test it out.
+
+## Inline markup
+.. Here is some plain text. How about __ emphasized __ , or ** bolded ** text?
+Or even a || monospaced code font || ?
+
+.. What about __ ** both ** __ ?
+
+.. It's easy - if you want it --- to get en- and em-dashes too.
+
+.. Too bad I don't have paragraph breaking working.
+
+### TeX-style quotes
+
+.. `` In double quotes '' but this is not. `` A quote '' , followed by punctuation.
+
+### Toggle-style quotes
+
+.. " Also in double quotes " followed by some unquoted text.
+
+### Even links work!
+
+.. [[ https://www.nimblemachines.com/2019/ 2019 journal ]] is a link.
+
+----
+
+## Another heading
