@@ -7,10 +7,12 @@
   "executing" the directives, thereby generating an output file. In this
   case it will an HTML rendering of the document.)
 
-sealed .directive.
-: directive  .directive. definitions ;
+sealed .block-markup.
+sealed .inline-markup.
+
 compiler
-: \d   ( compile from directive)   .directive. \chain ;
+: \b   ( compile from block-markup)     .block-markup. \chain ;
+: \i   ( compile from inline-markup)   .inline-markup. \chain ;
 forth
 
 variable space-before  ( points to nope or space)
@@ -44,9 +46,22 @@ compiler
 : .(   \ (")  char ) string, drop  \ type ;  ( XXX should this be html?)
 forth
 
+variable @line-prev  -1 @line-prev !
+: initial?  ( - f)  ( is this the first token on the line?)
+   @line @line-prev @ = 0=  @line @line-prev ! ;
+
+defer default-block
+
 -: ."  (markup to HTML)" ;
 -: ( a u)
-   .directive. find if  execute  ^  then
+   initial? if
+      .block-markup. find if  execute  ^  then
+      skipped if
+         c@ #LF = if  ( at least one blank line)  default-block  then
+         0
+      then  drop
+   then
+   .inline-markup. find if  execute  ^  then
    ?space  +space  html-rsquo ;
 mode __html
 
@@ -55,15 +70,13 @@ mode __html
    state preserve  __html
    token,  raw-load-file ;
 
-: .open   ( a u)   .( <)   count type  .( >) ;
-: .close  ( a u)   .( </)  count type  .( >) ;
+: .open   ( z")   .( <)   count type  .( >) ;
+: .close  ( z")   .( </)  count type  .( >) ;
 
 ( Given the address of a memory cell, invert the value in the cell and
   return its new value.)
 
 : toggle  ( a - new)  dup  @ invert  dup rot ! ;
-
-( Inline markup.)
 
 ( Now for the interesting bits!)
 
@@ -74,21 +87,26 @@ mode __html
    if  ?space  .open   -space  ^  then
                .close  +space ;
 
-: punct   create  does> body> >name type  +space ;
+: .self   body> >name type ;
 
-directive
-: __host  \ [ ;
+: closing-punct   create  does>          .self  +space ;
+: opening-punct   create  does>  ?space  .self  -space ;
+
+.inline-markup. definitions
 
 inline __ em
 inline ** strong
 inline || code
 
-punct .
-punct ,
-punct ;
-punct :
-punct !
-punct ?
+closing-punct .
+closing-punct ,
+closing-punct ;
+closing-punct :
+closing-punct !
+closing-punct ?
+closing-punct )
+
+opening-punct (
 
 ( Doin it TeX style?)
 : ``  ?space  ." &ldquo;"  -space ;
@@ -97,20 +115,17 @@ punct ?
 : '           ." &rsquo;"  -space ;
 
 : -    ."  &ndash;"  +space ;
-: --   \d - ;
+: --   \i - ;
 : ---  ."  &mdash;"  +space ;  ( if you *really* want it)
 
-forth
-variable dquo?  dquo? off
-directive
-: "   dquo? toggle  if  \d ``  ^  then  \d '' ;
+here 0 ,  ( unnamed variable for toggling inside/outside of quote)
+: "   [ #] toggle  if  \i ``  ^  then  \i '' ;
 
 : [[   ?space  .( <a href=")  token uri  .( ">)  -space ;
 : ]]   .( </a>)  +space ;
 
-( Block markup.)
-
 forth
+
 variable block-elem  block-elem off
 
 : <cr>
@@ -123,15 +138,20 @@ variable block-elem  block-elem off
   markup comes along and closes the heading?)
 : heading
    create
-   does> body> >name nip 1+ push ( heading level)
+   does>
+      body> >name nip 1+ push ( heading level)
       ctrl J parse  ( grab whole line)  0 block
       .( <h)  r@ (.) type
       -- .(  id=")  2dup .heading-id  .( ")
       .( >)  html-rsquo  .( </h)  pop (.) type  .( >) ;
 
-directive
+-: ( para)  z" p" block ;  is default-block
 
-: ..  ( para)   z" p" block ;
+.block-markup. definitions
+
+( XXX Still missing <pre> and any way to do bulleted lists.)
+
+: __host  \ [ ;
 
 heading #
 heading ##
@@ -142,35 +162,56 @@ heading ####
 
 forth
 
+
+-- --------------------------------------------------------------------------
+-- Some markup to test the generator with.
+-- --------------------------------------------------------------------------
+
+.ifdef test
+
 >stdout  __html
 
 # Introduction
-.. Let's test it out.
+
+Let's test it out. Do we ignore # when it's not the first token on the line?
+How about ---- ?
+
+  A para with mixed whitespace at the start of the line.
 
 ## Inline markup
-.. Here is some plain text. How about __ emphasized __ , or ** bolded ** text?
+
+Here is some plain text. How about __ emphasized __ , or ** bolded ** text?
 Or even a || monospaced code font || ?
 
-.. What about __ ** both ** __ ?
+What about __ ** both ** __ ?
 
-.. It's easy - if you want it --- to get en- and em-dashes too.
-
-.. Too bad I don't have paragraph breaking working.
+It's easy - if you want it --- to get en- and em-dashes too.
 
 ### TeX-style quotes
 
-.. `` In double quotes '' but this is not. `` A quote '' , followed by punctuation.
+`` In double quotes '' but this is not. `` A quote '' , followed by punctuation.
 
 ### Toggle-style quotes
 
-.. " Also in double quotes " followed by some unquoted text.
+" Also in double quotes " followed by some unquoted text.
 
 ### Even links work!
 
-.. [[ https://www.nimblemachines.com/2019/ 2019 journal ]] is a link.
+[[ https://www.nimblemachines.com/2019/ 2019 journal ]] is a link.
 
 ----
 
-## Another heading
+## The hard parts: verbatim/pre-formatted code blocks and lists
+
+Do we want to use " code fences " , like || {{ || and || }} || , or use as
+a trigger for verbatim/pre mode the presence of non-newline whitespace
+(spaces and tabs) at the beginning of the line?
+
+I never use numbered (ordered) lists, so let's concentrate on bulleted
+(unordered) exclusively. The easiest way to write these is a bullet ( " o "
+or " * " or " - " ) at the beginning of the line, perhaps preceded by whitespace,
+which we can use to calculate the nesting.
 
 __host
+
+.then  ( test)
