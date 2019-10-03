@@ -9,7 +9,6 @@
 
 ( Still TODO:
 
-  * escape URIs properly
   * handling of <pre> [both as fenced blocks and prefix whitespace]
   * handling of [nested!] unordered lists
 )
@@ -28,17 +27,47 @@ variable space-before  ( points to nope or space)
 : ?space   space-before @execute ;
 
 : html-escape-char  ( ch)
-   dup  char & = if  drop  ." &amp;"       ^  then
-   dup  char < = if  drop  ." &lt;"        ^  then
-   dup  char > = if  drop  ." &gt;"        ^  then
+   dup  char & = if  drop  ." &amp;"  ^  then
+   dup  char < = if  drop  ." &lt;"   ^  then
+   dup  char > = if  drop  ." &gt;"   ^  then
    emit ;
 
 : html-rsquo-escape-char  ( ch)
-   dup  char ' = if  drop  ." &rsquo;"     ^  then  ( hack)
+   dup  char ' = if  drop  ." &rsquo;"  ^  then  ( hack)
    html-escape-char ;
 
 : html-verbatim-char  ( ch)
    dup  bl = if  drop  ." &nbsp;"  ^  then
+   html-escape-char ;
+
+: hex-escape  ( u)
+   radix preserve hex  char % emit  <#  # #  #> type ;
+
+comment %%uri-escaping%%
+
+  Characters that do *not* need escaping: alphanumerics and marks.
+  mark = "-" | "_" | "." | "!" | "~" | "*" | "'" | "(" | ")"
+
+                                   !"#$%&'()*+,-./0123456789:;<=>?
+  1111111111111111111111111111111110111110000110010000000000111111
+
+  @ABCDEFGHIJKLMNOPQRSTUVWXYZ[\]^_`abcdefghijklmnopqrstuvwxyz{|}~
+  1000000000000000000000000001111010000000000000000000000000011101
+
+%%uri-escaping%%
+
+( For grabbing single bits out of something.)
+: bit@  ( mask bit# - bit)  u>>  1 and ;
+
+here
+%1111111111111111111111111111111110111110000110010000000000111111 ,
+%1000000000000000000000000001111010000000000000000000000000011101 ,
+
+: uri-needs-escaping?  ( ch)
+   64 u/mod  ( r q)  cells  [ #] + @  63 rot - bit@ ;
+
+: uri-escape-char  ( ch)
+   dup uri-needs-escaping? if  hex-escape  ^  then
    html-escape-char ;
 
 : foreach  ( a u 'code)
@@ -49,10 +78,11 @@ variable space-before  ( points to nope or space)
 : html            ( a u)   ['] html-escape-char  foreach ;
 : html-rsquo      ( a u)   ['] html-rsquo-escape-char  foreach ;
 : html-verbatim   ( a u)   ['] html-verbatim-char  foreach ;
+: uri             ( a u)   ['] uri-escape-char  foreach ;
 
-( XXX need to escape URIs too! The following doesn't really work -- it
-  doesn't do enough!)
-: uri   html ;
+( To test the URI escaping:)
+-- token !"#$%&'()*+,-./0123456789:;<=>?  uri
+-- token @ABCDEFGHIJKLMNOPQRSTUVWXYZ[\]^_`abcdefghijklmnopqrstuvwxyz{|}~ uri
 
 compiler
 : .(   \ (")  char ) string, drop  \ type ;  ( XXX should this be html?)
@@ -91,7 +121,7 @@ mode __html
 
 -: ."  (verbatim)" ;
 -: ( a u)
-   initial? if  2dup " }}" string= if  0 block  __html  ^  then  then
+   initial? if  2dup " }}" string= if  2drop  0 block  __html  ^  then  then
    skipped html  ( copy preceding whitespace)
    ( token) html
    trailing html  ( copy trailing whitespace) ;
@@ -153,7 +183,7 @@ opening-punct (
 here 0 ,  ( unnamed variable for toggling inside/outside of quote)
 : "   [ #] toggle  if  \i ``  ^  then  \i '' ;
 
-: [[   ?space  .( <a href=")  token uri  .( ">)  -space ;
+: [[   ?space  .( <a href=")  token html  .( ">)  -space ;
 : ]]   .( </a>)  +space ;
 
 forth
@@ -185,8 +215,9 @@ forth
       .(  id=")  2dup .heading-id  .( "><a href="#)  2dup .heading-id
       .( ">)  html-rsquo  .( </a></h)  pop (.) type  .( >) ;
 
--- : para             z" p"   block ;  ( default block style)
 -: ( para)         z" p"   block ;  is default-block
+
+-- : para             z" p"   block ;  ( default block style)
 -- : pre              z" pre" block  __verbatim ;
 -- : unordered-list   z" ul"  block ;
 
