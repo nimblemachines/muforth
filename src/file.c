@@ -27,7 +27,7 @@
  * *existence* of stpcpy(). ;-).
  *
  * Unlike memcpy, which STOOPIDLY returns dest, rather than something
- * USEFUL, this routine copies strles(src) bytes to dest, appends a null,
+ * USEFUL, this routine copies strlen(src) bytes to dest, appends a null,
  * and then returns a pointer to the null terminator.
  */
 char *string_copy(char *dest, char *src)
@@ -62,7 +62,9 @@ char *concat_paths(char *dest, size_t destsize, char *p1, char *p2)
  *
  * If path starts with "/", return it unchanged.
  * If path starts with "./", prefix it with the current directory.
- * Otherwise, prefix it with the muforth build directory.
+ * Otherwise, prefix it with the muforth "home" directory MU_DIR, which is
+ * usually something like "/home/<user>/muforth/mu/". (The build process
+ * sets it automagically.)
  */
 static char* abs_path(char *dest, size_t destsize, char *path)
 {
