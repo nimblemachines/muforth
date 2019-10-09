@@ -38,6 +38,8 @@ VERSOBJS=	${COREOBJS} ${ARCHOBJS} ${OPTOBJS}
 ALLOBJS=	${VERSOBJS} muforth.o
 makefiles=	Makefile arch.mk local.mk
 DEPFILES=	$(makefiles) muforth.h env.h public.h
+sedscripts=	../scripts/keep_preprocessor.sed ../scripts/gen_dict_chain.sed
+chains=		forth_chain.h compiler_chain.h runtime_chain.h
 
 .PHONY: all clean httplink diffsed
 
@@ -49,6 +51,10 @@ ${ALLOBJS} : ${DEPFILES}
 # _all_ be remade if it changes - if the contents are actually different from
 # the last run.
 
+# NOTE: This means that public.h will often remain *older* than .public.h, so
+# the following rule will run and print "No changes to public.h" even when
+# there is no other work for Make to do.
+
 public.h : .public.h
 	@if cmp -s ${.ALLSRC} ${.TARGET} ; then \
 		echo No changes to ${.TARGET} ; \
@@ -59,20 +65,12 @@ public.h : .public.h
 
 .public.h : ${ALLOBJS:.o=.ph}
 	@(echo "/* This file is automagically generated. Do not edit! */"; \
-	cat ${.ALLSRC}) > ${.TARGET}
-
-runtime_chain.h : public.h ../scripts/gen_dict_chain.sed $(makefiles)
-	@echo Making ${.TARGET}
-	@(echo "/* This file is automagically generated. Do not edit! */"; \
-	sed -E \
-		-f ../scripts/keep_preprocessor.sed \
-		-e '/^void mu_runtime/!d' \
-		-e 's/mu_runtime_/mu_/' \
-		-f ../scripts/gen_dict_chain.sed \
-		-e 's/mu_/mu_runtime_/' public.h \
+	echo; cat ${.ALLSRC} \
 	) > ${.TARGET}
 
-forth_chain.h : public.h ../scripts/gen_dict_chain.sed $(makefiles)
+$(chains) : public.h $(sedscripts) $(makefiles)
+
+forth_chain.h :
 	@echo Making ${.TARGET}
 	@(echo "/* This file is automagically generated. Do not edit! */"; \
 	sed -E \
@@ -82,7 +80,7 @@ forth_chain.h : public.h ../scripts/gen_dict_chain.sed $(makefiles)
 		-f ../scripts/gen_dict_chain.sed public.h \
 	) > ${.TARGET}
 
-compiler_chain.h : public.h ../scripts/gen_dict_chain.sed $(makefiles)
+compiler_chain.h :
 	@echo Making ${.TARGET}
 	@(echo "/* This file is automagically generated. Do not edit! */"; \
 	sed -E \
@@ -93,7 +91,18 @@ compiler_chain.h : public.h ../scripts/gen_dict_chain.sed $(makefiles)
 		-e 's/mu_/mu_compiler_/' public.h \
 	) > ${.TARGET}
 
-dict.o : forth_chain.h compiler_chain.h runtime_chain.h
+runtime_chain.h :
+	@echo Making ${.TARGET}
+	@(echo "/* This file is automagically generated. Do not edit! */"; \
+	sed -E \
+		-f ../scripts/keep_preprocessor.sed \
+		-e '/^void mu_runtime/!d' \
+		-e 's/mu_runtime_/mu_/' \
+		-f ../scripts/gen_dict_chain.sed \
+		-e 's/mu_/mu_runtime_/' public.h \
+	) > ${.TARGET}
+
+dict.o : $(chains)
 
 .SUFFIXES : .ph .asm
 
@@ -101,7 +110,7 @@ ${ALLOBJS:.o=.ph} : $(makefiles)
 
 .c.ph :
 	@echo Making ${.TARGET}
-	@(echo "/* ${.IMPSRC} */"; \
+	@(echo "/* ~~~~ ${.IMPSRC} ~~~~ */"; \
 	sed -E -n \
 		-e '/^static /d' \
 		-e '/^#(if|else|endif)/p' \
@@ -120,8 +129,9 @@ muforth.o : version.h
 
 version.h : ${VERSOBJS}
 	@echo Making ${.TARGET}
-	@echo "#define BUILD_TIME `date \"+%s\"`" > ${.TARGET}
-	@echo "#define BUILD_DATE \"`date \"+%Y-%b-%d %R\"`\"" >> ${.TARGET}
+	@(echo "#define BUILD_TIME `date \"+%s\"`"; \
+	echo "#define BUILD_DATE \"`date \"+%Y-%b-%d %R\"`\"" \
+	) > ${.TARGET}
 
 file.o : muhome.h
 
@@ -143,7 +153,7 @@ ${ALLOBJS:.o=.asm} : $(DEPFILES)
 clean :
 	rm -f muforth muforth32 muforth64
 	rm -f version.h muhome.h *.o *.asm env.h envtest
-	rm -f *.ph .public.h public.h forth_chain.h compiler_chain.h
+	rm -f *.ph .public.h public.h $(chains)
 	rm -f image.*
 
 distclean : clean
