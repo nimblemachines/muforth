@@ -99,7 +99,7 @@ static int foreach_dirent(char *path, path_ok_fn try_path,
             concat_paths(pathbuf, USB_PATH_MAX, path, pde->d_name);
             matched = fn(pathbuf, pmatch);
 
-            /* 
+            /*
              * matched < 0 means matched but error opening read/write
              *        == 0 means no match
              *         > 0 means match and device opened read/write
@@ -358,7 +358,7 @@ static int match_hid(char *dev, struct match *pmatch)
     pid = (unsigned short)hid.product;
 
     /* XXX have vendor and product fields been rewritten from USB
-     * endianness (little) to local host's? */ 
+     * endianness (little) to local host's? */
     if (hid.bustype == BUS_USB &&
         vid == pmatch->idVendor && pid == pmatch->idProduct)
         return open(dev, O_RDWR);   /* Re-open read-write; could fail! */

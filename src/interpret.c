@@ -238,7 +238,7 @@ static CELL_T(struct imode *) state = CELL(&forth_interpreter);
 void mu_consume()
 {
     /* call the current consume function */
-    execute_xtk(_(_(state)->eat));  
+    execute_xtk(_(_(state)->eat));
 }
 
 void mu_push_state()

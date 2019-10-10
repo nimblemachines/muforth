@@ -193,7 +193,7 @@ void mu_dplus3()
  */
 
 #ifdef GCC_IS_COMPLETELY_FUCKED
-/* 
+/*
  * Some tests that didn't work out. I think the fault was intially mine: I
  * had cast using "(unsigned)" rather than "(uint32_t)". That may have made
  * a difference. It certainly caused my initial 64-bit port to work in
