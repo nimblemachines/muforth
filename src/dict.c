@@ -374,8 +374,8 @@ static void mu_push_chain()
 }
 
 /*
- * NOTE: This is *only* called from init_dict() in order to create the initial three
- * chains. It is never called from Forth.
+ * NOTE: This is *only* called from init_dict() in order to create the
+ * initial three chains. It is never called from Forth.
  *
  * Create a new chain.
  *
