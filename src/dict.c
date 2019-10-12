@@ -312,8 +312,8 @@ static link_cell *new_name(
 }
 
 /*
- * new_linked_name creates a new dictionary (name) entry and links it onto
- * the chain represented by plink.
+ * new_linked_name creates a new, non-hidden dictionary (name) entry and
+ * links it onto the chain represented by plink.
  */
 static void new_linked_name(
     link_cell *plink, char *name, int length)
@@ -334,8 +334,15 @@ void mu_linked_name_()
  * defined in C; this routine compiles a code pointer into the dict entry
  * that points to the C function.
  */
-static void init_chain(link_cell *plink, struct inm *pinm)
+static void init_chain(link_cell *plink, link_cell *anchor_link, struct inm *pinm)
 {
+    /*
+     * Set the beginning, "anchor", link for the chain. For sealed chains,
+     * this will be NULL. For chains anchored to other chains, this will be
+     * address of the link field of the chain being anchored to.
+     */
+    _(plink->cell) = anchor_link;
+
     for (; pinm->name != NULL; pinm++)
     {
         new_linked_name(plink, pinm->name, strlen(pinm->name));
@@ -367,17 +374,24 @@ static void mu_push_chain()
 }
 
 /*
- * Create a new chain. First, call new_linked_name() to create the public
- * name - .forth. or .compiler. . Then, populate its code field with code
- * to push the address of the following hidden word's link field. And,
- * lastly, created the hidden name, and return its address.
+ * NOTE: This is *only* called from init_dict() in order to create the
+ * initial three chains. It is never called from Forth.
  *
- * pchain is the chain that this chain is _named_ in;
+ * Create a new chain.
+ *
+ * First, call new_linked_name() to create the public name: .forth. or
+ * .compiler. or .runtime. . Then, populate its code field with code to
+ * push the address of the following hidden word's link field. And, lastly,
+ * create the hidden name ("muchain"), and return the address of the hidden
+ * name's link field.
+ *
+ * plink points to the chain that this chain is _named_ in. It will always
+ * be the .forth. chain.
  */
 static link_cell *new_chain(
-    link_cell *pchain, char *name, int length)
+    link_cell *plink, char *name)
 {
-    new_linked_name(pchain, name, length);
+    new_linked_name(plink, name, strlen(name));
     *ph++ = (addr)mu_push_chain;    /* set code pointer */
     return new_name(NULL, "muchain", 7, 1);
 }
@@ -395,40 +409,38 @@ static void allocate()
 
 void init_dict()
 {
-    link_cell forth;
-    link_cell compiler;
-    link_cell runtime;
+    link_cell forth_bootstrap;  /* we need this to "bootstrap" the .forth. chain */
 
     allocate();
 
-    /* Zero out initial links. */
-    _(forth.cell) = NULL;
-    _(compiler.cell) = NULL;
-
-    /* First, populate dictionary with words defined in C. */
-    init_chain(&forth, initial_forth);
-    init_chain(&compiler, initial_compiler);
+    /* First, populate the "bootstrap" .forth. chain with words defined in C. */
+    init_chain(&forth_bootstrap, NULL, initial_forth);
 
     /*
-     * Create .forth. .compiler. and .runtime. chains that look and smell
-     * like the ones that will later be created as create/does words. These
-     * have a body that looks like a normal word, but the name is always
-     * "muchain" and the hidden bit is set.
+     * Next, create in our "bootstrap" forth chain .forth. , .compiler. ,
+     * and .runtime. chains that look and smell like the ones that will
+     * later be created as create/does words. These have a body that looks
+     * like a normal word, but the name is always "muchain" and the hidden
+     * bit is set.
      */
-    forth_chain    = new_chain(&forth, ".forth.", 7);
-    compiler_chain = new_chain(&forth, ".compiler.", 10);
-    runtime_chain  = new_chain(&forth, ".runtime.", 9);
+    forth_chain    = new_chain(&forth_bootstrap, ".forth.");
+    compiler_chain = new_chain(&forth_bootstrap, ".compiler.");
+    runtime_chain  = new_chain(&forth_bootstrap, ".runtime.");
 
     /*
-     * Unlike .forth. and .compiler. which are "sealed" chains, .runtime.
-     * is anchored to the .forth. chain, so searches of .runtime. continue
-     * in the .forth. chain.
+     * Now that everything is in the bootstrap .forth. chain, set the link
+     * pointer in the real .forth. chain to match.
      */
-    _(runtime.cell) = forth_chain;
-    init_chain(&runtime, initial_runtime);
+    _(forth_chain->cell) = _(forth_bootstrap.cell);
 
-    /* Now that everything is in the dictionary, set the link pointers. */
-    _(forth_chain->cell) = _(forth.cell);
-    _(compiler_chain->cell) = _(compiler.cell);
-    _(runtime_chain->cell) = _(runtime.cell);
+    /* Now we can populate the .compiler. chain with words defined in C. */
+    init_chain(compiler_chain, NULL, initial_compiler);
+
+    /*
+     * And we do the same with the .runtime. chain - with a wrinkle. Unlike
+     * .forth. and .compiler. which are "sealed" chains, .runtime. is
+     * anchored to the .forth. chain, so searches of .runtime. continue in
+     * the .forth. chain.
+     */
+    init_chain(runtime_chain, forth_chain, initial_runtime);
 }

@@ -99,7 +99,7 @@ static int foreach_dirent(char *path, path_ok_fn try_path,
             concat_paths(pathbuf, USB_PATH_MAX, path, pde->d_name);
             matched = fn(pathbuf, vid, pid);
 
-            /* 
+            /*
              * matched < 0 means matched but error opening read/write
              *        == 0 means no match
              *         > 0 means match and device opened read/write

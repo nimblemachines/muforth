@@ -10,10 +10,13 @@
 
 # keep the /* filename.c */ comments
 /^\/\* .*\.c/ {
+# prefix with a blank line
 i\
-\
 
+# indent the comment with a TAB
 s/^\//	\//
+
+# print it
 p
 }
 
