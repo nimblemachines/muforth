@@ -1,7 +1,7 @@
 /*
- * This file is part of muforth: http://muforth.nimblemachines.com/
+ * This file is part of muforth: https://muforth.nimblemachines.com/
  *
- * Copyright (c) 2002-2018 David Frech. (Read the LICENSE for details.)
+ * Copyright (c) 2002-2019 David Frech. (Read the LICENSE for details.)
  */
 
 /* Interpreter and compiler */
@@ -238,7 +238,7 @@ static CELL_T(struct imode *) state = CELL(&forth_interpreter);
 void mu_consume()
 {
     /* call the current consume function */
-    execute_xtk(_(_(state)->eat));  
+    execute_xtk(_(_(state)->eat));
 }
 
 void mu_push_state()
@@ -251,7 +251,7 @@ void mu_compiler_lbracket()
     _(state) = &forth_interpreter;
 }
 
-void mu_minus_rbracket()
+void mu_rbracket()
 {
     _(state) = &forth_compiler;
 }

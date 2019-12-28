@@ -1,6 +1,6 @@
-( This file is part of muforth: http://muforth.nimblemachines.com/
+( This file is part of muforth: https://muforth.nimblemachines.com/
 
-  Copyright 2002-2018 David Frech. (Read the LICENSE for details.)
+  Copyright 2002-2019 David Frech. (Read the LICENSE for details.)
 
 .ifndef chat-v1
 loading MSP430 serial chat protocol v2 (host)
@@ -80,42 +80,39 @@ variable checksum
 
 .then
 
+( Send two no-ops, let them transmit, _then_ throw away any input bytes.)
+: resync  c.Idle  c.Idle  drain  flush ;
+
 
 .ifdef paranoid
 
 ( Reset host's and target's checksum accumulator.)
-: ?reset   c.GetCheck              sum! ;
-: ?ok      c.GetCheck  checksum @  sum!
+: ?reset   resync  c.GetCheck              sum! ;
+: ?ok              c.GetCheck  checksum @  sum!
    =if  ." checksum failed: " u.  ^  then  drop ;
 
 .else
 
-: ?reset ;
+: ?reset   resync ;
 : ?ok ;
 
 .then
 
-
-( Send two no-ops, let them transmit, _then_ throw away any input bytes.)
-: resync  c.Idle  c.Idle  drain  flush ;
 
 : c.setup-chunk  ( buf a u - #words)
    swap c.SetAddr  swap m !  1+ 2/ ( words) ;
 
 ( Hook into interact code.)
 : c.Hello
-   #115200 bps  resync
-   ?reset
-.ifndef ignore-version
+   #115200 bps  ?reset
    cr ." Chat firmware version "  c.GetVersion  ?ok
-   radix preserve  hex  sep preserve  -sep   u.
-.then ;
+   radix preserve  hex  sep preserve  -sep   <# 4# 4# #> type ;
 
-: read-bytewise?  ( u a)
+: ?read-bytewise  ( u a)
    100 u< if  c.ReadWordsB ^  then  c.ReadWords ;
 
 : c.ReadChunk    ( buf a u)
-   over push  ( a)  c.setup-chunk  dup pop read-bytewise?
+   over push  ( a)  c.setup-chunk  dup pop ?read-bytewise
    for  w> >hilo  m& m&  next
    ?ok ;
 
@@ -126,36 +123,30 @@ variable checksum
 ( We used to do ?reset in c.Run, but if we're resetting the chip we'll lose
   the GetCheck command and time out. Doing it here makes more sense.)
 
-: c.GetRegs  ( buf - sp)  ?reset  c.GetSP  dup push  .LAST  c.ReadChunk  pop ;
-: c.SetRegs  ( buf)               c.GetSP            .LAST  c.WriteChunk ;
+: c.GetStatus    ( - sp pc sr cp)
+   ?reset  c.GetSP  dup c.SetAddr  3 c.ReadWords  w> w> w> ( cp sr pc)  swap rot ;
 
-: c.ErasePage ( a fcmd - status)
-   swap c.SetAddr  0 c.FlashWord ;
+: chat-run            ( pc sr cp)
+           c.GetSP      c.SetAddr  c.WriteWord  c.WriteWord  c.WriteWord
+   c.Run ;
 
-( Or together the statuses from each FlashWord command and return it.)
-: c.FlashChunk   ( buf a u fcmd - status)
-   push ( fcmd)
-   c.setup-chunk  pop 0 rot  ( fcmd 0 #words)
-   for  over ( fcmd)  m* m* lohi>  c.FlashWord  or  next  nip
-   ?ok ;
+: ?flash-status  ( status - fail?)   84 and ;
 
+: c.ErasePage   (     a   - fail?)
+   c.SetAddr  [ \eq FERASE  \eq FKEY + #]  0  c.FlashWord  ?flash-status  ?ok ;
 
-( The interact interfaces for ReadWord and WriteWord take an address. Let's
-  make that work, but also streamline the conversation with the target to
-  only set the address if necessary.)
-
-variable chat-addr  chat-addr on
-: ?set-addr  ( a)
-   chat-addr @ over xor if  dup c.SetAddr  then  \m cell+  chat-addr ! ;
-
-: c.ReadWordAddr   ( a - w)  ?set-addr  c.ReadWord   ?ok ;
-: c.WriteWordAddr  ( w a)    ?set-addr  c.WriteWord  ?ok ;
+( OR together returned flash statuses for the chunk.)
+: c.FlashChunk  ( buf a u - fail?)
+   c.setup-chunk  ( #words)
+   [ \eq FWRT   \eq FKEY + #]  0 rot  ( fcmd status #words)
+   for  over ( fcmd)  m* m* lohi> ( data)  c.FlashWord  or  next  nip
+   ?flash-status  ?ok ;
 
 
 ( NOTE: We don't define RunWait separately. Since we will always be reading
-  the registers back after Run, that first command - the GetSP in GetRegs -
-  will block until the target is ready.)
+  the registers back after Run, that first read command will block until
+  the target is ready.)
 
 : chat
-   chat-via  c.Hello  c.GetRegs  c.SetRegs  c.ReadWordAddr  c.WriteWordAddr
-             c.ReadChunk  c.WriteChunk  c.ErasePage  c.FlashChunk  c.Run ;
+   chat-via  c.Hello  c.GetStatus  chat-run
+             c.ReadChunk  c.WriteChunk  c.ErasePage  c.FlashChunk ;

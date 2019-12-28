@@ -1,8 +1,20 @@
-( This file is part of muforth: http://muforth.nimblemachines.com/
+( This file is part of muforth: https://muforth.nimblemachines.com/
 
-  Copyright 2002-2018 David Frech. (Read the LICENSE for details.)
+  Copyright 2002-2019 David Frech. (Read the LICENSE for details.)
 
-loading MSP430 serial chat protocol v3 (core)
+loading MSP430 serial chat protocol v3 (core) (OBSOLETE and DEPRECATED!)
+
+( NOTE and WARNING!
+
+  This code has been retired. It is being left here as an object lesson and
+  as an historical artifact.
+
+  If you are using a Flash-based MSP430, such as the G2553, you should be
+  using chat-v2.
+
+  If you are using an FRAM-based MSP430, such as the FR6989, you should be
+  using chat-v4.)
+
 
 ( Trying something simple and traditional.
 
@@ -15,8 +27,16 @@ loading MSP430 serial chat protocol v3 (core)
 32  Run         - set PC, SR, and CP and execute
 33  ReadWords   - set address, then read N words
 34  WriteWords  - set address, then write N words
+35  GetCheck    - return accumulated checksum to host
 
-35 - ff  Idle   - these command bytes are ignored
+The following are for older - non-CPUX? non-FRAM? - MSP430s that have
+byte-sized i/o from 0020 to 00ff and sport regular Flash memory rather than
+FRAM.
+
+36  ReadWordsB  - set address, then read N words bytewise
+37  FlashWords  - set flash command, set address, then write N words to Flash
+
+38 - ff  Idle   - these command bytes are ignored
 )
 
 decimal
@@ -32,9 +52,10 @@ assembler
 ( These are all considered "caller saved" registers. They are scratch.
   Called code can freely clobber them.)
 
- 13 reg top    ( current accumulator)
- 14 reg mp     ( memory pointer)
- 15 reg count  ( word count)
+ 12 reg top    ( current accumulator)
+ 13 reg mp     ( memory pointer)
+ 14 reg count  ( word count)
+ 15 reg check  ( checksum accumulator)
 forth
 
 ( Tell the disassembler about these register names.)
@@ -42,9 +63,9 @@ forth
    dup 5 u< if  ( low special)
      2*  z" pcspsrr3cp" +  2 type  ^  then
           ( 0011223344)
-   dup 13 u< if  ( not special)  ." r" .udec  ^  then
-   13 -  5 *  z" top  mp   count" +  5 -trailing type ;  is .regname
-               ( dddddeeeeefffff)
+   dup 12 u< if  ( not special)  ." r" .udec  ^  then
+   12 -  5 *  z" top  mp   countcheck" +  5 -trailing type ;  is .regname
+               ( cccccdddddeeeeefffff)
 
 hex
 
@@ -61,9 +82,13 @@ label put-byte
 label get-word
    get-byte c  top push  ( save low byte)
    get-byte c  top swpb  sp )+ top bis  ( combine high and low)
-   ret  ;c
+   top check xor  ( xor into checksum)  ret  ;c
+
+label get-check
+   check top mov  ( fall thru)  ;c     -- zeroes checksum!
 
 label put-word
+   top check xor  ( xor into checksum)
    put-byte c  top swpb  put-byte j  ;c
 
 ( Compile the first 32 bits of the current muforth Git commit.
@@ -104,18 +129,55 @@ Thanks, TI!
 TI-is-a-bunch-of-fucking-liars!
 
 label do-words
+   top push  ( for use of called code)
    get-word c  top mp mov  ( set starting address)
    get-byte c  top tst  0!= if  ( if count non-zero)
-      top count mov  begin  2 sp +) call  1 # count sub  0= until
-   then  2 # sp add  ret  ;c
+      top check xor  ( xor into checksum)  top count mov
+      begin  4 sp +) call  1 # count sub  0= until
+   then  4 # sp add  ret  ;c
 
 label read-words
    do-words c  ( push address of following code!)
    mp )+ top mov  put-word j  ;c
 
+.ndef in-ram  .ndef fr6989  .and .if
+label read-words-bytewise
+   do-words c  ( push address of following code!)
+   mp )+ top movb  top push  ( save low byte)
+   mp )+ top movb  top swpb  sp )+ top bis  ( combine high and low)
+   put-word j  ;c
+.then
+
 label write-words
    do-words c  ( push address of following code!)
    get-word c  top mp ) mov  2 # mp add  ret  ;c
+
+.equates. .contains FCTL1 .if
+
+label flash-words
+   get-word c  ( get flash command + key into top; do-words pushes this)
+   do-words c  ( push address of following code!)
+   get-word c  ( get data word to write to flash)
+   FKEY  # FCTL3 & mov           -- clear FLOCK
+   2 sp +) FCTL1 & mov           -- write flash command - must have FKEY!
+   top mp ) mov  2 # mp add      -- write word and incr pointer
+.ifdef in-ram
+   begin  FBUSY # FCTL3 & bit  0= until
+.then
+   FKEY # FCTL1 & mov            -- clear command
+   FKEY FLOCK + # FCTL3 & mov    -- set FLOCK
+   FCTL3 & top mov  put-word j   -- read status and return it
+   ;c
+
+.else  ( dummy version)
+
+label flash-words
+   get-word c  ( get flash command + key into top; in this code we ignore it)
+   do-words c  ( push address of following code!)
+   get-word c  2 # mp add  ( get word, inc memory pointer)
+   9658 # top mov  ( fake flash status)  put-word j  ;c
+
+.then
 
 ( Dispatch.)
 label command-table
@@ -124,9 +186,19 @@ label command-table
    ( 32) run ,
    ( 33) read-words ,
    ( 34) write-words ,
+   ( 35) get-check ,
+
+.def in-ram  .def fr6989  .or .if
+   ( 36) read-words ,
+.else
+   ( 36) read-words-bytewise ,
+.then
+
+   ( 37) flash-words ,
 
 label process
    get-byte c  ( cmd)
+   top check xor   ( xor into checksum)
 
    30 # top sub   ( 00 to 2f become large unsigned numbers)
    process command-table - 2/ # top cmp  u< if
@@ -176,10 +248,17 @@ Vreset handler
   the DCO to generate 16 MHz MCLK and SMCLK.)
 
 .equates. .contains CAL_BC1_16MHZ .if  ( we need to set up the DCO trim ourselves)
-   -- Set clock to factory-calibrated 16 MHz
-   -- See G2553 datasheet, p15
-   CAL_BC1_16MHZ & BCSCTL1 & movb
-   CAL_DCO_16MHZ & DCOCTL & movb
+   "0ffff # CAL_DCO_16MHZ & cmp     -- if Info A has been erased, don't use trim
+   0= if
+      -- Set defaults that might work to get chat going...
+      %10_00_1111 # BCSCTL1 & movb  -- RSEL=15
+      a0 # DCOCTL & movb            -- not quite the middle?
+   else
+      -- Set clock to factory-calibrated 16 MHz
+      -- See G2553 datasheet, p15
+      CAL_BC1_16MHZ & BCSCTL1 & movb
+      CAL_DCO_16MHZ & DCOCTL & movb
+   then
    BCSCTL2 & clrb
 
 .else

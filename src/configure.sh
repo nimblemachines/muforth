@@ -1,8 +1,8 @@
 #!/bin/sh
 
-# This file is part of muforth: http://muforth.nimblemachines.com/
+# This file is part of muforth: https://muforth.nimblemachines.com/
 #
-# Copyright (c) 2002-2018 David Frech. (Read the LICENSE for details.)
+# Copyright (c) 2002-2019 David Frech. (Read the LICENSE for details.)
 
 # This NOT a GNU configure script!
 
@@ -25,9 +25,9 @@ if [ -d ../.git ]; then
     cat <<EOT > /tmp/post-commit.sh
 #!/bin/sh
 
-# This file is part of muforth: http://muforth.nimblemachines.com/
+# This file is part of muforth: https://muforth.nimblemachines.com/
 #
-# Copyright (c) 2002-2018 David Frech. (Read the LICENSE for details.)
+# Copyright (c) 2002-2019 David Frech. (Read the LICENSE for details.)
 
 # So that we always have an accurate git commit available to Forth code,
 # after commit, checkout or merge generate a muforth file that defines the
@@ -128,6 +128,7 @@ should be available to udev.
 EOF
         else
             ../scripts/make-udev-rules.sh $USER > 99-muforth.rules
+            ../scripts/make-udev-rules.sh $UID > 99-muforth-uid.rules
             cat <<EOF
 A udev rules file has just been generated, which will be of interest to you
 if you want to use USB devices with muforth.
@@ -139,6 +140,23 @@ Please do the following as root:
 
 (or possibly some other command to tell udevd to reload its rules files;
 'man udev' for the whole story).
+
+If you are running this on a Chromebook, things are slightly more
+complicated. /etc is on a read-only filesystem. The udev rules live in a
+volatile filesystem (/run) and have to be re-copied every time you restart
+your Chromebook, so you'll want to make a script. But the basic steps are:
+
+In a non-chroot shell,
+
+  $ sudo mkdir -p /run/udev/rules.d
+  $ sudo cp ${muforth}/src/99-muforth-uid.rules /run/udev/rules.d
+  $ sudo udevadm control --reload
+
+Note that this way uses a different rules file; this one has a numeric UID
+rather than a user name for each rule, since the Chromebook's /etc/passwd
+and /etc/group files aren't going to have the user name info that lives in
+your chroot.
+
 EOF
         fi
     elif [ -d /proc/bus/usb ]; then
@@ -152,16 +170,19 @@ EOF
     fi
 fi
 
-if [ "$os" = "FreeBSD" -o "$os" = "NetBSD" -o "$os" = "OpenBSD" ]; then
+if [ "$os" = "FreeBSD" ]; then
+    # For FreeBSD, include both old-style and new-style USB drivers. Let
+    # the C preprocessor decide which code to include. ;-)
     archobjs="file.o main.o time.o tty.o select.o pty.o usb-netbsd.o usb-freebsd.o"
     if [ "$cpu" = "amd64" ]; then
         Wnarrowing=""
     fi
 fi
 
-if [ "$os" = "DragonFly" ]; then
+if [ "$os" = "DragonFly" -o "$os" = "NetBSD" -o "$os" = "OpenBSD" ]; then
+    # DragonFly, NetBSD, and OpenBSD all have a NetBSD-like USB stack.
     archobjs="file.o main.o time.o tty.o select.o pty.o usb-netbsd.o"
-    if [ "$cpu" = "x86_64" ]; then
+    if [ "$cpu" = "amd64" -o "$cpu" = "x86_64" ]; then
         Wnarrowing=""
     fi
 fi
@@ -176,49 +197,13 @@ else
     cflags="${Wnarrowing}${cflags}"
 fi
 
-# Figure out which version of sed we're running, so we can properly specify
-# the use of extended (ie, sane) regular expressions.
-
-# XXX Do this a different way? How about _trying_ to run sed -E and if that
-# works, we have BSD sed; if sed -r works, then we have GNU. If neither one
-# works, complain that the person has a weird sed and that they need to
-# find a better one.
-
-echo
-
-if sed --version 2> /dev/null | grep -q "not GNU sed"; then
-  cat <<EOF
-You are running a funky version of sed - probably built into busybox - that
-does not support extended regular expressions. Please install a sed that
-does, like GNU sed, and then re-run configure.sh.
-EOF
-  exit 1
-elif sed --version 2> /dev/null | grep -q "GNU sed"; then
-  cat <<EOF
-Found GNU sed; using "-r" for extended regular expressions.
-EOF
-  sedext="-r"
-else
-  cat <<EOF
-Found BSD sed; using "-E" for extended regular expressions.
-EOF
-  sedext="-E"
-fi
-
 # Now, put all our variables into an "architecture-specific" make file.
 cat <<EOT > arch.mk
-SEDEXT=     ${sedext}
 ARCH_C=     ${cflags}
 ARCH_LD=    ${ldflags}
 ARCHOBJS=   ${archobjs}
 MU_DIR=     ${top}/mu
 EOT
-
-# fix up use of sed in scripts/do_sed.sh
-sed ${sedext} \
-  -e "s/%sedext%/${sedext}/g" \
-  ../scripts/do_sed.sh.in > ../scripts/do_sed.sh
-chmod 755 ../scripts/do_sed.sh
 
 # Touch local.mk, which we'll need regardless of which kind of Make the
 # user has. Also, this allows us to use .include rather than .sinclude,
@@ -241,7 +226,7 @@ re-run configure.sh like this:
 Then run your BSD make.
 
 EOF
-  sed ${sedext} \
+  sed -E \
     -f ../scripts/make.sed \
     -f ../scripts/gnu-make.sed \
     -e 's/^### Makefile/### GNU Makefile/' Makefile.in > Makefile
@@ -255,7 +240,7 @@ If the build fails, try re-running configure like this:
 Then type "gmake" instead of "make".
 
 EOF
-  sed ${sedext} \
+  sed -E \
     -f ../scripts/make.sed \
     -e 's/^### Makefile/### BSD Makefile/' Makefile.in > Makefile
 fi

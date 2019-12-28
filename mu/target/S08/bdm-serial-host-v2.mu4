@@ -1,0 +1,80 @@
+( This file is part of muforth: https://muforth.nimblemachines.com/
+
+  Copyright 2002-2019 David Frech. (Read the LICENSE for details.)
+
+loading S08 BDM-over-SCI transport v2 (host)
+
+( Host-side - ie PC - code to drive the BDM-over-SCI implementation in
+  target/S08/bdm2-core.mu4
+
+  This is "version 2" which means I re-imagined it to be more like the
+  byteloader protocol, where the target is never waiting for more than one
+  byte.)
+
+( NOTE: Before loading this file, load an S08 variant device file. This
+  code requires several of the register defines, and needs to know where to
+  find the clock trim register.)
+
+( BDM code on the 908 supports the following commands:
+  0 Bye - escape back to byteloader
+  1 Idle - do nothing; re-sync
+  2 WriteFirst - reset count and pointer, then do WriteNext
+  3 WriteNext - write next byte to buffer, incr count and pointer
+  4 ReadNext - from Sync or BDM
+  5 Write buffered bytes to BDM, read nothing, return junk byte
+  6 ditto, read 1 byte, return it
+  7 ditto, read 2 bytes, return first
+  8 run Sync pulse, return high byte
+  9 Hold BKGD pin low
+ 10 Hold BKGD pin high
+ 11 Tri-state BKGD pin
+ 12 Set BDM rate to 4M
+ 13 Set BDM rate to 8M)
+
+hex
+
+: b.Bye     00 send ;  ( End session, return to chat command loop)
+
+( Core commands that generate BDM traffic. These no longer overlap with the
+  chat commands. Start instead with 20 hex - 32 decimal. Anything < 20 will
+  exit the BDM loop and return to chat.)
+
+: b.Idle    20 send ;
+
+: Send1     ?spkt  21 send  send ;
+: SendNext         22 send  send ;
+: Send2    Send1  SendNext ;
+: Send3    Send2  SendNext ;
+: Send4    Send3  SendNext ;
+
+: RecvNext  23 send  recv ;
+: Expect0   24 send  recv drop ;
+: Expect1   25 send  recv ;
+: Expect2   26 send  recv  RecvNext ;
+
+( Misc commands)
+: b.Sync      ?spkt  27 send  recv  RecvNext  hilo> ;
+: b.BkgdLow   ?spkt  28 send ;
+: b.BkgdHiZ   ?spkt  29 send ;
+: b.Clock4M   ?spkt  2a send ;
+: b.Clock8M   ?spkt  2b send ;
+: b.Clock16M  ?spkt  2c send ;
+
+( Can't use name of register here; will be undefined when loading for 908.)
+: chip-id   "1807 ( SDIDL) chat-c@
+   dup "0af = if  drop "0ff ^  then  ( 908 will return 0af) ;
+
+( Get start address of BDM code.)
+: bdm-start  ( - a)
+   chip-id 0ff = if  0fb00  ( 908, serial, flash version)   ^ then
+
+   .ifdef bdm-in-ram
+                  @ram   ( S08, serial, ram version)
+   .else
+                  @bdm   ( S08, serial, flash version)
+   .then ;
+
+: b.Start  ( start the BDM firmware on the connected device)
+   #115200 bps  resync
+   bdm-start c.SetPC c.Run
+   " S08b2" await  ( match signature) ;

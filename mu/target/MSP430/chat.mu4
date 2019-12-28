@@ -1,6 +1,6 @@
-( This file is part of muforth: http://muforth.nimblemachines.com/
+( This file is part of muforth: https://muforth.nimblemachines.com/
 
-  Copyright 2002-2018 David Frech. (Read the LICENSE for details.)
+  Copyright 2002-2019 David Frech. (Read the LICENSE for details.)
 
 loading MSP430 serial chat protocol v2 (core)
 
@@ -28,10 +28,10 @@ loading MSP430 serial chat protocol v2 (core)
 decimal
 
 assembler
-( The chat code saves and restores - but does not otherwise touch - the
-  context pointer, cp. It is used to pass execution context between the
-  host and target. By default we assume it is the first "callee-saved"
-  register, r4.)
+( The chat code passes back and forth between host and target - but does
+  not otherwise touch - the context pointer, cp. It is used to pass
+  execution context between the host and target. By default we assume it is
+  the first "callee-saved" register, r4.)
 
  04 reg cp     ( context pointer)
 
@@ -57,6 +57,17 @@ hex
 
 __meta
 
+( Compile the first 32 bits of the current muforth Git commit.
+  These will always be the first four bytes of the file, so verify can be
+  smart about ignoring them.)
+
+label version
+   muforth-commit drop 8 evaluate
+   dup 10 >>  swap  ( high low)  ,  ,
+
+( The commit is followed by a pointer to the chat entry code.)
+label chat-entry-vector   0 ,
+
 label get-byte
    begin  01 # chat-uart-ifg & bitb  0!= until
    chat-uart-rxbuf & top movb  ret  ;c
@@ -77,16 +88,10 @@ label put-word
    top check xor  ( xor into checksum)
    put-byte c  top swpb  put-byte j  ;c
 
-( Compile the first 32 bits of the current muforth Git commit.
-  When asked for the version, return these two 16-bit words, in
-  little-endian order.)
-
-muforth-commit drop 8 evaluate
-   dup 10 >>  swap  ( high low)
-
 label get-version
-   ( commit-lo) # top mov  put-word c
-   ( commit-hi) # top mov  put-word j  ;c
+   version # mp mov ( address of commit)
+   mp )+ top mov  put-word c
+   mp )+ top mov  put-word j  ;c
 
 label set-addr
    get-word c  top mp mov  ret  ;c
@@ -149,17 +154,14 @@ label flash-word
    begin  FBUSY # FCTL3 & bit  0= until
 .then
    FKEY # FCTL1 & mov            -- clear command
+   FCTL3 & top mov               -- read status
    FKEY FLOCK + # FCTL3 & mov    -- set FLOCK
-   FCTL3 & top mov  put-word j   -- read status and return it
-   ;c
+   put-word j  ;c                -- return status to host
 
-.else  ( dummy version)
+.else
 
-label flash-word
-   get-word c                    -- get value to write
-   get-word c                    -- get flash command + key
-   2 # mp add                    -- incr pointer
-   9658 # top mov  put-word j    -- return fake OK status
+z" No way to program the flash. You should probably use chat-v3." abort
+
 .then
 
 ( Dispatch.)
@@ -197,6 +199,8 @@ label chat-entry
    sr push  sr clr  ( disable interrupts!)  cp push
    begin  process c  again  ;c
 
+chat-entry chat-entry-vector image-!  ( patch the vector)
+
 ( This creates a slot for the PC which can be replaced with the address of
   native code to execute. That code can end with a return instruction, which
   will return to the call to interact below, and then re-enter chat with
@@ -231,10 +235,17 @@ Vreset handler
   the DCO to generate 16 MHz MCLK and SMCLK.)
 
 .equates. .contains CAL_BC1_16MHZ .if  ( we need to set up the DCO trim ourselves)
-   -- Set clock to factory-calibrated 16 MHz
-   -- See G2553 datasheet, p15
-   CAL_BC1_16MHZ & BCSCTL1 & movb
-   CAL_DCO_16MHZ & DCOCTL & movb
+   "0ffff # CAL_DCO_16MHZ & cmp     -- if Info A has been erased, don't use trim
+   0= if
+      -- Set defaults that might work to get chat going...
+      %10_00_1111 # BCSCTL1 & movb  -- RSEL=15
+      a0 # DCOCTL & movb            -- not quite the middle?
+   else
+      -- Set clock to factory-calibrated 16 MHz
+      -- See G2553 datasheet, p15
+      CAL_BC1_16MHZ & BCSCTL1 & movb
+      CAL_DCO_16MHZ & DCOCTL & movb
+   then
    BCSCTL2 & clrb
 
 .else
@@ -289,8 +300,6 @@ z" No BCS calibration or CS module found. Your clock is unsupported."  abort
 .then
 
 .then  ( not in-ram)
-
-   chat-entry # push  ( so it's always available at the top of the stack)
 
    ( This is here so that native code can simply return and it will
      re-enter the chat code with a proper stack.)

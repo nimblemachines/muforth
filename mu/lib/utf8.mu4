@@ -1,0 +1,52 @@
+( This file is part of muforth: https://muforth.nimblemachines.com/
+
+  Copyright 2002-2019 David Frech. (Read the LICENSE for details.)
+
+( Quick and dirty UTF-8 conversion.)
+
+comment %utf8-table%
+
+   Char. number range |        UTF-8 octet sequence
+      (hexadecimal)   |              (binary)
+   -------------------+------------------------------------------
+   00_0000 - 00_007F  |  0bbb_bbbb
+   00_0080 - 00_07FF  |  110b_bbbb 10bb_bbbb
+   00_0800 - 00_FFFF  |  1110_bbbb 10bb_bbbb 10bb_bbbb
+   01_0000 - 10_FFFF  |  1111_0bbb 10bb_bbbb 10bb_bbbb 10bb_bbbb
+
+%utf8-table%
+
+hex
+
+: u6+  ( bits a - bits' a+1)   c@+ push  3f and  swap  6 <<  or  pop ;
+
+: utf8@+  ( a - wchar a+n)
+   c@+ push
+   dup    80 u<     if          pop               ^  then
+   dup c2 e0 within if  1f and  pop  u6+          ^  then
+   dup e0 f0 within if  0f and  pop  u6+ u6+      ^  then
+                         7 and  pop  u6+ u6+ u6+  ^ ;
+
+: u6peel  ( w - low6 w>>6)   dup 3f and  80 +  swap 6 >> ;
+
+: utf8!+  ( wchar a - a+n)
+   push
+   dup     80 u< if                       pop              c!+  ^  then
+   dup    800 u< if         u6peel  c0 +  pop          c!+ c!+  ^  then
+   dup 1_0000 u< if  u6peel u6peel  e0 +  pop      c!+ c!+ c!+  ^  then
+              u6peel u6peel u6peel  f0 +  pop  c!+ c!+ c!+ c!+ ;
+
+.ifdef utf8-test
+
+7f pad   utf8!+
+80 swap  utf8!+
+7ff swap  utf8!+
+800 swap  utf8!+
+ffff swap  utf8!+
+1_0000 swap  utf8!+
+10_ffff swap  utf8!+
+drop
+pad  utf8@+ utf8@+ utf8@+ utf8@+ utf8@+ utf8@+ utf8@+
+drop
+
+.then

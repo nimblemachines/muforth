@@ -1,90 +1,25 @@
-( This file is part of muforth: http://muforth.nimblemachines.com/
+( This file is part of muforth: https://muforth.nimblemachines.com/
 
-  Copyright 2002-2018 David Frech. (Read the LICENSE for details.)
+  Copyright 2002-2019 David Frech. (Read the LICENSE for details.)
 
-loading ARM v6-M meta-compiler (chains)
+loading ARM v6-M meta-compiler (target-specific chains)
 
 forth  decimal
 
-( Metacompiler vocabs)
+( Metacompiler vocabulary chains.)
 
-( .meta. is where meta-compiler specific words go - esp if they would
-  otherwise shadow a host word of the same name. @ is a good example - the
-  meta version writes into the target image, using a local, image-relative
-  address. .meta. contains special versions of : to compile macros [though
-  I'm thinking of deprecating or removing this] and to define new defining
-  words during target compilation. It will also, once the kernel starts
-  loading, contain a : that compiles target colon words!
+( Since we are now "chaining" chains together, let's do this bottom-up.
+
+  .equates. contains chip equates and any other constants that should be
+  visible to both the assembler and target compiler. When used interactively,
+  or in the assembler, these push their value. When used in a target colon
+  word, these compile literals.
 
   .assembler. contains definitions of instructions, registers, addressing
   modes, and words to build control structures. It is searched when
   building code words, and also when compiling macros.
 
-  .equates. contains chip equates and any other constants that should be
-  visible to the target compiler. When used interactively, or in the
-  assembler, these push their value. When used in a target colon word, these
-  compile literals.
+  Simple, right? ;-)
 
-  Labels - like temporary locations defined in assembler that do not
-  represent target words - are in .meta., and are invisible to the target
-  compiler.
-
-  Also in .meta. are a handful of variables that refer to key pieces of
-  target infrastructure that won't get defined until the kernel is loaded.
-  Having these as forward-reference variables allows us to write the
-  metacompiler using variable references; compilation of the kernel will
-  patch these with actual addresses of target code.
-
-  .meta-compiler. is like .compiler. but for the -target- colon compiler.
-  This will contain target versions of [ ; if then begin while etc. It is
-  sealed since we don't want to get any host words by accident.)
-
-sealed .meta.           ( the `meta' version of .forth.)
-sealed .meta-compiler.  ( the `meta' version of .compiler.)
-sealed .assembler.      ( the host-resident target assembler)
-sealed .equates.        ( chip equates and other constants for target)
-sealed .lex.            ( comments and conditional interpretation)
-sealed .target.         ( the target words - like `forth' on the host)
-
-: meta                        .meta. definitions ;
-: meta-compiler      .meta-compiler. definitions ;
-: assembler              .assembler. definitions ;
-: equates                  .equates. definitions ;
-: lex                          .lex. definitions ;
-: target                    .target. definitions ;
-
-compiler
-: \m   ( compile from meta)                        .meta. \chain ;
-: \mc  ( compile from meta-compiler)      .meta-compiler. \chain ;
-: \a   ( compile from assembler)              .assembler. \chain ;
-: \eq  ( compile from equates)                  .equates. \chain ;
-: \t   ( compile from target)                    .target. \chain ;
-forth
-
-meta
-: \f               ' execute ;  ( execute a forth word from meta)
-forth
-: \m        .meta. chain' execute ;  ( execute a meta word from forth)
-: \a   .assembler. chain' execute ;  ( execute an assembler word from forth)
-
-lex
-( Comments are nice to have!)
-: (     \ ( ;
-: --    \ -- ;
-
-( And conditional intepretation is nice to have too.)
-: .if     \ .if ;
-: .else   \ .else ;
-: .then   \ .then ;
-
-: .def     \ .def ;
-: .ndef    \ .ndef ;
-: .ifdef   \ .ifdef ;
-: .ifndef  \ .ifndef ;
-: .contains  \ .contains ;
-
-( For combining conditional tests.)
-: .or   .or ;
-: .and  .and ;
-: .not  .not ;
-forth
+sealed .equates.    ( chip equates and other constants for target)
+sealed .assembler.  ( the host-resident target assembler)

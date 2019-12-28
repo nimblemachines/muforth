@@ -1,6 +1,6 @@
-( This file is part of muforth: http://muforth.nimblemachines.com/
+( This file is part of muforth: https://muforth.nimblemachines.com/
 
-  Copyright 2002-2018 David Frech. (Read the LICENSE for details.)
+  Copyright 2002-2019 David Frech. (Read the LICENSE for details.)
 
 loading RISC-V Forth kernel
 
@@ -245,9 +245,11 @@ code u>>   ( n shamt - n')   x pop1   x top top srl   next  ;c
 code +   ( x t - x+t)   x pop1   x top top add   next  ;c
 code -   ( x t - x-t)   x pop1   x top top sub   next  ;c
 
-code and   x pop1   x top top and   next  ;c
-code or    x pop1   x top top or    next  ;c
-code xor   x pop1   x top top xor   next  ;c
+code and   begin   x pop1   x top top and   next  ;c
+code or            x pop1   x top top or    next  ;c
+code xor           x pop1   x top top xor   next  ;c
+
+code bic   top top not   again  ( invert top, then do and)  ;c
 
 ( Stack ops.)
 code dup    [r]  ( t - t t)  top push1   next  ;c
@@ -260,15 +262,13 @@ code swap   [r]  ( w t - t w)       0 sp w lw   0 sp top sw
 
 code rot    [r]  ( w x t - x t w)   0 sp   x lw   cell sp w lw
                                     0 sp top sw   cell sp x sw   again  ;c
+: -rot    rot  rot ;  [r]
 
-code tuck  [r]  (   w t - t w t)    0 sp w lw   0 sp top sw   w push1   next  ;c
+code tuck   [r]  (   w t - t w t)   0 sp w lw   0 sp top sw   w push1   next  ;c
 
 ( Make a copy of the nth stack item, where  0 nth  is  dup)
 code nth   [r]  ( w_n .. w_0 t - w_n .. w_0 w_t)
    top cellshift top slli   sp top top add   0 top top lw   next  ;c
-
-: 2dup   over over ;  [r]
-: -rot    rot  rot ;  [r]
 
 ( Return stack ops.)
 code >r   [r]  ( w)    top rpush1   top pop1   next  ;c
@@ -277,11 +277,9 @@ code r@   [r]  ( - w)   0 rp w lw   wpush j  ;c
 
 
 ( Memory access.)
-code   @   ( a -  w)  0 top top lw    next  ;c
-code  h@   ( a -  h)  0 top top lh    next  ;c
-code uh@   ( a - uh)  0 top top lhu   next  ;c
-code  c@   ( a -  b)  0 top top lb    next  ;c
-code uc@   ( a - ub)  0 top top lbu   next  ;c
+code  @   ( a -  w)  0 top top lw    next  ;c
+code h@   ( a - uh)  0 top top lhu   next  ;c  ( Unsigned!)
+code c@   ( a - ub)  0 top top lbu   next  ;c  ( Unsigned!)
 
 code !   ( w a)     0 sp w lw   0 top w sw
 label poptwo   cell sp top lw   2 cells sp sp addi   next  ;c
@@ -291,6 +289,27 @@ code c!  ( b a)     0 sp w lw   0 top w sb   poptwo j  ;c
 
 code +!  ( w a)     0 sp w lw   0 top x lw   w x x add   0 top x sw
                     poptwo j  ;c
+
+.ifdef A-ext
+
+code +bits  ( bits a)   ( turn on bits in a word in memory)
+   0 sp w lw                        top w x0 amoor.w  ( addr src dest)
+   poptwo j  ;c
+
+code -bits  ( bits a)   ( turn off bits in a word in memory)
+   0 sp w lw   w w not  ( invert)   top w x0 amoand.w  ( addr src dest)
+   poptwo j  ;c
+
+.else
+
+( XXX Should use AMOxxx instructions here...)
+: +bits  ( bits a)   ( turn on bits in a word in memory)
+   tuck               @ or  swap ! ;
+
+: -bits  ( bits a)   ( turn off bits in a word in memory)
+   swap  invert  over @ and  swap ! ;
+
+.then
 
 ( The slt/u/i instructions set a register to 1 if the comparison is true,
   and to 0 otherwise. We want to use -1 as a true flag, so we always negate
@@ -363,8 +382,8 @@ code dnegate   ( d - -d)
   the _unsigned_ comparison of the low-order words.
 
   Otherwise, ignore the low-order words and:
-     For ud< return the _unsigned_ comparison of the high-order words 
-     For  d< return the _signed_ comparison of the high-order words 
+     For ud< return the _unsigned_ comparison of the high-order words
+     For  d< return the _signed_ comparison of the high-order words
 )
 ( Compare high-order words; if equal, compare low-order, pop stack, push
   flag, and run NEXT. If not equal, pop stack and return to caller.)
@@ -402,6 +421,55 @@ meta: d.   ( tdlo tdhi)   d>  \f  . ;
 : 2swap  ( a b c d - c d a b)   rot >r  rot r> ;  [r]
 : 2over  ( a b c d - a b c d a b)   3 nth  3 nth ;  [r]
 : 2tuck  ( a b c d - c d a b c d)   2swap  2over ;  [r]
+
+
+( Multiply and divide.)
+code um*  ( x t - x*t_lo x*t_hi)
+   0 sp x lw   x top w mulhu   x top y mul
+   begin   0 sp y sw ( lo)   w top mv ( hi)   next  ;c
+
+code m*   ( x t - x*t_lo x*t_hi)
+   0 sp x lw   x top w mulh   x top y mul   again  ;c
+
+code *   ( x t - x*t)   x pop1   x top top mul   next  ;c
+
+code u/mod   ( x t - x-mod-t x/t)
+   0 sp x lw   x top w divu   x top y remu
+   0 sp y sw ( mod)   w top mv ( quot)   next  ;c
+
+code /mod   ( x t - x-mod-t x/t)
+   0 sp x lw   x top w div   x top y rem
+   y 0!= if   x top z xor   z 0< if
+      -1 w w addi   top y y add  ( floor quotient if mod != 0 and x xor top < 0)
+   then  then
+   0 sp y sw ( mod)   w top mv ( quot)   next  ;c
+
+: /   /mod  nip ;
+
+.ifdef unfinished-do-not-use
+
+( Does an unsigned division of x:y by t, resulting in an unsigned double
+  quotient, and an unsigned remainder.)
+code ud/mod   ( y x t - urem uquot-lo uquot-hi)
+   0 sp x lw   cell sp y lw   top z mv
+   x z top divu   x z w remu   ( top = qhi, w = rhi)
+   w y y add ( add rhi to y)  ( XXX what about carry?!?)
+   y z x divu   y z w remu   0 sp x sw ( qlo)  cell sp w sw ( urem)  next  ;c
+
+( XXX on RISC-V, div and rem only take single-length dividend. We have to
+  make our own double-len divide...)
+( XXX can we use /mod to make fm/mod?)
+code fm/mod   ( y x t - x:y-mod-t x:y/t)
+   0 sp x lw   cell sp y lw   x top w div   x top y rem
+   y 0!= if   x top z xor   z 0< if
+      -1 w w addi   top y y add  ( floor quotient if mod != 0 and x xor top < 0)
+   then  then
+   0 sp y sw ( mod)   w top mv ( quot)   next  ;c
+
+: */mod   m*  fm/mod ;
+: */      */mod  nip ;
+
+.then
 
 
 ( Have both mcycle64@ and minstret64@ jump to the shared code so that when
@@ -463,10 +531,11 @@ ram
   Much easier than stuffing things into register slots on stack frame!)
 
 code bug  [r]
-   top ip rp ix push4   ebreak  ;c
+   top ip rp ix push4   sp tp mv   rp sp mv   ebreak  ;c
 
 implements continue-forth  __asm
-   top ip rp ix pop4   fence.i   next  ;c
+   tp sp mv
+   top ip rp ix pop4   "888 w li   w mie csrc   fence.i   next  ;c
 
 implements trampoline  ( x0 .. xn pfa - y0 .. ym)
    ]  execute  begin  bug  again  [
@@ -484,7 +553,7 @@ forth
   anything other than two cells past trampoline, we've hit "bug" somewhere
   other than the trampoline. Show this by annotating IP with a "*".)
 
-: executing?   ( ip - f)   [ \m trampoline @  2 \m cells + ]  - ;
+: executing?   ( ip - f)   [ \m trampoline @  2 \m cells + #]  - ;
 
 : .ip
    \m ip@  dup .h32  executing? if  ." * "  ^  then  ( done)  2sp ;
@@ -494,9 +563,9 @@ forth
 
 
 -: ( forth version of .regs)
-   cr  ."       IX        SP        RP        IP"
-       (  00000000  00000000  00000000  00000000 )
-   cr      tix .tr       .sp   trp .tr       .ip ;
+   cr  ."       IX        SP        RP        IP    mcause      mepc"
+       (  00000000  00000000  00000000  00000000  00000000  00000000 )
+   cr      tix .tr       .sp   trp .tr       .ip  tmcause .tr  tmepc .tr ;
    is .regs
 
 
@@ -512,5 +581,3 @@ meta: grog  ( start n)  0 do  \t 1+ remote  loop ;
 ( try: 44 10 grog)
 
 ~~examples~~
-
-flash

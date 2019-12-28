@@ -1,12 +1,14 @@
-( This file is part of muforth: http://muforth.nimblemachines.com/
+( This file is part of muforth: https://muforth.nimblemachines.com/
 
-  Copyright 2002-2018 David Frech. (Read the LICENSE for details.)
+  Copyright 2002-2019 David Frech. (Read the LICENSE for details.)
 
 ld target/common/endian.mu4
 
-loading ARM target support:
+loading ST-LINK debug
 
 hex
+
+.ifdef hid-find-device  ( if yes, we are running Linux or OSX; if no, BSD)
 
 0483 3748 usb-find-device  .if   constant stlink
 
@@ -20,6 +22,27 @@ hex
 : uread   ( buf len - #read)  1  stlink  usb-read ;
 : uwrite  ( buf len)          2  stlink  usb-write ;
 
+.then  ( found stlink)
+
+.else  ( BSD system)
+
+( Try shooting in the dark. The user can also tweak these by reading the
+  output of
+
+    usbdevs -d
+)
+z" /dev/ugen0.01" open-file-ro  constant stlink-read
+z" /dev/ugen0.02" open-file-wo  constant stlink-write
+
+: uread   ( buf len - #read)  stlink-read  -rot  read ;
+: uwrite  ( buf len )         stlink-write -rot  write ;
+
+.then
+
+( Did we find a target we can talk to?)
+
+.ifdef uread
+
 ( A simple buffer for chatty communication protocols. Words for putting
   values into a buffer and taking them out again.)
 
@@ -30,7 +53,7 @@ variable cp  ( chat pointer)
 : +cp    1 cp +! ;
 
 ( XXX Note: this is different from how I named these in
-  target/HC08/bdm-usb-host.m4. Change those as well?)
+  target/S08/bdm-usb-host.m4. Change those as well?)
 
 : >b  ( byte)    cp @  c!  +cp ;
 : b>  ( - byte)  cp @  c@  +cp ;
@@ -105,11 +128,6 @@ variable spy
 : dfu>         07 0f3 cmd2 ;  ( exit dfu mode)
 : get-mode        0f5 cmd1  2 expect  b> ;
 
-
-( Do this ASAP so we know if we can use v2 debug api commands.)
-ver .ver  #10 > .if  -d apiv2  .then
-
-
 ( For simple two-byte debug commands.)
 : dbg  ( subcmd)  <dbg  cmd> ;
 
@@ -168,7 +186,7 @@ defer doit  ( buf target len)
 
 
 ( Read and write "debug" registers. What is this?)
-.ifdef apiv2
+.ifdef stlink-debug-regs
 
 ( XXX these don't work yet! ReadPipe errors out.)
 : writedebug  ( w a)    35 <dbg  >w >w  cmd>  check ;
@@ -199,16 +217,26 @@ defer doit  ( buf target len)
    dup  pad 800 write  close-file ;
 
 
-( The interface for the interact code. Implemented by all debug transports.)
-
-: t.chat  ( connect to device)
+: st.hello  ( connect to device)
+   cr  ver .ver  drop
    cr  tell-mode
    dup  0=  if  drop  ." => "  dfu>  tell-mode  then
    dup  1 = if  drop  ." => "  >swd  tell-mode  then
-        2 - if  ." Tried, but didn't succeed. "  then ;
+        2 - if  ." Tried, but didn't succeed. "  then
+   halt ;
 
-: t.read   ( buf a u)    read32 ;  ( Easy peasy!)
-: t.write  ( buf a u)   write32 ;
+: st.read   ( buf a u)    read32 ;  ( Easy peasy!)
+: st.write  ( buf a u)   write32 ;
+
+( The interface for the interact code. Implemented by all debug transports.)
+
+: st.get-sp  begin  core-state  80 xor  until
+             #13 reg@ ;
+: st.set-sp  #13 reg! ;
+: st.run     #15 reg!  run ;
+
+: jtag
+   chat-via  st.hello  st.get-sp  st.set-sp  st.read  st.write  st.run ;
 
 
 .else  ( no device found)

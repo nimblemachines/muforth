@@ -1,0 +1,325 @@
+( This file is part of muforth: https://muforth.nimblemachines.com/
+
+  Copyright 2002-2019 David Frech. (Read the LICENSE for details.)
+
+( Quick and dirty HTML generator. Takes in a file of markup -- consisting
+  of tokens and directives -- and copies the tokens verbatim while
+  "executing" the directives, thereby generating an output file. In this
+  case it will an HTML rendering of the document.)
+
+( Still TODO:
+
+  * handling of <pre> [both as fenced blocks and prefix whitespace]
+  * handling of [nested!] unordered lists
+)
+
+sealed .block-markup.
+sealed .inline-markup.
+
+compiler
+: \b   ( compile from block-markup)     .block-markup. \chain ;
+: \i   ( compile from inline-markup)   .inline-markup. \chain ;
+forth
+
+variable space-before  ( points to nope or space)
+: +space   ['] space  space-before ! ;
+: -space   ['] nope   space-before ! ;  -space
+: ?space   space-before @execute ;
+
+: html-escape-char  ( ch)
+   dup  char & = if  drop  ." &amp;"  ^  then
+   dup  char < = if  drop  ." &lt;"   ^  then
+   dup  char > = if  drop  ." &gt;"   ^  then
+   emit ;
+
+: html-rsquo-escape-char  ( ch)
+   dup  char ' = if  drop  ." &rsquo;"  ^  then  ( hack)
+   html-escape-char ;
+
+: html-verbatim-char  ( ch)
+   dup  bl = if  drop  ." &nbsp;"  ^  then
+   html-escape-char ;
+
+: hex-escape  ( u)
+   radix preserve hex  char % emit  <#  # #  #> type ;
+
+comment %%uri-escaping%%
+
+  Characters that do *not* need escaping: alphanumerics and marks.
+  mark = "-" | "_" | "." | "!" | "~" | "*" | "'" | "(" | ")"
+
+                                   !"#$%&'()*+,-./0123456789:;<=>?
+  1111111111111111111111111111111110111110000110010000000000111111
+
+  @ABCDEFGHIJKLMNOPQRSTUVWXYZ[\]^_`abcdefghijklmnopqrstuvwxyz{|}~
+  1000000000000000000000000001111010000000000000000000000000011101
+
+%%uri-escaping%%
+
+( For grabbing single bits out of something.)
+: bit@  ( mask bit# - bit)  u>>  1 and ;
+
+here
+%1111111111111111111111111111111110111110000110010000000000111111 ,
+%1000000000000000000000000001111010000000000000000000000000011101 ,
+
+: uri-needs-escaping?  ( ch)
+   64 u/mod  ( r q)  cells  [ #] + @  63 rot - bit@ ;
+
+: uri-escape-char  ( ch)
+   dup uri-needs-escaping? if  hex-escape  ^  then
+   html-escape-char ;
+
+: foreach  ( a u 'code)
+   swap for
+      push  c@+ swap  r@ execute  pop
+   next  2drop ;
+
+: html            ( a u)   ['] html-escape-char  foreach ;
+: html-rsquo      ( a u)   ['] html-rsquo-escape-char  foreach ;
+: html-verbatim   ( a u)   ['] html-verbatim-char  foreach ;
+: uri             ( a u)   ['] uri-escape-char  foreach ;
+
+( To test the URI escaping:)
+-- token !"#$%&'()*+,-./0123456789:;<=>?  uri
+-- token @ABCDEFGHIJKLMNOPQRSTUVWXYZ[\]^_`abcdefghijklmnopqrstuvwxyz{|}~ uri
+
+compiler
+: .(   \ (")  char ) string, drop  \ type ;  ( XXX should this be html?)
+forth
+
+: .open   ( z")   .( <)   count type  .( >) ;
+: .close  ( z")   .( </)  count type  .( >) ;
+
+variable block-elem  block-elem off
+
+: <cr>
+   block-elem @ ?if  .close  then  cr  -space ;
+
+: block   ( z")
+   <cr>  dup block-elem !  ?if  .open  then ;
+
+variable @line-prev  -1 @line-prev !
+: initial?  ( - f)  ( is this the first token on the line?)
+   @line @line-prev @ = 0=  @line @line-prev ! ;
+
+defer default-block
+
+-: ."  (markup to HTML)" ;
+-: ( a u)
+   initial? if
+      .block-markup. find if  execute  ^  then
+      skipped if  ( if *any* whitespace preceded this token)
+         c@ #LF = if  ( at least one blank line preceded this token)
+            default-block
+         then  0
+      then  drop
+   then
+   .inline-markup. find if  execute  ^  then
+   ?space  +space  html-rsquo ;
+mode __html
+
+-: ."  (verbatim)" ;
+-: ( a u)
+   initial? if  2dup " }}" string= if  2drop  0 block  __html  ^  then  then
+   skipped html  ( copy preceding whitespace)
+   ( token) html
+   trailing html  ( copy trailing whitespace) ;
+mode __verbatim
+
+: markup
+   out-channel preserve  >stdout
+   state preserve  __html
+   token,  raw-load-file  0 block ;
+
+( Given the address of a memory cell, invert the value in the cell and
+  return its new value.)
+
+: toggle  ( a - new)  dup  @ invert  dup rot ! ;
+
+( Now for the interesting bits!)
+
+: inline
+   create  0 , ( toggle)  token, drop ( element)
+   does>  push ( body)  r@ toggle
+   pop cell+ cell+ ( element)  swap
+   if  ?space  .open   -space  ^  then
+               .close  +space ;
+
+: .self   body> >name type ;
+
+: closing-punct   create  does>          .self  +space ;
+: opening-punct   create  does>  ?space  .self  -space ;
+
+.inline-markup. definitions
+
+inline __ em
+inline ** strong
+inline || code  ( XXX should this be styled as Forth, obviating need for \f ?)
+
+( Quote the following word as Forth.)
+: \f   ?space  .( <code class="forth">)  token type  .( </code>)  +space ;
+
+closing-punct .
+closing-punct ,
+closing-punct ;
+closing-punct :
+closing-punct !
+closing-punct ?
+closing-punct )
+
+opening-punct (
+
+( Doin it TeX style?)
+: ``  ?space  ." &ldquo;"  -space ;
+: ''          ." &rdquo;"  +space ;
+
+: '           ." &rsquo;"  -space ;
+
+: -    ."  &ndash;"  +space ;
+: --   \i - ;
+: ---  ."  &mdash;"  +space ;  ( if you *really* want it)
+
+here 0 ,  ( unnamed variable for toggling inside/outside of quote)
+: "   [ #] toggle  if  \i ``  ^  then  \i '' ;
+
+: [[   ?space  .( <a href=")  token html  .( ">)  -space ;
+: ]]   .( </a>)  +space ;
+
+forth
+
+( XXX should heading instead just echo words until another kind of block
+  markup comes along and closes the heading?)
+
+: lowercase?  ( ch - f)   char a  [ char z 1+ #] within ;
+: uppercase?  ( ch - f)   char A  [ char Z 1+ #] within ;
+: >lowercase  ( ch - ch')   [ char a  char A - #] + ;
+
+: html-heading-char  ( ch)
+   dup  lowercase? if             emit  ^  then
+   dup  uppercase? if  >lowercase emit  ^  then
+   drop  char - emit ;
+
+: .heading-id  ( a u)  ['] html-heading-char  foreach ;
+
+( Generated heading HTML should look like this:
+  <h4 id="github-vs-bitbucket"><a href="#github-vs-bitbucket">GitHub vs Bitbucket</a></h4>
+)
+
+: heading
+   create
+   does>
+      body> >name nip 1+ push ( heading level)
+      ctrl J parse  ( grab whole line)  0 block
+      .( <h)  r@ (.) type
+      .(  id=")  2dup .heading-id  .( "><a href="#)  2dup .heading-id
+      .( ">)  html-rsquo  .( </a></h)  pop (.) type  .( >) ;
+
+-: ( para)         z" p"   block ;  is default-block
+
+-- : para             z" p"   block ;  ( default block style)
+-- : pre              z" pre" block  __verbatim ;
+-- : unordered-list   z" ul"  block ;
+
+
+.block-markup. definitions
+
+( XXX Still missing <pre> and any way to do bulleted lists.)
+
+: __host   0 block  \ [ ;
+
+heading #
+heading ##
+heading ###
+heading ####
+
+: {{   ( start <pre> block)   z" pre" block  __verbatim ;
+-- : }}   ( end <pre> block)   0 block  __html ;
+
+: ----   0 block  .( <hr />) ;
+
+forth
+
+
+.ifdef test
+
+-- --------------------------------------------------------------------------
+-- Some markup to test the generator with.
+-- --------------------------------------------------------------------------
+
+>stdout  __html
+
+# Introduction
+
+Let's test it out. Do we ignore # when it's not the first token on the line?
+How about ---- ?
+
+  A para with mixed whitespace at the start of the line.
+
+## Inline markup
+
+Here is some plain text. How about __ emphasized __ , or ** bolded ** text?
+Or even a || monospaced code font || ?
+
+What about __ ** both ** __ ?
+
+It's easy - if you want it --- to get en- and em-dashes too.
+
+### TeX-style quotes
+
+`` In double quotes '' but this is not. `` A quote '' , followed by punctuation.
+
+### Toggle-style quotes
+
+" Also in double quotes " followed by some unquoted text.
+
+### Even links work!
+
+[[ https://www.nimblemachines.com/2019/ 2019 journal ]] is a link.
+
+----
+
+## The hard parts: verbatim/pre-formatted code blocks and lists
+
+Do we want to use " code fences " , like || {{ || and || }} || , or use as
+a trigger for verbatim/pre mode the presence of non-newline whitespace
+(spaces and tabs) at the beginning of the line?
+
+I never use numbered (ordered) lists, so let's concentrate on bulleted
+(unordered) exclusively. The easiest way to write these is a bullet ( " o "
+or " * " or " - " ) at the beginning of the line, perhaps preceded by
+whitespace, which we can use to calculate the nesting.
+
+{{
+( Some Forth code!)
+
+here 0 ,  ( unnamed variable for toggling inside/outside of quote)
+: "   [ #] toggle  if  \i ``  ^  then  \i '' ;
+
+: [[   ?space  .( <a href=")  token uri  .( ">)  -space ;
+: ]]   .( </a>)  +space ;
+
+forth
+}}
+
+I miss the indentation that comes with the other style - that any line of
+the text that starts with spaces or tabs starts a || <pre> || section, and
+the first line that __ doesn't __ start with whitespace ends it. I prefer
+how it looks. I suppose I could add two spaces to the start of every line
+in a fenced code block... But I may try to also implement the " lines
+starting with spaces " style.
+
+For completeness, we can quote inline Forth words too: \f create . However,
+do we need \f \f ? Or should we just use \f || instead (interesting that I
+can't quote \f || using \f || ) , and style all code words as if they were
+Forth?
+
+# Happy endings?
+
+A-and, we have a problem. If a regular para (<p>, like this one) is the
+last thing in the file, the closing para tag (</p>) won't show up unless we
+call || 0 block || when we are all done. Hmm.
+
+__host
+
+.then  ( test)

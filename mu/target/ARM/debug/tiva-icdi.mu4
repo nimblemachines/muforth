@@ -1,6 +1,6 @@
-( This file is part of muforth: http://muforth.nimblemachines.com/
+( This file is part of muforth: https://muforth.nimblemachines.com/
 
-  Copyright 2002-2018 David Frech. (Read the LICENSE for details.)
+  Copyright 2002-2019 David Frech. (Read the LICENSE for details.)
 
 ld target/common/endian.mu4
 
@@ -21,6 +21,8 @@ loading Tiva/Stellaris debug support
 
 hex
 
+.ifdef hid-find-device  ( if yes, we are running Linux or OSX; if no, BSD)
+
 1cbe 00fd usb-find-device  .if  constant icdi
 
 ( Device found - load support)
@@ -34,6 +36,27 @@ hex
 
 : uread   ( buf len - #read)  3  icdi  usb-read ;
 : uwrite  ( buf len)          2  icdi  usb-write ;
+
+.then  ( matched icdi)
+
+.else  ( BSD system)
+
+( Try shooting in the dark. The user can also tweak these by reading the
+  output of
+
+    usbdevs -d
+)
+z" /dev/ugen0.03" open-file-ro  constant icdi-read
+z" /dev/ugen0.02" open-file-wo  constant icdi-write
+
+: uread   ( buf len - #read)  icdi-read  -rot  read ;
+: uwrite  ( buf len )         icdi-write -rot  write ;
+
+.then
+
+( Did we find a target we can talk to?)
+
+.ifdef uread
 
 ( Let's size the buffer so we can move 256 bytes at a time. For writing,
   the buffer will look like this:
@@ -54,7 +77,7 @@ variable bp  ( buf pointer)
 : +bp   1 bp +! ;
 
 ( XXX Note: this is different from how I named these in
-  target/HC08/bdm-usb-host.m4. Change those as well?)
+  target/S08/bdm-usb-host.m4. Change those as well?)
 
 : >b  ( byte)    bp @  c!  +bp ;
 : b>  ( - byte)  bp @  c@  +bp ;
@@ -154,10 +177,6 @@ compiler
 : <cmd,n>   ( u)  \c char  compile cmd,n ;
 forth
 
-( debug)
-spy on
-: r  recv ;
-
 : t.cycle            <cmd>   i ;
 : t.cycles  ( u)     <cmd,n> i ;
 : t.step             <cmd>   s ;
@@ -172,7 +191,7 @@ spy on
    <pkt  char P >b  >num  char = >b  pad lew!  pad 4 >hexstring  pkt> ;
 
 : addr-len  ( a u - u)   swap >num  char , >b  dup >num ;
-: t.read  ( buf a u)
+: ti.read  ( buf a u)
    <pkt  char m >b  addr-len  pkt>  ?hexstring> ;
 
 ( OMFG!! The M command doesn't work! TI's firmware is totally broken. No
@@ -185,10 +204,10 @@ spy on
 : t.write-broken  ( buf a u)
    <pkt  char M >b  addr-len  char : >b  >hexstring  pkt> ;
 
-: t.write  ( buf a u)
+: ti.write  ( buf a u)
    <pkt  char X >b  addr-len  char : >b  >binarystring  pkt> ;
 
-: t.chat
+: ti.hello
    <pkt  " qSupported" >string  pkt>  t.halt ;
 
 ( Easier to type. Should I deprecate t.get/setreg?)
@@ -197,6 +216,13 @@ spy on
 
 : pc!   0f reg! ;
 : pc@   0f reg@ ;
+
+( XXX no waiting until target ready... will this work?)
+: ti.get-sp   ( - sp)   #13 reg@ ;
+: ti.set-sp   ( sp)     #13 reg! ;
+
+: jtag
+   chat-via  ti.hello  ti.get-sp  ti.set-sp  ti.read  ti.write  t.go ;
 
 .else  ." No supported USB devices found."
 

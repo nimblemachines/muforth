@@ -1,6 +1,6 @@
-( This file is part of muforth: http://muforth.nimblemachines.com/
+( This file is part of muforth: https://muforth.nimblemachines.com/
 
-  Copyright 2002-2018 David Frech. (Read the LICENSE for details.)
+  Copyright 2002-2019 David Frech. (Read the LICENSE for details.)
 
 loading RISC-V meta-compiler (main)
 
@@ -12,6 +12,7 @@ assembler
 \a a0  constant top
 .ifdef native
 \a ra  constant ip  ( instruction pointer)
+\a s1  constant mp  ( general memory pointer - for chat)
 .else
 \a s1  constant ip  ( instruction pointer)
 .then
@@ -33,7 +34,7 @@ forth
    dup 0= if  drop  ." zero"  ^  then
    dup 16 u< if
 .ifdef native
-            z"    ip sp kp up w  x  y  rp s1 topa1 a2 a3 a4 a5 "
+            z"    ip sp kp up w  x  y  rp mp topa1 a2 a3 a4 a5 "
 .else
             z"    ra sp kp up w  x  y  rp ip topa1 a2 a3 a4 a5 "
 .then
@@ -42,10 +43,10 @@ forth
    then
    swap 3 * + 3 -trailing type ;
 
-: forth-regs  [ ] is .regname ;  forth-regs
+: forth-regs  [ #] is .regname ;  forth-regs
 
 -- ------------------------------------------------------------------------
--- Signatures - how we built the target image 
+-- Signatures - how we built the target image
 -- ------------------------------------------------------------------------
 
 meta
@@ -89,11 +90,11 @@ variable (unnest)
 
 forth
 
-( looks up a label or forward-reference variable, and executes it to push
-  its value or address)
+( Look up a label or forward-reference variable, and execute it to push
+  its value or address.)
 
-: lookup  ( look up next token as forward-ref variable or label)
-   .meta. chain' execute ( get addr) ;
+: lookup
+   .meta. chain' execute ;
 
 : implements   \m here  lookup  ! ;
 
@@ -182,41 +183,17 @@ meta
 : code*   \m code  untoken  implements ;
 
 
-.ifdef notyet  ( hooks)
-
 ( For forward references. Use hook to define the hook. This creates a label
-  and compiles a long jump. Then resolve using hooks, which patches the jmp
-  to point to here.
+  and compiles a jump. Then resolve using hooks, which patches the jump to
+  point to here.
 
   NOTE: the label points at the code *immediately after* the hook, not the
   hook itself. This makes fixup easier, but can be confusing if you want to
   disassemble the code for a particular hook!)
 
-forth
-: hook!   ( to from)  \m cell-  image-! ;
 meta
-
-( NOTE: We can't use  asm{  0 #  }  when creating the hook code because
-  that will get converted to a constant generator form! We need to compile
-  a version with space in the following word for the absolute or relative
-  address that will get patched by "hooks".)
-
-.ifdef hooks-are-relative
-
-( Hooks using PC-relative addressing.)
-: hook    asm{  "0666 # pc add  }  state preserve  \m label ;
-: hooks   \m here  lookup  ( to from)  tuck  - swap  hook! ;
-
-.else
-
-( Hooks using absolute addressing.)
-: hook    asm{  "0666 # br  }      state preserve  \m label ;
-: hooks   \m here  lookup  ( to from)                hook! ;
-
-.then
-
-.then   ( hooks)
-
+: hook    \m label  asm{  here j  } ;  ( compile a jump with 0 offset)
+: hooks   lookup  \m here  ( src dest)  \a resolve ;
 forth
 
 
@@ -232,7 +209,7 @@ forth
 
 .ifdef native
 ( NOTE: Do the  pop @  before the  h @ preserve  else R stack mayhem ensues.)
-: (;code@)   pop @  h @ preserve  last-code @  \m there  asm{  w jal  } ;
+: (;code@)   pop @  h @ preserve  last-code @  \m goto  asm{  w jal  } ;
 .else
 : (;code@)   pop @  last-code @  image-! ;  ( ITC)
 .then

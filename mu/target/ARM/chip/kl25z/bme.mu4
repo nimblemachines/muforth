@@ -1,0 +1,113 @@
+( This file is part of muforth: https://muforth.nimblemachines.com/
+
+  Copyright 2002-2019 David Frech. (Read the LICENSE for details.)
+
+loading Kinetis L bit manipulation engine (BME) support
+
+comment %bme-intro%
+
+  Unlike Cortex-M3 and -M4 processors, which support bit-banding - where
+  every bit in a 1 MiB address region has an alias counterpart that
+  allocates a 32-bit word for each bit - Cortex-M0 and M0+ processors have no
+  similar feature.
+
+  To fill this void, Freescale developed the "bit manipulation engine"
+  (BME) for their Kinetis L series of processors, which are based on the
+  Cortex-M0+.
+
+  It's actually more powerful - and more complicated - than bitbanding, but
+  the idea is similar. Freescale, in their documentation, call it "decorated
+  storage". The idea is that, like with bitbanding, you use an *alias
+  address* to access a piece of the memory map, and the high-order bits of
+  this alias address specify some kind of operation - often an atomic
+  read-modify-write - of the underlying address.
+
+  Unlike the CM3/4 bitbanding, the BME only aliases addresses in the
+  peripheral memory region, not in SRAM. So keep that in mind.
+
+  The "decoration" bits (those high-order address bits) mean different
+  things for loads and stores, so we'll tackle them separately.
+
+
+  Decorated loads
+  ~~~~~~~~~~~~~~~
+
+  LAC1 is "load and clear 1 bit". Given an address and a bit number, it
+  loads the specified bit into bit 0 of the destination, clearing all
+  higher-order bits, and then clears the specified bit in the source.
+
+  LAS1 - "load and set 1 bit" is exactly as above, except that after
+  loading the single bit into the destination it *sets* the specified bit in
+  the source.
+
+  UBFX is "unsigned bit field extract". Given a an address, a starting
+  (LSB) bit number, and a width, extract the bit field and right justify it
+  in the destination, zeroing all higher-order bits. Note that, as with BFI,
+  the width is represented in the alias address as width - 1, so 0000 means 1
+  bit wide, and 1111 means 16 bits wide
+
+  Also note that UBFX is the *only* operation in the BME that is a simple
+  read, rather than a read-modify-write.
+
+        31 30 29 28 | 27 26 25 24 | 23 22 21 20 | 19 18 17 16 | ... 0
+  LAC1   0  1  0  0    1  0  b  b    b  b  b  -    <--- mem_addr --->
+  LAS1   0  1  0  0    1  1  b  b    b  b  b  -    <--- mem_addr --->
+  UBFX   0  1  0  1    b  b  b  b    b  w  w  w    w  <-- mem_addr ->
+
+
+  Decorated stores
+  ~~~~~~~~~~~~~~~~
+
+  AND ands the source with destination and writes the result back to the
+  destination. OR and XOR are similar.
+
+  BFI - "bit field insert" - is like UBFX, except for writing bit fields
+  into registers rather than reading them. Also, unlike UBFX which
+  right-justifies the bitfield after reading it from the source, BFI expects
+  the bitfield to be written to be already shifted into place, rather than
+  right-justified.
+
+        31 30 29 28 | 27 26 25 24 | 23 22 21 20 | 19 18 17 16 | ... 0
+  AND    0  1  0  0    0  1  -  -    -  -  -  -    <--- mem_addr --->
+  OR     0  1  0  0    1  0  -  -    -  -  -  -    <--- mem_addr --->
+  XOR    0  1  0  0    1  1  -  -    -  -  -  -    <--- mem_addr --->
+  BFI    0  1  0  1    b  b  b  b    b  w  w  w    w  <-- mem_addr ->
+
+  These alias addresses can be used for byte and halfword loads and stores
+  as well. Just be careful to make sure that the bit number and bit field
+  width encoded in the alias address do not exceed the size of the operation.
+
+  One last note: Since UBFX and BFI can only represent 19 bits of the
+  represented I/O space, the GPIO registers should be addressed at 4000_f000,
+  rather than at 400f_f000.
+
+%bme-intro%
+
+hex
+
+1 #19 << 1-  constant bme-mask19   ( address mask for operations with width)
+1 #20 << 1-  constant bme-mask20   ( address mask for operations w/out width)
+
+: bme-bit        ( a bit#       - alias-bits)  1f and  #21 <<
+                                           swap bme-mask20 and  or ;
+: bme-bit-width  ( a bit #width - alias-bits)  1-  0f and  #19 <<
+                                              swap 1f and  #23 <<   or
+                                               swap bme-mask19 and  or ;
+
+meta
+
+( Convert an I/O address, and an optional bit number and width, into an
+  address in the alias space.)
+
+( Decorated loads.)
+: >bme-lac1  ( a bit#       - alias)  bme-bit        4800_0000 or ;
+: >bme-las1  ( a bit#       - alias)  bme-bit        4c00_0000 or ;
+: >bme-ubfx  ( a bit# width - alias)  bme-bit-width  5000_0000 or ;
+
+( Decorated stores.)
+: >bme-and   ( a            - alias)  0 bme-bit  4400_0000 or ;
+: >bme-or    ( a            - alias)  0 bme-bit  4800_0000 or ;
+: >bme-xor   ( a            - alias)  0 bme-bit  4c00_0000 or ;
+: >bme-bfi   ( a bit# width - alias)  \m >bme-ubfx ;
+
+forth

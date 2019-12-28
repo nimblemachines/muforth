@@ -1,6 +1,6 @@
-( This file is part of muforth: http://muforth.nimblemachines.com/
+( This file is part of muforth: https://muforth.nimblemachines.com/
 
-  Copyright 2002-2018 David Frech. (Read the LICENSE for details.)
+  Copyright 2002-2019 David Frech. (Read the LICENSE for details.)
 
 loading RISC-V RV32 disassembler (I subset)
 
@@ -17,7 +17,7 @@ loading RISC-V RV32 disassembler (I subset)
 
 ( mask op and test against match)
 : match   ( op mask match - op)
-   matched?  pop  swap if       @execute  ^  then  cell+ push ;
+   matched?  pop  swap if      @execute  ^  then  cell+ push ;
 
 ( If matched, drop op2 and execute following cfa. Otherwise, skip following
   cfa and leave both op1 and op2 on the stack.)
@@ -44,6 +44,7 @@ variable instr-pc  ( points to _start_ of current instruction)
 : rd>       ( op - rd)    7 >>  reg> ;
 : rs1>      ( op - rs1)  15 >>  reg> ;
 : rs2>      ( op - rs2)  20 >>  reg> ;
+: shamt>    ( op - rs2)  20 >>  63 and ;  ( hi bit should be 0 for rv32)
 
 : funct3>   ( op - f3)   12 >>    7 and ;
 : funct7>   ( op - f7)   25 >> ;
@@ -84,7 +85,7 @@ variable instr-pc  ( points to _start_ of current instruction)
 
 defer .regname
 -:  ( reg)   ." x"  .udec ;
-: raw-regs  [ ] is .regname ;
+: raw-regs  [ #] is .regname ;
 
 -:  ( reg)
    dup 0= if  drop  ." zero"  ^  then
@@ -95,15 +96,16 @@ defer .regname
    then
    swap 3 * + 3 -trailing type ;
 
-: abi-regs  [ ] is .regname ;
+: abi-regs  [ #] is .regname ;
 
 abi-regs
 
 ( Trailing underscore signifies the following space.)
-: .rd_   ( op - op)  dup rd>   .regname space ;
+: .rd    ( op - op)  dup rd>   .regname ;
 : .rs1   ( op - op)  dup rs1>  .regname ;
 : .rs2   ( op - op)  dup rs2>  .regname ;
 
+: .rd_   ( op - op)  .rd  space ;
 : .rs1_  ( op - op)  .rs1 space ;
 : .rs2_  ( op - op)  .rs2 space ;
 
@@ -116,6 +118,8 @@ abi-regs
 : .rel-dest  ( off)   instr-pc @ +  dup ea !  .u32 ;
 
 : .undecoded   ." *undecoded*" ;
+: .unimplemented  ." *unimplemented*" ;
+: .reserved  ." *reserved*" ;
 
 : .load
    dup funct3>  4 *  z" lb  lh  lw  ??? lbu lhu ??? ??? "  +
@@ -144,7 +148,7 @@ abi-regs
 ( NOTE: for the 64-bit version of these, the shift amount field is 6 bits
   wide, not 5.)
 
-: .shift-imm   .rd_  .rs1_  dup rs2> .imm ;
+: .shift-imm   .rd_  .rs1_  dup shamt> .imm ;
 : .slli   ." slli "  .shift-imm ;
 : .srli   ." srli "  .shift-imm ;
 : .srai   ." srai "  .shift-imm ;
@@ -195,7 +199,7 @@ abi-regs
    2dup link> >body @  = if  ( found it!)  link>name  type  -1  ^  then
    drop  0 ;
 
-: .csrname  ( addr)  [ ] .csr. forall-words  drop ;
+: .csrname  ( addr)  [ #] .csr. forall-words  drop ;
 : .csrnum   swap  space space  .(hex) ;  ( print last, as a "comment")
 : .csrreg   dup 20 >>  ( addr)  swap  over .csrname ;
 : .csrboth  .csrreg  .csrnum ;
@@ -210,6 +214,24 @@ abi-regs
 
 : .csr_rw   ." csrr"  .csrwop   space  .rd_     .rs1_             .csrboth ;
 : .csr_rwi  ." csrr"  .csrwop  ." i "  .rd_  dup rs1> .imm space  .csrboth ;
+
+
+( Decoding both RV32A and RV64A for simplicity. Their encodings are
+  intertwined, so doing both here is easier than unnecessarily breaking out
+  the RV64A for "later".)
+
+: .amo-size  dup funct3>  1 and  2*   z" .w.d"  +  2 type ;
+: .amo-aqrl  dup funct7>  3 and  6 *  z"       .rl   .aq   .aqrl "  +
+             5 -trailing type ;
+: .amo-suffix   .amo-size  .amo-aqrl  space ;
+
+: .amo-2op   dup 27 >>  z" add xor or  and min max minumaxu"  +
+             ." amo"  4 -trailing type  .amo-suffix  .3reg ;
+
+: .lr        ." lr"       .amo-suffix  .rd_  .rs1 ;
+: .sc        ." sc"       .amo-suffix  .3reg ;
+: .amoswap   ." amoswap"  .amo-suffix  .3reg ;
+
 
 binary  ( !!)
 
@@ -287,6 +309,18 @@ binary  ( !!)
    drop
    .undecoded ;
 
+( NOTE: For simplicity I'm matching both the 32-bit - f3=010 - and 64-bit -
+  f3=011 - atomics here.)
+
+: .amo  ( atomics)
+   dup #12 >>              ( op  aqrl  rs2   rs1  f3)
+   00011_00_00000_00000_110  00000_00_00000_00000_010  submatch .amo-2op
+   11111_00_00000_00000_110  00001_00_00000_00000_010  submatch .amoswap
+   11111_00_11111_00000_110  00010_00_00000_00000_010  submatch .lr    ( rs2=0)
+   11111_00_00000_00000_110  00011_00_00000_00000_010  submatch .sc
+   drop
+   .undecoded ;
+
 ( Create a defer'ed word for a subset disassembler. Its default behaviour
   will be to execute .undecoded .)
 : subset   undeferred preserve  ['] .undecoded  undeferred !  defer ;
@@ -295,9 +329,6 @@ binary  ( !!)
 
 ( Compressed - C - subset. The entire 16-bit encoding space.)
 subset shred16  ( op - op)
-
-( subset A - atomic)
-subset .amo
 
 ( subsets FD - floating point)
 subset .load-fp

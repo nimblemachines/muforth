@@ -1,30 +1,10 @@
-( This file is part of muforth: http://muforth.nimblemachines.com/
+( This file is part of muforth: https://muforth.nimblemachines.com/
 
-  Copyright 2002-2018 David Frech. (Read the LICENSE for details.)
+  Copyright 2002-2019 David Frech. (Read the LICENSE for details.)
 
 loading ARM v6-M memory image
 
-( Space for compiling into. ARMs can get big; the biggest devices at this
-  writing have 1MB of flash. For now let's limit ourselves
-  to 256KiB of flash, and 32KiB of RAM. And though not all parts have
-  EEPROM, let's define a space for it anyway.)
-
-( XXX: We should really define this in a device/xxx file that gets loaded
-  _before_ this one.)
-
 ( Default some memory sizes and origins.)
-
-( On TI devices at least, the EEPROM isn't in the memory map; it's only
-  accessible through address and data registers, ie, in a peripheral. So
-  I'm not sure it makes sense to define @eeprom, since it  is going to be
-  meaningless on some chips.)
-
-( XXX FIXME KLUDGE)
-"6000_0000 constant @eeprom  
-
-.ifndef #eeprom
-   2 Ki constant #eeprom
-.then
 
 ( On most Cortex-M devices, flash starts at 0. STM32 are different; their
   flash starts at "0800_0000. But since we wrap the addresses, our local
@@ -54,34 +34,30 @@ loading ARM v6-M memory image
 : power-of-two?  ( n)
    begin  dup 1 and 0=  while  u2/  repeat  1 = ;
 
-( Memory images are prefixed by their length and origin - the target
-  address that they start on. When we push an image, we push the address of
-  its first byte, but the previous cells contain the length and origin,
-  if we want to do bounds checking or address wrapping.)
+( Memory images are prefixed by their current pointer, origin, and size in
+  bytes.)
 
-variable image  ( image buffer pointer)
-: make-image
-   create  ( #bytes origin)  ,  dup power-of-two?  0= if
-      error" image size not a power of 2"  then
-      dup  ( size)  ,  allot
-   does>  image ! ;
+variable h  ( dictionary pointer pointer; points to current image)
+: make-image  ( origin #bytes)
+   dup power-of-two?  0= if  error" image size not a power of 2"  then
+   create  swap  dup , , ( ptr origin)  dup , ( size)   allot
+   does>  h ! ;
 
-( XXX is clamping the size of flash and ram like this going to cause problems?)
-#flash 256 Ki min  0        make-image  flash-image
-#ram    64 Ki min  @ram     make-image  ram-image
-#eeprom  4 Ki min  @eeprom  make-image  eeprom-image
+( Initially limit flash space to 1 MiB and ram to 64 KiB.)
+@flash  #flash  1 Mi min  make-image  flash
+@ram    #ram   64 Ki min  make-image  ram
 
 ( Simple but inefficient!)
-: @image  image @  @  ( origin) ;
-: #image  image @  cell+ @  ( get byte count) ;
-: 'image  image @  cell+ cell+  ( get address) ;
+: @image  h @  cell+ @         ( origin) ;
+: #image  h @  cell+ cell+ @   ( image size) ;
+: 'image  h @  [ 3 cells #] +  ( image address) ;
 
-( XXX no eeprom right now...)
 : target>image  ( target)  ( find an image based on target addr)
-   @ram  [ @ram #ram + ]  within  if  ram-image ^  then  flash-image ;
+   @ram  [ @ram #ram + #]  within  if  ram ^  then  flash ;
 
 : wrap   #image 1-  and ;
 : image+  ( target - host)
+   h preserve
    dup target>image  @image -  wrap  'image + ;
 
 ( DEBUG: Define show-comma to show code as it's compiled.)
@@ -124,71 +100,49 @@ defer |@  ( fetch cell from image/target)
 -: ( buf a u)  swap image+ -rot  cmove ;
 
 : >image   ['] image-@   is |@       ( ARM only)
-           [ ]           is |read
+           [ #]          is |read
            ['] lew@      is |cell@
                          32 |addr !  ( size of addr in bits)
                           4 |cell !  ( size of cell in bytes) ;
->image
 
-( Dictionary operators.)
-variable h   ( image dictionary pointer pointer; points to one of:)
-   2variable 'ram     ( ram pointer, origin)
-   2variable 'flash   ( flash pointer, origin)
-   2variable 'ee      ( eeprom pointer, origin)
-
-: ram     'ram     h ! ;
-: flash   'flash   h ! ;
-: eeprom  'ee      h ! ;
-: in-flash?  h @  'flash = ;
-: in-ram?    h @  'ram = ;
-: org    ( a) ( set dict pointer)  h @  ! ;
+>image  ( default to image; this can change once we are chatting with target.)
 
 meta
-( XXX alignment policy? Should , always align? Should allot? Should we even
-  have two spaces? We will never, in this architecture, want to , or c,
-  into ram; we will only need "ram here" and "ram allot".)
+2 constant cellshift
+4 constant cell
+: cells  2 << ;
+: cell/  2 >> ;
+: cell+  \m cell + ;
+: cell-  \m cell - ;
 
-: here  ( - a)  h @ @ ;
+: here   ( - a)  h @ @ ;
+: goto   ( a)    h @ ! ;   ( set region pointer to a)
+: allot  ( n)    h @ +! ;
+
+: c,    ( ch)   .debug-comma  \m here image-c!       1 \m allot ;
+: h,    ( h)    ( \m halign)  \m here image-h!       2 \m allot ;
+: ,     ( w)    ( \m align)   \m here image-!  \m cell \m allot ;
+
 : haligned   1+  -2 and ;  ( halfword aligned)
-: halign    \m here \m haligned  org ;
 : aligned   3 +  -4 and ;  ( word aligned)
-: align     \m here \m aligned  org ;
-: allot ( n)    h @ +! ;
-: c,    ( ch)   .debug-comma  \m here image-c!  1 \m allot ;
-: h,    ( h)    ( \m halign)  \m here image-h!  2 \m allot ;
-: ,     ( w)    ( \m align)   \m here image-!   4 \m allot ;
+
+forth
+: #align,  ( byte #bits)  \m here  negate and  for  dup \m c,  next  drop ;
+meta
+: halign,  1 #align, ;
+: align,   3 #align, ;
+
+: halign   0 \m halign, ;
+: align    0 \m align, ;
 
 forth
 ( return the origin & number of bytes in current region)
-: region  ( - a u)  h @  2@  ( origin ptr)  over - ;
+: region   ( - a u)         h @  2@  ( origin ptr)  over - ;
+: region!  ( origin ptr)    h @  2! ;  ( set origin and ptr)
 
 ( Initialization.)
-: fferase  'image #image  "ff fill ;
-: wipe   flash-image fferase
-         ram-image fferase
-         eeprom-image fferase ;
+: wipe   'image  #image  ( erase)   "ff  fill
+          @image  \m goto ( reset pointer to origin) ;
 
-: ram!      ( ram-origin)  dup 'ram   2!  ( set ptr and origin to origin) ;
-: flash!  ( flash-origin)  dup 'flash 2!  ( set ptr and origin to origin) ;
-: ee!    ( eeprom-origin)  dup 'ee    2!  ( set ptr and origin to origin) ;
-
-: clean-slate
-   wipe  @ram ram!  @flash flash!  @eeprom ee!  flash  @flash org ;
-
-clean-slate
-
-( testing)
-hex
-1111_1111 0 image-!  ( first cell of flash)
-2222_2222 #flash  4 -  image-!  ( last cell)
-a110_aa20 4 image-!
-abcd_f7fa 8 image-!
-8000_f380 c image-!
-8008_f180 10 image-!
-f333_e92d 14 image-!
-e844_e8bd 18 image-!
-f333_e904 1c image-!
-e844_e8bc 20 image-!
-
-3333_3333 @ram image-!  ( first cell of ram)
-4444_4444 @ram #ram +  4 -  image-!
+flash wipe
+ram wipe  ( leaves us in ram!)

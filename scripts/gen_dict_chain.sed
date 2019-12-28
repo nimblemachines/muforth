@@ -1,6 +1,6 @@
-# This file is part of muforth: http://muforth.nimblemachines.com/
+# This file is part of muforth: https://muforth.nimblemachines.com/
 #
-# Copyright (c) 2002-2018 David Frech. (Read the LICENSE for details.)
+# Copyright (c) 2002-2019 David Frech. (Read the LICENSE for details.)
 
 #
 # It looks a bit complicated. ;-) The idea is to automagically convert from a
@@ -27,7 +27,6 @@ s/push_//
 s/_carefully//
 s/less/</
 s/equal/=/
-s/zero/0/
 #s/reset/!/
 s/star(_|$)/*/
 s/backslash/\\\\/
@@ -58,10 +57,8 @@ s/(.*)_size/#\1/
 # turn foo_ to (foo)
 s/((.*)_)$/\(\2\)/
 
-s/([a-zA-Z])_([^a-zA-Z])/\1\2/g
-s/([^a-zA-Z])_([a-zA-Z])/\1\2/g
-s/([^a-zA-Z])_([^a-zA-Z])/\1\2/g
-s/([a-zA-Z])_([a-zA-Z])/\1-\2/g
+s/([a-zA-Z0-9])_([a-zA-Z0-9])/\1-\2/g
+s/_//g
 
 # concat hold & pattern
 H

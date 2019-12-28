@@ -1,6 +1,6 @@
-( This file is part of muforth: http://muforth.nimblemachines.com/
+( This file is part of muforth: https://muforth.nimblemachines.com/
 
-  Copyright 2002-2018 David Frech. (Read the LICENSE for details.)
+  Copyright 2002-2019 David Frech. (Read the LICENSE for details.)
 
 loading RISC-V RV32 assembler (I subset)
 
@@ -13,14 +13,14 @@ loading RISC-V RV32 assembler (I subset)
 ( Support for inline asm in any colon word.)
 compiler
 : asm{   __inline-asm ;  ( start assembler)
-: }      -] ;  ( exit assembler mode and restart host colon compiler)
+: }      ] ;  ( exit assembler mode and restart host colon compiler)
 definer
 : }   __definer-colon ;  ( when compiling via meta: return to definer : )
 forth
 
 ( Let's define the registers first. There are 32 general-purpose
   registers. We define them with "weird" bits in the upper part so we can
-  identify them, while they are sitting on the stack, as register. ;-)
+  identify them, while they are sitting on the stack, as registers. ;-)
 
 : 8regs  ( n - n+8)  8 for  dup "5_d00d_00 or  constant 1+  next ;
 assembler
@@ -112,11 +112,11 @@ forth
 
 : SB-type  ( opcode f3)  >funct3  constant
    does> @  ( dest rs1 rs2 op)  rs2  rs1
-   >pc-rel  dup #13 ?sfits  SB-imm  op, ;
+   >pc-rel  over #13 ?sfits  SB-imm  op, ;
 
 : UJ-type  ( opcode)  constant
    does> @  ( dest rd op)  rd
-   >pc-rel  dup #21 ?sfits  UJ-imm  op, ;
+   >pc-rel  over #21 ?sfits  UJ-imm  op, ;
 
 : priv  ( opcode f3 imm12)  push >funct3  pop >rs2  constant
    does> @  op, ;
@@ -160,6 +160,29 @@ assembler binary
 01_000_11  001  S-type sh
 01_000_11  010  S-type sw
 
+.ifdef A-ext
+( amo)
+( XXX aq and rl bits are both zero. Need some kind of postfix way to set
+  them? Or do something like _fence?)
+01_011_11  010  0000000  R-type amoadd.w
+01_011_11  010  0000100  R-type amoswap.w
+forth
+01_011_11  010  0001000  R-type lr.w    ( needs rs2 set to zero)
+assembler
+01_011_11  010  0001100  R-type sc.w
+
+01_011_11  010  0010000  R-type amoxor.w
+01_011_11  010  0100000  R-type amoor.w
+01_011_11  010  0110000  R-type amoand.w
+01_011_11  010  1000000  R-type amomin.w
+01_011_11  010  1010000  R-type amomax.w
+01_011_11  010  1100000  R-type amominu.w
+01_011_11  010  1110000  R-type amomaxu.w
+
+( Set rs2 to zero.)
+: lr.w  ( rs1 rd)   asm{  x0 swap lr.w  } ;
+.then
+
 ( op)
 01_100_11  000  0000000  R-type add
 01_100_11  000  0100000  R-type sub
@@ -171,6 +194,18 @@ assembler binary
 01_100_11  101  0100000  R-type sra
 01_100_11  110  0000000  R-type or
 01_100_11  111  0000000  R-type and
+
+.ifdef M-ext
+( op)
+01_100_11  000  0000001  R-type mul
+01_100_11  001  0000001  R-type mulh
+01_100_11  010  0000001  R-type mulhsu
+01_100_11  011  0000001  R-type mulhu
+01_100_11  100  0000001  R-type div
+01_100_11  101  0000001  R-type divu
+01_100_11  110  0000001  R-type rem
+01_100_11  111  0000001  R-type remu
+.then
 
 ( lui)
 01_101_11  U-type lui
@@ -209,9 +244,37 @@ assembler binary
 11_100_11  110  II-type csrrsi  ( CSR read/set immediate)
 11_100_11  111  II-type csrrci  ( CSR read/clear immediate)
 
+( Utility.)
+
+( There is some subtlety involved in the way that RISC-V immediate values
+  work. Many instructions contain a 12-bit *signed* offset. A few
+  instructions allow loading a 20-bit immediate into the highest 20 bits of a
+  register.
+
+  But because the low 12 are *signed*, one has to be careful when splitting
+  a 32-bit immediate value into a high 20-bit part and a low 12-bit part
+
+  If the low part is negative - bit 11 is set - hex 1000 needs to be added
+  to the high part to compensate! When the negative low part is
+  sign-extended, that is equivalent to adding ffff_f000 to the whole value -
+  and this is precisely -1000. Tricky!
+
+  An easy way to adjust the high part is essentially to "round up" by
+  adding "800 and then throwing away the low 12 bits. If bit 11 was set,
+  adding "800 carries into bit 12, and we add the "1000 that we need. If bit
+  11 was clear, adding "800 and truncating does nothing.
+
+  I couldn't think of a clever way to adjust the low part. Basically I'm
+  sign extending, by isolating the sign bit, doubling its value, and then
+  subtracting it.)
+
+: >ui  ( a - hi20)  ( "to upper immediate") "800 + "0fff bic ;
+: >li  ( a - lo12)  ( "to lower immediate")        "0fff and  dup "800 and 2* - ;
+
 ( Synthetic instructions.)
 : nop             asm{  0 x0 x0 addi  } ;
 : mv    ( rs rd)  asm{   0 -rot addi  } ;
+: li   ( imm rd)  asm{  x0 swap addi  } ;
 : not   ( rs rd)  asm{  -1 -rot xori  } ;
 : neg   ( rs rd)  asm{  x0 -rot sub  } ;
 : seqz  ( rs rd)  asm{   1 -rot sltiu  } ;
@@ -265,7 +328,7 @@ assembler
 ( Resolve a relative jump from src to dest.)
 : resolve  ( src dest)
    over - ( offset)  over image-@  ( src offset op)
-   dup "fff and 11_011_11 = if  ( UJ-type)  over #21 ?sfits  UJ-imm  else
+   dup "07f and 11_011_11 = if  ( UJ-type)  over #21 ?sfits  UJ-imm  else
                                 ( SB-type)  over #13 ?sfits  SB-imm  then
    swap image-! ;
 

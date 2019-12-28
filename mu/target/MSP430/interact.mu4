@@ -1,40 +1,29 @@
-( This file is part of muforth: http://muforth.nimblemachines.com/
+( This file is part of muforth: https://muforth.nimblemachines.com/
 
-  Copyright 2002-2018 David Frech. (Read the LICENSE for details.)
+  Copyright 2002-2019 David Frech. (Read the LICENSE for details.)
 
 loading MSP430 interaction
 
 variable chatting
-
 variable chat-vector
-: chat-cmd   ( index)  cells  constant
+
+: chat-cmd   ( index - index+1)  dup cells  constant  1+
              does> @  chat-vector @ =if  +  @execute  ^  then  2drop
                 error" Not connected to a chat-capable target" ;
 
 : chat-fail   error" Chat command not implemented" ;
 
-.ifdef chat-v3-host
+0  ( initial command index)
 
- 0 chat-cmd t.Hello
- 1 chat-cmd t.GetStatus    ( - sp pc sr cp)
- 2 chat-cmd t.Run          ( pc sr cp)
- 3 chat-cmd t.ReadChunk    ( buf a u)  ( XXX order??)
- 4 chat-cmd t.WriteChunk   ( buf a u)
+chat-cmd t.Hello
+chat-cmd t.GetStatus    ( - sp pc sr cp)
+chat-cmd t.Run          ( pc sr cp)
+chat-cmd t.ReadChunk    ( buf a u)
+chat-cmd t.WriteChunk   ( buf a u)
+chat-cmd t.ErasePage    (     a   - fail?)
+chat-cmd t.FlashChunk   ( buf a u - fail?)
 
-.else  ( v2 or v1)
-
- 0 chat-cmd t.Hello
- 1 chat-cmd t.GetRegs      ( buf - sp)
- 2 chat-cmd t.SetRegs      ( buf)
- 3 chat-cmd t.ReadWord     ( a - w)
- 4 chat-cmd t.WriteWord    ( a w)
- 5 chat-cmd t.ReadChunk    ( buf a u)  ( XXX order??)
- 6 chat-cmd t.WriteChunk   ( buf a u)
- 7 chat-cmd t.ErasePage    ( a cmd - status)
- 8 chat-cmd t.FlashChunk   ( buf a u cmd - status)
- 9 chat-cmd t.Run
-
-.then
+drop  ( last command index)
 
 : >chat
    ['] t.ReadChunk  is |read    ( read from connected target)
@@ -42,96 +31,51 @@ variable chat-vector
                     16 |addr !  ( size of addr in bits)
                      2 |cell !  ( size of cell in bytes) ;
 
-: copy-chunk  ( a u)
-   =if
-      -- cr  ." copy-chunk "  over u. dup u.
-      over image+ -rot  t.WriteChunk  ^
-   then  2drop ;
+: copy-chunk  ( 'target len - 'target+len)
+   -- cr ." copy-chunk "  2dup swap u. u.
+   2dup + push  over image+ -rot t.WriteChunk  pop ;
+
+: copy-chunked  ( a u)
+   -- cr ." copy-chunked "  2dup swap u. u.
+   256 /mod ( r q)  swap push  for   256 copy-chunk  next
+                        pop  =if  ( rem) copy-chunk  drop ^  then  2drop ;
 
 variable ram-copied  ( pointer to first un-copied byte)
 
 : copy-ram
    h preserve  ram
    ram-copied @  dup 0= if  drop  region drop  then
-   \m here  over -  copy-chunk
+   \m here  over -  copy-chunked
    \m here  ram-copied ! ;
 
 
-( The chat firmware has pushed an "exception frame" onto the stack.)
+( Cached local values of target registers.)
+variable .CP     -- context pointer
+variable .SR     -- status register
+variable .SP
+variable .PC
 
-( Let's call these "chatregs" so we don't conflict with the assembler's
-  "reg" definition.)
-
-: chatreg  ( index)  \m cells  constant ;
-
-.ifndef chat-v1
-
-( These are passed to and from chat, via get-regs and set-regs:)
-00 chatreg .CP     -- context pointer
-01 chatreg .SR     -- status register
-02 chatreg .PC
-03 chatreg .LAST
-
-( These are passed to and from target via D stack. We define them here so
-  that we can store them in the local register frame.)
-03 chatreg .IP
-04 chatreg .LOOP
+variable .IP
+variable .LOOP
 .ifdef microscope
-05 chatreg .W
-06 chatreg .X
-07 chatreg .Y
-08 chatreg .Z
-09 chatreg .SIZE
-.else
-05 chatreg .SIZE
+variable .W
+variable .X
+variable .Y
+variable .Z
 .then
 
-.else  ( chat-v1)
-
-00 chatreg .FCMD     -- flash command
-01 chatreg .IP
-02 chatreg .W
-03 chatreg .RP
-04 chatreg .COUNT
-05 chatreg .TOP
-06 chatreg .X
-07 chatreg .Y
-08 chatreg .SR       -- status register
-09 chatreg .PC
-10 chatreg .LAST
-10 chatreg .SIZE
-
-.then
-
-.SIZE buffer chat-frame  ( local copy of target's stack frame)
-    variable chat-sp     ( current value of target's SP)
-
-( These index into our local chat-frame, _not_ into target memory!)
-: reg@   ( offset - reg)   chat-frame +  leh@ ;
-: reg!   ( reg offset)     chat-frame +  leh! ;
-
-.ifdef chat-v3-host
-
-: get-regs   t.GetStatus  .CP reg!  .SR reg!  .PC reg!  chat-sp ! ;
-: set-regs                                    .PC reg@  .SR reg@  .CP reg@ ;
-
-.else  ( chat v2 or v1)
-
-: get-regs   chat-frame t.GetRegs  chat-sp ! ;
-: set-regs   chat-frame t.SetRegs ;
-
-.then
+: get-regs   t.GetStatus  .CP !  .SR !  .PC !  .SP ! ;
+: set-regs                .PC @  .SR @  .CP @ ;
 
 : 2sp  space space ;
-: .b9  binary  <#  # # # #  # # # #  #  #> type ;
-: .h16    hex  <#  # # # #  #> type ;
+: 4#  # # # # ;
+: .b9  binary  <#  4#  4#  #  #> type ;
+: .h16    hex  <#  4#  #> type ;
 : .h16__  .h16  2sp ;
-: .r   ( offset)  reg@  .h16__ ;
-: .sr       .SR   reg@  .b9   2sp ;
+: .r   ( offset)  @  .h16__ ;
+: .sr         .SR @  .b9   2sp ;
 
 defer .regs
-
-.ifndef chat-v1
 
 -: ( chat v2/v3 version of .regs)
    radix preserve
@@ -140,27 +84,8 @@ defer .regs
        (  000100011  0000  0000  0000 )
    cr           .sr
                    .CP .r
-             chat-sp @ .h16__  .PC .r ;  is .regs
-
-.else  ( chat-v1)
-
--: ( chat v1 version of .regs)
-   radix preserve
-
-   cr  ." V----INZC    IP     W    RP   Cnt   Top     X     Y    SP    PC"
-       (  000100011  0000  0000  0000  0000  0000  0000  0000  0000  0000)
-   cr           .sr
-                   .IP .r
-                          .W .r
-                               .RP .r
-                                  .COUNT .r
-                                          .TOP .r
-                                                  .X .r
-                                                        .Y .r
-                                                 chat-sp @ .h16__  .PC .r ;  is .regs
-
-
-.then
+                         .SP .r
+                               .PC .r ;  is .regs
 
 : hi  chatting on  >chat  t.Hello  get-regs  .regs
       ram-copied off  copy-ram
@@ -169,62 +94,11 @@ defer .regs
 : chat-via   pop  chat-vector !  hi ;
 
 
-( NOTE: All the following d.Foobar commands are the dummy _implementations_
-  of the chat command interface.)
-
-.SIZE buffer dummy-frame
-
-: d.Hello  ." Connecting to dummy chat target."
-   ( Init each reg in dummy-frame to its index, then set PC to RAM)
-   dummy-frame m !
-   0  .LAST \m cell/ for  dup >hilo m& m&  \m cell+  next  drop
-   "220 .PC dummy-frame +  leh! ;
-
-: d.ReadWord     ( a - w)
-   cr  ." dummy read word "  dup u.
-   image-@ ;
-
-: d.WriteWord     ( w a)
-   cr  ." dummy write word "  over u.  dup u.
-   image-! ;
-
-: d.ReadChunk    ( buf a u)
-   -- cr  ." Dummy read chunk "  2 nth u.  over u.  dup u.
-   push  image+  2dup xor if  swap pop cmove  ^  then
-   rdrop  2drop ;
-
-: d.WriteChunk   ( buf a u)
-   -- cr  ." Dummy write chunk "  2 nth u.  over u.  dup u.
-   push  image+  2dup xor if       pop cmove  ^  then
-   rdrop  2drop ;
-
-: d.ErasePage   ( a fcmd - status)
-   -- cr  ." Dummy erase page "  over u.  dup u.
-   2drop  "9658 ;
-
-: d.FlashChunk   ( buf a u fcmd - status)
-   drop  d.WriteChunk  "9658 ;
-
-: d.GetRegs  ( buf - sp)
-   ( copy dummy-frame to buf)
-   dummy-frame swap .LAST cmove  "dead ;
-
-: d.SetRegs  ( buf)
-   ( copy buf to dummy-frame)
-   dummy-frame .LAST cmove ;
-
-: dummy
-   chat-via  d.Hello  d.GetRegs  d.SetRegs  d.ReadWord  d.WriteWord
-             d.ReadChunk  d.WriteChunk  d.ErasePage  d.FlashChunk
-             ( Run) nope ;
-
-: _run      copy-ram  set-regs  t.Run ;  ( don't wait for target)
-: _runwait  _run  get-regs ;   ( wait for target)
-
-: runwait   _runwait  .regs ;
+: run      copy-ram  set-regs  t.Run ;  ( don't wait for target)
+: runwait  run  get-regs ;              ( wait for target)
 
 ( For running random code that doesn't return.)
-: kick  ( pc)  .PC reg!  _run ;
+: kick  ( pc)  .PC !  run ;
 
 ( when the code you're calling doesn't speak the same protocol as running code)
 : go   \eq Vreset image-@  kick ;
@@ -232,7 +106,7 @@ defer .regs
 : reset    go  0 #100,000,000 nanosleep ( 100ms)  get-regs .regs ;
 
 ( For running random bits of code.)
-: call  ( pc)  .PC reg!  runwait ;
+: call  ( pc)  .PC !  runwait .regs ;
 
 
 .ifndef chat-v1
@@ -253,9 +127,9 @@ defer .regs
   target.)
 
 meta
-: sp0   [ @ram #ram +  #48 - ] ;
-: sp!   .CP reg! ;  ( the trampoline code loads SP from CP)
-: sp@   .CP reg@ ;  ( the trampoline code stores SP into CP)
+: sp0   [ @ram #ram +  #48 - #] ;
+: sp!   .CP ! ;  ( the trampoline code loads SP from CP)
+: sp@   .CP @ ;  ( the trampoline code stores SP into CP)
 : depth   \m sp0  \m sp@ -  \m cell/  1- ;
 forth
 
@@ -317,14 +191,17 @@ forth
 : ?chat
    chatting @ 0= if  error" not connected to target"  then ;
 
+: rechat
+   get-regs  stack<
+.ifdef microscope  ( x0 .. xn ip - y0 .. yn ip loop z y x w')
+   .W !  .X !  .Y !  .Z !
+.then
+   .LOOP !  .IP !  .regs ;
+
 ( NOTE: For initial execution of a Forth word, xn is cfa!)
 : continue  ( x0 .. xn ip - y0 .. yn ip loop)
    ?chat
-   stack>  _runwait  stack<
-.ifdef microscope  ( x0 .. xn ip - y0 .. yn ip loop z y x w')
-   .W reg!  .X reg!  .Y reg!  .Z reg!
-.then
-   .LOOP reg!  .IP reg!  .regs ;
+   stack>  run  rechat ;
 
 ( These are implement'ed by the kernel code.)
 meta
@@ -332,11 +209,12 @@ variable continue-forth
 variable trampoline
 
 : cont    ( )     ( continue forth execution)
-   .IP reg@  continue ;
+   .IP @  continue ;
 forth
 
 -: ( cfa)  ( execute target forth word)
-   p@ continue-forth .PC reg!
+   p@ continue-forth .PC !
+   [ @ram #ram +  2 \m cells - #] .SP !  ( room for SR and PC *only*)
    p@ trampoline  ( ip)  continue ;  is remote
 
 

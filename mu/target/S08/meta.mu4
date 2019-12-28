@@ -1,0 +1,332 @@
+( This file is part of muforth: https://muforth.nimblemachines.com/
+
+  Copyright 2002-2019 David Frech. (Read the LICENSE for details.)
+
+
+loading S08 Meta-compiler (main)
+
+( Make it easy to check if a device register has been defined. If device
+  equates move to somewhere other than .equates. update this too.)
+compiler
+: .reg   .equates. \ .contains ;
+forth
+: .reg   \ .reg ;
+
+compiler
+: asm{                   __inline-asm ;
+: }       ] ;  ( exit inline assembler mode and restart colon compiler)
+forth
+
+( Make it easy to make assembler macros.)
+meta
+: macro           current preserve       assembler  :  __inline-asm ;
+
+forth
+: macro   \m macro ;
+
+
+-- ------------------------------------------------------------------------
+-- Stack layout
+-- ------------------------------------------------------------------------
+
+( To make use of literals easier, we keep two "scratch" bytes allocated on
+  the D stack, at 0,x and 1,x. Below this is top, and below that, second.
+  Like this:
+
+     |      |      |
+     +------+------+
+  4  |  sh  |  sl  |  5   second
+     +------+------+
+  2  |  th  |  tl  |  3   top
+     +------+------+
+  0  |  xh  |  xl  |  1   scratch
+     +------+------+
+)
+
+( Useful stack macros.)
+assembler
+: sl  asm{  5 ,x } ;
+: sh  asm{  4 ,x } ;
+: tl  asm{  3 ,x } ;
+: th  asm{  2 ,x } ;
+: xl  asm{  1 ,x } ;
+: xh  asm{  0 ,x } ;
+
+( And for double-length values:)
+
+: ds0  asm{  9 ,x } ;  ( double second, lsb)
+: ds1  asm{  8 ,x } ;
+: ds2  asm{  7 ,x } ;
+: ds3  asm{  6 ,x } ;  ( double second, msb)
+: dt0  asm{  5 ,x } ;  ( double top, lsb)
+: dt1  asm{  4 ,x } ;
+: dt2  asm{  3 ,x } ;
+: dt3  asm{  2 ,x } ;  ( double top, msb)
+forth
+
+
+-- ------------------------------------------------------------------------
+-- Peephole optimiser tags
+-- ------------------------------------------------------------------------
+
+( Tags tell the meta-compiler what kind of special code, if any, was just
+  compiled. Currently used to identify literals and calls, for simple
+  peephole optimisations.
+
+  We store the tag byte at \m here. No tag is represented by an "empty"
+  image byte - 0ff - _not_ by a tag of zero.)
+
+( Tags used:)
+  1 constant $lit    ( $ suggests price tag ;-)
+"ad constant $bsr
+"bd constant $jsr1   ( jsr dir)
+"cd constant $jsr2   ( jsr ext)
+
+: tag!  ( tag)     \m here image-c! ;
+: tag@  ( - tag)   \m here image-c@ ;
+: notag  "ff tag! ;
+
+( We also want to cleanly uncompile code, so instead of simply backing up
+  and leaving the cruft - instructions and tags - behind, let's back up and
+  "uncompile" the code, leaving behind untagged code.)
+
+: uncompile  ( #bytes)
+   \m here  over -  dup \m goto image+  swap ( #bytes)  1+ ( include tag)  "ff fill ;
+
+
+-- ------------------------------------------------------------------------
+-- Literal loading.
+-- ------------------------------------------------------------------------
+--
+-- The low half is put into A, the high half into xh - 0,x, on the data
+-- stack.
+--
+-- If high half and low half are equal and non-zero,
+--    half # lda  xh sta  ( 3 bytes)
+-- Otherwise:
+--
+-- High half:
+-- If hi =  0, xh clr          ( 1 byte)
+-- If hi =  1, xh clr  xh inc  ( 2 bytes)
+-- If hi = -1, xh clr  xh dec  ( 2 bytes)
+-- Otherwise, #hi lda  xh sta  ( 3 bytes)
+--
+-- Low half:
+-- If lo =  0, .a clr  ( 1 byte)
+-- Otherwise, #lo lda  ( 2 bytes)
+-- ------------------------------------------------------------------------
+
+: load-hi  ( hi)
+   dup              0= if  drop  asm{  xh clr } ^  then
+   dup             1 = if  drop  asm{  xh clr  xh inc } ^  then
+   dup "0ff and "0ff = if  drop  asm{  xh clr  xh dec } ^  then
+                                 asm{   # lda  xh sta } ;
+: load-lo  ( lo)
+    ?if  asm{  # lda } ^  then
+         asm{ .a clr } ;
+
+: load-literal  ( n)
+   >lohi  2dup = if  =if  ( if hi & lo are equal and non-zero)
+      drop  asm{  # lda  xh sta } ^  then  then
+   load-hi  load-lo ;
+
+( XXX - does it make more sense - it certainly makes the generated code
+  more readable - to store A in xl and then promote the scratch cell to top?
+  And to do the reverse with pop-literal?
+
+  I think the original versions of push-literal and pop-literal came from a
+  time when I was flirting with only have *one* scratch byte available at the
+  top of the stack. I'm leaving the -alt versions here for now, but still
+  using the originals.)
+
+( With a literal in A and xh, push it onto the D stack.)
+: push-literal  ( A -> tl, xh -> th)
+   asm{  -2 # aix ( xh -> th)  tl sta } ;
+
+: push-literal-alt  ( A -> xl, then promote scratch to top)
+   asm{  xl sta  -2 # aix } ;
+
+( Pop top of D stack into A and xh, just as if they were loaded by
+  load-literal. This is used to make versions of binary operations that
+  work either with true literals, or with a value sitting on the D stack.)
+
+: pop-literal   ( tl -> A, th -> xh)
+   asm{  tl lda  2 # aix  ( th -> xh) } ;
+
+: pop-literal-alt   ( top -> scratch, then load A from xl)
+   asm{  2 # aix  ( demote top to scratch)  xl lda } ;
+
+meta
+: literal   ( n)  load-literal  push-literal  $lit tag! ;
+: compile,  ( target-cfa)  \m here swap  \a c ( compile call)  image-c@ tag! ;
+forth
+
+: called  ( - dest-addr)
+   \m here  tag@
+   dup $bsr  = if ( bsr)      drop  dup 1- image-c@ ( offset)  sext  +a ^ then
+   dup $jsr1 = if ( jsr dir)  drop      1- image-c@ ^  then
+   dup $jsr2 = if ( jsr ext)  drop     2 - image-@  ^  then
+   2drop  0 ;
+
+: replace  ( jsr-op jmp-op offset - -1)
+   \m here +a image-c!  drop  notag  -1 ;
+
+( If last code compiled was a call, rewrite it to a jump and return true;
+  else return false.)
+
+: tail?  ( - f)
+   tag@
+   dup $bsr  = if ( bsr)      "20 ( bra)      -2 replace ^  then
+   dup $jsr1 = if ( jsr dir)  "bc ( jmp dir)  -2 replace ^  then
+   dup $jsr2 = if ( jsr ext)  "cc ( jmp ext)  -3 replace ^  then
+   drop  0 ;
+
+target-compiler
+: ^   tail? if ^ then  asm{  rts } ;
+
+forth
+: lit?   ( - lit?)  tag@ $lit =  dup if  4 uncompile  then ;
+
+: _litop  current preserve  target-compiler  create  __asm
+          does>  lit?  if  cell+  then  @  \m compile, ;
+
+meta
+: litop
+   _litop
+      \m here  ( stack entry point)  ,
+      pop-literal
+      \m here  ( literal entry point)  , ;
+
+: relop
+   _litop
+      \m here  ( literal entry point)
+      push-literal
+      \m here  ( stack entry point)  ,  , ;
+
+forth
+
+
+( Create a new target name. A target word is defined as a _constant_ equal
+  to its code field address.)
+
+meta
+: label   \m here  current preserve    meta constant  __asm ;
+: name    \m here  current preserve  target constant ;
+: code    \m name  __asm ;
+: :       \m name  __target-colon ;
+
+:  ]   __target-colon  notag ;
+: #]   \m literal  \m ] ;
+
+( For forward references)
+: forward-jmp   "100 \a ) \a jmp  \m label ;
+: forward-jsr   "100 \a ) \a jsr  \m label ;
+: resolve>>  ( src)  \m here  swap 2 -  image-! ;
+
+: '  .target. chain' execute ;  ( target words are constants!)
+
+: __host  \ [ ;  ( return to host forth mode)
+: {    \m __host ;  ( useful for bracketing a few  host forth words)
+
+forth
+: }    __meta ;  ( return to meta)
+
+assembler
+: ;c   __meta ;
+
+target-compiler
+: [   __meta ;
+: ;   \tc ^  \tc [ ;  ( return to meta)
+
+compiler
+: ;m   \ ;  __meta ;  ( exit macro compilation and return to __meta)
+
+forth
+
+
+( Alloting RAM space to variables.)
+( XXX Should I assume space for stack? Things are bad _before_ we've come
+  to the actual end of RAM...)
+
+( zvar grows up from @ram; xvar grows down from "0100. If they cross, throw
+  an error.)
+
+( We don't do  h preserve  because our caller already has.)
+: ?zpage
+   xram \m here  zram \m here  u<
+   if error" No available zero-page ram" then ;
+
+( sanity check allocation size)
+: ?var  ( #bytes)
+   depth 1 u< if  error" needs a count of bytes to allocate"  then
+   #ram over u< if  error" Allocation greater than ram size"  then ;
+
+meta
+: var   ( #bytes)
+   ?var  ( sanity check allocation size)
+   h preserve  ram   \m here equ  \m allot
+   [ @ram #ram + #]  \m here  u<  if error" No available ram"  then ;
+
+: zvar  ( #bytes)
+   ?var  ( sanity check allocation size)
+   h preserve  zram  \m here equ  \m allot  ?zpage ;
+
+: xvar  ( #bytes)
+   ?var  ( sanity check allocation size)
+   h preserve  xram  negate \m allot  \m here equ  ?zpage ;
+
+forth
+
+( Utility macros.)
+: pshhx  asm{  .x psh  .h psh         } ;
+: pulhx  asm{          .h pul  .x pul } ;
+
+
+( Calculation of FCDIV - flash clock divider [sic]
+
+  FCDIV = ceil[busclock/200k] - 1
+
+  We leave off the - 1 to slow the flash a bit. Insurance against our clock
+  being a bit fast... better to have the flash clock run a bit slow than
+  too fast.
+
+  We're trying the divide the bus clock down to between 150kHz and 200kHz,
+  to drive the flash programming machinery. We need to calculate a divider
+  that works. One caveat: if the calculated value is > 63, set a bit that
+  first divides the bus clock by 8 before dividing by our divider
+  [actually, our divider + 1].)
+
+( For utmost resolution, clock speed is in hertz.)
+: hz>fcdiv  ( clock-in-hz - fcdiv)
+   199,999 +  200,000 /
+   dup 64 u< not if
+      ( too big - round up and divide by 8)  7 + 3 >>
+      ( set "divide by 8" bit)  "40 or
+   then ;
+
+( For most uses: clock speed is in kilohertz.)
+: khz>fcdiv  ( clock-in-khz - fcdiv)
+   1,000 *  hz>fcdiv ;
+
+( Interrupt vectors and handlers.)
+variable vector-offset  ( 0 if vectors not relocated)
+: reloc-vector  ( offset - offset')
+   dup \eq Vreset = if ^ then  ( reset doesn't get relocated)
+   vector-offset @ +a ;
+
+meta
+: handler  ( vector-offset)
+   reloc-vector  \m here swap  image-!  __asm ;
+
+( Create a script that allows mixing of target and host words.)
+: script:   current preserve  meta  :  __scripting ;
+
+definer
+: ;   \ ;  __meta ;  ( do normal host ; but then return to __meta)
+
+forth
+
+( Patch target colon compiler.)
+.meta. chain' literal   is target-literal
+             ' number   is target-number    ( use host's number)
+.meta. chain' compile,  is target-compile,

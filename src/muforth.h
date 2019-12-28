@@ -1,7 +1,7 @@
 /*
- * This file is part of muforth: http://muforth.nimblemachines.com/
+ * This file is part of muforth: https://muforth.nimblemachines.com/
  *
- * Copyright (c) 2002-2018 David Frech. (Read the LICENSE for details.)
+ * Copyright (c) 2002-2019 David Frech. (Read the LICENSE for details.)
  */
 
 #include <sys/types.h>
@@ -139,8 +139,6 @@ struct counted_string
 
 extern int parsed_lineno;       /* captured with first character of token */
 extern struct string parsed;    /* for errors */
-
-extern cell  *ph;      /* ptr to next free byte in heap space */
 
 /* declare common functions */
 

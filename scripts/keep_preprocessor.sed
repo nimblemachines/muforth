@@ -1,6 +1,6 @@
-# This file is part of muforth: http://muforth.nimblemachines.com/
+# This file is part of muforth: https://muforth.nimblemachines.com/
 #
-# Copyright (c) 2002-2018 David Frech. (Read the LICENSE for details.)
+# Copyright (c) 2002-2019 David Frech. (Read the LICENSE for details.)
 
 #
 # For each of the generated dictionary chain initializers, we want to keep the
@@ -10,10 +10,13 @@
 
 # keep the /* filename.c */ comments
 /^\/\* .*\.c/ {
+# prefix with a blank line
 i\
-\
 
+# indent the comment with a TAB
 s/^\//	\//
+
+# print it
 p
 }
 
