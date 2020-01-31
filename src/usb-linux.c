@@ -41,13 +41,7 @@
 
 #define USB_PATH_MAX (strlen(USB_ROOT2)+16)
 
-struct match
-{
-    unsigned int idVendor;
-    unsigned int idProduct;
-};
-
-typedef int (*usb_match_fn)(char *, struct match *);    /* filepath, match_data */
+typedef int (*usb_match_fn)(char *, int vid, int pid);    /* filepath, vendor id, product id */
 typedef int (*path_ok_fn)(struct dirent *);
 
 /*
@@ -78,7 +72,7 @@ static int dir_exists(char *path)
  *  >0 if match found
  */
 static int foreach_dirent(char *path, path_ok_fn try_path,
-                          usb_match_fn fn, struct match *pmatch)
+                          usb_match_fn fn, int vid, int pid)
 {
     char pathbuf[USB_PATH_MAX];
     DIR *pdir;
@@ -97,7 +91,7 @@ static int foreach_dirent(char *path, path_ok_fn try_path,
             int matched;
 
             concat_paths(pathbuf, USB_PATH_MAX, path, pde->d_name);
-            matched = fn(pathbuf, pmatch);
+            matched = fn(pathbuf, vid, pid);
 
             /*
              * matched < 0 means matched but error opening read/write
@@ -117,19 +111,13 @@ static int foreach_dirent(char *path, path_ok_fn try_path,
     return 0;   /* no match */
 }
 
-static int read_le16(__le16 *pw)
-{
-    __u8 *pb = (__u8 *)pw;
-    return pb[0] + (pb[1] << 8);
-}
-
 /*
  * match_device returns 0 if there was no match (or if it couldn't open a
  * device); >0 if it successfully matched the device and was able to open
  * it read/write; <0 if it matched a device but couldn't open it (the only
  * true error condition we care about).
  */
-static int match_device(char *dev, struct match *pmatch)
+static int match_device(char *dev, int vid, int pid)
 {
     int fd;
     struct usb_device_descriptor dev_desc;
@@ -147,8 +135,8 @@ static int match_device(char *dev, struct match *pmatch)
 
     close(fd);
 
-    if (read_le16(&dev_desc.idVendor) == pmatch->idVendor &&
-        read_le16(&dev_desc.idProduct) == pmatch->idProduct)
+    if (__le16_to_cpu(dev_desc.idVendor) == vid &&
+        __le16_to_cpu(dev_desc.idProduct) == pid)
         return open(dev, O_RDWR);   /* Re-open read-write; this could fail! */
 
     return 0;
@@ -160,9 +148,9 @@ static int is_bus_or_dev(struct dirent *pde)
     return isdigit(pde->d_name[0]) ? -1 : 0;
 }
 
-static int enumerate_devices(char *bus, struct match *pmatch)
+static int enumerate_devices(char *bus, int vid, int pid)
 {
-    return foreach_dirent(bus, is_bus_or_dev, match_device, pmatch);
+    return foreach_dirent(bus, is_bus_or_dev, match_device, vid, pid);
 }
 
 /*
@@ -170,17 +158,15 @@ static int enumerate_devices(char *bus, struct match *pmatch)
  */
 void mu_usb_find_device()
 {
-    struct match match;
     int matched;
-
-    match.idVendor = ST1;
-    match.idProduct = TOP;
+    int vid = ST1;
+    int pid = TOP;
 
     /* Enumerate USB device tree, looking for a match */
     if (dir_exists(USB_ROOT1))
-        matched = foreach_dirent(USB_ROOT1, is_bus_or_dev, enumerate_devices, &match);
+        matched = foreach_dirent(USB_ROOT1, is_bus_or_dev, enumerate_devices, vid, pid);
     else
-        matched = foreach_dirent(USB_ROOT2, is_bus_or_dev, enumerate_devices, &match);
+        matched = foreach_dirent(USB_ROOT2, is_bus_or_dev, enumerate_devices, vid, pid);
 
     if (matched < 0) return abort_strerror();
 
@@ -336,11 +322,10 @@ void mu_usb_write()
  * it read/write; <0 if it matched a device but couldn't open it (the only
  * true error condition we care about).
  */
-static int match_hid(char *dev, struct match *pmatch)
+static int match_hid(char *dev, int vid, int pid)
 {
     int fd;
     struct hidraw_devinfo hid;
-    unsigned int vid, pid;
 
 #ifdef DEBUG_USB_ENUMERATION
     fprintf(stderr, "match_hid: trying %s\n", dev);
@@ -353,14 +338,12 @@ static int match_hid(char *dev, struct match *pmatch)
 
     close(fd);
 
-    /* Linux idiots! Defined these as _signed_ 16-bit ints. */
-    vid = (unsigned short)hid.vendor;
-    pid = (unsigned short)hid.product;
-
     /* XXX have vendor and product fields been rewritten from USB
      * endianness (little) to local host's? */
+
+    /* Linux idiots! They defined these as _signed_ 16-bit ints. */
     if (hid.bustype == BUS_USB &&
-        vid == pmatch->idVendor && pid == pmatch->idProduct)
+        (unsigned)hid.vendor == vid && (unsigned)hid.product == pid)
         return open(dev, O_RDWR);   /* Re-open read-write; could fail! */
 
     return 0;
@@ -371,19 +354,17 @@ static int match_hid(char *dev, struct match *pmatch)
  */
 void mu_hid_find_device()
 {
-    struct match match;
     int matched;
     int devnum;
     char dev_hidraw[] = "/dev/hidrawX";
-
-    match.idVendor = ST1;
-    match.idProduct = TOP;
+    int vid = ST1;
+    int pid = TOP;
 
     /* Try hidraw0 to hidraw9 */
     for (devnum = '0'; devnum <= '9'; devnum++)
     {
         dev_hidraw[11] = devnum;
-        matched = match_hid(dev_hidraw, &match);
+        matched = match_hid(dev_hidraw, vid, pid);
         if (matched != 0) break;
     }
 
