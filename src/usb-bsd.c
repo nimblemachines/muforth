@@ -231,12 +231,12 @@ static void mu_usb_open_pipe(int flags)     /* ( dev pipe# - pipe) */
     char path[PATHMAX];
 
 #ifdef MU_USB_NETBSD
-    snprintf(path, PATHMAX, "/dev/ugen%d.%.2ld", mud->devnum, TOP);
+    snprintf(path, PATHMAX, "/dev/ugen%d.%.2lld", mud->devnum, TOP);
 #else
 #ifdef MU_USB_FREEBSD
-    snprintf(path, PATHMAX, "/dev/ugen%d.%ld", mud->devnum, TOP);
+    snprintf(path, PATHMAX, "/dev/ugen%d.%lld", mud->devnum, TOP);
 #else   /* FREEBSD 8+ */
-    snprintf(path, PATHMAX, "/dev/usb/%d.%d.%ld", mud->busnum, mud->devnum, TOP);
+    snprintf(path, PATHMAX, "/dev/usb/%d.%d.%lld", mud->busnum, mud->devnum, TOP);
 #endif
 #endif
     pipe_fd = open(path, flags);
