@@ -1,6 +1,6 @@
 # This file is part of muforth: https://muforth.nimblemachines.com/
 #
-# Copyright (c) 2002-2019 David Frech. (Read the LICENSE for details.)
+# Copyright (c) 2002-2020 David Frech. (Read the LICENSE for details.)
 
 #
 # For each of the generated dictionary chain initializers, we want to keep the

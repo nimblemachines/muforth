@@ -1,7 +1,7 @@
 /*
  * This file is part of muforth: https://muforth.nimblemachines.com/
  *
- * Copyright (c) 2002-2019 David Frech. (Read the LICENSE for details.)
+ * Copyright (c) 2002-2020 David Frech. (Read the LICENSE for details.)
  */
 
 /*
@@ -117,12 +117,6 @@ static int foreach_dirent(char *path, path_ok_fn try_path,
     return 0;   /* no match */
 }
 
-static int read_le16(__le16 *pw)
-{
-    __u8 *pb = (__u8 *)pw;
-    return pb[0] + (pb[1] << 8);
-}
-
 /*
  * match_device returns 0 if there was no match (or if it couldn't open a
  * device); >0 if it successfully matched the device and was able to open
@@ -147,8 +141,8 @@ static int match_device(char *dev, int vid, int pid)
 
     close(fd);
 
-    if (read_le16(&dev_desc.idVendor) == vid &&
-        read_le16(&dev_desc.idProduct) == pid)
+    if (__le16_to_cpu(dev_desc.idVendor) == vid &&
+        __le16_to_cpu(dev_desc.idProduct) == pid)
         return open(dev, O_RDWR);   /* Re-open read-write; this could fail! */
 
     return 0;
@@ -171,12 +165,14 @@ static int enumerate_devices(char *bus, int vid, int pid)
 void mu_usb_find_device()
 {
     int matched;
+    int vid = ST1;
+    int pid = TOP;
 
     /* Enumerate USB device tree, looking for a match */
     if (dir_exists(USB_ROOT1))
-        matched = foreach_dirent(USB_ROOT1, is_bus_or_dev, enumerate_devices, ST1, TOP);
+        matched = foreach_dirent(USB_ROOT1, is_bus_or_dev, enumerate_devices, vid, pid);
     else
-        matched = foreach_dirent(USB_ROOT2, is_bus_or_dev, enumerate_devices, ST1, TOP);
+        matched = foreach_dirent(USB_ROOT2, is_bus_or_dev, enumerate_devices, vid, pid);
 
     if (matched < 0) return abort_strerror();
 
@@ -375,8 +371,12 @@ static int match_hid(char *dev, int vid, int pid)
 
     close(fd);
 
+    /* XXX have vendor and product fields been rewritten from USB
+     * endianness (little) to local host's? */
+
+    /* Linux idiots! They defined these as _signed_ 16-bit ints. */
     if (hid.bustype == BUS_USB &&
-        hid.vendor == vid && hid.product == pid)
+        (unsigned)hid.vendor == vid && (unsigned)hid.product == pid)
         return open(dev, O_RDWR);   /* Re-open read-write; could fail! */
 
     return 0;
@@ -390,12 +390,14 @@ void mu_hid_find_device()
     int matched;
     int devnum;
     char dev_hidraw[] = "/dev/hidrawX";
+    int vid = ST1;
+    int pid = TOP;
 
     /* Try hidraw0 to hidraw9 */
     for (devnum = '0'; devnum <= '9'; devnum++)
     {
         dev_hidraw[11] = devnum;
-        matched = match_hid(dev_hidraw, ST1, TOP);
+        matched = match_hid(dev_hidraw, vid, pid);
         if (matched != 0) break;
     }
 

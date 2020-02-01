@@ -1,7 +1,7 @@
 /*
  * This file is part of muforth: https://muforth.nimblemachines.com/
  *
- * Copyright (c) 2002-2019 David Frech. (Read the LICENSE for details.)
+ * Copyright (c) 2002-2020 David Frech. (Read the LICENSE for details.)
  */
 
 /* the very basic words */
@@ -23,9 +23,27 @@ void mu_2star()                  { TOP <<= 1; }
 void mu_2slash()                 { TOP >>= 1; }
 void mu_u2slash()  { TOP = (ucell) TOP >>  1; }
 
-void mu_shift_left()            { ST1 = ST1 << TOP; DROP(1); }
-void mu_shift_right()           { ST1 = ST1 >> TOP; DROP(1); }
-void mu_ushift_right()  { ST1 = (ucell) ST1 >> TOP; DROP(1); }
+/*
+ * Let's give very specific semantics to left and right shifts, rather than
+ * leaving their semantics to the whims of C's underspecified nature.
+ *
+ * Shift amounts strictly less than (sizeof(cell) * 8) will be shifted "normally"
+ * via C's << or >> operator.
+ *
+ * Shift amounts greater than or equal to (sizeof(cell) * 8) -- let's call
+ * these "big" shifts -- will instead result in all ones or all zeros,
+ * depending on the type of shift, and the value shifted. In particular:
+ *
+ *  - Big left shifts and big unsigned right shifts of any value result in all zeros.
+ *  - Big signed right shifts of *non-negative* values result in all zeros.
+ *  - Big signed right shifts of *negative* values result in all ones.
+ */
+#define BIGSHIFT  ((ucell) TOP >= (sizeof(cell) * 8))
+#define SIGN(x)   ((x) < 0 ? -1 : 0)
+
+void mu_shift_left()    { ST1 = BIGSHIFT ? 0 :         ST1 << TOP; DROP(1); }
+void mu_ushift_right()  { ST1 = BIGSHIFT ? 0 : (ucell) ST1 >> TOP; DROP(1); }
+void mu_shift_right()   { ST1 = BIGSHIFT ? SIGN(ST1) : ST1 >> TOP; DROP(1); }
 
 /* By defining these here, we don't need to export the cell size to Forth.
  * This saves a word in the dictionary. ;-) */
