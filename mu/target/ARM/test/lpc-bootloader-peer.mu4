@@ -1,0 +1,114 @@
+( This file is part of muforth: https://muforth.nimblemachines.com/
+
+  Copyright 2002-2020 David Frech. (Read the LICENSE for details.)
+
+loading NXP LPC bootloader (ISP) peer
+
+( NOTE: This might seem a bit odd, but this file implements the target side
+  of the ISP protocol implemented in ROM on the target chip! The reason for
+  doing this here, in muforth, is to test out the protocol by having both
+  sides running on the host.)
+
+variable pty-master
+: pty-send  ( b)     pty-master @ >emit ;
+: pty-recv  ( - b)   pty-master @ <key ;
+
+( Spying on the protocol.)
+variable spy  spy on
+: .char  ( ch - ch)
+   dup  dup letter? if  emit space  else  .h8_  then
+   dup #LF = if  cr  then ;
+
+: send             spy @ if  ." >"  .char  then  pty-send ;
+: recv   pty-recv  spy @ if  ." <"  .char  then ;
+
+( Send a CRLF to the host.)
+: <crlf>   #CR send  #LF send ;
+
+runtime
+( Send a string to the host.)
+: (send")   ( a u)  for  c@+ swap  send  next  drop  <crlf> ;
+
+compiler
+: send"    \ "  \ (send") ;
+
+forth
+: send"    char " parse  (send") ;
+
+( Get input from host.)
+: process  ( key - done)
+   dup #CR = if drop  0 ^ then
+   dup #LF = if drop -1 ^ then ( done)
+   m&  0 ;
+
+128 buffer inbuf
+: get-line  ( - a u)
+   m preserve  inbuf m !
+   begin  recv process  until
+   inbuf  m @  over - ;
+
+: success   send" 0" ;
+: invalid   send" 1" ;
+: ok        send" OK" ;
+
+( To synchronize, the host sends a "?" character. We send the string
+  "Synchronized". Then the host does the same, followed by a clock speed in
+  kHz. Once this "handshake" is complete, we enter into the command loop.)
+
+: sync
+   begin  recv  char ? = until  send" Synchronized"
+   get-line  cr type  ok  ( should be "Synchronized" from host)
+   get-line  ( crystal speed)  cr type  ok ;
+
+variable echoing
+
+32 Ki buffer image   image 32 Ki "ff fill
+: image+   ( target-addr - host-addr)  [ 32 Ki 1- #] and  image + ;
+
+: read-memory   ( a u)
+   cr ." read-memory "  radix preserve hex  over u.  dup u.
+   m preserve  swap  image+ m !
+   for  m* send  next ;
+
+: write-memory  ( a u)
+   cr ." write-memory "  radix preserve hex  over u.  dup u.
+   m preserve  swap  image+ m !
+   for  recv m&  next ;
+
+sealed .isp-command
+: isp-command   .isp-command definitions ;
+
+' nope ( prompt)
+-:  .isp-command find  if  success execute ^  then  invalid ;
+mode __isp-peer
+
+: num   radix preserve decimal  token number ;
+
+isp-command
+: A   num  0= if  echoing off  then ;
+: J   send" 33024" ;  ( LPC810)
+: K   send" foo"  send" bar" ;
+: R   num ( addr)  num ( count)  read-memory ;
+: W   num ( addr)  num ( count)  write-memory  ok ;
+forth
+
+: peer-command
+   get-line  echoing @ if  2dup (send")  then
+   state preserve  __isp-peer evaluate ;
+
+: re-peer
+   open-pty  cr  ." Connect to "  zcount type  ."  to chat with this peer."
+   pty-master !  echoing on  sync  begin  peer-command  again ;
+
+( FUCK!! Is it a new Linux kernel? The re-peering process seems now to open
+  another, different, pty each time! Really annoying.
+
+  Ah! A race condition. Lovely. Let's wait 100ms before re-opening the pty
+  master. That seems to work. Fucking Linux!!)
+
+: peer
+   begin  catch re-peer  pty-master @ close-file
+                                         0 #100,000,000 nanosleep  again ;
+
+( Let's run it!)
+peer
