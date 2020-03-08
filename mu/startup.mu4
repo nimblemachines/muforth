@@ -39,13 +39,16 @@ forth
 
   Copyright 2002-2020 David Frech. (Read the LICENSE for details.)
 
-( This file is muforth/startup.mu4. It contains high-level Forth code
-  necessary to the useful execution of Forth. This file is loaded and
-  interpreted when Forth starts up.
+( This file is muforth/mu/startup.mu4. It contains high-level Forth code
+  necessary to the useful execution of muforth. This file is loaded and
+  interpreted every time muforth starts up.
 
-  The idea is to move as much code as possible -out- of the Forth kernel.
-  Hence the name: "mu" is the Greek letter often used in engineering to
-  represent "micro".
+  The idea is to move as much code as possible *out* of muforth's C kernel
+  and instead implement it in Forth. Hence the name "muforth": mu is the
+  Greek letter often used in engineering to represent "micro".
+
+  However, this "micro-ness" only refers to the C kernel; once everything
+  in this file is loaded, muforth has over 500 words defined!
 
   This file exemplifies a Forth strength - shared by Lisp and Smalltalk,
   among other interpretive/compiled languages - that I like to call
@@ -55,13 +58,20 @@ forth
   As defined in the kernel, the interpreter/compiler is very simple; it
   only knows how to do the following things:
 
-  1. create a new colon word, making a dictionary entry for it;
+  1. parse a whitespace-delimited token out of the input stream;
 
-  2. compile a "call" to an already-defined word [Forth lingo for
-     "named piece of code"], by appending its execution address to the end
-     of the colon word we are compiling.
+  2. look up a token in the dictionary, and complain if it is not found;
 
-  That's it!
+  3. execute the code that is associated with a token;
+
+  4. compile a "call" to the code that is associated with a token, by
+     appending its execution address to the end of the current dictionary
+     entry;
+
+  5. create a new dictionary entry.
+
+  That's it! No numbers, no control structures, and no error reporting
+  other than "xyz isn't defined".
 
   In this file, in Forth, we need to extend the interpreter/compiler to do
   the following:
@@ -73,7 +83,11 @@ forth
   3. read and write numbers - an interesting exercise since muforth starts
      life not even knowing the constants 0 or 1;
 
-  4. read and write strings.
+  4. read and write strings;
+
+  5. create return stack exception frames - for error handling and "fluid
+     binding" of global variables - and unwind through these frames when
+     errors occur.
 
   Once these are complete we will have a useful Forth for doing real work.
 
@@ -281,12 +295,11 @@ forth
   colorForth compiles a literal.
 
   Even though we don't have color in muforth, we can make things a bit
-  cleaner by assuming -- unlike traditional Forth -- that between  [  and
-  ]  we will calculate a literal.
+  cleaner by creating a new word -- #] -- that compiles a literal *before*
+  restarting the colon compiler.
 
-  How does it work? Simple.  ]  _always_ compiles a literal before
-  restarting the colon compiler. To restart it _without_ compiling a
-  literal, use  -]  .)
+  We retain the normal Forth behaviour that  ]  simply restarts the colon
+  compiler, doing no other work.)
 
 
 ( Dictionary structure words. Link fields point to link fields. Roughly, a
@@ -492,12 +505,16 @@ forth
   that dictionary searches and word listings won't see it.
 
   The link field points to the link field within the name entry of the last
-  word defined on the chain.)
+  word defined on the chain.
 
-: chain   create  [ token muchain  drop @ #] ,
-                  [ bl 2* 2* ( 128)  2 2* 2* 1- ( 7) + #]  here 1- c!
-                  ( link) ,
-          does>  cell+ ;  ( return address of link field)
+  We create new chains by reusing the code field and the "muchain" name
+  field from  .forth.  - an existing chain that is created by C code in
+  src/dict.c that is executed at startup.)
+
+: chain   ( anchor-link)
+          new  [ ' .forth. @ #] , ( code field)
+           [ .forth. cell- @ #] , ( hidden "muchain" name field)
+                                , ( anchor-link) ;
 
 : sealed           0  chain ;  ( create an independent vocab chain)
 : chained  current @  chain ;  ( chain to the current vocab)
@@ -751,8 +768,8 @@ decimal
 
 ( NOTE WELL: This code - the number parsing code - has been a thorn in my
   side for ever. You'll see, as you read the following code and comments,
-  that over the years I have made changes, but it has never been as simple as
-  elegant as I would like. It needs a really good whacking.)
+  that over the years I have made changes, but it has never been as simple
+  or as elegant as I would like. It needs a really good whacking.)
 
 ( 2006-mar-26. Ok, so this *totally* sucks. The presence of these bits of
   punctuation can mask a word not being found in the dictionary. A bare /,
@@ -1406,8 +1423,8 @@ variable zloading    ( C-string name of file being loaded)
    \ [    ( return to host forth...)
    forth  ( ... and compile into .forth. chain)
    out-channel preserve  >stderr
-   dup open-file-ro ( fd)  dup on-exit close-file
-   read-file ( a u)
+   dup open-file-ro ( z" fd)  dup on-exit close-file
+   read-file ( z" a u)
    zloading preserve  rot zloading !
    line preserve  1 line !
    line on-exit add-lines-read
@@ -1540,21 +1557,20 @@ Copyright (c) 2002-2020 David Frech (read the LICENSE for details)
 Type 'settings' to see a few of muforth's tweakable behaviours.
 " ;
 
-( Print filename if zloading non-zero; print linenumber if @line non-zero.)
+( If zloading non-zero, print filename; if @line *also* non-zero, print
+  linenumber as well.)
+
 : .where
-   zloading @  =if  dup zcount type  then
-   @line  =if  ." , line "  radix preserve decimal  dup u.  then
-   or if  ." : "  then ;
+   zloading @  ?if  zcount type
+      @line ?if  ." , line "  radix preserve decimal  (u.) type  then
+      ." : "
+   then ;
 
 : .error  ( z")
    >stderr  cr  .where  parsed type space  zcount type ;
 
 ' .error  is warn
 : ?error  ( z")   ?if  .error  r>  -1 unwind  >r  then ;
-
-z" startup.mu4" zloading !
-
-.runtime. chain' throw  'abort !
 
 
 ( Now that all targets have been switched to the du-cached code, and
@@ -1582,6 +1598,7 @@ ld lib/du-cached.mu4
    ( infinite loop, until error... )
 
 : warm
+   [ .runtime. chain' throw #] 'abort !
    decimal \ [
    >stderr banner
    -consumed +sep +case +radix +stack ( defaults - reset these how you like)
