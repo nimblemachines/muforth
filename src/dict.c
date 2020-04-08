@@ -104,7 +104,7 @@ typedef struct link_field link_cell;
 struct dict_name
 {
     char suffix[SUFFIX_LEN];    /* last 7 characters of name */
-    unsigned char length;       /* 127 max; high bit = hidden */
+    unsigned char length;       /* 255 max; 0 means hidden */
     link_cell link;             /* link to preceding link */
 };
 
@@ -123,7 +123,7 @@ struct dict_entry
  *
  * These are now initialised at dictionary init time by calling new_name()
  * with the hidden flag true. This way these pseudo-words won't be found by
- * mu_find() or show up when listed by  word .
+ * mu_find() or show up when listed by  words .
  */
 static link_cell *forth_chain;
 static link_cell *compiler_chain;
@@ -233,10 +233,10 @@ void mu_find()
     link_cell *plink = (link_cell *)TOP;
 
     /*
-     * Only search if length < 128. This prevents us from matching hidden
-     * entries!
+     * Only search if 0 < length < 256. This prevents us from matching hidden
+     * entries, which have length set to 0!
      */
-    if (length < 128)
+    if (0 < length && length < 256)
     {
         while ((plink = _(plink->cell)) != NULL)
         {
@@ -273,10 +273,9 @@ static link_cell *new_name(
     assert(ALIGNED(ph) == (intptr_t)ph, "misaligned (new_name)");
 
     /*
-     * Since we're using the high bit of the length as a "hidden" or
-     * "deleted" flag, cap the length at 127.
+     * Since we're using one byte to store the length, cap length at 255.
      */
-    length = MIN(length, 127);
+    length = MIN(length, 255);
 
     /*
      * Calculate space for the bytes of the name that don't fit into
@@ -295,7 +294,9 @@ static link_cell *new_name(
 
     /* Copy name string */
     memcpy(pnm->suffix + SUFFIX_LEN - length, name, length);
-    pnm->length = length + (hidden ? 128 : 0);
+
+    /* If hidden, set length to 0 */
+    pnm->length = hidden ? 0 : length;
 
     /* Set link pointer */
     _(pnm->link.cell) = link;
@@ -420,8 +421,8 @@ void init_dict()
      * Next, create in our "bootstrap" forth chain .forth. , .compiler. ,
      * and .runtime. chains that look and smell like the ones that will
      * later be created as create/does words. These have a body that looks
-     * like a normal word, but the name is always "muchain" and the hidden
-     * bit is set.
+     * like a normal word, but the name is always "muchain" and its length
+     * byte is 0.
      */
     forth_chain    = new_chain(&forth_bootstrap, ".forth.");
     compiler_chain = new_chain(&forth_bootstrap, ".compiler.");
