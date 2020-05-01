@@ -8,26 +8,28 @@
 
 #include <stdlib.h>     /* exit(3) */
 
-static struct counted_string *pcmd_line;
+static struct string cmd_line;
 
 static void convert_command_line(int argc, char *argv[])
 {
-    char *pline;
+    char *copied;   /* pointer to last byte copied */
 
     /* skip arg[0] */
     argc--;
     argv++;
 
+    /* Concatenate the args into a string in the dictionary. */
     mu_here();
-    pcmd_line = (struct counted_string *)POP;
-    pline = pcmd_line->data;
+    copied = cmd_line.data = (char *)POP;
 
     while (argc--)
     {
-        pline = string_copy(pline, *argv++);
-        *pline++ = ' ';
+        copied = string_copy(copied, *argv++);
+        *copied++ = ' ';
     }
-    pcmd_line->length = pline - pcmd_line->data;
+
+    /* Record length. */
+    cmd_line.length = copied - cmd_line.data;
 
     /*
      * No need to null-terminate! This string is evaluated by the Forth
@@ -35,13 +37,14 @@ static void convert_command_line(int argc, char *argv[])
      * C are copied out of this string into the dictionary and
      * null-terminated first - just like input from _any other_ source.
      */
-    PUSH(pline - (char *)pcmd_line);
+    PUSH(cmd_line.length);
     mu_allot();
 }
 
 void mu_push_command_line()
 {
-    PUSH_ADDR(&pcmd_line->data);
+    PUSH_ADDR(cmd_line.data);
+    PUSH(cmd_line.length);
 }
 
 void mu_bye()

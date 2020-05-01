@@ -20,23 +20,23 @@ void die(const char* zmsg)
     exit(1);
 }
 
-void muboot_die()      /* zmsg */
-{
-    die((char *)TOP);
-}
-
 /* abort() is deferred via this variable */
-CODE(muboot_die)
-static xtk_cell xtk_abort = XTK(muboot_die);
+static xt_cell xt_abort = NULL;
 
 void mu_abort()     /* zmsg */
 {
-    execute_xtk(_(xtk_abort));
+    if (xt_abort)
+    {
+        PUSH(xt_abort);
+        mu_execute();
+    }
+    else
+        die((char *)TOP);
 }
 
 void mu_push_tick_abort()
 {
-    PUSH_ADDR(&xtk_abort);
+    PUSH_ADDR(&xt_abort);
 }
 
 /*
