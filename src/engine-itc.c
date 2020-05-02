@@ -10,18 +10,17 @@
 
 /*
  * This is where all the magic happens. Any time we have the address of a
- * word to execute (an execution token, or XTK) - either because we looked
+ * word to execute (an execution token, or xt) - either because we looked
  * it up in the dictionary, or because we fetched it out of a variable - we
- * call execute_xtk. It is most commonly invoked by EXECUTE, which POPs an
- * xtk off the D stack, and calls execute_xtk.
+ * call mu_execute().
  *
  * We need magic here because of the hybrid nature of the system. It is
  * *not* a truly indirect-threaded Forth, where you set up IP and go, and
  * never look back. We're executing C code, then Forth, then C... The Forth
  * inner interpreter never runs "free"; in fact, we run it in this routine!
  *
- * How do we know if the XTK refers to a Forth word or to a C routine? We
- * don't...until we run it. If it's Forth, the first thing it will do is
+ * How do we know if the xt refers to a Forth word or to a C routine? We
+ * don't...until we run it! If it's Forth, the first thing it will do is
  * NEST - push the caller's IP - and then it will set IP to point to its
  * own code. In fact, that's *all* Forth words do when you execute them!
  *
@@ -49,9 +48,9 @@ void mu_execute()
 
     rp_saved = RP;
 
-    CALL(_STAR((xt_cell *)SP++));
+    CALL(_STAR((xt_cell *)SP++));   /* pop stack and execute xt */
     while (RP < rp_saved)
-        CALL(_STAR(IP++));
+        CALL(_STAR(IP++));          /* do NEXT */
 }
 
 #define NEST      RPUSH((addr)IP)
