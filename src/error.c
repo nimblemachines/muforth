@@ -21,13 +21,17 @@ void die(const char* zmsg)
 }
 
 /* abort() is deferred via this variable */
-static xt_cell xt_abort = NULL;
+static xt_cell xt_abort = CELL(NULL);
 
 void mu_abort()     /* zmsg */
 {
-    if (xt_abort)
+    if (_(xt_abort))
     {
-        PUSH(xt_abort);
+        /*
+         * PUSH_ADDR because the contents of xt_abort are a machine
+         * address.
+         */
+        PUSH_ADDR(_(xt_abort));
         mu_execute();
     }
     else

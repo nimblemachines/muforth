@@ -18,10 +18,12 @@
 #ifdef MU_LITTLE_ENDIAN
 /* LE 32 */
 #define CELL_T(type)    struct { type value; uintptr_t padding; }
+#define CELL(value)     { value, 0 }
 
 #else
 /* BE 32 */
 #define CELL_T(type)    struct { uintptr_t padding; type value; }
+#define CELL(value)     { 0, value }
 
 #endif
 
@@ -32,6 +34,7 @@
 
 /* These are no-ops for 64-bit. */
 #define CELL_T(type)    type
+#define CELL(value)     (value)
 #define _(cell)         (cell)
 #define _STAR(pcell)    *(pcell)
 

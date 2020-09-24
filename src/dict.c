@@ -401,7 +401,7 @@ static link_cell *new_chain(
     link_cell *plink, char *name)
 {
     new_linked_name(plink, name, strlen(name));
-    _STAR(code_cell *)ph++ = mu_do_chain;   /* set code pointer */
+    _STAR((code_cell *)ph++) = mu_do_chain;     /* set code pointer */
     return new_name(NULL, "muchain", 7, 1);
 }
 
@@ -422,7 +422,7 @@ static void init_chain(link_cell *plink, link_cell *anchor_link, struct inm *pin
     for (; pinm->name != NULL; pinm++)
     {
         new_linked_name(plink, pinm->name, strlen(pinm->name));
-        _STAR(code_cell *)ph++ = pinm->code;    /* set code pointer */
+        _STAR((code_cell *)ph++) = pinm->code;      /* set code pointer */
     }
 }
 
