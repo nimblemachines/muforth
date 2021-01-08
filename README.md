@@ -46,7 +46,7 @@ will tell you how to build muforth. It's stupid simple.
 Look in
 [mu/target/](https://github.com/nimblemachines/muforth/tree/master/mu/target)
 to find a target that interests you. There is generally a
-`mu/target/&lt;target-name&gt;/build.mu4` that loads the cross-build environment. Use it as
+`mu/target/<target-name>/build.mu4` that loads the cross-build environment. Use it as
 an "index" to find the assembler, disassembler, meta-compiler, kernel, and
 other key pieces of code.
 
