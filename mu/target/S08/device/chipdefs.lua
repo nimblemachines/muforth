@@ -1,6 +1,6 @@
 -- This file is part of muforth: https://muforth.nimblemachines.com/
 
--- Copyright (c) 2002-2020 David Frech. (Read the LICENSE for details.)
+-- Copyright (c) 2002-2021 David Frech. (Read the LICENSE for details.)
 
 -- Equates for several S08 variants, "scraped" from Freescale datasheets.
 -- From here we generate muforth code!
