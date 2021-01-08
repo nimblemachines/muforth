@@ -30,7 +30,7 @@ but the differences go rather deep.
 
 Its implementation is no longer the point. Its sole reason for existing
 is to be a cross/meta/target-compiler for _other_ Forths, and their
-implementations are in no way tied to muforth's.
+implementations are in no way tied to muforth’s.
 
 It’s [BSD
 licensed](https://github.com/nimblemachines/muforth/blob/master/LICENSE), so do
@@ -41,19 +41,19 @@ muforth.
 # Starting points
 
 [BUILDING](https://github.com/nimblemachines/muforth/blob/master/BUILDING)
-will tell you how to build muforth. It's stupid simple.
+will tell you how to build muforth. It’s stupid simple.
 
 Look in
 [mu/target/](https://github.com/nimblemachines/muforth/tree/master/mu/target)
 to find a target that interests you. There is generally a
-`mu/target/<target-name>/build.mu4` that loads the cross-build environment. Use it as
-an "index" to find the assembler, disassembler, meta-compiler, kernel, and
-other key pieces of code.
+`mu/target/<target-name>/build.mu4` that loads the cross-build environment. Use
+it as an “index” to find the assembler, disassembler, meta-compiler, kernel,
+and other key pieces of code.
 
 
 # Documentation
 
-Sadly, there isn't a lot of documentation right now. A good place to start is
+Sadly, there isn’t a lot of documentation right now. A good place to start is
 to read the source.
 
 The code – both the C code that implements the Forth virtual machine and the
