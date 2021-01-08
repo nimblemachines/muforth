@@ -46,7 +46,7 @@ will tell you how to build muforth. It's stupid simple.
 Look in
 [mu/target/](https://github.com/nimblemachines/muforth/tree/master/mu/target)
 to find a target that interests you. There is generally a
-mu/target/<target>/build.mu4 that loads the cross-build environment. Use it as
+mu/target/&lt;target&gt>/build.mu4 that loads the cross-build environment. Use it as
 an "index" to find the assembler, disassembler, meta-compiler, kernel, and
 other key pieces of code.
 
@@ -82,14 +82,15 @@ that great, but you might find it interesting, or at least amusing.
 
 It’s also hard to see my slides. If you want to “follow along”, [download my
 slides](https://github.com/nimblemachines/muforth/blob/master/talks/2008-mar-30-PNCA),
-and use less to view them – ideally in a text window that is about 31 lines
+and use `less` to view them – ideally in a text window that is about 31 lines
 high – like so:
 
-  less -G ~/muforth/talks/2008-mar-30-PNCA
+```
+less -G ~/muforth/talks/2008-mar-30-PNCA
+```
 
-Use /^=== to get to the second page, and n to page forward after that.
+Use `/^===` to get to the second page, and `n` to page forward after that.
 
-<iframe src="https://player.vimeo.com/video/859408" width="640" height="361"
-frameborder="0" allow="autoplay; fullscreen" allowfullscreen></iframe>
+[![March 2008 talk on Vimeo](https://i.vimeocdn.com/video/53151468)](https://vimeo.com/859408)
 
 # Above all, enjoy!
