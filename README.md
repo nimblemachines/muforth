@@ -9,7 +9,7 @@ it is naturally extensible, scriptable, and customizable.
 It is very well-suited to interactive coding, debugging, and exploration, and
 is a great tool for bringing up new hardware.
 
-It has support - in varying degrees of completeness - for the following
+It has support – in varying degrees of completeness – for the following
 architectures:
 
   * [ARMv5](https://github.com/nimblemachines/muforth/tree/master/mu/target/ARM/v5) (originally targeting an ARM AEB-1 board running an ARM7DI processor)
@@ -25,7 +25,7 @@ architectures:
 # Why yet another Forth?
 
 I initially wrote muforth because I wanted to try out some implementation
-ideas. Today there is very little that distinguishes muforth from fig-FORTH -
+ideas. Today there is very little that distinguishes muforth from fig-FORTH –
 but the differences go rather deep.
 
 Its implementation is no longer the point. Its sole reason for existing
@@ -46,7 +46,7 @@ will tell you how to build muforth. It's stupid simple.
 Look in
 [mu/target/](https://github.com/nimblemachines/muforth/tree/master/mu/target)
 to find a target that interests you. There is generally a
-mu/target/&lt;target&gt>/build.mu4 that loads the cross-build environment. Use it as
+`mu/target/&lt;target-name&gt;/build.mu4` that loads the cross-build environment. Use it as
 an "index" to find the assembler, disassembler, meta-compiler, kernel, and
 other key pieces of code.
 
