@@ -1,5 +1,8 @@
--- Like we did with the S08, try to generate some of the equates
+-- Like we did with the S08 and AVR, try to generate some of the equates
 -- automatically. Or at least automatically-ish.
+
+-- Currently this file generates a *subset* of the MSP430FR6989 equates,
+-- and *most* of the MSP430F5529 equates.
 
 -- Scraped from MSP430F5529 datasheet, pp68--81.
 -- Copied verbatim table-by-table, then broke up tables 6-25 and 6-37 into
@@ -448,7 +451,7 @@ USB PLL interrupts USBPLLIR 14h
 # NOTE: For some stupid reason, TI decided that, *in this one case*, to put
 # underscores in the register names. Also, the names are stupid. I'm going to
 # fix both of these problems. Of course, this is going to render my register
-# incompatible with any example code...
+# names incompatible with any example code...
 
 Table 6-45. USB Control Registers (Base Address: 0920h)
 REGISTER DESCRIPTION REGISTER OFFSET
@@ -776,7 +779,7 @@ function peripheral_printer()
 end
 
 function print_reg(l)
-    local comment, reg, offset = l:match "^(..-) (%w+) (%x+)h$"
+    local comment, reg, offset = l:match "^(..-) (%w+) 0-(%x%x)h$"
     if comment then
         local padding = math.max(16 - reg:len(), 3)
         print(fmt("%s preg %s%s| %s",
