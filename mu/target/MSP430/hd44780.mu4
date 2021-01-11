@@ -238,8 +238,9 @@ code spi!
 ( Do two 4-bit cycles for each 8-bit transfer.)
 : wr8  ( data RS)   split  wr4 ( hi)  wr4 ( lo)  100us ;
 
-: cmd   ( byte)  0 wr8 ;
-: emit  ( char)  8 wr8 ;
+: cmd   ( byte)  0 wr8 ;  ( send a command byte)
+: data  ( byte)  8 wr8 ;  ( send a byte of data: pixels to character generator
+                            RAM, or char to display RAM)
 
 .else  ( not hc595)
 
@@ -277,33 +278,44 @@ meta: drive  ( mask)  constant
 ( Do two 4-bit cycles for each 8-bit transfer.)
 : wr8  ( data RS)   control!  dup  wr4 ( hi)  nyb<<  wr4 ( lo)  100us ;
 
-: cmd   ( byte)  0 wr8 ;
-: emit  ( char)  2 wr8 ;
+: cmd   ( byte)  0 wr8 ;  ( send a command byte)
+: data  ( byte)  2 wr8 ;  ( send a byte of data: pixels to character generator
+                            RAM, or char to display RAM)
 
 .then
 
-: at    ( addr)  80 or  cmd ;
-: clear           1     cmd  5ms ;
-: home            2     cmd  5ms ;
+: at     ( addr)  80 or  cmd ;  ( set an address in display RAM)
+: cgram  ( addr)  40 or  cmd ;  ( set an address in character generator RAM)
+: clear            1     cmd  5ms ;
+: home             2     cmd  5ms ;
 : cr    ( line#)  =if  drop 40  then  at ;
+
+variable 'preprocess
+: emit   'preprocess @execute  data ;
 
 : type    ( a u)  for  count emit  next  drop ;
 
 : +cursor   %0000_1110 cmd  ( display on; cursor on; blink off) ;
 : -cursor   %0000_1100 cmd  ( display on; cursor off; blink off) ;
 
+: 1line    %0010_0100 cmd  ( 4 bit interface; 1 line; 5x11 font) ;
+: 2lines   %0010_1000 cmd  ( 4 bit interface; 2 lines; 5x8 font) ;
+
+( Useful two line display using 5x8 character boxes. Characters with
+  descenders look very ugly.)
+
+: ugly
+   2lines  ['] nope 'preprocess !
+   +cursor ( display and cursor on)
+   clear ;
+
 : lcd-init
    port-init  ( implicitly sets E, RS, and R/nW to 0)
    %0011_0000  dup wr4 5ms  dup wr4 5ms  wr4 100us  ( do power-up init; see table 23 in datasheet)
    %0010_0000 wr4  ( 4 bit interface)  100us
-   %0010_1000 cmd  ( 4 bit interface; 2 lines; 5x8 font)
-   +cursor ( display and cursor on)
-   clear ;
+   ugly ;
 
 ram
-
-: cgram  ( addr)  40 or  cmd ;
-: +descender  80 + ;
 
 label true   -1 # top mov  begin  next  ;c
 
@@ -313,10 +325,17 @@ code in?  ( char a u - f)  ( if char in string, return true)
       1 # top sub ( count)  0= until
    ( top is zero)  again ( next)  ;c
 
-: fancy-emit
-   dup  " gjpqy" in?  if  +descender  then  emit ;
+: +descender  80 + ;  ( Convert an ASCII character to its descender version)
+: ?descender  ( char - char')  dup  " gjpqy" in?  if  +descender  then ;
 
-: fancy    ( a u)  for  count fancy-emit  next  drop ;
+( Set a one line mode with room for descenders, and set up emit to choose
+  the descender versions of g j p q and y.
+
+  Cf ugly, above.)
+
+: fancy
+  1line  ['] ?descender 'preprocess !
+  +cursor clear ;
 
 ( Examples.)
 
