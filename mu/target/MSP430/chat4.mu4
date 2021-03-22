@@ -34,17 +34,20 @@ loading MSP430 serial chat protocol v4 (core)
 
   Responds to the following commands. NOTE: these are hex values!
 
-00 - 3f  Idle   - these command bytes are ignored
+00 - 3f  Idle        - these command bytes are ignored
 
-40  VersionAddr - get the address of the version commit
-41  SetAddr     - set the memory address pointer
-42  GetStatus   - get SP, PC, SR, and CP
-43  Run         - set SP, PC, SR, CP, and execute
-44  ReadWords   - read N words, incrementing by 2 as we go
-45  WriteWord   - write a word to memory, incr pointer by 2
-46  WriteByte   - write a byte to memory, incr pointer by 1
+40  VersionAddr      - get the address of the version commit
+41  SetAddr          - set the memory address pointer
+42  GetStatus        - get SP, PC, SR, and CP
+43  Run              - set SP, PC, SR, CP, and execute
+44  ReadWords        - read N words, incrementing by 2 as we go
+45  WriteWord        - write a word to memory, incr pointer by 2
+46  WriteByte        - write a byte to memory, incr pointer by 1
+47  SetFlashCmd      - set flash command, clear flash status
+48  GetFlashStatus   - read accumulated flash status word
+49  FlashWord        - write a word to flash, incr pointer
 
-47 - ff  Idle   - these command bytes are ignored
+4a - ff  Idle        - these command bytes are ignored
 )
 
 decimal
@@ -60,6 +63,8 @@ assembler
 ( These are all considered "caller saved" registers. They are scratch.
   Called code can freely clobber them.)
 
+ 12 reg fcmd   ( flash command)
+ 13 reg fstat  ( flash status)
  14 reg top    ( current accumulator)
  15 reg mp     ( memory pointer)
 forth
@@ -69,10 +74,9 @@ forth
    dup 5 u< if  ( low special)
      2*  z" pcspsrr3cp" +  2 type  ^  then
           ( 0011223344)
-   dup 14 u< if  ( not special)  ." r" .udec  ^  then
-   14 -  3 *  z" topmp " +  3 -trailing type ;  is .regname
-               ( eeefff)
-
+   dup 12 u< if  ( not special)  ." r" .udec  ^  then
+   12 -  5 *  z" fcmd fstattop  mp   " +  5 -trailing type ;  is .regname
+               ( cccccdddddeeeeefffff)
 hex
 
 __meta
@@ -132,9 +136,41 @@ label read-words
 label write-word
    get-word c  top mp ) mov   2 # mp add  ret  ;c
 
-( We need this to turn change the MPU settings.)
+( We need this to change the MPU settings on FRAM devices.)
 label write-byte
    get-byte c  top mp ) movb  1 # mp add  ret  ;c
+
+.equates. .contains FCTL1 .if
+
+label set-flash-command
+   get-word c  top fcmd mov      -- receive and save flash command from host
+   fstat clr                     -- clear flash status
+   ret  ;c
+
+( Return accumulated flash status word to host. For safety, also clear the
+  fcmd register.)
+
+label get-flash-status
+   fcmd clr  fstat top mov  put-word j  ;c
+
+( Execute the flash command saved in fcmd. After command completes, read
+  the flash status and OR it into fstat.)
+
+label flash-word
+   get-word c                    -- receive word to flash
+   FKEY # FCTL3 & mov            -- clear FLOCK
+   fcmd FCTL1 & mov              -- write flash command - must have FKEY!
+   top mp ) mov  2 # mp add      -- write word and incr pointer
+.def in-ram  .def bsl-ram-chat  .or .if
+   begin  FBUSY # FCTL3 & bit  0= until
+.then
+   FKEY # FCTL1 & mov            -- clear command
+   FCTL3 & top mov               -- read status word
+   FKEY FLOCK + # FCTL3 & mov    -- set FLOCK
+   top fstat bis                 -- OR resulting flash status into fstat
+   ret  ;c
+
+.then
 
 ( Dispatch.)
 label command-table
@@ -145,6 +181,11 @@ label command-table
    ( 44) read-words ,
    ( 45) write-word ,
    ( 46) write-byte ,
+.equates. .contains FCTL1 .if
+   ( 47) set-flash-command ,
+   ( 48) get-flash-status ,
+   ( 49) flash-word ,
+.then
 
 label process
    get-byte c  ( cmd)
@@ -190,7 +231,7 @@ Vreset handler
    MPUCTL0 1+ ( high byte) & clrb   -- re-lock MPU
 .then
 
-.equates. .contains PM5CTL0 .if
+.equates. .contains PM5CTL0  .ndef f5529  .and .if
    1 # PM5CTL0 & bic                -- unlock i/o port pins
 .then
 
@@ -234,20 +275,59 @@ Vreset handler
 
 .else
 
-z" No BCS calibration or CS module found. Your clock is unsupported."  abort
+( If device contains a UCS module, set it up. On the F5529 Launchpad there
+  is a 4 Mhz crystal connected to XT2. We want to use it to drive the
+  DCO/PLL to get a 16/24/25 Mhz clock.)
 
-.then .then
+.equates. .contains UCSCTL0 .if
+
+0 .if
+   -- On F5529, P5SEL.2 and .3 need to be 1 to connect XT2 to the pins.
+   -- %0000_1100 # P5SEL & movb
+   %0000_0100 # P5SEL & movb     -- is P5SEL.2 enough? datasheet thinks so
+
+   -- Set highest drive current for XT2
+   c000 # UCSCTL6 & bis
+
+   -- Turn on XT2 and wait for it to start.
+   1100 # UCSCTL6 & bic    -- turn off XT2OFF and XT2BYPASS bits
+   begin
+      -- Clear fault flags
+      8 ( XT2OFFG) # UCSCTL7 & bicb
+      2 ( OFIFG) # SFRIFG1 & bicb
+
+      -- Loop until XT2 fault flag remains clear
+      8 ( XT2OFFG) # UCSCTL7 & bitb
+   0= until
+
+   -- Switch SMCLK and MCLK to XT2 while we set up the DCO and FLL
+   77 ( SELM+SELS bits) # UCSCTL4 & bic
+   55 ( SELM=XT2, SELS=XT2) #  UCSCTL4 & bis
+
+   -- Divide XT2 to 1 Mhz
+   -- Switch MCLK to DCO
+.then
+
+.else
+
+z" No BCS calibration, CS module, or UCS module found. Your clock is unsupported."
+abort
+
+.then .then .then
 
    -- Configure UART for 115,200 bps, 8 bits, no parity
    81 # chat-uart-ctl1 & bisb    -- enable SMCLK
                                  -- hold UART in reset while configuring
    chat-uart-ctl0 & clrb         -- reset to defaults: 8 bits, no parity, 1 stop
-   chat-uart-br1 & clrb          -- set baud rate divisor
-.ifndef slow-chat
-   8 # chat-uart-br0 & movb      -- 16,000,000/16/115,200
+
+.ifdef chat-uart-brw
+   chat-uart-brw &  \f swap #  \f swap mov
 .else
-   #104 # chat-uart-br0 & movb   -- 16,000,000/16/9600
+   chat-uart-br1 & clrb          -- set baud rate divisor high byte to 0
+   chat-uart-br &  \f swap #  \f swap movb
+                                 -- set baud rate divisor low byte
 .then
+
 .ifdef chat-uart-mctlw
    chat-uart-mctlw &  \f swap # \f swap  mov
 .else
@@ -264,7 +344,8 @@ z" No BCS calibration or CS module found. Your clock is unsupported."  abort
 .ifdef chat-port-sel0-zeros  chat-port-sel0-zeros # chat-port-sel0 & bicb   .then
 .ifdef chat-port-sel1-zeros  chat-port-sel1-zeros # chat-port-sel1 & bicb   .then
 
-.equates. .contains FCTL1 .if  ( Flash control register)
+( G2553 has this register; F5529 does not!)
+.equates. .contains FCTL2 .if  ( Flash control register)
    -- Set up flash clock; needs to be between 257 and 476 kHz (no joke)
    -- We're running at 16M, so set it to 16M/40 = 400k.
    FKEY #39 ( divisor-1) +  %0100_0000 ( MCLK)  + # FCTL2 & mov
@@ -283,11 +364,11 @@ z" No BCS calibration or CS module found. Your clock is unsupported."  abort
 
 here
 .equates. .contains Vbslkey .if
-Vbslkey goto  0 ,
+   Vbslkey goto  0 ,
 .else .equates. .contains Vbslsig1 .if
-Vbslsig1 goto  0aaaa dup , ,  ( sig1 and sig2)
+   Vbslsig1 goto  0aaaa dup , ,  ( sig1 and sig2)
 .else
-z" Do you have to do something special to prevent the BSL from erasing chip?"
-   abort
+   ." Do you have to do something special to prevent the BSL from erasing your chip?"
+   -- abort
 .then .then
 goto
