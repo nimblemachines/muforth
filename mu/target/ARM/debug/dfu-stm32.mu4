@@ -1,0 +1,125 @@
+( This file is part of muforth: https://muforth.nimblemachines.com/
+
+  Copyright 2002-2020 David Frech. (Read the LICENSE for details.)
+
+loading STM32 USB DFU (device firmware upgrade) support
+
+( By supporting the STM32 USB DFU interface, it's possible to ignore the
+  broken ST-LINK interface and talk directly to the target chip.
+
+  The DFU interface supports reading and writing both Flash and RAM, so it
+  can be used directly to "explore" the chip as well as writing
+  muforth-specific USB chat firmware to it.
+
+  References:
+
+  * STM32 System memory boot mode, app note AN2606
+  * USB DFU protocol used in the STM32 bootloader, app note AN3156
+  * USB DFU 1.1 spec: https://usb.org/sites/default/files/DFU_1.1.pdf
+)
+
+hex
+
+0483 df11 usb-find-device  .if  constant dfu-device
+
+: usb  ( bmRequest bRequest wValue wIndex wLength 'buffer)
+   dfu-device  usb-control drop ;
+
+: ms   #1,000,000 * ( ns)  0 swap  nanosleep ;
+
+
+( Commands)
+
+( DFU_DNLOAD)
+: dfu.dnload  ( wValue wLength 'buffer)  2push
+            21 01  rot 0  2pop  usb ;
+
+( DFU_UPLOAD)
+: dfu.upload  ( wValue wLength 'buffer)  2push
+           0a1 02  rot 0  2pop  usb ;
+
+variable stbuf  ( for checking status)
+
+( DFU_GETSTATUS)
+: dfu.get-status   ( - state:status)
+           0a1 03  0 0 6  stbuf  usb
+           stbuf c@+ ( status stbuf+1)
+                 c@+ c@+ c@+  push  lohi> lohi> ( timeout) ms
+           pop c@  lohi> ( state:status) ;
+
+( DFU_CLRSTATUS)
+: dfu.clear-status
+            21 04  0 0 0  stbuf  usb ;
+
+
+: !=   = 0= ;  ( to be more like C?)
+
+( Wait until device no longer busy.)
+: -busy  ( - status)
+   0  begin  drop  dfu.get-status  dup 04_00 ( dfuDNBUSY) != until ;
+
+: >idle
+   begin  dfu.clear-status  dfu.get-status  02_00 ( dfuIDLE) = until ;
+
+( Check to see if we are either in dfuIDLE or in a particular
+  status/state. Reset to dfuIDLE if neither is true.)
+
+: ?status  ( status)
+   -busy  02_00 ( dfuIDLE) over =  if  2drop ^  then
+                                =  if        ^  then
+   >idle ;
+
+( Since the DFU protocol is stupidly sensitive to what state it's in,
+  let's be careful and create "smarter" dnload and upload words that take
+  special care with state transitions.
+
+  NOTE: When using dnload and upload to transfer to and from target memory,
+  resp, the target transfer address is calculated as follows:
+
+    target_address = [wValue - 2] * wLength + base_address
+
+  base_address defaults to 0800_0000 but can be set using the set-address
+  command, below.
+
+  There seem to be - surprise! - some quirks with the implementation. Using
+  a smallish wValue - like 0100 hex - I was unable to access all of the RAM.
+  Also, one has to skip the beginning of RAM - details are in AN2606 but it's
+  usually 5 Ki or 6 Ki or so - so some experimentation is in order when
+  really putting this to the test.
+
+  Also, it seems that the wLength value needs to be the same for upload and
+  dnload, otherwise things don't work properly! I have no idea what is going
+  on, but I tried to write four blocks of 256 bytes and then read back one
+  block of 1024 bytes, and only the first 256 bytes were correct. But when
+  I read them back in blocks of 256 bytes, I got the correct data!
+
+  So, "quirks". ;-)
+
+: dnload   ( wValue wLength 'buffer)
+   05_00 ?status  ( dfuDNLOAD-IDLE)
+   dfu.dnload  -busy drop ;
+
+: upload   ( wValue wLength 'buffer)
+   09_00 ?status  ( dfuUPLOAD-IDLE)
+   dfu.upload ;
+
+
+variable cmd   ( we need a small buffer for DNLOAD sub-commands)
+
+( DFU_DNLOAD subcommands)
+: >cmd        ( cmd)               cmd c!         0 1 cmd  dnload ;
+: >cmd+addr   ( target-addr cmd)   cmd c!+  lew!  0 5 cmd  dnload ;
+
+( DFU_DNLOAD subcommand 21)
+: set-address  ( target-addr)   21 >cmd+addr ;
+
+( DFU_DNLOAD subcommand 41, with address)
+: erase-page   ( target-addr)   41 >cmd+addr ;
+
+( DFU_DNLOAD subcommand 41, without address)
+: mass-erase                    41 >cmd ;
+
+( DFU_DNLOAD subcommand 92)
+: unprotect                     92 >cmd ;
+
+.then
