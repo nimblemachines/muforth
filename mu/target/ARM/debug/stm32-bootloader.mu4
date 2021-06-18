@@ -15,7 +15,6 @@ hex
 : ?spkt  ( spy packet, or "spiked")  spy @ if  cr  then ;
 
 variable checksum
-: sum!  checksum off ;
 : sum  ( w)  checksum @  xor  checksum ! ;
 
 : >b   dup sum  send ;
@@ -32,35 +31,75 @@ variable checksum
 : >sum    checksum @  >b  ?ack ; ( resets checksum to zero!)
 : >cmd    ( cmd)  dup send  invert send  ?ack ;  ( send command and its inverse)
 : >addr   ( a)  ( big-endian)  >0123  >b >b >b >b  >sum ;
-: >count  ( n)  1- >b ;
+: >hword  ( u)  >lohi  >b >b ;
 
 ( Command set)
-: b.version       ( - version)
-                             ?spkt  01 >cmd  b> b> b> 2drop  ?ack ;
+: b.get-commands  ( - #commands version)
+                             ?spkt  00 >cmd  b> b> ; ( receive #commands bytes)
 : b.read-memory   ( a u)     ?spkt  11 >cmd  swap >addr  1- >cmd ; ( receive u bytes)
 : b.go            ( a)       ?spkt  21 >cmd       >addr ;
-: b.write-memory  ( a u)     ?spkt  31 >cmd  swap >addr  >count ;  ( send data and checksum, then ?ack)
-: b.erase         ( ???)     ?spkt  43 >cmd ;  ( XXX incomplete)
+: b.write-memory  ( a u)     ?spkt  31 >cmd  swap >addr  1- >b ; ( send data and checksum, then ?ack)
+: b.erase-memory             ?spkt  43 >cmd ;  ( followed by page list bytes, or ff,00)
+: b.extended-erase-memory    ?spkt  44 >cmd ;  ( followed by page list halfwords, or ffff,00)
 : b.read-unprotect           ?spkt  92 >cmd  ?ack ?ack ;
 
 : setup-chunk  ( buf a u - u a u)   rot m !  tuck ;
 
-: b.hello
-   checksum off  #115200 bps  even-parity  7f send  ?ack
-   b.version  cr  ." Bootloader version "
-   radix preserve hex  <#  #  char . hold  #  #> type  cr ;
+( Protocol can erase several pages at once. We do one at a time for
+  simplicity. Note that we send pagecount-1 - ie, 0 for a pagecount of 1 -
+  to target!)
 
-: b.read-chunk  ( buf a u)
+: >page-index  ( a - i)  0800_0000 -  /page / ;
+
+( Original erase command uses byte-sized page indices.)
+: orig-erase-page      ( a)  0 >b      >page-index  >b      >sum ;
+: orig-mass-erase          0ff >cmd ;
+
+( Extended erase command uses hword-sized page indices.)
+: extended-erase-page  ( a)  0 >hword  >page-index  >hword  >sum ;
+: extended-mass-erase    0ffff >hword                       >sum ;
+
+: orig-erase  ( a)
+   b.erase-memory  =if  orig-erase-page ^  then
+                  drop  orig-mass-erase ;
+
+: extended-erase  ( a)
+   b.extended-erase-memory  =if  extended-erase-page ^  then
+                           drop  extended-mass-erase ;
+
+defer b.erase         now orig-erase     is b.erase  ( default)
+: use-extended-erase  now extended-erase is b.erase
+   ." Using extended erase command."  cr ;
+
+( Connect to target bootloader, get version and command list, and look for
+  command 44 - extended erase - and use it if possible.)
+
+: b.hello  ( - chunk-size)
+   checksum off  #115200 bps  even-parity  7f send  ?ack
+   b.get-commands  ( #commands version)
+   cr  ." Bootloader version "
+   radix preserve hex  <#  #  char . hold  #  #> type  cr
+   ( Now receive the list of command bytes and look for extended erase.)
+   for  b>  44 =  if  use-extended-erase  then  next  ?ack
+   100 ;
+
+: b.get-status    ( - sp pc)  dead_c0de dup ;
+: b.run           ( sp pc)  2drop chat-fail ;
+
+: b.read  ( buf a u)
    setup-chunk  b.read-memory   for  b> m&  next ;
 
-: b.write-chunk  ( buf a u)
+: b.write  ( buf a u)
    setup-chunk  b.write-memory  for  m* >b  next  >sum ;
 
-: b.get-sp  dead_c0de ;
-: b.set-sp  chat-fail ;
-: b.run     chat-fail ;
+( XXX Needs to write SP and PC to two consecutive locations, and then send
+  the address of the SP to the bootloader.)
 
-( XXX Need a boot-via? We can't do tethered-style code execution using the
-  serial bootloader. We can only jump to our application, never to return.)
+: b.flash   b.write ;
+
+( XXX Do we eed a boot-via in addition to chat-via? We can't do
+  tethered-style code execution using the serial bootloader. We can only
+  jump to our application, never to return.)
+
 : boot
-   chat-via  b.hello  b.get-sp  b.set-sp  b.read-chunk  b.write-chunk  b.run ;
+   chat-via  b.hello  b.get-status  b.run  b.read  b.write  b.erase  b.flash ;
