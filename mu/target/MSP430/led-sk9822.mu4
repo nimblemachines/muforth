@@ -1,0 +1,168 @@
+( This file is part of muforth: https://muforth.nimblemachines.com/
+
+  Copyright 2002-2021 David Frech. (Read the LICENSE for details.)
+
+loading Support for SK9822 RGB LED chip (eg Adafruit Dotstars)
+
+( The serial protocol is very simple. It is a series of 32-bit "frames":
+  a start frame that is all 0 bits, followed by an RGB frame for each LED
+  in the string, followed by an end frame consisting of enough "dummy" bits
+  -- 0 or 1 -- to clock the LED frames to the end of the string.
+
+  The RGB frame has a 5-bit intensity field in addition to the R, G, and B values:
+
+    111n_nnnn bbbb_bbbb gggg_gggg rrrr_rrrr
+
+  nn is intensity, bb is blue, gg is green, rr is red.
+
+  See
+
+    https://cpldcpu.wordpress.com/2014/11/30/understanding-the-apa102-superled/
+    https://cpldcpu.wordpress.com/2016/12/13/sk9822-a-clone-of-the-apa102/
+
+  for a helpful discussion of how these chip LEDs work, how many bits are
+  *actually* required in the end frame, and how their behavior departs from
+  the specification in the datasheet.
+)
+
+hex
+__meta
+ram
+
+( Doing initial testing on the FR6989 Launchpad.)
+( UCB0_SCLK is P1.4; UCB0_MOSI is P1.6.
+  P1SEL1 = 0 and P1SEL0 = 1 to select UCB0.
+
+  The Dotstar cable has 4 colored wires:
+  Red = 5v
+  Black = Gnd
+  Yellow = SPI clock => P1.4
+  Green =  SPI data  => P1.6
+)
+
+( Init ports and SPI interface - USCI_B0.)
+code port-init
+   ( Set up SPI)
+
+   ( Clock phase=0, polarity=1; clock idles high, shifts data out on
+     falling edge; shifts data in on rising edge.
+     MSB first, 8-bit mode, Master mode, 3 pin SPI, synchronous.
+     Hold UCB0 in reset.)
+   %0110_1001_1000_0001 # UCB0CTLW0 & mov
+
+   ( Let's use a modest shift rate of 1M - SMCLK/16)
+   #16 # UCB0BR0 & mov
+
+   ( Bring SPI out of reset)
+   01 # UCB0CTLW0 & bic
+
+   %0101_0000 # P1SEL1 & bicb  ( Give P1.4 and P1.6 to UCB0 - aka SPI)
+   %0101_0000 # P1SEL0 & bisb
+   next  ;c
+
+( Start an SPI transaction, and don't return until it is finished!)
+code spi!
+   top UCB0TXBUF & movb  top pop
+   begin  01 # UCB0STATW & bit  0= until  ( wait for UCBUSY zero)
+   next  ;c
+
+: >b  spi! ;
+
+( I have 117 LEDs in my string. Update this value for yours.)
+#117 equ #led
+
+: >frame  ( r g b i)  >b >b >b >b ;
+: start     0  0  0  0  >frame ;
+: end      [ #led 1+ 2/ ( # of extra clocks needed)  #31 + #32 / ( #frames) ]
+           literal for  start  next ;
+
+variable brightness
+( Send an RGB+brightness packet down the wire.)
+: >led    ( r g b)  brightness @ 1f and  ( 0 to 31) 0e0 or  >frame ;
+
+: led-init   port-init  8 brightness ! ;
+
+code c@+  ( a - b a+1)         top )+ w movb  w push               next  ;c
+code c!+  ( b a - a+1)   w pop  w top ) movb          1 # top add  next  ;c
+
+: rgb@   ( a - r g b a+3)   c@+ c@+ c@+ ;
+: rgb!   ( r g b a - a+3)   >r  swap rot ( b g r)  r>  c!+ c!+ c!+ ;
+
+variable 'color
+meta: color  ( r g b)  create  rot c,  swap c,  c,
+                       does>  'color @execute ;
+( R  G  B)
+ ff 00 00 color r
+ 00 ff 00 color g
+ 00 00 ff color b
+
+ 00 ff ff color c  ( cyan = -red)
+ ff 00 ff color m  ( magenta = -green)
+ ff ff 00 color y  ( yellow = -blue)
+
+ 40 40 40 color w  ( low intensity white)
+ 00 00 00 color z  ( black - zero)
+
+: sec   ( n)  ( delay for n seconds, approx. For/next loop takes ~11 cycles)
+   for   #1212 for  #1200 for next  next  next ;
+
+: 5min       #5 sec ;
+: 30min   #1800 sec ;
+
+: send-once   ( 'color)  rgb@ drop  >led ;
+: send-three  ( 'color)  dup send-once  dup send-once  send-once ;
+: send-four   ( 'color)  dup send-once  send-three ;
+: 3-on-3-off  ( 'color)
+   start
+   #20 for  dup send-three  [ ' z >body ] literal  send-three  next  drop
+   end  5min ;
+
+: send-all    ( 'color)  start  #led for  dup send-once  next  end  5min
+                         3-on-3-off ;
+
+: once    ['] send-once   'color ! ;
+: threes  ['] 3-on-3-off  'color ! ;
+: fours   ['] send-four   'color ! ;
+: all     ['] send-all    'color ! ;
+
+( Color wheel: RGB primaries, CMY secondaries)
+: wheel   r y g c b m ;
+ 
+: primary-loop   start  for  wheel  next  end ;
+: primaries*4    fours   5  primary-loop ;
+: primaries      once  #20  primary-loop ;
+
+: cmy     once  #20  start  for  c m y  z z z  next  end ;
+
+: doit
+   led-init
+   begin
+      all  wheel
+      primaries    5min
+      -- threes  wheel
+      primaries*4  5min
+      cmy   5min
+   again ;
+
+
+.ifdef testing
+
+( How many LEDs do we have? I'm going to overestimate - there should be
+  around 120 - and drive 200 and then count. Groups of ten: rgbcmywwww.)
+
+: howmany  once  start  #20 for  wheel  w w w w  next  end ;
+
+.then
+
+
+.ifdef colors-in-memory
+
+#led 3 * buffer leds
+
+: show   start  leds #led for  rgb@ >r >led r>  next  drop  end ;
+
+variable 'led
+: rgb,  ( r g b)  'led @  rgb!  'led ! ;
+: new   leds 'led !  ['] rgb, 'color ! ;
+
+.then

@@ -1,7 +1,7 @@
 /*
  * This file is part of muforth: https://muforth.nimblemachines.com/
  *
- * Copyright (c) 2002-2020 David Frech. (Read the LICENSE for details.)
+ * Copyright (c) 2002-2021 David Frech. (Read the LICENSE for details.)
  */
 
 /* error-handling code for muForth */
@@ -20,23 +20,27 @@ void die(const char* zmsg)
     exit(1);
 }
 
-void muboot_die()      /* zmsg */
-{
-    die((char *)TOP);
-}
-
 /* abort() is deferred via this variable */
-CODE(muboot_die)
-static xtk_cell xtk_abort = XTK(muboot_die);
+static xt_cell xt_abort = CELL(NULL);
 
 void mu_abort()     /* zmsg */
 {
-    execute_xtk(_(xtk_abort));
+    if (_(xt_abort))
+    {
+        /*
+         * PUSH_ADDR because the contents of xt_abort are a machine
+         * address.
+         */
+        PUSH_ADDR(_(xt_abort));
+        mu_execute();
+    }
+    else
+        die((char *)TOP);
 }
 
 void mu_push_tick_abort()
 {
-    PUSH_ADDR(&xtk_abort);
+    PUSH_ADDR(&xt_abort);
 }
 
 /*

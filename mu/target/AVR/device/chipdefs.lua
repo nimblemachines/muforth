@@ -1,6 +1,6 @@
 -- This file is part of muforth: https://muforth.nimblemachines.com/
 
--- Copyright (c) 2002-2020 David Frech. (Read the LICENSE for details.)
+-- Copyright (c) 2002-2021 David Frech. (Read the LICENSE for details.)
 
 -- Common equates for Atmel atmega parts.
 
@@ -439,68 +439,68 @@ mega8515_vec = [[
 dofile 'target/S08/device/string.lua'
 
 function show_vectors(v, size)
-vt = {}
-name_max = 0  -- width of name field
-v = v:gsub("%$(%x)", "0x%1")   -- replace $ with 0x to normalise
-for num, addr, name, desc in v:gmatch("(%d+) (0x%x+) ([%w_]+) (.-)\n") do
-   if desc ~= "Reserved" then
-      table.insert(vt, { addr=addr/size, desc=desc, name=name })
-   end
-   if #name > name_max then name_max = #name end
-   --print (addr, desc, name)
-end
+    vt = {}
+    name_max = 0  -- width of name field
+    v = v:gsub("%$(%x)", "0x%1")   -- replace $ with 0x to normalise
+    for num, addr, name, desc in v:gmatch("(%d+) (0x%x+) ([%w_]+) (.-)\n") do
+        if desc ~= "Reserved" then
+            table.insert(vt, { addr=addr/size, desc=desc, name=name })
+        end
+        if #name > name_max then name_max = #name end
+        --print (addr, desc, name)
+    end
 
---print (name_max)
+    --print (name_max)
 
-for _,vec in ipairs(vt) do
-   -- print(string.format("#%02d  %05x  vec  %s  ( %s)",
-   -- 0x10000-vec.addr, vec.addr, vec.name..(" "):rep(name_max-#vec.name), vec.desc))
-   print(string.format("%04x vector  %s  ( %s)",
-      vec.addr, vec.name..(" "):rep(name_max-#vec.name), vec.desc))
-end
-print()
+    for _,vec in ipairs(vt) do
+        -- print(string.format("#%02d  %05x  vec  %s  ( %s)",
+        -- 0x10000-vec.addr, vec.addr, vec.name..(" "):rep(name_max-#vec.name), vec.desc))
+        print(string.format("%04x vector  %s  ( %s)",
+            vec.addr, vec.name..(" "):rep(name_max-#vec.name), vec.desc))
+    end
+    print()
 end
 
 function show_regs(s)
-   s = s:gsub("%$(%x)", "0x%1")   -- replace $ with 0x to normalise
-   local pat = "%((0x%x+)%) ([%w_/]+)" .. (" ([%w<-]+)"):rep(8)
+    s = s:gsub("%$(%x)", "0x%1")   -- replace $ with 0x to normalise
+    local pat = "%((0x%x+)%) ([%w_/]+)" .. (" ([%w<-]+)"):rep(8)
 
 -- (0x60) WDTCSR WDIF WDIE WDP3 WDCE WDE WDP2 WDP1 WDP0 55
 -- 0x3F (0x5F) SREG I T H S V N Z C 10
 
-   local function show_line(l)
-      -- skip whitespace-only lines or Reserved slots
-      if l:match "^%s*$" or l:match "Reserved" then return end
-      local addr, reg, b7, b6, b5, b4, b3, b2, b1, b0 = l:match(pat)
-      if addr then
-         print (string.format("%04x reg  %-8s | "..("%-7s "):rep(8),
-                              addr, reg, b7, b6, b5, b4, b3, b2, b1, b0))
-         return
-      end
+    local function show_line(l)
+        -- skip whitespace-only lines or Reserved slots
+        if l:match "^%s*$" or l:match "Reserved" then return end
+        local addr, reg, b7, b6, b5, b4, b3, b2, b1, b0 = l:match(pat)
+        if addr then
+            print (string.format("%04x reg  %-8s | "..("%-7s "):rep(8),
+                                 addr, reg, b7, b6, b5, b4, b3, b2, b1, b0))
+            return
+        end
 
 -- (0xC6) UDR0 USART I/O Data Register 193
-      addr, reg, desc = l:match "%((0x%x+)%) ([%w_]+) (.+)"
-      print (string.format("%04x reg  %-8s | %s", addr, reg, desc))
-      -- print (string.format("! %s failed to match - need exactly 8 items after name",
-      --       reg))
-   end
+        addr, reg, desc = l:match "%((0x%x+)%) ([%w_]+) (.+)"
+        print (string.format("%04x reg  %-8s | %s", addr, reg, desc))
+        -- print (string.format("! %s failed to match - need exactly 8 items after name",
+        --       reg))
+    end
 
-   for l in s:lines() do
-      show_line(l)
-   end
-   print()
+    for l in s:lines() do
+        show_line(l)
+    end
+    print()
 end
 
 function show_heading(s)
-   print (string.format(
-      "( Equates for ATMEGA%s. Extracted from the datasheet using Lua!)", s))
-   print()
+    print (string.format(
+        "( Equates for ATMEGA%s. Extracted from the datasheet using Lua!)", s))
+    print()
 end
 
 function show_part(name, vec, vecsize, reg)
-   show_heading(name)
-   show_vectors(vec, vecsize)
-   show_regs(reg)
+    show_heading(name)
+    show_vectors(vec, vecsize)
+    show_regs(reg)
 end
 
 -- show_part(" (common)", common_vec, common_sfr)

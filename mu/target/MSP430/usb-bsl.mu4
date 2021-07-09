@@ -1,0 +1,90 @@
+( This file is part of muforth: https://muforth.nimblemachines.com/
+
+  Copyright 2002-2021 David Frech. (Read the LICENSE for details.)
+
+loading MSP430 USB BSL support
+
+( The only supported device that currently uses this is the MSP430F5529.)
+
+( Details on the BSL from SLAU319, the BSL User's Guide.
+
+  vid/pid of the USB BSL is hex 2047/0200.
+
+  Only BSL operations available are:
+    TX data block fast
+    TX password
+    Load PC
+
+  The idea is that the USB BSL can be used to download a RAM-based, more
+  sophisticated USB BSL. But why would *we* bother with another BSL? Instead
+  we should download USB or UART chat code into RAM and jump to that!
+)
+
+hex
+
+2047 0200 hid-find-device  ( TI MSP USB BSL)  .if  constant usb-bsl  .then
+
+.ifdef usb-bsl
+
+( Device found - load support)
+
+: uread   ( buf len)  usb-bsl  hid-read  drop ;
+: uwrite  ( buf len)  usb-bsl  hid-write ;
+
+: ?spy   spy @ if  dup .h8_  then ;
+
+40 buffer buf  ( read and write HID endpoint)
+variable 'buf
+: buf!   buf 'buf ! ;
+: #buf       'buf @  buf - ;
+
+: >b   ( b)    ?spy  'buf @  c!+  'buf ! ;
+: b>   ( - b)        'buf @  c@+  'buf ! ;
+
+: >w   ( w)   >hilo  >b >b ;
+: w>   ( - w)         b> b>  lohi> ;
+
+( Send an address - 3 bytes!)
+: >addr   ( a)  >hilo >b  >w ;
+
+( >buf reads bytes from buf and copies them into buf)
+: >buf  ( buf u)  swap m !  for  m* >b  next ;
+
+: ?match  ( b)
+   b> = if ^ then  ."  Weird value returned" ;
+
+: ?core  buf!  3f ?match  02 ?match  3b ?match  b>
+   dup   0= if  drop  ." BSL unlocked successfully"  ^  then
+   dup 04 = if  drop  ." BSL locked"  ^  then
+   dup 05 = if  drop  ." BSL password error"  ^  then
+       07 = if        ." Unknown command"  ^  then ;
+
+: core>   buf #buf uread  cr ?core ;
+
+: <bsl    ( cmd length)   buf!  3f >b  >b ( len)  >b ( cmd) ;
+: bsl>    buf #buf uwrite ;
+
+                       ( cmd len)
+: bsl-txbuf  ( buf a u)   1b over 4 + <bsl  swap >addr  >buf  bsl> ;
+: bsl-unlock              11 21 <bsl  10 for  0ffff >w  next  bsl>  core> ;
+: bsl-unlock-image        11 21 <bsl  ffe0 image+ 20  >buf    bsl>  core> ;
+: bsl-loadpc  ( pc)       17 04 <bsl  >addr                   bsl> ;
+
+: chunk  ( 'target len - 'target+len)
+   cr ." chunk "  over u.  dup u.
+   2dup + push  over image+ -rot  bsl-txbuf  pop ;
+
+: copy-region  ( a len)
+   20 /mod ( r q)  swap push  for  20 chunk  next
+                     pop  =if  ( rem) chunk  drop ^  then  2drop ;
+: blast
+   -- spy on
+   bsl-unlock  ram region  ( a len)  copy-region
+   \eq Vreset image-@  cr ." start " dup u.  bsl-loadpc
+   spy off ;
+
+.else
+
+   ." No supported USB BSL devices found."
+
+.then

@@ -2,7 +2,7 @@
 
 # This file is part of muforth: https://muforth.nimblemachines.com/
 #
-# Copyright (c) 2002-2020 David Frech. (Read the LICENSE for details.)
+# Copyright (c) 2002-2021 David Frech. (Read the LICENSE for details.)
 #
 # Create a udev rules file that matches all the USB devices we care about:
 #
@@ -12,6 +12,7 @@
 #   0d28  - MBED/CMSIS-DAP - for anything supported by mbed
 #   15a2  - my Freescale HC08 JS16 board
 #   1cbe  - TI/Luminary Stellaris/Tiva ICDI boards
+#   2047  - TI MSP-FET, ez-FET, USB BSL, etc
 #   c251  - Keil CMSIS-DAP - for Freescale Freedom (FRDM) boards
 #
 # I added the following fake vendor ID and plan to use it for future
@@ -24,7 +25,7 @@ cat <<EOT
     # udev rules to match USB devices of interest to muforth
 EOT
 
-for vid in 0403 0483 04d8 0d28 15a2 1cbe c251 f0ff ; do
+for vid in 0403 0483 04d8 0d28 15a2 1cbe 2047 c251 f0ff ; do
     cat <<EOT
     SUBSYSTEMS=="usb", ATTRS{idVendor}=="$vid", OWNER:="$1"
 EOT

@@ -1,7 +1,7 @@
 /*
  * This file is part of muforth: https://muforth.nimblemachines.com/
  *
- * Copyright (c) 2002-2020 David Frech. (Read the LICENSE for details.)
+ * Copyright (c) 2002-2021 David Frech. (Read the LICENSE for details.)
  */
 
 /* Interpreter and compiler */
@@ -17,12 +17,8 @@
 #include <stdio.h>
 #endif
 
-/* interpreter mode */
-struct imode
-{
-    xtk_cell eat;       /* consume one token */
-    xtk_cell prompt;    /* display a mode-specific prompt */
-};
+/* C version of state variable */
+static code state = &muboot_interpret_token;
 
 /* cell versions of char * pointers */
 typedef CELL_T(char *) charptr_cell;
@@ -190,7 +186,7 @@ void muboot_interpret_token()
     mu_find();
     if (POP)
     {
-        EXECUTE;
+        mu_execute();
         return;
     }
     mu_complain();
@@ -203,7 +199,7 @@ static void muboot_compile_token()
     mu_find();
     if (POP)
     {
-        EXECUTE;
+        mu_execute();
         return;
     }
     muboot_push_runtime_chain();
@@ -216,44 +212,14 @@ static void muboot_compile_token()
     mu_complain();
 }
 
-/*
- * Remember that the second part of a struct imode is a pointer to code to
- * print a mode-specific prompt. The muforth kernel lacks decent I/O
- * facilities. Until these are defined in startup.mu4, the prompts are
- * noops.
- */
-CODE(mu_nope)
-CODE(muboot_interpret_token)
-CODE(muboot_compile_token)
-
-static struct imode forth_interpreter =
-    { XTK(muboot_interpret_token), XTK(mu_nope) };
-
-static struct imode forth_compiler =
-    { XTK(muboot_compile_token),   XTK(mu_nope) };
-
-static CELL_T(struct imode *) state = CELL(&forth_interpreter);
-
-
-void mu_consume()
-{
-    /* call the current consume function */
-    execute_xtk(_(_(state)->eat));
-}
-
-void mu_push_state()
-{
-    PUSH_ADDR(&state);
-}
-
 void mu_compiler_lbracket()
 {
-    _(state) = &forth_interpreter;
+    state = &muboot_interpret_token;
 }
 
 void mu_rbracket()
 {
-    _(state) = &forth_compiler;
+    state = &muboot_compile_token;
 }
 
 #ifdef DEBUG_STACK
@@ -286,7 +252,7 @@ static void muboot_interpret()
     {
         mu_token();
         if (TOP == 0) break;
-        mu_consume();
+        (*state)();     /* consume token */
         SHOW_STACK;
     }
     DROP(2);

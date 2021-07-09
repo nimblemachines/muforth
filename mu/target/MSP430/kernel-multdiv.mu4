@@ -1,8 +1,6 @@
 ( This file is part of muforth: https://muforth.nimblemachines.com/
 
-  Copyright 2002-2020 David Frech. (Read the LICENSE for details.)
-
-ld target/MSP430/load-kernel.mu4
+  Copyright 2002-2021 David Frech. (Read the LICENSE for details.)
 
 __meta
 hex
@@ -103,20 +101,20 @@ code um/mod-fig  ( ud u - urem uquot)
   top  holds multipli-cand - m-cand
 )
 code m*  ( n1 n2 - dprod)
-   y pop ( m-er)  top x mov  y x xor  0< if  ( different signs)  -1 # push
+   y pop ( m-er)  top x mov  y x xor  0< if  ( different signs)  -- -1 # push
       top tst  0< if  top w mov  y top mov  w y mov  ( exch)  then
 
       x clr ( prodhi)  #15 # w mov
       begin  1 # y bit  0!= if  top x add  then  x ror  y ror
              1 # w sub  0= until
-      1 # y bit  0!= if  top x sub  then  x ror  y ror
-      y push  ( prodlo)  x top mov
+      top x sub  x ror  y ror  y push  ( prodlo)  x top mov
       8000 # top xor ( complement last carry)  next
    then
 
    ( same sign)
-   0 # push
+   -- 0 # push
    top tst  0< if  top neg  y neg  then  ( now both >=0)  do-um* j  ;c
+
 
 
 ( Another quick take on this. We want m-cand >= 0. So, let's approach it
@@ -158,7 +156,7 @@ code m*2  ( n1 n2 - dprod)
   reasonable.)
 
 code m*3  ( n1 n2 - dprod)
-   y pop ( m-er)  top x mov  y x xor  0< if  ( different signs)  -1 # push
+   y pop ( m-er)  top x mov  y x xor  0< if  ( different signs)  -- -1 # push
       top tst  0< if  top w mov  y top mov  w y mov  ( exch)  then
 
       x clr ( prodhi)  #15 # w mov
@@ -169,6 +167,128 @@ code m*3  ( n1 n2 - dprod)
    then
 
    ( same sign)
-   0 # push
+   -- 0 # push
    top tst  0< if  top neg  y neg  then  ( now both >=0 ... maybe ;-)
    do-um* j  ;c
+
+( Take four? What if we just didn't care? m-cand m-er and both be signed.
+  Let's see what happens.
+
+  Register use is like that of um*:
+
+    w  is loop counter
+    x  holds high half of result
+    y  holds low half of result, and also 16-bit multipli-er - m-er
+  top  holds multipli-cand - m-cand
+)
+code m*4  ( n1 n2 - dprod)
+   y pop ( m-er)  x clr ( prodhi)  #15 # w mov
+   begin  1 # y bit  0!= if  top x add  then  x ror  y ror
+          1 # w sub  0= until
+   1 # y bit  0!= if  top x sub  then  x ror  y ror
+   y push  ( prodlo)  x top mov  ( prodhi)
+   8000 # top xor ( complement last carry)  next  ;c
+
+( Tests.)
+meta: table  create  ;code  ( index - value)
+                     top top add  w top add  top ) top mov  next  ;c
+
+table mcand   0 , 1 , ffff , 8000 , 8001 , 7fff ,  ( six "interesting" multiplicands)
+
+: d=  ( alo ahi blo bhi - f)  ( f is true if alo=blo and ahi=bhi)
+   rot = >r  = r> and ;
+
+( For fetching and storing a series of cells.)
+code @+   ( a - w a+)  top )+ w mov  w push  next  ;c
+code !+   ( w a - a+)  sp )+ top ) mov  2 # top add  next  ;c
+
+-- : @+   ( a - n a+)   dup @  swap cell+ ;
+-- : !+   ( n a - a+)  tuck !       cell+ ;
+
+: 2!  ( lo hi addr)    !+ ! ;
+: 2@  ( addr - lo hi)  @+ @ swap ;
+
+code 2drop   2 # sp add  top pop  next  ;c
+
+meta: 2variable    4 buffer ;  ( A 2variable is just a 4-byte buffer!)
+
+2variable bench
+variable testee
+
+: test  ( 'code)  testee !
+   6 0 do  i mcand
+      6 0 do  dup  i mcand  mpy32.um* bench 2!
+              dup  i mcand  testee @execute  bench 2@ d=
+              0= if  i mcand  bug  drop  then
+      loop  drop  loop ;
+
+{
+: clamp16   ffff and ;
+: clamp32   ffff_ffff and ;
+: >lohi  ( w32 - lo16 hi16)  dup clamp16  swap #16 >>  clamp16 ;
+: lohi>  ( lo16 hi16 - w32)  #16 <<  + ;
+: sext16  dup 8000 and 2* - ;
+
+: table  create  does>  ( index body - value)  swap cells + @ ;
+
+( Table of unsigned multiplicands.)
+table mcand   0 , 1 , ffff , 8000 , 8001 , 7fff ,  ( six "interesting" multiplicands)
+
+variable testee
+2variable bench
+meta
+: um*-test  ( 'code)  testee !
+   6 0 do
+      6 0 do
+         cr  j mcand  dup u.  i mcand dup u.  ." : "
+         2dup  *  clamp32  dup u.  bench !
+         testee @ remote  lohi>  dup u.
+         bench @  = if ." OK" else ." FAIL" then
+      loop
+   loop ;
+
+: m*-test  ( 'code)  testee !
+   6 0 do
+      6 0 do
+         cr  j mcand  dup u. sext16  i mcand dup u. sext16  ." : "
+         2dup  *  clamp32  dup .  bench !
+         testee @ remote  lohi>  dup .
+         bench @  = if ." OK" else ." FAIL" then
+      loop
+   loop ;
+
+forth
+: d=  ( alo ahi blo bhi - f)  ( f is true if alo=blo and ahi=bhi)
+   rot = >r  = r> and ;
+
+: uorder  ( x y - lesser greater)  2dup u< if ^ then  swap ;
+: order   ( x y - lesser greater)  2dup  < if ^ then  swap ;
+
+: .h16  <#  4#  #>  type space ;
+: .h32  <#  4#  char _ hold  4#  #>  type space ;
+
+: host-u*/   ( offset mcand1 mcand2 - q r)  push  r@ * +  pop u/mod ;
+
+2variable mcands
+meta
+: u/test  ( 'code)  testee !
+   radix preserve  hex
+   6 1 do
+      6 1 do
+         i mcand  j mcand  uorder  2dup mcands 2!
+         cr  over .h16 ." * "  .h16 ." + "  1- .h16 ." => "
+         mcands 2@  over 1- -rot  host-u*/         over .h16  dup .h16  bench 2!  ." , "
+         mcands 2@  over 1- -rot  testee @ remote  over .h16  dup .h16  bench 2@
+         d= if ." OK" else ." FAIL" then
+      loop
+   loop ;
+forth
+
+now nope is .regs
+}
+
+code d+  ( d1 d2 - dsum)
+   x pop ( d2lo)  y pop ( d1hi)  sp )+ x add  ( d1lo + d2lo)  x push
+   y top addc ( d1hi + d2hi + carry)  next  ;c
+
+: u*/  ( offset mcand1 mcand2)  >r  r@ um*  rot 0 d+  r> um/mod ;

@@ -1,6 +1,6 @@
 ( This file is part of muforth: https://muforth.nimblemachines.com/
 
-  Copyright 2002-2020 David Frech. (Read the LICENSE for details.)
+  Copyright 2002-2021 David Frech. (Read the LICENSE for details.)
 
 loading ARM v6-M interaction
 
@@ -14,12 +14,13 @@ variable chat-vector
 : chat-fail   error" Chat command not implemented" ;
 
 0
-chat-cmd t.hello
-chat-cmd t.get-sp   ( - sp)
-chat-cmd t.set-sp   ( sp)
+chat-cmd t.hello    ( - chunk-size)
+chat-cmd t.get-status   ( - sp pc)
+chat-cmd t.run      ( pc sp)
 chat-cmd t.read     ( buf a u)
 chat-cmd t.write    ( buf a u)
-chat-cmd t.run      ( pc)
+chat-cmd t.erase    ( a)
+chat-cmd t.flash    ( buf a u)
 drop
 
 ( XXX should be simpler? Not using a buffer?)
@@ -32,14 +33,20 @@ drop
                 32 |addr !  ( size of addr in bits)
                  4 |cell !  ( size of cell in bytes) ;
 
+( Chunk size is reported by the debug interface. Always use this when
+  copying RAM contents or programming the flash!)
+
+variable /chunk  ( chunk size, as reported by debug interface)
+   256 /chunk !  ( sane default)
+
 : copy-chunk  ( 'target len - 'target+len)
    -- cr ." copy-chunk "  2dup swap u. u.
    2dup + push  over image+ -rot t.write  pop ;
 
 : copy-region  ( a u)
    -- cr ." copy-region "  2dup swap u. u.
-   256 /mod ( r q)  swap push  for   256 copy-chunk  next
-                        pop  =if  ( rem) copy-chunk  drop ^  then  2drop ;
+   /chunk @  /mod ( r q)  swap push  for   /chunk @  copy-chunk  next
+                                    pop  =if  ( rem) copy-chunk  drop ^  then  2drop ;
 
 variable ram-copied  ( pointer to first un-copied byte)
 
@@ -59,8 +66,7 @@ variable tsp    ( target SP)
 variable trp    ( target RP)
 variable tip    ( target IP)
 
-: get-regs  ( just SP for now)        t.get-sp tsp ! ;
-: set-regs  ( just SP for now)  tsp @ t.set-sp ;
+: get-regs  ( - sp pc)  ( just SP for now)  t.get-status  drop  tsp ! ;
 
 : 2sp   space space ;
 : .h32     radix preserve  hex  <#  4#               4#  #> type ;
@@ -72,14 +78,14 @@ variable tip    ( target IP)
 : .tr   ( variable)  ( "target register")  @ .h32__ ;
 defer .regs   now nope is .regs  ( print nothing by default)
 
-: hi  chatting on  >chat  t.hello  get-regs  .regs
+: hi  chatting on  >chat  t.hello  /chunk !  get-regs  .regs
       ram-copied off
       now __chatting is __meta  __meta ;
 
 : chat-via   pop  chat-vector !  hi ;
 
 
-: kick     ( pc)  copy-ram  set-regs  t.run ;  ( don't wait for target)
+: kick     ( pc)  copy-ram  tsp @  t.run ;  ( don't wait for target)
 : runwait  ( pc)  kick  get-regs ;   ( wait for target)
 
 ( For running random bits of code.)

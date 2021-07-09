@@ -13,7 +13,7 @@ token new  current @  (linked-name)
 
 new :
    <:> ]
-      new <:>  nope  ]
+      new <:>  ]
    ^ [
 
 : definitions  current !  ^ [
@@ -22,8 +22,7 @@ new :
 : runtime    .runtime. definitions  ^ [
 
 compiler
-: ;   nope
-      compile ^
+: ;   compile ^
       [  token [  .compiler. find huh?  ,  ]  ^ [
 forth
 
@@ -37,7 +36,7 @@ forth
 
 ( This file is part of muforth: https://muforth.nimblemachines.com/
 
-  Copyright 2002-2020 David Frech. (Read the LICENSE for details.)
+  Copyright 2002-2021 David Frech. (Read the LICENSE for details.)
 
 ( This file is muforth/mu/startup.mu4. It contains high-level Forth code
   necessary to the useful execution of muforth. This file is loaded and
@@ -110,6 +109,8 @@ forth
 ( Stack manipulations.)
 : rot    >r swap  r> swap ;  ( a b c - b c a)  ( fig!)
 : -rot   swap >r  swap r> ;  ( a b c - c a b)
+
+: nip    swap drop ;           ( a b - b)
 : tuck   swap over ;           ( a b - b a b)
 
 ( Back up over last token parsed from the input so we can re-parse it.)
@@ -305,10 +306,9 @@ forth
 ( Dictionary structure words. Link fields point to link fields. Roughly, a
   dictionary entry is the following cell-sized things: suffix, link, code;
   where suffix is the last 7 [64-bit] characters of the name, followed by
-  its byte-sized length. Remember: high bit of length is hidden bit!)
+  its byte-sized length. If length is zero, the word is *hidden*.)
 
-: link>name    ( 'link - a u)
-   1- dup c@ [ bl 2* 2* 1- #] and  ( 'len len)  tuck -  swap ;
+: link>name    ( 'link - a u)  1- dup c@  ( 'len len)  tuck -  swap ;
 
 ( These words all assume we're calculating to or from a code field
   address.)
@@ -403,29 +403,6 @@ here 0 ,
 : 2variable   variable  0 , ;
 
 
-( "nameless" colon words.)
-: -:  here <:>        ] ;
-
-( For comparison, the regular : compiler is defined thus:
-:  :   new <:>  nope  ] ;
-where nope is a placeholder for code to hide the newly created colon word.)
-
-
-( We'd like to hide colon words as they are being created, and show them
-  when they are complete.)
-
-2variable last-colon  ( the link address of the last colon word defined,
-                        and the chain it was defined in)
-
-: show
-   last-colon 2@  =if  swap !  0 0  then  last-colon 2! ;  ' show
-   ( patch into ; )  .compiler. chain' ;  cell+              !
-
--: ( hide)
-   current @  dup @  ( chain link)  2dup last-colon 2!  @ swap ! ( unlink) ;
-   ( patch into : )     .forth. chain' :  cell+ cell+ cell+  !
-
-
 ( To bracket comments in a flexible way. If you've bracketed some text
   using comment, changing "comment" to "uncomment" will interpret the
   bracketed text - the delimiter becomes a noop.)
@@ -497,12 +474,13 @@ forth
   are structures, created in the body of a does word, that look just like a
   name entry in the dictionary - a name-suffix followed by a link field.
 
-  The name entry is always the string "muchain" followed by its length, 7.
-  This is exactly 8 bytes long - the length of a suffix now that muforth is
-  64-bit. The name identifies the word as the head of a dictionary chain.
+  The name entry is always the string "muchain" followed by a zero length
+  byte. This is exactly 8 bytes long - the length of a suffix now that
+  muforth is 64-bit. The name identifies the word as the head of a dictionary
+  chain.
 
-  The name is hidden - by setting the high bit of the name's length - so
-  that dictionary searches and word listings won't see it.
+  The name is hidden - by setting the length to zero - so that dictionary
+  searches and word listings won't see it.
 
   The link field points to the link field within the name entry of the last
   word defined on the chain.
@@ -874,31 +852,77 @@ decimal
   interpreter and compiler, which up till this point have simply complained
   if they saw something not in the dictionary.)
 
-( Let's define a word to create new modes. This is mostly useful for
-  meta-compilers.)
+( First we need to re-define  [  and  ] . We will define these as
+  interpreter "modes", which consist of a word to display a prompt string
+  and a token consumer function. Since we don't currently have a way to
+  compile strings,we will use  nope  until we re-define the prompts later.)
 
+variable state  ( interpret or compile -- or whatever!)
 : mode   create  ( prompt token-consumer)  ,  ,  does>  state ! ;
 
 
-( To set the compiler consumer, we need a sneaky word to get the value of
-  state while compiling - we use the same trick later to set the compiler
-  prompt.)
+( Redefine the forth "consumer" to try to convert numbers after failing to
+  find a token in the .forth. chain. Since we don't yet have a way to
+  create nameless colon definitions, do it by hand!)
+
+' nope  ( null prompt for interpret mode)
+
+here <:> ]  ( make a nameless colon word)
+   ( interpret one token)
+   .forth. find  if  execute ^  then  number ;
 
 compiler
-: 'compiler-mode  state @ ;
+mode [  ( enter interpreter mode)
 forth
 
-( Redefine, and then set the forth "consume".)
--:   ( interpret one token)
-      .forth. find  if  execute ^  then  number ;     state @  !
+( Now for the compiler "consumer".)
+' nope  ( null prompt for compiler mode)
 
-( Now set the compiler "consumer". To get access to the value of state at
-  compile time, we turn on the compiler, but don't compile anything!)
-
--:   ( compile one token)
+here <:> ]  ( make a nameless colon word)
+   ( compile one token)
    .compiler. find  if  execute ^  then
     .runtime. find  if  ,       ^  then  number literal ;
-                                      ]  'compiler-mode [  !
+
+mode ]  ( enter compiler mode)
+
+
+( We need to re-define the interpret loop to use our new state mechanism.)
+defer ?stack
+: interpret
+   begin  token =while  state @ @execute  ?stack  repeat  2drop ;
+
+
+( We'd like to hide colon words as they are being created, and show them
+  when they are complete.)
+
+2variable last-colon  ( the link address of the last colon word defined,
+                        and the chain it was defined in)
+
+: show
+   last-colon 2@  =if  swap !  0 0  then  last-colon 2! ;
+
+: hide
+   current @  dup @  ( chain link)  2dup last-colon 2!  @ swap ! ( unlink) ;
+
+
+( Create a "nameless" colon word.)
+: -:  here <:>  ] ;
+
+( Created a named colon word, and hide its name until we execute  show .)
+:  :   new <:>  ]  hide ;
+
+
+( Fire up the state-aware interpreter! The new  :  will use the redefined  ]
+  which affects the state variable.)
+
+.compiler. chain' [ execute  ( set interpet state)  interpret
+
+compiler                       ( end the definition by hand, not using ; )
+:  ;   compile ^  \ [  show    ^ [ show
+forth
+
+( Since we redefined ] we need to redefine #] as well.)
+: #]   literal  ] ;
 
 
 : >    swap <  ;
@@ -1200,7 +1224,8 @@ being-defined -v  ( be verbose)
    begin  pop @ =while  push  2r@ swap execute  until  pop  then
    pop 2drop ;
 
-: hidden?   ( 'link - hidden?)      1- c@  ( len)  128 and ;
+( A word is hidden if its length byte is zero.)
+: hidden?   ( 'link - hidden?)      1- c@  ( len)  0= ;
 : muchain?  ( 'link - muchain?)  cell- @  [ .forth. cell- @ #] = ;
 
 : .name-and-count-it  ( count 'link - count+1 exit?)
@@ -1366,16 +1391,12 @@ defer ?show-stack
 : .prompt   ."  Ok"   .mode-prompt  ?show-radix ;
 
 ( set prompt in compile mode)
--: ."  (compiling)"  'compiler-mode  ;  cell+ !  ( bwa ha ha!)
+-: ."  (compiling)" ;   ' ] >body cell+ !
 
-: ?stack
+-: ( ?stack)
    depth 0< if  sp-reset  error" tried to pop an empty stack"  then
    depth [ 4096 64 - #] > if   ." too many items on the stack"  then ;
-
-
-( Forth re-implementation of C interpret; semantics are exactly the same!)
-: interpret
-   begin  token =while  consume  ?stack  repeat  2drop ;
+is ?stack
 
 : evaluate  ( a u)
    start preserve  end preserve  ( save input source)
@@ -1513,7 +1534,7 @@ the end of the file.
    .then  type  ."
 
 
-Copyright (c) 2002-2020 David Frech. All rights reserved.
+Copyright (c) 2002-2021 David Frech. All rights reserved.
 muforth is free software; read the LICENSE for details.
 
 Type 'settings' to see a few of muforth's tweakable behaviours.
@@ -1532,7 +1553,7 @@ Type 'settings' to see a few of muforth's tweakable behaviours.
    else drop ( empty string) then
    ."
 
-Copyright (c) 2002-2020 David Frech. http://muforth.nimblemachines.com/
+Copyright (c) 2002-2021 David Frech. http://muforth.nimblemachines.com/
 
 Type 'settings' to see a few of muforth's tweakable behaviours.
 " ;
@@ -1552,7 +1573,7 @@ ld commit.mu4
       build-date ( pushes a string!)
    .then  type
    ."  (https://muforth.nimblemachines.com/)
-Copyright (c) 2002-2020 David Frech (read the LICENSE for details)
+Copyright (c) 2002-2021 David Frech (read the LICENSE for details)
 
 Type 'settings' to see a few of muforth's tweakable behaviours.
 " ;
@@ -1603,7 +1624,7 @@ ld lib/du-cached.mu4
    >stderr banner
    -consumed +sep +case +radix +stack ( defaults - reset these how you like)
    z" (command line)" zloading !  line off
-   command-line count  catch evaluate ?error
+   command-line  catch evaluate ?error
    zloading off
    begin  catch quit ?error  again ;
 
