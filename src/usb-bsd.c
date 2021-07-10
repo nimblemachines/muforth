@@ -42,6 +42,7 @@
 #include <dev/usb/usb.h>
 #endif
 #ifdef MU_USB_FREEBSD_8
+#include <dirent.h>         /* opendir, readdir */
 #include <dev/usb/usb_ioctl.h>
 #include <dev/usb/usbdi.h>
 #define USBD_SHORT_XFER_OK  USB_SHORT_XFER_OK
@@ -77,11 +78,14 @@
 #define UGEN_EP0    "/dev/ugen%d"
 #endif
 
+/*
+ * No need to make this fit perfectly in a cell. When we allocate it we
+ * round up to a cell boundary.
+ */
 struct mu_usb_dev
 {
-    uint32_t fd;
+    int fd;
     uint8_t devnum;
-    uint8_t padding[3];
 };
 
 static int enumerate_devices(int vid, int pid, struct mu_usb_dev *mud)
@@ -93,20 +97,21 @@ static int enumerate_devices(int vid, int pid, struct mu_usb_dev *mud)
 #define PATHMAX 32
     char path[PATHMAX];
 
-    for (dev = 0; dev < 10; dev++)
+    /* How many do we try? */
+    for (dev = 0; dev < 16; dev++)
     {
         snprintf(path, PATHMAX, UGEN_EP0, dev);
         fd = open(path, O_RDONLY);
-        if (fd == -1) { continue; }
+        if (fd == -1) { continue; }     /* probably doesn't exist; try the next one */
         res = ioctl(fd, USB_GET_DEVICEINFO, &udi);
         close(fd);
-        if (res == -1) { continue; }
+        if (res == -1) { return -1; }   /* this seems like a problem */
 
         if (udi.udi_vendorNo == vid &&
             udi.udi_productNo == pid)
         {
             int timeout = 5000; /* ms */
-            fd = open(path, O_RDWR);   /* Re-open read-write */
+            fd = open(path, O_RDWR);    /* Re-open read-write */
             if (fd == -1) { return -1; }
             /* Try to set timeout, but don't give up if it fails. */
             ioctl(fd, USB_SET_TIMEOUT, &timeout);
@@ -121,34 +126,50 @@ static int enumerate_devices(int vid, int pid, struct mu_usb_dev *mud)
 
 #else   /* FreeBSD 8+ */
 
+/*
+ * No need to make this fit perfectly in a cell. When we allocate it we
+ * round up to a cell boundary.
+ */
 struct mu_usb_dev
 {
-    uint32_t fd;
+    int fd;
     uint8_t busnum;
     uint8_t devnum;
-    uint8_t padding[2];
 };
 
 static int enumerate_devices(int vid, int pid, struct mu_usb_dev *mud)
 {
-    struct usb_device_info udi;
-    int fd;
-    int res;
-    int bus;
-    int dev;
-#define PATHMAX 32
-    char path[PATHMAX];
+    DIR *usbdir;
+    struct dirent *dev;
 
-    for (bus = 0; bus < 8; bus++)
+    usbdir = opendir("/dev/usb");
+
+    /* Return no match if directory couldn't be opened. */
+    if (usbdir == NULL) return 0;
+
+    while ((dev = readdir(usbdir)) != NULL)
     {
-        for (dev = 1; dev < 128; dev++)
+        /* skip . and .. */
+        if (dev->d_name[0] == '.') { continue; }
+
+        /* endpoint 0 device ends in ".0" */
+        if (dev->d_name[dev->d_namlen - 1] == '0' &&
+            dev->d_name[dev->d_namlen - 2] == '.')
         {
-            snprintf(path, PATHMAX, "/dev/usb/%d.%d.0", bus, dev);
+#define PATHMAX 32
+            char path[PATHMAX];
+            int fd;
+            int res;
+            struct usb_device_info udi;
+
+            /* Found endpoint 0 device; build path */
+            snprintf(path, PATHMAX, "/dev/usb/%s", dev->d_name);
+
             fd = open(path, O_RDONLY);
-            if (fd == -1) { break; }
+            if (fd == -1) { return -1; }    /* fail if we can't open it */
             res = ioctl(fd, USB_GET_DEVICEINFO, &udi);
             close(fd);
-            if (res == -1) { continue; }
+            if (res == -1) { return -1; }   /* fail if we can't read its guts */
 
             if (udi.udi_vendorNo == vid &&
                 udi.udi_productNo == pid)
@@ -166,8 +187,8 @@ static int enumerate_devices(int vid, int pid, struct mu_usb_dev *mud)
                 }
                 /* Fill in the device structure passed to us. */
                 mud->fd = fd;
-                mud->busnum = bus;
-                mud->devnum = dev;
+                mud->busnum = udi->udi_bus;
+                mud->devnum = udi->udi_index;
                 return fd;
             }
         }
@@ -178,7 +199,7 @@ static int enumerate_devices(int vid, int pid, struct mu_usb_dev *mud)
 #endif  /* ifndef FreeBSD 8+ */
 
 /*
- * usb-find-device (vendor-id product-id -- handle -1 | 0)
+ * usb-find-device (vendor-id product-id -- dev -1 | 0)
  */
 void mu_usb_find_device()
 {
@@ -208,13 +229,21 @@ void mu_usb_find_device()
     {
         /*
          * Matched; return a struct containing the matched device's _open_
-         * file descriptor, and a device number (for everything but FreeBSD
-         * 8+), or a bus number and device number (for FreeBSD 8+).
+         * file descriptor, followed by a device number (for everything but
+         * FreeBSD 8+), or a bus number and device number (for FreeBSD 8+).
          */
         PUSH(sizeof(struct mu_usb_dev));
         mu_allot();
         PUSH(-1);
     }
+}
+
+void mu_usb_close()     /* usb-close ( dev) */
+{
+    struct mu_usb_dev *mud = (struct mu_usb_dev *)TOP;
+
+    TOP = mud->fd;      /* replace TOP with device fd */
+    mu_close_file();
 }
 
 /*
@@ -226,17 +255,19 @@ void mu_usb_find_device()
 static void mu_usb_open_pipe(int flags)     /* ( dev pipe# - pipe) */
 {
     struct mu_usb_dev *mud = (struct mu_usb_dev *)ST1;
+    int pipe_num = TOP;
+
     int pipe_fd;
 #define PATHMAX 32
     char path[PATHMAX];
 
 #ifdef MU_USB_NETBSD
-    snprintf(path, PATHMAX, "/dev/ugen%d.%.2lld", mud->devnum, TOP);
+    snprintf(path, PATHMAX, "/dev/ugen%d.%.2d", mud->devnum, pipe_num);
 #else
 #ifdef MU_USB_FREEBSD
-    snprintf(path, PATHMAX, "/dev/ugen%d.%lld", mud->devnum, TOP);
+    snprintf(path, PATHMAX, "/dev/ugen%d.%d", mud->devnum, pipe_num);
 #else   /* FREEBSD 8+ */
-    snprintf(path, PATHMAX, "/dev/usb/%d.%d.%lld", mud->busnum, mud->devnum, TOP);
+    snprintf(path, PATHMAX, "/dev/usb/%d.%d.%d", mud->busnum, mud->devnum, pipe_num);
 #endif
 #endif
     pipe_fd = open(path, flags);
@@ -256,12 +287,30 @@ void mu_usb_open_pipe_ro()  { mu_usb_open_pipe(O_RDONLY); }
 void mu_usb_open_pipe_wo()  { mu_usb_open_pipe(O_WRONLY); }
 void mu_usb_open_pipe_rw()  { mu_usb_open_pipe(O_RDWR); }
 
-/*
- * usb-close (handle)
- */
-void mu_usb_close()
+/* A pipe is really just a file descriptor. */
+void mu_usb_close_pipe()    /* ( pipe) */
 {
     mu_close_file();
+}
+
+void mu_usb_read_pipe()     /* ( buf len pipe -- #read) */
+{
+    int fd = TOP;       /* pipe */
+    size_t len = ST1;
+    void *buf = ST2;
+
+    DROP(2);
+    TOP = read_carefully(fd, buf, len);
+}
+
+void mu_usb_write_pipe()     /* ( buf len pipe) */
+{
+    int fd = TOP;       /* pipe */
+    size_t len = ST1;
+    void *buf = ST2;
+
+    DROP(3);
+    write_carefully(fd, buf, len);
 }
 
 /*

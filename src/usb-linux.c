@@ -192,35 +192,6 @@ void mu_usb_find_device()
     }
 }
 
-static void mu_allocate_usb_pipe()  /* ( dev pipe# - pipe) */
-{
-    int fd = ST1;
-    int pipe = TOP;
-    struct mu_usb_pipe *p;
-
-    DROP(2);
-    mu_here();  /* push current heap pointer */
-    p = (struct mu_usb_pipe *)TOP;
-    p->fd = fd;
-    p->pipe = pipe;
-    PUSH(sizeof(struct mu_usb_pipe));
-    mu_allot();
-}
-
-/*
- * usb-open-pipe-ro  ( dev pipe# - pipe)
- * usb-open-pipe-wo  ( dev pipe# - pipe)
- * usb-open-pipe-rw  ( dev pipe# - pipe)
- *
- * These all do the same thing. Linux doesn't use file descriptors to
- * represent pipes, so ro/wo/rw is meaningless. On BSD endpoints are
- * represented as different files, so this distinction is critical in that
- * case.
- */
-void mu_usb_open_pipe_ro()  { mu_allocate_usb_pipe(); }
-void mu_usb_open_pipe_wo()  { mu_allocate_usb_pipe(); }
-void mu_usb_open_pipe_rw()  { mu_allocate_usb_pipe(); }
-
 /*
  * usb-claim-interface  ( interface dev)
  */
@@ -280,6 +251,35 @@ void mu_usb_control()
     TOP = count;
 }
 
+static void mu_allocate_usb_pipe()  /* ( dev pipe# - pipe) */
+{
+    int fd = ST1;
+    int pipe = TOP;
+    struct mu_usb_pipe *p;
+
+    DROP(2);
+    mu_here();  /* push current heap pointer */
+    p = (struct mu_usb_pipe *)TOP;
+    p->fd = fd;
+    p->pipe = pipe;
+    PUSH(sizeof(struct mu_usb_pipe));
+    mu_allot();
+}
+
+/*
+ * usb-open-pipe-ro  ( dev pipe# - pipe)
+ * usb-open-pipe-wo  ( dev pipe# - pipe)
+ * usb-open-pipe-rw  ( dev pipe# - pipe)
+ *
+ * These all do the same thing. Linux doesn't use file descriptors to
+ * represent pipes, so ro/wo/rw is meaningless. On BSD endpoints are
+ * represented as different files, so this distinction is critical in that
+ * case.
+ */
+void mu_usb_open_pipe_ro()  { mu_allocate_usb_pipe(); }
+void mu_usb_open_pipe_wo()  { mu_allocate_usb_pipe(); }
+void mu_usb_open_pipe_rw()  { mu_allocate_usb_pipe(); }
+
 /*
  * usb-read-pipe ( 'buffer size pipe -- #read)
  */
@@ -322,6 +322,10 @@ void mu_usb_write_pipe()
     if (ioctl(p->fd, USBDEVFS_BULK, &tr) == -1)
         return abort_strerror();
 }
+
+/* usb-close-pipe   ( pipe) */
+void mu_usb_close_pipe()    { DROP(1); }
+
 
 /*
  * USB HID support.
@@ -437,12 +441,12 @@ void mu_hid_find_device()
  */
 void mu_hid_read()
 {
-    cell fd = TOP;      /* 'buffer size dev -- dev 'buffer size */
-    TOP = ST1;
-    ST1 = ST2;
-    ST2 = fd;
+    int fd = TOP;      /* 'buffer size dev -- dev 'buffer size */
+    size_t len = ST1;
+    void *buffer = (void *)ST2;
 
-    mu_read_carefully();
+    DROP(2);
+    TOP = read_carefully(fd, buffer, len);
 }
 
 /*
@@ -450,10 +454,10 @@ void mu_hid_read()
  */
 void mu_hid_write()
 {
-    cell fd = TOP;      /* 'buffer size dev -- dev 'buffer size */
-    TOP = ST1;
-    ST1 = ST2;
-    ST2 = fd;
+    int fd = TOP;      /* 'buffer size dev -- dev 'buffer size */
+    size_t len = ST1;
+    void *buffer = (void *)ST2;
 
-    mu_write_carefully();
+    DROP(3);
+    write_carefully(fd, buffer, len);
 }

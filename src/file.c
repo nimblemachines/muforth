@@ -223,37 +223,22 @@ void mu_read_file()     /* fd - addr len */
     TOP = s.st_size;
 }
 
-void mu_read_carefully()    /* fd buffer len -- #read */
+ssize_t read_carefully(int fd, void *buffer, size_t len)
 {
-    int fd;
-    char *buffer;
-    size_t len;
     ssize_t count;
-
-    fd = ST2;
-    buffer = (char *) ST1;
-    len = TOP;
-    DROP(2);
 
     while((count = read(fd, buffer, len)) == -1)
     {
         if (errno == EINTR || errno == EAGAIN) continue;
-        return abort_strerror();
+        abort_strerror();
+        return 0;
     }
-    TOP = count;
+    return count;
 }
 
-void mu_write_carefully()   /* fd buffer len */
+void write_carefully(int fd, void *buffer, size_t len)
 {
-    int fd;
-    char *buffer;
-    size_t len;
     ssize_t written;
-
-    fd = ST2;
-    buffer = (char *) ST1;
-    len = TOP;
-    DROP(3);
 
     while (len > 0)
     {
@@ -266,6 +251,26 @@ void mu_write_carefully()   /* fd buffer len */
         buffer += written;
         len -= written;
     }
+}
+
+void mu_read()      /* fd buffer len -- #read */
+{
+    int fd = ST2;
+    void *buffer = (void *) ST1;
+    size_t len = TOP;
+
+    DROP(2);
+    TOP = read_carefully(fd, buffer, len);
+}
+
+void mu_write()     /* fd buffer len */
+{
+    int fd = ST2;
+    void *buffer = (void *) ST1;
+    size_t len = TOP;
+
+    DROP(3);
+    write_carefully(fd, buffer, len);
 }
 
 /* Core io primitives */

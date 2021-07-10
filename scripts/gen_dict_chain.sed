@@ -24,7 +24,6 @@ s/(.*)\(void\);/\1/
 h
 
 s/push_//
-s/_carefully//
 s/less/</
 s/equal/=/
 #s/reset/!/
