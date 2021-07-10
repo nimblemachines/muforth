@@ -187,8 +187,8 @@ static int enumerate_devices(int vid, int pid, struct mu_usb_dev *mud)
                 }
                 /* Fill in the device structure passed to us. */
                 mud->fd = fd;
-                mud->busnum = udi->udi_bus;
-                mud->devnum = udi->udi_index;
+                mud->busnum = udi.udi_bus;
+                mud->devnum = udi.udi_index;
                 return fd;
             }
         }
@@ -297,7 +297,7 @@ void mu_usb_read_pipe()     /* ( buf len pipe -- #read) */
 {
     int fd = TOP;       /* pipe */
     size_t len = ST1;
-    void *buf = ST2;
+    void *buf = (void *)ST2;
 
     DROP(2);
     TOP = read_carefully(fd, buf, len);
@@ -307,7 +307,7 @@ void mu_usb_write_pipe()     /* ( buf len pipe) */
 {
     int fd = TOP;       /* pipe */
     size_t len = ST1;
-    void *buf = ST2;
+    void *buf = (void *)ST2;
 
     DROP(3);
     write_carefully(fd, buf, len);
