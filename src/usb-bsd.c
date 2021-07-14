@@ -49,6 +49,16 @@
 #define USBD_SHORT_XFER_OK  USB_SHORT_XFER_OK
 #endif
 
+#ifdef DEBUG_USB_ENUMERATION
+#define DEBUG0(fmt)         fprintf(stderr, fmt)
+#define DEBUG1(fmt, a)      fprintf(stderr, fmt, a)
+#define DEBUG2(fmt, a, b)   fprintf(stderr, fmt, a, b)
+#else
+#define DEBUG0(fmt)
+#define DEBUG1(fmt, a)
+#define DEBUG2(fmt, a, b)
+#endif
+
 /*
  * On NetBSD and OpenBSD, ugen devices are predefined - there is no devfs.
  * On my system there are 4 ugens (0 to 3) each with 16 endpoints - 00 to
@@ -102,30 +112,23 @@ static int enumerate_devices(int vid, int pid, struct mu_usb_dev *mud)
     for (dev = 0; dev < 16; dev++)
     {
         snprintf(path, PATHMAX, UGEN_EP0, dev);
-#ifdef DEBUG_USB_ENUMERATION
-    fprintf(stderr, "enumerate_devices: trying %s\n", path);
-#endif
+        DEBUG1("enumerate_devices: trying %s\n", path);
         fd = open(path, O_RDONLY);
         if (fd == -1)
         {
             /* If we get "Permission denied", tell the caller. */
-            if (errno == EACCESS) { return -1; }
+            if (errno == EACCES) { return -1; }
             /* otherwise: device probably doesn't exist; try the next one */
             continue;
         }
         res = ioctl(fd, USB_GET_DEVICEINFO, &udi);
         close(fd);
         if (res == -1) { return -1; }   /* this seems like a problem */
-#ifdef DEBUG_USB_ENUMERATION
-    fprintf(stderr, "enumerate_devices: %.4x:%.4x",
-        udi.udi_vendorNo, udi.udi_productNo);
-#endif
+        DEBUG2("enumerate_devices: %.4x:%.4x", udi.udi_vendorNo, udi.udi_productNo);
         if (udi.udi_vendorNo == vid &&
             udi.udi_productNo == pid)
         {
-#ifdef DEBUG_USB_ENUMERATION
-    fprintf(stderr, " MATCHED\n");
-#endif
+            DEBUG0(" MATCHED\n");
             int timeout = 5000; /* ms */
             fd = open(path, O_RDWR);    /* Re-open read-write */
             if (fd == -1) { return -1; }
@@ -136,9 +139,7 @@ static int enumerate_devices(int vid, int pid, struct mu_usb_dev *mud)
             mud->devnum = dev;
             return fd;
         }
-#ifdef DEBUG_USB_ENUMERATION
-    fprintf(stderr, "\n");
-#endif
+        DEBUG0("\n");
     }
     return 0;
 }
