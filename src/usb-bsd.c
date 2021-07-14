@@ -165,7 +165,7 @@ static int enumerate_devices(int vid, int pid, struct mu_usb_dev *mud)
     usbdir = opendir("/dev/usb");
 
     /* Return no match if directory couldn't be opened. */
-    if (usbdir == NULL) return 0;
+    if (usbdir == NULL) { return 0; }
 
     while ((dev = readdir(usbdir)) != NULL)
     {
@@ -209,6 +209,8 @@ static int enumerate_devices(int vid, int pid, struct mu_usb_dev *mud)
                 mud->fd = fd;
                 mud->busnum = udi.udi_bus;
                 mud->devnum = udi.udi_index;
+                DEBUG2("enumerate_devices: udi_index = %d, udi_addr = %d\n",
+                       udi.udi_index, udi.udi_addr);
                 return fd;
             }
         }
