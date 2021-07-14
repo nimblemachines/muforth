@@ -36,6 +36,7 @@
 #include <unistd.h>         /* close */
 #include <sys/ioctl.h>      /* ioctl */
 #include <stdio.h>          /* snprintf */
+#include <errno.h>          /* errno */
 #ifdef __DragonFly__
 #include <bus/usb/usb.h>
 #else
