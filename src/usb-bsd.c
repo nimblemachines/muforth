@@ -101,15 +101,24 @@ static int enumerate_devices(int vid, int pid, struct mu_usb_dev *mud)
     for (dev = 0; dev < 16; dev++)
     {
         snprintf(path, PATHMAX, UGEN_EP0, dev);
+#ifdef DEBUG_USB_ENUMERATION
+    fprintf(stderr, "enumerate_devices: trying %s\n", path);
+#endif
         fd = open(path, O_RDONLY);
         if (fd == -1) { continue; }     /* probably doesn't exist; try the next one */
         res = ioctl(fd, USB_GET_DEVICEINFO, &udi);
         close(fd);
         if (res == -1) { return -1; }   /* this seems like a problem */
-
+#ifdef DEBUG_USB_ENUMERATION
+    fprintf(stderr, "enumerate_devices: %.4x:%.4x ",
+        udi.udi_vendorNo, udi.udi_productNo);
+#endif
         if (udi.udi_vendorNo == vid &&
             udi.udi_productNo == pid)
         {
+#ifdef DEBUG_USB_ENUMERATION
+    fprintf(stderr, "enumerate_devices: MATCHED\n");
+#endif
             int timeout = 5000; /* ms */
             fd = open(path, O_RDWR);    /* Re-open read-write */
             if (fd == -1) { return -1; }
@@ -120,6 +129,9 @@ static int enumerate_devices(int vid, int pid, struct mu_usb_dev *mud)
             mud->devnum = dev;
             return fd;
         }
+#ifdef DEBUG_USB_ENUMERATION
+    fprintf(stderr, "\n");
+#endif
     }
     return 0;
 }
@@ -295,9 +307,9 @@ void mu_usb_close_pipe()    /* ( pipe) */
 
 void mu_usb_read_pipe()     /* ( buf len pipe -- #read) */
 {
-    int fd = TOP;       /* pipe */
-    size_t len = ST1;
     void *buf = (void *)ST2;
+    size_t len = ST1;
+    int fd = TOP;       /* pipe */
 
     DROP(2);
     TOP = read_carefully(fd, buf, len);
@@ -305,9 +317,9 @@ void mu_usb_read_pipe()     /* ( buf len pipe -- #read) */
 
 void mu_usb_write_pipe()     /* ( buf len pipe) */
 {
-    int fd = TOP;       /* pipe */
-    size_t len = ST1;
     void *buf = (void *)ST2;
+    size_t len = ST1;
+    int fd = TOP;       /* pipe */
 
     DROP(3);
     write_carefully(fd, buf, len);
