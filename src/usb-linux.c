@@ -27,6 +27,13 @@
 
 #ifdef DEBUG_USB_ENUMERATION
 #include <stdio.h>
+#define DEBUG0(fmt)         fprintf(stderr, fmt)
+#define DEBUG1(fmt, a)      fprintf(stderr, fmt, a)
+#define DEBUG2(fmt, a, b)   fprintf(stderr, fmt, a, b)
+#else
+#define DEBUG0(fmt)
+#define DEBUG1(fmt, a)
+#define DEBUG2(fmt, a, b)
 #endif
 
 /*
@@ -129,9 +136,7 @@ static int match_device(char *dev, int vid, int pid)
     struct usb_device_descriptor dev_desc;
     int count;
 
-#ifdef DEBUG_USB_ENUMERATION
-    fprintf(stderr, "match_device: trying %s\n", dev);
-#endif
+    DEBUG1("match_device: trying %s\n", dev);
     fd = open(dev, O_RDONLY);
     if (fd == -1) return 0;
 
@@ -364,9 +369,7 @@ static int match_hid(char *dev, int vid, int pid)
     int fd;
     struct hidraw_devinfo hid;
 
-#ifdef DEBUG_USB_ENUMERATION
-    fprintf(stderr, "match_hid: trying %s\n", dev);
-#endif
+    DEBUG1("match_hid: trying %s\n", dev);
     fd = open(dev, O_RDONLY);
     if (fd == -1) return 0;
 
