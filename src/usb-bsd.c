@@ -105,19 +105,25 @@ static int enumerate_devices(int vid, int pid, struct mu_usb_dev *mud)
     fprintf(stderr, "enumerate_devices: trying %s\n", path);
 #endif
         fd = open(path, O_RDONLY);
-        if (fd == -1) { continue; }     /* probably doesn't exist; try the next one */
+        if (fd == -1)
+        {
+            /* If we get "Permission denied", tell the caller. */
+            if (errno == EACCESS) { return -1; }
+            /* otherwise: device probably doesn't exist; try the next one */
+            continue;
+        }
         res = ioctl(fd, USB_GET_DEVICEINFO, &udi);
         close(fd);
         if (res == -1) { return -1; }   /* this seems like a problem */
 #ifdef DEBUG_USB_ENUMERATION
-    fprintf(stderr, "enumerate_devices: %.4x:%.4x ",
+    fprintf(stderr, "enumerate_devices: %.4x:%.4x",
         udi.udi_vendorNo, udi.udi_productNo);
 #endif
         if (udi.udi_vendorNo == vid &&
             udi.udi_productNo == pid)
         {
 #ifdef DEBUG_USB_ENUMERATION
-    fprintf(stderr, "enumerate_devices: MATCHED\n");
+    fprintf(stderr, " MATCHED\n");
 #endif
             int timeout = 5000; /* ms */
             fd = open(path, O_RDWR);    /* Re-open read-write */
