@@ -1,0 +1,115 @@
+( This file is part of muforth: https://muforth.nimblemachines.com/
+
+  Copyright 2002-2021 David Frech. (Read the LICENSE for details.)
+
+loading MSP430 bootstrap loader (BSL) support (1xx, 2xx, and 4xx devices)
+
+hex
+
+( Since checksumming is done on a 16-bit word basis, let's checksum by
+  words rather than by alternating bytes.)
+
+variable checksum
+: sum!  0ffff checksum ! ;
+: sum  ( w)  checksum @  xor  checksum ! ;
+
+: >w   dup sum  >hilo  send send ;
+: w>   recv recv  lohi>  dup sum ;
+
+: >bb   ( lo hi)  lohi> >w ;
+: bb>   ( - hi lo)      w> >hilo ;
+
+: ?match  ( want got)  2dup = if  2drop ^  then
+   ." expected "  .h8_  ." got " .h8_ ;
+
+: >buf  ( buf u)  swap m !  1+ 2/ for  m* m* >bb  next ;
+: buf>  ( buf u)  swap m !  1+ 2/ for  bb> m& m&  next ;
+
+( For reading back memory from BSL.)
+: hdr>  sum!  bb> 80 ?match  drop  bb> ?match ;
+: chk>  w> drop  checksum @  0=  if ^ then
+        error" bad checksum received" ;
+
+: ?ack  recv  90 ?match ;
+: sync  80 send  ?ack ;
+
+: >length   dup >bb ;  ( Send length twice! Genius!)
+
+: <bsl  ( length cmd)  sync  sum!  80 swap >bb  4 + >length ;
+: bsl>  checksum @  >w ;
+
+( Protocol commands. See Table 2-1, page 11, in SLAU319.
+
+  Cmd   Command name    Direction    Password-protected?
+  ===   =============   ==========   ===================
+   10   RX password     host -> BSL  No
+   12   RX data block   host -> BSL  Yes
+   14   TX data block   BSL -> host  Yes
+   16   Erase segment   n/a          Yes
+   18   Mass erase      n/a          No
+   1a   Load PC         n/a          Yes
+)
+
+( NOTE: Until further notice, we should not use mass-erase. As far as I
+  can tell, it _will_ erase the information memory, which means we'll lose
+  the factory calibration data. Perhaps try it with the parameters 04 0a5
+  instead? These are the actual command bytes written to FCTL1. 02 is segment
+  erase; 04 is erase all main memory; 06 is erase main+info if LOCKA 0.
+
+  See SLAU144, Sec 7.4.1, p324.
+
+  Since the BSL apparently _clears_ LOCKA, using 06 and doing a mass erase
+  will erase the info memory. Using 04 and doing a mass erase *also* erases
+  the info memory. Just FYI. ;-)
+
+( Since it is a tool of last resort, mass-erase is commented out so
+  that it is not called accidentally. Uncomment and reload if you
+  absolutely need it.)
+
+: bsl-unlock              20 10 <bsl  0 >w  0 >w  10 for  0ffff >w  next  bsl> ?ack ;
+: bsl-unlock-image        20 10 <bsl  0 >w  0 >w  ffe0 image+ 20  >buf    bsl> ?ack ;
+: bsl-txbuf  ( buf a u)  dup 12 <bsl  swap >w  dup >w  >buf  bsl>  ?ack ;
+: bsl-rxbuf  ( buf a u)    0 14 <bsl  swap >w  dup >w        bsl>  hdr>  buf>  chk> ;
+: bsl-erase  ( a)          0 16 <bsl    >w  0a502 >w         bsl>  ?ack ;
+( mass-erase               0 18 <bsl  0 >w  0a506 >w         bsl>  ?ack ; )
+: bsl-loadpc  ( pc)        0 1a <bsl       >w    0 >w        bsl>  ?ack ;
+: bsl-version ( buf)       0 1e <bsl     0 >w    0 >w        bsl>  hdr>  buf>  chk> ;
+
+
+( Let's make sure we're not writing the flash inadvertently - until we know
+  exactly what we're doing.)
+
+: in-ram?  ( a - f)   @ram  dup #ram +  within ;
+: bsl-txbuf-checked   ( buf a u)
+   over in-ram? if  2dup + in-ram?  if  bsl-txbuf  ^  then  then
+   cr  ." write to "  over u.  dup u.  ." blocked"  drop 2drop ;
+
+( Naming convention note: All the following b.Foobar commands are the BSL
+  _implementations_ of the chat command interface.)
+
+: b.Hello  ( start things going)
+   #9600 bps  ignore-parity  even-parity  bsl-unlock ;
+
+: b.GetStatus  ( - sp pc sr cp)  "dead @ram 0 "dead ;
+: b.Run             ( pc sr cp)  2drop  bsl-loadpc ;
+
+: b.ReadWord  ( a - w)                 pad swap \m cell  bsl-rxbuf  pad leh@ ;
+: b.WriteWord ( w a)    push  pad leh!  pad pop \m cell  bsl-txbuf-checked ;
+
+: b.ReadChunk    ( buf a u)  bsl-rxbuf ;
+: b.WriteChunk   ( buf a u)  bsl-txbuf-checked ;
+
+.equates. .contains FCTL1 .if
+
+: b.ErasePage   (     a   - fail?)   bsl-erase  0 ;
+: b.FlashChunk  ( buf a u - fail?)   bsl-txbuf  0 ;
+
+.else  ( FRAM?)
+
+: b.ErasePage   (     a   - fail?)   bsl-erase  0 ;  ( XXX ???)
+: b.FlashChunk  ( buf a u - fail?)   bsl-txbuf  0 ;
+
+.then
+
+: bsl  chat-via  b.Hello  b.GetStatus  b.Run
+                 b.ReadChunk  b.WriteChunk  b.ErasePage  b.FlashChunk ;

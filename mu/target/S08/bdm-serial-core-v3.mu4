@@ -1,0 +1,171 @@
+( This file is part of muforth: https://muforth.nimblemachines.com/
+
+  Copyright 2002-2021 David Frech. (Read the LICENSE for details.)
+
+loading S08 BDM support v3 (core)
+
+__meta
+
+hex
+
+( Support for Freescale's S08 Background Debug Mode - or BDM.)
+
+( I've split out the bit routines into two other files - one for the 908,
+  and one for the S08. Look at bdm-bit-908.mu4 and bdm-bit-S08.mu4.)
+
+( It turns out that because the 9S08QG8, when mostly blank, is hard to get
+  into Active BDM mode. On POR - power on reset - it starts running random
+  code and either gets a COP - watchdog - reset, or an illegal instruction,
+  or illegal address. So it resets and starts all over again. Trying to get
+  into Active BDM via the BKGD pin is basically impossible. There is a
+  forum posting about this here:
+
+  http://forums.freescale.com/freescale/board/message?message.uid=11435#U11435
+
+  So, given that, we have to hold BKGD/MS low during POR in order to force
+  the chip into Active BDM mode. A side-effect of this is that it selects
+  the bus clock - rather than the "alternate" BDM clock - ICSLCLK - so the
+  BDM will be running at 4MHz instead of 8. This makes life simpler in some
+  ways, but it turns out that it's pretty easy to meet the timing specs for
+  both 4M and 8M BDM with a "host" running at less than 6M.)
+
+( Our signature.)
+label id
+   char S c,  char 0 c,  char 8 c,  ( S08 architecture)
+   char b c,                        ( BDM)
+   char 3 c,                        ( version 3)
+
+( The SCI code is identical between 908 and S08 except for the names - and
+  offsets - of the SCI status and data regs ... so let's abstract them.)
+
+.ifdef S08
+
+macro SciStatus   SCIS1  ;m
+macro SciData     SCID   ;m
+
+.else   -- 908
+
+macro SciStatus   SCS1   ;m
+macro SciData     SCDR   ;m
+
+.then
+
+macro SciRx?   begin  SciStatus 5 ( recvr full)  bset? until  ;m
+macro SciTx?   begin  SciStatus 7 ( xmit empty)  bset? until  ;m
+
+label SciRx  ( store byte into buf at HX, increment HX)
+   SciRx?  SciData ) 0 ,x mov  rts  ;c
+
+label SciTx  ( transmit byte from buf at HX, increment HX)
+   SciTx?  0 ,x SciData ) mov  rts  ;c
+
+
+( NOTE: Command numbers are all given in HEX.)
+
+( dispatch uses the following stack frame:
+  0,s to 1,s   return addr to main loop
+  2,s to 5,s   send and expect buffer
+  6,s          send count
+  7,s          expect count
+  8,s          current count)
+
+label dispatch
+   04 # cmp  u< if  ( 20..23 Send1..4)
+      .a inc  6 ,s sta  ( send count)
+      tsx  2 # aix  ( point HX at start of buffer)
+      begin  SciRx c  .a decz? until
+      rts
+   then
+
+   04 # sub
+   03 # cmp  u< if  ( 24..26 Execute BDM, Expect 0..2)
+      7 ,s sta  ( expect count)
+      6 ,s lda  ( get send count)
+      8 ,s sta  ( cur count)
+      tsx  2 # aix  ( point HX at start of buffer)
+      begin  BdmTx ) jsr  8 ,s decz? until  ( write bytes via BDM)
+
+      ( After writing bytes via BDM, delay. For an S08 target we should delay
+        16 target cycles; for a CFv1 target, 32 cycles. Let's calculate,
+        based on our clock and assuming we are talking to a 4M target, how
+        many loops we need.)
+
+decimal
+
+.ifdef cfv1-target   32 4 /
+.else  ( S08)        16 4 /   .then
+
+.ifdef 4.9152m       49 40    .else
+.ifdef 9.8304m       98 40    .else
+.ifdef 24m           24  4    .else
+( assume 9.216M)     92 40    .then .then .then
+
+hex
+      */ ( count) # lda  begin .a decz? until  ( 4~ per loop)
+
+      7 ,s lda  0= if  ( expect count is zero)
+         SciTx j  ( send back a junk byte; keep host from outrunning us)
+      then
+      8 ,s sta  ( cur count)
+      tsx  2 # aix  ( point HX at start of buffer)
+      begin  BdmRx ) jsr  8 ,s decz? until  ( read bytes via BDM)
+
+      7 ,s lda  ( get expect count)
+      tsx  2 # aix  ( point HX at start of buffer)
+      begin  SciTx c  .a decz? until  ( send response back via SCI)
+      rts
+   then
+
+   03 # sub
+   0= if  ( 27 SyncPulse)
+      tsx  2 # aix  ( point HX at start of buffer)
+      SyncPulse ) jsr
+      SciTx c  SciTx j
+   then
+
+   .a decz? if  ( 28 BkgdLow)
+      BdmDriveLow ) jmp  -- drive BKGD/MS low
+   then
+
+   .a decz? if  ( 29 BkgdHiZ)
+      BdmHiZ ) jmp
+   then
+
+   .a decz? if  ( 2a Set4M)
+      BdmRx1 # ldhx
+      SetRx1_4M ) jsr
+      SetTx1_4M ) jmp
+   then
+
+   .a decz? if  ( 2b Set8M)
+      BdmRx1 # ldhx
+      SetRx1_8M ) jsr
+      SetTx1_8M ) jmp
+   then
+
+.ifdef bdm-16m-target
+   .a decz? if  ( 2c Set16M)
+      BdmRx1 # ldhx
+      SetRx1_16M ) jsr
+      SetTx1_16M ) jmp
+   then
+.then
+
+   ( Unknown)  ( do nothing at all!)  rts  ;c
+
+
+\m bdm-chat-loop resolve>>  ( jump at start of Flash points here)
+
+( Return a signature of who we are and what we're doing.)
+label signon
+   id # ldhx  5 # lda
+   begin  SciTx c  .a decz? until
+
+   -7 # ais   ( room for send and expect counts, cur count, and buffer)
+   BdmHiZ ) jsr  ( make sure BKGD high and tri-stated)
+   begin
+      SciRx?  SciData ) lda  ( get command byte)
+      20 # sub   ( BDM commands start at 20 hex; anything below that, we exit)
+      u< if  ( 00 Bye up to 1f)  ( return to chat)  7 # ais  rts  then
+      dispatch c
+   again  ;c

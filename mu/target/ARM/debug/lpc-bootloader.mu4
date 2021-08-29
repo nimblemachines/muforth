@@ -1,82 +1,189 @@
-( This file is part of muforth: http://muforth.nimblemachines.com/
+( This file is part of muforth: https://muforth.nimblemachines.com/
 
-  Copyright 2002-2017 David Frech. (Read the LICENSE for details.)
+  Copyright 2002-2021 David Frech. (Read the LICENSE for details.)
 
 loading NXP LPC bootloader support
 
-( Totally non-working!! Don't get your hopes up. ;-)
+( Possibly working!! Don't get your hopes up. ;-)
 
-sealed .isp.
-: isp   .isp. definitions ;
+( We need target serial support.)
+.ifndef target-raw
+  ld target/common/serial.mu4
+.then
 
-defer resync
+( Make spy work better. This is a mostly ASCII protocol, so make it easier
+  to see what is going on by printing visible codes as themselves. Only
+  control codes will show up as two digit hex values.)
 
-: (status")   out-channel preserve >stderr  count type ;
+: .char  ( ch - ch)
+   dup  dup letter? if  emit space  else  .h8_  then
+   dup #LF = if  cr  then ;
+
+: send          spy @ if  ." >"  .char  then  _send ;
+: recv   _recv  spy @ if  ." <"  .char  then ;
+
+sealed .isp-response.
+: isp-response   .isp-response. definitions ;
+
+: chip   ( a u)  cr  ." Connected to "  type ;
+
+( Send a CRLF to the chip.)
+: <crlf>   #CR send  #LF send ;
+
+( Send a chunk of bytes to the chip.)
+: send-chunk   ( a u)  for  c@+ swap  send  next  drop ;
+
+runtime
+( Send a string, followed by CRLF, to the chip.)
+: (send")   ( a u)  send-chunk  <crlf> ;
 
 compiler
-: status"   \ z"  \ (status") ;
+: send"    \ "  \ (send") ;
 
-isp
+forth
+: send"    char " parse  (send") ;
+
+isp-response
 ( ISP command return codes.)
-:  0  status" Success" ;
-:  1  status" Invalid command" ;
-:  2  status" Source address not word-aligned" ;
-:  3  status" Destination address not word-aligned" ;
-:  4  status" Source address not mapped" ;
-:  5  status" Destination address not mapped" ;
-:  6  status" Byte count not a multiple of 4" ;
-:  7  status" Invalid sector number" ;
-:  8  status" Sector not blank" ;
-:  9  status" Sector not prepared for write" ;
-: 10  status" Source and destination data not equal" ;
-: 11  status" Busy flashing" ;
-: 12  status" Parameter error" ;
-: 13  status" Address not word-aligned" ;
-: 14  status" Address not mapped" ;
-: 15  status" Command locked" ;
-: 16  status" Invalid unlock code" ;
-: 17  status" Invalid baud rate" ;
-: 18  status" Invalid stop bit setting" ;
-: 19  status" Code read protection enabled" ;
+:  0       ( Success) ;
+:  1  error" Invalid command" ;
+:  2  error" Source address not word-aligned" ;
+:  3  error" Destination address not word-aligned" ;
+:  4  error" Source address not mapped" ;
+:  5  error" Destination address not mapped" ;
+:  6  error" Byte count not a multiple of 4" ;
+:  7  error" Invalid sector number" ;
+:  8  error" Sector not blank" ;
+:  9  error" Sector not prepared for write" ;
+: 10  error" Source and destination data not equal" ;
+: 11  error" Busy flashing" ;
+: 12  error" Parameter error" ;
+: 13  error" Address not word-aligned" ;
+: 14  error" Address not mapped" ;
+: 15  error" Command locked" ;
+: 16  error" Invalid unlock code" ;
+: 17  error" Invalid baud rate" ;
+: 18  error" Invalid stop bit setting" ;
+: 19  error" Code read protection enabled" ;
 
-: 196353  status" LPC2131" ;
-: 196369  status" LPC2132" ;
-: 196370  status" LPC2134" ;
-: 196387  status" LPC2136" ;
-: 196389  status" LPC2138" ;
+( Chip IDs from LPC81x user manual [UM10601]:
+  LPC810M021FN8 0x0000 8100
+  LPC811M001JDH16 0x0000 8110
+  LPC812M101JDH16 0x0000 8120
+  LPC812M101JD20 0x0000 8121
+  LPC812M101JDH20 0x0000 8122
+  LPC812M101JTB16 0x0000 8122  ??
+)
+: 33024   " LPC810M021FN8" chip ;
+: 33040   " LPC811M001JDH16" chip ;
+: 33056   " LPC812M101JDH16" chip ;
+: 33057   " LPC812M101JD20" chip ;
+: 33058   " LPC812M101JDH20" chip ;
 
-: Synchronized   ." Synchronized"  status" Synchronized"  cr ;
+( Chip IDs from LPC213x user manual [UM10120]:
+  LPC2131 and LPC2131/01 196353 0x0002 FF01
+  LPC2132 and LPC2132/01 196369 0x0002 FF11
+  LPC2134 and LPC2134/01 196370 0x0002 FF12
+  LPC2136 and LPC2136/01 196387 0x0002 FF23
+  LPC2138 and LPC2138/01 196389 0x0002 FF25
+)
+: 196353   " LPC2131" chip ;
+: 196369   " LPC2132" chip ;
+: 196370   " LPC2134" chip ;
+: 196387   " LPC2136" chip ;
+: 196389   " LPC2138" chip ;
 
-( Chose these values for begin ... until use.)
+( Chip IDs from LPC214x user manual [UM10139]:
+  LPC2141 196353 0x0402 FF01
+  LPC2142 196369 0x0402 FF11
+  LPC2144 196370 0x0402 FF12
+  LPC2146 196387 0x0402 FF23
+  LPC2148 196389 0x0402 FF25
+
+  TOTAL FAIL!! More misleading or incorrect ISP documentation! The "decimal
+  equivalents" shown in the table are actually for the LPC213x, not the
+  LPC214x. The authors just copied them over. In fact, the *correct* LPC214x
+  values are the LPC213x value + 0400_0000 hex!
+)
+: 67305217   " LPC2141" chip ;
+: 67305233   " LPC2142" chip ;
+: 67305234   " LPC2144" chip ;
+: 67305251   " LPC2146" chip ;
+: 67305253   " LPC2148" chip ;
+
+( I chose these values for begin ... until use.)
+: Synchronized  -1 ;
 : OK     -1 ;  ( true)
 : RESEND  0 ;  ( false)
 
 forth
 
 ' nope ( prompt)
--:  .isp. find  if execute ^ then  ( uudecode) ;
-mode listening
+-:  .isp-response. find  if execute ^ then ;
+mode __isp
 
 ( Get input from target.)
-: process  ( end a key - end a' done)
-   dup #LF if drop  0 ^ then
-   dup #CR if drop -1 ^ then ( done)
-   over c!  1+  2dup = ;
+: process  ( key - done)
+   dup #CR = if drop  0 ^ then
+   dup #LF = if drop -1 ^ then ( done)
+   m&  0 ;
 
 128 buffer inbuf
-: straight  ( - a u)  ( I think this is what Chuck called it. ;-)
-   inbuf 128  over + swap ( end inbuf)
-   begin  key  process  until  nip  inbuf swap ( inbuf a)  over - ;
+: get-line  ( - a u)
+   m preserve  inbuf m !
+   begin  recv process  until
+   inbuf  m @  over - ;
 
-: xtal   ." 14745" cr ( xtal speed) ;
+: isp-eval   ( a u)  state preserve  __isp evaluate ;
+: listen   get-line  isp-eval ;
 
-: listen  straight listening evaluate \ [ ;
-: sync  begin  char ? emit  listen  until  ( OK will return -1)
-        begin  xtal  listen  until
-        begin  char J emit  listen until
-        now nope is resync ;
+: isp.hello
+   ( XXX We might be able to go faster than 9600, but let's start there.)
+   9600 bps  flush  drain
+   begin  begin  char ? send  listen  until  ( Synchronized will push -1)
+      send" Syncronized"  listen  until  ( OK will push -1)
 
-now sync is resync
+   ( The crystal frequency, sent in kHz, is ignored by the LPC81x. This value
+     was for the LPC213x on my Olimex board.)
+   send" 14745" ( send crystal speed)  listen drop  ( chip sends "OK")
 
-: testing  char J emit cr
-   straight type   straight type ;  now testing is resync
+   send" A 0" ( turn off echo)
+      get-line cr type  listen  ( read and ignore echoed response, then read status)
+
+   send" J"  listen  listen  ( read status, then chip id)
+   send" K"  listen  cr ." ROM version "  get-line type  get-line type ;
+
+( XXX For now, fake the SP)
+variable fake-sp  "deadbeef fake-sp !
+: isp.get-sp   ( - sp)   fake-sp @ ;
+: isp.set-sp   ( sp)     fake-sp ! ;
+
+: cmd-addr-len  ( a u cmd - u)
+   radix preserve decimal  sep preserve -sep
+   send  bl send  swap (u.) send-chunk  bl send  dup (u.) send-chunk  <crlf>
+   listen ;
+
+.ifdef isp-data-raw  ( LPC81x and possibly others)
+
+: isp.read     ( buf a u)
+   m preserve  rot m !
+   char R cmd-addr-len  for  recv m&  next ;
+
+: isp.write    ( buf a u)
+   m preserve  rot m !
+   char W cmd-addr-len  for  m* send  next
+   listen drop ( chip sends "OK") ;
+
+: isp.run      ( pc)     drop ;
+
+.else  ( ISP data is sent uuencoded on most LPC chips)
+
+: isp.read     ( buf a u)  error" uuencoded ISP read unimplemented" ;
+: isp.write    ( buf a u)  error" uuencoded ISP write unimplemented" ;
+: isp.run      ( pc)     drop ;
+
+.then
+
+( The interface for the interact code. Implemented by all debug transports.)
+: isp
+   chat-via  isp.hello  isp.get-sp  isp.set-sp  isp.read  isp.write  isp.run ;

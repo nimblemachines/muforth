@@ -2,18 +2,18 @@ here
    .forth. ,
 
 token current  .forth.  (linked-name)
-   <:> -]   (lit)  [  ,  -]  ^ [
+   <:> ]   (lit)  [  ,  ]  ^ [
 
 token new  current @  (linked-name)
-   <:> -]
+   <:> ]
       token
       nope
       current @  (linked-name)
    ^ [
 
 new :
-   <:> -]
-      new <:>  nope  -]
+   <:> ]
+      new <:>  ]
    ^ [
 
 : definitions  current !  ^ [
@@ -21,32 +21,33 @@ new :
 : compiler  .compiler. definitions  ^ [
 : runtime    .runtime. definitions  ^ [
 
-: literal   (lit) (lit) ,  ,   ^ [
-
-: ]   literal -]  ^ [
-
 compiler
-: ;   nope
-      (lit) ^ ,
-      [  token [ .compiler. find huh?  ,  -]  ^ [
+: ;   compile ^
+      [  token [  .compiler. find huh?  ,  ]  ^ [
 forth
 
+: literal   compile (lit)  , ;
+: #]        literal  ] ;
+
 : char   token  drop  c@ ;
-: (    [ char ) ]  parse  2drop ;
+: (    [ char ) #]  parse  2drop ;
 
 ( Phew! now we can have comments!)
 
-( This file is part of muforth: http://muforth.nimblemachines.com/
+( This file is part of muforth: https://muforth.nimblemachines.com/
 
-  Copyright 2002-2017 David Frech. (Read the LICENSE for details.)
+  Copyright 2002-2021 David Frech. (Read the LICENSE for details.)
 
-( This file is muforth/startup.mu4. It contains high-level Forth code
-  necessary to the useful execution of Forth. This file is loaded and
-  interpreted when Forth starts up.
+( This file is muforth/mu/startup.mu4. It contains high-level Forth code
+  necessary to the useful execution of muforth. This file is loaded and
+  interpreted every time muforth starts up.
 
-  The idea is to move as much code as possible -out- of the Forth kernel.
-  Hence the name: "mu" is the Greek letter often used in engineering to
-  represent "micro".
+  The idea is to move as much code as possible *out* of muforth's C kernel
+  and instead implement it in Forth. Hence the name "muforth": mu is the
+  Greek letter often used in engineering to represent "micro".
+
+  However, this "micro-ness" only refers to the C kernel; once everything
+  in this file is loaded, muforth has over 500 words defined!
 
   This file exemplifies a Forth strength - shared by Lisp and Smalltalk,
   among other interpretive/compiled languages - that I like to call
@@ -56,13 +57,20 @@ forth
   As defined in the kernel, the interpreter/compiler is very simple; it
   only knows how to do the following things:
 
-  1. create a new colon word, making a dictionary entry for it;
+  1. parse a whitespace-delimited token out of the input stream;
 
-  2. compile a "call" to an already-defined word [Forth lingo for
-     "named piece of code"], by appending its execution address to the end
-     of the colon word we are compiling.
+  2. look up a token in the dictionary, and complain if it is not found;
 
-  That's it!
+  3. execute the code that is associated with a token;
+
+  4. compile a "call" to the code that is associated with a token, by
+     appending its execution address to the end of the current dictionary
+     entry;
+
+  5. create a new dictionary entry.
+
+  That's it! No numbers, no control structures, and no error reporting
+  other than "xyz isn't defined".
 
   In this file, in Forth, we need to extend the interpreter/compiler to do
   the following:
@@ -74,7 +82,11 @@ forth
   3. read and write numbers - an interesting exercise since muforth starts
      life not even knowing the constants 0 or 1;
 
-  4. read and write strings.
+  4. read and write strings;
+
+  5. create return stack exception frames - for error handling and "fluid
+     binding" of global variables - and unwind through these frames when
+     errors occur.
 
   Once these are complete we will have a useful Forth for doing real work.
 
@@ -97,6 +109,8 @@ forth
 ( Stack manipulations.)
 : rot    >r swap  r> swap ;  ( a b c - b c a)  ( fig!)
 : -rot   swap >r  swap r> ;  ( a b c - c a b)
+
+: nip    swap drop ;           ( a b - b)
 : tuck   swap over ;           ( a b - b a b)
 
 ( Back up over last token parsed from the input so we can re-parse it.)
@@ -126,7 +140,7 @@ compiler
 ( XXX: should this and ' do the same thing?)
 ( : [']  .forth. chain' literal ;)
 ( XXX should this search .runtime. rather than .forth. ??)
-: [']  ' literal ;
+: [']  '  literal ;
 
 ( XXX: is this useful? Here? Maybe in a target compiler...)
 : \f   .runtime. \chain ;
@@ -138,18 +152,18 @@ forth
 
 
 ( We don't even have any constants yet! So we make the easiest one first...)
-: 0   [ dup dup xor ] ;
-: -1  [ 0 invert ] ;
-: 1   [ -1 negate ] ;
-: 2   [ 1 2* ] ;
+: 0   [ dup dup xor #] ;
+: -1  [ 0 invert #] ;
+: 1   [ -1 negate #] ;
+: 2   [ 1 2* #] ;
 
 ( On and off)
 : on   -1 swap !  ;
 : off   0 swap !  ;
 
-: bl  [ 2 2* 2* 2* 2* ] ;  ( space character)
+: bl  [ 2 2* 2* 2* 2* #] ;  ( space character)
 
-: ctrl   char  [ bl 2* ( 64) ]  xor ;  ( how you get ^? = 127.)
+: ctrl   char  [ bl 2* ( 64) #]  xor ;  ( how you get ^? = 127.)
 compiler
 : char   \f char literal ;
 : ctrl   \f ctrl literal ;
@@ -157,7 +171,7 @@ forth
 
 ( Before I figured out the trick above, which yields the correct answer for
   ctrl ?, I defined ctrl thus:)
-( : ctrl   char  [ bl 1- ]  and ;  ( 31 and)
+( : ctrl   char  [ bl 1- #]  and ;  ( 31 and)
 
 
 ( Some useful tidbits.)
@@ -168,9 +182,9 @@ forth
 : 1+   1 + ;  ( these are common)
 : 1-  -1 + ;
 
-: cell   [ 1 cells ] ;
-: cell+  [ cell ] + ;
-: cell-  [ cell negate ] + ;
+: cell   [ 1 cells #] ;
+: cell+  [ cell #] + ;
+: cell-  [ cell negate #] + ;
 
 ( For fetching and storing a series of bytes.)
 : c@+  ( a - b a+1)   dup c@  swap 1+ ;
@@ -186,7 +200,7 @@ forth
 
 : 2dup   ( a b     - a b a b)   over over ;
 : 2swap  ( a b c d - c d a b)   rot push  rot pop ;
-: 2over  ( a b c d - a b c d a b)   [ 2 1+ ] nth  [ 2 1+ ] nth ;
+: 2over  ( a b c d - a b c d a b)   [ 2 1+ #] nth  [ 2 1+ #] nth ;
 : 2tuck  ( a b c d - c d a b c d)   2swap  2over ;
 
 : =    xor 0= ;
@@ -215,9 +229,6 @@ forth
 ( When using absolute branch addresses, this is easy: just store dest at src.)
 : <resolve  ( dest src)  ! ;
 : >resolve  ( src dest)  swap <resolve ;
-
-( Going back to fig-FORTH!)
-: compile   pop  @+  push  , ;
 
 compiler
 : then   ( src)          here >resolve ;
@@ -285,21 +296,19 @@ forth
   colorForth compiles a literal.
 
   Even though we don't have color in muforth, we can make things a bit
-  cleaner by assuming -- unlike traditional Forth -- that between  [  and
-  ]  we will calculate a literal.
+  cleaner by creating a new word -- #] -- that compiles a literal *before*
+  restarting the colon compiler.
 
-  How does it work? Simple.  ]  _always_ compiles a literal before
-  restarting the colon compiler. To restart it _without_ compiling a
-  literal, use  -]  .)
+  We retain the normal Forth behaviour that  ]  simply restarts the colon
+  compiler, doing no other work.)
 
 
 ( Dictionary structure words. Link fields point to link fields. Roughly, a
   dictionary entry is the following cell-sized things: suffix, link, code;
   where suffix is the last 7 [64-bit] characters of the name, followed by
-  its byte-sized length. Remember: high bit of length is hidden bit!)
+  its byte-sized length. If length is zero, the word is *hidden*.)
 
-: link>name    ( 'link - a u)
-   1- dup c@ [ bl 2* 2* 1- ] and  ( 'len len)  tuck -  swap ;
+: link>name    ( 'link - a u)  1- dup c@  ( 'len len)  tuck -  swap ;
 
 ( These words all assume we're calculating to or from a code field
   address.)
@@ -352,7 +361,7 @@ forth
 
 ( last-created contains the ip address of the last <does> word defined)
 here 0 ,
-: last-created  [ ] ;  ( make the variable by hand!)
+: last-created  [ #] ;  ( make the variable by hand!)
 
 ( does> fixes up the does ip of the last <does> word to point to the code
   after "does>" in the caller.)
@@ -392,29 +401,6 @@ here 0 ,
 
 : variable    create  0 , ;
 : 2variable   variable  0 , ;
-
-
-( "nameless" colon words.)
-: -:  here <:>        -] ;
-
-( For comparison, the regular : compiler is defined thus:
-:  :   new <:>  nope  -] ;
-where nope is a placeholder for code to hide the newly created colon word.)
-
-
-( We'd like to hide colon words as they are being created, and show them
-  when they are complete.)
-
-2variable last-colon  ( the link address of the last colon word defined,
-                        and the chain it was defined in)
-
-: show
-   last-colon 2@  =if  swap !  0 0  then  last-colon 2! ;  ' show
-   ( patch into ; )  .compiler. chain' ;  cell+              !
-
--: ( hide)
-   current @  dup @  ( chain link)  2dup last-colon 2!  @ swap ! ( unlink) ;
-   ( patch into : )     .forth. chain' :  cell+ cell+ cell+  !
 
 
 ( To bracket comments in a flexible way. If you've bracketed some text
@@ -488,20 +474,25 @@ forth
   are structures, created in the body of a does word, that look just like a
   name entry in the dictionary - a name-suffix followed by a link field.
 
-  The name entry is always the string "muchain" followed by its length, 7.
-  This is exactly 8 bytes long - the length of a suffix now that muforth is
-  64-bit. The name identifies the word as the head of a dictionary chain.
+  The name entry is always the string "muchain" followed by a zero length
+  byte. This is exactly 8 bytes long - the length of a suffix now that
+  muforth is 64-bit. The name identifies the word as the head of a dictionary
+  chain.
 
-  The name is hidden - by setting the high bit of the name's length - so
-  that dictionary searches and word listings won't see it.
+  The name is hidden - by setting the length to zero - so that dictionary
+  searches and word listings won't see it.
 
   The link field points to the link field within the name entry of the last
-  word defined on the chain.)
+  word defined on the chain.
 
-: chain   create  [ token muchain  drop @ ] ,
-                  [ bl 2* 2* ( 128)  2 2* 2* 1- ( 7) + ]  here 1- c!
-                  ( link) ,
-          does>  cell+ ;  ( return address of link field)
+  We create new chains by reusing the code field and the "muchain" name
+  field from  .forth.  - an existing chain that is created by C code in
+  src/dict.c that is executed at startup.)
+
+: chain   ( anchor-link)
+          new  [ ' .forth. @ #] , ( code field)
+           [ .forth. cell- @ #] , ( hidden "muchain" name field)
+                                , ( anchor-link) ;
 
 : sealed           0  chain ;  ( create an independent vocab chain)
 : chained  current @  chain ;  ( chain to the current vocab)
@@ -618,7 +609,7 @@ variable fp    ( the "top" - most recently pushed - frame)
            r> execute         ( execute cleanup word)
            >r                 ( restore return address) ;
 
-create remove  -]  unlink ;   ( remove pushes IP when executed!)
+create remove  ]  unlink ;    ( remove pushes IP when executed!)
 
 
 ( Now some interesting applications.)
@@ -755,8 +746,8 @@ decimal
 
 ( NOTE WELL: This code - the number parsing code - has been a thorn in my
   side for ever. You'll see, as you read the following code and comments,
-  that over the years I have made changes, but it has never been as simple as
-  elegant as I would like. It needs a really good whacking.)
+  that over the years I have made changes, but it has never been as simple
+  or as elegant as I would like. It needs a really good whacking.)
 
 ( 2006-mar-26. Ok, so this *totally* sucks. The presence of these bits of
   punctuation can mask a word not being found in the dictionary. A bare /,
@@ -777,9 +768,10 @@ decimal
 
 : ?radix  ( a u - a' u')
 (   char 0 punct  if  hex ^  then )
-   char " punct  if  hex ^  then
-   char # punct  if  decimal ^  then
+   char " punct  if  hex ^  then       ( " for hex and ' for octal are Donald Knuthisms)
    char ' punct  if  octal ^  then
+   char $ punct  if  hex ^  then       ( $ for hex is a time-worn convention)
+   char # punct  if  decimal ^  then
    char % punct  if  binary ^  then ;
 
 ( . resets dpl; others leave it unchanged; this means that embedding . in a
@@ -797,13 +789,13 @@ decimal
 ( This is scary. We need a bunch of literals for `digit>'.)
 
 : digit>   ( ch - digit | junk)
-   char 0 -  [ 2 2* 2* 1+ ]  ( 9)   over u< if  ( !decimal)
-          [ 2 2* 2* 2* 1+ ]  ( 17)  -
-     [ 2 1+  2* 2* 2*  1+ ]  ( 25)  over u< if  ( !hex, UPPERCASE)
-          [ 2 2* 2* 2* 2* ]  ( 32)  -
-     [ 2 1+  2* 2* 2*  1+ ]  ( 25)  over u< if  ( !hex, lowercase)
+   char 0 -  [ 2 2* 2* 1+ #]  ( 9)   over u< if  ( !decimal)
+          [ 2 2* 2* 2* 1+ #]  ( 17)  -
+     [ 2 1+  2* 2* 2*  1+ #]  ( 25)  over u< if  ( !hex, UPPERCASE)
+          [ 2 2* 2* 2* 2* #]  ( 32)  -
+     [ 2 1+  2* 2* 2*  1+ #]  ( 25)  over u< if  ( !hex, lowercase)
       ( junk)  ^
-   then  then  ( hex) [ 2 2* 1+ 2* ]  ( 10) +  then  ( decimal) ;
+   then  then  ( hex) [ 2 2* 1+ 2* #]  ( 10) +  then  ( decimal) ;
 
 :  digit?   ( ch -   digit T |   junk F)  digit>  dup radix @  u< ;
 : @digit?   ( a  - a digit T | a junk F)  dup c@  digit? ;
@@ -861,31 +853,77 @@ decimal
   interpreter and compiler, which up till this point have simply complained
   if they saw something not in the dictionary.)
 
-( Let's define a word to create new modes. This is mostly useful for
-  meta-compilers.)
+( First we need to re-define  [  and  ] . We will define these as
+  interpreter "modes", which consist of a word to display a prompt string
+  and a token consumer function. Since we don't currently have a way to
+  compile strings,we will use  nope  until we re-define the prompts later.)
 
+variable state  ( interpret or compile -- or whatever!)
 : mode   create  ( prompt token-consumer)  ,  ,  does>  state ! ;
 
 
-( To set the compiler consumer, we need a sneaky word to get the value of
-  state while compiling - we use the same trick later to set the compiler
-  prompt.)
+( Redefine the forth "consumer" to try to convert numbers after failing to
+  find a token in the .forth. chain. Since we don't yet have a way to
+  create nameless colon definitions, do it by hand!)
+
+' nope  ( null prompt for interpret mode)
+
+here <:> ]  ( make a nameless colon word)
+   ( interpret one token)
+   .forth. find  if  execute ^  then  number ;
 
 compiler
-: 'compiler-mode  state @ ;
+mode [  ( enter interpreter mode)
 forth
 
-( Redefine, and then set the forth "consume".)
--:   ( interpret one token)
-      .forth. find  if  execute ^  then  number ;     state @  !
+( Now for the compiler "consumer".)
+' nope  ( null prompt for compiler mode)
 
-( Now set the compiler "consumer". To get access to the value of state at
-  compile time, we turn on the compiler, but don't compile anything!)
-
--:   ( compile one token)
+here <:> ]  ( make a nameless colon word)
+   ( compile one token)
    .compiler. find  if  execute ^  then
     .runtime. find  if  ,       ^  then  number literal ;
-                                      -]  'compiler-mode [  !
+
+mode ]  ( enter compiler mode)
+
+
+( We need to re-define the interpret loop to use our new state mechanism.)
+defer ?stack
+: interpret
+   begin  token =while  state @ @execute  ?stack  repeat  2drop ;
+
+
+( We'd like to hide colon words as they are being created, and show them
+  when they are complete.)
+
+2variable last-colon  ( the link address of the last colon word defined,
+                        and the chain it was defined in)
+
+: show
+   last-colon 2@  =if  swap !  0 0  then  last-colon 2! ;
+
+: hide
+   current @  dup @  ( chain link)  2dup last-colon 2!  @ swap ! ( unlink) ;
+
+
+( Create a "nameless" colon word.)
+: -:  here <:>  ] ;
+
+( Created a named colon word, and hide its name until we execute  show .)
+:  :   new <:>  ]  hide ;
+
+
+( Fire up the state-aware interpreter! The new  :  will use the redefined  ]
+  which affects the state variable.)
+
+.compiler. chain' [ execute  ( set interpet state)  interpret
+
+compiler                       ( end the definition by hand, not using ; )
+:  ;   compile ^  \ [  show    ^ [ show
+forth
+
+( Since we redefined ] we need to redefine #] as well.)
+: #]   literal  ] ;
 
 
 : >    swap <  ;
@@ -1109,7 +1147,7 @@ forth
 
 ( Words that do something with each word being defined.)
 ( hook into new by rewriting its second cell!)
-: being-defined  constant  does> @  [ ' new cell+ cell+ ]  ! ;
+: being-defined  constant  does> @  [ ' new cell+ cell+ #]  ! ;
 
 ( To warn of re-defining a word.)
 -: ( a u)  2dup current @ find if  out-channel preserve  >stderr
@@ -1161,10 +1199,13 @@ being-defined -v  ( be verbose)
   modify the stack, which is why its stack effect shows i items on the
   left, and j on the right.
 
-  Let's translate this into muforth's terms. The word called for each word
-  has the following stack effect:
+  Let's translate this into muforth's terms, but let's change the return
+  value from continue-if-true to exit-if-true. I prefer exit-if-true, and use
+  it elsewhere in muforth.
 
-    ( k*x 'link - l*x continue?)
+  The word called for each word has the following stack effect:
+
+    ( k*x 'link - l*x exit?)
 
 ( 'link is a link field address; ie, the address of a cell containing a
   link. Since in muforth's dictionary links point to links, simply
@@ -1179,21 +1220,14 @@ being-defined -v  ( be verbose)
   hidden. If the iterator skipped hidden entries it wouldn't know when to
   stop!)
 
-( Update: In making the change to bring forall-words nearly into
-  "compliance" with the Forth 2012 draft standard - by modeling it after
-  TRAVERSE-WORDLIST - I changed the flag returned from the word called to
-  "process" each word from exit-if-true to continue-if-true. I prefer
-  exit-if-true, and use it elsewhere in muforth.
-
-  I've decided to change this code back to exit-if-true.)
-
 : forall-words  ( i*x 'code 'link - j*x)
    2push
    begin  pop @ =while  push  2r@ swap execute  until  pop  then
    pop 2drop ;
 
-: hidden?   ( 'link - hidden?)      1- c@  ( len)  128 and ;
-: muchain?  ( 'link - muchain?)  cell- @  [ .forth. cell- @ ] = ;
+( A word is hidden if its length byte is zero.)
+: hidden?   ( 'link - hidden?)      1- c@  ( len)  0= ;
+: muchain?  ( 'link - muchain?)  cell- @  [ .forth. cell- @ #] = ;
 
 : .name-and-count-it  ( count 'link - count+1 exit?)
    link>name  dup 2 + ?wrap  type space space  1+  0 ;
@@ -1211,7 +1245,7 @@ being-defined -v  ( be verbose)
    .name-and-count-thru-muchains ;
 
 : (words)  ( 'code)
-   cr cr  0 swap ( count)  current @  ( count 'code 'link)  forall-words
+   cr cr  0 swap  current @ ( count 'code 'link)  forall-words
    radix preserve  decimal  cr  ." ("  . ." words)" ;
 
 : words      ['] .name-and-count-local          (words) ;
@@ -1251,10 +1285,15 @@ being-defined -v  ( be verbose)
   possible confusion of using "M" thinking it means 2^20 rather than 10^6.)
 
 
+( This is useful whether or not we have clock support, so let's move it
+  outside of the .ifdef.)
+
+: "hold  ( a n)  dup negate  hld +!  hld @  swap cmove  ;
+
+
 .ifdef clock
 
 ( Time, timestamp.)
-: "hold  ( a n)  dup negate  hld +!  hld @  swap cmove  ;
 : ##     ( n)   # #  drop  ;
 
 ( Separators)
@@ -1305,7 +1344,7 @@ being-defined -v  ( be verbose)
   s->smhdy and smhdy->s. ;-)
 
 : smhq->s  6 * +  smh->s ;  ( sec min hr quarter-day)
-: smhdy->s  [ 365 3 * 366 + ] * ( quarter-days/yr)  push 4 * pop +  smhq->s ;
+: smhdy->s  [ 365 3 * 366 + #] * ( quarter-days/yr)  push 4 * pop +  smhq->s ;
 
 .then ( time support)
 
@@ -1320,7 +1359,7 @@ defer ?show-radix
    dup 16 = if  drop  ."  (hex)"      ^  then
    radix preserve  decimal  ."  (radix " 0 u.r ." )" ;
 
-: +radix       [ ]  is ?show-radix ;
+: +radix      [ #]  is ?show-radix ;
 : -radix  now nope  is ?show-radix ;
 
 
@@ -1333,13 +1372,18 @@ defer ?show-radix
 
 defer ?show-stack
 
--:  radix preserve  hex  sep preserve  -sep
-   out-channel preserve >stderr
-   stderr >col @ if cr then  ."   --"
-   0  stderr >width @  4 -  18 / 1-  ( # of stack items to print)
-   do  i nth  18 u.r  -1 +loop ;
+( XXX Should decimal show as signed and everything else as unsigned?
+      Should that be another setting?)
+-: depth ?if
+      sep preserve  -sep
+      out-channel preserve >stderr
+      stderr >col @ if cr then
+      radix @ push  decimal  dup 2 u.r space  1-  ." =>"  pop radix !
+      stderr >width @  5 -  18 / 1-  ( max # of stack items to print)
+      min  0 max  0 swap  do  i nth  18 .r  -1 +loop
+   then ;
 
-: +stack       [ ]  is ?show-stack ;
+: +stack      [ #]  is ?show-stack ;
 : -stack  now nope  is ?show-stack ;
 
 
@@ -1348,16 +1392,12 @@ defer ?show-stack
 : .prompt   ."  Ok"   .mode-prompt  ?show-radix ;
 
 ( set prompt in compile mode)
--: ."  (compiling)"  'compiler-mode  ;  cell+ !  ( bwa ha ha!)
+-: ."  (compiling)" ;   ' ] >body cell+ !
 
-: ?stack
+-: ( ?stack)
    depth 0< if  sp-reset  error" tried to pop an empty stack"  then
-   depth [ 4096 64 - ] > if   ." too many items on the stack"  then ;
-
-
-( Forth re-implementation of C interpret; semantics are exactly the same!)
-: interpret
-   begin  token =while  consume  ?stack  repeat  2drop ;
+   depth [ 4096 64 - #] > if   ." too many items on the stack"  then ;
+is ?stack
 
 : evaluate  ( a u)
    start preserve  end preserve  ( save input source)
@@ -1398,15 +1438,15 @@ variable zloading    ( C-string name of file being loaded)
   chain, any changes made to them by the loaded file will remain after the
   file is loaded. This is useful for loading a set of development tools that
   need to change into a metacompiler state, and perhaps switch to hex. See
-  target/HC08/build.mu4 for an example.)
+  target/S08/build.mu4 for an example.)
 
 : raw-load-file  ( z")
    decimal
    \ [    ( return to host forth...)
    forth  ( ... and compile into .forth. chain)
    out-channel preserve  >stderr
-   dup open-file-ro ( fd)  dup on-exit close-file
-   read-file ( a u)
+   dup open-file-ro ( z" fd)  dup on-exit close-file
+   read-file ( z" a u)
    zloading preserve  rot zloading !
    line preserve  1 line !
    line on-exit add-lines-read
@@ -1437,12 +1477,12 @@ defer load-stats  ( show space consumed, or simply close double parens)
    out-channel preserve  >stderr
    here swap -  space .  ." bytes ))" ;
 
-: +consumed  [ ] is load-stats ;
+: +consumed  [ #] is load-stats ;
 
 -: ( dont-show-consumed)  ( here)
    drop  unwinding @ if ^ then  ." ))" ;
 
-: -consumed  [ ] is load-stats ;  -consumed
+: -consumed  [ #] is load-stats ;  -consumed
 
 ( Print some descriptive text and, at end of file, optionally show the
   amount of dictionary space consumed by loading. Consumes and prints the
@@ -1495,7 +1535,7 @@ the end of the file.
    .then  type  ."
 
 
-Copyright (c) 2002-2017 David Frech. All rights reserved.
+Copyright (c) 2002-2021 David Frech. All rights reserved.
 muforth is free software; read the LICENSE for details.
 
 Type 'settings' to see a few of muforth's tweakable behaviours.
@@ -1514,7 +1554,7 @@ Type 'settings' to see a few of muforth's tweakable behaviours.
    else drop ( empty string) then
    ."
 
-Copyright (c) 2002-2017 David Frech. http://muforth.nimblemachines.com/
+Copyright (c) 2002-2021 David Frech. http://muforth.nimblemachines.com/
 
 Type 'settings' to see a few of muforth's tweakable behaviours.
 " ;
@@ -1533,27 +1573,26 @@ ld commit.mu4
    .else
       build-date ( pushes a string!)
    .then  type
-   ."  (http://muforth.nimblemachines.com/)
-Copyright (c) 2002-2017 David Frech (read the LICENSE for details)
+   ."  (https://muforth.nimblemachines.com/)
+Copyright (c) 2002-2021 David Frech (read the LICENSE for details)
 
 Type 'settings' to see a few of muforth's tweakable behaviours.
 " ;
 
-( Print filename if zloading non-zero; print linenumber if @line non-zero.)
+( If zloading non-zero, print filename; if @line *also* non-zero, print
+  linenumber as well.)
+
 : .where
-   zloading @  =if  dup zcount type  then
-   @line  =if  ." , line "  radix preserve decimal  dup u.  then
-   or if  ." : "  then ;
+   zloading @  ?if  zcount type
+      @line ?if  ." , line "  radix preserve decimal  (u.) type  then
+      ." : "
+   then ;
 
 : .error  ( z")
    >stderr  cr  .where  parsed type space  zcount type ;
 
 ' .error  is warn
 : ?error  ( z")   ?if  .error  r>  -1 unwind  >r  then ;
-
-z" startup.mu4" zloading !
-
-.runtime. chain' throw  'abort !
 
 
 ( Now that all targets have been switched to the du-cached code, and
@@ -1577,15 +1616,16 @@ ld lib/du-cached.mu4
 .then
 
 : quit
-   begin  cr  typing evaluate  >stderr  .prompt  ?show-stack  again ;
+   begin  ?stack  cr  typing evaluate  >stderr  .prompt  ?show-stack  again ;
    ( infinite loop, until error... )
 
 : warm
+   [ .runtime. chain' throw #] 'abort !
    decimal \ [
    >stderr banner
    -consumed +sep +case +radix +stack ( defaults - reset these how you like)
    z" (command line)" zloading !  line off
-   command-line count  catch evaluate ?error
+   command-line  catch evaluate ?error
    zloading off
    begin  catch quit ?error  again ;
 

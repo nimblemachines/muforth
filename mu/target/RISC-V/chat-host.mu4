@@ -1,0 +1,66 @@
+( This file is part of muforth: https://muforth.nimblemachines.com/
+
+  Copyright 2002-2021 David Frech. (Read the LICENSE for details.)
+
+loading RISC-V serial chat protocol (host)
+
+hex
+
+( Taking inspiration from the wildly successful S08 serial chat protocol.
+
+  Responds to the following commands. NOTE: these are hex values!
+
+00 - 0f  idle   - these command bytes are ignored
+
+10  version     - get the 32-bit version commit
+11  set address - set the memory address pointer
+12  read words  - read N words, incrementing by 4 as we go
+13  write word  - write a word to memory, incr pointer by 4
+14  get sp      - get sp
+15  run         - set pc and sp and execute
+
+16 - ff  idle   - these command bytes are ignored
+)
+
+: >b   send ;
+: b>   recv ;
+
+: >w               >3210  >b >b >b >b ;
+: w>   b> b> b> b>  0123> ;
+
+: c.idle                       0 >b  ;
+: c.version       ( - commit pc)
+                              10 >b              w> w> ;
+: c.set-addr      ( a)        11 >b  >w ;
+
+: c.read-words    ( n)        12 >b  >b ;  ( then read streamed bytes)
+: c.write-word    ( w)        13 >b  >w ;
+
+: c.get-status    ( - sp mcause mepc)
+                              14 >b              w> w> w> ;
+: c.run           ( pc sp)    15 >b  swap >w >w ;
+
+( Send two no-ops, let them transmit, _then_ throw away any input bytes.)
+: resync   c.idle  c.idle  drain  flush ;
+
+: hex8
+   radix preserve  hex  sep preserve  -sep   <# 4# 4# #> type ;
+
+: c.hello
+   #115200 bps  resync
+   cr ." Chat firmware version "  c.version  ( commit pc)  swap
+   hex8  @ram  dup #ram +  within if  ."  (RAM) "  then ;
+
+: c.setup-chunk  ( buf a u - #words)
+   swap c.set-addr  swap m !  3 + 2 >> ( #words) ;
+
+: c.read    ( buf a u)
+   -- cr  ." c.read "  2 nth u.  over u.  dup u.
+   c.setup-chunk  dup c.read-words  for  w> >3210  m& m& m& m&  next ;
+
+: c.write   ( buf a u)
+   -- cr  ." c.write "  2 nth u.  over u.  dup u.
+   c.setup-chunk  for  m* m* m* m*  0123>  c.write-word  next ;
+
+: chat
+   chat-via  c.hello  c.read  c.write  c.get-status  c.run ;

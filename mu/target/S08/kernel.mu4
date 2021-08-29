@@ -1,0 +1,534 @@
+( This file is part of muforth: https://muforth.nimblemachines.com/
+
+  Copyright 2002-2021 David Frech. (Read the LICENSE for details.)
+
+loading S08 Forth kernel
+
+( Convenient compiler shortcuts.)
+target-compiler
+: bug    asm{  swi } ;   ( Put a bug anywhere in your code!)
+: drop   asm{  2 # aix } ;
+forth
+
+__meta
+
+( Stack ops.)
+code dup  ( a - a a)
+   th lda  xh sta  tl lda  begin  push-literal  rts  ;c
+
+code over  ( a b - a b a)
+   sh lda  xh sta  sl lda  again  ;c
+
+code nip  ( a b - b)
+   tl lda  sl sta  th lda  sh sta  ( top -> sec)  ( fall through)  ;c
+
+( NOTE: In Forth we will directly compile 2 # aix rather than calling drop!
+  But it's here if you need to take its address.)
+code drop
+   2 # aix  rts  ;c
+
+code swap  ( a b - b a)
+   th lda  xh sta  sh lda  th sta  xh lda  sh sta
+   tl lda  xh sta  sl lda  tl sta  xh lda  sl sta  rts  ;c
+
+
+( Return stack ops.)
+code r!  ( move to R; needs to be room above return address)
+   th lda  2 ,s sta  tl lda  3 ,s sta  2 # aix  rts  ;c
+
+code r@  ( copy from R; needs to be value above return address)
+   2 ,s lda  xh sta  3 ,s lda  push-literal  rts  ;c
+
+( >r aka push will _compile_ -2 # ais, then call to r! )
+( r> aka pop will _compile_ call to r@, then 2 # ais )
+
+code -rot  ( a b c - c a b)
+   here 2 +a c  ( call rot, then fall thru)  ;c
+
+code rot   ( a b c - b c a)
+   -- : rot  >r swap  r< swap ;
+   -2 # ais  ' r! c  ' swap c  ' r@ c  2 # ais  ' swap j  ;c
+
+
+( Unary ops.)
+code invert
+   tl com  th com  rts  ;c
+
+code negate
+   tl neg  begin  .a clr  th sbc  th sta  rts  ;c
+
+code dnegate
+   sl neg         .a clr  sh sbc  sh sta
+                  .a clr  tl sbc  tl sta  again  ;c
+
+
+( Binary ops.)
+code -
+   ' negate c  ( fall thru)  ;c
+
+( litop compiles two entry points: the first expects both values on the
+  stack; the second expects the top value as a literal, in A and xh.
+  Between the two entry points litop compiles  pop-literal  .)
+
+ code +
+litop +
+           tl add  tl sta
+   xh lda  th adc  th sta  rts  ;c
+
+ code and
+litop and
+           tl and  tl sta
+   xh lda  th and  th sta  rts  ;c
+
+ code or
+litop or
+           tl ora  tl sta
+   xh lda  th ora  th sta  rts  ;c
+
+ code xor
+litop xor
+           tl eor  tl sta
+   xh lda  th eor  th sta  rts  ;c
+
+
+( Relational operators.)
+label relop-start
+
+code 0=
+   tl lda  th ora  1 # sub ( Z -> C)  ( fall thru)  ;c
+
+label makeflag  ( C -> -1, NC -> 0)
+   .a clr  0 # sbc  tl sta  th sta  rts  ;c
+
+code 0<
+   th lsl ( N -> C)  makeflag j  ;c
+
+label compare  ( subtract top from second, but don't save the result)
+   sl lda  tl sub  sh lda  th sbc  2 # aix  rts  ;c
+
+( u< and < require that we first push literal values; there is no
+  "shortcut" like with the other 2ops, because the values are in the wrong
+  order!)
+
+( relops are like litops, but have their entry points swapped, with
+  different code in between.
+
+( relop compiles two entry points: the first expects the top value as a
+  literal, in A and xh; the second expects both values on the stack.
+  Between the two entry points litop compiles  push-literal  .)
+
+relop u<
+ code u<
+   compare c  makeflag j  ;c
+
+relop <
+ code <
+   compare c  < if  sec  makeflag j  ( true)  then
+                    clc  makeflag j  ( false)  ;c
+
+label relop-end
+
+
+( Basic double-length - 32-bit - support.)
+code d-
+   ' dnegate c  ( fall thru)  ;c
+
+code d+
+   ds0 lda  dt0 add  ds0 sta
+   ds1 lda  dt1 adc  ds1 sta
+   ds2 lda  dt2 adc  ds2 sta
+   ds3 lda  dt3 adc  ds3 sta  4 # aix  rts  ;c
+
+( Shifts.)
+code 2*
+   tl lsl  th rol  rts  ;c
+
+code 2/
+   th asr  tl ror  rts  ;c
+
+code u2/
+   th lsr  tl ror  rts  ;c  ( I could share ror with 2/, but is it worth it?)
+
+
+( Memory access.)
+
+( Loading HX from the D stack this way requires that it be big-endian,
+  which in turn requires having two bytes of scratch space.
+
+  th ldhx : 3 bytes, 5~
+  We could also do this:
+     th lda [ H]  tl ldx  .a psh  .h pul  : 6 bytes, 11~  not great!!
+)
+
+code c@  ( a - byte)
+   pshhx  th ldhx  0 ,x lda  pulhx
+   th clr  tl sta  rts  ;c
+
+code c!  ( byte a)
+   sl lda
+   pshhx  th ldhx  0 ,x sta  pulhx
+   4 # aix  rts  ;c
+
+code @  ( a - word)
+   -2 # ais  ( room for hi byte; also so push-constant can call fetch)
+   pshhx  th ldhx
+label fetch        0 ,x lda ( hi)  2 ,s sta
+                   1 ,x lda ( lo)            pulhx
+   tl sta  .a pul  th sta  1 # ais  rts  ;c
+
+code !  ( word a)
+   sh lda  .a psh  sl lda
+   pshhx  th ldhx            1 ,x sta ( lo)
+                   2 ,s lda  0 ,x sta ( hi)  pulhx
+   .a pul  4 # aix  rts  ;c
+
+
+( Common support - threaded- or ;code-style - for constants.)
+label push-constant  ( - word)
+   -2 # aix
+   pshhx  2 ,s ldhx  fetch j  ;c
+
+
+( for, next)
+
+( Pop the stack if top is zero; state of Z flag reflects top of stack.
+  Currently used in for/next loops, and to compile  ?if .)
+
+code ?zero
+   tl lda  th ora  0= if  2 # aix  then  rts  ( Z set)  ;c
+
+( (for) ( pushes the negation of the count, and (next) ( increments and tests it.)
+
+code (for)  ( n)
+   tl neg  .a clr  th sbc  ' r! 2 + j ( jump into r!) ;c
+
+( Increment negated count on S stack. If low byte rolls over to zero,
+  increment high byte. Z bit set when both bytes are zero!)
+
+code (next)  ( zero set when done)
+   3 ,s inc  0= if  2 ,s inc  then  rts  ;c
+
+
+( do, loop, +loop)
+
+( do/loop stack frame on S:
+
+     |       |       |
+     +-------+-------+
+  4  |  ixh  |  ixl  |  5   index == start-limit to 0
+     +-------+-------+
+  2  |  lih  |  lil  |  3   limit
+     +-------+-------+
+  0  |  rah  |  ral  |  1   return address
+     +-------+-------+
+)
+
+
+( Note: caller has to do -4 # ais before calling (do)
+ code (do)   ( limit start)
+litop (do)
+label #(do)  -- for test code
+           tl sub  5 ,s sta
+   xh lda  th sbc  4 ,s sta   ( index = start-limit)
+   ' r! j  ( Move limit to R. This has to be a _jump_!!)  ;c
+
+( Note: caller has to do 4 # ais after calling (loop or (+loop)
+ code (+loop)  ( incr)
+litop (+loop)
+label #(+loop)  -- for test code, and (loop)
+   ( Add incr to index; if sign changes, we've crossed threshold)
+           5 ,s add  5 ,s sta  4 ,s lda  xl sta  ( save ixh)
+             xh adc  4 ,s sta  xl eor  ( N = crossed)  rts  ;c
+
+code (loop)
+   ( Add one to index; if sign changes, we've crossed threshold)
+   xh clr  1 # lda  ( load constant 1)  #(+loop) j  ;c
+
+code i
+   ( Push index + delta of inner do loop.)
+   3 ,s lda  5 ,s add  xl sta  2 ,s lda  4 ,s adc
+label push-result
+   -2 # aix  th sta  rts  ;c
+
+code j
+   ( Push index + delta of second enclosing do loop.)
+   7 ,s lda  9 ,s add  xl sta  6 ,s lda  8 ,s adc
+   push-result j  ;c
+
+
+
+{
+
+( Control structures.)
+
+( Relop words do two things: push a flag value - 0 for false, -1 for true -
+  and set or clear the Z flag. If we don't want to immediately to test the
+  flag value and branch, we can simply leave its value on the stack and go on
+  our way.
+
+  For the following control structures, using  if  or  =if , the "branch if
+  zero" compilation strategy goes like this:
+
+  * If we didn't just call a relop, compile code to test the top of the
+    stack.
+
+  * If pop? is true, compile code to pop the stack.
+
+  * Compile a "0!= if" clause, which will compile a branch if zero.
+
+  ?if  is a bit trickier, so its code is custom. First it compiles a call to
+  a word that tests the top of the stack and pops it if it equals zero. It
+  also sets or clears the Z flag. Then it compiles a "branch if zero".
+)
+
+forth
+: ?relop  ( pop?)
+   called  \m relop-start  \m relop-end  within 0= if
+      asm{  tl lda  th ora }  then
+   if  asm{  2 # aix }  then
+   asm{  0!= if } ;
+
+target-compiler
+: ?if   ( - src)  \t ?zero \m compile,  asm{  0!= if } ;
+: =if   ( - src)   0 ?relop ;
+: if    ( - src)  -1 ?relop ;
+: then  ( src)          \a then  notag ;
+: else  ( src0 - src1)  \a else ;
+
+: begin   ( - dest)     \a begin ;
+: ?until  ( dest -)  \tc ?if  \a <resolve ;
+: =until  ( dest -)  \tc =if  \a <resolve ;
+: until   ( dest -)   \tc if  \a <resolve ;
+: again   ( dest -)     \a again ;
+: ?while  ( dest - src dest)  \tc ?if  swap ;
+: =while  ( dest - src dest)  \tc =if  swap ;
+: while   ( dest - src dest)   \tc if  swap ;
+: repeat  ( src dest -)   \tc again  \tc then ;
+
+( n for .. next  goes n times; 0 if n=0 )
+
+: for     ( - src dest)  asm{  \t ?zero c    0!= if  -2 # ais  \t (for) c  begin } ;
+: next    ( src dest -)  asm{  \t (next) c  0= until  2 # ais  then } ;
+
+( do, loop, +loop)
+: do      ( - src dest)   asm{  -4 # ais }  \tc (do)  \tc begin ;
+: loop    ( src dest)     asm{  \t (loop) c }  asm{  0< until  4 # ais } ;
+: +loop   ( src dest)         \tc (+loop)      asm{  0< until  4 # ais } ;
+forth
+
+}
+
+
+.ifdef toy-multiply
+
+( For fun, multiply-by-shifting. So I can compare with multiply using the
+  built-in 8x8->16 instruction.)
+
+code umul  ( u8_multiplier u8_multiplicand - u16)
+   9 # lda
+label umul_n
+   .a psh ( count)
+   begin
+      sl ror ( shift mer right; low bit into C)
+   0 ,s decz? if  .a pul  2 # aix  rts  then
+      sh lda ( accum hi)  CS if  tl add ( multiplicand)  then
+      .a ror  sh sta ( shift accum)
+   again  ;c
+
+code smul  ( s8_multiplier u8_multiplicand - s16)
+   7 # lda  umul_n c  ( it pops the stack, so change offsets)
+   tl lda ( multiplier)  .a lsr ( lo bit into C)
+   xh lda ( accum hi)  CS if  xl sub ( multiplicand)  then
+   .a ror  th sta ( shift accum)  tl ror ( shift multiplier)  rts  ;c
+
+.then  ( toy multiply)
+
+( Correct version)
+code um*  ( umer umcand - uprodlo uprodhi)
+   ( Move multiplicand to S and zero accumulator)
+   16 # lda ( loop count)  .a psh
+   tl lda  .a psh  th lda  .a psh  tl clr  th clr
+   sl lda ( multiplier)
+   begin
+      .a lsr ( lo bit into C)  .a clr
+      CS if  1 ,s lda ( mcand lo)        tl add ( accum lo)  tl sta
+             0 ,s lda ( mcand hi)  then  th adc ( accum hi)
+
+      ( Now shift right, carry, accum, and mer, high to low)
+      .a ror  th sta  tl ror  sh ror  sl lda  .a ror  sl sta
+   2 ,s decz? until  3 # ais  rts  ;c
+
+( Also correct!)
+code um*2  ( umer umcand - uprodlo uprodhi)
+   ( Move multiplicand to S and zero accumulator)
+   17 # lda ( loop count)  .a psh
+   tl lda  .a psh  th lda  .a psh  tl clr  th clr
+   begin
+      sh ror  sl ror ( rotate mer right 1 bit into C)
+   2 ,s decz? if  3 # ais  rts  then
+      .a clr
+      CS if  1 ,s lda ( mcand lo)        tl add ( accum lo)  tl sta
+             0 ,s lda ( mcand hi)  then  th adc ( accum hi)
+
+      ( Now shift carry & accum right 1 bit, high to low)
+      .a ror  th sta  tl ror
+   again  ;c
+
+( Works, and only takes one jump per loop instead of two.)
+code um*3  ( umer umcand - uprodlo uprodhi)
+   ( Move multiplicand to S and zero accumulator)
+   17 # lda ( loop count)  .a psh
+   tl lda  .a psh  th lda  .a psh  tl clr  th clr
+forward-jmp prime-pump
+   begin
+      .a clr
+      CS if  1 ,s lda ( mcand lo)        tl add ( accum lo)  tl sta
+             0 ,s lda ( mcand hi)  then  th adc ( accum hi)
+
+      ( Now shift carry & accum right 1 bit, high to low)
+      .a ror  th sta  tl ror
+prime-pump resolve>>
+      sh ror  sl ror ( rotate mer right 1 bit into C)
+   2 ,s decz? until  3 # ais  rts  ;c
+
+( What about using the chip? The above routines clock in at about 760~!
+  Ouch. How fast can we go using the chip's 8x8 multiply?
+
+  Unfortunately it uses the X register, so we can't do this on the X stack.
+  We have to move everything to S or zram, do the multiply, and then move
+  back. Even so, can it be worse that the - arguably simple and elegant -
+  loop above?
+
+  Stack layout:)
+
+{
+assembler
+: s_sl   asm{  8 ,s } ; -- sl
+: s_sh   asm{  7 ,s } ; -- sh
+: s_tl   asm{  6 ,s } ; -- tl
+: s_th   asm{  5 ,s } ; -- th
+: s_p0   asm{  4 ,s } ; -- prod0 - lsb
+: s_p1   asm{  3 ,s } ; -- prod1
+: s_p2   asm{  2 ,s } ; -- prod2
+: s_p3   asm{  1 ,s } ; -- prod3 - msb
+    --   asm{  0 ,s } ; -- saved X
+forth
+}
+
+code um*4  ( umer umcand - uprodlo uprodhi)
+   ( Move everything to S)
+   sl lda  .a psh  sh lda  .a psh  tl lda  .a psh  th lda  .a psh
+   ( Room for result - on S)  -4 # ais
+   ( We need it for mul, so push X)  .x psh
+             s_sh ldx  mul ( th*sh)  s_p2 sta  s_p3 stx
+   s_tl lda  s_sl ldx  mul ( tl*sl)  s_p0 sta  s_p1 stx
+   s_tl lda  s_sh ldx  mul ( tl*sh)
+   s_p1 add  s_p1 sta  txa  s_p2 adc  s_p2 sta  CS if  s_p3 inc  then
+   s_th lda  s_sl ldx  mul ( th*sl)
+   s_p1 add  s_p1 sta  txa  s_p2 adc  s_p2 sta
+                               .x pul  .a pul ( s_p3)  0 # adc
+   ( Move result back to X stack)
+   th sta  .a pul  tl sta  .a pul  sh sta  .a pul  sl sta
+   4 # ais  rts  ;c
+
+( Another version using mov ,x+ to move values between X stack and zram
+  scratch space. For every ",s" in the above code we save a byte and a
+  cycle by switching to zram - direct - accesses.
+
+  Scratch space layout - low to high memory, unlike stack picture above:)
+
+1 zvar x_p3   -- prod3 - msb
+1 zvar x_p2   -- prod2
+1 zvar x_p1   -- prod1
+1 zvar x_p0   -- prod0 - lsb
+1 zvar x_th   -- th
+1 zvar x_tl   -- tl
+1 zvar x_sh   -- sh
+1 zvar x_sl   -- sl
+
+code um*5  ( umer umcand - uprodlo uprodhi)
+   ( Move everything to zpage and push X)
+   #scratch # aix  ( so HX points _at_ th)
+   ( We need it for mul, so push X - when it points to tl)
+   0 ,x  x_th ) mov  .x psh  0 ,x  x_tl ) mov
+   0 ,x  x_sh ) mov          0 ,x  x_sl ) mov
+
+   x_th ) lda  x_sh ) ldx  mul ( th*sh)  x_p2 ) sta  x_p3 ) stx
+   x_tl ) lda  x_sl ) ldx  mul ( tl*sl)  x_p0 ) sta  x_p1 ) stx
+   x_tl ) lda  x_sh ) ldx  mul ( tl*sh)
+   x_p1 ) add  x_p1 ) sta  txa  x_p2 ) adc  x_p2 ) sta  CS if  x_p3 ) inc  then
+   x_th ) lda  x_sl ) ldx  mul ( th*sl)
+   x_p1 ) add  x_p1 ) sta  txa  x_p2 ) adc  x_p2 ) sta  x_p3 ) lda  0 # adc
+
+   ( Move result back to X stack)
+   .x pul  ( points to tl)
+   x_p2 ) 0 ,x mov  x_p1 ) 0 ,x mov  x_p0 ) 0 ,x mov
+   #scratch 4 + negate # aix  th sta  rts  ;c
+
+( "Short" multiply: 16x16->16. Much faster and still useful.)
+code *
+   ( Move everything to zpage and push X)
+   #scratch # aix  ( so HX points _at_ th)
+   ( We need it for mul, so push X - when it points to sl)
+   0 ,x  x_th ) mov          0 ,x  x_tl ) mov
+   0 ,x  x_sh ) mov  .x psh  0 ,x  x_sl ) mov
+
+   x_tl ) lda  x_sl ) ldx  mul ( tl*sl)  x_p0 ) sta  x_p1 ) stx
+   x_tl ) lda  x_sh ) ldx  mul ( tl*sh)  x_p1 ) add  x_p1 ) sta
+   x_th ) lda  x_sl ) ldx  mul ( th*sl)  x_p1 ) add
+
+   ( Move result back to X stack)
+   .x pul  ( points to sl)  x_p0 ) 0 ,x mov
+   #scratch 2 + negate # aix  th sta  rts  ;c
+
+
+( Now, to tackle _divide_.)
+
+( First, the bit-by-bit shift-and-subtract method.
+
+  This is essentially the reverse of the multipy's add-and-shift - as you
+  would expect. However, with multiply we get lucky: for every one bit in
+  the multiplier, we add the multiplicand into an accumulator, and then
+  immediately shift both the accumulator and the multiplier together, one
+  bit to the right. Our add produces 17-bits but we immediately shift the
+  generated carry in at the left, so we don't have to save it.
+
+  With divide we don't get so lucky. We first shift _left_, creating a
+  17-bit value - including the carry bit. We then test to see if
+  subtracting the divisor causes underflow; if it does _not_, we actually
+  do the subtract, put a 1 into the space that shifting created [in the
+  lowest bit of the quotient] and then shift left again. The trouble is
+  that we do the shift from low to high, generating a carry - which we have
+  to save somewhere - and then do the compare, again starting with the less
+  significant byte. So we con't optimise the way we can with multiply, and
+  the code is clumsier than I would like.)
+
+( NOTE 1: Unlike the published fig-FORTH code for u/, which calculates the
+  division of a 31-bit unsigned dividend by a 16-bit unsigned divisor, I
+  want to do a full 32-bit division. Leaving off that high-order bit allows
+  an optimisation: they only have to subtract from 16 bits instead of 17,
+  so things can be simpler.)
+
+( NOTE 2: the order of the results is _opposite_ that of fig-FORTH and
+  FORTH-83! I think I understand why they want to have the quotient on
+  top - it's "more significant" - but in the shift-and-subtract method the
+  quotient naturally ends up in the _lower_ half of the result.
+
+  In the 6502 assembler source for fig-FORTH's u/ the high and low halves
+  of the dividend are swapped before entering the loop. This is how they
+  end up with quot and rem in the right order at the end.)
+
+( Dividend is in sh:sl:s3:s2
+  Divisor  is in th:tl)
+
+code um/mod  ( ud u - uquot urem)
+   16 # lda  .a psh ( loop count)
+   begin
+      ds2 lsl  ds3 rol  sl rol  sh rol  .a clr  .a rol ( C -> A)  .a psh ( save)
+       sl lda   tl sub  sh lda  th sbc  .a pul  0 # sbc  ( compare)
+      u>= if ( no borrow: do subtract, shift 1 bit into lsb)
+        ds2 inc ( shift in 1)
+         sl lda  tl sub  sl sta
+         sh lda  th sbc  sh sta  then
+   0 ,s decz? until  .a pul
+   2 # aix  rts  ;c

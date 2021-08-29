@@ -1,0 +1,80 @@
+( This file is part of muforth: https://muforth.nimblemachines.com/
+
+  Copyright 2002-2021 David Frech. (Read the LICENSE for details.)
+
+( Words to make writing USB descriptors easier. These are intended to work
+  with a meta-compiler, and will get compiled into the .meta. chain.)
+
+loading Target USB descriptors
+
+( We need UTF-8 to UCS-16LE support if we use any string descriptors.)
+ld lib/utf8.mu4
+
+( We need >hilo too.)
+ld target/common/endian.mu4
+
+meta
+
+( Compile a little-endian 16 bit value.)
+: le,  ( w)  >hilo  \m c, \m c, ;
+
+( Compile a USB UCS-16LE string descriptor.)
+: ucs16-string,  ( a u)
+   \m here  ( address of length byte)
+   0 \m c, ( length)  3 \m c, ( string descriptor type)
+   -rot  ( 'len a u)  over + push  ( 'len a)
+   begin  dup r@ u< while  utf8@+ swap  \m le,  repeat
+   drop  rdrop
+   \m here  over - ( calc length)  swap image-c! ( store at 'len) ;
+
+: u"   char " parse  ( a u)  \m ucs16-string, ;
+
+: end-descriptor  ( 'length 'descriptor-start)
+   \m here  swap -  swap image+ leh! ;
+
+hex
+
+( Compile a USB endpoint descriptor.)
+00 constant out
+80 constant in
+
+01 constant iso ( -chronous)
+02 constant bulk
+03 constant interrupt
+
+: endpoint  ( interval bufsize type in/out number)
+   7 \m c, ( len)  05 \m c, ( ENDPOINT)
+   or  \m c, ( num+direction)
+   \m c, ( type)
+   \m le, ( bufsize)
+   \m c, ( interval) ;
+
+( Compile a USB MIDI Jack descriptor.)
+
+( Jack types.)
+01 constant embedded
+02 constant external
+
+: in-jack  ( string-id id type)
+   6 \m c, ( len)  24 \m c, ( CS_INTERFACE)  02 \m c, ( MIDI_IN_JACK)
+   \m c, ( type)  \m c, ( jackId)  \m c, ( string descr) ;
+
+( Define an out jack. Out jacks can have as many inputs as you like. They
+  act like "mixers" - merging the MIDI streams on their input pins into a
+  single stream.)
+
+: out-jack  ( string-id source-idN .. source-id1 #sources id type )
+   2 nth ( #sources) 2* 7 + \m c, ( len)
+   24 \m c, ( CS_INTERFACE)  03 \m c, ( MIDI_OUT_JACK)
+   \m c, ( type)  \m c, ( jackId)
+   dup \m c, ( #inputs)  for  \m c, ( source-id)  01 \m c, ( source pin)  next
+   \m c, ( string descr) ;
+
+( Connect an endpoint to one or more embedded jacks. This must directly
+  follow the standard USB endpoint descriptor.)
+
+: midi-endpoint  ( jackN .. jack1 #jacks)
+   dup 4 + \m c, ( len)  25 \m c, ( CS_ENDPOINT)  01 \m c, ( MS_GENERAL)
+   dup \m c, ( #jacks)  for  \m c,  next ;
+
+forth

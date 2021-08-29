@@ -1,0 +1,228 @@
+( This file is part of muforth: https://muforth.nimblemachines.com/
+
+  Copyright 2002-2021 David Frech. (Read the LICENSE for details.)
+
+( Because both chat2 and chat3 share some init code - for setting up the
+  watchdog, the clock, and the UART - I thought I'd put that code in one
+  place instead of spawning multiple incompatible versions... Which had
+  started to happen. ;-)
+
+__meta
+
+hex
+
+( This is here mostly to get us back into the assembler...)
+label chat-init-clocks-and-uart
+
+.ifdef S08
+
+   -- Turn off watchdog
+   -- Can't use bit ops! SOPT1 not in z-page.
+   -- Clear bits 6 & 7. These have different meanings on different chips,
+   -- but at least for the JS and QG clearing both bits will shut off the
+   -- watchdog.
+   SOPT1 ) lda  3f # and  SOPT1 ) sta
+
+   .ifdef 24m
+
+      .reg MCGTRM .if  ( JS/JM running 48M PLL)
+
+   ( Set up the xtal oscillator and PLL. For USB we need a 48M clock - 24M
+     bus clock. Getting there takes a few steps...)
+
+   -- FEI ==> FBE
+   -- Start xtal osc - we've got a 4M xtal on the board.
+   -- Datasheet and appnotes have you set BDIV to /1 here, but since we're
+   -- running off untrimmed internal osc still, that's a bad idea. We leave
+   -- that until the end.
+   %01_11_0110 # MCGC2 ) mov  ( keep BDIV at /2, start ext osc)
+   -- wait for osc to start (OSCINIT)
+   begin  MCGSC 1  bset? until
+   -- switch to ext clock (FBE): CLKS=01 (ext), RDIV=001 (/2), IREFS=0
+   -- NOTE: We've set RDIV for PLL (4M/2 == 2M), but we're still running
+   -- the FLL, so this will temporarily run it out of spec... DS says this
+   -- is ok, as long as we switch quickly!
+   -- %10_111_000 # MCGC1 ) mov  -- from when I thought I needed to keep
+                                 -- RDIV set for FLL
+   %10_001_000 # MCGC1 ) mov
+
+   -- Wait until we've switched clocks
+   begin  MCGSC ) lda  %0001_1100 # and  ( mask IREFST and CLKST)
+          %0000_1000 # cmp  0= until  ( IREFST=0, CLKST=10)
+
+   -- FBE ==> PBE
+   -- We're spinning up the PLL. We're set up to divide our 4M xtal by two
+   -- (RDIV) to get 2M (PLL freq); let's multiply that by 24 (VDIV) to get
+   -- 48M, which is our target clock.
+   %0100_0110 # MCGC3 ) mov    -- PLLS=1, VDIV=0110 (*24)
+
+   begin  MCGSC 5 bset?  until   -- loop until PLLST set
+   begin  MCGSC 6 bset?  until   -- loop until LOCK set
+
+   -- PBE ==> PEE
+   MCGC1 7 bclr  -- set CLKS to 00 (PLL)
+   begin  MCGSC 2 bset?  until
+   begin  MCGSC 3 bset?  until   -- loop until CLKST=11
+
+   -- Lastly, set BDIV to /1
+   MCGC2 6 bclr
+
+      .else  ( 24m ICS - QE32 probably)
+
+   ( Set up the xtal oscillator and FLL for 48M clock - 24M bus clock.
+     Getting there takes a few steps...)
+
+   %01_11_0110 # ICSC2 ) mov  ( keep BDIV at /2, start ext osc)
+   -- wait for osc to start (OSCINIT)
+   begin  ICSSC 1  bset? until
+   -- switch! making sure to change RDIV at the same time
+   %00_010_000 # ICSC1 ) mov
+
+         .ifdef bit-by-bit
+
+   -- Wait until we've switched to EREF
+   begin  ICSSC 4 bclr?  until  ( IREFST=0)
+
+   -- Then switch multiplier to high range...
+   %10_0_0_0000 # ICSSC ) mov
+
+   -- and wait until we've switched
+   begin  begin  ICSSC 7 bset?  until
+                 ICSSC 6 bclr?  until  ( DRST=10)
+
+         .else  ( all at once)
+
+   -- Switch multiplier to high range
+   %10_0_0_0000 # ICSSC ) mov
+
+   -- Wait until we've switched clocks
+   begin  ICSSC ) lda  %1101_0000 # and  ( mask DRST and IREFST)
+          %1000_0000 # cmp  0= until  ( DRST=10, IREFST=0)
+
+         .then
+
+   -- Lastly, set BDIV to /1
+   ICSC2 6 bclr
+
+      .then  ( QE32)
+
+   ( Both these cases run @ 24m, so set FCDIV and baud rate accordingly.)
+
+   #24,000 khz>fcdiv  # lda   FCDIV ) sta
+
+   ( Configure SCI for 115200 bps)
+
+   SCIBDH ) clr        ( baud rate divisor, high)
+   #13 # SCIBDL ) mov  ( baud rate divisor, low)
+                       ( yields 115200 from 24M bus clock)
+   0c # SCIC2 ) mov    ( enable rcvr, xmitter)
+
+   .else .ifdef 9.8304m  ( 4.9152M xtal)
+
+   ( Start crystal oscillator.)
+   %01_11_0110 # ICSC2 ) mov     ( keep BDIV at /2, start ext osc)
+   begin  ICSSC 1  bset? until   ( wait for osc to start)
+   %00_111_000 # ICSC1 ) mov     ( switch! RDIV now /128)
+   ICSC2 6 bclr                  ( Lastly, set BDIV to /1)
+
+   #9,830,400 hz>fcdiv  # lda   FCDIV ) sta
+
+   ( Configure SCI. At this xtal frequency we can't do better than 38400
+     and still get a good divisor.)
+
+   SCIBDH ) clr       ( baud rate divisor, high)
+   10 # SCIBDL ) mov  ( baud rate divisor, low)
+                      ( yields 38400 from 9.8304M bus clock)
+   0c # SCIC2 ) mov   ( enable rcvr, xmitter)
+
+   .else .ifdef 8m ( 4.000M xtal)
+
+   ( Start crystal oscillator.)
+   %01_11_0110 # ICSC2 ) mov     ( keep BDIV at /2, start ext osc)
+   begin  ICSSC 1  bset? until   ( wait for osc to start)
+   %00_111_000 # ICSC1 ) mov     ( switch! RDIV now /128)
+   ICSC2 6 bclr                  ( Lastly, set BDIV to /1)
+
+   #8,000 khz>fcdiv  # lda   FCDIV ) sta
+
+   ( Configure SCI. At this xtal frequency we can't do better than 38400
+     and still get a good divisor.)
+
+   SCIBDH ) clr       ( baud rate divisor, high)
+   #13 # SCIBDL ) mov ( baud rate divisor, low)
+                      ( yields 38400 from 9.8304M bus clock)
+   0c # SCIC2 ) mov   ( enable rcvr, xmitter)
+
+   .else  ( configure ICS or MCG, depending on device)
+
+      .reg ICSTRM .if
+
+   -- Configure ICS (internal clock source)
+   -- We're staying in FEI mode, but we're going to trim the internal
+   -- reference so that our bus clock is 9.216M - a nice multiplier for
+   -- 115200.
+   -- I've put my own trim values into the chips @ FFAD (for 9.216M).
+
+   0ffad ) lda   ICSTRM ) sta
+   ICSC2 ) clr   ( switch BDIV to /1 from /2)
+
+      .else    -- JS or JM part with MCG
+
+   -- Adjust registers and values for the JS & JM parts, which use a different
+   -- clock generator (MCG instead of ICS), and run twice as fast.
+
+   0ffad ) lda   MCGTRM ) sta
+   -- leave BDIV/2 set; MCG runs 2x as fast as QG's ICS
+
+      .then  ( ICS vs MCG)
+
+   #9,216 khz>fcdiv  # lda   FCDIV ) sta
+
+   -- Configure SCI
+   SCIBDH ) clr      ( baud rate divisor, high)
+   5 # SCIBDL ) mov  ( baud rate divisor, low)
+                     ( yields 115200 from 9.216M bus clock)
+   0c # SCIC2 ) mov  ( enable rcvr, xmitter)
+
+   .then  .then  .then  ( xtal vs internal osc)
+
+.else  ( 908)
+
+   -- Setting COPD works, but is unnecessary in monitor mode; however,
+   -- setting RSTEN causes the chip to fly away. Noise on nRST pin?
+   -- Since I'm avoiding setting the Reset vector, setting these or not is
+   -- irrelevant.
+   -- CONFIG2 0 bset  ( set RSTEN: enable nRST pin - pin 8)
+
+   -- I'm going to, after all, attempt to burn a chip with a programmed
+   -- Reset vector. So I need this:
+   CONFIG1 0 bset  ( set COPD: disable watchdog!)
+
+   -- XXX Set up for use with on-chip crystal osc?
+   -- 42 # OSC ) mov  ( set Ext Osc and ECGON)
+
+   -- configure crystal osc
+   PortA 4 bset
+   DirA 4 bset  ( configure OSC2 as output, drive high several cycles)
+   nsa nsa nsa
+   DirA 4 bclr
+   0c0 # OSC ) mov  ( set external osc going - 8-32MHz xtal)
+
+   -- wait for startup; normally one waits 4096 target cycles; for
+   -- simplicity we wait that many cycles, but based on the internal osc,
+   -- which is slower (12.8M) than the crystal (18.432M).
+
+   #16 # ldx  ( 4096 = 16 * 256; we don't bother to clr A the first time)
+   begin  begin  .a decz? until  .x decz? until
+   OSC 1 bset ( set ECGON - switch oscillators!)
+
+   -- Configure SCI
+   SCC1 6 ( ENSCI) bset
+   %001_10000 # SCPSC ) mov  ( prescaler divisor of 2 + 16/32)
+                             ( yields 115200 from 18.432M clock)
+   0c # SCC2 ) mov   ( enable rcvr, xmitter)
+
+.then  ( 908)
+
+   ( fall thru to code following the loading of this file...)
+   ;c

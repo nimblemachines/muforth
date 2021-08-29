@@ -1,0 +1,67 @@
+( This file is part of muforth: https://muforth.nimblemachines.com/
+
+  Copyright 2002-2021 David Frech. (Read the LICENSE for details.)
+
+loading IIC over USB (core)
+
+( Host-side code to drive the IIC code in target/S08/iic-usb-core.mu4.)
+
+hex
+
+-- : usb  ( bmRequest bRequest wValue wIndex wLength 'buffer)
+
+( Commands:
+0-2f  Bye        - exit IIC code and return to HC08 chat loop
+  30  RecvByte   - receive data byte, send ACK/NACK
+  31  SendByte   - send data byte, return ACK/NACK
+  32  Start      - send START bit
+  33  Restart    - send RESTART bit
+  34  Stop       - send STOP bit
+  35  SlowClock  - set 100k IIC clock  [XXX nop]
+  36  FastClock  - set 400k IIC clock  [ditto]
+)
+
+( Control reads)
+: expect1  ( wValue bReq - byte)   0c0 swap  rot  0  1 pad  usb  pad c@ ;
+: iic.RecvByte  ( ack - byte)  30 expect1 ;
+: iic.SendByte  ( byte - ack)  31 expect1 ;
+
+: control-write
+   create ,  ( bRequest)
+   does> @   40 swap  0 0 0 0  usb ;
+
+00  control-write  iic.Bye  ( End session, return to chat command loop)
+32  control-write  iic.Start    ( send START bit)
+33  control-write  iic.Restart  ( send RESTART bit)
+34  control-write  iic.Stop     ( send STOP bit)
+35  control-write  iic.SlowClock  ( 100k)
+36  control-write  iic.FastClock  ( 400k)
+
+: iic.Hello  ( start the AVR chat firmware on the connected device)
+   @iic-chat u.SetPC u.Run ;
+
+( Some shorthands)
+: S   ( start)           iic.Start ;
+: PS  ( restart)         iic.Restart ;
+: P   ( stop)            iic.Stop ;
+: W   ( write)           iic.SendByte u. ;
+: Ra  ( read)          0 iic.RecvByte ;  ( read and ACK)
+: Rn  ( read)          1 iic.RecvByte ;  ( read and NACK)
+: Aw  ( addr+write)  0fe W ;
+: Ar  ( addr+read)   0ff W ;
+
+( The following is test code to talk to my simple "debug stub" running on
+  an Atmel AVR.)
+
+( First byte of IIC payload is a chat command.)
+: cmd  ( cmd)   S  Aw  W ;
+
+( Goofy names to try this out.)
+: z!   ( addr)             >hilo  10 cmd  W  W  P ;
+: zp*  ( - b)  ( read prog mem)   11 cmd        PS  Ar  Rn  P ;
+: z*   ( - b)  ( read data mem)   12 cmd        PS  Ar  Rn  P ;
+: z&   ( b)    ( write data mem)  13 cmd  W     P ;
+: zgo                             14 cmd        P ;
+
+: p4  11 cmd  PS  Ar  Ra Ra Ra Rn  P ;
+: w4  13 cmd          W  W  W  W   P ;

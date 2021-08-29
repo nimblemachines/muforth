@@ -1,0 +1,210 @@
+( This file is part of muforth: https://muforth.nimblemachines.com/
+
+  Copyright 2002-2021 David Frech. (Read the LICENSE for details.)
+
+( Freescale HC08 disassembler.)
+
+loading S08 disassembler
+
+forth
+hex
+
+( Sign extend byte to host cell.)
+: sext   ( b - n)  dup 80 and if -100 + then ;
+
+( Printing numbers)
+: .h      hex   (u.)  type ;
+: .h2     hex   <#        # #  #>  type ;
+: .h4     hex   <#    # # # #  #>  type ;
+: .bit   octal  <#          #  #>  type ;
+
+( Signed hex byte)
+: .sh2    sext dup push  abs
+          hex   <#        # #  pop sign  #>  type ;
+
+( Including space before)
+: ._h2  space  .h2 ;
+: ._h4  space  .h4 ;
+
+: -trailing  ( a u - a u')  ( strip trailing blanks)
+   over + ( end)  begin  1-  dup c@ bl -  until  over -  1+ ;
+
+( 4" is used to print a 4-char substring. At compile time the whole string
+  is compiled. At runtime, the index on the stack is scaled by 4 and used
+  to index into the string; a 4-char substring is printed.)
+
+: (4")  ( - index z")  swap 2 << +  4 -trailing type ;
+compiler
+: 4"      \ z"  \ (4") ;
+forth
+
+: b  ( - b)  c* ;   ( XXX these could print as they go...)
+: w  ( - w)  b  8 <<  b + ;
+
+( If there is a pre byte - 9e - shift it up into high byte and add in
+  following byte.)
+
+: op  ( a - op)  p !  b  dup 9e = if  8 <<  b +  then ;
+
+: pre?  ( op - flag)  8 u>>  9e = ;
+: row  ( op - row)  0f and ;
+: col  ( op - col)  4 u>>  row ;
+
+( .dest fetches the rel8 offset and calculates and prints the destination
+  address.)
+
+: .dest  b  ( offset)  sext  p @  +a  dup ea !  ._h4 ;
+
+( Since the system stack is empty descending, the top element is at 1,s
+  rather than 0,s. The X-indexed stack is full descending, however, and
+  confusion would ensue if these were different, so we _adjust_ ,s offsets
+  here and in the assembler so that it _appears_ that 0,s points to the
+  top element.)
+
+: sadjust  ( op off - op off') ( adjust for s)  over pre? + ;  ( subtract 1 if ,s)
+: ireg   ( op - op)  dup pre? negate  4" ,x  ,s  " ;
+: ireg+  ( op - op)  dup pre? negate  4" ,x+ ,s  " ;  ( for cbeq)
+
+: simm  b  ."  #"  .sh2 ;  ( signed)
+: dimm  w  ."  #"  dup ea !  .h4 ;
+: imm   b  ."  #"  .h2 ;
+: dir   b  dup ea !  ._h2 ;  ( direct addr)
+: ext   w  dup ea !  ._h4 ;  ( extended addr)
+: .a    ." a" ;
+: .x    ." x" ;
+: ix1   ( op - op)  ( indexed 1 byte offset)  b  sadjust  ._h2  ireg ;
+: ix2   ( op - op)  ( indexed 2 byte offset)  w  sadjust  ._h4  ireg ;
+: ix1+  ( op - op)                            b  sadjust  ._h2  ireg+ ;
+: ix    ."  ,x" ;
+
+: set/clr  ( op - op)
+   dup 1 and  4" set clr "   dup row u2/ ( bit#) .bit  dir ;
+
+: brbit ( op - op)  ." br"  set/clr  .dest ;
+: bit ( op - op)    ." b"   set/clr ;
+
+
+( XXX I'd love to rename bhcc to bhc and bhcs to bhs - esp since the
+  half-carry bit is called H and not HC ... but I can't. bhs - aka bcc -
+  means "branch if higher or same" to lots of programmers, and I don't want
+  to create confusion. bhs _is_, in fact, mentioned in the reference manual
+  as a synonym for bcc.)
+
+: bcond2  ( op - op)
+   dup row 4" bra brn bhi bls bcc bcs bne beq bhccbhcsbpl bmi bmc bms bil bih "
+   .dest ;
+
+: bcond9  ( op - op)
+   dup row 4" bge blt bgt ble "
+   .dest ;
+
+( display effective address as a string)
+: 1ea  ( op - op)  dup col 3 - jump
+   ( 30   40   50   60   70)
+    dir   .a   .x  ix1   ix   ;
+
+: 2ea  ( op - op)  dup col 0a - jump
+   ( a0   b0   c0   d0   e0   f0)
+    imm  dir  ext  ix2  ix1   ix   ;
+
+: skip  ( #cells)  cells  pop +  push ;
+
+: ix+  ."  ,x+" ;
+
+: .mov  ( op - op)  ." mov"  dup col 04 - 3 * skip
+   dir dir ^   ( each entry takes 3 cells)
+   dir ix+ ^
+   imm dir ^
+   ix+ dir ;
+
+( cbeq and dbnz - whatever I end up choosing to call them - need to be
+  handled separately from the other 1ops, since they are followed by a
+  rel8. They are branches!)
+
+: .a_imm  .a  imm ;
+: .x_imm  .x  imm ;
+
+: cbeq_ea  ( op - op)  dup col 3 - jump
+   ( 30     40       50     60     70)
+    dir   .a_imm   .x_imm  ix1+    ix+   ;
+
+: cbeq  ( op - op)  ." cbeq"  cbeq_ea  .dest ;
+: dbnz  ( op - op)  ." dbnz"  1ea      .dest ;
+
+( hx opcodes)
+: .cphx  ." cphx" ;
+: .ldhx  ." ldhx" ;
+: .sthx  ." sthx" ;
+
+  ( these are capitalised to show they are NYI)
+: 1op2
+   dup 32 = if  .ldhx ext ^  then
+   dup col 4 -  4" mul div nsa daa " ;
+
+: 1op5
+   dup col 3 - 3 * skip
+   .sthx dir ^    ( each entry takes 3 cells)
+   .ldhx dimm ^
+   .ldhx dir ^
+   .cphx dimm ^
+   .cphx dir ;
+
+: 1ope
+   dup 3e = if  .cphx ext ^  then
+   .mov ;
+
+: 1op_  ( regular 1op)
+   dup row 4" neg CBEQROW2com lsr ROW5ror asr lsl rol dec DBNZinc tst ROWEclr "
+   1ea ;
+
+: 1op  ( op - op)
+   dup row  jump
+   1op_  cbeq  1op2  1op_    1op_  1op5  1op_  1op_
+   1op_  1op_  1op_  dbnz    1op_  1op_  1ope  1op_  ;
+
+: 2op  ( op - op)
+   dup row 4" sub cmp sbc cpx and bit lda sta eor adc ora add jmp jsr ldx stx "
+   2ea ;
+
+( Handle special cases in column a0)
+: 2op_a0  ( op - op)
+   dup 0a7 = if  ." ais"  simm  ^  then
+   dup 0ac = if  ." ILL"  ^  then
+   dup 0ad = if  ." bsr"  .dest  ^  then
+   dup 0af = if  ." aix"  simm  ^  then
+   2op ;
+
+: inh8  ( op - op)
+   dup row 4" rti rts bgndswi tap tpa pulapshapulxpshxpulhpshhclrh--- stopwait"
+   ;
+
+: col9  ( op - op)
+   dup row 4 u< if  bcond9 ^ then
+   dup 96 = if  .sthx ext ^  then
+   dup row 4 - 4" txs tsx STHXtax clc sec cli sei rsp nop PRE txa " ;
+
+: >x  ( op - op')  ( force use of X register by deleting pre byte)
+   0ff and ;
+
+: dispatch  ( a - op)
+   dup ea !  op
+   ( Handle some strange S08 opcodes that don't fit well into the matrix
+     before we dispatch by column.)
+   dup 9ef3 = if  .cphx sp1 ^  then  ( really sp1)
+   dup 9eae = if  .ldhx ix  ^  then
+   dup 9ebe = if  .ldhx >x ix2 ^  then  ( forced to ,x)
+   dup 9ece = if  .ldhx >x ix1 ^  then  ( forced to ,x)
+   dup 9efe = if  .ldhx ix1 ^  then  ( really sp1)
+   dup 9eff = if  .sthx ix1 ^  then  ( really sp1)
+
+   dup col  jump
+   brbit  bit   bcond2  1op    1op  1op  1op  1op
+   inh8   col9  2op_a0  2op    2op  2op  2op  2op  ;
+
+( Support for interactive disassembly.)
+: dis+  ( a - a' 0)  drop  p @  0 advance  0 ;
+: dis-  ( a - a' 0)            -8 advance  0 ;  ( arbitrary backward offset)
+
+( The workhorse.)
+: 1dis  ( a)
+   dup .addr  .nesting  dispatch  drop ;

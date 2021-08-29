@@ -1,7 +1,7 @@
 /*
- * This file is part of muforth: http://muforth.nimblemachines.com/
+ * This file is part of muforth: https://muforth.nimblemachines.com/
  *
- * Copyright (c) 2002-2017 David Frech. (Read the LICENSE for details.)
+ * Copyright (c) 2002-2021 David Frech. (Read the LICENSE for details.)
  */
 
 /* "Multi-precision" integer arithmetic. */
@@ -193,7 +193,7 @@ void mu_dplus3()
  */
 
 #ifdef GCC_IS_COMPLETELY_FUCKED
-/* 
+/*
  * Some tests that didn't work out. I think the fault was intially mine: I
  * had cast using "(unsigned)" rather than "(uint32_t)". That may have made
  * a difference. It certainly caused my initial 64-bit port to work in

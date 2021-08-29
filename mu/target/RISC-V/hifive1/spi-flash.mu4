@@ -1,0 +1,80 @@
+( This file is part of muforth: https://muforth.nimblemachines.com/
+
+  Copyright 2002-2021 David Frech. (Read the LICENSE for details.)
+
+loading HiFive1 SPI flash experiments
+
+__meta
+
+hex
+
+: lohi>  ( lo hi - h)   8 << or ;
+: >hilo  ( h - hi lo)   dup 8 u>>  swap 0ff and ;
+
+: hilo>  ( hi lo - h)   swap  lohi> ;
+: >lohi  ( h - lo hi)        >hilo  swap ;
+
+( XXX c@+ should probably be in the kernel, and should probably be
+  assembler.)
+
+: c@+  ( a - b a+1)  dup c@  swap 1+ ;
+
+: tx  ( set dir to tx)  8 spi0.fmt +bits ;
+: rx  ( set dir to rx)  8 spi0.fmt -bits ;
+
+: >spi-prog-io
+   0 spi0.fctrl !  ( put spi0 into programmed i/o mode)
+   1 spi0.txmark !  ( set tx watermark to 1) ;
+
+: >spi-mem-mapped
+   1 spi0.fctrl !  ( put spi0 into flash memory mode) ;
+
+: not  0= ;
+: spi!  ( b)
+   begin  spi0.txdata @  0< not until  spi0.txdata ! ;
+
+: spi@  ( - b)
+   0  begin  drop  spi0.rxdata @  dup 0< not until
+   0ff and ;
+
+: send  tx    spi! ;
+: recv  rx  0 spi! spi@ ;
+
+: wait-for-txwm
+   begin  spi0.ip @  1 and  until ;
+
+: cs\  ( cmd)  ( assert CS, send command byte)
+                  2 ( HOLD) spi0.csmode !  send ;
+: cs/  ( de-assert CS)
+   wait-for-txwm  0 ( AUTO) spi0.csmode ! ;
+
+( For sending 1-byte commands)
+: cmd   ( cmd)  cs\  cs/ ;
+
+: >addr  ( a)  >lohi >lohi  send send send ;
+: r4     ( - w)  recv recv recv recv  lohi> lohi> lohi> ;
+
+( SPI commands.)
+: wrdi  04 cmd ;
+: rdsr  05 cs\  recv  cs/ ;
+: wren  06 cmd ;
+
+: read4   ( addr - w)             03 cs\  >addr  r4           cs/ ;
+: read16  ( addr - w0 w1 w2 w3)   03 cs\  >addr  r4 r4 r4 r4  cs/ ;
+
+: -busy  ( wait until busy flag is clear)
+   begin  rdsr  1 and  0= until ;
+
+: erase  ( a)  ( 4k sector erase)
+        20 cs\  >addr  cs/  -busy ;
+
+( For many chips, command 02 programs only a single byte. SST/Microchip
+  25-series flash is in this category. The ISSI chip on the HiFive1 board
+  can do *page* programming of up to 256 bytes at a time. This makes our
+  job much easier!)
+
+: prog  ( buf a u)
+        02 cs\  swap >addr  for  c@+ swap  send  next  drop  cs/  -busy ;
+
+: reset-chip  66 cs\  99 send  cs/ ;
+: jedec  9f cs\  recv recv hilo>  recv hilo>  cs/ ;

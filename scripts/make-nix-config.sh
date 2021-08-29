@@ -1,8 +1,8 @@
 #!/bin/sh
 
-# This file is part of muforth: http://muforth.nimblemachines.com/
+# This file is part of muforth: https://muforth.nimblemachines.com/
 #
-# Copyright (c) 2002-2017 David Frech. (Read the LICENSE for details.)
+# Copyright (c) 2002-2021 David Frech. (Read the LICENSE for details.)
 
 # Make a configuration snippet for NixOS users with udev rules for using
 # USB devices with muforth.

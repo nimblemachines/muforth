@@ -1,0 +1,480 @@
+( This file is part of muforth: https://muforth.nimblemachines.com/
+
+  Copyright 2002-2021 David Frech. (Read the LICENSE for details.)
+
+loading ARM v6-M Forth kernel (ITC)
+
+( Yes, you guessed it: The guts of Forth for ARMv6-M processors!
+
+  Because this is a true RISC architecture, doing threaded code doesn't
+  seem to make a lot of sense. If you include NEXT inline in each code word -
+  the speediest approach - you really need post-increment addressing.
+  Otherwise NEXT can take up a lot of space!
+
+  On ARMv6-M, NEXT for ITC - indirect-threaded code - is three instructions,
+  and NEXT for DTC - direct-threaded code - is two.
+
+  However! There are several advantages to doing ITC. One is that the
+  system is dead simple, and it's easy to write "user-level" code that mucks
+  about with the internals of words, since everything has a uniform
+  structure.
+
+  It's also cache-efficient, mostly separating data - pointers and
+  variables - from code. In a native Forth these often end up next to each
+  other in memory, making the caches' jobs more difficult. Since Forth is
+  so simple, it's very likely that the entire native code implemenation will
+  fit into the I-cache, making it potentially very fast. We'll see about
+  this!)
+
+-- ------------------------------------------------------------------------
+-- Macros defining common VM operations
+-- ------------------------------------------------------------------------
+
+( XXX this is a hack until we have a proper smart jump and call.)
+assembler
+: j   asm{{  b  }} ;
+: c   asm{{  bl  }} ;
+forth
+
+( XXX Macros or subroutines?)
+( Data stack macros.)
+
+( NOTE: The registers are pushed and popped in "register index" order:
+  lower indices end up at lower addresses. The order that they are
+  mentioned in the macro call is irrelevant! So be careful.)
+
+: regs>mask  ( rn .. r0 #regs - mask)   0 swap  for  reg>mask  next ;
+
+assembler
+
+: dpush1  ( r1)           1 regs>mask  asm{{  push  }} ;
+: dpush2  ( r1 r2)        2 regs>mask  asm{{  push  }} ;
+: dpush3  ( r1 r2 r3)     3 regs>mask  asm{{  push  }} ;
+: dpush4  ( r1 r2 r3 r4)  4 regs>mask  asm{{  push  }} ;
+
+: dpop1  ( r1)           1 regs>mask  asm{{  pop  }} ;
+: dpop2  ( r1 r2)        2 regs>mask  asm{{  pop  }} ;
+: dpop3  ( r1 r2 r3)     3 regs>mask  asm{{  pop  }} ;
+: dpop4  ( r1 r2 r3 r4)  4 regs>mask  asm{{  pop  }} ;
+
+( Return stack macros.)
+( NOTE: The above warning about order is relevant here too!)
+( These are pushed in the order given on the stack.)
+: rpush1  ( r1)       push  asm{{  1 cells # rp rp subs
+                                   0 rp +)  \f pop  str  }} ;
+: rpush2  ( r2 r1)   2push  asm{{  2 cells # rp rp subs
+                                   0 rp +)  \f pop  str
+                             1 cells rp +)  \f pop  str  }} ;
+
+( These are popped in register index order - lower to higher.)
+: rpop1  ( r1)       1 regs>mask  asm{{  rp ldm  }} ;
+: rpop2  ( r1 r2)    2 regs>mask  asm{{  rp ldm  }} ;
+
+forth
+
+
+-- ------------------------------------------------------------------------
+-- The kernel begins here!
+-- ------------------------------------------------------------------------
+
+( Compile NEXT inline.)
+assembler
+: dispatch   asm{{  { x }  w ldm   x bx  }} ;
+: next       asm{{  { w } ip ldm   dispatch  }} ;
+forth
+
+__meta
+
+meta: constant  new  ,  ;code  label doconst
+                               0 w +) w ldr  ( fetch constant into w)
+                               ( fall thru)  ;c
+
+meta: create    new     ;code  label dovar
+                               label wpush
+                               top dpush1   w top mov  ( move pfa to top)
+                               next  ;c
+
+                               label dodoes
+                               top dpush1   w top mov  ( move pfa to top)
+( XXX probably needs to be lr not x)
+                               x w mov  ( x is parent ip)  ( fall thru)  ;c
+
+meta: :         new  ]  ;code  label docolon
+                               ip rpush1   w ip mov  ( pfa is new ip)   next  ;c
+
+code* (unnest)  [r]   ip rpop1   begin   next  ;c
+codes nope      [r]
+
+definer: does>   <;code>  asm{{  dodoes c  }}  ] ;
+
+code* (lit)     [r]   { w } ip ldm  ( fetch literal into w)   wpush j  ;c
+
+code execute   ( cfa)        top w mov   begin   top dpop1   dispatch  ;c
+code @execute  ( 'cfa)  0 top +) w ldr   again  ;c
+
+code*    (branch)   [r]
+label branch        0 ip +) ip ldr  ( follow branch)   next  ;c
+code*   (0branch)   [r]  top w mov   top dpop1   branch 0!= until  ( fall thru)  ;c
+label  skip         4 # ip ip adds   next  ( skip branch address)  ;c
+code*  (?0branch)   [r]  top top tst   skip 0= until   top dpop1   branch j  ;c
+code*  (=0branch)   [r]  top top tst   skip 0= until               branch j  ;c
+
+.ifdef loop-in-reg
+
+( NOTE: This is untranslated RISC-V code, *not* ARM!)
+
+( Fast version, using loop register)
+code* (for)   [r]  ( u)
+   ix rpush1   top ix mv   top pop1   next  ;c
+
+code* (next)  [r]
+   -1 ix ix addi  branch ix 0= until  ix rpop1   skip j  ;c
+
+( Do-loop frame looks like this:
+
+  +------------------+
+  |   saved ix reg   |
+  +------------------+
+  |      limit       |<--- rp
+  +------------------+
+
+  Current index is in ix register; current "user-visible" index is
+  calculated as index + limit.)
+
+code* (do)  [r]  ( limit start)
+   top w mv     ( w = start)
+   top x pop2   ( x = limit)
+   ix x rpush2  ( push ix reg and limit onto R)
+   w x ix sub   ( index = start - limit)
+   next  ;c
+
+( Increment index. If it overflows to zero, restore ix register, pop
+  stack frame, skip backwards jump, and continue. If non-zero, simply take
+  the backwards jump.)
+
+code* (loop)  [r]
+   1 ix ix addi   branch ix 0= until
+label undo
+   cell rp ix lw        ( restore saved ix from R stack)
+   2 cells rp rp addi   ( pop R stack frame)
+   skip j  ;c
+
+( Add incr to index. If the sign of index has changed, we've crossed the
+  threshold, so restore index, pop frame, and skip jump. Otherwise, take
+  the backwards jump.)
+
+code* (+loop)  [r]  ( incr)
+   ix x mv  ( save ix *before* adding incr)
+   top ix ix add   top pop1   ix x x xor   undo x 0>= until
+   branch j  ;c
+
+( Push current loop index. User-visible index = index + limit)
+code i   [r]  ( - index)
+   0 rp w lw   ix w w add   wpush j  ;c
+
+.else  ( keeping for/next and do/loop index on R stack, not in a register)
+
+( for is just >r.)
+code* (next)  [r]
+   0 rp +) x ldr   1 # x x subs   0 rp +) x str
+   branch 0= until   cell # rp rp adds   skip j  ;c
+
+( Do-loop frame looks like this:
+
+  +---------+
+  |  limit  |
+  +---------+
+  |  index  |<--- rp
+  +---------+
+
+   "User-visible" index is calculated as index + limit.)
+
+code* (do)   [r]  ( limit start)
+   2 cells # rp rp subs  ( make room on R stack - all in one go)
+   x dpop1        cell rp +) x   str  ( save limit to R)
+   x top top subs    0 rp +) top str  ( index = start - limit)
+label poptop
+   top dpop1   next  ;c
+
+( Increment index. If it overflows to zero, pop stack frame, skip backwards
+  jump, and continue. If non-zero, simply take the backwards jump.)
+
+code* (loop)  [r]
+   0 rp +) x ldr   1 # x x adds   0 rp +) x str   branch 0= until
+label undo
+   2 cells # rp rp adds   skip j  ;c
+
+( Add incr to index. If the sign of index has changed, we've crossed the
+  threshold, so pop stack frame, skip backwards jump, and continue.
+  Otherwise, take the backwards jump.)
+
+code* (+loop)  [r]  ( incr)
+   0 rp +) x ldr  ( index)   x top top add   0 rp +) top str
+   top x x eors   top dpop1   undo 0>= until   branch j  ;c
+
+( Push current loop index. User-visible index = index + limit)
+code i   [r]  ( - index)
+  0 rp +) x ldr  ( index)   cell rp +) w ldr  ( limit)
+  x w w adds   wpush j  ;c
+
+.then
+
+( Allocate buffer space _before_ defining the constant that pushes the
+  buffer's address. This way we can define buffers in ram as well as in
+  flash!)
+
+meta: buffer   ( #bytes)
+   h preserve  ram  align here  swap aligned allot  constant ;
+
+meta: variable     cell    buffer ;  ( A variable is a cell-sized buffer!)
+meta: 2variable    cell 2* buffer ;
+
+( Basic unary ops.)
+code invert   top top mvns   next  ;c
+code negate   top top negs   next  ;c
+
+code 2*   1 # top top lsls   next  ;c   ( also: top top top add)
+code 2/   1 # top top asrs   next  ;c
+code u2/  1 # top top lsrs   next  ;c
+
+code <<    ( n shamt - n')   x dpop1   top x x lsls   x top mov  next  ;c
+code >>    ( n shamt - n')   x dpop1   top x x asrs   x top mov  next  ;c
+code u>>   ( n shamt - n')   x dpop1   top x x lsrs   x top mov  next  ;c
+
+( Basic binary ops.)
+code +   ( x t - x+t)   x dpop1   top x top adds   next  ;c
+code -   ( x t - x-t)   x dpop1   top x top subs   next  ;c
+
+code and   x dpop1   x top top ands   next  ;c
+code or    x dpop1   x top top orrs   next  ;c
+code xor   x dpop1   x top top eors   next  ;c
+
+( Stack ops.)
+code dup    [r]  ( t - t t)  top dpush1   next  ;c
+code drop   [r]  ( x t - x)  top dpop1    next  ;c
+code nip    [r]  ( x t - t)  cell # sp sp add   next  ;c
+
+code over   [r]  ( w t - w t w)     0 sp +) w ldr   wpush j  ;c
+code swap   [r]  ( w t - t w)       0 sp +) w ldr   0 sp +) top str
+                                           begin   w top mov   next  ;c
+
+code rot    [r]  ( w x t - x t w)   0 sp +)   x ldr   cell sp +) w ldr
+                                    0 sp +) top str   cell sp +) x str   again  ;c
+
+code tuck   [r]  (   w t - t w t)   0 sp +) w ldr   0 sp +) top str   w dpush1   next  ;c
+
+( Make a copy of the nth stack item, where  0 nth  is  dup)
+code nth   [r]  ( w_n .. w_0 t - w_n .. w_0 w_t)
+   cellshift # top top lsls   sp top top add  0 top +) top ldr   next  ;c
+
+: 2dup   over over ;  [r]
+: -rot    rot  rot ;  [r]
+
+( Return stack ops.)
+align  implements (for)
+code >r   [r]  ( w)        top rpush1   poptop j  ;c
+code r>   [r]  ( - w)         w rpop1   wpush j  ;c
+code r@   [r]  ( - w)   0 rp +) w ldr   wpush j  ;c
+
+
+( Memory access.)
+code   @   ( a -  w)  0 top +) top ldr     next  ;c
+code  h@   ( a - uh)  0 top +) top ldrh    next  ;c  ( Unsigned!)
+code  c@   ( a - ub)  0 top +) top ldrb    next  ;c  ( Unsigned!)
+
+code !   ( w a)     w dpop1   0 top +) w str    poptop j  ;c
+code h!  ( h a)     w dpop1   0 top +) w strh   poptop j  ;c
+code c!  ( b a)     w dpop1   0 top +) w strb   poptop j  ;c
+
+code +!  ( w a)     w dpop1   0 top +) x ldr   w x x add
+                              0 top +) x str   poptop j  ;c
+
+( Comparison and flag operators.)
+code 0<  ( n - f)   31 # top top asrs   next  ;c
+
+( These are a bit tricky, esp since borrow is ~carry. The idea is: get the
+  inverse of the flag value we want into carry, then subtract top from
+  itself - yielding zero - minus borrow, or -1 for true, 0 for false. It's
+  efficient but non-obvious.)
+
+code 0=  ( n - f)
+label eqzero     1 # top top subs  ( ~Z -> C)
+label makeflag   top top top sbcs   next  ;c
+
+code u<  ( x t - x u< t)
+          x dpop1   top x cmp  ( ~uless -> C)  makeflag j  ;c
+
+( Since it's tricky to directly set or clear the carry flag, let's instead
+  conditionally pass a zero or one to eqzero, to create a true or false
+  flag, resp.)
+
+code  <  ( x t - x < t)
+          0 # w movs  ( true)
+          x dpop1   top x cmp   w top mov    eqzero >= until
+                              1 # top movs   eqzero j  ;c
+
+( Another useful compare operator - equality!)
+: =   xor 0= ;
+
+( Small constants.)
+-2 constant -2   [r]
+-1 constant -1   [r]
+ 0 constant 0    [r]
+ 1 constant 1    [r]
+ 2 constant 2    [r]
+
+( Incrementers by small constants. Shared code means they take up very
+  little space!)
+
+meta: incr   constant  ;code   0 w +) w ldr   w top top adds   next  ;c
+   1 incr 1+   [r]
+   2 incr 2+   [r]
+
+  -1 incr 1-   [r]
+  -2 incr 2-   [r]
+
+cell        incr cell+   [r]
+cell negate incr cell-   [r]
+
+.ifdef notyet  ( unconverted RISC-V code)
+
+( Double numbers. Useful, among other things, for computing with RISC-V's
+  64-bit timers and counters.)
+
+( Double-length math register use.
+
+  Enter with d1 and d2 on the stack. Registers are first loaded as follows:
+
+    top = d2hi
+    w   = d2lo
+    x   = d1hi
+    y   = d1lo
+)
+
+code d+   ( d1 d2 - d1+d2)
+   0 sp w lw  ( d2lo)   cell sp x lw  ( d1hi)   2 cells sp y lw  ( d1lo)
+   y w w add  ( sumlo)   w y y sltu  ( y+w < y => carry)
+   x top top add  ( sumhi)   top y top add  ( +carry)
+label wput-pop2
+   2 cells sp w sw  ( lo)   2 cells sp sp addi  ( pop)
+   next   ;c
+
+code d-   ( d1 d2 - d1-d2)
+   0 sp w lw  ( d2lo)   cell sp x lw  ( d1hi)   2 cells sp y lw  ( d1lo)
+   y w w sub  ( difflo)   y w y sltu  ( y-w > y => borrow)
+   x top top sub  ( diffhi)   top y top sub  ( -borrow)
+   wput-pop2 j  ;c
+
+code dnegate   ( d - -d)
+   0 sp w lw  ( dlo)   w y snez  ( will borrow only if w != 0)   w w neg
+   0 sp w sw   top top neg   top y top sub  ( -borrow)   next  ;c
+
+( I've wracked my brain and I can't come up with a way to do 64-bit
+  compares without using a branch. Here is the basic idea:
+
+  Compare the high-order words. If they are _equal_, return as the result
+  the _unsigned_ comparison of the low-order words.
+
+  Otherwise, ignore the low-order words and:
+     For ud< return the _unsigned_ comparison of the high-order words
+     For  d< return the _signed_ comparison of the high-order words
+)
+( Compare high-order words; if equal, compare low-order, pop stack, push
+  flag, and run NEXT. If not equal, pop stack and return to caller.)
+
+label dless-common
+   cell sp x lw  ( d1hi)   x top = if  ( high-order words equal: compare low)
+            0 sp w lw  ( d2lo)
+      2 cells sp y lw  ( d1lo)
+      3 cells sp sp addi  ( pop)   y w top sltu  ( d1 d2 u<)   makeflag j
+   then
+   3 cells sp sp addi   0 w jr  ;c
+
+code d<   ( d1 d2 - f)
+   dless-common w jal   x top top slt    makeflag j  ;c
+
+code ud<  ( d1 d2 - f)
+   dless-common w jal   x top top sltu   makeflag j  ;c
+
+( Host words to make it easier to deal with double numbers on the target.
+
+  >d   converts a host-side 64-bit number into two 32-bit target numbers
+  d>   goes the other way: target -> host
+  d.   prints a target double number as a signed 64-bit number
+  ud.  prints a target double number as an unsigned 64-bit number
+)
+
+meta: >d   ( host - tdlo tdhi)   dup "ffff_ffff and  ( lo)  swap 32 u>> ;
+meta: d>   ( tdlo tdhi - host)   32 <<  swap "ffff_ffff and  + ;
+meta: ud.  ( tdlo tdhi)   d>     u. ;
+meta: d.   ( tdlo tdhi)   d>  \f  . ;
+
+
+( Once we have double numbers, these come in handy.)
+: 2dup   ( a b     - a b a b)   over over ;  [r]
+: 2swap  ( a b c d - c d a b)   rot >r  rot r> ;  [r]
+: 2over  ( a b c d - a b c d a b)   3 nth  3 nth ;  [r]
+: 2tuck  ( a b c d - c d a b c d)   2swap  2over ;  [r]
+
+.then  ( notyet)
+
+ram
+
+( For debugging and interactive execution.)
+
+( The host can push things onto host stack; they get copied to target
+  stack, registers popped, words execute, re-push, copy back to host...
+  Much easier than stuffing things into register slots on stack frame!)
+
+code bug  [r]
+   { top ip rp } push  0 bkpt  ;c
+
+implements continue-forth  __asm
+   { top ip rp } pop   dsb  isb  next  ;c
+
+implements trampoline  ( x0 .. xn - y0 .. ym)
+   ]  execute  begin  bug  again  [
+
+__host
+
+( Make it easy to get to the key target registers from meta.)
+meta
+: sp@   tsp @  2 \m cells  +  ;  ( skip IP and RP)
+: rp@   trp @ ;
+: ip@   tip @ ;
+forth
+
+( Show some indication of whether a word is still executing. If IP is
+  anything other than two cells past trampoline, we've hit "bug" somewhere
+  other than the trampoline. Show this by annotating IP with a "*".)
+
+: executing?   ( ip - f)   [ \m trampoline @  2 \m cells + #]  - ;
+
+: .ip
+   \m ip@  dup .h32  executing? if  ." * "  ^  then  ( done)  2sp ;
+
+: .sp
+   \m sp@  .h32__ ;
+
+
+-: ( forth version of .regs)
+   cr  ."       SP        RP        IP"
+       (  00000000  00000000  00000000 )
+   cr          .sp   trp .tr       .ip ;
+   is .regs
+
+
+__meta
+
+
+comment ~~examples~~
+variable inc
+: lala  do  i bug drop  inc @ +loop ;
+
+( to demonstrate scripting target execution from the host)
+meta: grog  ( start n)  0 do  \t 1+ remote  loop ;
+( try: 44 10 grog)
+
+~~examples~~
+
+flash

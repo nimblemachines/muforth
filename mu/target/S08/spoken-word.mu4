@@ -1,0 +1,92 @@
+( This file is part of muforth: https://muforth.nimblemachines.com/
+
+  Copyright 2002-2021 David Frech. (Read the LICENSE for details.)
+
+loading S08 Spoken Word (really just some exploratory code)
+
+__meta
+ram
+hex
+
+( Connecting an S08QG8 to an HC595 to drive 10 LEDs. The idea is that the
+  LEDs will be mounted vertically along the spoke of a bicycle wheel, and
+  as the wheel spins, can spell words or make patterns.
+
+  I've hooked the top 8 LEDs to the outputs of the HC595. Assuming that the
+  8 bits are shifted in MSB first, the MSB - output QH - is on top.
+
+  The bottom two are connected to PTB7 and PTB6, B7 being the upper one.
+
+  The two chips are connected thus:
+
+  QG8        Pin     595  Pin
+  ====       ===     ===  ===
+  PTB5         7    RCLK   12   storage register clock
+  PTB4         8  nSRCLR   10   serial register clear
+  PTB3/MOSI    9     SER   14   serial data in
+  PTB2/SPSCK  10   SRCLK   11   shift register clock
+
+                     nOE   13   Low
+
+  LEDs, top to bottom:
+                      QH    7
+                      QG    6
+                      QF    5
+                      QE    4
+                      QD    3
+                      QC    2
+                      QB    1
+                      QA   15
+  PTB7         5
+  PTB6         6
+)
+
+.ifdef use-spi
+
+code spi-init
+   %0101_0000 # ( cpol=0, cpha=0, enable spi, master mode) SPIC1 ) mov
+   ( 8-bit mode, /SS disable, separate pins) SPIC2 ) clr
+   %1110_1100 # lda  PTBDS ) sta ( high drive on SCK, MOSI, B7, and B6)
+   01 # SPIBR ) mov  ( 9.216M / 1 / 4 = 2.304M - hopefully not too fast!)
+   rts  ;c
+
+( XXX We can't know when it's done shifting... Xmit empty becomes true
+  immediately, as xmitter is double-buffered.)
+
+code hi8!
+   SPID ) sta  rts  ;c
+
+.then
+
+( Nice commands/macros to make things pretty.)
+macro    r/  PTBD 5 bset  ;m  ( bring RCLK high)
+macro    r\  PTBD 5 bclr  ;m  ( bring RCLK low)
+macro  clr/  PTBD 4 bset  ;m  ( bring nSRCLR high)
+macro  clr\  PTBD 4 bclr  ;m  ( bring nSRCLR low)
+
+macro   d!  .a rol  CS if  PTBD 3 bset
+                     else  PTBD 3 bclr  ( SERIN)  then  ;m
+
+macro   sr/  PTBD 2 bset  ;m  ( bring SRCLK high)
+macro   sr\  PTBD 2 bclr  ;m  ( bring SRCLK low)
+
+code ports-init
+   SPIC1 ) clr  ( disable SPI)
+   PTBD ) clr  %1111_1100 # PTBDD ) mov
+               %1111_1100 # lda  PTBDS ) sta
+   clr/   ( stop clearing shift regs)
+   r/ r\  ( clock cleared shift regs onto output regs)  rts  ;c
+
+code hi8!  ( bits - bits)
+   th lda
+   .x psh  8 # ldx  ( count)
+   begin  d!  sr/ sr\  .x decz? until
+   .x pul  r/ r\  rts  ;c
+
+( Since RCLK and SRCLK idle low, and nSRCLR idles high, mask the top two
+  bits, OR in nSRCLR, and write the whole register.)
+
+code lo8!  ( bits)
+   tl lda  2 # aix  0c0 # and  10 # ora  PTBD ) sta  rts  ;c
+
+: show  hi8!  lo8! ;

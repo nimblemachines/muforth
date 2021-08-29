@@ -1,6 +1,6 @@
-( This file is part of muforth: http://muforth.nimblemachines.com/
+( This file is part of muforth: https://muforth.nimblemachines.com/
 
-  Copyright 2002-2017 David Frech. (Read the LICENSE for details.)
+  Copyright 2002-2021 David Frech. (Read the LICENSE for details.)
 
 loading ARM v6-M Thumb2 disassembler
 
@@ -45,14 +45,29 @@ variable instr-pc  ( points to _start_ of current instruction)
 : .[     ." [ " ;
 : .]     ."  ]" ;
 
+( Standard ways of printing different "types".)
+: .udec  radix preserve  decimal  (u.) type ;
+: .hex   radix preserve  hex       (.) type ;
+
 ( #op takes an index, a string of ops, and a "width", and prints the op,
   but with *no* trailing whitespace.)
 : #op  ( index z" width)  push  swap r@ *  +  pop type ;
 
-: .reg  ( reg)
-   radix preserve decimal
-   0f and  dup 0d u< if  char r emit  (u.) type  ^  then
-   0d - z" splrpc" 2 #op ;
+: -trailing  ( a u - a u')  ( strip trailing blanks)
+   over + ( end)  begin  1-  dup c@ bl -  until  over -  1+ ;
+
+defer .reg  ( reg)
+-: ( reg)
+   0f and  dup #13 u< if  char r emit  .udec  ^  then
+   #13 - z" splrpc" 2 #op ;
+
+: raw-regs  [ #] is .reg ;  raw-regs
+
+( From http://infocenter.arm.com/help/topic/com.arm.doc.ihi0042f/IHI0042F_aapcs.pdf p14.)
+-:  ( reg)
+   z" a1a2a3a4v1v2v3v4v5v6v7v8ipsplrpc"  2 #op ;
+
+: abi-regs  [ #] is .reg ;
 
 : 4#   # # # # ;
 : .u32  radix preserve hex  <# 4#  char _ hold  4# #> type ;
@@ -185,12 +200,15 @@ variable instr-pc  ( points to _start_ of current instruction)
       1 u+
    repeat  shunt  2drop  ."  }" ;
 
-: .regmask8  ( op bit8reg - op)
-   over 8 bit@  swap <<
+( extra is lr or pc - or nothing.)
+: .regmask   ( op extra - op)
    over 0ff and or  ( 16-bit mask)  .reglist ;
 
-: .push  ." push   "  0e ( lr)  .regmask8 ;
-: .pop   ." pop    "  0f ( pc)  .regmask8 ;
+: regmask8  ( op bit8reg - op extra)
+   over 8 bit@  swap << ;
+
+: .push  ." push   "  0e ( lr) regmask8  .regmask ;
+: .pop   ." pop    "  0f ( pc) regmask8  .regmask ;
 
 : .cps    dup 4 bit@  z" cpsiecpsid" .op5
           dup 1 bit@ if  ." i"  then  ( must be set for v6-m; only option)
@@ -204,8 +222,8 @@ variable instr-pc  ( points to _start_ of current instruction)
    1 swap <<  over and  0= if  char ! emit  then
    comma ;
 
-: .ldmia   ." ldmia  "  Rd8@  ?ldm-wb  0 .regmask8 ;
-: .stmia   ." stmia  "  Rd8   ." !, "  0 .regmask8 ;
+: .ldmia   ." ldmia  "  Rd8@  ?ldm-wb  0 .regmask ;
+: .stmia   ." stmia  "  Rd8   ." !, "  0 .regmask ;
 
 : .undef  ." undef  "  i8  imm ;
 : .svc    ." svc    "  i8  imm ;
@@ -234,12 +252,15 @@ variable instr-pc  ( points to _start_ of current instruction)
    over #26 bit@  ( S)  push
    over #11 bit@  ( J2)  r@ xor  1 xor  #21 << ( I2 ditto)  +
    over #13 bit@  ( J1)  r@ xor  1 xor  #22 << ( I1 ditto)  +
-   pop ( S)  if  [ 1 #23 << negate ] +  then ;
+   pop ( S)  if  [ 1 #23 << negate #] +  then ;
 
 : .bl-dest  ( op - op)
    bl-offset@ ( hword-offset)  .branch-pc ;
 
 : .bl  ( op - op)   ." bl     "  .bl-dest ;
+
+: .barrier  ( op - op)
+   dup 4 >>  3 and  z" dsbdmbisb???"  3 #op ;
 
 ( Is this a 16-bit instruction?)
 : thumb16?  ( op - f)   e800 u< ;
@@ -283,6 +304,7 @@ variable instr-pc  ( points to _start_ of current instruction)
 : shred32-v6m  ( op - op)
    ( All the 32-bit v6-m instructions!)
    f800_d000 f000_d000 match  .bl
+   ffff_ffc0 f3bf_8f40 match  .barrier
    0  ( no match) ;
 
 ( Support for interactive disassembly.)

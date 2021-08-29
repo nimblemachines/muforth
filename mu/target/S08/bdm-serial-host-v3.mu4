@@ -1,0 +1,57 @@
+( This file is part of muforth: https://muforth.nimblemachines.com/
+
+  Copyright 2002-2021 David Frech. (Read the LICENSE for details.)
+
+loading S08 BDM-over-SCI transport v3 (host)
+
+( Host-side - ie PC - code to drive the BDM-over-SCI implementation in
+  target/S08/bdm-serial-core-v3.mu4.
+
+  This is "version 3" which means I re-imagined it to be more like the
+  byteloader protocol, where the target is never waiting for more than one
+  byte.)
+
+( NOTE: Before loading this file, load an S08 variant device file. This
+  code requires several of the register defines, and needs to know where to
+  find the clock trim register.)
+
+hex
+
+: b.Bye     00 send ;  ( End session, return to chat command loop)
+
+( Core commands that generate BDM traffic. Start with 20 hex - 32 decimal.
+  Anything < 20 will exit the BDM loop and return to chat.)
+
+: Send1    ?spkt  20 send  send ;
+: Send2    ?spkt  21 send  send send ;
+: Send3    ?spkt  22 send  send send send ;
+: Send4    ?spkt  23 send  send send send send ;
+
+: Expect0  24 send  recv drop ;
+: Expect1  25 send  recv ;
+: Expect2  26 send  recv recv ;
+
+( Misc commands)
+: b.Sync      ?spkt  27 send  recv recv  hilo> ;
+: b.BkgdLow   ?spkt  28 send ;
+: b.BkgdHiZ   ?spkt  29 send ;
+: b.Clock4M   ?spkt  2a send ;
+: b.Clock8M   ?spkt  2b send ;
+: b.Clock16M  ?spkt  2c send ;
+
+( NOTE: I've removed the ability to run the code in a 908 chip. I'm not
+  even sure where it would start...)
+
+: b.Start  ( start the BDM firmware on the connected device)
+.ifdef chat-slow
+   #38400 bps  resync
+.else
+   #115200 bps  resync
+.then
+.ifdef bdm-in-ram
+   @ram   ( S08, serial, ram version)
+.else
+   @bdm   ( S08, serial, flash version)
+.then
+   c.SetPC c.Run
+   " S08b3" await  ( match signature) ;

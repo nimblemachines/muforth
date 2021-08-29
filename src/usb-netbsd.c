@@ -1,7 +1,7 @@
 /*
- * This file is part of muforth: http://muforth.nimblemachines.com/
+ * This file is part of muforth: https://muforth.nimblemachines.com/
  *
- * Copyright (c) 2002-2017 David Frech. (Read the LICENSE for details.)
+ * Copyright (c) 2002-2021 David Frech. (Read the LICENSE for details.)
  */
 
 /*
@@ -16,7 +16,7 @@
  * systems.
  */
 
-#if defined(__NetBSD__) || defined(__DragonFly__) || (__FreeBSD__ < 8)
+#if defined(__NetBSD__) || defined(__OpenBSD__) || defined(__DragonFly__) || (defined(__FreeBSD__) && (__FreeBSD__ < 8))
 
 #include "muforth.h"
 
@@ -41,7 +41,7 @@
  * endpoints 10 to 15.
  */
 
-#ifdef __NetBSD__
+#if defined(__NetBSD__) || defined(__OpenBSD__)
 #define UGEN_EP0    "/dev/ugen0.00"
 #else
 #define UGEN_EP0    "/dev/ugen0"

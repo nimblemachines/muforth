@@ -1,0 +1,197 @@
+( This file is part of muforth: https://muforth.nimblemachines.com/
+
+  Copyright 2002-2021 David Frech. (Read the LICENSE for details.)
+
+loading RISC-V openocd debug support
+
+( NOTE: This is a - hopefully temporary - workaround. Ideally I want to be
+  able to talk *directly* to the FTDI chip on the HiFive1 board, but having
+  GDB support gets me "oniline" with the chip a bit sooner.)
+
+( ALSO NOTE: In order to have a reasonable conversation with a gdb stub
+  you have to do a "qSupported" query first, otherwise all memory reads
+  will return 0, and it will be impossible to stop the core.)
+
+hex
+
+variable fd-gdb-out
+variable fd-gdb-in
+
+( NOTE: When using named pipes - fifos - with openocd, it will *listen* on
+  pipe <name>, and *send* on pipe <name>o.
+
+  ALSO NOTE: Opening a pipe for reading will *block* until another process
+  has opened it for writing. Ditto for the other direction. To make this
+  less crazy, I'm going to open both pipes with O_NONBLOCK set, and loop on
+  the read and write until data has been read or written.)
+
+: open-gdb-pipes
+   z" target/RISC-V/riscv-gdbo"  open-file-ro-nonblocking  fd-gdb-in !
+   z" target/RISC-V/riscv-gdb"   open-file-wo-nonblocking  fd-gdb-out ! ;
+
+( Read from and write to gdb pipes.)
+: gread   ( a u - #read)  fd-gdb-in @ -rot  read ;
+: gwrite  ( a u)         fd-gdb-out @ -rot  write ;
+
+
+( Let's size the buffer so we can move 256 bytes at a time. For writing,
+  the buffer will look like this:
+
+  $M2000f000,100:xx ... xx#ss
+
+  The overhead is: 7 punct + 3 len + 8 address = 18 bytes. We need 2 bytes
+  in the buffer for each byte read or written; so 256 * 2 + 18 total. Let's
+  round up our overhead to a multiple of 8.
+
+  No, fuck it! Let's make it big. How about 4 KiB?
+
+  And let's have one for each direction.)
+
+1000 constant #maxbuf  ( these are HEX numbers!)
+variable rbp  ( read buf pointer)
+variable wbp  ( write buf pointer)
+#maxbuf buffer rbuf  ( read buffer)
+#maxbuf buffer wbuf  ( write buffer)
+
+: 0buf  ( buf)  #maxbuf 55 fill ;
+: !rbuf  rbuf rbp ! ;
+: !wbuf  wbuf wbp ! ;
+
+: #rbuf  rbp @  rbuf - ;
+: #wbuf  wbp @  wbuf - ;
+
+: >b  ( byte)    wbp @  c!  1 wbp +! ;
+: b>  ( - byte)  rbp @  c@  1 rbp +! ;
+
+: >string  ( a u)  tuck  wbp @ swap cmove  wbp +! ;
+: >num
+   radix preserve  hex  <# #s #>  ( a u)  >string ;
+
+: >nyb      0f and  >digit  >b ;
+: nyb>          b>  digit>  0f and ;  ( hopefully it was actually hex... ;-)
+
+: >hex  ( b)    dup  4 >> >nyb  >nyb ;
+: hex>  ( - b)  nyb> 4 <<       nyb> + ;
+
+: >hexstring  ( a u)
+   for  c@+ swap  >hex  next  drop ;
+
+: hexstring>  ( a u)
+   for  hex> over c!  1+  next  drop ;
+
+: sum  ( a u - sum)
+   0 -rot ( sum)  for  c@+ push  +  pop  next  drop  0ff and ;
+
+: checksum  ( - sum)
+   wbuf 1+  ( skip $)  #wbuf 1-  sum ;
+
+( Whether to spy on traffic to gdb stub.)
+variable spy
+
+: .visible  ( b)
+   dup 80 and if  char + emit  80 xor    then
+   dup  bl u< if  char ^ emit  char @ +  then  emit ;
+
+: bintype  ( a u)
+   for  c@+ swap  .visible  next  drop ;
+
+: send
+   spy @ if  cr ." > "  wbuf #wbuf bintype  then
+   wbuf #wbuf gwrite ;
+
+( From a read buffer address - pointing somewhere in rbuf - push byte count
+  of room *left* in buffer.)
+
+: #room  ( a - a u)
+   rbuf over -  ( #filled)  #maxbuf swap - ( #room) ;
+
+: smart-recv
+   rbuf 0buf
+   rbuf  begin  dup #room gread  +  dup 3 - c@  char # =  until  rbp !
+   spy @ if  cr ." < "  rbuf #rbuf bintype  then ;
+
+( Send a "bare" packet that consists of a single byte. We use this both for
+  acks - which are an ASCII + character - and to interrupt and hopefully
+  halt the target - by sending a ^C.)
+
+: bare  ( ch)  !wbuf  >b  send ;
+: ack   char +  bare ;
+: halt       03 bare ;
+
+( Packet starts with "+$". We need to skip these before reading hex.)
+: ?hexstring>  ( a u)
+   !rbuf  begin  b>  char $ =  until  hexstring> ;
+
+: <pkt  ( begin a debug packet)
+   !wbuf  char $ >b ;
+
+: pkt>  ( end a debug packet)
+   checksum  char # >b  >hex  send  smart-recv  ack ;
+
+: cmd    ( char)    <pkt  >b        pkt> ;
+: cmd,n  ( n char)  <pkt  >b  >num  pkt> ;
+
+compiler
+: <cmd>           \c char  compile cmd ;
+: <cmd,n>   ( u)  \c char  compile cmd,n ;
+forth
+
+: j.cycle            <cmd>   i ;
+: j.cycles  ( u)     <cmd,n> i ;
+: j.step             <cmd>   s ;
+: j.why-halted       <cmd>   ? ;
+: j.continue         <cmd>   c ;
+: j.go    ( addr)    <cmd,n> c ;
+
+.ifdef xlen32
+
+: j.getregs  ( buf)
+   <cmd> g  [ #32 4 * #] ?hexstring> ;
+
+: j.setregs  ( buf)
+   <pkt  char G >b  [ #32 4 * #] >hexstring  pkt> ;
+
+( NOTE: reg #32 *is* the PC!)
+: j.getreg  ( n - value)
+   <cmd,n> p  pad 4 ?hexstring>  pad lew@ ;
+
+: j.setreg  ( value n)
+   <pkt  char P >b  >num  char = >b  pad lew!  pad 4 >hexstring  pkt> ;
+
+.else  ( 64 bits, baby!)
+
+( Extend little-endian memory operators to 64 bits.)
+: le8@  ( a - d)   dup lew@ ( low)  swap 4 + lew@  #32 << + ;
+: le8!  ( d a)  push  dup r@ lew! ( low)  #32 >>  pop 4 + lew! ;
+
+: j.getregs  ( buf)
+   <cmd> g  [ #32 8 * #] ?hexstring> ;
+
+: j.setregs  ( buf)
+   <pkt  char G >b  [ #32 8 * #] >hexstring  pkt> ;
+
+: j.getreg  ( n - value)
+   <cmd,n> p  pad 8 ?hexstring>  pad le8@ ;
+
+: j.setreg  ( value n)
+   <pkt  char P >b  >num  char = >b  pad le8!  pad 8 >hexstring  pkt> ;
+
+.then
+
+: addr-len  ( a u - u)   swap >num  char , >b  dup >num ;
+
+: j.read  ( buf a u)
+   <pkt  char m >b  addr-len  pkt>  ?hexstring> ;
+
+: j.write  ( buf a u)
+   <pkt  char M >b  addr-len  char : >b  >hexstring  pkt> ;
+
+: j.hello
+   open-gdb-pipes
+   <pkt  " qSupported" >string  pkt> ;
+
+: j.get-status   ( - sp mcause mepc)   [ \a tp  0 >reg nip #] j.getreg  0 0 ;
+: j.run      ( pc sp)  [ \a tp  0 >reg nip #] j.setreg  j.go ;
+
+: jtag
+   chat-via  j.hello  j.read  j.write  j.get-status  j.run ;

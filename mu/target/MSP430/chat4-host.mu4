@@ -1,0 +1,115 @@
+( This file is part of muforth: https://muforth.nimblemachines.com/
+
+  Copyright 2002-2021 David Frech. (Read the LICENSE for details.)
+
+loading MSP430 serial chat protocol v4 (host)
+
+hex
+
+( Taking inspiration from the wildly successful HC08 serial chat protocol.
+
+  Responds to the following commands. NOTE: these are hex values!
+
+00 - 3f  Idle        - these command bytes are ignored
+
+40  VersionAddr      - get the address of the version commit
+41  SetAddr          - set the memory address pointer
+42  GetStatus        - get SP, PC, SR, and CP
+43  Run              - set SP, PC, SR, CP, and execute
+44  ReadWords        - read N words, incrementing by 2 as we go
+45  WriteWord        - write a word to memory, incr pointer by 2
+46  WriteByte        - write a byte to memory, incr pointer by 1
+47  SetFlashCmd      - set flash command, clear flash status
+48  GetFlashStatus   - read accumulated flash status word
+49  FlashWord        - write a word to flash, incr pointer
+
+4a - ff  Idle        - these command bytes are ignored
+)
+
+: >b   send ;
+: b>   recv ;
+
+: >w         >hilo  >b >b ;
+: w>   b> b>  lohi> ;
+
+: c.Idle                        0 >b     ;
+
+: c.VersionAddr      ( )      40 >b     ;
+: c.SetAddr          ( a)     41 >b  >w ;
+: c.GetStatus        ( - sp pc sr cp)
+                              42 >b  w> w> w> w> ;
+: c.Run              ( pc sr cp)
+                              43 >b  rot >w  swap >w  >w ;
+: c.ReadWords        ( n)     44 >b  >b ;  ( then read streamed bytes)
+: c.WriteWord        ( w)     45 >b  >w ;
+: c.WriteByte        ( b)     46 >b  >b ;
+: c.SetFlashCmd      ( cmd)   47 >b  >w ;
+: c.GetFlashStatus   ( - status)
+                              48 >b  w> ;
+: c.FlashWord        ( w)     49 >b  >w ;
+
+( Send two no-ops, let them transmit, _then_ throw away any input bytes.)
+: resync  c.Idle  c.Idle  drain  flush ;
+
+: get-version  ( - n)   c.VersionAddr  2 c.ReadWords w> w> ( lo hi)  10 << + ;
+
+: c.Hello
+   #115200 bps  resync
+   cr ." Chat firmware version "  get-version
+   radix preserve  hex  sep preserve  -sep   <# 4# 4# #> type ;
+
+: c.setup-chunk  ( buf a u - #words)
+   swap c.SetAddr  swap m !  1+ 2/ ( words) ;
+
+: c.ReadChunk    ( buf a u)
+   c.setup-chunk  dup c.ReadWords  for  w> >hilo  m& m&  next ;
+
+: c.WriteChunk   ( buf a u)
+   c.setup-chunk  for  m* m* lohi>  c.WriteWord  next ;
+
+( FRAM devices have an MPUCTL0 register)
+.equates. .contains MPUCTL0 .if
+
+: unlock-mpu
+   \eq MPUCTL0 c.SetAddr  [ \eq MPUKEY 1+ #] c.WriteWord ;
+
+: lock-mpu
+   [ \eq MPUCTL0 1+ #] c.SetAddr  0 c.WriteByte ;
+
+: c.ErasePage    ( a - fail?)  ( XXX - no-op?)  drop  0 ;
+
+: c.FlashChunk   ( buf a u -- fail?)
+   unlock-mpu
+   \eq MPUSAM  c.SetAddr  1 c.ReadWords  w> 0200 or  ( enable W bit for segment3)
+   \eq MPUSAM  c.SetAddr    c.WriteWord
+   c.WriteChunk
+   lock-mpu  0 ;
+
+.then
+
+( Flash devices have an FCTL1 register.)
+.equates. .contains FCTL1 .if
+
+: ?flash-status   ( - fail?)   c.GetFlashStatus  84 and ;
+
+: c.ErasePage   ( a - fail?)
+   [ \eq FERASE  \eq FKEY + #]  c.SetFlashCmd
+   c.SetAddr  0 c.FlashWord  ?flash-status ;
+
+: c.FlashChunk  ( buf a u - fail?)
+   [ \eq FWRT   \eq FKEY + #]  c.SetFlashCmd
+   c.setup-chunk  for  m* m* lohi>  c.FlashWord  next  ?flash-status ;
+
+.then
+
+: get-status  resync  c.GetStatus ;
+
+: set-sp-and-run   ( pc sr sp)  .SP @ c.SetAddr  c.Run ;
+
+( NOTE: We don't define RunWait separately. Since we will always be reading
+  the registers back after Run, that first read command will block until
+  the target is ready.)
+
+: chat
+   chat-via  c.Hello  get-status  set-sp-and-run
+             c.ReadChunk  c.WriteChunk  c.ErasePage  c.FlashChunk ;

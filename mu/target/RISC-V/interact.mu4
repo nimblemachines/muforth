@@ -1,6 +1,6 @@
-( This file is part of muforth: http://muforth.nimblemachines.com/
+( This file is part of muforth: https://muforth.nimblemachines.com/
 
-  Copyright 2002-2017 David Frech. (Read the LICENSE for details.)
+  Copyright 2002-2021 David Frech. (Read the LICENSE for details.)
 
 loading RISC-V interaction
 
@@ -14,12 +14,13 @@ variable chat-vector
 : chat-fail   error" Chat command not implemented" ;
 
 0
-chat-cmd t.hello
-chat-cmd t.get-sp   ( - sp)
-chat-cmd t.set-sp   ( sp)
-chat-cmd t.read     ( buf a u)
-chat-cmd t.write    ( buf a u)
-chat-cmd t.run      ( pc)
+chat-cmd t.hello       ( - chunk-size)
+chat-cmd t.get-status  ( - sp mcause mepc)
+chat-cmd t.run         ( pc sp)
+chat-cmd t.read        ( buf a u)
+chat-cmd t.write       ( buf a u)
+chat-cmd t.erase       ( a)
+chat-cmd t.flash       ( buf a u)
 drop
 
 : >chat
@@ -56,21 +57,27 @@ variable trp    ( target RP)
 variable tip    ( target IP)
 variable tix    ( target loop index counter)
 
-: get-regs  ( just SP for now)        t.get-sp tsp ! ;
-: set-regs  ( just SP for now)  tsp @ t.set-sp ;
+variable tmcause  ( mcause exception register)
+variable tmepc    ( mepc exception register)
+
+: get-regs   t.get-status  tmepc !  tmcause !  tsp ! ;
 
 : .tr   ( variable)  ( "target register")  @ .h32 2sp ;
-defer .regs
 
-: hi  chatting on  >chat  t.hello  get-regs  .regs
+defer .regs    now nope is .regs
+
+: hi  chatting on  >chat  t.hello drop ( chunk-size)
+      get-regs  .regs
       ram-copied off  copy-ram
       now __chatting is __meta  __meta ;
 
 : chat-via   pop  chat-vector !  hi ;
 
 
-: kick     ( pc)  copy-ram  set-regs  t.run ;  ( don't wait for target)
-: runwait  ( pc)  kick  get-regs ;   ( wait for target)
+: ms       #1,000,000 * ( ns)  0 swap  nanosleep ;
+
+: kick     ( pc)  copy-ram  tsp @  t.run ;   ( don't wait for target)
+: runwait  ( pc)  kick  #10 ms  get-regs ;   ( wait for target)
 
 ( For running random bits of code.)
 : call   ( pc)  runwait  .regs ;
@@ -78,7 +85,7 @@ defer .regs
 ( when the code you're calling doesn't speak the same protocol as running code)
 -- : go   ( XXX where is reset?)  XXX kick ;
 
--- : reset    go  0 #100,000,000 nanosleep ( 100ms)  get-regs .regs ;
+: reset    "8000_3000 kick  100 ms  get-regs .regs ;
 
 
 ( Because the target "caches" the top of the stack in a register, and
@@ -109,8 +116,8 @@ defer .regs
   transition to a tasking version.)
 
 meta
-@ram #ram +            constant rp0   ( R stack is at the end of RAM)
-\m rp0  #32 \m cells - constant sp0   ( D stack is *below* R stack)
+@ram #ram +  2 \m cells - constant rp0   ( R stack is at the end of RAM)
+\m rp0     #64 \m cells - constant sp0   ( D stack is *below* R stack)
 
 : depth   \m sp0  tsp @ -  \m cell/  1- ;
 forth
@@ -220,6 +227,8 @@ key: d  ( a - a 0)   dumping    0 ;
 key: x  ( a - a 0)   xrefing    0 ;
 key: i  ( a - a 0)   disasming  0 ;
 
+host-seekeys 'seekeys !  ( back to host bindings)
+
 
 ( Interactive)
 
@@ -228,3 +237,20 @@ meta
 : du   ( a - a')   dumping     inspect ;
 : dis  ( a - a')   disasming   inspect ;
 forth
+
+( Batch mode)
+( Redirect to stdout to make it easier to write output to a file.)
+defer dump-line
+: batch-dump  ( start limit cfa)  is dump-line
+   >target  ( XXX should this be >image ?)
+   out-channel preserve  >stdout
+   radix preserve
+   istack-depth preserve  istack-depth off
+   begin  swap  dump-line drop  swap  2dup u< 0=  until  2drop ;
+
+( XXX create/does> instead?)
+-: ( a - a' 0)  dup 1dump  16 advance  0 ;
+: dumps  ( start limit)   [ #]  batch-dump ;
+
+-: ( a - a' 0)  dup 1dis   dis+ ;
+: disses  ( start limit)  [ #]  batch-dump ;
