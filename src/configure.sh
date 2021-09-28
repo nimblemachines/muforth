@@ -20,9 +20,13 @@
 # Useful for scripts, so they know where they are
 top=$(dirname $(pwd))
 
+# Where to put temporary files
+# Use TMPDIR if defined and non-empty, otherwise /tmp
+tmp=${TMPDIR:-/tmp}
+
 if [ -d ../.git ]; then
     # Create the hook script for Git
-    cat <<EOT > /tmp/post-commit.sh
+    cat <<EOT > ${tmp}/post-commit.sh
 #!/bin/sh
 
 # This file is part of muforth: https://muforth.nimblemachines.com/
@@ -41,11 +45,11 @@ echo ": muforth-commit  \" \$sha\" ;" > ${top}/mu/commit.mu4
 EOT
     echo
     echo "Installing post-commit, post-checkout, and post-merge hooks."
-    install -m 755 /tmp/post-commit.sh ../.git/hooks/post-commit
-    install -m 755 /tmp/post-commit.sh ../.git/hooks/post-checkout
-    install -m 755 /tmp/post-commit.sh ../.git/hooks/post-merge
-    sh /tmp/post-commit.sh
-    rm /tmp/post-commit.sh
+    install -m 755 ${tmp}/post-commit.sh ../.git/hooks/post-commit
+    install -m 755 ${tmp}/post-commit.sh ../.git/hooks/post-checkout
+    install -m 755 ${tmp}/post-commit.sh ../.git/hooks/post-merge
+    sh ${tmp}/post-commit.sh
+    rm ${tmp}/post-commit.sh
 else
     echo ": muforth-commit 0 ;" > ../mu/commit.mu4
 fi
