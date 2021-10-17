@@ -14,7 +14,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
-#include <setjmp.h>
 
 int main(int argc, char *argv[])
 {
@@ -60,8 +59,6 @@ int main(int argc, char *argv[])
         if (mem == 0x44332211)
             printf("#define MU_LITTLE_ENDIAN\n");
     }
-
-    printf("#define MU_JMPBUF_CELLS %d\n", (int)(sizeof(jmp_buf) / sizeof(intptr_t)));
 
     return 0;
 }
