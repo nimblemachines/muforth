@@ -111,27 +111,57 @@ forth
 
 
 -- ------------------------------------------------------------------------
--- Creating new target names
+-- Exception vectors and vector table
 -- ------------------------------------------------------------------------
 
-.ifdef notyet  ( vectors)
+: align-by  ( offset alignment)  push  r@ 1- +  pop negate and ;
 
-( XXX How do we do vectors in ARM v6-m land?)
-: unvectored?  ( offset - f)  image-@  "0ffff_ffff = ;
+.equates. .contains LAST_irq  .if
+
+( Address of start of vector table.)
+variable @vectors
+: +vectors  @vectors @ + ;
+
+( Capture address of vector table and allot space for it in flash or ram.
+  Vector table alignment depends on the number of vectors. We round this up
+  to a power of two and then multiply by 4 - the size of the target cell.
+
+  We align the *size* of the table to a multiple of 16, just for neatness.
+
+  Supply a reset SP value or 0. If you use 0, the top of ram will be used.)
+
+: vector-table  ( reset-sp)
+   \m here  ( in current region)
+   \eq LAST_irq  round-up-to-power-of-two  ( this is our alignment)
+   align-by  dup \m goto  @vectors !
+   \eq LAST_irq  16 align-by  \m allot
+
+   ( Now set up the reset SP value.)
+   dup 0= if  drop  @ram #ram + ( use default: top of ram)  then
+   0 +vectors image-! ;
+
+: unvectored?  ( offset - f)  +vectors image-@  "0ffff_ffff = ;
 
 meta
-: handler  ( vector-offset)  \m here swap  image-!  __asm ;
+: handler  ( vector-offset)
+   \m here 1+ ( thumb!) swap  +vectors image-!  __asm ;
 
 ( Set all unset vectors to point to this vector - usually RESET.)
-: default-handler  ( start-vector default-vector)
+: default-handler  ( default-vector-offset)
    \m handler  ( force it, in case it's been set already)
    ( then set all unset handlers to this address)
-   \eq Vreset  swap do
+   \eq LAST_irq  \m cell ( from RESET to LAST) do
       i unvectored? if  i  \m handler  ( set it)  then
    \m cell +loop ;
 
-.then  ( vectors)
+forth
 
+.then  ( LAST_irq in .equates.)
+
+
+-- ------------------------------------------------------------------------
+-- Creating new target names
+-- ------------------------------------------------------------------------
 
 variable last-code   ( for ;code and does> to fix up)
 
