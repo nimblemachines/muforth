@@ -1,29 +1,26 @@
 /*
  * This file is part of muforth: https://muforth.nimblemachines.com/
  *
- * Copyright (c) 2002-2019 David Frech. (Read the LICENSE for details.)
+ * Copyright (c) 2002-2021 David Frech. (Read the LICENSE for details.)
  */
 
 /* Nuts and bolts of threaded-code compiler & execution engine */
 
 #include "muforth.h"
 
-void mu_execute() { EXECUTE; }
-
 /*
  * This is where all the magic happens. Any time we have the address of a
- * word to execute (an execution token, or XTK) - either because we looked
+ * word to execute (an execution token, or xt) - either because we looked
  * it up in the dictionary, or because we fetched it out of a variable - we
- * call execute_xtk. It is most commonly invoked by EXECUTE, which POPs an
- * xtk off the D stack, and calls execute_xtk.
+ * call mu_execute().
  *
  * We need magic here because of the hybrid nature of the system. It is
  * *not* a truly indirect-threaded Forth, where you set up IP and go, and
  * never look back. We're executing C code, then Forth, then C... The Forth
  * inner interpreter never runs "free"; in fact, we run it in this routine!
  *
- * How do we know if the XTK refers to a Forth word or to a C routine? We
- * don't...until we run it. If it's Forth, the first thing it will do is
+ * How do we know if the xt refers to a Forth word or to a C routine? We
+ * don't...until we run it! If it's Forth, the first thing it will do is
  * NEST - push the caller's IP - and then it will set IP to point to its
  * own code. In fact, that's *all* Forth words do when you execute them!
  *
@@ -42,29 +39,35 @@ void mu_execute() { EXECUTE; }
  * Thanks to Michael Pruemm for the idea of comparing RP to rp_saved as a
  * way to see when we're "done".
  */
-void execute_xtk(xtk x)
+
+#define CALL(xt)  (W = (xt), (_STAR(W))())
+
+void mu_execute()
 {
     cell *rp_saved;
 
     rp_saved = RP;
 
-    CALL(x);
+    CALL(_STAR((xt_cell *)SP++));   /* pop stack and execute xt */
     while (RP < rp_saved)
-        NEXT;
+        CALL(_STAR(IP++));          /* do NEXT */
 }
+
+#define NEST      RPUSH((addr)IP)
+#define UNNEST    (IP = (xt_cell *)RPOP)
 
 /* The most important "word" of all: */
 static void mu_do_colon()
 {
     NEST;                       /* entering a new word; push IP */
-    IP = (xtk_cell *)&W[1];     /* new IP is address of parameter field */
+    IP = (xt_cell *)&W[1];      /* new IP is address of parameter field */
 }
 
 /* The basis of create/does>. */
 static void mu_do_does()
 {
     NEST;                       /* entering a new word; push IP */
-    IP = (xtk_cell *)_(W[1]);   /* new IP is stored in the parameter field */
+    IP = (xt_cell *)_(W[1]);    /* new IP is stored in the parameter field */
     PUSH_ADDR(&W[2]);           /* push the address of the word's body */
 }
 
@@ -75,19 +78,22 @@ void mu_set_does_code()  { PUSH_ADDR(&mu_do_does);  mu_comma(); }
 void mu_runtime_exit()      { UNNEST; }
 
 /* Push an inline literal */
-void mu_runtime_lit_()  { PUSH(*(cell *)IP++); }
+void mu_runtime_lit_()      { PUSH(*(cell *)IP++); }
 
 /* Compile the following word */
-void mu_runtime_compile()  { mu_runtime_lit_(); mu_comma(); }
+void mu_runtime_compile()   { mu_runtime_lit_(); mu_comma(); }
 
 
 /*
  * These are the control structure runtime workhorses.
  */
+#define BRANCH    (IP = (xt_cell *)_STAR(IP))
+#define SKIP      (IP++)
+
 void mu_runtime_branch_()           { BRANCH; }
-void mu_runtime_equal_0branch_()    { if (TOP == 0) BRANCH; else IP++; }
+void mu_runtime_equal_0branch_()    { if (TOP == 0) BRANCH; else SKIP; }
 void mu_runtime_0branch_()          { mu_runtime_equal_0branch_(); DROP(1); }
-void mu_runtime_q0branch_()         { if (TOP == 0) { BRANCH; DROP(1); } else IP++; }
+void mu_runtime_q0branch_()         { if (TOP == 0) { BRANCH; DROP(1); } else SKIP; }
 
 /*
  * (next)
@@ -107,12 +113,10 @@ void mu_runtime_q0branch_()         { if (TOP == 0) { BRANCH; DROP(1); } else IP
 
 void mu_runtime_next_()
 {
-    cell rtop = RP[0];                  /* counter on top of R stack */
-
-    if (--rtop == 0)
-        { IP++; RP++; }                 /* skip branch, pop counter */
+    if (--RTOP == 0)        /* decrement counter on top of R stack */
+        { SKIP; RP++; }     /* zero: skip branch, pop counter */
     else
-        { RP[0] = rtop; BRANCH; }       /* update index, branch back */
+        { BRANCH; }         /* non-zero: branch back */
 }
 
 /*
@@ -145,32 +149,29 @@ void mu_runtime_do_()   /* (do)  ( limit start) */
 
 void mu_runtime_loop_()
 {
-    cell rtop = RP[0];
-
-    rtop++;                             /* increment index */
-    if (rtop == 0)
-        { IP++; RP += 3; }              /* skip branch, pop R stack */
+    RTOP++;                     /* increment index on top of R stack */
+    if (RTOP == 0)
+        { SKIP; RP += 3; }      /* zero: skip branch, pop R stack */
     else
-        { RP[0] = rtop; BRANCH; }       /* update index, branch back */
+        { BRANCH; }             /* non-zero: branch back */
 }
 
 void mu_runtime_plus_loop_()    /* (+loop)  ( incr) */
 {
-    cell rtop = RP[0];
-    cell prev = rtop;
+    cell prev = RTOP;
 
-    rtop += TOP;                /* increment index */
-    if ((rtop ^ prev) < 0)      /* current & prev index have opposite signs */
-        { IP++; RP += 3; }              /* skip branch, pop R stack */
+    RTOP += TOP;                /* increment index */
+    if ((RTOP ^ prev) < 0)      /* current & prev index have opposite signs */
+        { SKIP; RP += 3; }      /* opposite: skip branch, pop R stack */
     else
-        { RP[0] = rtop; BRANCH; }       /* update index, branch back */
+        { BRANCH; }             /* same: branch back */
     DROP(1);
 }
 
 /* leave the do loop early */
 void mu_runtime_leave()
 {
-    IP = (xtk_cell *)RP[2];     /* jump to address saved on R stack */
+    IP = (xt_cell *)RP[2];      /* jump to address saved on R stack */
     RP += 3;                    /* pop "do" context */
 }
 

@@ -1,8 +1,6 @@
 ( This file is part of muforth: https://muforth.nimblemachines.com/
 
-  Copyright 2002-2019 David Frech. (Read the LICENSE for details.)
-
-ld target/common/endian.mu4
+  Copyright 2002-2021 David Frech. (Read the LICENSE for details.)
 
 loading CMSIS-DAP support
 
@@ -147,7 +145,7 @@ end CMSIS-DAP-commands
 0d28 0204 hid-find-device  ( MBED CMSIS-DAP)  .if  constant cmsis  .else
 c251 f002 hid-find-device  ( Keil CMSIS-DAP)  .if  constant cmsis  .else
 
-   ." No supported USB devices found."
+   ." No supported USB devices found. "
 
 .then .then
 
@@ -335,7 +333,7 @@ variable #xfers
 (    0008 reserved)
 0000_000c constant AHB.DRW  ( Access size depends on CSW.size bits)
 
-( Bank registers. These always generates word-sized accesses,
+( Bank registers. These always generate word-sized accesses,
   but require CSW.size bits to be set to word size.)
 
 0000_0010 constant AHB.BD0  ( TAR and -10)
@@ -460,7 +458,8 @@ variable ahb.csw@reset  ( capture this value and use it for later xfers)
 : us  ( #microsecs)  #1,000 *  0 swap nanosleep ;
 : ms  ( #millisecs)  #1,000 *  us ;
 
-: dap.hello  ( connect to device)
+( connect to device)
+: dap.hello  ( - chunk-size)
    -- spy on  ( uncomment for more verbosity)
    led off
    DAP.Connect  00 DAP.SWD_Configure  DAP.Transfer_Configure
@@ -484,6 +483,7 @@ variable ahb.csw@reset  ( capture this value and use it for later xfers)
    begin  halted?  until
    0 MDM.Control AP.Write  ( release reset and debug requests)
    -- spy off
+   100  ( 256 byte chunk size)
 ;
 
 
@@ -560,19 +560,20 @@ variable ahb.csw@reset  ( capture this value and use it for later xfers)
   18  Process stack pointer, PSP
   20  CONTROL.PRIMASK)
 
-( XXX Time out after a while?)
-: dap.get-sp  ( - sp)
-   begin  halted?  until  #13 readreg ;
-
-: dap.set-sp  ( sp)       #13 writereg ;
-
-: get-pc   ( - pc)   #15 readreg ;
-: dap.run  ( pc)     #15 writereg  run ;
-
 ( The interface for the interact code. Implemented by all debug transports.)
 
+( XXX Time out after a while?)
+: dap.get-status  ( - sp pc)
+   begin  halted?  until  #13 readreg  #15 readreg ;
+
+: dap.run  ( pc sp)      #13 writereg  #15 writereg  run ;
+
+( XXX Not yet implemented.)
+: dap.erase    ( a)  drop chat-fail ;
+: dap.flash    ( buf a u)  drop 2drop chat-fail ;
+
 : jtag
-   chat-via  dap.hello  dap.get-sp  dap.set-sp  dap.read  dap.write  dap.run ;
+   chat-via  dap.hello  dap.get-status  dap.run  dap.read  dap.write  dap.erase  dap.flash ;
 
 
 .ifdef debugdebug

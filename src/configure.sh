@@ -2,7 +2,7 @@
 
 # This file is part of muforth: https://muforth.nimblemachines.com/
 #
-# Copyright (c) 2002-2019 David Frech. (Read the LICENSE for details.)
+# Copyright (c) 2002-2021 David Frech. (Read the LICENSE for details.)
 
 # This NOT a GNU configure script!
 
@@ -20,14 +20,18 @@
 # Useful for scripts, so they know where they are
 top=$(dirname $(pwd))
 
+# Where to put temporary files
+# Use TMPDIR if defined and non-empty, otherwise /tmp
+tmp=${TMPDIR:-/tmp}
+
 if [ -d ../.git ]; then
     # Create the hook script for Git
-    cat <<EOT > /tmp/post-commit.sh
+    cat <<EOT > ${tmp}/post-commit.sh
 #!/bin/sh
 
 # This file is part of muforth: https://muforth.nimblemachines.com/
 #
-# Copyright (c) 2002-2019 David Frech. (Read the LICENSE for details.)
+# Copyright (c) 2002-2021 David Frech. (Read the LICENSE for details.)
 
 # So that we always have an accurate git commit available to Forth code,
 # after commit, checkout or merge generate a muforth file that defines the
@@ -41,11 +45,11 @@ echo ": muforth-commit  \" \$sha\" ;" > ${top}/mu/commit.mu4
 EOT
     echo
     echo "Installing post-commit, post-checkout, and post-merge hooks."
-    install -m 755 /tmp/post-commit.sh ../.git/hooks/post-commit
-    install -m 755 /tmp/post-commit.sh ../.git/hooks/post-checkout
-    install -m 755 /tmp/post-commit.sh ../.git/hooks/post-merge
-    sh /tmp/post-commit.sh
-    rm /tmp/post-commit.sh
+    install -m 755 ${tmp}/post-commit.sh ../.git/hooks/post-commit
+    install -m 755 ${tmp}/post-commit.sh ../.git/hooks/post-checkout
+    install -m 755 ${tmp}/post-commit.sh ../.git/hooks/post-merge
+    sh ${tmp}/post-commit.sh
+    rm ${tmp}/post-commit.sh
 else
     echo ": muforth-commit 0 ;" > ../mu/commit.mu4
 fi
@@ -106,15 +110,15 @@ if [ "$os" = "Linux" ]; then
         done
     fi
     if [ -d /dev/bus/usb ]; then
-        cat <<EOF
+        cat <<EOT
 
 Your USB devices are mounted on /dev/bus/usb and controlled by udevd.
 
-EOF
+EOT
         if [ -f /etc/nixos/configuration.nix ]; then
             # Running NixOS! Yippee!
             ../scripts/make-nix-config.sh $USER > udev.nix
-            cat <<EOF
+            cat <<EOT
 It appears that you are one of the few intrepid souls running NixOS.
 
 We salute you!
@@ -125,11 +129,11 @@ and a few udev rules, and append it to your configuration.nix.
 
 After doing a 'nixos-rebuild switch' or 'nixos-rebuild test' the new rules
 should be available to udev.
-EOF
+EOT
         else
             ../scripts/make-udev-rules.sh $USER > 99-muforth.rules
             ../scripts/make-udev-rules.sh $UID > 99-muforth-uid.rules
-            cat <<EOF
+            cat <<EOT
 A udev rules file has just been generated, which will be of interest to you
 if you want to use USB devices with muforth.
 
@@ -157,16 +161,16 @@ rather than a user name for each rule, since the Chromebook's /etc/passwd
 and /etc/group files aren't going to have the user name info that lives in
 your chroot.
 
-EOF
+EOT
         fi
     elif [ -d /proc/bus/usb ]; then
-        cat <<EOF
+        cat <<EOT
 
 Your USB devices are mounted on /proc/bus/usb and controlled by usbfs.
 If you want to use USB devices with muforth you'll want to modify the
 /etc/fstab line that mounts the usbfs to allow regular users to access
 USB device files.
-EOF
+EOT
     fi
 fi
 
@@ -216,7 +220,7 @@ touch local.mk
 if [ "${gnu}" = "yes" ] ||
    ([ "${bsd}" != "yes" ] &&
     make --version 2> /dev/null | grep -q "GNU Make"); then
-  cat <<EOF
+  cat <<EOT
 Found GNU make; creating a GNU-compatible Makefile.
 If instead you want to force the creation of a BSD-compatible Makefile,
 re-run configure.sh like this:
@@ -225,13 +229,13 @@ re-run configure.sh like this:
 
 Then run your BSD make.
 
-EOF
+EOT
   sed -E \
     -f ../scripts/make.sed \
     -f ../scripts/gnu-make.sed \
     -e 's/^### Makefile/### GNU Makefile/' Makefile.in > Makefile
 else
-  cat <<EOF
+  cat <<EOT
 Found non-GNU (perhaps BSD?) make; creating a BSD-compatible Makefile.
 If the build fails, try re-running configure like this:
 
@@ -239,13 +243,13 @@ If the build fails, try re-running configure like this:
 
 Then type "gmake" instead of "make".
 
-EOF
+EOT
   sed -E \
     -f ../scripts/make.sed \
     -e 's/^### Makefile/### BSD Makefile/' Makefile.in > Makefile
 fi
 
-cat <<EOF
+cat <<EOT
 Once it builds successfully, run it like this:
 
   cd ../mu
@@ -253,4 +257,4 @@ Once it builds successfully, run it like this:
 
 Enjoy muforth!
 
-EOF
+EOT

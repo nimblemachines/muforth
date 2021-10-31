@@ -1,6 +1,6 @@
 ( This file is part of muforth: https://muforth.nimblemachines.com/
 
-  Copyright 2002-2019 David Frech. (Read the LICENSE for details.)
+  Copyright 2002-2021 David Frech. (Read the LICENSE for details.)
 
 loading MSP430 FR6989 LCD_C support
 
@@ -42,37 +42,6 @@ code lcd-init-hardware
    -- Fire it up!!
    1 # LCDCCTL0 & bis      -- set LCD_ON
    next  ;c
-
-( Here are the names of the segments:
-
-   +---a---+
-   |\  |  /|
-   f h j k b
-   |  \|/  |
-   +-g-+-m-+
-   |  /|\  |
-   e q p n c
-   |/  |  \|
-   +---d---+
-
-  As a word value, we can represent them thus:
-
-    abcd_efgm_hjkp_qXnY
-
-  NOTE: X and Y are decimal points, colons, negative signs, and other
-  punctuation - mostly. When writing a character value to display memory we
-  should be careful not to clobber X and Y.
-
-  For completeness, here is a map of each character position, and what each
-  of the bits means, segment-wise:
-
-  0  abcd_efgm_hjkp_q-n.   neg, dp
-  1  abcd_efgm_hjkp_q:n.   colon, dp
-  2  abcd_efgm_hjkp_q^n.   antenna [^], dp
-  3  abcd_efgm_hjkp_q:n.   colon, dp
-  4  abcd_efgm_hjkp_q*n.   degree [*], dp
-  5  abcd_efgm_hjkp_qTnR   Tx, Rx
-)
 
 ( Because TI's engineers screwed the pooch on how they laid out the
   segment lines, it's not always possible to read or write a single
@@ -147,7 +116,38 @@ code lcd-special!  ( segments)
 meta: table  create  ;code  ( index - value)
                      top top add  w top add  top ) top mov  next  ;c
 
-( ASCII characters 32 to 95, inclusive. Subtract 32 from the ASCII value,
+( Here are the names of the segments:
+
+   +---a---+
+   |\  |  /|
+   f h j k b
+   |  \|/  |
+   +-g-+-m-+
+   |  /|\  |
+   e q p n c
+   |/  |  \|
+   +---d---+
+
+  As a word value, we can represent them thus:
+
+    abcd_efgm_hjkp_qXnY
+
+  NOTE: X and Y are decimal points, colons, negative signs, and other
+  punctuation - mostly. When writing a character value to display memory we
+  should be careful not to clobber X and Y.
+
+  For completeness, here is a map of each character position, and what each
+  of the bits means, segment-wise:
+
+  0  abcd_efgm_hjkp_q-n.   neg, dp
+  1  abcd_efgm_hjkp_q:n.   colon, dp
+  2  abcd_efgm_hjkp_q^n.   antenna [^], dp
+  3  abcd_efgm_hjkp_q:n.   colon, dp
+  4  abcd_efgm_hjkp_q*n.   degree [*], dp
+  5  abcd_efgm_hjkp_qTnR   Tx, Rx
+)
+
+( ASCII characters 32 to 127 inclusive. Subtract 32 from the ASCII value,
   then index into the table, which contains a "bitmap" of segments.)
 
 table glyph
@@ -161,7 +161,7 @@ table glyph
      fc28 , 6020 , db00 , f300 , 6700 , b700 , bf00 , e400 , ( alt 7's: 8028 8328)
 
 --      8      9      :      ;      <      =      >      ?
-     ff00 , f700 , 0000 , 0000 , 0022 , 1300 , 0088 , c110 ,
+     ff00 , f700 , 0000 , 0000 , 0000 , 0000 , 0000 , c110 ,
 
 --      @      A      B      C      D      E      F      G
      fa02 , ef00 , f150 , 9c00 , f050 , 9f00 , 8f00 , bd00 ,
@@ -173,9 +173,22 @@ table glyph
      cf00 , fc02 , cf02 , b700 , 8050 , 7c00 , 0c28 , 6c0a ,
 
 --      X      Y      Z      [      \      ]      ^      _
-     00aa , 00b0 , 9028 , 9c00 , 0082 , f000 , 001a , 1000 ,
+     00aa , 00b0 , 9028 , 0000 , 0082 , 0000 , 001a , 1000 ,
 
-: ascii  ( char - segments)  20 - glyph ;
+--      `      a      b      c      d      e      f      g
+     0080 , ef00 , f150 , 9c00 , f050 , 9f00 , 8f00 , bd00 ,  ( uppercase)
+
+--      h      i      j      k      l      m      n      o
+     6f00 , 9050 , 7800 , 0e22 , 1c00 , 6ca0 , 6c82 , fc00 ,  ( uppercase)
+
+--      p      q      r      s      t      u      v      w
+     cf00 , fc02 , cf02 , b700 , 8050 , 7c00 , 0c28 , 6c0a ,  ( uppercase)
+
+--      x      y      z      {      |      }      ~    DEL
+     00aa , 00b0 , 9028 , 0000 , 0050 , 0000 , 001a , 6caa ,  ( uppercase)
+
+
+: ascii>segments  ( char - segments)  20 -  glyph ;
 
 ( Fill memory, starting at a for u _words_, with value v)
 code fill  ( a u v)
@@ -188,17 +201,7 @@ code fill  ( a u v)
 : clear  ( clear current LCD memory - normal or blinking)
    lcd-mem @  #12  erase ;
 
-( String display.)
-: count   ( a - a+1 byte)   dup 1+  swap c@ ;  ( a species of c@+)
-: aligned   1+ -2 and ;
-: show    ( a u)   clear  0 do  count ascii  i lcd!  loop  drop ;
-: (")   r>  count  2dup + aligned  >r ;
-
-meta: cstring,  ( a u)  ( compile a counted string - with prefix length byte)
-   dup c, ( count)  string,  0 align, ;
-
-compiler: "
-   \t (") target-compile,  char " parse  cstring, ;
+: show    ( a u)   clear  0 do  count ascii>segments  i lcd!  loop  drop ;
 
 : duo  ( a1 u1 a2 u2)   >blink show  >lcd show  lcd-alternating ;
 
@@ -222,10 +225,22 @@ table twiddle
    Gamma     8c00
    Sigma     9088
    lambda    008a
-   slash     0028
-   backslash 0082
    bottom    1050
    turnstile 0150
-   plus      0350
-   minus     0300
 )
+
+
+.ifdef test
+
+( Quick test - display all characters.)
+ram
+
+: chars
+   lcd-init  lcd-steady
+   80 20 do  ( SPC to DEL)
+      clear
+      i  6 0 do  i over + ascii>segments  i lcd!  loop  drop
+      10 delay
+   6 +loop ;
+
+.then  ( test)

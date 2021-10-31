@@ -1,6 +1,6 @@
 ( This file is part of muforth: https://muforth.nimblemachines.com/
 
-  Copyright 2002-2019 David Frech. (Read the LICENSE for details.)
+  Copyright 2002-2021 David Frech. (Read the LICENSE for details.)
 
 ( Memory dump.)
 
@@ -46,34 +46,35 @@ variable p
 ( up to 12 remembered locations)
 12 array+ istack-addr  ( saved address)
 12 array+ istack-mode  ( address of word to reset to saved mode)
-variable isp  ( stack pointer - points to next empty space)
-0 isp !
+variable istack-depth  ( stack pointer - points to next empty space)
+0 istack-depth !
 variable du-set-mode  ( cfa of word to restore du mode)
 
 ( If there is room on the i-stack, push a and make ea the new a. Otherwise,
   drop ea and return a.)
 
 : i-push  ( a ea - ea | a)
-   isp @  dup 12 u<  if  ( room)  push ( isp)
+   istack-depth @  dup 12 u<  if  ( room)  push ( istack-depth)
       du-set-mode @  r@ istack-mode !  swap ( ea a)  r@ istack-addr !
-      pop 1+ isp !  ^  then
-   ( a ea isp)  2drop ;
+      pop 1+ istack-depth !  ^  then
+   ( a ea istack-depth)  2drop ;
 
 ( If there is something on the i-stack, pop the address, pop and execute
   the mode cfa if nonzero - to return us to prev mode - and return the new
   a. Otherwise, return original a.)
 
 : i-pop   ( a - popped | a)
-   isp @  =if  ( not empty)  1- dup isp !  push ( isp)  drop ( a)
+   istack-depth @  =if  ( not empty)  1- dup istack-depth !  push ( istack-depth)
+      drop ( a)
       r@ istack-addr @  ( saved-a)
      pop istack-mode @ =if execute  ^  then  then  ( saved-a 0)
-   ( a isp)  drop ;
+   ( a istack-depth)  drop ;
 
 ( Hmm. This is a weird special case. In addition to not looping if count is
   zero, we also want to avoid printing the space. So we have to redundantly
   guard the for loop with a ?if/then.)
 
-: .nesting  isp @  ?if  for  char > emit  next  space  then ;
+: .nesting  istack-depth @  ?if  for  char > emit  next  space  then ;
 
 
 -- ------------------------------------------------------------------------
@@ -141,11 +142,10 @@ variable #field  ( width of each byte, rendered)
 : #bytes    ( a - a #bytes)  16 over  15 and -  ;  ( 1 .. 16, end on multiple)
 : .spacing  ( a n - a) + dup 3 and 0= if space then ;  ( every 4th add a space)
 
-( >letter is pickier than >graphic, to make strings easier to read. This is
+( Only print printable ASCII. UTF-8 screws up the spacing. This is
   America-centric and not very international, which is unfortunate.)
 
-: >letter   ( ch - ch')  dup letter?   if ^ then  drop bl  ;
-: >graphic  ( ch - ch')  dup graphic?  if ^ then  drop bl  ;
+: >graphic  ( ch - ch')  dup printable-ascii? if ^ then  drop bl  ;
 
 : .char  >graphic  1 |_field|  emit ;
 : .hex-byte        2 |_field|  .h8 ;
@@ -310,7 +310,7 @@ host-seekeys  cell negate  ( 'keymap mask)
    >host
    out-channel preserve  >stdout
    radix preserve
-   isp preserve  isp off
+   istack-depth preserve  istack-depth off
    begin  swap  dup 1dump  16 advance drop  swap  2dup u< 0=  until  2drop ;
 
 

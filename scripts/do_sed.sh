@@ -2,15 +2,15 @@
 
 echo Processing $1
 
-# delete trailing whitespace
-sed -E \
-	-f scripts/whitespace.sed \
-	$1 > $1.sedded
-exit
-
 # just update copyright date
 sed -E \
 	-f scripts/copyright.sed \
+	$1 > $1.sedded
+exit
+
+# delete trailing whitespace
+sed -E \
+	-f scripts/whitespace.sed \
 	$1 > $1.sedded
 exit
 

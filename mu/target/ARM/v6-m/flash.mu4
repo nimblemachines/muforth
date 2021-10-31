@@ -1,0 +1,69 @@
+( This file is part of muforth: https://muforth.nimblemachines.com/
+
+  Copyright 2002-2021 David Frech. (Read the LICENSE for details.)
+
+loading Flash programming
+
+hex
+
+: program-chunk  ( 'target len)
+   cr ." program "  2dup swap u. u.
+   over image+ -rot  ( buf 'target len)  t.flash ;
+
+: erase-page  ( 'target)
+   cr ." erase " dup u.
+   t.erase ;
+
+: erase?  ( 'target - erase?)   [ /page 1- #] and  0= ;
+
+( Before we program the _first_ byte of a page, we erase the page.)
+: flash-chunk  ( 'target len - 'target+len)
+   2dup + push  over erase? if  over erase-page  then  program-chunk  pop ;
+
+( Do the programming in chunks smaller than a whole page. Some target
+  communications protocols use byte-size counts, so do it in 256 byte
+  chunks.)
+
+: flash-region  ( a len)
+   /chunk @  /mod  ( r q)  swap push  for  /chunk @  flash-chunk  next
+                                    pop  =if  ( rem) flash-chunk  drop ^  then  2drop ;
+
+( Check to see if we're going to clobber the bootloader and complain if
+  we're not executing from RAM.)
+
+( XXX Do nothing right now. We only need to do this when trying to program
+  the flash from chat code - which doesn't exist yet. ;-)
+
+: ?clobbering-loader  ( a u - a u)  ;
+
+( Prepare to do a comparison or computation between data read from the
+  target into a buffer, and data in our memory image. Read a chunk from the
+  target into buf, and set m to point to the beginning of buf.
+
+  Be careful about setting m. Some chunked read implementations use it, so
+  set it *after* doing the read.)
+
+: setup-comparison  ( 'target len buf - 'target len)
+   push  2dup  r@ -rot t.read  ( 'target len)  pop m ! ;
+
+: flash-image
+   h preserve  flash region ( a u)  flash-region ;
+
+( Fast verify! Using chunked reads.)
+: verify-chunk  ( 'target len - 'target+len)
+   -- cr ." verify "  over u.  dup u.
+   2dup + push
+   ( 'target len) pad  setup-comparison
+   for  dup image-c@ m* xor  if  dup u.  then  1+  next  drop
+   pop ;
+
+( Verify in chunks of 256 bytes.)
+: verify-region
+   /chunk @  /mod  ( r q)  swap push  for  /chunk @  verify-chunk  next
+                                    pop  =if  ( rem) verify-chunk  drop ^  then  2drop ;
+
+: ?empty-region ( a u - a u)  =if ^ then
+   cr ." WARNING: The flash region is empty. verify will always report no change." ;
+
+: verify
+   h preserve  flash region ( a len)  ?empty-region  verify-region ;

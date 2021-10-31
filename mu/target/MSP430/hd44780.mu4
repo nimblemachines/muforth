@@ -1,6 +1,6 @@
 ( This file is part of muforth: https://muforth.nimblemachines.com/
 
-  Copyright 2002-2019 David Frech. (Read the LICENSE for details.)
+  Copyright 2002-2021 David Frech. (Read the LICENSE for details.)
 
 loading Hitachi HD44780 LCD
 
@@ -104,12 +104,16 @@ hex
   P2.5   13       D5   12
   P2.4   12       D4   11
 
-  P2.3   11       --   --
-  P2.2   10        E    6
-  P2.1    9     R/nW    5
-  P2.0    8       RS    4
+  P2.3   11        E    6
+  P2.2   10     R/nW    5
+  P2.1    9       RS    4
+  P2.0    8       --   --
 
-  *LCD pins numbers assume 14-pin, 2x7 connector. I'm not sure how the
+                  Vo    3    contrast; tying to Gnd often works
+                  5v    2    since we are not reading from LCD, this is ok
+                 Gnd    1
+
+  *LCD pin numbers assume 14-pin, 2x7 connector. I'm not sure how the
   single-row inline connectors are pinned out.)
 
 ( For connecting to an HC595, rather than to a G2553.
@@ -133,7 +137,11 @@ hex
                             R/nW    5     Low
   P1.0    2                    E    6
 
-  *LCD pins numbers assume 14-pin, 2x7 connector. I'm not sure how the
+                              Vo    3    contrast; tying to Gnd often works
+                              5v    2    since we are not reading from LCD, this is ok
+                             Gnd    1
+
+  *LCD pin numbers assume 14-pin, 2x7 connector. I'm not sure how the
   single-row inline connectors are pinned out.)
 
 ( Interface timing.
@@ -230,35 +238,26 @@ code spi!
 ( Do two 4-bit cycles for each 8-bit transfer.)
 : wr8  ( data RS)   split  wr4 ( hi)  wr4 ( lo)  100us ;
 
-: cmd   ( byte)  0 wr8 ;
-: emit  ( char)  8 wr8 ;
-
-: at    ( addr)  80 or  cmd ;
-: clear           1     cmd  5ms ;
-: home            2     cmd  5ms ;
-: cr    ( line#)  =if  drop 40  then  at ;
-
-: +cursor   %0000_1110 cmd  ( display on; cursor on; blink off) ;
-: -cursor   %0000_1100 cmd  ( display on; cursor off; blink off) ;
-
-: lcd-init
-   E\  port-init
-   %0011_0000  dup wr4 5ms  dup wr4 5ms  wr4 100us
-   %0010_0000 wr4  ( 4 bit interface)  100us
-   %0010_1000 cmd  ( 4 bit interface; 2 lines; 5x8 font)
-   +cursor ( display and cursor on)
-   clear ;
+: cmd   ( byte)  0 wr8 ;  ( send a command byte)
+: data  ( byte)  8 wr8 ;  ( send a byte of data: pixels to character generator
+                            RAM, or char to display RAM)
 
 .else  ( not hc595)
 
 code port-init
-   P2SEL & clrb  P2OUT & clrb  -1 # P2DIR & movb  next  ;c
+.ifdef g2553
+   P2SEL & clrb
+.else .ifdef fr6989
+   P2SEL0 & clrb  P2SEL1 & clrb
+.else  z" Don't know how to set up the ports for your chip." abort
+.then .then
+   P2OUT & clrb  -1 # P2DIR & movb  next  ;c
 
 code E/
-   %0000_0100 # P2OUT & bisb  next  ;c
+   %0000_1000 # P2OUT & bisb  next  ;c
 
 code E\
-   %0000_0100 # P2OUT & bicb  next  ;c
+   %0000_1000 # P2OUT & bicb  next  ;c
 
 meta: drive  ( mask)  constant
    ;code  ( bits)
@@ -268,8 +267,8 @@ meta: drive  ( mask)  constant
       top P2OUT & bisb  ( combine bits)
       top pop   next  ;c
 
-%0000_0011 drive control!  ( RS and R/nW)
-%1111_0000 drive data!     ( D4 to D7)
+%0000_0110 drive control!  ( R/nW and RS)
+%1111_0000 drive data!     ( D7 to D4)
 
 : nyb<<  2* 2* 2* 2* ;
 
@@ -279,23 +278,83 @@ meta: drive  ( mask)  constant
 ( Do two 4-bit cycles for each 8-bit transfer.)
 : wr8  ( data RS)   control!  dup  wr4 ( hi)  nyb<<  wr4 ( lo)  100us ;
 
-: cmd   ( byte)  0 wr8 ;
-: emit  ( char)  1 wr8 ;
+: cmd   ( byte)  0 wr8 ;  ( send a command byte)
+: data  ( byte)  2 wr8 ;  ( send a byte of data: pixels to character generator
+                            RAM, or char to display RAM)
 
-: at    ( addr)  80 or  cmd ;
-: clear           1     cmd  5ms ;
-: home            2     cmd  5ms ;
+.then
+
+: at     ( addr)  80 or  cmd ;  ( set an address in display RAM)
+: cgram  ( addr)  40 or  cmd ;  ( set an address in character generator RAM)
+: clear            1     cmd  5ms ;
+: home             2     cmd  5ms ;
 : cr    ( line#)  =if  drop 40  then  at ;
+
+variable 'preprocess
+: emit   'preprocess @execute  data ;
+
+: type    ( a u)  for  count emit  next  drop ;
 
 : +cursor   %0000_1110 cmd  ( display on; cursor on; blink off) ;
 : -cursor   %0000_1100 cmd  ( display on; cursor off; blink off) ;
 
-: lcd-init
-   port-init  ( implicitly sets RS and R/nW to 0)
-   %0011_0000  dup wr4 5ms  dup wr4 5ms  wr4 100us
-   %0010_1000 ( 4 bit interface; 2 lines; 5x8 font)  dup wr4  ( put us into 4-bit mode)
-   cmd  ( send cmd again, but do both nybbles this time)
+: 1line    %0010_0100 cmd  ( 4 bit interface; 1 line; 5x11 font) ;
+: 2lines   %0010_1000 cmd  ( 4 bit interface; 2 lines; 5x8 font) ;
+
+( Useful two line display using 5x8 character boxes. Characters with
+  descenders look very ugly.)
+
+: ugly
+   2lines  ['] nope 'preprocess !
    +cursor ( display and cursor on)
    clear ;
 
-.then
+: lcd-init
+   port-init  ( implicitly sets E, RS, and R/nW to 0)
+   %0011_0000  dup wr4 5ms  dup wr4 5ms  wr4 100us  ( do power-up init; see table 23 in datasheet)
+   %0010_0000 wr4  ( 4 bit interface)  100us
+   ugly ;
+
+ram
+
+label true   -1 # top mov  begin  next  ;c
+
+code in?  ( char a u - f)  ( if char in string, return true)
+   x pop ( addr)  y pop ( char)
+   begin  x )+ y cmpb  true 0!= until
+      1 # top sub ( count)  0= until
+   ( top is zero)  again ( next)  ;c
+
+: +descender  80 + ;  ( Convert an ASCII character to its descender version)
+: ?descender  ( char - char')  dup  " gjpqy" in?  if  +descender  then ;
+
+( Set a one line mode with room for descenders, and set up emit to choose
+  the descender versions of g j p q and y.
+
+  Cf ugly, above.)
+
+: fancy
+  1line  ['] ?descender 'preprocess !
+  +cursor clear ;
+
+( Examples.)
+
+( text consumes an LCD position from the stack, creates a new named target
+  word, consumes the next token as a delimiter character, and then parses
+  the following string into the body of the newly-created target word. When
+  executed, the new word jumps to the LCD location and prints itself.
+
+  See examples at the end of the file.)
+
+meta: text
+   create  ( at)  c,  \f char parse  cstring,
+   does>  count at  count type ;
+
+{ h @ } ram
+
+ 0 text hi     " Hallo, Reginald! "
+4c text beer   ) beer)
+4c text beef   } beef}
+40 text where  " Where's the beef? "
+
+{ h ! }

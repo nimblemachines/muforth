@@ -1,6 +1,6 @@
 ( This file is part of muforth: https://muforth.nimblemachines.com/
 
-  Copyright 2002-2019 David Frech. (Read the LICENSE for details.)
+  Copyright 2002-2021 David Frech. (Read the LICENSE for details.)
 
 ld target/common/endian.mu4
 
@@ -10,7 +10,13 @@ hex
 
 .ifdef hid-find-device  ( if yes, we are running Linux or OSX; if no, BSD)
 
-0483 3748 usb-find-device  .if   constant stlink
+0483 3748 usb-find-device  .if   ." ST-LINK/V2 "    constant stlink  .else
+0483 374b usb-find-device  .if   ." ST-LINK/V2-1 "  constant stlink  -d v2-1  .else
+
+   ." No supported USB devices found. "
+.then .then
+
+.ifdef stlink
 
 ( Device found - load support)
 
@@ -20,7 +26,11 @@ hex
 : done   stlink  usb-close ;
 
 : uread   ( buf len - #read)  1  stlink  usb-read ;
+.ifdef v2-1
+: uwrite  ( buf len)          1  stlink  usb-write ;
+.else
 : uwrite  ( buf len)          2  stlink  usb-write ;
+.then
 
 .then  ( found stlink)
 
@@ -115,7 +125,7 @@ variable spy
 
 ( Check vid and pid but don't print them out.)
 : .ver  ( bits vid pid - jtag-version)
-   3748 =  swap 0483 =  and  if  ( matches)
+   -8 and  3748 =  swap 0483 =  and  if  ( matches)
       radix preserve  decimal
       dup  #12 u>>  ." ST-LINK/V" u.
              6 u>>  3f and  dup ( jtag-version)  ."  JTAG v" u.  ^
@@ -216,29 +226,31 @@ defer doit  ( buf target len)
    0800_0000 800  pad  ['] read32  chunked
    dup  pad 800 write  close-file ;
 
-
-: st.hello  ( connect to device)
+( connect to device)
+: st.hello  ( - chunk-size)
    cr  ver .ver  drop
    cr  tell-mode
    dup  0=  if  drop  ." => "  dfu>  tell-mode  then
    dup  1 = if  drop  ." => "  >swd  tell-mode  then
         2 - if  ." Tried, but didn't succeed. "  then
-   halt ;
+   halt  2 Ki ;
 
 : st.read   ( buf a u)    read32 ;  ( Easy peasy!)
 : st.write  ( buf a u)   write32 ;
 
 ( The interface for the interact code. Implemented by all debug transports.)
 
-: st.get-sp  begin  core-state  80 xor  until
-             #13 reg@ ;
-: st.set-sp  #13 reg! ;
-: st.run     #15 reg!  run ;
+: st.get-status  ( - sp pc)
+   begin  core-state  80 xor  until
+   #13 reg@  #15 reg@ ;
+
+: st.run     ( pc sp)  #13 reg!  #15 reg!  run ;
+
+( XXX Still need to be implementeted.)
+: st.erase  ( a)  drop chat-fail ;
+: st.flash  ( buf a u)  drop 2drop chat-fail ;
 
 : jtag
-   chat-via  st.hello  st.get-sp  st.set-sp  st.read  st.write  st.run ;
+   chat-via  st.hello  st.get-status  st.run  st.read  st.write  st.erase  st.flash ;
 
-
-.else  ( no device found)
-   ." None found "
 .then

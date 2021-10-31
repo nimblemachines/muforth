@@ -1,7 +1,7 @@
 /*
  * This file is part of muforth: https://muforth.nimblemachines.com/
  *
- * Copyright (c) 2002-2019 David Frech. (Read the LICENSE for details.)
+ * Copyright (c) 2002-2021 David Frech. (Read the LICENSE for details.)
  */
 
 /* the very basic words */
@@ -24,6 +24,25 @@ void mu_2slash()                 { TOP >>= 1; }
 void mu_u2slash()  { TOP = (ucell) TOP >>  1; }
 
 /*
+ * Representation of truth values
+ *
+ * In C, booleans are represent by integers. Zero means false, and anything
+ * non-zero means true. But the value returned by a comparison operator --
+ * "<" for example -- is always 0 or 1.
+ *
+ * Forth works similarly, and in its earliest days, comparison words like
+ * "<" or "0=" returned 0 for false and 1 for true. But starting in 1983 or
+ * so this was changed. The "standard" way now, in Forth, is to return -1
+ * (all ones) for true. This value is more useful, and it can be ANDed with
+ * other values to produces useful results without needing to jump.
+ *
+ * In the following code you will see the arithmetic negation ("-") of
+ * several comparison operators. This simply converts the C true (1) to the
+ * Forth true (-1), leaving false alone. It's not obvious, but it *is*
+ * simple and succint.
+ */
+
+/*
  * Let's give very specific semantics to left and right shifts, rather than
  * leaving their semantics to the whims of C's underspecified nature.
  *
@@ -39,7 +58,7 @@ void mu_u2slash()  { TOP = (ucell) TOP >>  1; }
  *  - Big signed right shifts of *negative* values result in all ones.
  */
 #define BIGSHIFT  ((ucell) TOP >= (sizeof(cell) * 8))
-#define SIGN(x)   ((x) < 0 ? -1 : 0)
+#define SIGN(x)   -((x) < 0)
 
 void mu_shift_left()    { ST1 = BIGSHIFT ? 0 :         ST1 << TOP; DROP(1); }
 void mu_ushift_right()  { ST1 = BIGSHIFT ? 0 : (ucell) ST1 >> TOP; DROP(1); }
@@ -65,23 +84,22 @@ void mu_nth()    { TOP = SP[TOP+1]; }
 /* t means TOP, s means SECOND */
 void mu_dup()    { cell t = TOP; PUSH(t); }             /* a   -> a   a */
 void mu_over()   { cell s = ST1; PUSH(s); }             /* a b -> a b a */
-void mu_nip()    { ST1 = TOP; DROP(1); }                /* a b ->   b   */
 void mu_swap()   { cell t = TOP; TOP = ST1; ST1 = t; }  /* a b ->   b a */
 
 void mu_drop()   { DROP(1); }
 void mu_2drop()  { DROP(2); }
 void mu_drops()  { DROP(TOP+1); }
 
-void mu_uless()  { ST1 = (ST1 < (ucell) TOP) ? -1 : 0; DROP(1); }
-void mu_less()   { ST1 = (ST1 <         TOP) ? -1 : 0; DROP(1); }
+void mu_uless()  { ST1 = -(ST1 < (ucell) TOP); DROP(1); }
+void mu_less()   { ST1 = -(ST1 <         TOP); DROP(1); }
 
-void mu_0less()   { TOP = (TOP <  0) ? -1 : 0; }
-void mu_0equal()  { TOP = (TOP == 0) ? -1 : 0; }
+void mu_0less()   { TOP = -(TOP <  0); }
+void mu_0equal()  { TOP = -(TOP == 0); }
 
-void mu_depth()     { cell d = S0 - SP; PUSH(d); }
-void mu_sp_reset()  { SP = S0; SP[0] = 0xdecafbad; }
+void mu_depth()     { cell d = SP0 - SP; PUSH(d); }
+void mu_sp_reset()  { SP = SP0; SP[0] = 0xdecafbad; }
 #ifdef WITH_SP_OPERATORS
-void mu_push_s0()   { PUSH_ADDR(S0); }          /* address of stack bottom */
+void mu_push_s0()   { PUSH_ADDR(SP0); }     /* address of stack bottom */
 void mu_sp_fetch()  { cell *s = SP; PUSH_ADDR(s); } /* push stack pointer */
 void mu_sp_store()  { SP = (cell *)TOP; }           /* set stack pointer */
 #endif

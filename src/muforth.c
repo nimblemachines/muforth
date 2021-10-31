@@ -1,27 +1,27 @@
 /*
  * This file is part of muforth: https://muforth.nimblemachines.com/
  *
- * Copyright (c) 2002-2019 David Frech. (Read the LICENSE for details.)
+ * Copyright (c) 2002-2021 David Frech. (Read the LICENSE for details.)
  */
 
 #include "muforth.h"
 #include "version.h"
 
 /* data stack */
-cell  stack[STACK_SIZE];
+cell  dstack[STACK_SIZE];
 cell  *SP;
 
 /* return stack */
 cell  rstack[STACK_SIZE];
 cell  *RP;
 
-xtk_cell  *IP;  /* instruction pointer */
-xtk        W;   /* on entry, points to the current Forth word */
+xt_cell  *IP;   /* instruction pointer */
+xt        W;    /* on entry, points to the current Forth word */
 
 static void init_stacks()
 {
     mu_sp_reset();
-    RP = R0;
+    RP = RP0;
 }
 
 void mu_push_build_time()
