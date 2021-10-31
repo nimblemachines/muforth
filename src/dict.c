@@ -226,6 +226,8 @@ void mu_find()
     TOP = 0;
 }
 
+#define HIDDEN 1
+
 /*
  * new_name creates a new dictionary (name) entry and returns it
  */
@@ -285,7 +287,7 @@ static void new_linked_name(
     link_cell *plink, char *name, int length)
 {
     /* create new name & link onto front of chain */
-    FOLLOW_LINK(plink) = new_name(FOLLOW_LINK(plink), name, length, 0);
+    FOLLOW_LINK(plink) = new_name(FOLLOW_LINK(plink), name, length, !HIDDEN);
 }
 
 /* (linked-name)  ( a u chain) */
@@ -402,7 +404,7 @@ static link_cell *new_chain(
 {
     new_linked_name(plink, name, strlen(name));
     _STAR((code_cell *)ph++) = mu_do_chain;     /* set code pointer */
-    return new_name(NULL, "muchain", 7, 1);
+    return new_name(NULL, "muchain", 7, HIDDEN);
 }
 
 /*
