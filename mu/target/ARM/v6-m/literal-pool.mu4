@@ -1,0 +1,32 @@
+( This file is part of muforth: https://muforth.nimblemachines.com/
+
+  Copyright 2002-2021 David Frech. (Read the LICENSE for details.)
+
+loading ARM v6-M literal pool support
+
+( As we generate them, we push literals onto a stack. When we want to
+  create the pool, we pop each one off, compile it into memory, and fix up
+  the ldr reference address.)
+
+64 array lit-stack  ( room for 32 literals)
+variable litsp      ( pointer into array)  lit-stack litsp !
+: lit-push  ( lit fixup)      litsp @  !+ !+          litsp ! ;
+: lit-pop   ( - lit fixup)    litsp @  2 cells -  dup litsp !  @+ @  swap ;
+
+assembler
+: lit   ( lit reg8)   swap  \m here  lit-push  "4800 r000 op, ;
+
+forth
+: h+!   ( n a)   tuck leh@ +  swap leh! ;
+
+: lit,  ( lit fixup)
+   \m here  over  >load-pc -  2 u>> ( fixup woff)
+   swap image+ h+! ( add offset into ldr instruction!)
+   \m ,  ( compile lit) ;
+
+meta
+: pool,
+   \m align  
+   begin  lit-stack  litsp @  u< while  lit-pop  lit,  repeat ;
+
+forth
