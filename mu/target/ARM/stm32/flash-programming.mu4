@@ -1,0 +1,129 @@
+( This file is part of muforth: https://muforth.nimblemachines.com/
+
+  Copyright 2002-2021 David Frech. (Read the LICENSE for details.)
+
+loading STM32 flash programming code
+
+.ifndef lit-stack
+   ld target/ARM/v6-m/literal-pool.mu4
+.then
+
+hex
+
+( Fetch and store FLASH_xxx registers.)
+assembler
+4 constant freg-base
+
+: freg@  ( flashreg-offset dest-reg)
+   asm{{  \f push  FLASH_ACR -  freg-base +)  \f pop  ldr  }} ;
+
+: freg!  ( flashreg-offset src-reg)
+   asm{{  \f push  FLASH_ACR -  freg-base +)  \f pop  str  }} ;
+forth
+
+__meta
+
+ram
+
+here equ flashbuf  100 allot  ( 40 words, 80 halfwords)
+
+( These need to be written to FLASH_KEYR to unlock the Flash controller.)
+4567_0123 equ KEY1
+cdef_89ab equ KEY2
+
+label unlock
+   FLASH_ACR freg-base lit
+   KEY1 w lit   FLASH_KEYR w freg!
+   KEY2 w lit   FLASH_KEYR w freg!
+   0 # w movs   FLASH_CR   w freg!  ( clear any program/erase bits)
+.ifdef testing
+   FLASH_CR w freg@
+   FLASH_SR x freg@
+.then
+   lr bx  ;c
+   pool,
+
+label lock
+   80 ( LOCK) # w movs
+   FLASH_CR w freg!
+.ifdef testing
+   FLASH_CR w freg@
+   FLASH_SR x freg@
+.then
+   lr bx  ;c
+
+( w is flash page address)
+label erase-page
+    { w } pop
+    2 ( PER)      # x movs   FLASH_CR x freg! ( set PER)
+                             FLASH_AR w freg! ( set page erase address)
+   42 ( STRT+PER) # x movs   FLASH_CR x freg! ( set STRT+PER)
+   ( fall through)  ;c
+
+label -busy
+   { x w } push
+   1 ( BSY) # w movs
+   begin   FLASH_SR x freg@   x w tst   0= until
+   { x w } pop   lr bx  ;c
+
+( w is flash address, x is byte count,
+  y is ram buffer address, z is offset.)
+( program by halfwords!)
+label write-flash
+   { y x w } pop
+   { lr } push
+   1 ( PG) # z movs   FLASH_CR z freg! ( set PG)
+   0 # z movs  ( offset)
+   begin
+      y z r+) top ldrh   w z r+) top strh
+      2 # z z adds
+      -busy bl
+      x z cmp
+   u>= until
+   { pc } pop  ;c
+
+( w is dest address, x is byte count, y is src address, z is offset. Copy
+  by words, not halfwords.)
+label copy-mem
+   { y x w } pop
+   0 # z movs  ( offset)
+   begin
+      y z r+) top ldr   w z r+) top str
+      4 # z z adds
+      x z cmp
+   u>= until
+   lr bx  ;c
+
+label execute-assembly
+   { top } pop   dsb   isb   top blx
+.ifdef testing
+   { top freg-base z y x w } push
+.then
+   0 bkpt ;c
+
+align  ( make sure RAM region is word-aligned)
+
+__host
+
+.ifdef testing
+
+: .rxregs  ( top freg z y x w)
+   cr  ."        W         X         Y         Z      FREG       TOP        SP"
+       (  00000000  00000000  00000000  00000000  00000000  00000000  00000000 )
+   cr       .h32__    .h32__    .h32__    .h32__    .h32__    .h32__  tsp @ .h32__ ;
+
+.else  ( not testing)
+
+: .rxregs ;
+
+.then  ( testing)
+
+( For quick and dirty execution of remote assembly code.)
+meta
+: rx  ( x0 .. xn 'code - y0 .. yn <regs>)
+   ?chat  1+ ( thumb)
+   stack>  \m execute-assembly runwait  stack<  .rxregs ;
+
+forth
+
+__meta
