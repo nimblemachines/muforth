@@ -18,6 +18,6 @@ doas chmod 660 /dev/ugenX.XX
 ```
 
 accordingly, depending on how motivated you are.  This is suggestion is lame and stupid and is apt to
-give the OBSD dev's fits in the unlikely event they take note, but it gets the job done.  If you have oodles
+give the OBSD devs fits in the unlikely event they take note, but it gets the job done.  If you have oodles
 of time and would like to bang together platform specific drivers for muforth to run on OpenBSD, be our guest,
 be our guest, put your morals to the test.
