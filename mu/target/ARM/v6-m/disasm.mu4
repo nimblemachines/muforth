@@ -49,28 +49,32 @@ variable instr-pc  ( points to _start_ of current instruction)
 : .udec  radix preserve  decimal  (u.) type ;
 : .hex   radix preserve  hex       (.) type ;
 
-( #op takes an index, a string of ops, and a "width", and prints the op,
-  but with *no* trailing whitespace.)
-: #op  ( index z" width)  push  swap r@ *  +  pop type ;
-
 : -trailing  ( a u - a u')  ( strip trailing blanks)
    over + ( end)  begin  1-  dup c@ bl -  until  over -  1+ ;
+
+( #op takes an index, a string of ops, and a "width", and leaves a string
+  on the stack, *including* the trailing whitespace.)
+
+: #op  ( index z" width - a u)  push  swap r@ *  +  pop ;
 
 defer .reg  ( reg)
 -: ( reg)
    0f and  dup #13 u< if  char r emit  .udec  ^  then
-   #13 - z" splrpc" 2 #op ;
+   #13 - z" splrpc" 2 #op type ;
 
 : raw-regs  [ #] is .reg ;  raw-regs
 
 ( From http://infocenter.arm.com/help/topic/com.arm.doc.ihi0042f/IHI0042F_aapcs.pdf p14.)
 -:  ( reg)
-   z" a1a2a3a4v1v2v3v4v5v6v7v8ipsplrpc"  2 #op ;
+   z" a1a2a3a4v1v2v3v4v5v6v7v8ipsplrpc"  2 #op type ;
 
 : abi-regs  [ #] is .reg ;
 
 : 4#   # # # # ;
 : .u32  radix preserve hex  <# 4#  char _ hold  4# #> type ;
+
+
+( 16-bit instructions.)
 
 ( NOTE: Rn shifts by 3; Rm shifts by 6, but RRm shifts by 3 - acts like Rn.)
 :  00r   7 and ;
@@ -105,7 +109,7 @@ defer .reg  ( reg)
 : >load-pc    ( pc - load-pc)  >branch-pc  -4 and ; ( What ARM call Align[PC,4])
 
 ( _op3 assumes each string takes 3 bytes; adds no following whitespace)
-: _op3  ( index z")  3 #op ;
+: _op3  ( index z")  3 #op type ;
 
 ( XXX this only sorta works. Later, with IT blocks, we'll have to check if
   we're inside one, and elide the S then.)
@@ -116,7 +120,7 @@ defer .reg  ( reg)
 : .op3s   (   index z")   1 -rot  .op3?s ;
 
 ( .op5 assumes each string takes 5 bytes)
-: .op5  ( index z")  5 #op  2 spaces ;
+: .op5  ( index z")  5 #op type  2 spaces ;
 
 : .addsub  ( op S 0/1 - op)   z" addsub" .op3?s ;
 
@@ -239,6 +243,9 @@ defer .reg  ( reg)
 
 : .bra   ." b      "  dup 7ff and  dup 400 and if  -800 +  then  .branch-pc ;
 
+
+( 32-bit instructions.)
+
 ( 32-bit bl. For historical reasons the encoding is really strange. The
   original Thumb instruction set used _two_ separate instructions to set
   the high and low halves of the branch displacement. With the addition of
@@ -260,7 +267,46 @@ defer .reg  ( reg)
 : .bl  ( op - op)   ." bl     "  .bl-dest ;
 
 : .barrier  ( op - op)
-   dup 4 >>  3 and  z" dsbdmbisb???"  3 #op ;
+   dup 4 >>  3 and  z" dsbdmbisb???"  3 #op type ;
+
+
+( Define words for pulling out the 4-bit register fields.)
+: reg4  constant ( shift)
+        does> @  ( op shift - op reg)  over swap u>>  0f and ;
+
+( We only need Rn4 and Rd4 for the v6-m instructions, but let's define
+  these all together so they make sense. The v7-m disassembler will need
+  all of them.)
+
+#16 reg4 Rn4
+#12 reg4 Rt4
+  8 reg4 Rd4
+  0 reg4 Rm4
+
+: .Rn4   Rn4 .reg ;
+: .Rt4   Rt4 .reg ;
+: .Rd4   Rd4 .reg ;
+: .Rm4   Rm4 .reg ;
+
+: .Rn4,  .Rn4 comma ;
+: .Rt4,  .Rt4 comma ;
+: .Rd4,  .Rd4 comma ;
+
+
+( Print a SYSm value. See Table B4-1 Special register field encoding
+  from ARM-v6M architecture manual, p304)
+
+: .sysm
+   dup 0ff and
+   dup 10 = if  drop ." PRIMASK" ^  then
+   dup 14 = if  drop ." CONTROL" ^  then
+   z" APSR IAPSREAPSRXPSR ???? IPSR EPSR IEPSRMSP  PSP  "
+   5 #op -trailing type ;
+
+( Move to and from special register.)
+: .mrs  ." mrs   "  .Rd4,         .sysm ;
+: .msr  ." msr   "  .sysm  comma  .Rn4 ;
+
 
 ( Is this a 16-bit instruction?)
 : thumb16?  ( op - f)   e800 u< ;
@@ -305,6 +351,8 @@ defer .reg  ( reg)
    ( All the 32-bit v6-m instructions!)
    f800_d000 f000_d000 match  .bl
    ffff_ffc0 f3bf_8f40 match  .barrier
+   ffff_f000 f3ef_8000 match  .mrs
+   fff0_ff00 f380_8800 match  .msr
    0  ( no match) ;
 
 ( Support for interactive disassembly.)

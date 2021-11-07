@@ -6,12 +6,14 @@ loading Flash programming
 
 hex
 
+.ifdef /page  ( for devices with uniform page size)
+
 : program-chunk  ( 'target len)
-   cr ." program "  2dup swap u. u.
+   cr ." program    "  2dup swap u. u.
    over image+ -rot  ( buf 'target len)  t.flash ;
 
 : erase-page  ( 'target)
-   cr ." erase " dup u.
+   cr ." erase page " dup u.
    t.erase ;
 
 : erase?  ( 'target - erase?)   [ /page 1- #] and  0= ;
@@ -19,6 +21,28 @@ hex
 ( Before we program the _first_ byte of a page, we erase the page.)
 : flash-chunk  ( 'target len - 'target+len)
    2dup + push  over erase? if  over erase-page  then  program-chunk  pop ;
+
+.else  ( non-uniform flash; uses sectors rather than pages)
+
+: program-chunk  ( 'target len)
+   cr ." program      "  2dup swap u. u.
+   over image+ -rot  ( buf 'target len)  t.flash ;
+
+: erase-sector  ( sector#)
+   cr ." erase sector " dup u.
+   t.erase ;
+
+( Given a flash address, return true if on a sector boundary; also return
+  sector# to erase; else return false.)
+
+: erase?  ( 'target - sector# -1 | 0)
+   lookup-flash-sector ;
+
+( Before we program the _first_ byte of a sector we erase the sector.)
+: flash-chunk  ( 'target len - 'target+len)
+   2dup + push  over erase? if  erase-sector  then  program-chunk  pop ;
+
+.then
 
 ( Do the programming in chunks; the variable /chunk - which is set by the
   interact code based on a value received from the debug interface - tells
