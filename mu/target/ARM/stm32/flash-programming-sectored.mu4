@@ -2,7 +2,7 @@
 
   Copyright 2002-2021 David Frech. (Read the LICENSE for details.)
 
-loading STM32 flash programming code
+loading STM32 flash programming code (sector flash)
 
 .ifndef lit-stack
    ld target/ARM/v6-m/literal-pool.mu4
@@ -48,11 +48,15 @@ assembler
 ( Fetch and store FLASH_xxx registers.)
 4 constant freg-base
 
-: freg@  ( flashreg-offset dest-reg)
-   asm{{  \f push  FLASH_ACR -  freg-base +)  \f pop  ldr  }} ;
-
 : freg!  ( flashreg-offset src-reg)
    asm{{  \f push  FLASH_ACR -  freg-base +)  \f pop  str  }} ;
+
+( We sometimes want to write byte-sized values to the flash regs.)
+: fregb@  ( flashreg-offset dest-reg)
+   asm{{  \f push  FLASH_ACR -  freg-base +)  \f pop  ldrb  }} ;
+
+: fregb!  ( flashreg-offset src-reg)
+   asm{{  \f push  FLASH_ACR -  freg-base +)  \f pop  strb  }} ;
 forth
 
 ( Tell the disassembler about these register names.)
@@ -86,25 +90,24 @@ label unlock
 
 label lock
    80 ( LOCK) # w movs
-   FLASH_CR w freg!
+   FLASH_CR 3 + w fregb!
    lr bx  ;c
 
 label -busy
    x w rpush2
    1 ( BSY) # w movs
-   begin   FLASH_SR x freg@   x w tst   0= until
+   begin   FLASH_SR 2 + x fregb@   x w tst   0= until
    x w rpop2
    lr bx  ;c
 
-( w is flash page address to erase)
+( w is flash sector to erase)
 ( unlock consumes key)
-label stm32-erase  ( flash-page-address key)
+label stm32-erase  ( sector# key)
    lr rpush
    unlock bl
-   w dpop
-    2 ( PER)      # x movs   FLASH_CR x freg! ( set PER)
-                             FLASH_AR w freg! ( set page erase address)
-   42 ( STRT+PER) # x movs   FLASH_CR x freg! ( set STRT+PER)
+   w dpop  3 # w w lsls  ( shift sector# up 3 bits)
+   2 ( SER)  # w w adds   FLASH_CR     w freg!  ( set SER + sector number)
+   1 ( STRT) # w movs     FLASH_CR 2 + w fregb! ( set STRT bit)
    -busy bl
    lock bl
    pc rpop  ;c
@@ -116,12 +119,13 @@ label stm32-flash-chunk  ( ram-buf-address flash-address byte-count key)
    lr rpush
    unlock bl
    y x w dpop3
-   1 ( PG) # z movs   FLASH_CR z freg! ( set PG bit)
+   1 ( PG)    # z movs   FLASH_CR    z freg!  ( set PG bit)
+   2 ( psize) # z movs   FLASH_CR 1+ z fregb! ( psize=2; program by 32bit word)
    0 # z movs  ( offset)
    begin
-      ( program by halfwords!)
-      y z r+) top ldrh   x z r+) top strh
-      2 # z z adds
+      ( unlike paged flash, we can program by words!)
+      y z r+) top ldr   x z r+) top str
+      4 # z z adds
       -busy bl
       w z cmp
    u>= until
@@ -184,14 +188,9 @@ forth
 
 decimal
 
-( How much space do we want to use for the flashbuf? It can't be bigger
-  than /page, but we don't want it to be too much of a fraction of the
-  RAM.)
-
-#ram  8 Ki u< .if  256  .else
-#ram 16 Ki u< .if  512  .else
-#ram 32 Ki u< .if  1 Ki  /page  min  .else  /page  .then .then .then
-   constant #flashbuf
+( Any chip with sectored flash probably has lots of RAM, so let's use a 4
+  Ki ram flash buffer.)
+4 Ki constant #flashbuf
 
 ( Leave room for 64 cells on sp stack; round down to multiple of 256, then
   leave #flashbuf bytes of space for buffer.)

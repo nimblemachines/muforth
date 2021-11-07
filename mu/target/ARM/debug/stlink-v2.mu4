@@ -226,6 +226,14 @@ defer doit  ( buf target len)
    0800_0000 800  pad  ['] read32  chunked
    dup  pad 800 write  close-file ;
 
+.ifndef #flashbuf
+   .ifdef /page  ( chip has flash with uniform page size)
+      ld target/ARM/stm32/flash-programming.mu4
+   .else  ( chip has sectored flash)
+      ld target/ARM/stm32/flash-programming-sectored.mu4
+   .then
+.then
+
 ( connect to device)
 : st.hello  ( - chunk-size)
    cr  ver .ver  drop
@@ -233,7 +241,7 @@ defer doit  ( buf target len)
    dup  0=  if  drop  ." => "  dfu>  tell-mode  then
    dup  1 = if  drop  ." => "  >swd  tell-mode  then
         2 - if  ." Tried, but didn't succeed. "  then
-   halt  #256 ;  ( size of RAM flash buffer)
+   halt  #flashbuf ;  ( size of RAM flash buffer)
 
 ( Make sure we read or write an aligned byte count.)
 : st.read   ( buf a u)  aligned  read32 ;  ( Easy peasy!)
@@ -247,26 +255,26 @@ defer doit  ( buf target len)
 
 : st.run     ( pc sp)  #13 reg!  #15 reg!  run ;
 
-.meta. .contains stm32-erase-page  .not .if
-   ld target/ARM/stm32/flash-programming.mu4
-.then
-
 ( We have to pass a "key" - the hex value "feed_deed - that is xor'ed with
   the flash keys to unlock the Flash controller.
 
-  Both stm32-erage-page and stm32-flash-chunk unlock before and lock after
-  they do their work.)
+  Both stm32-erage and stm32-flash-chunk unlock before and lock after they
+  do their work.)
 
-: st.erase  ( a)
-   "feed_deed  \m stm32-erase-page rx ;
+( stm32-erase takes flash address for uniform page devices, and a sector
+  number, for sectored devices. target/ARM/v6-m/flash.mu4 has already
+  figured this out for us.)
+
+: st.erase  ( a | sector#)
+   "feed_deed  \m stm32-erase rx ;
 
 ( stm32-flash-chunk  ( ram-buf-address flash-address byte-count key)
 
 ( Copy buf contents to ram buffer, then write to flash from there.)
 : st.flash  ( buf a u)
    swap push ( save target flash address)
-   ( buf u)  tuck  flashbuf  swap  ( u buf a u)  st.write
-   ( u)  flashbuf  pop  ( flash-addr)  rot
+   ( buf u)  tuck  @flashbuf  swap  ( u buf a u)  st.write
+   ( u)  @flashbuf  pop  ( flash-addr)  rot
    "feed_deed  \m stm32-flash-chunk rx ;
 
 : jtag
