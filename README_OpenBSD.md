@@ -3,7 +3,7 @@
 OpenBSD, starting about 6.9ish, no longer allows applications to access /dev/ugenX.XX directly.
 The OBSD devs would like you to write your own drivers.  Don't hold your breath for tools like muforth.
 
-This creates a bit of problem whilst attempting to chat with target devices, but huzzah, there is a
+This creates a bit of a problem whilst attempting to chat with target devices, but huzzah, there is a
 thoroughly not OBSD dev approved workaround: 
 
 1) Put yourself on the doas list and make sure you're a member of group wheel.
