@@ -109,6 +109,50 @@ label stm32-erase  ( flash-page-address key)
    lock bl
    pc rpop  ;c
 
+( unlock consumes key)
+label stm32-mass-erase  ( key)
+   lr rpush
+   unlock bl
+    4 ( MER)      # w movs   FLASH_CR w freg! ( set MER)
+   44 ( STRT+MER) # w movs   FLASH_CR w freg! ( set STRT+MER)
+   -busy bl
+   lock bl
+   pc rpop  ;c
+
+( Option bytes, erasing and programming.)
+
+( top has host's unlock key)
+label unlock-option-bytes  ( key)
+   lr rpush
+   unlock bl  ( first unlock FLASH_CR)
+   ( then unlock option bytes; top still has key)
+   KEY1 w lit   top w w eors   FLASH_OPTKEYR w freg!
+   KEY2 w lit   top w w eors   FLASH_OPTKEYR w freg!
+   pc rpop  ;c
+   pool,
+
+label erase-option-bytes
+   lr rpush
+   220 ( OPTWRE+OPTER) w lit   FLASH_CR w freg! ( set OPTER)
+    40 ( STRT) # w w adds      FLASH_CR w freg! ( set STRT+OPTER)
+   -busy bl
+   pc rpop  ;c
+   pool,
+
+label remove-read-protect  ( key)
+   lr rpush
+   -- unlock-option-bytes bl
+   -- erase-option-bytes bl
+   210 ( OPTWRE+OPTPG) w lit   FLASH_CR w freg! ( set OPTPG)
+   -- Reference manual says to do a halfword write; complemented high byte
+   -- will be automagically generated.
+   55aa w lit   OB_RDP x lit   0 x +) w strh
+   -- 0aa # w movs   OB_RDP x lit   0 x +) w strh
+   -busy bl
+   lock bl
+   pc rpop  ;c
+   pool,
+
 ( w is byte count, x is flash address,
   y is ram buffer address, z is offset.)
 ( unlock consumes key)
