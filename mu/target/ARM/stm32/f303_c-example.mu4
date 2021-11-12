@@ -1,0 +1,60 @@
+( This file is part of muforth: https://muforth.nimblemachines.com/
+
+  Copyright 2002-2021 David Frech. (Read the LICENSE for details.)
+
+loading STM32F303_C example startup code
+
+( Create a flash image containing a vector table, the ITC Forth kernel, and
+  some basic startup code.)
+
+__meta
+hex
+
+{ h @ } flash  ( save region and set to flash)
+0 vector-table  ( lay down a vector table, using end of ram as initial SP)
+
+{ h ! }  ( restore region pointer)
+ld target/ARM/v6-m/kernel-itc.mu4
+
+: wait-for-rdy  ( regaddr)
+   begin  dup c@  2 and  until  ( wait for RDY bit)  drop ;
+
+( Turn on HSE, which is driven by an 8 Mhz signal from the ST-LINK. Use it
+  to drive the PLL to 72 Mhz - x9 - and when the PLL stabilizes, switch to
+  it as the system clock source.)
+
+: clock-init
+   5 ( HSEON + HSEBYP) [ RCC_CR 2 + #] tuck c!  wait-for-rdy ( wait for HSERDY)
+   001d_0000 RCC_CFGR ! ( USBPRE=/1.5; PLLMUL=9; PLLSRC=HSE)
+   1 ( PLLON)          [ RCC_CR 3 + #] tuck c!  wait-for-rdy ( wait for PLLRDY)
+   2 ( SW=PLL as sysclk)  RCC_CFGR tuck c!
+   begin  dup c@ %1010 =  until  ( SW=PLL and SWS=PLL)  drop ;
+
+: ports-init
+   -- Turn on clock to Port E
+   ( Ports GFED_CBAH )
+        [ %0010_0000  #16 << #] RCC_AHBENR +!
+   -- Make PE8 to PE15 outputs
+   5555_0000 GPIOE_MODER ! ;
+
+: wait   for next ;
+: flash-leds  0000_ff00 GPIOE_ODR ! 8_0000 wait  0 GPIOE_ODR ! ;
+
+here ]  ( chip-init)
+   2 ( latency) FLASH_ACR +!  ( we need two cycles for 72 MHz clock!)
+   clock-init  ports-init  flash-leds  bug  [
+
+Reset_exc handler
+   -- Startup code!
+   -- Since we have a Forth kernel, let's write the startup code in Forth!
+   sp rp mov   #64 cells # sp sp sub  ( RP at end of flash; SP below)
+   ( chip-init)  ip  lit
+   "decafbad     top lit
+   next  ;c
+   pool,
+
+HardFault_exc handler
+   here b  ;c  ( hang)
+
+NMI_exc default-handler
+   lr bx  ;c  ( return to sender!!)
