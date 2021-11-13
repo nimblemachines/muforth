@@ -1,0 +1,78 @@
+( This file is part of muforth: https://muforth.nimblemachines.com/
+
+  Copyright 2002-2021 David Frech. (Read the LICENSE for details.)
+
+loading STM32F051x8 example startup code
+
+( Create a flash image containing a vector table, the ITC Forth kernel, and
+  some basic startup code.)
+
+__meta
+hex
+
+{ h @ } flash  ( save region and set to flash)
+0 vector-table  ( lay down a vector table, using end of ram as initial SP)
+
+{ h ! }  ( restore region pointer)
+ld target/ARM/v6-m/kernel-itc.mu4
+
+: wait-for-rdy  ( regaddr)
+   begin  dup c@  2 and  until  ( wait for RDY bit)  drop ;
+
+( Even though the documentation gives conflicting messages - the schematic
+  says that it's connected, but the user manual says that it isn't - it
+  seems that the 8 MHz clock from the ST-LINK is *not* in fact routed to the
+  OSC_IN pin on the F072.
+
+  Instead, the F072 has a 48 MHz HSI - high speed internal - clock that can
+  synchronize with the frame fields from USB, so it can be used as a
+  crystal-less clock source, even for USB applications. We will use this as
+  our system clock.)
+
+: clock-init
+   5 ( HSEON + HSEBYP) [ RCC_CR 2 + #] tuck c!  wait-for-rdy ( wait for HSERDY)
+   0011_0000 RCC_CFGR ! ( PLLMUL=6; PLLSRC=HSE)
+   1 ( PLLON)          [ RCC_CR 3 + #] tuck c!  wait-for-rdy ( wait for PLLRDY)
+   2 ( SW=PLL as sysclk)  RCC_CFGR tuck c!
+   begin  dup c@ %1010 =  until  ( SW=PLL and SWS=PLL)  drop ;
+
+: ports-init
+   -- Turn on clock to Port C
+   ( Ports -FED_CBA- )
+        [ %0000_1000  #16 << #] RCC_AHBENR +!
+   -- Make PC8 and PC9 outputs
+   [ %0101 #16 << #] GPIOC_MODER ! ;
+
+: wait   for next ;
+: flash-leds   %11_0000_0000 GPIOC_ODR !  2_0000 wait  0 GPIOC_ODR ! ;
+
+here ]  ( chip-init)
+   1 ( latency) FLASH_ACR +!  ( we need one cycle for 48 MHz clock!)
+   clock-init  ports-init  flash-leds  bug  [
+
+Reset_exc handler
+   -- Startup code!
+   -- Since we have a Forth kernel, let's write the startup code in Forth!
+   sp rp mov   #64 cells # sp sp sub  ( RP at end of flash; SP below)
+   ( chip-init)  ip  lit
+   "decafbad     top lit
+   next  ;c
+   pool,
+
+HardFault_exc handler
+   here b  ;c  ( hang)
+
+NMI_exc default-handler
+   lr bx  ;c  ( return to sender!!)
+
+
+( NOTES about the F051-Discovery board.)
+
+( LEDs are attached to PC8 and PC9.
+
+  Port  Led   Color
+-----------------------------
+  PC8   LD4   blue
+  PC9   LD3   green
+)
+
