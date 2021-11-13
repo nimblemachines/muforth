@@ -15,6 +15,116 @@ hex
 
 .ifdef picoboot
 
-( All the interesting code goes here! ;-)
+( NOTE: We are not supposed to hardwire the endpoint numbers here, but I'm
+  going to do it anyway so we can get this code working ASAP. ;-)
+
+( These are for executing commands over the two bulk endpoints.)
+: uwrite  ( buf len)   3  picoboot  usb-write ;
+: uread   ( buf len)   4  picoboot  usb-read  drop ;
+
+( This is for resetting the PICOBOOT interface. Again, we are hardwiring
+  this for now. The Mass Storage device is interface 0; PICOBOOT is
+  interface 1.)
+
+: picoboot.reset   41 41 0 1 0 pad picoboot  usb-control  drop ;
+
+
+#32 buffer cmdbuf
+variable bp  ( buf pointer)
+: >b  ( b)   bp @  c!+  bp ! ;
+: >h  ( h)   >hilo  >b >b ;  ( little-endian)
+: >w  ( w)   >3210  >b >b >b >b ;  ( little-endian)
+
+( NOTE: For now we are using a token that is always 0. It would be better
+  if it was an increasing integer. We can try this later.)
+
+: <pico  ( #transfer-bytes #cmd-bytes cmd)
+   cmdbuf bp !
+   431f_d10b >w  0 >w ( token)  >b ( cmd)  >b ( #cmd-bytes)
+   0 >h ( reserved)  >w ( #transfer-bytes) ;
+
+: pico>  ( pad buffer with zeros)
+   [ cmdbuf #32 + #]  bp @ -  for  0 >b  next
+   cmdbuf #32 uwrite ;
+
+( Transferring data.)
+: ack>   pad 0 uread ;
+: ack<   pad 0 uwrite ;
+
+
+( PICOBOOT commands.)
+
+( Important NOTES about the following commands.
+
+  bExclusive: 0 = allow mass storage;
+              1 = no mass storage;
+              2 = eject mass storage
+
+  When erasing the Flash, addr is a 4 Ki aligned sector address, and size
+  is 4 Ki aligned count of bytes to erase.
+
+  When reading from or writing to Flash, addr and size must be 256-byte
+  aligned.
+)
+
+( We only need these five!!)
+
+: picoboot.exclusive  ( bExclusive)    0 1 01  <pico  >b                          pico>  ack> ;
+: picoboot.erase      ( size addr)     0 8 03  <pico  ( addr) >w  ( size) >w      pico>  ack> ;
+: picoboot.read   ( buf size addr)  over 8 84  <pico  ( addr) >w  ( size) dup >w  pico>
+                                                                                  uread  ack< ;
+: picoboot.write  ( buf size addr)  over 8 05  <pico  ( addr) >w  ( size) dup >w  pico>
+                                                                                 uwrite  ack> ;
+: picoboot.exec            ( addr)     0 4 08  <pico  1+ ( addr+thumb) >w         pico>  ack> ;
+
+.ifdef unneeded
+: picoboot.exit-xip                    0 0 06  <pico                              pico>  ack> ;
+: picoboot.enter-xip                   0 0 07  <pico                              pico>  ack> ;
+.then
+
+variable rom-func-table
+variable rom-data-table
+variable rom-table-lookup
+
+: h@+  ( a - h a+2)  c@+ c@+  push  lohi>  pop ;
+
+( These are the commands required by the chat/debug interface.)
+: pi.version
+   pad 4 0010 picoboot.read  pad lew@
+   dup  00ff_ffff and  0001754d ( "Mu" 01) =  if
+      #24 u>>  cr ." PICOBOOT v" u.
+      pad 6 0014 picoboot.read
+      pad h@+ h@+ h@+ drop
+      rom-table-lookup !  rom-data-table !  rom-func-table !  ^  then
+   drop  ." Hmm. No version found in the ROM." ;
+
+: pi.hello   ( - chunk-size)
+   picoboot.reset
+   2 picoboot.exclusive  ( eject mass storage)
+   pi.version
+   #256 ;  ( so we get correct alignment for reading and writing flash)
+
+__meta
+ram
+
+here constant pico-sp  0 ,
+
+__host
+
+: pi.get-status   ( - sp pc)
+   pad 4 pico-sp picoboot.read  pad lew@  "deadbeef ;
+
+: pi.run      ( pc sp)
+   pad lew!  pad 4 pico-sp picoboot.write
+   picoboot.exec ;
+
+: pi.read     ( buf a u)  swap  picoboot.read ;
+: pi.write    ( buf a u)  swap  picoboot.write ;
+
+: pi.erase    ( a)   4 Ki swap  picoboot.erase ;
+: pi.flash    ( buf a u)  swap  picoboot.write ;
+
+: pico
+   chat-via  pi.hello  pi.get-status  pi.run  pi.read  pi.write  pi.erase  pi.flash ;
 
 .then  ( ifdef picoboot)
