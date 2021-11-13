@@ -6,12 +6,14 @@ loading Flash programming
 
 hex
 
+.ifdef /page  ( for devices with uniform page size)
+
 : program-chunk  ( 'target len)
-   cr ." program "  2dup swap u. u.
+   cr ." program    "  2dup swap u. u.
    over image+ -rot  ( buf 'target len)  t.flash ;
 
 : erase-page  ( 'target)
-   cr ." erase " dup u.
+   cr ." erase page " dup u.
    t.erase ;
 
 : erase?  ( 'target - erase?)   [ /page 1- #] and  0= ;
@@ -20,9 +22,31 @@ hex
 : flash-chunk  ( 'target len - 'target+len)
    2dup + push  over erase? if  over erase-page  then  program-chunk  pop ;
 
-( Do the programming in chunks smaller than a whole page. Some target
-  communications protocols use byte-size counts, so do it in 256 byte
-  chunks.)
+.else  ( non-uniform flash; uses sectors rather than pages)
+
+: program-chunk  ( 'target len)
+   cr ." program      "  2dup swap u. u.
+   over image+ -rot  ( buf 'target len)  t.flash ;
+
+: erase-sector  ( sector#)
+   cr ." erase sector " dup u.
+   t.erase ;
+
+( Given a flash address, return true if on a sector boundary; also return
+  sector# to erase; else return false.)
+
+: erase?  ( 'target - sector# -1 | 0)
+   lookup-flash-sector ;
+
+( Before we program the _first_ byte of a sector we erase the sector.)
+: flash-chunk  ( 'target len - 'target+len)
+   2dup + push  over erase? if  erase-sector  then  program-chunk  pop ;
+
+.then
+
+( Do the programming in chunks; the variable /chunk - which is set by the
+  interact code based on a value received from the debug interface - tells
+  us how big each chunk should be.)
 
 : flash-region  ( a len)
    /chunk @  /mod  ( r q)  swap push  for  /chunk @  flash-chunk  next
@@ -57,7 +81,10 @@ hex
    for  dup image-c@ m* xor  if  dup u.  then  1+  next  drop
    pop ;
 
-( Verify in chunks of 256 bytes.)
+( Verify using the same chunk size that we used for flashing; the variable
+  /chunk - which is set by the interact code based on a value received from
+  the debug interface - tells us how big each chunk should be.)
+
 : verify-region
    /chunk @  /mod  ( r q)  swap push  for  /chunk @  verify-chunk  next
                                     pop  =if  ( rem) verify-chunk  drop ^  then  2drop ;
@@ -67,3 +94,35 @@ hex
 
 : verify
    h preserve  flash region ( a len)  ?empty-region  verify-region ;
+
+( Read an image from the target into the host image.)
+: read-chunk  ( a u - a+u)
+   -- cr ." read-chunk "  over u.  dup u.
+   2dup + push
+   over image+ -rot  t.read
+   pop ;
+
+: read-region  ( a u)
+   /chunk @  /mod  ( r q)  swap push  for  /chunk @  read-chunk  next
+                                    pop  =if  ( rem) read-chunk  drop ^  then  2drop ;
+
+( target address can be anything in the flash region; ie, below 2000_0000.
+  We remap this to look like it starts from @flash so that save-image will
+  work properly.)
+
+: read-image  ( target len)
+   h preserve  flash
+   over  #image 1- and  @flash +  over +  \m goto
+   read-region ;
+
+( Save image to a file.)
+: save-image
+   token, create-file  ( fd)  dup
+   h preserve  flash region  swap image+ swap  write
+   close-file ;
+
+( Load image from a file.)
+: load-image
+   token, open-file-ro  ( fd)  dup read-file  ( a u)  rot close-file
+   h preserve  flash  @flash  2dup + \m goto
+   image+ swap  cmove ;

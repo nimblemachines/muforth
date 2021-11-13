@@ -1,0 +1,243 @@
+( This file is part of muforth: https://muforth.nimblemachines.com/
+
+  Copyright 2002-2021 David Frech. (Read the LICENSE for details.)
+
+loading STM32 flash programming code
+
+hex
+
+( Stack macros.)
+
+( NOTE: We have switched stacks! ARM won't let us push the LR onto any
+  stack but the system data stack, pointed to by SP. Stupid.
+
+  R stack uses SP, push, and pop. Stack pointer reg is rsp == SP.
+  D stack uses RP, str, and ldm.  Stack pointer reg is dsp == RP.)
+
+( NOTE: The registers are pushed and popped in "register index" order:
+  lower indices end up at lower addresses. The order that they are
+  mentioned in the macro call is irrelevant! So be careful.)
+
+: regs>mask  ( rn .. r0 #regs - mask)   0 swap  for  reg>mask  next ;
+
+assembler
+
+\a rp  ( Forth return stack)        constant dsp  ( is our data stack)
+\a sp  ( Forth data stack pointer)  constant rsp  ( is our return stack)
+
+( Return stack macros.)
+: rpush   ( r1)           1 regs>mask  asm{{  push  }} ;
+: rpush2  ( r1 r2)        2 regs>mask  asm{{  push  }} ;
+
+: rpop   ( r1)           1 regs>mask  asm{{  pop  }} ;
+: rpop2  ( r1 r2)        2 regs>mask  asm{{  pop  }} ;
+
+( NOTE: The above warning about order is relevant here too!)
+( These are pushed in the order given on the stack.)
+
+( Data stack macros.)
+( These are popped in register index order - lower to higher.)
+: dpop   ( r1)       1 regs>mask  asm{{  dsp ldm  }} ;
+: dpop2  ( r1 r2)    2 regs>mask  asm{{  dsp ldm  }} ;
+: dpop3  ( r1 r2 r3) 3 regs>mask  asm{{  dsp ldm  }} ;
+
+( Fetch and store FLASH_xxx registers.)
+4 constant freg-base
+
+: freg@  ( flashreg-offset dest-reg)
+   asm{{  \f push  FLASH_ACR -  freg-base +)  \f pop  ldr  }} ;
+
+: freg!  ( flashreg-offset src-reg)
+   asm{{  \f push  FLASH_ACR -  freg-base +)  \f pop  str  }} ;
+forth
+
+( Tell the disassembler about these register names.)
+-: ( reg)
+   #15 and  3 *
+   z" w  x  y  z  fr dspip topr8 up r10r11r12rsplr pc " +  3 -trailing type ;
+
+: asm-regs   [ #] is .reg ;   asm-regs
+
+__meta
+
+ram
+
+( These need to be written to FLASH_KEYR to unlock the Flash controller.)
+( While pointless and perhaps amusing, we have xor'ed the flash key values
+  with a value that the host has to send. This way runaway code is slightly
+  less likely to accidentally unlock the flash.)
+
+4567_0123 feed_deed xor equ KEY1
+cdef_89ab feed_deed xor equ KEY2
+
+( top has host's unlock key)
+label unlock
+   top dpop
+   FLASH_ACR freg-base lit
+   KEY1 w lit   top w w eors   FLASH_KEYR w freg!
+   KEY2 w lit   top w w eors   FLASH_KEYR w freg!
+   0 # w movs   FLASH_CR   w freg!  ( clear any program/erase bits)
+   lr bx  ;c
+   pool,
+
+label lock
+   80 ( LOCK) # w movs
+   FLASH_CR w freg!
+   lr bx  ;c
+
+label -busy
+   x w rpush2
+   1 ( BSY) # w movs
+   begin   FLASH_SR x freg@   x w tst   0= until
+   x w rpop2
+   lr bx  ;c
+
+( w is flash page address to erase)
+( unlock consumes key)
+label stm32-erase  ( flash-page-address key)
+   lr rpush
+   unlock bl
+   w dpop
+    2 ( PER)      # x movs   FLASH_CR x freg! ( set PER)
+                             FLASH_AR w freg! ( set page erase address)
+   42 ( STRT+PER) # x movs   FLASH_CR x freg! ( set STRT+PER)
+   -busy bl
+   lock bl
+   pc rpop  ;c
+
+( unlock consumes key)
+label stm32-mass-erase  ( key)
+   lr rpush
+   unlock bl
+    4 ( MER)      # w movs   FLASH_CR w freg! ( set MER)
+   44 ( STRT+MER) # w movs   FLASH_CR w freg! ( set STRT+MER)
+   -busy bl
+   lock bl
+   pc rpop  ;c
+
+( Option bytes, erasing and programming.)
+
+( top has host's unlock key)
+label unlock-option-bytes  ( key)
+   lr rpush
+   unlock bl  ( first unlock FLASH_CR)
+   ( then unlock option bytes; top still has key)
+   KEY1 w lit   top w w eors   FLASH_OPTKEYR w freg!
+   KEY2 w lit   top w w eors   FLASH_OPTKEYR w freg!
+   pc rpop  ;c
+   pool,
+
+label erase-option-bytes
+   lr rpush
+   220 ( OPTWRE+OPTER) w lit   FLASH_CR w freg! ( set OPTER)
+    40 ( STRT) # w w adds      FLASH_CR w freg! ( set STRT+OPTER)
+   -busy bl
+   pc rpop  ;c
+   pool,
+
+label remove-read-protect  ( key)
+   lr rpush
+   -- unlock-option-bytes bl
+   -- erase-option-bytes bl
+   210 ( OPTWRE+OPTPG) w lit   FLASH_CR w freg! ( set OPTPG)
+   -- Reference manual says to do a halfword write; complemented high byte
+   -- will be automagically generated.
+   55aa w lit   OB_RDP x lit   0 x +) w strh
+   -- 0aa # w movs   OB_RDP x lit   0 x +) w strh
+   -busy bl
+   lock bl
+   pc rpop  ;c
+   pool,
+
+( w is byte count, x is flash address,
+  y is ram buffer address, z is offset.)
+( unlock consumes key)
+label stm32-flash-chunk  ( ram-buf-address flash-address byte-count key)
+   lr rpush
+   unlock bl
+   y x w dpop3
+   1 ( PG) # z movs   FLASH_CR z freg! ( set PG bit)
+   0 # z movs  ( offset)
+   begin
+      ( program by halfwords!)
+      y z r+) top ldrh   x z r+) top strh
+      2 # z z adds
+      -busy bl
+      w z cmp
+   u>= until
+   lock bl
+   pc rpop  ;c
+
+.ifdef testing
+
+( w is byte count, x is dest address, y is src address, z is offset. Copy
+  by words, not halfwords.)
+label copy-mem  ( src dest count)
+   y x w dpop3
+   0 # z movs  ( offset)
+   begin
+      y z r+) top ldr   x z r+) top str
+      4 # z z adds
+      w z cmp
+   u>= until
+   lr bx  ;c
+
+.then  ( testing)
+
+( This looks a litte bit goofy because we have to switch stack pointers
+  before executing the code, and then switch back afterwards - except that
+  we don't care about the return stack pointer after our code has executed;
+  we assume that the R stack is empty. We don't really need the data stack
+  pointer either, but we push it anyway, just in case.
+
+  We make sure to disable interrupts before calling our code!)
+
+label execute-assembly
+   cpsid  ( disable interrupts)
+   { top w } pop   sp rp mov   w sp mov   dsb   isb   top blx
+   rp sp mov
+.ifdef testing
+   { top freg-base z y x w } push
+.then
+   0 bkpt ;c
+
+align  ( make sure RAM region is word-aligned)
+
+__host
+
+forth
+
+.ifdef testing
+
+: .rxregs  ( top freg z y x w)
+   cr  ."        W         X         Y         Z      FREG       TOP        SP"
+       (  00000000  00000000  00000000  00000000  00000000  00000000  00000000 )
+   cr       .h32__    .h32__    .h32__    .h32__    .h32__    .h32__  tsp @ .h32__ ;
+
+.else  ( not testing)
+
+: .rxregs ;
+
+.then  ( testing)
+
+( For quick and dirty execution of remote assembly code.)
+: rx  ( x0 .. xn 'code rp - y0 .. yn <regs>)
+   ?chat  1+ ( thumb)  \m rp0
+   stack>  \m execute-assembly runwait  stack<  .rxregs ;
+
+decimal
+
+( How much space do we want to use for the flashbuf? It can't be bigger
+  than /page, but we don't want it to be too much of a fraction of the
+  RAM.)
+
+#ram  8 Ki u< .if  256  .else
+#ram 16 Ki u< .if  512  .else
+#ram 32 Ki u< .if  1 Ki  /page  min  .else  /page  .then .then .then
+   constant #flashbuf
+
+( Leave room for 64 cells on sp stack; round down to multiple of 256, then
+  leave #flashbuf bytes of space for buffer.)
+\m sp0  64 \m cells -  -256 and  #flashbuf -  constant @flashbuf
+
+__meta

@@ -106,15 +106,15 @@ variable spy
 : cmd2  ( b1 b0)     <cmd  >b >b     cmd> ;
 : cmd3  ( b2 b1 b0)  <cmd  >b >b >b  cmd> ;
 
+: .jtag-version  ( bits)
+   radix preserve  decimal  6 u>>  3f and  ."  JTAG v" u. ;
+
 ( Check vid and pid but don't print them out.)
 : .ver  ( bits vid pid - jtag-version)
-   -8 and  3748 =  swap 0483 =  and  if  ( matches)
-      radix preserve  decimal
-      dup  #12 u>>  ." ST-LINK/V" u.
-             6 u>>  3f and  dup ( jtag-version)  ."  JTAG v" u.  ^
-   then
-   drop ( bits)  0 ( jtag version)
-   ." Weird. Is this an ST-LINK/V2?" ;
+   swap  0483 = ( ST Micro)  if
+   dup 3748 =  if  drop  ." ST-LINK/V2"    .jtag-version  ^  then
+       374b =  if        ." ST-LINK/V2-1"  .jtag-version  ^  then
+   then  drop  ." Weird. Is this an ST-LINK/V2?" ;
 
 : ver             0f1 cmd1  6 expect  b> b>  hilo>  ( big-endian!)   h> h> ;
 : <dbg      <cmd  0f2 >b  >b ;  ( finish command with cmd>)
@@ -209,17 +209,26 @@ defer doit  ( buf target len)
    0800_0000 800  pad  ['] read32  chunked
    dup  pad 800 write  close-file ;
 
+.ifndef #flashbuf
+   .ifdef /page  ( chip has flash with uniform page size)
+      ld target/ARM/stm32/flash-programming.mu4
+   .else  ( chip has sectored flash)
+      ld target/ARM/stm32/flash-programming-sectored.mu4
+   .then
+.then
+
 ( connect to device)
 : st.hello  ( - chunk-size)
-   cr  ver .ver  drop
+   cr  ver .ver
    cr  tell-mode
    dup  0=  if  drop  ." => "  dfu>  tell-mode  then
    dup  1 = if  drop  ." => "  >swd  tell-mode  then
         2 - if  ." Tried, but didn't succeed. "  then
-   halt  2 Ki ;
+   halt  #flashbuf ;  ( size of RAM flash buffer)
 
-: st.read   ( buf a u)    read32 ;  ( Easy peasy!)
-: st.write  ( buf a u)   write32 ;
+( Make sure we read or write an aligned byte count.)
+: st.read   ( buf a u)  aligned  read32 ;  ( Easy peasy!)
+: st.write  ( buf a u)  aligned write32 ;
 
 ( The interface for the interact code. Implemented by all debug transports.)
 
@@ -229,9 +238,27 @@ defer doit  ( buf target len)
 
 : st.run     ( pc sp)  #13 reg!  #15 reg!  run ;
 
-( XXX Still need to be implementeted.)
-: st.erase  ( a)  drop chat-fail ;
-: st.flash  ( buf a u)  drop 2drop chat-fail ;
+( We have to pass a "key" - the hex value "feed_deed - that is xor'ed with
+  the flash keys to unlock the Flash controller.
+
+  Both stm32-erage and stm32-flash-chunk unlock before and lock after they
+  do their work.)
+
+( stm32-erase takes flash address for uniform page devices, and a sector
+  number, for sectored devices. target/ARM/v6-m/flash.mu4 has already
+  figured this out for us.)
+
+: st.erase  ( a | sector#)
+   "feed_deed  \m stm32-erase rx ;
+
+( stm32-flash-chunk  ( ram-buf-address flash-address byte-count key)
+
+( Copy buf contents to ram buffer, then write to flash from there.)
+: st.flash  ( buf a u)
+   swap push ( save target flash address)
+   ( buf u)  tuck  @flashbuf  swap  ( u buf a u)  st.write
+   ( u)  @flashbuf  pop  ( flash-addr)  rot
+   "feed_deed  \m stm32-flash-chunk rx ;
 
 : jtag
    chat-via  st.hello  st.get-status  st.run  st.read  st.write  st.erase  st.flash ;

@@ -1,0 +1,80 @@
+( This file is part of muforth: https://muforth.nimblemachines.com/
+
+  Copyright 2002-2021 David Frech. (Read the LICENSE for details.)
+
+loading STM32F072xB example startup code
+
+( Create a flash image containing a vector table, the ITC Forth kernel, and
+  some basic startup code.)
+
+__meta
+hex
+
+{ h @ } flash  ( save region and set to flash)
+0 vector-table  ( lay down a vector table, using end of ram as initial SP)
+
+{ h ! }  ( restore region pointer)
+ld target/ARM/v6-m/kernel-itc.mu4
+
+: wait-for-rdy  ( regaddr)
+   begin  dup c@  2 and  until  ( wait for RDY bit)  drop ;
+
+( Even though the documentation gives conflicting messages - the schematic
+  says that it's connected, but the user manual says that it isn't - it
+  seems that the 8 MHz clock from the ST-LINK is *not* in fact routed to the
+  OSC_IN pin on the F072.
+
+  Instead, the F072 has a 48 MHz HSI - high speed internal - clock that can
+  synchronize with the frame fields from USB, so it can be used as a
+  crystal-less clock source, even for USB applications. We will use this as
+  our system clock.)
+
+: clock-init
+   1 ( HSI48ON) [ RCC_CR2 2 + #] tuck c!  wait-for-rdy ( wait for HSI48RDY)
+   3 ( SW=HSI48 as sysclk)  RCC_CFGR tuck c!
+   begin  dup c@ %1111 =  until  ( SW=HSI48 and SWS=HSI48)  drop ;
+
+: ports-init
+   -- Turn on clock to Port C
+   ( Ports -FED_CBA- )
+        [ %0000_1000  #16 << #] RCC_AHBENR +!
+   -- Make PC6 to PC9 outputs
+   [ %01010101 #12 << #] GPIOC_MODER ! ;
+
+: wait   for next ;
+: flash-leds   %11_1100_0000 GPIOC_ODR !  2_0000 wait  0 GPIOC_ODR ! ;
+
+here ]  ( chip-init)
+   1 ( latency) FLASH_ACR +!  ( we need one cycle for 48 MHz clock!)
+   clock-init  ports-init  flash-leds  bug  [
+
+Reset_exc handler
+   -- Startup code!
+   -- Since we have a Forth kernel, let's write the startup code in Forth!
+   sp rp mov   #64 cells # sp sp sub  ( RP at end of flash; SP below)
+   ( chip-init)  ip  lit
+   "decafbad     top lit
+   next  ;c
+   pool,
+
+HardFault_exc handler
+   here b  ;c  ( hang)
+
+NMI_exc default-handler
+   lr bx  ;c  ( return to sender!!)
+
+
+( NOTES about the F072-Discovery board.)
+
+( LEDs are attached to PC6 to PC9.
+
+  Port Led Dir  Color
+-----------------------------
+  PC6  LD3  N   red
+  PC7  LD6  S   blue
+  PC8  LD4  W   orange
+  PC9  LD5  E   green
+
+  ST-LINK is connected to USART1_RX and _TX; PC5 and PC4, resp.
+  USART1 is AF7 for PC4 and PC5.
+)

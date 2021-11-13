@@ -17,24 +17,6 @@ hex
 
 ( 32 bit instructions.)
 
-( Define words for pulling out the 4-bit register fields.)
-: reg4  constant ( shift)
-        does> @  ( op shift - op reg)  over swap u>>  0f and ;
-
-#16 reg4 Rn4
-#12 reg4 Rt4
-  8 reg4 Rd4
-  0 reg4 Rm4
-
-: .Rn4   Rn4 .reg ;
-: .Rt4   Rt4 .reg ;
-: .Rd4   Rd4 .reg ;
-: .Rm4   Rm4 .reg ;
-
-: .Rn4,  .Rn4 comma ;
-: .Rt4,  .Rt4 comma ;
-: .Rd4,  .Rd4 comma ;
-
 : ,imm   comma imm ;
 
 : P@  ( op - Pbit)  #24 bit@ ;
@@ -88,7 +70,7 @@ hex
 : .imm-shift  ( op - op)
    .Rm4 comma  ( was space)
    imm3:2 ( imm5 = shift amount)
-   over 4 u>>  3 and  dup 3 u< if  z" lsl lsr asr " 4 #op  imm  ^  then
+   over 4 u>>  3 and  dup 3 u< if  z" lsl lsr asr " 4 #op type imm  ^  then
    drop ( type)  =if  ." rrx"  drop  ^  then  ." ror "  imm ;
 
 ( This is complicated because there are versions of various instructions
@@ -239,7 +221,7 @@ hex
 : .strex-i8  ( word-offset)   ." strex  "  .Rd4  comma  .index-ex-i8 ;
 : .ldrex-i8  ( word-offset)   ." ldrex  "               .index-ex-i8 ;
 
-: .exbh   ( op z")  over 4 bit@  swap  6 #op space ;
+: .exbh   ( op z")  over 4 bit@  swap  6 #op type  space ;
 : .index-exb   dup push  .Rt4  0 0 1 1  pop .index-woup ;
 
 : .strexb    z" strexbstrexh"  .exbh  .Rd4  comma  .index-exb ;
@@ -279,7 +261,7 @@ hex
    .Rt4,  .index-i8 ;
 
 : .ldrsbt-i8  ( ldrsbt ldrsht)
-   dup W@  z" ldrsbtldrsht" 6 #op  space
+   dup W@  z" ldrsbtldrsht" 6 #op type  space
    .Rt4,  .index-i8 ;
 
 : .str.w    ( str strb strh ldr ldrb ldrh)
@@ -297,14 +279,19 @@ hex
 
 ( Disassemble the v7-m instructions that aren't in v6-m.)
 : shred16-v7m  ( op - op)
-   ( First try the 16-bit v7-m instructions:)
-   f500 b100 match  .cbz  ( cbz cbnz)
+   ( First try the 16-bit v6-m instructions:)
+   shred16-v6m  if -1 ^ then  ( exit if one matched)
 
-   ( No match; try the v6-m code.)
-   shred16-v6m ;
+   ( Then try the 16-bit v7-m instructions:)
+   f500 b100 match  .cbz  ( cbz cbnz)
+   0  ( no match) ;
+
 
 : shred32-v7m  ( op - op)
-   ( First try the 32-bit v7-m instructions:)
+   ( First try the 32-bit v6-m instructions:)
+   shred32-v6m  if -1 ^ then  ( exit if one matched)
+
+   ( Then try the 32-bit v7-m instructions:)
    ffff_0000 e8bd_0000 match  .pop.w
    ffff_0000 e92d_0000 match  .push.w
    ffc0_0000 e880_0000 match  .stmia.w
@@ -353,9 +340,7 @@ hex
    ff50_0000 f910_0000 match  .ldrsb.w  ( ldrsb ldrsh)
 
    ff80_f0f0 fa00_f000 match  .shift-reg.w  ( lsl.w lsr.w asr.w ror.w)
-
-   ( No match; try the v6-m code.)
-   shred32-v6m ;
+   0  ( no match) ;
 
 
 ' shred16-v7m  is shred16
