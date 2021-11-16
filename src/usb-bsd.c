@@ -322,7 +322,9 @@ void mu_usb_read_pipe()     /* ( buf len pipe -- #read) */
     int fd = TOP;       /* pipe */
 
     DROP(2);
+    fprintf(stderr, ">>> usb-read-pipe: %p %d %d\n", buf, len, fd);
     TOP = read_carefully(fd, buf, len);
+    fprintf(stderr, "<<< usb-read-pipe: %p %d %d\n", buf, len, fd);
 }
 
 void mu_usb_write_pipe()     /* ( buf len pipe) */
@@ -332,7 +334,9 @@ void mu_usb_write_pipe()     /* ( buf len pipe) */
     int fd = TOP;       /* pipe */
 
     DROP(3);
+    fprintf(stderr, ">>> usb-write-pipe: %p %d %d\n", buf, len, fd);
     write_carefully(fd, buf, len);
+    fprintf(stderr, "<<< usb-write-pipe: %p %d %d\n", buf, len, fd);
 }
 
 /*
