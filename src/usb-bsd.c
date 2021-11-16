@@ -320,8 +320,11 @@ void mu_usb_read_pipe()     /* ( buf len pipe -- #read) */
     void *buf = (void *)ST2;
     size_t len = ST1;
     int fd = TOP;       /* pipe */
+    int dummy;
 
     DROP(2);
+    ioctl(fd, USB_SET_SHORT_XFER, &dummy);
+
     fprintf(stderr, ">>> usb-read-pipe: %p %d %d\n", buf, len, fd);
     TOP = read_carefully(fd, buf, len);
     fprintf(stderr, "<<< usb-read-pipe: %p %d %d\n", buf, len, fd);
