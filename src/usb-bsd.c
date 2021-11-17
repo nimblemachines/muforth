@@ -49,14 +49,16 @@
 #define USBD_SHORT_XFER_OK  USB_SHORT_XFER_OK
 #endif
 
-#ifdef DEBUG_USB_ENUMERATION
-#define DEBUG0(fmt)         fprintf(stderr, fmt)
-#define DEBUG1(fmt, a)      fprintf(stderr, fmt, a)
-#define DEBUG2(fmt, a, b)   fprintf(stderr, fmt, a, b)
+#ifdef DEBUG_USB
+#define DEBUG0(fmt)             fprintf(stderr, fmt)
+#define DEBUG1(fmt, a)          fprintf(stderr, fmt, a)
+#define DEBUG2(fmt, a, b)       fprintf(stderr, fmt, a, b)
+#define DEBUG3(fmt, a, b, c)    fprintf(stderr, fmt, a, b, c)
 #else
 #define DEBUG0(fmt)
 #define DEBUG1(fmt, a)
 #define DEBUG2(fmt, a, b)
+#define DEBUG3(fmt, a, b, c)
 #endif
 
 /*
@@ -325,9 +327,8 @@ void mu_usb_read_pipe()     /* ( buf len pipe -- #read) */
     DROP(2);
     ioctl(fd, USB_SET_SHORT_XFER, &dummy);
 
-    fprintf(stderr, ">>> usb-read-pipe: %p %d %d\n", buf, len, fd);
+    DEBUG3("usb-read-pipe: %p %ld %d\n", buf, len, fd);
     TOP = read_carefully(fd, buf, len);
-    fprintf(stderr, "<<< usb-read-pipe: %p %d %d\n", buf, len, fd);
 }
 
 void mu_usb_write_pipe()     /* ( buf len pipe) */
@@ -337,9 +338,8 @@ void mu_usb_write_pipe()     /* ( buf len pipe) */
     int fd = TOP;       /* pipe */
 
     DROP(3);
-    fprintf(stderr, ">>> usb-write-pipe: %p %d %d\n", buf, len, fd);
+    DEBUG3("usb-write-pipe: %p %ld %d\n", buf, len, fd);
     write_carefully(fd, buf, len);
-    fprintf(stderr, "<<< usb-write-pipe: %p %d %d\n", buf, len, fd);
 }
 
 /*
