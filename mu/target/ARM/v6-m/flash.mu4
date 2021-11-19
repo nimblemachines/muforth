@@ -60,6 +60,15 @@ hex
 
 : ?clobbering-loader  ( a u - a u)  ;
 
+: ?align-region  ( a u - a u)  dup  [ \m cell  1- #] and  0= if ^ then
+   cr ." WARNING: The flash region does not end on a target cell boundary." ;
+
+: flash-image
+   h preserve  flash region ( a u)  ?align-region  flash-region ;
+
+
+( Verifying that host and target images are the same.)
+
 ( Prepare to do a comparison or computation between data read from the
   target into a buffer, and data in our memory image. Read a chunk from the
   target into buf, and set m to point to the beginning of buf.
@@ -70,30 +79,47 @@ hex
 : setup-comparison  ( 'target len buf - 'target len)
    push  2dup  r@ -rot t.read  ( 'target len)  pop m ! ;
 
-: flash-image
-   h preserve  flash region ( a u)  flash-region ;
+variable noisy-verify?  ( Whether to print differences.)
 
-( Fast verify! Using chunked reads.)
-: verify-chunk  ( 'target len - 'target+len)
+( Little endian.)
+: mcell*   m* m* m* m*  0123> ;
+
+( Accumulate - by logically OR-ing - any differences.)
+: verify-word    ( diff a - diff' a)
+   dup image-@ mcell* xor  ( diff a xor)
+   =if  noisy-verify? @ if  over u. ( print address that differs)  then  then
+   rot or  swap ;
+
+: verify-chunk  ( diff 'target #chunk - diff' 'target+#chunk)
    -- cr ." verify "  over u.  dup u.
    2dup + push
-   ( 'target len) pad  setup-comparison
-   for  dup image-c@ m* xor  if  dup u.  then  1+  next  drop
+   ( diff 'target len) pad  setup-comparison
+   \m aligned  \m cell/ for  verify-word  \m cell+  next  drop
    pop ;
 
 ( Verify using the same chunk size that we used for flashing; the variable
   /chunk - which is set by the interact code based on a value received from
   the debug interface - tells us how big each chunk should be.)
 
-: verify-region
+: verify-region  ( 'target len - diff')
+   0 -rot  ( diff)
    /chunk @  /mod  ( r q)  swap push  for  /chunk @  verify-chunk  next
                                     pop  =if  ( rem) verify-chunk  drop ^  then  2drop ;
 
-: ?empty-region ( a u - a u)  =if ^ then
+: ?empty-region  ( a u - a u)  =if ^ then
    cr ." WARNING: The flash region is empty. verify will always report no change." ;
 
 : verify
-   h preserve  flash region ( a len)  ?empty-region  verify-region ;
+   h preserve  flash region ( a len)  ?empty-region  ?align-region
+   noisy-verify? on  verify-region  drop ;
+
+( Called when we connect to target to make sure host's and target's flash
+  regions are the same.)
+
+-: ( verify-quietly)  ( - 0 if same, non-zero if different)
+   h preserve  flash region ( a len)  ?align-region
+   noisy-verify? off  verify-region ;  is verify-quietly
+
 
 ( Read an image from the target into the host image.)
 : read-chunk  ( a u - a+u)
@@ -112,7 +138,8 @@ hex
 
 : read-image  ( target len)
    h preserve  flash
-   over  #image 1- and  @flash +  over +  \m goto
+   over  #image 1- and  @flash +  ( remap to @flash)
+   dup region! ( reset flash origin)  over +  \m goto  ( set end)
    read-region ;
 
 ( Save image to a file.)
