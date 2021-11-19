@@ -24,6 +24,6 @@ be our guest, be our guest, put your morals to the test.
 
 # Supported versions
 
-All OpenBSD testing and development on both amd64 and i386 is conducted using OpenBSD --current (7.0 as of this writing).
+All OpenBSD testing and development of muforth on both amd64 and i386 is conducted using OpenBSD --current (7.0 as of this writing).
 
 Older versions will likely work, as testing on OpenBSD has been ongoing since at least 5.8, but running --current is recommended.
