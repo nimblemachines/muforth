@@ -27,3 +27,76 @@ DFU mode => Mass mode => Debug mode
 0800057c  60584310 
 08000580  46c04770 
 08000584  40021000 RCC_CR 
+
+#################################################
+Fri Nov 19 06:46:45 PST 2021
+OpenBSD 7.0
+GENERIC.MP#296 i386
+#################################################
+
+The anomalous output for the f0 can be explained by the fact that the
+master public repository (https://github.com/nimblemachines/muforth.git)
+is loading "special" example code:
+
+stm32f0-discovery.mu4
+
+loading STM32F0 Discovery board
+
+ld! target/ARM/stm32/f051_8.mu4
+ld target/ARM/debug/stlink-v2.mu4
+
+flash
+ld target/ARM/stm32/f051_8-example.mu4 <-----
+
+This is guaranteed to create a tripping point for new users.  If that's
+you and you're trying to figure out whacky behavior with flash, you can
+save your factory image (cf issues #18 Workaround and #31 on main repo
+above) and reflash with this loaded code.
+
+This needs to be changed; it violates the principal of least
+astonishment and given the current haphazard state of muforth
+documentation in general and target documentation in specific, we need
+to do the least astonishing thing.
+
+It is easily rectified by having two board files; one which a new user
+can use with the factory demo code and one which loads the special
+example code and a nice note in target/ARM/board which clearly explains
+the difference.
+
+As we can see below, reflashing takes care of the decompile inconsistencies wrt
+the stm32f051:
+
+ST-LINK/V2 JTAG v15 
+DFU mode => Mass mode => Debug mode 
+      SP        RP        IP
+20001fe8  00000000  00000000*  Ok (chatting) (hex) (flash)
+00 t.erase  Ok (chatting) (hex) (flash)
+jtag 
+ST-LINK/V2 JTAG v15 
+Debug mode 
+      SP        RP        IP
+20001f84  00000000  00000000*  Ok (chatting) (hex) (flash)
+flash-image 
+erase page 800_0000 
+program    800_0000 200 
+program    800_0200 200 
+erase page 800_0400 
+program    800_0400 1b8  Ok (chatting) (hex) (flash)
+verify  Ok (chatting) (hex) (flash)
+' flash-leds dec 
+08000544  : flash-leds 
+08000548  080000f0 (lit) 
+0800054c  00000300 
+08000550  080000f0 (lit) 
+08000554  48000814 GPIOC_ODR 
+08000558  08000324 ! 
+0800055c  080000f0 (lit) 
+08000560  00020000 
+08000564  08000528 wait 
+08000568  080003d4 0 
+0800056c  080000f0 (lit) 
+08000570  48000814 GPIOC_ODR 
+08000574  08000324 ! 
+08000578  080000e0 (unnest) 
+0800057c  080003dc 1 
+08000580  080000f0 (lit) 
