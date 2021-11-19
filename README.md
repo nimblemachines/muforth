@@ -2,7 +2,7 @@
 
 Personal fork of https://github.com/nimblemachines/muforth
 
-New users might to watch or clone this repository, as it actively tries
+New users might want to watch or clone this repository, as it actively tries
 to identify and offer solutions for tripping points or omissions that
 have not yet been incorporated into the master repository above.
 
