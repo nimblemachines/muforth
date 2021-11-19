@@ -17,7 +17,7 @@ use the target/ARM/board files clearly labelled with the word "factory"
 **in this repository**.
 
 Documentation for muforth is, at present, scattered between git logs and
-code statements; improving this is at the top of everyone's list. 
+code comments; improving this is at the top of everyone's list. 
 
 
 # Supported platforms/architectures
