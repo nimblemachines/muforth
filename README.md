@@ -19,7 +19,7 @@ use the target/ARM/board files clearly labelled with the word "factory"
 Fortunately there is also the new verification code, but see
 
 ```
-   target/ARM/beta-testing/testing-flash-verification-code.txt
+   target/ARM/beta-testing/testing-flash-verification-code.md
 ```
 
 for some thoughts on this.
