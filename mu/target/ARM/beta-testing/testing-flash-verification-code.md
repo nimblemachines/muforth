@@ -52,7 +52,7 @@ verify  Ok (chatting) (hex) (flash)
 Now this is truly fascinating, because the problem of assumption that
 arises due to the canonical Forth prompt is **reversed** from that
 above:  the new or inexperienced user might assume that the verification
-is Ok because that's what the program replied, when in fact the Ok just
+is Ok because that's what the interpreter replied, when in fact the Ok just
 means "Hey sailor, Ok, peachy, we're still chatting and the word verify just
 successfully executed." It most definitely does NOT state that the actual
 verification is Ok.  Unbeknownst to the new user, it is the **lack of additional output** 
