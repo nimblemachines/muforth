@@ -10,19 +10,15 @@ A case in point until **very** recently:
 
 If you are a new user with a fresh factory stm32fx-discovery board and
 you attempt to chat with the target using the appropriate default
-target/ARM/board/ **in the master repository**, you're going to have
-some weird moments with flash because they now load "special" example
+target/ARM/board/ file **in the master repository**, you're going to have
+some weird moments with flash because those files now load "special" example
 code.  You can either reflash the board with that code OR you can just
-use the target/ARM/board files clearly labelled with the word "factory"
-**in this repository**.
+use the target/ARM/board files **in this repository** clearly labelled with 
+the word "factory".
 
-Fortunately there is also the new verification code, but see
-
-```
-   target/ARM/beta-testing/testing-flash-verification-code.md
-```
-
-for some thoughts on this.
+Fortunately, some new verification code was just pushed, and it now warns the
+user if the there is a mismatch between target/host flash. Also see [this writeup](https://github.com/anarchitech/muforth/blob/master/mu/target/ARM/beta-testing/testing-flash-verification-code.md)
+for some further thoughts regarding this and ui in general.
 
 Documentation for muforth is, at present, scattered between git logs and
 code comments; improving this is at the top of everyone's list. 
