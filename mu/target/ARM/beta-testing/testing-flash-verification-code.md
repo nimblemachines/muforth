@@ -1,15 +1,15 @@
 Really good news:
 
-Recent support has been added to address issue #31, and as a side effect
+Recent support for target/host flash verification has been added to address issue #31, and as a side effect
 help somewhat with issue #32.
 
-Let's see if they work:
+Let's see how it works:
 
 ---------------------------------------------------------------------
 
 STM32F407G-Discovery board:
 Loaded code is MISMATCHED with flashed target:
-
+```
 jtag 
 ST-LINK/V2 JTAG v16 
 DFU mode => Mass mode => Debug mode 
@@ -17,7 +17,7 @@ DFU mode => Mass mode => Debug mode
 2001fed8  00000000  00000000* 
 WARNING: Target's flash image differs from host's. Run flash-image? Ok
 (chatting) (hex) (flash)
-
+```
 This is an obvious and mostly reasonable message, however the inclusion
 of a question mark followed by the canonical Ok response is apt to lead
 the new or inexperienced user to conclude that the board was just
@@ -32,13 +32,13 @@ may be.
 
 STM32F407G-Discovery board:
 Loaded code is MATCHED with flashed target:
-
+```
 jtag 
 ST-LINK/V2 JTAG v16 
 DFU mode => Mass mode => Debug mode 
       SP        RP        IP
 2001fed8  00000000  00000000*  Ok (chatting) (hex) (flash)
-
+```
 Well there's no message one way or the other is there?  Should we assume
 everything is just peachy? Should we go ahead and manually verify? Was
 this load handled obviously?
@@ -87,5 +87,5 @@ hi
 WARNING: Target's flash image differs from host's. Run flash-image?
 ```
 
-That's it! If you think something else needs to be added, file on issue
+That's it! If you think something else needs to be added, file an issue
 on github and we'll take a look at it.
