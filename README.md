@@ -154,8 +154,10 @@ verify
 
 If it all worked, verify will just print "Ok". If it didn't, verify
 will spew a range of exciting addresses at you and then print "Ok." That
-"Ok" does not mean everything is "OK" it means "Ok, that's not good."
-Sometimes "Ok" is not "Ok", children, Mmmmm-kay?
+"Ok" does not mean everything is "OK" it means "Ok, verify executed successfully"
+but that nasty spew means the target host flash verification failed.
+Sometimes "Ok" is not "Ok", children, Mmmmm-kay? (I'm also not a fan of Forth's
+Ok prompt. I'm in the minority.)
 
 ## Going Forward
 
