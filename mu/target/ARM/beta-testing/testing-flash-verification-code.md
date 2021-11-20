@@ -1,9 +1,3 @@
-#################################################
-Fri Nov 19 16:31:13 PST 2021
-OpenBSD 7.0
-GENERIC.MP#298 i386
-#################################################
-
 Really good news:
 
 Recent support has been added to address issue #31, and as a side effect
