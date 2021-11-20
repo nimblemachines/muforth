@@ -1,7 +1,8 @@
 Really good news:
 
-Recent support for target/host flash verification has been added to address issue #31, and as a side effect
-help somewhat with issue #32.
+Recent support for target/host flash verification has been added that helped us decide 
+to close issue #31 and #32, not without minor disagreement covered below. (There are merits
+to both sides of this.)
 
 Let's see how it works:
 
