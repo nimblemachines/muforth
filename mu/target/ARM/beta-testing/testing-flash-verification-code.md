@@ -1,7 +1,7 @@
 Really good news:
 
 Recent support for target/host flash verification has been added that helped us decide 
-to close issue #31 and #32, not without minor disagreement covered below. (There are merits
+to close issues #31 and #32, not without minor disagreement covered below. (There are merits
 to both sides of this.)
 
 Let's see how it works:
