@@ -22,11 +22,9 @@ This is an obvious and mostly reasonable message, however the inclusion
 of a question mark followed by the canonical Ok response is apt to lead
 the new or inexperienced user to conclude that the board was just
 automagically flashed.  It might, perhaps, be better to phrase as a
-statement: 'You can either run flash-image followed by verify, or you may
-CTRL-C out of here, replug, and retry by loading the file(s) that will 
-match the flashed target.'  A bit prolix perhaps, but it leaves no room
-for doubt as to what the hell is going on and what a possible solution
-may be.
+statement: 'Run flash-image or reload with the correct files.'  A bit prolix perhaps, 
+but it leaves no room for doubt as to what the hell is going on and what a possible 
+solution may be. It also reduces the potential ambiguity of ? Ok
 
 ----------------------------------------------------------------------
 
@@ -44,26 +42,31 @@ everything is just peachy? Should we go ahead and manually verify? Was
 this load handled obviously?
 
 We have to conclude that no, this is not obvious, and if we have a
-message delivered for one condition but not another then we're left in a
-state of lingering doubt.  Let's go ahead and type verify just to be
-sure.  Regretfully, we must conclude that this is marked as a failure of
-the intent to provide verification of the flashed image.  If the damn
-thing is verified, state that: "Flash image and host image match and are
-verified"  or  "Verification successful; flash image and host image
-match"
+message delivered for one test of a condition but not another then we're left 
+in a state of lingering doubt.  
 
+Let's go ahead and type verify just to be sure:
+```
 verify  Ok (chatting) (hex) (flash)
-
+```
 Now this is truly fascinating, because the problem of assumption that
 arises due to the canonical Forth prompt is **reversed** from that
 above:  the new or inexperienced user might assume that the verification
 is Ok because that's what the program replied, when in fact the Ok just
 means "Hey sailor, Ok, peachy, we're still chatting and the word verify just
 successfully executed." It most definitely does NOT state that the actual
-verification is Ok.  The **lack of additional output** returned by
-running verify means verification is ok ... but how the hell is the new or
-unfamiliar user supposed to know that unless they've read the
-non-existent documentation?
+verification is Ok.  Unbeknownst to the new user, it is the **lack of additional output** 
+returned by running verify that means verification is ok ... but how the hell is 
+the new or inexperienced user supposed to know that unless they've read the
+non-existent documentation? (It must be admitted that I have always had an
+issue with Forth's use of Ok; as shown above it is an imprecise choice for a humane
+interface and Forth would be better served with a simple prompt for its interpreter.)
+
+Regretfully, we must conclude that this must be marked as a failure of
+the intent to provide verification of the flashed image.  If the damn
+thing is verified, state that: "Flash image and host image match and are
+verified"  or  "Verification successful; flash image and host image
+match"
 
 -----------------------------------------------------------------------
 
