@@ -28,7 +28,7 @@ Documentation for muforth is, at present, scattered between git logs and
 code comments; improving this is at the top of everyone's list. 
 
 
-# Supported platforms/architectures
+## Supported platforms/architectures
 
 Currently tested and working on the following systems/platforms:
 
@@ -39,7 +39,7 @@ Currently tested and working on the following systems/platforms:
 * Cros (via chroot or that ... crostini ... thing.)
 
 
-# Building
+## Building
 
 For Linux any flavor, NixOS and Termux, use the master branch.  For the BSD's use
 the bsd-usb-support branch.  Ask daf about OSX/iOS and Windows support, I
@@ -51,7 +51,7 @@ the therapy bill was expensive.
 cd into the cloned repository, run ./configure.sh and then run make.
 Note the admonition about 99-muforth.rules
 
-# Running
+## Running
 
 You can use muforth as a standalone forth, and this is a lot of fun for
 learning about muforth, and a bit about forth.  Be forewarned that if
@@ -91,7 +91,7 @@ and you're off to thrashy bit land.  @ram puts you in ram, @flash puts
 you in flash. du dumps memory from address, dis disassembles code, and
 dec decompiles forth code on a target.
 
-# Jumping Jack Flash
+## Jumping Jack Flash
 
 You can use muforth to flash a target with your very own code once you
 get up to speed!  In virtually all cases, we highly recommend saving one
@@ -99,7 +99,7 @@ or more memory images of a fresh target ... grab anything you can and
 save it, but especially grab everything in flash.  You'll thank me
 later. ;)
 
-## Example: Saving a flash image file
+### Example: Saving a flash image file
 
 Load a file and start chatting with the target. Put it into hex mode.
 Let's assume in the following that you have a minty fresh
@@ -136,7 +136,7 @@ This will automagically save fileName.img in muforth/mu/ and *no*,
 you do not need to enclose the fileName in quotes, backticks or any 
 such nonsense. 
  
-## Example: Load procedure for a saved or new .img file
+### Example: Load procedure for a saved or new .img file
 
 You need to chat with the board and load the image file you intend to
 flash to the target:
