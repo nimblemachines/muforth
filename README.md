@@ -14,7 +14,7 @@ target/ARM/board/ **in the master repository**, you're going to have
 some weird moments with flash because they now load "special" example
 code.  You can either reflash the board with that code OR you can just
 use the target/ARM/board files clearly labelled with the word "factory"
-in this repository.
+**in this repository**.
 
 Fortunately there is also the new verification code, but see
 
@@ -25,7 +25,7 @@ Fortunately there is also the new verification code, but see
 for some thoughts on this.
 
 Documentation for muforth is, at present, scattered between git logs and
-code statements; improving this is at the top of everyone's list. 
+code comments; improving this is at the top of everyone's list. 
 
 
 # Supported platforms/architectures
