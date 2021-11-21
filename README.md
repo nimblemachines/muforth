@@ -80,7 +80,8 @@ Generally speaking, jtag or serial, you're going to cd into muforth/mu.
 Using the Raspberry Pi Pico as an example:
 
 ``` 
-./muforth -f target/ARM/board/raspberry-pi-pico.mu4 jtag 
+./muforth -f target/ARM/board/raspberry-pi-pico.mu4 
+jtag 
 ```
 
 and you're off to thrashy bit land.  @ram puts you in ram, @flash puts
