@@ -10,25 +10,21 @@ A case in point until **very** recently:
 
 If you are a new user with a fresh factory stm32fx-discovery board and
 you attempt to chat with the target using the appropriate default
-target/ARM/board/ **in the master repository**, you're going to have
-some weird moments with flash because they now load "special" example
+target/ARM/board/ file **in the master repository**, you're going to have
+some weird moments with flash because those files now load "special" example
 code.  You can either reflash the board with that code OR you can just
-use the target/ARM/board files clearly labelled with the word "factory"
-**in this repository**.
+use the target/ARM/board files **in this repository** clearly labelled with 
+the word "factory".
 
-Fortunately there is also the new verification code, but see
-
-```
-   target/ARM/beta-testing/testing-flash-verification-code.txt
-```
-
-for some thoughts on this.
+Fortunately, some new verification code was just pushed, and it now warns the
+user if the there is a mismatch between target/host flash. Also see [this writeup](https://github.com/anarchitech/muforth/blob/master/mu/target/ARM/beta-testing/testing-flash-verification-code.md)
+for some further thoughts regarding this and ui in general.
 
 Documentation for muforth is, at present, scattered between git logs and
 code comments; improving this is at the top of everyone's list. 
 
 
-# Supported platforms/architectures
+## Supported platforms/architectures
 
 Currently tested and working on the following systems/platforms:
 
@@ -39,7 +35,7 @@ Currently tested and working on the following systems/platforms:
 * Cros (via chroot or that ... crostini ... thing.)
 
 
-# Building
+## Building
 
 For Linux any flavor, NixOS and Termux, use the master branch.  For the BSD's use
 the bsd-usb-support branch.  Ask daf about OSX/iOS and Windows support, I
@@ -51,7 +47,7 @@ the therapy bill was expensive.
 cd into the cloned repository, run ./configure.sh and then run make.
 Note the admonition about 99-muforth.rules
 
-# Running
+## Running
 
 You can use muforth as a standalone forth, and this is a lot of fun for
 learning about muforth, and a bit about forth.  Be forewarned that if
@@ -84,14 +80,15 @@ Generally speaking, jtag or serial, you're going to cd into muforth/mu.
 Using the Raspberry Pi Pico as an example:
 
 ``` 
-./muforth -f target/ARM/board/raspberry-pi-pico.mu4 jtag 
+./muforth -f target/ARM/board/raspberry-pi-pico.mu4 
+jtag 
 ```
 
 and you're off to thrashy bit land.  @ram puts you in ram, @flash puts
 you in flash. du dumps memory from address, dis disassembles code, and
 dec decompiles forth code on a target.
 
-# Jumping Jack Flash
+## Jumping Jack Flash
 
 You can use muforth to flash a target with your very own code once you
 get up to speed!  In virtually all cases, we highly recommend saving one
@@ -99,7 +96,7 @@ or more memory images of a fresh target ... grab anything you can and
 save it, but especially grab everything in flash.  You'll thank me
 later. ;)
 
-## Example: Saving a flash image file
+### Example: Saving a flash image file
 
 Load a file and start chatting with the target. Put it into hex mode.
 Let's assume in the following that you have a minty fresh
@@ -136,7 +133,7 @@ This will automagically save fileName.img in muforth/mu/ and *no*,
 you do not need to enclose the fileName in quotes, backticks or any 
 such nonsense. 
  
-## Example: Load procedure for a saved or new .img file
+### Example: Load procedure for a saved or new .img file
 
 You need to chat with the board and load the image file you intend to
 flash to the target:
@@ -154,8 +151,10 @@ verify
 
 If it all worked, verify will just print "Ok". If it didn't, verify
 will spew a range of exciting addresses at you and then print "Ok." That
-"Ok" does not mean everything is "OK" it means "Ok, that's not good."
-Sometimes "Ok" is not "Ok", children, Mmmmm-kay?
+"Ok" does not mean everything is "OK" it means "Ok, verify executed successfully"
+but that nasty spew means the target host flash verification failed.
+Sometimes "Ok" is not "Ok", children, Mmmmm-kay? (I'm also not a fan of Forth's
+Ok prompt. I'm in the minority.)
 
 ## Going Forward
 
