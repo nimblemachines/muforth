@@ -24,4 +24,5 @@ r2 -a arm -m 0x0 -b 16 pico-zero.img
 ```
 Go. To. Town.
 
-Travis Goodspeed has a [fun talk about RE'ing ARM firmware](https://youtube.com/watch?v=GX8-K4TssjY)
+This trick isn't specific to muforth, there's a lot of other tools out there you can use to [extract
+the firmware off an embedded ARM device.](https://youtube.com/watch?v=GX8-K4TssjY)
