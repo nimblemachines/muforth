@@ -40,7 +40,7 @@ Currently tested and working on the following systems/platforms:
 For Linux any flavor, NixOS and Termux, use the master branch.  For the BSD's use
 the bsd-usb-support branch.  Ask daf about OSX/iOS and Windows support, I
 have no idea where we are with any of those. (I doubt there's any
-support for iOS, although you never know. Cygwin used to work with
+support for iOS, although you never know.) Cygwin used to work with
 Windows. I **once** got it compile on Windows. **Once**. Don't ask,
 the therapy bill was expensive.  
 
