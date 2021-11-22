@@ -38,14 +38,13 @@ Currently tested and working on the following systems/platforms:
 ## Building
 
 For Linux any flavor, NixOS and Termux, use the master branch.  For the BSD's use
-the bsd-usb-support branch.  Ask daf about OSX/iOS and Windows support, I
-have no idea where we are with any of those. (I doubt there's any
+the bsd-usb-support branch.  Ask daf about OSX/iOS and Windows support, although we're actively looking at an [interesting idea.](https://github.com/nimblemachines/muforth/issues/34) (I doubt there's any
 support for iOS, although you never know.) Cygwin used to work with
 Windows. I **once** got it compile on Windows. **Once**. Don't ask,
 the therapy bill was expensive.  
 
 cd into the cloned repository, run ./configure.sh and then run make.
-Note the admonition about 99-muforth.rules
+Read the configure and post-make notes, take heed of the bit about 99-muforth.rules
 
 ## Running
 
