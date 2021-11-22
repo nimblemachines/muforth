@@ -18,7 +18,7 @@ save-image pico-zero.img
 bye
 ```
 
-Then do whatever the hell you want with it; strings, hexdump, radare:
+Then do whatever the hell you want with it; strings, hexdump, [radare:](https://radare.org/n/)
 ```
 r2 -a arm -m 0x0 -b 16 pico-zero.img
 ```
