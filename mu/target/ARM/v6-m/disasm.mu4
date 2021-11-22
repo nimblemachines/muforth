@@ -74,6 +74,48 @@ defer .reg  ( reg)
 : .u32  radix preserve hex  <# 4#  char _ hold  4# #> type ;
 
 
+( We would like to print "significant" addresses - like equates - in a
+  symbolic way, both here in the disassembler and in the decompiler. Let's
+  define a few utility words to make that easier.)
+
+: value-matches?  ( value 'link - match?)  link> >body @ = ;
+
+( NOTE: This code will search *through* muchain links!)
+-: ( value 'link - 'link -1 | value 0)
+   dup         hidden? if  drop  0  ^  then  ( ignore hidden and muchain)
+   2dup value-matches? if  nip  -1  ^  then
+                           drop  0 ;
+
+( Given a constant value, find the host dictionary entry, if one exists,
+  that contains a constant that matches it.)
+
+: find-constant  ( value chain - 'link -1 | value 0)
+   over push  [ #]  swap  forall-words  pop over = 0= ;
+
+: .target  ( 'link)  link>name type ;
+: .equate  ( 'link offset)  swap .target  ?if  ."  + " .udec  then ;
+
+( Let's be smart about equates. Most equates are multiples of four. If we
+  are using a byte or halfword offset, we won't match the equate. We need
+  to match the aligned value and then print the difference, if any. But some
+  equates are *not* multiples of four; for these we want to look for an exact
+  match.
+
+  Let's try to match equates *twice*: the first time we look for an exact
+  match; the second time for a four-byte-aligned match, which we will print
+  with an offset, if any.)
+
+: equate?  ( a - 'link offset -1 | 0)
+   ( First, look for an exact match.)
+   dup
+   .equates. find-constant if  nip  0 -1  ^  then
+
+   ( If that fails, looked for an aligned match.)
+   -4 and ( addr aligned-addr)
+   .equates. find-constant if  swap  3 and  -1  ^  then
+   2drop  0 ;
+
+
 ( 16-bit instructions.)
 
 ( NOTE: Rn shifts by 3; Rm shifts by 6, but RRm shifts by 3 - acts like Rn.)
@@ -167,7 +209,8 @@ defer .reg  ( reg)
 : load-pc+  ( byte-offset - addr)  instr-pc @  >load-pc  + ;
 
 : .ldr-pc   ." ldr    "  Rd8,  .[  i8 woff> load-pc+  dup .u32  .]
-                               ."  = "  |@  dup set-ea  .u32 ;
+                               ."  = "  |@  dup set-ea  dup .u32
+                               equate? if  ."  ; "  .equate  then ;
 
 : .str-r
    dup 9 u>> 7 and  z" str  strh strb ldrsbldr  ldrh ldrb ldrsh" .op5
