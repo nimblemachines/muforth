@@ -156,6 +156,9 @@ but that nasty spew means the target host flash verification failed.
 Sometimes "Ok" is not "Ok", children, Mmmmm-kay? (I'm also not a fan of Forth's
 Ok prompt. I'm in the minority.)
 
+Finally, there's a trick you can use with embedded ARM devices [when you can't access flash
+@flash.](https://github.com/anarchitech/muforth-anarchitech/blob/master/mu/target/ARM/raspi/firmware/extracted/zeroFlash.md)
+
 ## Going Forward
 
 Your best path to understanding what to do after that is going to come
