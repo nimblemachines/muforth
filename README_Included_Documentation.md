@@ -15,4 +15,9 @@ to promote and support your product by developing for it in the first
 place.
 
 Documentation for supported targets, if available and included, may be
-found in muforth/mu/target/NAME/doc
+found in the following **subdirectories** of muforth/mu/target/ 
+
+* ARM/stm32/doc
+* ESP/doc
+* MSP430/doc
+* RISC-V/doc 
