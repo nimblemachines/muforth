@@ -10,8 +10,8 @@ Beneficial Thing to the community.
 copyright of said documents**, and furthermore we feel strongly that their
 inclusion both falls under the **doctrine of "Fair Use"** and benefits all
 concerned.  If you are a manufacturer of one of those targets, feel free
-to reach out, but take a moment to reflect that we're actually helping
-to promote and support your product by developing for it in the first
+to reach out, but take a moment to reflect that we're actually **helping
+to promote and support your product** by developing for it in the first
 place.
 
 Documentation for supported targets, if available and included, may be
