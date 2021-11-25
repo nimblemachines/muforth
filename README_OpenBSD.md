@@ -1,5 +1,11 @@
 # Running muforth on OpenBSD
 
+OpenBSD, NetBSD, FreeBSD and with any luck DragonFlyBSD need to use the
+bsd-usb-support branch.  Theoretically this will all get folded into
+master at some point.  For now, if you *do* use one of these systems,
+you'll find you frequently have to ```git merge origin master``` as
+syncing that branch is occasionally delayed. 
+
 OpenBSD, starting about 6.9ish, no longer allows applications to access /dev/ugenX.XX directly.
 The OBSD devs would like you to write your own drivers.  Don't hold your breath for tools like muforth.
 
