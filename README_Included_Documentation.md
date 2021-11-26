@@ -17,7 +17,7 @@ place.
 Documentation for supported targets, if available and included, may be
 found in the following **subdirectories** of muforth/mu/target/ 
 
-* ARM/stm32/doc
-* ESP/doc
-* MSP430/doc
-* RISC-V/doc 
+* [ARM/stm32/doc](https://github.com/anarchitech/muforth-anarchitech/mu/target/ARM/stm32/doc)
+* [ESP/doc](https://github.com/anarchitech/muforth-anarchitech/mu/target/ESP/doc)
+* [MSP430/doc](https://github.com/anarchitech/muforth-anarchitech/mu/target/MSP430/doc)
+* [RISC-V/doc](https://github.com/anarchitech/muforth-anarchitech/mu/target/RISC-V/doc) 
