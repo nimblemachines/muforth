@@ -19,5 +19,5 @@ found in the following **subdirectories** of muforth/mu/target/
 
 * [ARM/stm32/doc](https://github.com/anarchitech/muforth-anarchitech/tree/master/mu/target/ARM/stm32/doc)
 * [ESP/doc](https://github.com/anarchitech/muforth-anarchitech/tree/master/mu/target/ESP/doc)
-* [MSP430/doc](https://github.com/anarchitech/muforth-anarchitech/mu/tree/master/target/MSP430/doc)
+* [MSP430/doc](https://github.com/anarchitech/muforth-anarchitech/tree/master/mu/target/MSP430/doc)
 * [RISC-V/doc](https://github.com/anarchitech/muforth-anarchitech/tree/master/mu/target/RISC-V/doc) 
