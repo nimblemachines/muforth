@@ -17,6 +17,7 @@ place.
 Documentation for supported targets, if available and included, may be
 found in the following **subdirectories** of muforth/mu/target/ 
 
+* [ARM/kinetis/doc](https://github.com/anarchitech/muforth-anarchitech/tree/master/mu/target/ARM/kinetis/doc)
 * [ARM/raspi/doc](https://github.com/anarchitech/muforth-anarchitech/tree/master/mu/target/ARM/raspi/doc)
 * [ARM/stm32/doc](https://github.com/anarchitech/muforth-anarchitech/tree/master/mu/target/ARM/stm32/doc)
 * [ESP/doc](https://github.com/anarchitech/muforth-anarchitech/tree/master/mu/target/ESP/doc)
