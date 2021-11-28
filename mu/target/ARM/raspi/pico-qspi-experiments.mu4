@@ -1,0 +1,195 @@
+( This file is part of muforth: https://muforth.nimblemachines.com/
+
+  Copyright 2002-2021 David Frech. (Read the LICENSE for details.)
+
+loading Raspberry Pi Pico QSPI experiments (SIO mode)
+
+( We want to use the RP2040's SIO - single-cycle i/o - to drive and read
+  the QSPI pins so we can really see how the connected flash device works,
+  without the intervention of the XIP_SSI.
+
+  I could potentially put the XIP_SSI into regular SPI mode, but having
+  total control - by bit-banging - will give me more confidence that I know
+  how the flash chip is actually responding.)
+
+__meta
+
+hex
+
+: 2drop  drop drop ;
+
+: qspi-function!  ( gpio-function)
+   IO_QSPI_GPIO_QSPI_SCLK_CTRL  6 for  2dup !  8 +  next  2drop ;
+
+( Connect QSPI pins to SIO rather than XIP.)
+: >qspi-sio   5 ( SIO function) qspi-function! ;
+
+( Connect QSPI pins back to XIP.)
+: >qspi-xip   0 ( XIP function) qspi-function! ;
+
+
+( GPIO_HI_x registers have the following layout:
+
+  IO3     IO2   IO1  IO0  CS#  CLK   [QSPI]
+  RESET#  WP#   SO   SI   CS#  CLK   [SPI]
+
+  SI is slave or serial in; host writes data on this pin.
+  SO is slave or serial out; host reads data from this pin.
+
+  "#" means active low.
+)
+
+
+-- --------------------------------------------------------------------
+-- SPI building blocks
+-- --------------------------------------------------------------------
+
+: clk/   1 SIO_GPIO_HI_OUT_SET ! ;
+: clk\   1 SIO_GPIO_HI_OUT_CLR ! ;
+
+: clk/\  clk/  clk\ ;  ( do one clock cycle)
+
+( Asserting CS has a funny name because most of the time - but not always!
+  - we want to send a command byte after asserting CS. We use cs\ for this.
+  The few times that we want to assert CS *without* sending a command byte
+  - like in continuous read mode, for execute-in-place [XIP] - we use _cs\
+  instead.)
+
+: _cs\  ( assert CS)     2 SIO_GPIO_HI_OUT_CLR ! ;
+:  cs/  ( de-assert CS)  2 SIO_GPIO_HI_OUT_SET ! ;
+
+( For normal SPI mode we want CS#, CLK, SI, WP#, and RESET# to be
+  outputs. Only SO is an input.)
+
+: >spi-mode
+   %1100_00 SIO_GPIO_HI_OUT_SET !  ( drive RESET# and WR# high)
+   %1101_11 SIO_GPIO_HI_OE !       ( set everything but SO/IO1 as output) ;
+
+: bit!   ( bit)  ( sample hi bit - 80 - and drive SI/IO0 with it)
+   4 ( SI/IO0)  SIO_GPIO_HI_OUT_CLR
+   rot 80 and  if  cell-  ( SET)  then  !
+   clk/\ ;
+
+: bit@   ( - bit)
+   clk/
+   SIO_GPIO_HI_IN @  8 and  ( SO/IO1)  3 u>>
+   clk\ ;
+
+( Write a byte, in 8 clocks, using SPI.)
+: >s   ( b)        8 for  dup bit!  2*  next  drop ;
+
+( Read a byte, in 8 clocks, using SPI.)
+: s>   ( - b)   0  8 for  2* bit@ +     next ;
+
+( Chip select idles *high*; clock idles *low*.)
+: init-spi
+   >qspi-sio  ( connect the QSPI pin to the SIO, not the XIP_SSI)
+   cs/  clk\
+   >spi-mode  ( set up output enables for normal SPI) ;
+
+
+( XXX I want to break out the core SPI commands into a common file that I
+  can load. Much of the code here was cribbed from RISC-V SPI flash code;
+  repeating myself here makes me uncomfortable. ;-)
+
+: lohi>  ( lo hi - h)   8 << or ;
+: >hilo  ( h - hi lo)   dup 8 u>>  swap 0ff and ;
+
+: hilo>  ( hi lo - h)   swap  lohi> ;
+: >lohi  ( h - lo hi)        >hilo  swap ;
+
+: >addr  ( a)  >lohi >lohi  >s >s >s ;
+: r4     ( - w)  s> s> s> s>  lohi> lohi> lohi> ;
+
+: cs\   ( cmd)  ( assert CS, send command byte)  _cs\  >s ;
+: cmd   ( cmd)   cs\  cs/ ;  ( send a single-byte command with no parameters)
+
+
+-- --------------------------------------------------------------------
+-- SPI commands
+-- --------------------------------------------------------------------
+
+: wrdi   04 cmd ;            ( Write disable)
+: rdsr   05 cs\  s>  cs/ ;   ( Read status register)
+: rdsr2  35 cs\  s>  cs/ ;   ( Read status register 2)
+: rdsr3  15 cs\  s>  cs/ ;   ( Read status register 3)
+: wren   06 cmd ;            ( Write enable)
+
+: read4   ( addr - w)             03 cs\  >addr  r4           cs/ ;
+: read16  ( addr - w0 w1 w2 w3)   03 cs\  >addr  r4 r4 r4 r4  cs/ ;
+
+: -busy  ( wait until busy flag is clear)
+   begin  rdsr  1 and  0= until ;
+
+: erase  ( a)  ( 4k sector erase)
+        20 cs\  >addr  cs/  -busy ;
+
+( For many chips, command 02 programs only a single byte. SST/Microchip
+  25-series flash is in this category. The ISSI chip on the HiFive1 board
+  can do *page* programming of up to 256 bytes at a time. This makes our
+  job much easier!)
+
+: prog  ( buf a u)
+        02 cs\  swap >addr  for  c@+ swap  >s  next  drop  cs/  -busy ;
+
+: reset-chip  66 cs\  99 >s  cs/ ;
+: jedec       9f cs\  s> s> hilo>  s> hilo>  cs/ ;
+
+
+-- --------------------------------------------------------------------
+-- QSPI building blocks
+-- --------------------------------------------------------------------
+
+( Mask that represents IO0 to IO3.)
+%1111_00 constant qio-mask  ( we'll need this a bunch of times)
+
+: nyb!   ( x0)  ( write high nybble)
+   0f0 and  2 u>>  dup
+                 SIO_GPIO_HI_OUT_SET !  ( set the one bits)
+   qio-mask xor  SIO_GPIO_HI_OUT_CLR !  ( clear the zero bits)
+   clk/\ ;
+
+: nyb@   ( - 0x)
+   clk/
+   SIO_GPIO_HI_IN @  qio-mask and  2 u>>
+   clk\ ;
+
+( Write a byte, in 2 clocks, using QSPI.)
+: >q   ( b)   dup nyb!  4 <<  nyb! ;
+
+( Read a byte, in 2 clocks, using QSPI.)
+: q>   ( - b)     nyb@  4 <<  nyb@  + ;
+
+( For QSPI mode we need to switch IO0 to IO3 between writing and reading.
+  We do this after the first nybble that contains the mode bits, so the dummy
+  bytes will be hi-Z.)
+
+: qwr   qio-mask SIO_GPIO_HI_OE_SET ! ;  ( IO0-IO3 as outputs)
+: qrd   qio-mask SIO_GPIO_HI_OE_CLR ! ;  ( IO0-IO3 as inputs)
+
+( Create n dummy cycles.)
+: dummy    ( n)  for  clk/\  next ;
+
+
+-- --------------------------------------------------------------------
+-- QSPI commands
+-- --------------------------------------------------------------------
+
+( Specific to the Winbond flash chip on the Pico. After the 6 address
+  nybbles we write *one* mode nybble followed by *five* dummy cycles.)
+
+: >qaddr   ( addr mode)
+   swap  >lohi >lohi  qwr  >q >q >q  nyb! ( mode)  qrd  5 dummy ;
+
+: qr4      ( - w)  q> q> q> q>  lohi> lohi> lohi> ;
+: qread4   ( addr - w)             0eb cs\  0f0 >qaddr  qr4              cs/  >spi-mode ;
+: qread16  ( addr - w0 w1 w2 w3)   0eb cs\  0f0 >qaddr  qr4 qr4 qr4 qr4  cs/  >spi-mode ;
+
+( xip-start and xread16 send the "continuous read" mode bits.)
+: xip-start  ( addr - w)           0eb cs\  0a0 >qaddr  qr4              cs/ ;
+: xip-end    ( addr - w)              _cs\  0f0 >qaddr  qr4              cs/  >spi-mode ;
+
+( Do a continuous mode read. Don't send a read command, just the address
+  and mode bits. Then read 16 bytes back.)
+
+: xread16    ( addr - w0 w1 w2 w3)    _cs\  0a0 >qaddr  qr4 qr4 qr4 qr4  cs/ ;
