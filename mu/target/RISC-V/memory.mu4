@@ -16,7 +16,9 @@ loading RISC-V memory image
 ( Memory images are prefixed by their current pointer, origin, and size in
   bytes.)
 
-variable h  ( dictionary pointer pointer; points to current image)
+variable h    ( dictionary pointer pointer; points to current image)
+: dp   h @ ;  ( dictionary pointer)
+
 : make-image  ( origin #bytes)
    dup power-of-two?  0= if  error" image size not a power of 2"  then
    create  swap  dup , , ( ptr origin)  dup , ( size)   allot
@@ -27,17 +29,16 @@ variable h  ( dictionary pointer pointer; points to current image)
 @ram    #ram  make-image  ram
 
 ( Simple but inefficient!)
-: @image  h @  cell+ @         ( origin) ;
-: #image  h @  cell+ cell+ @   ( image size) ;
-: 'image  h @  [ 3 cells #] +  ( image address) ;
+: @image  dp  cell+ @         ( origin) ;
+: #image  dp  cell+ cell+ @   ( image size) ;
+: 'image  dp  [ 3 cells #] +  ( image address) ;
 
 : target>image  ( target)  ( find an image based on target addr)
    @ram  [ @ram #ram + #]  within  if  ram ^  then  flash ;
 
-: wrap   #image 1-  and ;
 : image+  ( target - host)
    h preserve
-   dup target>image  @image -  wrap  'image + ;
+   dup target>image  #image 1- and  'image + ;
 
 ( DEBUG: Define show-comma to show code as it's compiled.)
 .ifdef show-comma
@@ -88,9 +89,9 @@ meta
 : cell+  \m cell + ;
 : cell-  \m cell - ;
 
-: here   ( - a)  h @ @ ;
-: goto   ( a)    h @ ! ;   ( set region pointer to a)
-: allot  ( n)    h @ +! ;
+: here   ( - a)  dp @ ;
+: goto   ( a)    dp ! ;   ( set region pointer to a)
+: allot  ( n)    dp +! ;
 
 : c,    ( ch)   .debug-comma  \m here image-c!       1 \m allot ;
 : h,    ( h)    ( \m halign)  \m here image-h!       2 \m allot ;
@@ -106,9 +107,11 @@ meta
 : align,    ( b)  3 mask-align, ;
 
 forth
+: region!  ( origin ptr)    dp 2!  ( set pointer and origin) ;
+: region@  ( - origin ptr)  dp 2@  ( get pointer and origin) ;
+
 ( return the origin & number of bytes in current region)
-: region   ( - a u)         h @  2@  ( origin ptr)  over - ;
-: region!  ( a)        dup  h @  2!  ( set origin and ptr) ;
+: region   ( - a u)  region@  ( origin ptr)  over - ;
 
 ( Initialization.)
 : wipe   'image  #image  ( erase)   "ff  fill
