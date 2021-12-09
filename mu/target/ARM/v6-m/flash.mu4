@@ -132,28 +132,36 @@ variable noisy-verify?  ( Whether to print differences.)
    /chunk @  /mod  ( r q)  swap push  for  /chunk @  read-chunk  next
                                     pop  =if  ( rem) read-chunk  drop ^  then  2drop ;
 
-( target address can be anything in the flash region; ie, below 2000_0000.
-  We remap this to look like it starts from @flash so that save-image will
-  work properly.)
+( If last 16 bytes contain "muforth@" followed by a starting target
+  address, use that address rather than @flash.)
 
-: set-flash-end   ( len flash-start - len)
-   dup region!  over + \m goto ;
+: image-origin  ( a u - a u start)
+   2dup +  cell- cell-  @+ @ swap
+   [ token muforth@ drop @ #] = if
+      ( valid signature) [ -2 cells #] u+ ^ then
+   drop  @flash ( default to @flash) ;
 
-( Read image from target.)
+( Read image from target. Leaves user in ram or flash depending on target
+  address.)
+
 : read-image  ( target len)
-   h preserve  flash
-   over  #image 1- and  @flash +  ( remap to @flash)
-   set-flash-end  read-region ;
+   2dup read-region  over target>image  over + region! ;
 
-( Load image from a file.)
+( Load image from a file. Leaves user in ram or flash depending on image
+  start address. If image does not contain a start address, leaves user in
+  flash.)
+
 : load-image
    token, open-file-ro  ( fd)  dup read-file  ( a u)  rot close-file
-   h preserve  flash
-   @flash  set-flash-end  ( len)
-   @flash  image+ swap cmove ;
+   image-origin  dup target>image
+   2dup swap over +  ( start end)  region!
+   ( a u start) image+ swap  cmove ;
 
-( Save image to a file.)
+( Save image to a file. Saves the current region! To make sure you are
+  saving the flash region, do "flash save-image <name>".)
+
 : save-image
-   token, create-file  ( fd)  dup
-   h preserve  flash region  swap image+ swap  write
-   close-file ;
+   token, create-file  ( fd)  push
+   r@  region  swap image+ swap  write
+   r@ " muforth@" write  r@ dp cell+ ( 'origin) cell write ( start)
+   pop close-file ;
