@@ -14,8 +14,8 @@ loading RISC-V serial chat protocol (core)
 11  set address - set the memory address pointer
 12  read words  - read N words, incrementing by 4 as we go
 13  write word  - write a word to memory, incr pointer by 4
-14  get sp      - get sp
-15  run         - set pc and sp and execute
+14  get status  - get sp
+15  run         - set sp and pc and execute
 
 16 - ff  idle   - these command bytes are ignored
 )
@@ -41,6 +41,11 @@ assembler
 
 : pop2  ( r2 r1)          asm{  0 sp rot ( r1) lw
                              cell sp rot ( r2) lw   2 cells sp sp addi  } ;
+
+: rpush2  ( r2 r1)        asm{  -2 cells rp rp addi   0 rp rot ( r1) sw
+                                                   cell rp rot ( r2) sw  } ;
+: rpop2   ( r2 r1)        asm{  0 rp rot ( r1) lw
+                             cell rp rot ( r2) lw   2 cells rp rp addi  } ;
 forth
 
 __meta
@@ -49,10 +54,10 @@ __meta
 ( lr should be something outside of C reg set; we are using standard ABI
   "alternate link register" x5/t0.)
 label nest
-   s0 ra push2   0 t0 jr  ;c
+   s2 ra rpush2   0 t0 jr  ;c
 
 label unnest
-   s0 ra pop2    0 t0 jr  ;c
+   s2 ra rpop2    0 t0 jr  ;c
 
 label exit
    unnest t0 jal   0 ra jr  ;c
@@ -70,32 +75,230 @@ forth
 
 __meta
 
+.equates. .contains uart0.rxdata  .if
+
+( Support words for SiFive HiFive1.)
+
 label drain
-   uart0.rxdata >ui a1 lui
-   begin   uart0.rxdata >li a1 a0 lw   a0 0< until
+   uart0.rxdata a1 lui
+   begin   uart0.rxdata a1 a0 lw   a0 0< until
    ret  ;c
 
 label b>  ( - b)
-   uart0.rxdata >ui a1 lui
-   begin   uart0.rxdata >li a1 a0 lw   a0 0>= until
+   uart0.rxdata a1 lui
+   begin   uart0.rxdata a1 a0 lw   a0 0>= until
    "0ff a0 a0 andi   ret  ;c
 
 label >b  ( b)
-   uart0.txdata >ui a1 lui
-   begin   uart0.txdata >li a1 a2 lw   a2 0>= until
-   uart0.txdata >li a1 a0 sw   ret  ;c
+   uart0.txdata a1 lui
+   begin   uart0.txdata a1 a2 lw   a2 0>= until
+   uart0.txdata a1 a0 sw   ret  ;c
+
+label uart-init
+   uart0.txdata a1 lui  ( get address of UART0 block)
+   1 a0 li   uart0.txctrl a1 a0 sw  ( set txen)
+             uart0.rxctrl a1 a0 sw  ( set rxen)
+   #16,000,000 2* #115200 / 1+ 2/ 1-  ( divisor) a0 li   uart0.div a1 a0 sw
+
+   ( Set GPIO IOF bits to allow UART to talk to pins. UART0 is pins 16 & 17.)
+   gpio.iof_en a1 lui
+   gpio.iof_en a1 a2 addi  ( full address)
+      0003_0000 a0 lui   ( mask with bits 16 and 17 set)
+      a2 a0 x0 amoor.w   ( addr src dest)
+   gpio.iof_sel a1 a2 addi  ( full address)
+      a0 a0 not          ( mask with bits 16 and 17 clear)
+      a2 a0 x0 amoand.w  ( addr src dest)
+   ret  ;c
+
+label >hfxosc
+   hfxosccfg a1 lui
+   hfxosccfg a1 a2 addi  ( full address)
+      4000_0000 a0 lui  ( enable)
+      begin   a2 a0 a3 amoswap.w   a3 0< until  ( until ready bit)
+   pllcfg a1 a2 addi  ( full address)
+      0007_0000 a0 lui  ( pllbypass+pllrefsel+pllsel)
+      a2 a0 x0 amoor.w
+   ret  ;c
+
+( At reset the SPI interface that reads the flash is set to run at 1/8 of
+  the cpu/bus clock speed. The formula is f/2*[div+1], where f is the
+  CPU/bus clock speed, and div is the value stored in the spi0.sckdiv
+  register. At reset sckdiv is set to 3.
+
+  We are planning to run at 16 MHz. It would be nice to run the SPI also at
+  16 MHz but the minimum divisor we can get is 2, by setting div to zero.)
+
+label set-spi-speed
+   0 a0 li   spi0.sckdiv dup a1 lui   a1 a0 sw   ret  ;c
+
+label chip-init
+   {{  uart-init c
+       >hfxosc c
+       set-spi-speed c  }}
+       drain j  ;c
+
+.then  ( SiFive HiFive1 support)
+
+
+.equates. .contains USART1_SR  .if
+
+( Support words for GigaDevice GD32VF103.)
+
+( NOTE: On GD32VF103, USART and GPIO registers are *word* access only!)
+
+label ?status  ( bit in a0)
+   USART1_SR a1 lui
+   begin   USART1_SR a1 a3 lw   a0 a3 a3 and   a3 0!= until
+   ret  ;c
+
+label b>  ( - b)
+   {{             1 #5 << ( RXNE bit) a0 li   ?status c
+       USART1_DR a1 a0 lw ( read data byte)  }};
+
+label >b  ( b)
+   {{  a0 s2 mv   1 #7 << ( TXE bit) a0 li    ?status c
+       USART1_DR a1 s2 sw ( write data byte)  }};
+
+label clock-init
+   RCC_CR a1 lui   RCC_CFGR a1 x0 sb  ( request HSI as sysclk)
+   begin   RCC_CFGR a1 a0 lbu   a0 0= until
+   1 a0 li  ( HSEON, PLLOFF)   RCC_CR 2 + a1 a0 sh
+   2 a0 li  ( HSERDY)
+   begin   RCC_CR 2 + a1 a2 lhu   a0 a2 a2 and   a2 a0 = until  ( PLLRDY=0, HSERDY=1)
+   RCC_CFGR2 a1 x0 sw  ( clear all bits)
+   0051_0400 a0 la  ( USBPRE=/1; PLLMUL=6; PLLSRC=HSE; APB1=PCLK/2)
+   RCC_CFGR a1 a0 sw
+   1 a0 li  ( PLLON)   RCC_CR 3 + a1 a0 sb
+   2 a0 li  ( PLLRDY)
+   begin   RCC_CR 3 + a1 a2 lbu   a0 a2 a2 and   a2 0!= until  ( PLLRDY=1)
+   %1010 a0 li ( request PLL as sysclk)   RCC_CFGR a1 a0 sb
+   begin   RCC_CFGR a1 a2 lbu   a0 a2 = until
+
+   ( Enable clocks for USART1, GPIOA, and GPIOC.)
+   1 #14 << ( USART1)
+   1 4 << ( GPIOC) +  ( need this for LEDs; might as well do it here)
+   1 2 << ( GPIOA) +  a0 la   RCC_APB2ENR a1 a0 sw
+   ret  ;c
+
+( On older chips - eg F103/F105 - and on the new GigaDevice GD32VF103! -
+  the GPIO configuration is somewhat different.
+
+  GPIOx_CRL and _CRH have 4 bits per GPIO pin: CNF<2>:MODE<2>
+
+  Here are the tables of their meanings:
+
+  MODE  Meaning
+   00   Input
+   01   Output; Maximum speed 10 MHz
+   10   Output; Maximum speed 2 MHz
+   11   Output; Maximum speed 50 MHz
+
+  If MODE = 00:
+  CNF   Meaning
+   00   Analog
+   01   Input floating
+   10   Input pull-up / pull-down
+   11   Reserved
+
+  If MODE != 00:
+  CNF   Meaning
+   00   Output, general purpose, push-pull
+   01   Output, general purpose, open-drain
+   10   Output, alternate function, push-pull
+   11   Output, alternate function, open-drain
+
+  If MODE = 00 and CNF = 10, the GPIOx_ODR bit corresponding to the pin
+  determines the direction of the pull-up/-down:
+
+  ODR
+   0   pull-down
+   1   pull-up
+)
+
+__host
+
+( CNF bits, MODE=0)
+0 equ gpio-in-analog
+4 equ gpio-in-floating
+8 equ gpio-in-pulled
+
+( CNF bits, MODE=1,2,3)
+4 equ gpio-open-drain
+8 equ gpio-alternate-function
+
+( MODE bits.)
+( XXX default to 10M? Add 1 for -slow and 2 for -fast?)
+1 equ gpio-out-10m
+2 equ gpio-out-2m
+3 equ gpio-out-50m
+
+__meta
+
+label ports-init
+   ( Set up ports needed for USART1 and LEDs. PA9 is TX; PA10 is RX.
+     PC13 is Red; PA1 is Green; PA2 is Blue.)
+
+   GPIOC_CRL a1 lui  ( base addr)
+   gpio-out-10m a0 li   a0 #20 a0 slli  ( PC13: output, push-pull, 10M, gpio)
+   GPIOC_CRH a1 a0 sw
+   1 #13 << a0 lui   GPIOC_BSRR a1 a0 sw  ( turn off PC13: set to 1)
+
+   GPIOA_CRL a1 lui  ( base addr)
+   ( PA2, PA1: output, push-pull, 10M, gpio)
+   gpio-out-10m 11 * ( duplicate!!) a0 li   a0 4 a0 slli
+   GPIOA_CRL a1 a0 sw
+   6 a0 li   GPIOA_BSRR a1 a0 sw  ( turn off PA1 and PA2: set to 1)
+
+   gpio-out-2m gpio-alternate-function +  ( PA9: output, push-pull, 2M, alt fn)
+   gpio-in-pulled 4 << +  ( PA10)  a0 li   a0 4 a0 slli
+   GPIOA_CRH a1 a0 sw
+   1 #10 << a0 li   GPIOA_BSRR a1 a0 sw  ( PA10: pulled up)
+   ret  ;c
+
+( Set baud rate, turn on rx and tx, and finally, enable the USART.)
+label uart-init
+   USART1_SR a1 lui  ( base addr)
+   USART1_CR1 a1 x0 sw  ( reset and disable USART)
+   %1100 ( TE+RE) a0 li  ( enable tx and rx)   USART1_CR1 a1 a0 sw
+   #48,000,000 #115,200 / a2 li   USART1_BRR a1 a2 sw
+   1 #13 << ( UE) a2 lui  ( enable USART)
+   a2 a0 a0 add  ( UE+TE+RE)   USART1_CR1 a1 a0 sw
+   ret  ;c
+
+label delay
+   10_0000 t0 lui   begin   -1 t0 t0 addi   t0 0= until   ret  ;c
+
+label flash-leds  {{
+   GPIOC_CRL a1 lui  ( base addr)
+   1 #13 << a0 lui  ( PC13 - Red LED)
+   GPIOC_BRR  a1 a0 sw  ( on)   delay c
+   GPIOC_BSRR a1 a0 sw  ( off)
+
+   GPIOA_CRL a1 lui  ( base addr)
+   2 a0 li  ( PA1 - Green LED)
+   GPIOA_BRR  a1 a0 sw  ( on)   delay c
+   GPIOA_BSRR a1 a0 sw  ( off)
+   4 a0 li  ( PA2 - Blue LED)
+   GPIOA_BRR  a1 a0 sw  ( on)   delay c
+   GPIOA_BSRR a1 a0 sw  ( off)  }};
+
+label chip-init
+   {{  clock-init c   ports-init c   uart-init c  }}  flash-leds j  ;c
+
+.then  ( GD32VF103 support)
+
 
 label w>
-   {{  b> c                       a0 s0 mv
-       b> c   a0  #8 a0 slli   a0 s0 s0 add
-       b> c   a0 #16 a0 slli   a0 s0 s0 add
-       b> c   a0 #24 a0 slli   s0 a0 a0 add  }};
+   {{  b> c                       a0 s2 mv
+       b> c   a0  #8 a0 slli   a0 s2 s2 add
+       b> c   a0 #16 a0 slli   a0 s2 s2 add
+       b> c   a0 #24 a0 slli   s2 a0 a0 add  }};
 
 label >w
-   {{      a0 s0 mv        >b c
-       s0  #8 a0 srli      >b c
-       s0 #16 a0 srli      >b c
-       s0 #24 a0 srli  }}  >b j  ;c
+   {{      a0 s2 mv        >b c
+       s2  #8 a0 srli      >b c
+       s2 #16 a0 srli      >b c
+       s2 #24 a0 srli  }}  >b j  ;c
 
 ( Compile the first 32 bits of the current muforth Git commit. When called,
   send the commit and our PC so the host can tell if we are running from
@@ -103,16 +306,16 @@ label >w
 
 label version
    {{  muforth-commit drop 8 evaluate
-       dup >ui a0 lui   >li a0 a0 addi       >w c
-                             0 a0 auipc  }}  >w j  ;c
+            a0 la               >w c
+       here a0 auipc  drop  }}  >w j  ;c
 
 label set-address
    {{  w> c   a0 s1 mv  }};
 
 label read-words
-   {{  b> c ( count)  a0 0!= if   a0 s0 mv
+   {{  b> c ( count)  a0 0!= if   a0 s2 mv
        begin    0 s1 a0 lw   cell s1 s1 addi   >w c
-               -1 s0 s0 addi   s0 0= until
+               -1 s2 s2 addi   s2 0= until
        then
    }};
 
@@ -120,11 +323,34 @@ label write-word
    {{  w> c   0 s1 a0 sw   cell s1 s1 addi  }};
 
 label get-status
-   {{  tp a0 mv                           >w c
-       @ram #ram + s0 lui
-       -4 s0 a0 lw  ( saved mcause)       >w c
-       0 a0 li   -4 s0 a0 sw  ( zero mcause)
-       -8 s0 a0 lw  ( saved mepc)     }}  >w j  ;c
+   sp a0 mv   >w j  ;c
+
+label run
+   {{  w> c  ( sp)   a0 s1 mv   w> c  ( pc)  }}
+   fence.i   s1 sp mv   0 a0 jr  ;c
+
+( XXX Should this be a table of relative pointers instead?)
+label cmd-table
+   ( 10) version j
+   ( 11) set-address j
+   ( 12) read-words j
+   ( 13) write-word j
+   ( 14) get-status j
+   ( 15) run j
+;c
+
+label dispatch
+   -10 a0 a0 addi  ( 00 to 0f become large unsigned numbers)
+   dispatch cmd-table - cell/ ( #cmds) a1 li   a0 a1 u< if
+      a0 2 a0 slli  ( word index)
+      cmd-table a1 auipc   a1 a0 a0 add   ( offset) a0 jr
+   then  ret  ;c
+
+( Even though chat-entry makes calls, it never returns to *its* caller, so
+  it doesn't bother to save its return address.)
+
+label chat-entry
+   begin   b> c ( cmd)   dispatch c   again  ;c
 
 ( XXX Right now exceptions are handled a bit oddly, and this probably needs
   to change. Returning from Forth code, in bug [in kernel-itc.mu4] a bunch
@@ -142,82 +368,6 @@ label get-status
   the stack - and when we go to execute code, we pop the "interesting" regs
   and mret.)
 
-.ifdef chatting-in-exception-context
-
-( We don't return, so we don't bother to save our ra.)
-label run
-   w> c  ( pc)   a0 mepc csrw
-   w> c  ( sp)   a0   tp mv   mret  ;c
-
-.else
-
-( We don't return, so we don't bother to save our ra.)
-label run
-   w> c  ( pc)  a0 s0 mv
-   w> c  ( sp)  a0 tp mv   fence.i   0 s0 jr  ;c
-
-.then
-
-label cmd-table
-   ( 10) version j
-   ( 11) set-address j
-   ( 12) read-words j
-   ( 13) write-word j
-   ( 14) get-status j
-   ( 15) run j
-;c
-
-label dispatch
-   -10 a0 a0 addi  ( 00 to 0f become large unsigned numbers)
-   dispatch cmd-table - cell/ ( #cmds) a1 li   a0 a1 u< if
-.ifdef use-compressed
-      a0 a0 a0 add  ( halfword index)
-.else
-      a0 2 a0 slli  ( word index)
-.then
-      here   0 a1 auipc   a1 a0 a0 add   cmd-table swap - a0 jr
-   then  ret  ;c
-
-label chat-entry
-   begin   b> c ( cmd)   dispatch c   again  ;c
-
-label uart-init
-   uart0.txdata >ui a1 lui  ( get address of UART0 block)
-   1 a0 li   uart0.txctrl >li a1 a0 sw  ( set txen)
-             uart0.rxctrl >li a1 a0 sw  ( set rxen)
-   #16,000,000 2* #115200 / 1+ 2/ 1-  ( divisor) a0 li   uart0.div >li a1 a0 sw
-
-   ( Set GPIO IOF bits to allow UART to talk to pins. UART0 is pins 16 & 17.)
-   gpio.iof_en >ui a1 lui
-   gpio.iof_en >li a1 a2 addi  ( full address)
-      0003_0000 a0 lui   ( mask with bits 16 and 17 set)
-      a2 a0 x0 amoor.w   ( addr src dest)
-   gpio.iof_sel >li a1 a2 addi  ( full address)
-      a0 a0 not          ( mask with bits 16 and 17 clear)
-      a2 a0 x0 amoand.w  ( addr src dest)
-   ret  ;c
-
-label >hfxosc
-   hfxosccfg >ui a1 lui
-   hfxosccfg >li a1 a2 addi  ( full address)
-      4000_0000 a0 lui  ( enable)
-      begin   a2 a0 a3 amoswap.w   a3 0< until  ( until ready bit)
-   pllcfg >li a1 a2 addi  ( full address)
-      0007_0000 a0 lui  ( pllbypass+pllrefsel+pllsel)
-      a2 a0 x0 amoor.w
-   ret  ;c
-
-( At reset the SPI interface that reads the flash is set to run at 1/8 of
-  the cpu/bus clock speed. The formula is f/2*[div+1], where f is the
-  CPU/bus clock speed, and div is the value stored in the spi0.sckdiv
-  register. At reset sckdiv is set to 3.
-
-  We are planning to run at 16 MHz. It would be nice to run the SPI also at
-  16 MHz but the minimum divisor we can get is 2, by setting div to zero.)
-
-label set-spi-speed
-   0 a0 li   spi0.sckdiv dup >ui a1 lui   >li a1 a0 sw   ret  ;c
-
 label interrupt
    ( ignore interrupts for now)
    ( fall thru)  ;c
@@ -225,58 +375,45 @@ label interrupt
 label exception-exit
    a1 a0 pop2   mret  ;c
 
+( Nuclei core seems to require 64-byte alignment, even for mtvec!)
+.equates. .contains USART1_SR ( proxy for GD32VF device) .if
+   -- here  1 #6 << align-by  goto
+.then
+
 label exception-entry
    a1 a0 push2
    mcause a0 csrr   interrupt  a0 0>= until  ( branch back if interrupt)
    ( exception, not interrupt)
-   @ram #ram + a1 lui   -4 a1 a0 sw  ( save mcause)
-   chat-entry  here -
-      dup >ui a0 auipc   >li a0 a0 addi
-   mepc a0 a0 csrrw  -8 a1 a0 sw   ( swap chat-entry with mepc)
+   rp0 a1 la   4 a1 a0 sw  ( save mcause)
+   chat-entry  a0 auipc   ( offset) a0 a0 addi
+   mepc a0 a0 csrrw  0 a1 a0 sw   ( swap chat-entry with mepc)
    exception-exit j  ;c
 
 label do-reset   hooks reset-entry
-   @ram #ram + sp lui
-   0 a0 li   -8 sp sp addi   0 sp a0 sw   4 sp a0 sw  ( slots to save mcause and mepc)
-   exception-entry  here -
-      dup >ui a0 auipc   >li a0 a0 addi   a0 mtvec csrw
-   uart-init c
-   >hfxosc c
-   set-spi-speed c
-   drain c
+   8 ( MIE) mstatus csrci  ( disable interrupts)
+   rp0 rp la   0 rp x0 sw   4 rp x0 sw  ( slots to save mcause and mepc)
+   sp0 sp la
+   exception-entry  a0 auipc   ( offset) a0 a0 addi   a0 mtvec csrw
+   chip-init c
    chat-entry j  ;c
 
-{ h @ }  ram
-
-( Support for programming the SPI flash. We only compile these words when
-  in-ram is defined. We can't run this code while executing chat from
-  flash, because the memory-mapped mode of the SPI controller has been
-  switched off.)
-
-( Room for opcode, 3 address bytes, and 256 bytes of data.)
-label spi-buf   104 allot
-
-label >spi-prog-io
-label >spi-mem-mapped
-label cs\
-label cs/
-label spi-packet
-
-
-label exec
-   0 tp a0 lw   0 a0 ra jalr   0 tp a0 sw   ebreak  ;c
+{ h @ } ram
+label execute-assembly
+   8 ( MIE) mstatus csrci  ( disable interrupts)
+   t0 rp pop2   0 t0 jr  ;c
 
 { h ! }
 
 __host
 
-variable ta0
-: rx   ( 'code)  stack>  \m exec runwait  stack<  ta0 !  .regs ;
+( Optionally print registers pushed by execute-assembly.)
+: .rxregs ;
 
--:
-   cr  ."       A0        SP    mcause      mepc"
-       (  00000000  00000000  00000000  00000000 )
-   cr      ta0 .tr   tsp .tr  tmcause .tr  tmepc .tr ;
-   is .regs
+( For quick and dirty execution of remote assembly code.)
+: rx  ( x0 .. xn 'code rp - y0 .. yn <regs>)
+   ?chat  \m rp0
+   stack>  \m execute-assembly runwait  stack<  .rxregs ;
+
+eabi-regs
 
 __meta
