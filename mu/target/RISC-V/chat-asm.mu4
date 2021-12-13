@@ -42,8 +42,11 @@ assembler
 : pop2  ( r2 r1)          asm{  0 sp rot ( r1) lw
                              cell sp rot ( r2) lw   2 cells sp sp addi  } ;
 
+: rpush1  ( r1)           asm{  -1 cells rp rp addi   0 rp rot ( r1) sw  } ;
 : rpush2  ( r2 r1)        asm{  -2 cells rp rp addi   0 rp rot ( r1) sw
                                                    cell rp rot ( r2) sw  } ;
+
+: rpop1   ( r1)           asm{  0 rp rot ( r1) lw      cell rp rp addi  } ;
 : rpop2   ( r2 r1)        asm{  0 rp rot ( r1) lw
                              cell rp rot ( r2) lw   2 cells rp rp addi  } ;
 forth
@@ -78,11 +81,6 @@ __meta
 .equates. .contains uart0.rxdata  .if
 
 ( Support words for SiFive HiFive1.)
-
-label drain
-   uart0.rxdata a1 lui
-   begin   uart0.rxdata a1 a0 lw   a0 0< until
-   ret  ;c
 
 label b>  ( - b)
    uart0.rxdata a1 lui
@@ -129,13 +127,52 @@ label >hfxosc
   16 MHz but the minimum divisor we can get is 2, by setting div to zero.)
 
 label set-spi-speed
-   0 a0 li   spi0.sckdiv dup a1 lui   a1 a0 sw   ret  ;c
+   spi0.sckdiv dup a1 lui   a1 x0 sw   ret  ;c
+
+( GPIO pins connected to RGB led. These are active low, so we *set* the
+  gpio.out_xor bits for these pins.)
+
+1 #22 << equ red
+1 #19 << equ green
+1 #21 << equ blue
+red green      +   equ yellow   ( aka -blue)
+red       blue +   equ magenta  ( aka -green)
+    green blue +   equ cyan     ( aka -red)
+
+label led-init
+   gpio.iof_en a1 lui  ( base addr)
+   red green blue + + a0 lui  ( bit set mask)
+   gpio.output_en a1 a2 addi  ( full address)
+      a2 a0 x0 amoor.w
+   gpio.out_xor a1 a2 addi  ( full address)
+      a2 a0 x0 amoor.w   ( we want the port bits to be 1 for on)
+   a0 a0 not  ( bit clear mask)
+   gpio.iof_en a1 a2 addi  ( full address)
+      a2 a0 x0 amoand.w  ( bits belong to the pins)
+   gpio.port a1 a2 addi  ( full address)
+      a2 a0 x0 amoand.w  ( turn LEDs off)
+   ret  ;c
+
+label 2delay
+   10_0000 t0 lui   begin begin   -1 t0 t0 addi   t0 0= until   ret  ;c
+
+label delay
+    8_0000 t0 lui   again  ;c
+
+( a0 has bits to set/reset; a1 has port address.)
+label blink
+   a1 a0 x0 amoor.w   ( on)   {{  delay c  }}  a0 a0 not
+   a1 a0 x0 amoand.w  ( off)     2delay j  ;c
+
+label blink-leds
+   {{ gpio.port a1 la  ( full address)
+      cyan a0 lui   blink c
+      magenta a0 lui   blink c
+      yellow a0 lui  }}  blink j  ;c
 
 label chip-init
-   {{  uart-init c
-       >hfxosc c
-       set-spi-speed c  }}
-       drain j  ;c
+   {{  >hfxosc c   uart-init c   set-spi-speed c   led-init c  }}
+        blink-leds j  ;c
 
 .then  ( SiFive HiFive1 support)
 
@@ -227,7 +264,6 @@ __host
 8 equ gpio-alternate-function
 
 ( MODE bits.)
-( XXX default to 10M? Add 1 for -slow and 2 for -fast?)
 1 equ gpio-out-10m
 2 equ gpio-out-2m
 3 equ gpio-out-50m
@@ -265,25 +301,26 @@ label uart-init
    a2 a0 a0 add  ( UE+TE+RE)   USART1_CR1 a1 a0 sw
    ret  ;c
 
+label 2delay
+   10_0000 t0 lui   begin begin   -1 t0 t0 addi   t0 0= until   ret  ;c
+
 label delay
-   10_0000 t0 lui   begin   -1 t0 t0 addi   t0 0= until   ret  ;c
+    8_0000 t0 lui   again  ;c
 
-label flash-leds  {{
-   GPIOC_CRL a1 lui  ( base addr)
-   1 #13 << a0 lui  ( PC13 - Red LED)
-   GPIOC_BRR  a1 a0 sw  ( on)   delay c
-   GPIOC_BSRR a1 a0 sw  ( off)
+( a0 has bits to set/reset; a1 has address of GPIOx_BRR.)
+label blink   0 ( GPIOx_BRR) a1 a0 sw  ( on)   {{  delay c  }}
+      GPIOA_BSRR GPIOA_BRR - a1 a0 sw  ( off)     2delay j  ;c
 
-   GPIOA_CRL a1 lui  ( base addr)
-   2 a0 li  ( PA1 - Green LED)
-   GPIOA_BRR  a1 a0 sw  ( on)   delay c
-   GPIOA_BSRR a1 a0 sw  ( off)
-   4 a0 li  ( PA2 - Blue LED)
-   GPIOA_BRR  a1 a0 sw  ( on)   delay c
-   GPIOA_BSRR a1 a0 sw  ( off)  }};
+label blink-leds  {{
+   GPIOC_BRR a1 la  ( full address)
+   1 #13 << ( PC13: Red LED) a0 lui   blink c
+
+   GPIOA_BRR a1 la  ( full address)
+   2 ( PA1: Green LED)  a0 li      blink c
+   4 ( PA2: Blue LED)   a0 li  }}  blink j  ;c
 
 label chip-init
-   {{  clock-init c   ports-init c   uart-init c  }}  flash-leds j  ;c
+   {{  clock-init c   ports-init c   uart-init c  }}  blink-leds j  ;c
 
 .then  ( GD32VF103 support)
 
@@ -326,8 +363,7 @@ label get-status
    sp a0 mv   >w j  ;c
 
 label run
-   {{  w> c  ( sp)   a0 s1 mv   w> c  ( pc)  }}
-   fence.i   s1 sp mv   0 a0 jr  ;c
+   {{  w> c  ( sp)   a0 sp mv   w> c  ( pc)  }}  fence.i   0 a0 jr  ;c
 
 ( XXX Should this be a table of relative pointers instead?)
 label cmd-table
@@ -375,11 +411,6 @@ label interrupt
 label exception-exit
    a1 a0 pop2   mret  ;c
 
-( Nuclei core seems to require 64-byte alignment, even for mtvec!)
-.equates. .contains USART1_SR ( proxy for GD32VF device) .if
-   -- here  1 #6 << align-by  goto
-.then
-
 label exception-entry
    a1 a0 push2
    mcause a0 csrr   interrupt  a0 0>= until  ( branch back if interrupt)
@@ -398,22 +429,33 @@ label do-reset   hooks reset-entry
    chat-entry j  ;c
 
 { h @ } ram
+.ifdef hifive-compat
+
+label execute-assembly
+   8 ( MIE) mstatus csrci  ( disable interrupts)
+   tp sp mv
+   t0 rp pop2
+   ra rpush1   0 t0 ra jalr   ra rpop1
+   sp tp mv   ret  ;c
+
+.else
+
 label execute-assembly
    8 ( MIE) mstatus csrci  ( disable interrupts)
    t0 rp pop2   0 t0 jr  ;c
+
+.then
 
 { h ! }
 
 __host
 
 ( Optionally print registers pushed by execute-assembly.)
-: .rxregs ;
+: .rxaregs ;
 
 ( For quick and dirty execution of remote assembly code.)
-: rx  ( x0 .. xn 'code rp - y0 .. yn <regs>)
+: rxa  ( x0 .. xn 'code rp - y0 .. yn <regs>)
    ?chat  \m rp0
-   stack>  \m execute-assembly runwait  stack<  .rxregs ;
-
-eabi-regs
+   stack>  \m execute-assembly runwait  stack<  .rxaregs ;
 
 __meta
