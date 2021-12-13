@@ -32,6 +32,8 @@ be our guest, be our guest, put your morals to the test.
 
 ## Serial Targets
 
+You have to be a member of group **dialer**!
+
 Devices such as the HCS08 and the MSP430 where the host uses a PL2303 or FTDI2232H to connect to the target:
 
 ```
