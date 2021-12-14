@@ -96,7 +96,7 @@ label uart-init
    uart0.txdata a1 lui  ( get address of UART0 block)
    1 a0 li   uart0.txctrl a1 a0 sw  ( set txen)
              uart0.rxctrl a1 a0 sw  ( set rxen)
-   #16,000,000 2* #115200 / 1+ 2/ 1-  ( divisor) a0 li   uart0.div a1 a0 sw
+   #96,000,000 2* #115200 / 1+ 2/ 1-  ( divisor) a0 li   uart0.div a1 a0 sw
 
    ( Set GPIO IOF bits to allow UART to talk to pins. UART0 is pins 16 & 17.)
    gpio.iof_en a1 lui
@@ -108,26 +108,72 @@ label uart-init
       a2 a0 x0 amoand.w  ( addr src dest)
    ret  ;c
 
+( Iteration count in a0.)
+label delay   begin   -1 a0 a0 addi   a0 0= until   ret  ;c
+
+label clock-init
+   ( Turn on external 16M xtal oscillator and wait for it to start up.)
+   hfxosccfg a1 lui
+   hfxosccfg a1 a2 addi  ( full address)
+      4000_0000 a0 lui  ( enable)
+      begin   a2 a0 a3  ( addr src dest) amoswap.w   a3 0< until  ( until ready bit)
+
+   ( Get full address of pllcfg into a2. We are going to be accessing it a lot!)
+   pllcfg a1 a2 addi  ( full address)
+
+      ( When not executing out of reset, turn off pll before re-configuring.)
+.ifdef in-ram
+      1_0000 a0 lui  ( pllsel)   a0 a0 not
+      a2 a0 x0 amoand.w  ( clear pllsel bit; run from hfrclk)
+      4_0000 a0 lui  ( pllbypass)
+      a2 a0 x0 amoor.w  ( set pllbypass bit: turn off pll)
+      begin   0 a2 a0 lw   a0 0>= until  ( pll not locked)
+.then
+
+      ( Set PLL to 16M /2 *96 /8 = 96M, running the VCO at 768M.)
+      (       Q=/8  F=*96  R=/2 + pllbypass+pllrefsel)
+      %110_0000_11_101111_00_01 a0 la  ( full value)
+      0 a2 a0 sw
+
+      ( Turn on PLL by clearing pllbypass bit.)
+      4_0000 a0 lui  ( pllbypass)   a0 a0 not
+      a2 a0 x0 amoand.w  ( clear pllbypass bit: turn on pll)
+
+      ( Delay at least 100us. This count will give us a delay of at least
+        300us and probably closer to 500us.)
+      1000 a0 lui   {{  delay c  }}
+
+      ( Wait for PLL to lock.)
+      begin   0 a2 a0 lw   a0 0< until  ( plllock)
+
+      ( Finally, switch clock source to PLL.)
+      1_0000 ( pllsel) a0 lui   a2 a0 x0 amoor.w
+
+   ret  ;c
+
+.ifdef **unused**
 label >hfxosc
    hfxosccfg a1 lui
    hfxosccfg a1 a2 addi  ( full address)
       4000_0000 a0 lui  ( enable)
-      begin   a2 a0 a3 amoswap.w   a3 0< until  ( until ready bit)
+      begin   a2 a0 a3  ( addr src dest) amoswap.w   a3 0< until  ( until ready bit)
    pllcfg a1 a2 addi  ( full address)
       0007_0000 a0 lui  ( pllbypass+pllrefsel+pllsel)
-      a2 a0 x0 amoor.w
+      a2 a0 x0 amoor.w  ( addr src dest)
    ret  ;c
+.then
 
 ( At reset the SPI interface that reads the flash is set to run at 1/8 of
   the cpu/bus clock speed. The formula is f/2*[div+1], where f is the
   CPU/bus clock speed, and div is the value stored in the spi0.sckdiv
   register. At reset sckdiv is set to 3.
 
-  We are planning to run at 16 MHz. It would be nice to run the SPI also at
-  16 MHz but the minimum divisor we can get is 2, by setting div to zero.)
+  We are now running the CPU at 96MHz. To run the SPI interface at 16MHz we
+  need a divisor of 6, so div=2.)
 
 label set-spi-speed
-   spi0.sckdiv dup a1 lui   a1 x0 sw   ret  ;c
+   #96 ( cpu) #16 ( spi) / 2/ 1-  a0 li
+   spi0.sckdiv dup a1 lui   a1 a0 sw   ret  ;c
 
 ( GPIO pins connected to RGB led. These are active low, so we *set* the
   gpio.out_xor bits for these pins.)
@@ -153,16 +199,17 @@ label led-init
       a2 a0 x0 amoand.w  ( turn LEDs off)
    ret  ;c
 
-label 2delay
-   a_0000 t0 lui   begin begin   -1 t0 t0 addi   t0 0= until   ret  ;c
+label on-time
+   40_0000 a0 lui   delay j  ;c
 
-label delay
-   5_0000 t0 lui   again  ;c
+label off-time
+   20_0000 a0 lui   delay j  ;c
 
 ( a0 has bits to set/reset; a1 has port address.)
-label blink
-   a1 a0 x0 amoor.w   ( on)   {{  2delay c  }}  a0 a0 not
-   a1 a0 x0 amoand.w  ( off)       delay j  ;c
+label blink  {{
+   a0 s2 mv
+   a1 s2 x0 amoor.w   ( on)        on-time c   s2 s2 not
+   a1 s2 x0 amoand.w  ( off)  }}  off-time j  ;c
 
 label blink-leds
    {{ gpio.port a1 la  ( full address)
@@ -171,8 +218,8 @@ label blink-leds
       yellow a0 lui  }}  blink j  ;c
 
 label chip-init
-   {{  >hfxosc c   uart-init c   set-spi-speed c   led-init c  }}
-        blink-leds j  ;c
+   {{  clock-init c   uart-init c   set-spi-speed c   led-init c  }}
+       blink-leds j  ;c
 
 .then  ( SiFive HiFive1 support)
 
