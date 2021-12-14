@@ -21,57 +21,67 @@ forth
   registers. We define them with "weird" bits in the upper part so we can
   identify them, while they are sitting on the stack, as registers. ;-)
 
-: 8regs  ( n - n+8)  8 for  dup "5_d00d_00 or  constant 1+  next ;
+( I was hoping these "weird bits" would spell "five dude", not "five
+  doodoo". ;-)
+
+"5_d00d 8 << constant reg-signature
+
+: 32regs  0  32 for  dup reg-signature or  constant 1+  next  drop ;
 assembler
 
-0 8regs  x0  x1  x2  x3  x4  x5  x6  x7
-  8regs  x8  x9 x10 x11 x12 x13 x14 x15
-  8regs x16 x17 x18 x19 x20 x21 x22 x23
-  8regs x24 x25 x26 x27 x28 x29 x30 x31  drop
+( Define the generic register names.)
+32regs  x0  x1  x2  x3  x4  x5  x6  x7
+        x8  x9 x10 x11 x12 x13 x14 x15
+       x16 x17 x18 x19 x20 x21 x22 x23
+       x24 x25 x26 x27 x28 x29 x30 x31
 
-.ifdef use-uabi  ( Unix ABI)
+( Also define the C - or "Unix" - ABI names.
+  https://github.com/riscv-non-isa/riscv-elf-psabi-doc/blob/master/riscv-cc.adoc
 
-( And their ABI names, too - see riscv-spec-v2.1.pdf, p109:)
-( XXX Would be nice to have the table copied here.)
-
-0 8regs zero  ra  sp  gp  tp  t0  t1  t2
-  8regs   s0  s1  a0  a1  a2  a3  a4  a5
-  8regs   a6  a7  s2  s3  s4  s5  s6  s7
-  8regs   s8  s9 s10 s11  t3  t4  t5  t6  drop
-
-.else  ( new EABI - embedded ABI)
-
-0 8regs zero  ra  sp  gp  tp  t0  s3  s4
-  8regs   s0  s1  a0  a1  a2  a3  s2  t1
-  8regs   s5  s6  s7  s8  s9 s10 s11 s12
-  8regs  s13 s14 s15 s16 s17 s18 s19 s20  drop
-
-.then
-
-( And their EABI names.
-  See https://github.com/riscv-non-isa/riscv-eabi-spec/blob/master/EABI.adoc
-
-           EABI Name  Description                      Saver
-    x0        zero     Hard-wired zero value            -
-    x1        ra       Return address                   Caller
-    x2        sp       Stack pointer                    Callee
-    x3        gp       Global pointer                   -
-    x4        tp       Thread pointer                   -
-    x5        t0       Temporary/link register          Caller
-    x6        s3       Saved register                   Callee
-    x7        s4       Saved register                   Callee
-    x8        s0/fp    Saved register/frame pointer     Callee
-    x9        s1       Saved register                   Callee
-    x10       a0       Argument/return value            Caller
-    x11       a1       Argument/return value            Caller
-    x12       a2       Argument                         Caller
-    x13       a3       Argument                         Caller
-    x14       s2       Saved register                   Callee
-    x15       t1       Temporary                        Caller
-    x16-x31   s5-s20   Saved registers                  Callee
+| Name      | ABI Mnemonic | Meaning                | Preserved across calls?
+| x0        | zero         | Zero                   | -- [Immutable]
+| x1        | ra           | Return address         | No
+| x2        | sp           | Stack pointer          | Yes
+| x3        | gp           | Global pointer         | -- [Unallocatable]
+| x4        | tp           | Thread pointer         | -- [Unallocatable]
+| x5 - x7   | t0 - t2      | Temporary registers    | No
+| x8 - x9   | s0 - s1      | Callee-saved registers | Yes
+| x10 - x17 | a0 - a7      | Argument registers     | No
+| x18 - x27 | s2 - s11     | Callee-saved registers | Yes
+| x28 - x31 | t3 - t6      | Temporary registers    | No
 )
 
+32regs zero  ra  sp  gp  tp  t0  t1  t2
+         s0  s1  a0  a1  a2  a3  a4  a5
+         a6  a7  s2  s3  s4  s5  s6  s7
+         s8  s9 s10 s11  t3  t4  t5  t6
+
 forth
+
+( Even though .regname is *used* in the disassembler, let's define it here
+  since we are thinking about register names and ABI conventions.)
+
+defer .regname
+: .udec  radix preserve  decimal  (u.) type ;
+: -trailing  ( a u - a u')  ( strip trailing blanks)
+   over + ( end)  begin  1-  dup c@ bl -  until  over -  1+ ;
+
+( Print a "raw" register name; eg, "x12".)
+-:  ( reg)   ." x"  .udec ;
+: raw-regs  [ #] is .regname ;
+
+( Print an ABI register name.)
+-:  ( reg)
+   dup 0= if  drop  ." zero"  ^  then
+   dup 16 u< if
+            z"    ra sp gp tp t0 t1 t2 s0 s1 a0 a1 a2 a3 a4 a5 "
+   else
+      16 -  z" a6 a7 s2 s3 s4 s5 s6 s7 s8 s9 s10s11t3 t4 t5 t6 "
+   then
+   swap 3 * + 3 -trailing type ;
+
+: abi-regs  [ #] is .regname ;  abi-regs  ( default)
+
 
 ( Shifting bits into position.)
 : >rd      ( op bits - op')   7 <<  or ;
@@ -83,7 +93,7 @@ forth
 ( Dealing with register fields.)
 : >reg  ( reg op - op reg-masked)  swap  31 and ;
 : ?reg  ( reg op - op reg-masked)
-   over -32 and  "5_d00d_00 = if  ( valid reg)  >reg  ^  then
+   over -32 and  reg-signature = if  ( valid reg)  >reg  ^  then
    error" expected a register" ;
 
 : rd   ( reg op - op')  ?reg  >rd ;
