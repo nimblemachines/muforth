@@ -1,0 +1,164 @@
+( This file is part of muforth: https://muforth.nimblemachines.com/
+
+  Copyright 2002-2021 David Frech. (Read the LICENSE for details.)
+
+loading Flash programming
+
+hex
+
+: program-chunk  ( 'target len)
+   cr ." program "  over u.  dup u.
+   over image+ -rot  ( buf 'target len)  t.program ;
+
+.ifdef /page  ( for devices with uniform page size)
+
+: erase-page  ( 'target)
+   cr ." erase   "  dup u.
+   t.erase ;
+
+: erase?  ( 'target - erase?)   [ /page 1- #] and  0= ;
+
+( Before we program the _first_ byte of a page, we erase the page.)
+: flash-chunk  ( 'target len - 'target+len)
+   2dup + push  over erase? if  over erase-page  then  program-chunk  pop ;
+
+.else  ( non-uniform flash; uses sectors rather than pages)
+
+: erase-sector  ( sector#)
+   cr ." erase sector "  dup u.
+   t.erase ;
+
+( Given a flash address, return true if on a sector boundary; also return
+  sector# to erase; else return false.)
+
+: erase?  ( 'target - sector# -1 | 0)
+   lookup-flash-sector ;
+
+( Before we program the _first_ byte of a sector we erase the sector.)
+: flash-chunk  ( 'target len - 'target+len)
+   2dup + push  over erase? if  erase-sector  then  program-chunk  pop ;
+
+.then
+
+( Do the programming in chunks; the variable /chunk - which is set by the
+  interact code based on a value received from the debug interface - tells
+  us how big each chunk should be.)
+
+: flash-region  ( a len)
+   /chunk @  /mod  ( r q)  swap push  for  /chunk @  flash-chunk  next
+                                    pop  =if  ( rem) flash-chunk  drop ^  then  2drop ;
+
+( Check to see if we're going to clobber the bootloader and complain if
+  we're not executing from RAM.)
+
+( XXX Do nothing right now. We only need to do this when trying to program
+  the flash from chat code - which doesn't exist yet. ;-)
+
+: ?clobbering-loader  ( a u - a u)  ;
+
+: ?align-region  ( a u - a u)  dup  [ \m cell  1- #] and  0= if ^ then
+   cr ." WARNING: The flash region does not end on a target cell boundary." ;
+
+: flash-image
+   h preserve  flash region ( a u)  ?align-region  ?clobbering-loader
+   t.flash-begin  flash-region  t.flash-end ;
+
+
+( Verifying that host and target images are the same.)
+
+( Prepare to do a comparison or computation between data read from the
+  target into a buffer, and data in our memory image. Read a chunk from the
+  target into buf, and set m to point to the beginning of buf.
+
+  Be careful about setting m. Some chunked read implementations use it, so
+  set it *after* doing the read.)
+
+: setup-comparison  ( 'target len - 'target len)
+   2dup pad -rot t.read  ( 'target len)  pad m ! ;
+
+variable noisy-verify?  ( Whether to print differences.)
+
+( Little endian.)
+: mcell*   m* m* m* m*  0123> ;
+
+( Accumulate - by logically OR-ing - any differences.)
+: verify-word    ( diff a - diff' a)
+   dup image-@ mcell* xor  ( diff a xor)
+   =if  noisy-verify? @ if  over u. ( print address that differs)  then  then
+   rot or  swap ;
+
+: verify-chunk  ( diff 'target #chunk - diff' 'target+#chunk)
+   -- cr ." verify "  over u.  dup u.
+   2dup + push
+   ( diff 'target len)  setup-comparison
+   \m aligned  \m cell/ for  verify-word  \m cell+  next  drop
+   pop ;
+
+( Verify using the same chunk size that we used for flashing; the variable
+  /chunk - which is set by the interact code based on a value received from
+  the debug interface - tells us how big each chunk should be.)
+
+: verify-region  ( 'target len - diff')
+   0 -rot  ( diff)
+   /chunk @  /mod  ( r q)  swap push  for  /chunk @  verify-chunk  next
+                                    pop  =if  ( rem) verify-chunk  drop ^  then  2drop ;
+
+: ?empty-region  ( a u - a u)  =if ^ then
+   cr ." WARNING: The flash region is empty. verify will always report no change." ;
+
+: verify
+   h preserve  flash region ( a len)  ?empty-region  ?align-region
+   noisy-verify? on  verify-region  drop ;
+
+( Called when we connect to target to make sure host's and target's flash
+  regions are the same.)
+
+-: ( verify-quietly)  ( - 0 if same, non-zero if different)
+   h preserve  flash region ( a len)  ?align-region
+   noisy-verify? off  verify-region ;  is verify-quietly
+
+
+( Read an image from the target into the host image.)
+: read-chunk  ( a u - a+u)
+   -- cr ." read-chunk "  over u.  dup u.
+   2dup + push
+   over image+ -rot  t.read
+   pop ;
+
+: read-region  ( a u)
+   /chunk @  /mod  ( r q)  swap push  for  /chunk @  read-chunk  next
+                                    pop  =if  ( rem) read-chunk  drop ^  then  2drop ;
+
+( If last 16 bytes contain "muforth@" followed by a starting target
+  address, use that address rather than @flash.)
+
+: image-origin  ( a u - a u start)
+   2dup +  cell- cell-  @+ @ swap
+   [ token muforth@ drop @ #] = if
+      ( valid signature) [ -2 cells #] u+ ^ then
+   drop  @flash ( default to @flash) ;
+
+( Read image from target. Leaves user in ram or flash depending on target
+  address.)
+
+: read-image  ( target len)
+   2dup read-region  over target>image  over +  ( start end)  region! ;
+
+( Load image from a file. Leaves user in ram or flash depending on image
+  start address. If image does not contain a start address, leaves user in
+  flash.)
+
+: load-image
+   token, open-file-ro  ( fd)  dup read-file  ( a u)  rot close-file
+   image-origin  dup target>image
+   2dup swap over +  ( start end)  region!
+   ( a u start) image+ swap  cmove ;
+
+( Save image to a file. Saves the current region. To make sure you are
+  saving the flash region, do "flash save-image <name>".)
+
+: save-image
+   token, create-file  ( fd)  push
+   r@  region  swap image+ swap  write
+   r@ " muforth@" write  r@ dp cell+ ( 'origin) cell write ( start)
+   pop close-file ;

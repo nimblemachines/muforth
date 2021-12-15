@@ -4,20 +4,102 @@
 
 loading HiFive1 SPI flash experiments
 
+hex
+forth-regs
+
+( Load a mini-kernel. We only need a handful of words.)
+
+( Macros defining common VM operations)
+assembler
+: dispatch   asm{  -1 cells w x lw   0 x jr  } ;
+:  next,     asm{     0 ip w lw      cell ip ip addi   dispatch  } ;
+: +next,     asm{  cell ip w lw   2 cells ip ip addi   dispatch  } ;
+forth
+
 __meta
 
-hex
+label shared-next   next,  ;c
 
-: lohi>  ( lo hi - h)   8 << or ;
-: >hilo  ( h - hi lo)   dup 8 u>>  swap 0ff and ;
+( To save space, compile NEXT as a jump to a shared NEXT routine.)
+meta: next   asm{  shared-next j  } ;
 
-: hilo>  ( hi lo - h)   swap  lohi> ;
-: >lohi  ( h - lo hi)        >hilo  swap ;
 
-( XXX c@+ should probably be in the kernel, and should probably be
-  assembler.)
+meta: constant  new  ,  ;code  label doconst
+                               0 w w lw  ( fetch constant into w)
+                               ( fall thru)  ;c
 
-: c@+  ( a - b a+1)  dup c@  swap 1+ ;
+meta: create    new     ;code  label dovar
+                               label wpush
+                               top push1   w top mv  ( move pfa to top)
+                               next  ;c
+
+meta: :         new  ]  ;code  label docolon
+                               ip rpush1   w ip mv  ( pfa is new ip)   next  ;c
+
+code* (unnest)  [r]   ip rpop1   next  ;c
+
+code* (lit)     [r]   0 ip w lw  ( fetch literal)
+                      top push1   w top mv  ( move literal to top)
+                      +next,  ( skip literal value)  ;c
+
+code execute   ( cfa/pfa)       top w mv   begin   top pop1   dispatch  ;c
+code @execute  ( 'cfa/'pfa)   0 top w lw   again  ;c
+
+code*    (branch)   [r]
+label branch        0 ip ip lw  ( follow branch)   next,  ;c
+code*   (0branch)   [r]  top w mv   top pop1   branch w 0!= until  ( fall thru)  ;c
+label  skip         +next,  ( skip branch address)  ;c
+code*  (?0branch)   [r]  skip top 0= until   top pop1   branch j  ;c
+
+( Fast version, using loop register)
+code* (for)   [r]  ( u)
+   ix rpush1   top ix mv   top pop1   next  ;c
+
+code* (next)  [r]
+   -1 ix ix addi  branch ix 0= until  ix rpop1   skip j  ;c
+
+code <<    ( n shamt - n')   x pop1   x top top sll   next  ;c
+code u>>   ( n shamt - n')   x pop1   x top top srl   next  ;c
+
+( Basic binary ops.)
+code and   x pop1   x top top and   next  ;c
+code or    x pop1   x top top or    next  ;c
+
+( Stack ops.)
+code dup    [r]  ( t - t t)  top push1   next  ;c
+code drop   [r]  ( x t - x)  top pop1    next  ;c
+code swap   [r]  ( w t - t w)       0 sp w lw   0 sp top sw
+                                     w top mv   next  ;c
+( Memory access.)
+code @   ( a -  w)  0 top top lw    next  ;c
+code !   ( w a)     0 sp w lw   0 top w sw
+label poptwo   cell sp top lw   2 cells sp sp addi   next  ;c
+
+code c@+  ( a - w a+1)  0 top w lbu   w push1   1 top top addi   next  ;c
+
+code +bits  ( bits a)   ( turn on bits in a word in memory)
+   0 sp w lw                        top w x0 amoor.w  ( addr src dest)
+   poptwo j  ;c
+
+code -bits  ( bits a)   ( turn off bits in a word in memory)
+   0 sp w lw   w w not  ( invert)   top w x0 amoand.w  ( addr src dest)
+   poptwo j  ;c
+
+( The slt/u/i instructions set a register to 1 if the comparison is true,
+  and to 0 otherwise. We want to use -1 as a true flag, so we always negate
+  the result of the test.)
+
+code 0=               top top seqz   label makeflag   top top neg   next  ;c
+code 0<               top top sltz   makeflag j  ;c
+
+( Small constants.)
+ 0 constant 0  [r]
+ 1 constant 1  [r]
+ 2 constant 2  [r]
+
+( Beginning of SPI flash code.)
+: hilo>  ( hi lo - h)   swap 8 << or ;
+: >lohi  ( h - lo hi)   dup 0ff and  swap 8 u>> ;
 
 : >spi-prog-io
    0 spi0.fctrl !  ( put spi0 into programmed i/o mode)
@@ -26,19 +108,17 @@ hex
 : >spi-mem-mapped
    1 spi0.fctrl !  ( put spi0 into flash memory mode) ;
 
-: not  0= ;
+: 0>=   0< 0= ;
+
 : spi!  ( b)
-   begin  spi0.txdata @  0< not until  spi0.txdata ! ;
+   begin  spi0.txdata @  0>= until  spi0.txdata ! ;
 
 : spi@  ( - b)
-   0  begin  drop  spi0.rxdata @  dup 0< not until
+   0  begin  drop  spi0.rxdata @  dup 0>= until
    0ff and ;
 
-: spi-dir-tx  ( set dir to tx)  8 spi0.fmt +bits ;
-: spi-dir-rx  ( set dir to rx)  8 spi0.fmt -bits ;
-
-: send  spi-dir-tx    spi! ;
-: recv  spi-dir-rx  0 spi! spi@ ;
+: send   8 spi0.fmt +bits ( set dir to tx)    spi! ;
+: recv   8 spi0.fmt -bits ( set dir to rx)  0 spi! spi@ ;
 
 : wait-for-txwm
    begin  spi0.ip @  1 and  until ;
@@ -52,21 +132,17 @@ hex
 : cmd   ( cmd)  cs\  cs/ ;
 
 : >addr  ( a)  >lohi >lohi  send send send ;
-: r4     ( - w)  recv recv recv recv  lohi> lohi> lohi> ;
 
 ( SPI commands.)
-: wrdi  04 cmd ;
 : rdsr  05 cs\  recv  cs/ ;
 : wren  06 cmd ;
-
-: read4   ( addr - w)             03 cs\  >addr  r4           cs/ ;
-: read16  ( addr - w0 w1 w2 w3)   03 cs\  >addr  r4 r4 r4 r4  cs/ ;
 
 : -busy  ( wait until busy flag is clear)
    begin  rdsr  1 and  0= until ;
 
 : erase  ( a)  ( 4k sector erase)
-        20 cs\  >addr  cs/  -busy ;
+   wren
+   20 cs\  >addr  cs/  -busy ;
 
 ( For many chips, command 02 programs only a single byte. SST/Microchip
   25-series flash is in this category. The ISSI chip on the HiFive1 board
@@ -74,7 +150,81 @@ hex
   job much easier!)
 
 : prog  ( buf a u)
-        02 cs\  swap >addr  for  c@+ swap  send  next  drop  cs/  -busy ;
+   wren
+   2 cs\  swap >addr  for  c@+ swap  send  next  drop  cs/  -busy ;
 
 : reset-chip  66 cs\  99 send  cs/ ;
 : jedec  9f cs\  recv recv hilo>  recv hilo>  cs/ ;
+
+.ifdef spi-flash-optional
+
+: wrdi  04 cmd ;
+: lohi>  ( lo hi - h)   swap hilo> ;
+
+: r4     ( - w)  recv recv recv recv  lohi> lohi> lohi> ;
+: read4   ( addr - w)             03 cs\  >addr  r4           cs/ ;
+: read16  ( addr - w0 w1 w2 w3)   03 cs\  >addr  r4 r4 r4 r4  cs/ ;
+
+.then
+
+( For debugging and interactive execution.)
+
+( The host can push things onto host stack; they get copied to target
+  stack, registers popped, words execute, re-push, copy back to host...
+  Much easier than stuffing things into register slots on stack frame!)
+
+.ifdef hifive-compat
+
+code bug  [r]
+   top ip rp ix push4   sp tp mv   rp sp mv   ebreak  ;c
+
+implements continue-forth  __asm
+   tp sp mv
+   top ip rp ix pop4   "888 w li   w mie csrc   fence.i   next  ;c
+
+.else
+
+code bug  [r]
+   top ip rp ix push4   ebreak  ;c
+
+implements continue-forth  __asm
+   top ip rp ix pop4   "888 w li   w mie csrc   fence.i   next  ;c
+
+.then
+
+implements trampoline  ( x0 .. xn pfa - y0 .. ym)
+   ]  execute  begin  bug  again  [
+
+__host
+
+.ifdef testing
+
+( Make it easy to get to the key target registers from meta.)
+meta
+: sp@   tsp @  3 \m cells  +  ;  ( skip IP, RP, and IX)
+: rp@   trp @ ;
+: ip@   tip @ ;
+forth
+
+( Show some indication of whether a word is still executing. If IP is
+  anything other than two cells past trampoline, we've hit "bug" somewhere
+  other than the trampoline. Show this by annotating IP with a "*".)
+
+: executing?   ( ip - f)   [ \m trampoline @  2 \m cells + #]  - ;
+
+: .ip
+   \m ip@  dup .h32  executing? if  ." * "  ^  then  ( done)  2sp ;
+
+: .sp
+   \m sp@  .h32__ ;
+
+
+-: ( forth version of .regs)
+   cr  ."       IX        SP        RP        IP"
+       (  00000000  00000000  00000000  00000000 )
+   cr      tix .tr       .sp   trp .tr       .ip ;
+   is .regs
+
+.then
+
+__meta
