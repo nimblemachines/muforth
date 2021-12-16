@@ -62,21 +62,10 @@ __meta
 
 ram
 
-( These need to be written to FLASH_KEYR to unlock the Flash controller.)
-( While pointless and perhaps amusing, we have xor'ed the flash key values
-  with a value that the host has to send. This way runaway code is slightly
-  less likely to accidentally unlock the flash.)
-
-4567_0123 feed_deed xor equ KEY1
-cdef_89ab feed_deed xor equ KEY2
-
-( top has host's unlock key)
 label unlock
-   top dpop
    FLASH_ACR freg-base lit
-   KEY1 w lit   top w w eors   FLASH_KEYR w freg!
-   KEY2 w lit   top w w eors   FLASH_KEYR w freg!
-   0 # w movs   FLASH_CR   w freg!  ( clear any program/erase bits)
+   x w dpop2   FLASH_KEYR w freg!   FLASH_KEYR x freg!
+   0 # w movs  FLASH_CR   w freg!  ( clear any program/erase bits)
    lr bx  ;c
    pool,
 
@@ -93,38 +82,29 @@ label -busy
    lr bx  ;c
 
 ( w is flash page address to erase)
-( unlock consumes key)
-label stm32-erase  ( flash-page-address key)
+label stm32-erase  ( flash-page-address)
    lr rpush
-   unlock bl
    w dpop
     2 ( PER)      # x movs   FLASH_CR x freg! ( set PER)
                              FLASH_AR w freg! ( set page erase address)
    42 ( STRT+PER) # x movs   FLASH_CR x freg! ( set STRT+PER)
    -busy bl
-   lock bl
    pc rpop  ;c
 
-( unlock consumes key)
-label stm32-mass-erase  ( key)
+label stm32-mass-erase
    lr rpush
-   unlock bl
     4 ( MER)      # w movs   FLASH_CR w freg! ( set MER)
    44 ( STRT+MER) # w movs   FLASH_CR w freg! ( set STRT+MER)
    -busy bl
-   lock bl
    pc rpop  ;c
+
+.ifdef bogus-and-untested
 
 ( Option bytes, erasing and programming.)
 
-( top has host's unlock key)
-label unlock-option-bytes  ( key)
-   lr rpush
-   unlock bl  ( first unlock FLASH_CR)
-   ( then unlock option bytes; top still has key)
-   KEY1 w lit   top w w eors   FLASH_OPTKEYR w freg!
-   KEY2 w lit   top w w eors   FLASH_OPTKEYR w freg!
-   pc rpop  ;c
+label unlock-option-bytes
+   x w dpop2   FLASH_OPTKEYR w freg!   FLASH_OPTKEYR x freg!
+   lr bx  ;c
    pool,
 
 label erase-option-bytes
@@ -145,27 +125,25 @@ label remove-read-protect  ( key)
    55aa w lit   OB_RDP x lit   0 x +) w strh
    -- 0aa # w movs   OB_RDP x lit   0 x +) w strh
    -busy bl
-   lock bl
    pc rpop  ;c
    pool,
 
+.then  ( bogus)
+
 ( w is byte count, x is flash address,
   y is ram buffer address, z is offset.)
-( unlock consumes key)
-label stm32-flash-chunk  ( ram-buf-address flash-address byte-count key)
+label stm32-flash-chunk  ( buf a u)
    lr rpush
-   unlock bl
    y x w dpop3
    1 ( PG) # z movs   FLASH_CR z freg! ( set PG bit)
    0 # z movs  ( offset)
    begin
       ( program by halfwords!)
-      y z r+) top ldrh   x z r+) top strh
+      z y r+) top ldrh   z x r+) top strh
       2 # z z adds
       -busy bl
       w z cmp
    u>= until
-   lock bl
    pc rpop  ;c
 
 .ifdef testing
@@ -176,7 +154,7 @@ label copy-mem  ( src dest count)
    y x w dpop3
    0 # z movs  ( offset)
    begin
-      y z r+) top ldr   x z r+) top str
+      z y r+) top ldr   z x r+) top str
       4 # z z adds
       w z cmp
    u>= until

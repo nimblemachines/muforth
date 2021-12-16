@@ -26,6 +26,9 @@ loading ARM v6-M Forth kernel (ITC)
   fit into the I-cache, making it potentially very fast. We'll see about
   this!)
 
+( Make sure disassembler uses the right register names.)
+forth-regs
+
 -- ------------------------------------------------------------------------
 -- Macros defining common VM operations
 -- ------------------------------------------------------------------------
@@ -58,7 +61,6 @@ assembler
 : dpop4  ( r1 r2 r3 r4)  4 regs>mask  asm{{  pop  }} ;
 
 ( Return stack macros.)
-( NOTE: The above warning about order is relevant here too!)
 ( These are pushed in the order given on the stack.)
 : rpush1  ( r1)       push  asm{{  1 cells # rp rp subs
                                    0 rp +)  \f pop  str  }} ;
@@ -66,6 +68,7 @@ assembler
                                    0 rp +)  \f pop  str
                              1 cells rp +)  \f pop  str  }} ;
 
+( NOTE: The above warning about order is relevant here too!)
 ( These are popped in register index order - lower to higher.)
 : rpop1  ( r1)       1 regs>mask  asm{{  rp ldm  }} ;
 : rpop2  ( r1 r2)    2 regs>mask  asm{{  rp ldm  }} ;
@@ -240,17 +243,19 @@ code 2*   1 # top top lsls   next  ;c   ( also: top top top add)
 code 2/   1 # top top asrs   next  ;c
 code u2/  1 # top top lsrs   next  ;c
 
-code <<    ( n shamt - n')   x dpop1   top x x lsls   x top mov  next  ;c
-code >>    ( n shamt - n')   x dpop1   top x x asrs   x top mov  next  ;c
-code u>>   ( n shamt - n')   x dpop1   top x x lsrs   x top mov  next  ;c
+code <<    ( n shamt - n')   x dpop1   top x x lsls   begin begin   x top mov  next  ;c
+code >>    ( n shamt - n')   x dpop1   top x x asrs   again  ;c
+code u>>   ( n shamt - n')   x dpop1   top x x lsrs   again  ;c
 
 ( Basic binary ops.)
-code +   ( x t - x+t)   x dpop1   top x top adds   next  ;c
-code -   ( x t - x-t)   x dpop1   top x top subs   next  ;c
+code -     ( x t - x-t)    x dpop1   top x top subs   next  ;c
+code +     ( x t - x+t)    x dpop1   x top top adds   next  ;c
+code *     ( x t - x*t)    x dpop1   x top top muls   next  ;c  ( 32x32 -> 32 signed multiply)
 
-code and   x dpop1   x top top ands   next  ;c
-code or    x dpop1   x top top orrs   next  ;c
-code xor   x dpop1   x top top eors   next  ;c
+code and   ( x t - x&t)    x dpop1   x top top ands   next  ;c
+code or    ( x t - x|t)    x dpop1   x top top orrs   next  ;c
+code xor   ( x t - x^t)    x dpop1   x top top eors   next  ;c
+code bic   ( x t - x&~t)   x dpop1   x top top bics   next  ;c
 
 ( Stack ops.)
 code dup    [r]  ( t - t t)  top dpush1   next  ;c
@@ -429,6 +434,9 @@ meta: d.   ( tdlo tdhi)   d>  \f  . ;
 
 .then  ( notyet)
 
+{ h @ }  ( save region)
+ram
+
 ( For debugging and interactive execution.)
 
 ( The host can push things onto host stack; they get copied to target
@@ -465,6 +473,8 @@ implements trampoline  ( x0 .. xn - y0 .. ym)
    ]  execute  begin  bug  again  [
 
 __host
+
+h !  ( restore region)
 
 ( Make it easy to get to the key target registers from meta.)
 meta

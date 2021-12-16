@@ -66,21 +66,10 @@ __meta
 
 ram
 
-( These need to be written to FLASH_KEYR to unlock the Flash controller.)
-( While pointless and perhaps amusing, we have xor'ed the flash key values
-  with a value that the host has to send. This way runaway code is slightly
-  less likely to accidentally unlock the flash.)
-
-4567_0123 feed_deed xor equ KEY1
-cdef_89ab feed_deed xor equ KEY2
-
-( top has host's unlock key)
 label unlock
-   top dpop
    FLASH_ACR freg-base lit
-   KEY1 w lit   top w w eors   FLASH_KEYR w freg!
-   KEY2 w lit   top w w eors   FLASH_KEYR w freg!
-   0 # w movs   FLASH_CR w freg!  ( clear any program/erase bits)
+   x w dpop2   FLASH_KEYR w freg!   FLASH_KEYR x freg!
+   0 # w movs  FLASH_CR   w freg!  ( clear any program/erase bits)
    lr bx  ;c
    pool,
 
@@ -97,35 +86,29 @@ label -busy
    lr bx  ;c
 
 ( w is flash sector to erase)
-( unlock consumes key)
-label stm32-erase  ( sector# key)
+label stm32-erase  ( sector#)
    lr rpush
-   unlock bl
    w dpop   3 # w w lsls  ( shift sector# up 3 bits)
    2 ( SER)  # w w adds   FLASH_CR     w freg!  ( set SER + sector number)
    1 ( STRT) # w movs     FLASH_CR 2 + w fregb! ( set STRT bit)
    -busy bl
-   lock bl
    pc rpop  ;c
 
 ( w is byte count, x is flash address,
   y is ram buffer address, z is offset.)
-( unlock consumes key)
-label stm32-flash-chunk  ( ram-buf-address flash-address byte-count key)
+label stm32-flash-chunk  ( buf a u)
    lr rpush
-   unlock bl
    y x w dpop3
    1 ( PG)    # z movs   FLASH_CR    z freg!  ( set PG bit)
    2 ( psize) # z movs   FLASH_CR 1+ z fregb! ( psize=2; program by 32bit word)
    0 # z movs  ( offset)
    begin
       ( unlike paged flash, we can program by words!)
-      y z r+) top ldr   x z r+) top str
+      z y r+) top ldr   z x r+) top str
       4 # z z adds
       -busy bl
       w z cmp
    u>= until
-   lock bl
    pc rpop  ;c
 
 .ifdef testing
@@ -136,7 +119,7 @@ label copy-mem  ( src dest count)
    y x w dpop3
    0 # z movs  ( offset)
    begin
-      y z r+) top ldr   x z r+) top str
+      z y r+) top ldr   z x r+) top str
       4 # z z adds
       w z cmp
    u>= until
