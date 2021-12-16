@@ -81,25 +81,23 @@ variable stbuf  ( for checking status)
   base_address defaults to 0800_0000 but can be set using the set-address
   command, below.
 
-  There seem to be - surprise! - some quirks with the implementation. Using
-  a smallish wValue - like 0100 hex - I was unable to access all of the RAM.
-  Also, one has to skip the beginning of RAM - details are in AN2606 but it's
-  usually 5 Ki or 6 Ki or so - so some experimentation is in order when
-  really putting this to the test.
+  After much swearing and gnashing of teeth, I discovered that the wLength
+  value really needs to be the device's flash page size! Nothing else will
+  work reliably.
 
-  Also, it seems that the wLength value needs to be the same for upload and
-  dnload, otherwise things don't work properly! I have no idea what is going
-  on, but I tried to write four blocks of 256 bytes and then read back one
-  block of 1024 bytes, and only the first 256 bytes were correct. But when
-  I read them back in blocks of 256 bytes, I got the correct data!
-
-  So, "quirks". ;-)
+  With a little cleverness I was able to get reading and writing of both
+  RAM and flash working. In particular, if the host requests fewer than /page
+  bytes, we request exactly /page bytes from the device and *cache* the
+  result, then satisfy the read request from the cache. This makes du - which
+  almost always requests 16 bytes at a time - work perfectly.)
 
 : dnload   ( wValue wLength 'buffer)
+   -- cr  ." dnload "  2 nth u.  over u.
    05_00 ?status  ( dfuDNLOAD-IDLE)
    dfu.dnload  -busy drop ;
 
 : upload   ( wValue wLength 'buffer)
+   -- cr  ." upload "  2 nth u.  over u.
    09_00 ?status  ( dfuUPLOAD-IDLE)
    dfu.upload ;
 
@@ -107,6 +105,7 @@ variable stbuf  ( for checking status)
 variable cmd   ( we need a small buffer for DNLOAD sub-commands)
 
 ( DFU_DNLOAD subcommands)
+-- : exit-dfu                                        0 0 cmd  dnload ;
 : >cmd        ( cmd)               cmd c!         0 1 cmd  dnload ;
 : >cmd+addr   ( target-addr cmd)   cmd c!+  lew!  0 5 cmd  dnload ;
 
@@ -123,28 +122,55 @@ variable cmd   ( we need a small buffer for DNLOAD sub-commands)
 : unprotect                     92 >cmd ;
 
 
-( d.read allows us to do a bit of exploring. Sadly we can't read any of the
-  I/O space, so it's impossible to see how the DFU bootloader has set up,
-  eg, the clock system.)
+( d.read allows us to do a bit of exploring. Sadly, we can't read any of
+  the I/O space, so it's impossible to see how the DFU bootloader has set
+  up, eg, the clock system.)
 
-: setup-chunk  ( buf a u - 2 u buf)  swap set-address  swap  2 -rot ;
+( Our chunk size is the page erase size of the device's flash.)
+/page constant #d.chunk
+#d.chunk buffer last-chunk  ( last chunk read from device - flash or ram)
 
-: d.hello   ( - chunk-size)  2 Ki ;
+( Really just flash or ram.)
+variable last-addr  last-addr off
+
+: ?set-address  ( a)
+   ff00_0000 and
+   last-addr @  over last-addr !  over = if  drop ^  then
+   -- cr ." set-address " dup u.
+   set-address ;
+
+( Chunk is 2 + chunk_index; u is size of chunks)
+: setup-chunk  ( a - chunk u)
+   dup ?set-address
+   00ff_ffff and  #d.chunk /  2 +  #d.chunk ;
+
+: ?read-chunk  ( a - offset)
+   dup [ #d.chunk 1- #] and  =if  ( address is the *not* at the beginning of a chunk)
+      nip ^ then  ( offset)
+   swap setup-chunk  last-chunk  ( 0 chunk u buf)  upload ;
+
+
+: d.hello   ( - chunk-size)  #d.chunk ;
 
 .ifdef csr  ( Gigadevice RISC-V chip)
-   : d.get-status  ( - sp mcause mepc)  dead_c0de dup dup ;
+   : d.get-status  ( - sp)  dead_c0de ;
 .else  ( STM32 part)
    : d.get-status  ( - sp pc)  dead_c0de dup ;
 .then
 
 : d.run     ( pc sp)  2drop chat-fail ;
-: d.read    ( buf a u)   setup-chunk  ( 2 u buf)  upload ;
-: d.write   ( buf a u)   setup-chunk  ( 2 u buf)  dnload ;
+
+: d.read    ( buf a u)
+   swap ?read-chunk  ( offset)  last-chunk +  ( buf u src)
+   -rot cmove ;
+
+: d.write   ( buf a u)   drop  setup-chunk rot  dnload ;
 : d.erase   ( a)   =if   erase-page ^  then  drop  mass-erase ;
-: d.flash   d.write ;
 
 : dfu
-   chat-via  d.hello  d.get-status  d.run  d.read  d.write  d.erase  d.flash ;
+   chat-via  d.hello  d.get-status  d.run  d.read  d.write
+   nope  nope  d.erase  d.write ;
+
 
 .else  ( no device found)
    ." No supported USB devices found. "
