@@ -30,7 +30,7 @@ device to Linux. You **must** select this if using Terminal.  You must **ignore*
 if you are connecting via a chroot.
 
 External USB device support has frankly been pathetic on the part of ChromeOS.  We gave
-up hope recently and either pwn the chromebooks outright and change them into Linux boxen,
+up hope until recently and either pwn the chromebooks outright and change them into Linux boxen,
 or opt for developer mode and a chroot (new models like the Acer Spin 713).  While we
 were recently pleased to discover **somewhat working** support for external USB devices via
 Terminal, it is ... twitchy to say the least, and direly needs improvement.
