@@ -26,8 +26,8 @@ a chroot (Archlinux is our preference) everything will work just swimmingly.
 
 Furthermore, it should be noted that when the HiFive1 is first plugged into the 
 chromebook's USB port, there will be a small pop-up that offers you to connect the
-device to Linux. You **must** select this if using Terminal.  You must **ignore** this
-if you are connecting via a chroot.
+device to Linux. You must **select this if using Terminal**.  You must **ignore this
+if you are connecting via a chroot**.
 
 External USB device support has frankly been pathetic on the part of ChromeOS.  We gave
 up hope until recently and either pwned the chromebooks outright and changed them into Linux boxen,
