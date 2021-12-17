@@ -1,4 +1,4 @@
-# ChromeOS Terminal
+# ChromeOS Terminal App and muforth
 
 For ChromeOS devices (chromebooks) running with Linux apps, the Terminal app
 requires special handling while using muforth to chat with RISC-V
