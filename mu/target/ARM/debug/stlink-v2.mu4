@@ -253,31 +253,30 @@ defer doit  ( buf target len)
    begin  core-state  80 xor  until
    #13 reg@  #15 reg@ ;
 
-: st.run     ( pc sp)  #13 reg!  #15 reg!  run ;
+: st.run  ( pc sp)
+   #13 reg!  #15 reg!  run ;
 
-( We have to pass a "key" - the hex value "feed_deed - that is xor'ed with
-  the flash keys to unlock the Flash controller.
+( Write unlock keys to FLASH_KEYR.)
+: st.flash-begin
+   cdef_89ab  4567_0123  \m unlock rx ;
 
-  Both stm32-erage and stm32-flash-chunk unlock before and lock after they
-  do their work.)
+( Re-lock flash controller registers.)
+: st.flash-end   \m lock rx ;
 
-( stm32-erase takes flash address for uniform page devices, and a sector
+( stm32-erase takes a flash address for uniform page devices, and a sector
   number, for sectored devices. target/ARM/v6-m/flash.mu4 has already
   figured this out for us.)
 
-: st.erase  ( a | sector#)
-   "feed_deed  \m stm32-erase rx ;
-
-( stm32-flash-chunk  ( ram-buf-address flash-address byte-count key)
+: st.erase  ( a | sector#)  \m stm32-erase rx ;
 
 ( Copy buf contents to ram buffer, then write to flash from there.)
-: st.flash  ( buf a u)
-   swap push ( save target flash address)
-   ( buf u)  tuck  @flashbuf  swap  ( u buf a u)  st.write
-   ( u)  @flashbuf  pop  ( flash-addr)  rot
-   "feed_deed  \m stm32-flash-chunk rx ;
+: st.program  ( buf a u)
+   push ( u)
+   swap @flashbuf r@  ( a buf flashbuf u)  st.write  ( copy chunk to target ram)
+   @flashbuf swap pop  ( flashbuf a u)  \m stm32-flash-chunk rx ;
 
 : jtag
-   chat-via  st.hello  st.get-status  st.run  st.read  st.write  st.erase  st.flash ;
+   chat-via  st.hello  st.get-status  st.run  st.read  st.write
+   st.flash-begin  st.flash-end  st.erase  st.program ;
 
 .then
