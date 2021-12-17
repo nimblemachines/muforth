@@ -8,6 +8,19 @@ You will need to edit target/RISC-V/chat-host.mu4 and in the definition of
 c.hello change the chunk size from #256 to #32, otherwise that chat connection
 will time out and you will make sad noises.
 
+```
+------------------- snip -------------------------
+
+ 57    : c.hello  ( - chunk-size)
+ 58       #115200 bps  resync
+ 59       cr ." Chat firmware version "  c.version  ( commit pc)  swap
+ 60       hex8  @ram  dup #ram +  within if  ."  (RAM) "  then
+ 61       #32 ; <--------------------------------------------------------- change from #256
+
+----------------- snip --------------------------
+
+```
+
 This **only** holds true for the Terminal app! If you opt for Developer mode and run
 a chroot (Archlinux is our preference) everything will work just swimmingly.
 
