@@ -55,6 +55,8 @@ going to discover that like all true forth's, muforth is its own animal.
 What's the rubric? "If you've learned one Forth, you've learned one
 Forth."
 
+### Chatting with targets
+
 The real fun with muforth comes with connecting to **targets** -- either a
 lone processor with some supporting hardware wired up to it or one of
 the nifty low cost development boards out there. Sadly, the era of DIP's
@@ -154,6 +156,19 @@ will spew a range of exciting addresses at you and then print "Ok." That
 but that nasty spew means the target host flash verification failed.
 Sometimes "Ok" is not "Ok", children, Mmmmm-kay? (I'm also not a fan of Forth's
 Ok prompt. I'm in the minority.)
+
+## Documentation
+
+Official documentation for muforth at present is thin.  Most of it can be found in
+commit messages or in the code comment sections.  Issues, both closed and open on the
+[master branch](https://github.com/nimblemachines/muforth) can be a source of useful
+information.
+
+In this fork we're trying add documentation in the form of README's in the root directory,
+README's and notes in the target directories, and [official target documentation](https://github.com/anarchitech/muforth-anarchitech/blob/master/README_Included_Documentation.md) in
+```muforth/mu/someTarget/doc```. 
+
+In short, documentation is a WIP.
 
 ## Going Forward
 
