@@ -13,6 +13,7 @@
 #   15a2  - my Freescale HC08 JS16 board
 #   1cbe  - TI/Luminary Stellaris/Tiva ICDI boards
 #   2047  - TI MSP-FET, ez-FET, USB BSL, etc
+#   28e9  - GigaDevice?
 #   2e8a  - Raspberry Pi Pico (PICOBOOT)
 #   c251  - Keil CMSIS-DAP - for Freescale Freedom (FRDM) boards
 #
@@ -26,7 +27,7 @@ cat <<EOT
     # udev rules to match USB devices of interest to muforth
 EOT
 
-for vid in 0403 0483 04d8 0d28 15a2 1cbe 2047 2e8a c251 f0ff ; do
+for vid in 0403 0483 04d8 0d28 15a2 1cbe 2047 28e9 2e8a c251 f0ff ; do
     cat <<EOT
     SUBSYSTEMS=="usb", ATTRS{idVendor}=="$vid", OWNER:="$1"
 EOT
