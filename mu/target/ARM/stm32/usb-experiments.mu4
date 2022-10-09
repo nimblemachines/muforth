@@ -1,0 +1,465 @@
+( This file is part of muforth: https://muforth.nimblemachines.com/
+
+  Copyright 2002-2022 David Frech. (Read the LICENSE for details.)
+
+ld target/common/usb-descriptors.mu4
+
+__meta
+hex
+
+{ h @ } flash  ( save region and set to flash)
+0 vector-table  ( lay down a vector table, using end of ram as initial SP)
+
+{ h ! }  ( restore region pointer)
+ld target/ARM/v6-m/kernel-itc.mu4
+
+
+( Buffer length for endpoint zero.)
+40 equ buflen0
+
+( Compile the first 32 bits of the current muforth Git commit.)
+
+.ifdef in-ram
+   1 Ki buffer setup-log
+.then
+
+here equ version
+   muforth-commit drop 8 evaluate  ,
+
+( Our device descriptor. Note: all USB data is little-endian.)
+here equ device-descriptor
+   12 c, ( bLength)
+   01 c, ( bDescriptorType = device)
+ 0200 le, ( bcdUSB = 02.00)
+   00 c, ( bDeviceClass - composite device - look to interfaces for class)
+   00 c, ( bDeviceSubClass)
+   00 c, ( bDeviceProtocol)
+ buflen0 c, ( bMaxPacketSize0)
+ f0ff le, ( idVendor = F0FF)
+ beda le, ( idProduct = BEDA; BED0 is S08 testbed)
+ 0001 le, ( bcdDevice = 00.01)
+   01 c, ( iManufacturer - string index = 1)
+   02 c, ( iProduct - string index = 2)
+   03 c, ( iSerialNumber - string index = 3)
+   01 c, ( bNumConfigurations)
+
+here equ config-descriptor
+   09 c, ( bLength)
+   02 c, ( bDescriptorType = configuration)
+ 0012 le, ( wTotalLength = configuration + interfaces + endpts)
+   01 c, ( bNumInterfaces)
+   01 c, ( bConfigurationValue; starts from 1, unlike interface numbers)
+   00 c, ( iConfiguration - string index = none)
+   80 c, ( bmAttributes)
+ #100 2/ c, ( bMaxPower, in 2mA increments = 100mA - one "unit load")
+ -- #200 2/ c, ( bMaxPower, in 2mA increments = 200mA - two "unit loads")
+
+here equ interface-descriptor
+   09 c, ( bLength)
+   04 c, ( bDescriptorType = interface)
+   00 c, ( bInterfaceNum)
+   00 c, ( bAlternateSetting)
+   00 c, ( bNumEndpoints - in _addition_ to endpoint pair 0)
+  0ff c, ( bInterfaceClass = vendor-specific)
+   00 c, ( bInterfaceSubClass)
+   00 c, ( bInterfaceProtocol)
+   00 c, ( iInterface - string index = none)
+
+here equ string0
+   04 c, ( bLength)
+   03 c, ( bDescriptorType = string)
+ 0409 le, ( LANGID = 0409 = US English)
+
+here equ string1
+   u" Fücken Awesöme Innövation Läb"
+
+here equ string2
+   u" STM32F072B USB testbed"
+
+here equ string3
+   muforth-commit drop #12  ucs16-string,
+
+here equ string-table
+   string0 string0 - c,
+   string1 string0 - c,
+   string2 string0 - c,
+   string3 string0 - c,
+   align
+
+: hang   begin again ;
+
+code h@+   ( a - w a+2)            0 top +) w ldrh   w dpush1
+                                   begin   2 # top top adds   next  ;c
+code h!+   ( w a - a+2)  w dpop1   0 top +) w strh   again  ;c
+
+code cells   2 # top top lsls   next  ;c
+code rdrop  [r]   w rpop1   next  ;c
+: 2drop   drop drop ;
+
+: (dispatch)  ( index)
+   1+ cells r@ +
+   dup r@ @ u< if  rdrop  @execute ^  then
+   drop  r> @ >r  ( skip jump table and keep executing) ;
+
+compiler: [:  ( start a jump table)
+   \t (dispatch) ,  here  0 , ( ip past last cfa) ;
+
+compiler: :]  ( end a jump table)
+   here  swap  image-! ;
+
+: off  0 swap ! ;
+
+: ep0-clear  ( clear-bits)
+   8080 xor  [ %01 9 << ( EP_TYPE=control) #] or  USB_EP0R ! ;
+
+meta: ep0-update  ( stat mask)
+   does> h@+ h@  ( stat mask)  invert
+   USB_EP0R @
+      8080 or  ( keep CTR_x bits)
+      and  ( mask off data toggles and other direction STAT bits)
+      xor  ( toggle *our* STAT bits)
+   USB_EP0R ! ;
+
+meta: ep0-out  ( stat)   create  #12 << ( STAT_RX) h,  4070 h,  ep0-update ;
+meta: ep0-in   ( stat)   create    4 << ( STAT_TX) h,  7040 h,  ep0-update ;
+
+( Endpoint STAT bits.
+
+  0     DISABLED  -- all requests addressed to this endpoint are ignored.)
+  1 equ STALL     -- all requests result in a STALL handshake.
+  2 equ NAK       -- all requests result in a NAK handshake.
+  3 equ VALID     -- this endpoint is enabled.
+
+STALL  ep0-in  stall
+  NAK  ep0-in  nak-in
+VALID  ep0-in  expect-in-token
+
+VALID  ep0-out  expect-out-token
+
+: expect-setup-token   nak-in  expect-out-token ;
+
+.ifdef 1x16-usb-ram
+
+4000_6004 equ in-count   ( TX_COUNT)
+4000_600c equ out-count  ( RX_COUNT)
+4000_6020 equ in-buffer
+4000_60a0 equ out-buffer
+
+( Useful aliases for buffer addresses - for control requests.)
+out-buffer 0 + equ bmRequestType
+out-buffer 1 + equ bRequest
+out-buffer 4 + equ wValue
+out-buffer 8 + equ wIndex
+out-buffer c + equ wLength
+
+( Copy a halfword to or from usb buffer memory, using 1x16 access scheme,
+  which embeds a halfword of ram in a word of address space.)
+
+code >usb  ( mem usb - mem+2 usb+4)
+   w dpop1   0 w   +) x ldrh   2 # w w adds   w dpush1
+             0 top +) x str    4 # top top adds   next  ;c
+
+code usb>  ( usb mem - usb+4 mem+2)
+   w dpop1   0 w   +) x ldr    4 # w w adds   w dpush1
+             0 top +) x strh   2 # top top adds   next  ;c
+
+.else  ( 2x16 usb ram access scheme)
+
+4000_6002 equ in-count   ( TX_COUNT)
+4000_6006 equ out-count  ( RX_COUNT)
+4000_6010 equ in-buffer
+4000_6050 equ out-buffer
+
+( Useful aliases for buffer addresses - for control requests.)
+out-buffer 0 + equ bmRequestType
+out-buffer 1 + equ bRequest
+out-buffer 2 + equ wValue
+out-buffer 4 + equ wIndex
+out-buffer 6 + equ wLength
+
+( Copy a halfword to or from usb buffer memory, using 2x16 access scheme,
+  which embeds a halfword of ram in a halfword of address space.)
+
+code >usb  ( mem usb - mem+2 usb+2)
+   w dpop1   0 w   +) x ldrh   2 # w w adds   w dpush1
+             0 top +) x strh   2 # top top adds   next  ;c
+
+code usb>  ( usb mem - usb+2 mem+2)
+   w dpop1   0 w   +) x ldrh   2 # w w adds   w dpush1
+             0 top +) x strh   2 # top top adds   next  ;c
+
+.then
+
+: wait   for next ;
+
+.equates. .contains USB_BCDR .if
+
+: periph-clock-init
+   [ 1 #23 << #] RCC_APB1ENR set!  ( USB clock) ;
+
+: usb-connect
+   [ 1 #15 << #]  ( DPPU - pullup bit)  USB_BCDR set! ;
+
+: usb-disconnect
+   [ 1 #15 << #]  ( DPPU - pullup bit)  USB_BCDR clr! ;
+
+( Delay a bit.)
+         ( clks/sec)  ( ms/sec)  ( clks/loop)
+: ms   [ #48,000,000   #1,000 /   #17 / #]  *  wait ;
+
+.else  ( do something with port pins? assuming F303 here...)
+
+: periph-clock-init
+   [ 1 #23 << #] RCC_APB1ENR set!  ( USB clock)
+   [ 1 #17 << #] RCC_AHBENR set!  ( GPIOA - USB pins are on port A) ;
+
+: usb-connect
+   [ %1111 #22 << #] GPIOA_MODER clr!
+   [ %1010 #22 << #] GPIOA_MODER set!  ( alt fn for PA11 and 12)
+   [ %1111 #22 << #] GPIOA_OSPEEDR set!  ( high speed for PA11 and 12)
+   [   0ee #12 << #] GPIOA_AFRH set!  ( af14 = usb; for PA11 and 12) ;
+
+( Send a "single-ended zero" onto the USB bus: hold both D+ and D- low.)
+: usb-disconnect
+   [   %11 #11 << #] GPIOA_ODR clr!  ( drive PA11 and 12 low)
+   [ %1111 #22 << #] GPIOA_MODER clr!
+   [ %0101 #22 << #] GPIOA_MODER set!  ( gp output mode for PA11 and 12) ;
+
+( Delay a bit.)
+         ( clks/sec)  ( ms/sec)  ( clks/loop)
+: ms   [ #72,000,000   #1,000 /   #17 / #]  *  wait ;
+
+.then
+
+variable memcount
+variable memaddr
+
+: +mem  ( count)   dup memaddr +!  negate memcount +! ;
+
+: umin  ( x y - umin)  ( lesser of x and y)
+   2dup u< if  swap  then  nip ;
+
+: prepare-in  ( count)
+.ifdef 1x16-usb-ram
+   in-count !
+.else
+   in-count h!
+.then
+
+   expect-in-token ;
+
+: prepare-next-in
+   memcount @ =if  ( still more to send?)
+      buflen0  umin  >r
+      memaddr @  in-buffer  r@  ( copy to USB buffer ram)
+      dup +mem  0 do  >usb  2 +loop  2drop
+   r> then
+   prepare-in ;
+
+: count  ( a - a u)  dup c@ ;
+
+: prepare-descriptor ( a u)
+   wLength h@  umin  memcount !  memaddr !  prepare-next-in ;
+
+: get-device-descriptor
+   device-descriptor count
+   prepare-descriptor ;
+
+: get-config-descriptor
+   config-descriptor  [ string0 config-descriptor - #]
+   prepare-descriptor ;
+
+: get-string-descriptor
+   wValue c@  ( index)  string-table + c@  string0 +  count
+   prepare-descriptor ;
+
+: get-descriptor
+   [ wValue 1+ #] c@ 1-
+   [: get-device-descriptor  get-config-descriptor  get-string-descriptor :]
+   stall ;
+
+: vendor-request  stall ;
+
+( Queue up IN status stage.)
+: finish-control-write   0 prepare-in ;
+
+: set-address   finish-control-write ;
+: set-configuration   finish-control-write ;
+
+: standard-request
+   bRequest c@  5 -
+   (            5               6      7      8                  9 )
+   [: set-address  get-descriptor  stall  stall  set-configuration :]
+   stall ;
+
+( An IN token is either part of a data stage of a control read, or it is
+  the status stage of a control write. Status IN's are always zero bytes
+  long; sometimes the last IN of the data stage is also zero bytes long -
+  see prepare-next-in for details.
+
+  The upshot is that if the last packet wasn't full we should expect no
+  more IN transactions.)
+
+: in-token
+   ( If last IN was a full packet, ready some more data.)
+   in-count c@ ?if
+      buflen0 = if  ( full packet)  prepare-next-in ^  then
+      ( Last packet was not full, but not empty either; no further IN's
+        expected. Expect status OUT.)
+      expect-out-token ^
+   then
+
+   ( Last packet was zero-length; could have been the last packet of a data
+     stage, or a status IN. If our address has not been set, assume that
+     this is the status IN of a SET_ADDRESS command.)
+
+   USB_DADDR @  80 = if
+      wValue c@  80 or  USB_DADDR !
+   then
+   expect-out-token ;
+
+( If last OUT was zero-length, it was a status transaction for a control
+  read, so get ready for a new SETUP. Otherwise, we've got a data payload.
+  Copy it.)
+
+: out-token
+   out-count c@  ?if  ( copy data payload)
+      out-buffer  memaddr @  rot
+      dup +mem  0 do  usb>  2 +loop  2drop
+      memcount @ if  expect-out-token ^  then
+      finish-control-write ^  ( queue up status IN)
+   then
+   ( zero-length OUT. Get ready for a new SETUP.)
+   expect-setup-token ;
+
+: setup-token
+   bmRequestType c@  60 and
+   dup 0= if  drop  standard-request ^  then
+     40 = if        vendor-request ^  then
+   stall ;
+
+8000 equ CTR_RX
+0080 equ CTR_TX
+
+: handle-transaction
+   USB_EP0R @  dup CTR_RX and  if
+      CTR_RX ep0-clear
+      [ 1 #11 << #] ( SETUP) and if
+         setup-token
+      ^ then
+      out-token
+   ^ then
+   CTR_TX and if
+      CTR_TX ep0-clear
+      in-token
+   then ;
+
+: handle-reset
+   80 USB_DADDR !  ( clear address but set EF - enable function - bit.)
+   0 ep0-clear  expect-setup-token ;
+
+: usb-init
+   ( Set up endpoint buffers.)
+   8400 ( rx count: BL_SIZE=1, NUM_BLOCK=1: 64 byte buffer)
+   0050 ( rx addr)
+   0040 ( tx count)
+   0010 ( tx addr)
+   4000_6000 ( buffer ram start)
+.ifdef 1x16-usb-ram
+   !+ !+ !+ !
+.else  ( 2x16 usb ram)
+   h!+ h!+ h!+ h!
+.then
+
+   1 ( FRES) USB_CNTR !  ( set reset bit and clear power down bit)
+   -- 100 wait
+   USB_CNTR off  ( clear reset bit and power down bits) ;
+
+( First handle all transactions, then handle other interrupts.)
+: process-usb
+   begin
+      USB_ISTR @  [ 1 #15 << #] ( CTR) and  while  handle-transaction
+   repeat
+   USB_ISTR @
+   USB_ISTR off
+   [ 1 #10 << #] ( RESET) and if  handle-reset  then
+   ;
+
+: plug   usb-disconnect  usb-init  #50 ms  usb-connect ;
+: usb
+   ( Set up CRS - clock recovery system.)
+   [ 1 6 << #] ( AUTOTRIMEN) CRS_CR set!  ( turn on autorimming of 48M HSI clock)
+
+   periph-clock-init
+   plug
+   c_0000 for  process-usb  next ;
+
+: wait-for-rdy  ( regaddr)
+   begin  dup c@  2 and  until  ( wait for RDY bit)  drop ;
+
+.ifdef stm32f072
+
+: clock-init
+   1 ( HSI48ON) [ RCC_CR2 2 + #] tuck c!  wait-for-rdy ( wait for HSI48RDY)
+   1 ( latency) FLASH_ACR +!  ( we need one cycle for 48 MHz clock!)
+   3 ( SW=HSI48 as sysclk)  RCC_CFGR tuck c!
+   begin  dup c@ %1111 =  until  ( SW=HSI48 and SWS=HSI48)  drop
+
+   ( Set up CRS - clock recovery system.)
+   [ 1 6 << #] ( AUTOTRIMEN) CRS_CR set!  ( turn on autorimming of 48M HSI clock) ;
+
+: led-init
+   -- Turn on clock to Port C
+   ( Ports -FED_CBA- )
+        [ %0000_1000  #16 << #] RCC_AHBENR +!
+   -- Make PC6 to PC9 outputs
+   [ %01010101 #12 << #] GPIOC_MODER ! ;
+
+: flash-leds   %11_1100_0000 GPIOC_ODR !  2_0000 wait  0 GPIOC_ODR ! ;
+
+.else
+
+( Turn on HSE, which is driven by an 8 Mhz signal from the ST-LINK. Use it
+  to drive the PLL to 72 Mhz - x9 - and when the PLL stabilizes, switch to
+  it as the system clock source.)
+
+: clock-init
+   5 ( HSEON + HSEBYP) [ RCC_CR 2 + #] tuck c!  wait-for-rdy ( wait for HSERDY)
+   001d_0400 RCC_CFGR ! ( USBPRE=/1.5; PLLMUL=9; PLLSRC=HSE; APB1=/2)
+   1 ( PLLON)          [ RCC_CR 3 + #] tuck c!  wait-for-rdy ( wait for PLLRDY)
+   2 ( latency) FLASH_ACR +!  ( we need two cycles for 72 MHz clock!)
+   2 ( SW=PLL as sysclk)  RCC_CFGR tuck c!
+   begin  dup c@ %1010 =  until  ( SW=PLL and SWS=PLL)  drop ;
+
+: led-init
+   -- Turn on clock to Port E
+   ( Ports GFED_CBAH )
+        [ %0010_0000  #16 << #] RCC_AHBENR +!
+   -- Make PE8 to PE15 outputs
+   5555_0000 GPIOE_MODER ! ;
+
+: flash-leds  0000_ff00 GPIOE_ODR !  3_0000 wait  0 GPIOE_ODR ! ;
+
+.then
+
+here ]  ( chip-init)
+   periph-clock-init
+   clock-init  led-init  flash-leds
+   usb-init
+   plug
+   begin  process-usb  again  [
+
+Reset_exc handler
+   -- Startup code!
+   -- Since we have a Forth kernel, let's write the startup code in Forth!
+   sp rp mov   #64 cells # sp sp sub  ( RP at end of RAM; SP below)
+   ( chip-init)  ip  lit
+   "decafbad     top lit
+   next  ;c
+   pool,
+
+HardFault_exc handler
+   here b  ;c  ( hang)
+
+NMI_exc default-handler
+   lr bx  ;c  ( return to sender!!)

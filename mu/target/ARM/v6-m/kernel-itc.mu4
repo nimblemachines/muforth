@@ -1,6 +1,6 @@
 ( This file is part of muforth: https://muforth.nimblemachines.com/
 
-  Copyright 2002-2021 David Frech. (Read the LICENSE for details.)
+  Copyright 2002-2022 David Frech. (Read the LICENSE for details.)
 
 loading ARM v6-M Forth kernel (ITC)
 
@@ -101,8 +101,9 @@ meta: create    new     ;code  label dovar
 
                                label dodoes
                                top dpush1   w top mov  ( move pfa to top)
-( XXX probably needs to be lr not x)
-                               x w mov  ( x is parent ip)  ( fall thru)  ;c
+                               lr w mov  ( lr is parent ip)
+                               1 # w w subs  ( clear thumb bit)
+                               ( fall thru)  ;c
 
 meta: :         new  ]  ;code  label docolon
                                implements target-do-colon
@@ -111,7 +112,7 @@ meta: :         new  ]  ;code  label docolon
 code* (unnest)  [r]   ip rpop1   begin   next  ;c
 codes nope
 
-definer: does>   <;code>  asm{{  dodoes c  }}  ] ;
+definer: does>   <;code>  asm{{  dodoes bl  }}  ] ;
 
 code* (lit)     [r]   { w } ip ldm  ( fetch literal into w)   wpush j  ;c
 
@@ -120,7 +121,8 @@ code @execute  ( 'cfa)  0 top +) w ldr   again  ;c
 
 code*    (branch)   [r]
 label branch        0 ip +) ip ldr  ( follow branch)   next  ;c
-code*   (0branch)   [r]  top w mov   top dpop1   branch 0!= until  ( fall thru)  ;c
+code*   (0branch)   [r]  top top tst                   top dpop1   branch 0!= until
+                    ( fall thru)  ;c
 label  skip         4 # ip ip adds   next  ( skip branch address)  ;c
 code*  (?0branch)   [r]  top top tst   skip 0= until   top dpop1   branch j  ;c
 code*  (=0branch)   [r]  top top tst   skip 0= until               branch j  ;c
@@ -252,10 +254,10 @@ code -     ( x t - x-t)    x dpop1   top x top subs   next  ;c
 code +     ( x t - x+t)    x dpop1   x top top adds   next  ;c
 code *     ( x t - x*t)    x dpop1   x top top muls   next  ;c  ( 32x32 -> 32 signed multiply)
 
-code and   ( x t - x&t)    x dpop1   x top top ands   next  ;c
-code or    ( x t - x|t)    x dpop1   x top top orrs   next  ;c
-code xor   ( x t - x^t)    x dpop1   x top top eors   next  ;c
-code bic   ( x t - x&~t)   x dpop1   x top top bics   next  ;c
+code and   ( x t - x&t)    x dpop1   begin   x top top ands   next  ;c
+code or    ( x t - x|t)    x dpop1           x top top orrs   next  ;c
+code xor   ( x t - x^t)    x dpop1           x top top eors   next  ;c
+code bic   ( x t - x&~t)   x dpop1   top top mvns   again  ;c
 
 ( Stack ops.)
 code dup    [r]  ( t - t t)  top dpush1   next  ;c
@@ -286,16 +288,19 @@ code r@   [r]  ( - w)   0 rp +) w ldr   wpush j  ;c
 
 
 ( Memory access.)
-code  @   ( a -  w)  0 top +) top ldr    next  ;c
-code h@   ( a - uh)  0 top +) top ldrh   next  ;c  ( Unsigned!)
-code c@   ( a - ub)  0 top +) top ldrb   next  ;c  ( Unsigned!)
+code  @    ( a -  w)  0 top +) top ldr    next  ;c
+code h@    ( a - uh)  0 top +) top ldrh   next  ;c  ( Unsigned!)
+code c@    ( a - ub)  0 top +) top ldrb   next  ;c  ( Unsigned!)
 
-code  !   ( w a)     w dpop1   0 top +) w str    poptop j  ;c
-code h!   ( h a)     w dpop1   0 top +) w strh   poptop j  ;c
-code c!   ( b a)     w dpop1   0 top +) w strb   poptop j  ;c
+code  !    ( w a)     w dpop1   0 top +) w str    poptop j  ;c
+code h!    ( h a)     w dpop1   0 top +) w strh   poptop j  ;c
+code c!    ( b a)     w dpop1   0 top +) w strb   poptop j  ;c
 
-code +!   ( w a)     w dpop1   0 top +) x ldr   w x x add
-                               0 top +) x str   poptop j  ;c
+code +!    ( w a)     w dpop1   0 top +) x ldr   w x x adds
+                  begin begin   0 top +) x str   poptop j  ;c
+
+code set!  ( w a)     w dpop1   0 top +) x ldr   w x x orrs  again  ;c
+code clr!  ( w a)     w dpop1   0 top +) x ldr   w x x bics  again  ;c
 
 code  @+   ( a - w a+4)            { w } top ldm   w dpush1   next  ;c
 code  !+   ( w a - a+4)  w dpop1   { w } top stm              next  ;c
