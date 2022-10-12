@@ -18,9 +18,27 @@ hex
 ( NOTE: We are not supposed to hardwire the endpoint numbers here, but I'm
   going to do it anyway so we can get this code working ASAP. ;-)
 
+.ifdef usb-read  ( Linux and maybe OSX)
+
 ( These are for executing commands over the two bulk endpoints.)
 : uwrite  ( buf len)   3  picoboot  usb-write ;
 : uread   ( buf len)   4  picoboot  usb-read  drop ;
+
+.else  ( ndef usb-read: BSD system)
+
+( Try shooting in the dark. The user can also tweak these by reading the
+  output of
+
+    usbdevs -d
+)
+z" /dev/ugen0.03" open-file-wo  constant picoboot-write
+z" /dev/ugen0.04" open-file-ro  constant picoboot-read
+
+( These are for executing commands over the two bulk endpoints.)
+: uwrite  ( buf len )   picoboot-write -rot  write ;
+: uread   ( buf len )   picoboot-read  -rot  read  drop ;
+
+.then
 
 ( This is for resetting the PICOBOOT interface. Again, we are hardwiring
   this for now. The Mass Storage device is interface 0; PICOBOOT is
@@ -36,11 +54,14 @@ variable bp  ( buf pointer)
 : >w  ( w)   >3210  >b >b >b >b ;  ( little-endian)
 
 variable spy  ( whether to spy on the protocol)
-: .b  ( n)  for  m* .h8_  next ;
+: .b     m*                  .h8_ ;
+: .w     m* m* m* m*  0123>  .h32 space ;
 : ?spy
+   radix preserve
    spy @ if
-      cr  cmdbuf 8 + m !  2 .b space  2 m +!  4 .b space
-      bp @  m @  do  i c@ .h8_  loop
+      cr  cmdbuf 8 +  m !  ( skip magic and token)
+      .b ( cmd)
+      7 m +!  ( skip to command bytes)  .w ( addr?)  .w ( #bytes?)
    then ;
 
 ( NOTE: For now we are using a token that is always 0. It would be better
@@ -78,10 +99,8 @@ variable spy  ( whether to spy on the protocol)
 
 : picoboot.exclusive  ( bExclusive)    0 1 01  <pico  >b                          pico>  ack> ;
 : picoboot.erase      ( size addr)     0 8 03  <pico  ( addr) >w  ( size) >w      pico>  ack> ;
-: picoboot.read   ( buf size addr)  over 8 84  <pico  ( addr) >w  ( size) dup >w  pico>
-                                                                                  uread  ack< ;
-: picoboot.write  ( buf size addr)  over 8 05  <pico  ( addr) >w  ( size) dup >w  pico>
-                                                                                 uwrite  ack> ;
+: picoboot.read   ( buf size addr)  over 8 84  <pico  ( addr) >w  ( size) dup >w  pico>  uread   ack< ;
+: picoboot.write  ( buf size addr)  over 8 05  <pico  ( addr) >w  ( size) dup >w  pico>  uwrite  ack> ;
 : picoboot.exit-xip                    0 0 06  <pico                              pico>  ack> ;
 : picoboot.enter-xip                   0 0 07  <pico                              pico>  ack> ;
 : picoboot.exec            ( addr)     0 4 08  <pico  1+ ( addr+thumb) >w         pico>  ack> ;
