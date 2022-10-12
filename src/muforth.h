@@ -130,6 +130,8 @@ void assert(int cond, const char *zmsg);
 /* file.c */
 char *string_copy(char *dest, char *src);
 char *concat_paths(char *dest, size_t destsize, char *p1, char *p2);
+ssize_t read_carefully(int fd, void *buffer, size_t len);
+void write_carefully(int fd, void *buffer, size_t len);
 
 /* Utility macros */
 #define MIN(a,b)    (((a) < (b)) ? (a) : (b))
