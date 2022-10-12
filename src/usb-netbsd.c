@@ -119,6 +119,34 @@ void mu_usb_close()
 }
 
 /*
+ * usb-read (buf len fd -- #read)
+ */
+void mu_usb_read()
+{
+    void *buf = (void *)ST2;
+    size_t len = ST1;
+    int fd = TOP;       /* endpoint */
+    int dummy = 1;
+
+    DROP(2);
+    ioctl(fd, USB_SET_SHORT_XFER, &dummy);
+    TOP = read_carefully(fd, buf, len);
+}
+
+/*
+ * usb-write (buf len fd)
+ */
+void mu_usb_write()
+{
+    void *buf = (void *)ST2;
+    size_t len = ST1;
+    int fd = TOP;       /* endpoint */
+
+    DROP(3);
+    write_carefully(fd, buf, len);
+}
+
+/*
  * usb-control (bmRequestType bRequest wValue wIndex wLength 'buffer device - count)
  */
 void mu_usb_control()

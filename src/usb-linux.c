@@ -246,9 +246,9 @@ void mu_usb_control()
 }
 
 /*
- * usb-read ( 'buffer size pipe# dev -- #read)
+ * usb-read-pipe ( 'buffer size pipe# dev -- #read)
  */
-void mu_usb_read()
+void mu_usb_read_pipe()
 {
     struct usbdevfs_bulktransfer tr;
     int fd;
@@ -271,9 +271,9 @@ void mu_usb_read()
 }
 
 /*
- * usb-write ( 'buffer size pipe# dev)
+ * usb-write-pipe ( 'buffer size pipe# dev)
  */
-void mu_usb_write()
+void mu_usb_write_pipe()
 {
     struct usbdevfs_bulktransfer tr;
     int fd;
