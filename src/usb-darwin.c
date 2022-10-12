@@ -275,14 +275,14 @@ void mu_usb_get_pipe_properties()
 #endif
 
 /*
- * usb-read ( 'buffer size pipe# dev -- #read)
+ * usb-read-pipe ( 'buffer size pipe# dev -- #read)
  */
-void mu_usb_read()
+void mu_usb_read_pipe()
 {
     IOUSBInterfaceInterface190 **intf = (IOUSBInterfaceInterface190 **)TOP;
     IOReturn ior;
     UInt32 size = ST2;
-    UInt8  pipe = ST1;
+    UInt8 pipe = ST1;
 
     /* data timeout of 100ms; completion timeout of 400ms */
     ior = (*intf)->ReadPipeTO(intf, pipe, (void *)ST3, &size, 100, 400);
@@ -294,13 +294,13 @@ void mu_usb_read()
 }
 
 /*
- * usb-write ( 'buffer size pipe# dev)
+ * usb-write-pipe ( 'buffer size pipe# dev)
  */
-void mu_usb_write()
+void mu_usb_write_pipe()
 {
     IOUSBInterfaceInterface190 **intf = (IOUSBInterfaceInterface190 **)TOP;
     IOReturn ior;
-    UInt8  pipe = ST1;
+    UInt8 pipe = ST1;
 
     /* data timeout of 100ms; completion timeout of 400ms */
     ior = (*intf)->WritePipeTO(intf, pipe, (void *)ST3, ST2, 100, 400);
