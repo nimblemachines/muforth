@@ -404,12 +404,12 @@ void mu_hid_find_device()
  */
 void mu_hid_read()
 {
-    cell fd = TOP;      /* 'buffer size dev -- dev 'buffer size */
-    TOP = ST1;
-    ST1 = ST2;
-    ST2 = fd;
+    void *buffer = (void *) ST2;
+    size_t len = ST1;
+    int fd = TOP;       /* dev is just a file descriptor */
 
-    mu_read_carefully();
+    DROP(2);
+    TOP = read_carefully(fd, buffer, len);
 }
 
 /*
@@ -417,10 +417,10 @@ void mu_hid_read()
  */
 void mu_hid_write()
 {
-    cell fd = TOP;      /* 'buffer size dev -- dev 'buffer size */
-    TOP = ST1;
-    ST1 = ST2;
-    ST2 = fd;
+    void *buffer = (void *) ST2;
+    size_t len = ST1;
+    int fd = TOP;       /* dev is just a file descriptor */
 
-    mu_write_carefully();
+    DROP(3);
+    write_carefully(fd, buffer, len);
 }
