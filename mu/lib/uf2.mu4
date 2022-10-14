@@ -1,0 +1,81 @@
+( This file is part of muforth: https://muforth.nimblemachines.com/
+
+  Copyright 2002-2022 David Frech. (Read the LICENSE for details.)
+
+loading UF2 file format
+
+( Initially for the Raspberry Pi Pico and possibly later for other targets,
+  we want to be able to generate UF2 image files for "easy" drag-and-drop
+  programming.
+
+  I have elsewhere ranted about how stupid I think drag-and-drop
+  programming is as a way of doing development, but it's not a bad way to
+  get, say, some chat firmware programmed onto a new board.)
+
+
+( The format.
+
+  The details are here: https://github.com/microsoft/uf2
+
+  In brief, a UF2 file consists of a series of 512-byte blocks, each
+  starting with 32-byte header, and ending with a 4-byte magic number. All
+  multibyte values are little-endian. There is room in each block for up to
+  476 bytes of payload data, but mostly people seem to be only putting 256
+  bytes of payload in each block. This makes the address math easier: the
+  offset of the beginning of a block is exactly twice the offset of the code
+  contained therein.
+
+  The header has the following format:
+
+   Offset   Size  Value
+  =======  =====  ===========================================
+     0       4    First magic number, 0x0a324655 ["UF2\n"]
+     4       4    Second magic number, 0x9e5d5157
+     8       4    Flags
+    12       4    Address in flash where the data should be written
+    16       4    Number of bytes in data payload [often 256]
+    20       4    Sequential block number; starts at 0
+    24       4    Total number of blocks in file
+    28       4    File size or board family ID or zero
+    32     476    Data, padded with zeros
+   508       4    Final magic number, 0x0ab16f30
+
+  The only flag we are going to care about relates to the value at offset
+  28. We are going to be putting a *family ID* rather than a file size here,
+  and we need a flag value of 0000_2000 hex for this.
+)
+
+hex
+
+( I'm going to assume a payload size of 256 for this code. Anything else
+  seems silly.)
+
+( Output a single word value, in little-endian binary form.)
+: w  ( word)   >3210  emit emit emit emit ;
+
+: gen-uf2-block  ( family #blocks target     block# -
+                   family #blocks target+256 block#+1)
+   0a32_4655 w  ( magic 0)
+   9e5d_5157 w  ( magic 1)
+   0000_2000 w  ( flags)
+   over w       ( address)
+   #256 w       ( payload size)
+   dup w  push  ( block#)
+   over w       ( block count)
+   2 nth w      ( family ID)
+   dup image+  #256 type  ( 256 bytes of data)
+   [ #476 #256 - #] for  0 emit  next  ( 220 bytes of padding)
+   0ab1_6f30 w  ( magic final)
+   #256 +  pop 1+ ;
+
+( Generate a UF2 file containing the current region - ram or flash. Whether
+  ram or flash, round the region size up to a multiple of the page size.)
+
+: uf2  ( family)
+   out-channel preserve >stdout
+   region ( a u)  /page aligned-by
+   #256 / ( #blocks)  swap  ( family #blocks target)
+   0 ( block#)  2 nth ( #blocks)  for  gen-uf2-block  next
+   2drop  2drop ;
+
+: pico-uf2   e48bff56 ( pico family)  uf2 ;
