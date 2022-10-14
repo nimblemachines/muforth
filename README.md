@@ -74,7 +74,12 @@ worrying too much about /dev/whatamienumeratingas
 
 On OpenBSD, due to the dim view the devs have of the security of the USB
 code, access is now restricted, but you can get it by using doas and
-making yourself a member of group wheel. doas chown $USER /dev/ugen0.* /dev/usbX
+making yourself a member of group wheel. 
+
+```
+doas chown $USER /dev/ugen0.* /dev/usbX
+```
+
 is the way to get jtag working with muforth targets on that OS.
 
 Generally speaking, jtag or serial, you're going to cd into muforth/mu.
