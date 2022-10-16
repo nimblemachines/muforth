@@ -1,9 +1,10 @@
 # muforth and .uf2 files
 
 muforth now includes nascent support for generating uf2 files for the
-drag and drop crowd. muforth/mu/target/ARM/board/picouf2.mu4 is a 
-template file that sets things up correctly so you can append your own 
-code files with ld ...
+drag and drop crowd. 
+
+muforth/mu/target/ARM/board/picouf2.mu4 is a template file that sets
+things up correctly so you can append your own code files with ld ...
 
 ### Example
 
