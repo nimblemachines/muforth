@@ -53,3 +53,8 @@ $ hexdump -C test.uf2 | less
 ```
 
 NB: Your .uf2 will look different, as the above included some current testing code.
+
+But wait! How the hell do you know this has worked? We can't even read
+from flash, and if we can't read from flash we can't execute code!
+
+It's called a cliffhanger ...
