@@ -2,6 +2,14 @@
 
 Fork of https://github.com/nimblemachines/muforth
 
+---
+
+### UPDATE 15 October 2022
+
+muforth now includes [nascent support for generating uf2 files.](https://github.com/anarchitech/muforth-anarchitech/blob/master/mu/target/ARM/beta-testing/README_UF2.md)
+
+---
+
 New users might want to watch or clone this repository, as it actively tries
 to identify and offer solutions for tripping points or omissions that
 have not yet been incorporated into the master repository above.
