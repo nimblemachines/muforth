@@ -1,0 +1,63 @@
+( This file is part of muforth: https://muforth.nimblemachines.com/
+
+  Copyright 2002-2022 David Frech. (Read the LICENSE for details.)
+
+loading CRC-32, compatible with Pico bootrom
+
+( We are going to recast the ARM assembler code from the Pico bootrom into
+  Forth so we can easily create a CRC32 checksum for flash stage2 loaders.)
+
+( The ARM code looks like this [from
+  https://github.com/raspberrypi/pico-bootrom/blob/master/bootrom/bootrom_misc.S]:
+
+   // Each byte digested MSB-first
+   // r0: start pointer
+   // r1: length in bytes
+   // r2: checksum seed value
+
+   crc32_small:
+       push {r4, r5, lr}
+       // r1 now end
+       add r1, r0
+       ldr  r5, =#0x4c11db7
+
+       b byte_loop_test
+   byte_loop:
+       ldrb r4, [r0]
+
+       rev  r3, r2
+       eor  r4, r3
+       lsl  r4, #24
+
+       mov r3, #8
+   bit_loop:
+       lsl r4, #1
+       bcc no_bit
+       eor r4, r5
+   no_bit:
+       sub r3, #1
+       bne bit_loop
+
+       lsl r2, #8
+       eor r2, r4
+
+       add r0, #1
+   byte_loop_test:
+       cmp r0, r1
+       blt byte_loop
+
+       mov r0, r2
+       pop {r4, r5, pc}
+)
+
+decimal
+
+: crc32-byte  ( crc byte - crc')
+   over 24 u>> xor  24 <<
+   8 for  2*  dup "1_0000_0000 and if  "04c1_1db7 xor  then  next
+   swap  8 << xor  "ffff_ffff and ;
+
+: crc32  ( crc a u - crc')
+   for  c@+ push  crc32-byte  pop  next  drop ;
+
+( To be compatible with the bootrom, the initial CRC is ffff_ffff.)
