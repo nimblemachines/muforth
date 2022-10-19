@@ -1,0 +1,93 @@
+( This file is part of muforth: https://muforth.nimblemachines.com/
+
+  Copyright 2002-2022 David Frech. (Read the LICENSE for details.)
+
+loading Pico XIP experiments
+
+( Bit-banging the SPI flash chip via the RP2040's SIO - single-cycle i/o -
+  port is nifty and all, but we really want to be able to do
+  execute-in-place - XIP.
+
+  Getting that to work with the Pico's Winbond W25Q16JV is the focus here.)
+
+__meta
+
+hex
+
+.target. .contains  qspi->xip  .not .if
+
+: 2drop  drop drop ;
+
+( To show what the QSPI pins are connected to.)
+: qspi-function@  ( sclk cs io0 io1 io2 io3)
+   IO_QSPI_GPIO_QSPI_SCLK_CTRL  6 for  @+ cell+  next  drop ;
+
+: qspi-function!  ( gpio-function)
+   IO_QSPI_GPIO_QSPI_SCLK_CTRL  6 for  2dup !  8 +  next  2drop ;
+
+( Connect QSPI pins to SIO rather than XIP.)
+: qspi->sio   5 ( SIO function) qspi-function! ;
+
+( Connect QSPI pins back to XIP.)
+: qspi->xip   0 ( XIP function) qspi-function! ;
+
+.then
+
+
+: xip-fast-clock   2 XIP_SSI_BAUDR !   ( /2 clock) ;
+: xip-slow-clock   4 XIP_SSI_BAUDR !   ( /4 clock) ;
+
+( Flush and enable the XIP flash cache.)
+: xip-flush-cache
+   XIP_CTRL_FLUSH  1 over !  @ drop ( @ completes after flush)
+   1 XIP_CTRL_CTRL set!  ( make sure flash cache is enabled) ;
+
+: xip-enable   ( spi-ctrlr0 ctrlr0)
+   0 XIP_SSI_SSIENR !  ( disable during config)
+   XIP_SSI_CTRLR0 !
+   XIP_SSI_SPI_CTRLR0 !
+   0 ( num data frames - 1)  XIP_SSI_CTRLR1 !  ( read one 32-bit word)
+   1 XIP_SSI_SSIENR !  ( re-enable) ;
+
+__host
+
+( Handy host word to help calculate the complicated register settings we
+  need for XIP_SSI_CTRLR0 and XIP_SSI_SPI_CTRLR0. It both calculates the
+  two register values and creates target literals to push them at run time.)
+
+( FRF can take the following values:
+    0 - normal SPI mode
+    1 - dual i/o mode
+    2 - quad i/o mode
+
+  TRANS_TYPE can take the following values:
+    0 - command and address in SPI format
+    1 - command in SPI format, address in FRF
+    2 - command and address both in FRF
+)
+
+: >xip-regs,  ( frf trans-type wait-cycles addr-nybs read-cmd)
+   ( read-cmd)  #24 <<  ( XIP_CMD)  >r  swap
+   ( wait-cycs) #11 <<  ( WAIT_CYCLES)
+   [ 2            8 <<  ( INST_L: # of nybbles) #] +  >r
+   ( addr-nybs)   2 <<  ( ADDR_L: # of nybbles)
+   ( trans-type)  +  r> +  r> +  ( => spi-ctrlr0)  \m literal
+
+   ( frf)         #21 <<  ( SPI_FRF)
+   [ #31 ( bits)  #16 <<  ( DFS_32)
+   3 ( eeprom rd)   8 <<  ( TMOD) + #] +  ( => ctrlr0)  \m literal ;
+
+__meta
+
+( Let's first try the simplest and slowest XIP setup: using the traditional
+  SPI read command 03. This only uses the SO and SI pins - everything is
+  clocked in or out one bit at a time.)
+
+: basic-read     [ 0  0  0  6  03  >xip-regs, ]  xip-enable ;
+: quad-o-read    [ 2  0  8  6  6b  >xip-regs, ]  xip-enable ;  ( FRQO: fast read quad output)
+: quad-io-read   [ 2  1  8  6  eb  >xip-regs, ]  xip-enable ;  ( FRQIO: fast read quad i/o)
+
+
+( tt - short for test - is basically our stage2. ;-)
+: tt  qspi->xip  xip-flush-cache  xip-fast-clock  quad-o-read ;
+: rd  1300_0020 @+ @+ @  1000_0040 @+ @+ @ ;
