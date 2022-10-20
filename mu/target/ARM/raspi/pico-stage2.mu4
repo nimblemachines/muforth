@@ -1,0 +1,86 @@
+( This file is part of muforth: https://muforth.nimblemachines.com/
+
+  Copyright 2002-2022 David Frech. (Read the LICENSE for details.)
+
+loading Pico flash stage2
+
+( This code resides in the first 256 bytes of the SPI flash, a Winbond
+  W25Q16JV. Its job is to prepare the system for execute-in-place - XIP -
+  from the flash.
+
+  The ideas and methods in this code were tested interactively by
+  experimenting with the Forth code in mu/target/ARM/raspi/pico-xip-experiments.mu4.
+  After finding a method that worked, I rewrote the code in assembler.
+
+  We have four tasks:
+    - connect the QSPI pins to the XIP peripheral
+    - flush and enable the flash cache
+    - set the SPI clock speed
+    - program the XIP peripheral for our particular SPI flash chip.
+)
+
+decimal
+
+( Host helper word to calculate two gnarly register values.)
+: >xip-regs  ( frf trans-type wait-cycles addr-nybs read-cmd - spi-ctrlr0 ctrlr0)
+   ( read-cmd)   24 <<  ( XIP_CMD)  >r  swap
+   ( wait-cycs)  11 <<  ( WAIT_CYCLES)
+   [ 2            8 <<  ( INST_L: # of nybbles) #] +  >r
+   ( addr-nybs)   2 <<  ( ADDR_L: # of nybbles)
+   ( trans-type)  +  r> +  r> +  ( => spi-ctrlr0)  swap
+
+   ( frf)          21 <<  ( SPI_FRF)
+   [ #31 ( bits)   16 <<  ( DFS_32)
+   3 ( eeprom rd)   8 <<  ( TMOD) + #] +  ( => ctrlr0) ;
+
+__meta
+hex
+
+label stage2   ( probably unnecessary - we know where this code lives!)
+
+( Connect QSPI pins to XIP.)
+   0 # w movs   ( XIP function)
+   IO_QSPI_GPIO_QSPI_SCLK_CTRL x lit  ( address of first of six GPIO_QSPI registers)
+    0 x +) w str
+    8 x +) w str
+   10 x +) w str
+   18 x +) w str
+   20 x +) w str
+   28 x +) w str
+
+( Flush and enable XIP flash cache.)
+   XIP_CTRL_CTRL x lit  ( base addr)
+   1 # w movs
+   XIP_CTRL_FLUSH XIP_CTRL_CTRL -  x +) w str
+   XIP_CTRL_FLUSH XIP_CTRL_CTRL -  x +) y ldr  ( load blocks until flush is complete)
+   0 x +) y ldr   w y y orrs   0 x +) y str  ( enable cache)
+
+( Enable XIP by setting up parameters for SPI reads.)
+   XIP_SSI_CTRLR0 x lit  ( base addr)
+
+   0 # w movs
+   XIP_SSI_SSIENR XIP_SSI_CTRLR0 -  x +) w str  ( disable during config)
+
+   XIP_SSI_CTRLR1 XIP_SSI_CTRLR0 -  x +) w str  ( read one 32-bit word)
+
+   ( We are going to use the "fast read quad output" instruction.)
+   2  0  8  6  6b  >xip-regs  ( spi-ctrlr0 ctrlr0)
+   w lit
+   0 x +) w str  ( set XIP_SSI_CTRLR0)
+   w lit
+   XIP_SSI_SPI_CTRLR0 y lit  ( too far to offset from x)
+   0 y +) w str  ( set XIP_SSI_SPI_CTRLR0)
+
+( Set a fast SPI clock for XIP.)
+   2 # w movs
+   XIP_SSI_BAUDR XIP_SSI_CTRLR0 -  x +) w str  ( sysclk/2)
+
+   1 # w movs
+   XIP_SSI_SSIENR XIP_SSI_CTRLR0 -  x +) w str  ( re-enable)
+
+( Done! Let's go execute some code...)
+( XXX actually, for now we have to call back into picoboot!)
+   ;c  pool,
+
+-- append-crc32
+@flash 100 + goto
