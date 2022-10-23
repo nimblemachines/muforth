@@ -16,6 +16,7 @@
 #   28e9  - GigaDevice?
 #   2e8a  - Raspberry Pi Pico (PICOBOOT)
 #   c251  - Keil CMSIS-DAP - for Freescale Freedom (FRDM) boards
+#   10c4  - Silicon Labs CP210x UART Bridge
 #
 # I added the following fake vendor ID and plan to use it for future
 # projects:
@@ -27,7 +28,7 @@ cat <<EOT
     # udev rules to match USB devices of interest to muforth
 EOT
 
-for vid in 0403 0483 04d8 0d28 15a2 1cbe 2047 28e9 2e8a c251 f0ff ; do
+for vid in 0403 0483 04d8 0d28 15a2 1cbe 2047 28e9 2e8a c251 10c4 f0ff ; do
     cat <<EOT
     SUBSYSTEMS=="usb", ATTRS{idVendor}=="$vid", OWNER:="$1"
 EOT
