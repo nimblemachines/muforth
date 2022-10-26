@@ -91,10 +91,10 @@ doas chown $USER /dev/ugen0.* /dev/usbX
 is the way to get jtag working with muforth targets on that OS.
 
 Generally speaking, jtag or serial, you're going to cd into muforth/mu.
-Using the Raspberry Pi Pico as an example:
+Using the STM32F4-Discovery as an example:
 
 ``` 
-./muforth -f target/ARM/board/raspberry-pi-pico.mu4 
+./muforth -f target/ARM/board/stm32f4-factory-discovery.mu4 
 jtag 
 ```
 
