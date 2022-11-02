@@ -1111,51 +1111,75 @@ variable sep  ( include "thousands" separators in numbers - or not.)
   "revert" to having strings compiled inline. Now we have to jump over
   their bodies again.
 
-  The single string literal primitive is called (")
+  Strings are compiled with a cell-sized prefix length, and at least one
+  zero terminating byte. Strings are padded to a cell boundary with zero
+  bytes.
 
-( It jumps over the inline, cell-count-prefixed string, and pushes the
-  address of its first character and its length on the stack. Because all
-  strings are compiled with zero-terminators, it is possible to pass the
-  address of the first character to a C function, and it will work.
+  Because string addresses point to the first character of the string and
+  all strings are compiled with zero-terminators, it is possible to pass a
+  string address to a C function, and it will work.
 
-  I use z" to identify this kind of address. It suggests a zero-terminated
-  string.)
+  I use z" to identify this kind of address. It suggests a C-style
+  zero-terminated string.
 
-( Copy string; return a counted string [addr of first character;
-  prefix count cell _precedes_ first character of string].
-  This does _not_ allot space in the dictionary!)
+  There are two string literal primitives. Both jump over the body of the
+  string, but differ in what they leave on the stack.
+
+    (z")  ( leaves only the address of the first character of the string;
+    (")   ( leaves both the address and count.)
+
+
+( Copy a string from the input stream into the dictionary and allot space
+  for it, then return the address of the first character of the string.
+  Prefix count cell _precedes_ first character of string.)
 
 : scrabble  ( a u - z")
-   here cell+ push ( z")
-   dup here ! ( prefix cell-sized length)
-   tuck ( u a u)  r@ swap cmove  ( copy string)
-   r@ + 0 swap c! ( zero terminator)  pop ;
+   dup ,  ( compile count cell)
+   here push ( string dest address)
+   dup 1+ allot  ( allot space for string, terminator, and padding)
+   0 here cell- !  ( store zero terminator and padding to cell boundary)
+   r@ swap cmove  ( copy string)
+   pop  ( return address of string) ;
 
-( all compiled strings have a zero terminator.)
-: count  ( z" - a u)  dup  cell- @ ;
+( Given the address of the count cell of a compiled string, skip over the
+  string, returning the address, length, and the new "return address": the
+  address of the cell following the string.)
+
+: skip-string    ( 'count - a u ra)  @+ swap ( a u)  2dup + 1+ aligned ;
+
+( Here are the two string literal primitives mentioned above.)
 runtime
-: (")    ( - a u)  pop  cell+ count ( a u)  2dup + 1+ aligned push ;
+: (")    ( - a u)  pop  skip-string       push ;
+: (z")   ( - a)    pop  skip-string  nip  push ;
 forth
 
-: _string  ( a u - z")  scrabble  count cell+ 1+  allot ;
-: string,   ( ch - z")  parse  _string ;
-: token,       ( - z")  token  _string ;
+( Take the address of the first character of a compiled string and return
+  its address and length. We simply back up one cell and fetch the length.)
 
-defer warn
-
-( Compiled strings.)
-compiler
-:  "   ( - a c)   \ (")  char " string,  drop ;
-: z"   ( - z")    \ "  \ drop ;   ( z means zero-terminated)
-: ."              \ "  \ type ;
-: error"         \ z"  \ abort ;  ( compile a C-style string for abort)
-: warn"          \ z"  \ warn ;
+: count  ( z" - a u)  dup  cell- @ ;
 
 ( Interpreted strings. Strings that return an address always get compiled!)
+: token,  ( - z")         token  scrabble ;  ( useful for compiling filenames)
+: z"      ( - z")  char " parse  scrabble ;
+:  "     ( - a c)  \f z"  count ;  ( ANS)
+
+( ." doesn't need to compile the following string because it is immediately
+  printed out and then forgotten, so we can read it directly out of the
+  input stream without copying.)
+
+: ."   char " parse  type ;
+
+( Compiled strings.)
+defer warn
+
+compiler
+:  "   ( - a c)   compile (")   \f z" drop ;
+: z"   ( - z")    compile (z")  \f z" drop ;
+: ."              \c "   compile type ;
+: error"          \c z"  compile abort ;  ( compile a C-style string for abort)
+: warn"           \c z"  compile warn ;   ( ditto for warn)
 forth
-: z"  ( - z")   char "  string, ;
-:  "  ( - a c)  \f z"  count ;  ( ANS)
-: ."    char " parse ( a #)  type  ;  ( not compiled)
+
 
 ( Words that do something with each word being defined.)
 ( hook into new by rewriting its second cell!)
