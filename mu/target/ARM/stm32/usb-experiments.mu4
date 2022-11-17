@@ -2,6 +2,8 @@
 
   Copyright 2002-2022 David Frech. (Read the LICENSE for details.)
 
+loading STM32 experimental USB code
+
 ld target/common/usb-descriptors.mu4
 
 __meta
@@ -74,7 +76,7 @@ here equ string1
    u" Fücken Awesöme Innövation Läb"
 
 here equ string2
-   u" STM32F072B USB testbed"
+   u" STM32 USB testbed"
 
 here equ string3
    muforth-commit drop #12  ucs16-string,
@@ -221,9 +223,10 @@ code usb>  ( usb mem - usb+2 mem+2)
 
 ( Send a "single-ended zero" onto the USB bus: hold both D+ and D- low.)
 : usb-disconnect
-   [   %11 #11 << #] GPIOA_ODR clr!  ( drive PA11 and 12 low)
+   [   %11 #11 << #] GPIOA_BRR !  ( drive PA11 and 12 low)
    [ %1111 #22 << #] GPIOA_MODER clr!
-   [ %0101 #22 << #] GPIOA_MODER set!  ( gp output mode for PA11 and 12) ;
+   [ %0101 #22 << #] GPIOA_MODER set!  ( gp output mode for PA11 and 12)
+   [   %11 #11 << #] GPIOA_OTYPER set!  ( make PA11 and 12 open-drain) ;
 
 ( Delay a bit.)
          ( clks/sec)  ( ms/sec)  ( clks/loop)
@@ -259,7 +262,12 @@ variable memaddr
 : count  ( a - a u)  dup c@ ;
 
 : prepare-descriptor ( a u)
-   wLength h@  umin  memcount !  memaddr !  prepare-next-in ;
+.ifdef 1x16-usb-ram
+   wLength @
+.else
+   wLength h@
+.then
+   umin  memcount !  memaddr !  prepare-next-in ;
 
 : get-device-descriptor
    device-descriptor count
@@ -313,7 +321,7 @@ variable memaddr
      stage, or a status IN. If our address has not been set, assume that
      this is the status IN of a SET_ADDRESS command.)
 
-   USB_DADDR @  80 = if
+   USB_DADDR @  80 = if  ( device address still unset)
       wValue c@  80 or  USB_DADDR !
    then
    expect-out-token ;
@@ -376,6 +384,7 @@ variable memaddr
    USB_CNTR off  ( clear reset bit and power down bits) ;
 
 ( First handle all transactions, then handle other interrupts.)
+( XXX use dup to reduce USB_ISTR literals?)
 : process-usb
    begin
       USB_ISTR @  [ 1 #15 << #] ( CTR) and  while  handle-transaction
@@ -385,39 +394,30 @@ variable memaddr
    [ 1 #10 << #] ( RESET) and if  handle-reset  then
    ;
 
-: plug   usb-disconnect  usb-init  #50 ms  usb-connect ;
-: usb
-   ( Set up CRS - clock recovery system.)
-   [ 1 6 << #] ( AUTOTRIMEN) CRS_CR set!  ( turn on autorimming of 48M HSI clock)
-
-   periph-clock-init
-   plug
-   c_0000 for  process-usb  next ;
-
 : wait-for-rdy  ( regaddr)
    begin  dup c@  2 and  until  ( wait for RDY bit)  drop ;
 
-.ifdef stm32f072
+.equates. .contains CRS_CR  .if  ( probably STM32F072)
 
 : clock-init
    1 ( HSI48ON) [ RCC_CR2 2 + #] tuck c!  wait-for-rdy ( wait for HSI48RDY)
-   1 ( latency) FLASH_ACR +!  ( we need one cycle for 48 MHz clock!)
+   6 ( ~latency) FLASH_ACR  1 ( latency) over  set! clr!  ( we need one cycle for 48 MHz clock!)
    3 ( SW=HSI48 as sysclk)  RCC_CFGR tuck c!
    begin  dup c@ %1111 =  until  ( SW=HSI48 and SWS=HSI48)  drop
 
    ( Set up CRS - clock recovery system.)
-   [ 1 6 << #] ( AUTOTRIMEN) CRS_CR set!  ( turn on autorimming of 48M HSI clock) ;
+   [ 1 6 << #] ( AUTOTRIMEN) CRS_CR set!  ( turn on autotrimming of 48M HSI clock) ;
 
 : led-init
    -- Turn on clock to Port C
    ( Ports -FED_CBA- )
-        [ %0000_1000  #16 << #] RCC_AHBENR +!
+        [ %0000_1000  #16 << #] RCC_AHBENR set!
    -- Make PC6 to PC9 outputs
-   [ %01010101 #12 << #] GPIOC_MODER ! ;
+   [ %01010101 #12 << #] GPIOC_MODER set! ;
 
-: flash-leds   %11_1100_0000 GPIOC_ODR !  2_0000 wait  0 GPIOC_ODR ! ;
+: flash-leds   %11_1100_0000 dup GPIOC_BSRR !  2_0000 wait  GPIOC_BRR ! ;
 
-.else
+.else  ( hopefully STM32F303)
 
 ( Turn on HSE, which is driven by an 8 Mhz signal from the ST-LINK. Use it
   to drive the PLL to 72 Mhz - x9 - and when the PLL stabilizes, switch to
@@ -427,26 +427,27 @@ variable memaddr
    5 ( HSEON + HSEBYP) [ RCC_CR 2 + #] tuck c!  wait-for-rdy ( wait for HSERDY)
    001d_0400 RCC_CFGR ! ( USBPRE=/1.5; PLLMUL=9; PLLSRC=HSE; APB1=/2)
    1 ( PLLON)          [ RCC_CR 3 + #] tuck c!  wait-for-rdy ( wait for PLLRDY)
-   2 ( latency) FLASH_ACR +!  ( we need two cycles for 72 MHz clock!)
+   5 ( ~latency) FLASH_ACR  2 ( latency) over  set! clr!  ( we need two cycles for 72 MHz clock!)
    2 ( SW=PLL as sysclk)  RCC_CFGR tuck c!
    begin  dup c@ %1010 =  until  ( SW=PLL and SWS=PLL)  drop ;
 
 : led-init
    -- Turn on clock to Port E
    ( Ports GFED_CBAH )
-        [ %0010_0000  #16 << #] RCC_AHBENR +!
+        [ %0010_0000  #16 << #] RCC_AHBENR set!
    -- Make PE8 to PE15 outputs
-   5555_0000 GPIOE_MODER ! ;
+   5555_0000 GPIOE_MODER set! ;
 
-: flash-leds  0000_ff00 GPIOE_ODR !  3_0000 wait  0 GPIOE_ODR ! ;
+: flash-leds  0000_ff00 dup GPIOE_BSRR !  3_0000 wait  GPIOE_BRR ! ;
 
 .then
 
 here ]  ( chip-init)
    periph-clock-init
+   usb-disconnect
    clock-init  led-init  flash-leds
    usb-init
-   plug
+   usb-connect
    begin  process-usb  again  [
 
 Reset_exc handler
@@ -463,3 +464,16 @@ HardFault_exc handler
 
 NMI_exc default-handler
    lr bx  ;c  ( return to sender!!)
+
+ram
+
+: tt  ( test)
+   periph-clock-init
+   usb-disconnect
+   clock-init  led-init  flash-leds
+   usb-init ;
+
+: go
+   tt
+   usb-connect
+   begin  process-usb  again  [
