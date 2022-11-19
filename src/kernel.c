@@ -19,9 +19,9 @@ void mu_xor()   { ST1 ^= TOP; DROP(1); }
 void mu_negate()  { TOP = -TOP; }
 void mu_invert()  { TOP = ~TOP; }
 
-void mu_2star()                  { TOP <<= 1; }
-void mu_2slash()                 { TOP >>= 1; }
-void mu_u2slash()  { TOP = (ucell) TOP >>  1; }
+void mu_2star()                 { TOP <<= 1; }
+void mu_2slash()                { TOP >>= 1; }
+void mu_u2slash()  { TOP = (uval) TOP >>  1; }
 
 /*
  * Representation of truth values
@@ -57,56 +57,60 @@ void mu_u2slash()  { TOP = (ucell) TOP >>  1; }
  *  - Big signed right shifts of *non-negative* values result in all zeros.
  *  - Big signed right shifts of *negative* values result in all ones.
  */
-#define BIGSHIFT  ((ucell) TOP >= (sizeof(cell) * 8))
+#define BIGSHIFT  (TOP >= (sizeof(val) * 8))
 #define SIGN(x)   -((x) < 0)
 
 void mu_shift_left()    { ST1 = BIGSHIFT ? 0 :         ST1 << TOP; DROP(1); }
-void mu_ushift_right()  { ST1 = BIGSHIFT ? 0 : (ucell) ST1 >> TOP; DROP(1); }
+void mu_ushift_right()  { ST1 = BIGSHIFT ? 0 :  (uval) ST1 >> TOP; DROP(1); }
 void mu_shift_right()   { ST1 = BIGSHIFT ? SIGN(ST1) : ST1 >> TOP; DROP(1); }
 
 /* By defining these here, we don't need to export the cell size to Forth.
  * This saves a word in the dictionary. ;-) */
-void mu_cells()        { TOP <<= 3; }
-void mu_cell_slash()   { TOP >>= 3; }  /* signed & flooring! */
+void mu_cells()        { TOP <<= 2; }
+void mu_cell_slash()   { TOP >>= 2; }  /* signed & flooring! */
 
 /* fetch and store character (really _byte_) values */
 void mu_cfetch()  { TOP = *(uint8_t *)TOP; }
 void mu_cstore()  { *(uint8_t *)TOP = ST1; DROP(2); }
 
-/* fetch and store cell values (64 bit) */
-void mu_fetch()       { TOP =  *(cell *)TOP; }
-void mu_store()       { *(cell *)TOP  = ST1; DROP(2); }
-void mu_plus_store()  { *(cell *)TOP += ST1; DROP(2); }
+/* fetch and store cell values (32 bit) */
+void mu_cell_fetch()  { TOP =  *(cell *)TOP; }
+void mu_cell_store()  { *(cell *)TOP  = ST1; DROP(2); }
+
+/* fetch and store values (64 bit) */
+void mu_fetch()       { TOP =  *(val *)TOP; }
+void mu_store()       { *(val *)TOP  = ST1; DROP(2); }
+void mu_plus_store()  { *(val *)TOP += ST1; DROP(2); }
 
 /* copy nth value (counting from 0) to top - ANS calls this "pick" */
 void mu_nth()    { TOP = SP[TOP+1]; }
 
 /* t means TOP, s means SECOND */
-void mu_dup()    { cell t = TOP; PUSH(t); }             /* a   -> a   a */
-void mu_over()   { cell s = ST1; PUSH(s); }             /* a b -> a b a */
-void mu_swap()   { cell t = TOP; TOP = ST1; ST1 = t; }  /* a b ->   b a */
+void mu_dup()    { val t = TOP; PUSH(t); }             /* a   -> a   a */
+void mu_over()   { val s = ST1; PUSH(s); }             /* a b -> a b a */
+void mu_swap()   { val t = TOP; TOP = ST1; ST1 = t; }  /* a b ->   b a */
 
 void mu_drop()   { DROP(1); }
 void mu_2drop()  { DROP(2); }
 void mu_drops()  { DROP(TOP+1); }
 
-void mu_uless()  { ST1 = -(ST1 < (ucell) TOP); DROP(1); }
-void mu_less()   { ST1 = -(ST1 <         TOP); DROP(1); }
+void mu_uless()  { ST1 = -(ST1 < (uval) TOP); DROP(1); }
+void mu_less()   { ST1 = -(ST1 <        TOP); DROP(1); }
 
 void mu_0less()   { TOP = -(TOP <  0); }
 void mu_0equal()  { TOP = -(TOP == 0); }
 
-void mu_depth()     { cell d = SP0 - SP; PUSH(d); }
+void mu_depth()     { val d = SP0 - SP; PUSH(d); }
 void mu_sp_reset()  { SP = SP0; SP[0] = 0xdecafbad; }
 #ifdef WITH_SP_OPERATORS
 void mu_push_s0()   { PUSH_ADDR(SP0); }     /* address of stack bottom */
-void mu_sp_fetch()  { cell *s = SP; PUSH_ADDR(s); } /* push stack pointer */
-void mu_sp_store()  { SP = (cell *)TOP; }           /* set stack pointer */
+void mu_sp_fetch()  { val *s = SP; PUSH_ADDR(s); }  /* push stack pointer */
+void mu_sp_store()  { SP = (val *)TOP; }            /* set stack pointer */
 #endif
 
 /* So we can do return-stack magic. */
-void mu_runtime_rp_store()       { RP  = (cell *)TOP; DROP(1); }
-void mu_runtime_rp_plus_store()  { RP += TOP; DROP(1); }    /* TOP is cell count! */
+void mu_runtime_rp_store()       { RP  = (val *)TOP; DROP(1); }
+void mu_runtime_rp_plus_store()  { RP += TOP; DROP(1); }    /* TOP is val count! */
 void mu_runtime_rp_fetch()       { PUSH_ADDR(RP); }
 
 /*
@@ -117,11 +121,11 @@ void mu_star()    { ST1 *= TOP; DROP(1); }
 
 void mu_uslash_mod()  /* u1 u2 -- um uq */
 {
-    ucell umod;
-    ucell uquot;
+    uval umod;
+    uval uquot;
 
-    uquot = (ucell)ST1 / TOP;
-    umod  = (ucell)ST1 % TOP;
+    uquot = (uval)ST1 / TOP;
+    umod  = (uval)ST1 % TOP;
     ST1 = umod;
     TOP = uquot;
 }
@@ -152,8 +156,8 @@ void mu_uslash_mod()  /* u1 u2 -- um uq */
  */
 void mu_slash_mod()  /* n1 n2 -- m q */
 {
-    cell mod;
-    cell quot;
+    val mod;
+    val quot;
 
     quot = ST1 / TOP;
     mod  = ST1 % TOP;

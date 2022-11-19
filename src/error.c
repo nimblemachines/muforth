@@ -21,7 +21,7 @@ void die(const char* zmsg)
 }
 
 /* abort() is deferred via this variable */
-static xt_cell xt_abort = CELL(NULL);
+static cell * xt_abort = NULL;
 
 void mu_abort()     /* zmsg */
 {

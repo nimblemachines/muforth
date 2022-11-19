@@ -40,54 +40,62 @@
  * way to see when we're "done".
  */
 
-#define CALL(xt)  (W = (xt), (_STAR(W))())
+#define CALL(xt)  (W = (cell *)(xt), (*FUN(*W++))())
 
 void mu_execute()
 {
-    cell *rp_saved;
+    val *rp_saved;
 
     rp_saved = RP;
 
-    CALL(_STAR((xt_cell *)SP++));   /* pop stack and execute xt */
+    CALL(POP);              /* pop stack and execute xt */
     while (RP < rp_saved)
-        CALL(_STAR(IP++));          /* do NEXT */
+        CALL(UNHEAPIFY(*IP++));     /* do NEXT */
 }
 
+/* XXX should we push actual pointers or heap indices? */
 #define NEST      RPUSH((addr)IP)
-#define UNNEST    (IP = (xt_cell *)RPOP)
+#define UNNEST    (IP = (cell *)RPOP)
+
+/*
+ * Define an empty token to foil sed matching of mu_do_colon(); we do *not*
+ * want to create a dictionary entry for it!
+ */
+#define NODICT
 
 /* The most important "word" of all: */
-static void mu_do_colon()
+NODICT void mu_do_colon()
 {
-    NEST;                       /* entering a new word; push IP */
-    IP = (xt_cell *)&W[1];      /* new IP is address of parameter field */
+    NEST;       /* entering a new word; push IP */
+    IP = W;     /* new IP is address of parameter field */
 }
 
 /* The basis of create/does>. */
 static void mu_do_does()
 {
-    NEST;                       /* entering a new word; push IP */
-    IP = (xt_cell *)_(W[1]);    /* new IP is stored in the parameter field */
-    PUSH_ADDR(&W[2]);           /* push the address of the word's body */
+    NEST;                   /* entering a new word; push IP */
+    IP = UNHEAPIFY(*W);     /* new IP is stored in the parameter field */
+    PUSH_ADDR(W + 1);       /* push the address of the word's body */
 }
 
-void mu_set_colon_code() { PUSH_ADDR(&mu_do_colon); mu_comma(); }
-void mu_set_does_code()  { PUSH_ADDR(&mu_do_does);  mu_comma(); }
+void mu_set_colon_code() { PUSH(CODE(mu_do_colon)); mu_cell_comma(); }
+void mu_set_does_code()  { PUSH(CODE(mu_do_does));  mu_cell_comma(); }
 
 /* Normal exit */
 void mu_runtime_exit()      { UNNEST; }
 
 /* Push an inline literal */
-void mu_runtime_lit_()      { PUSH(*(cell *)IP++); }
+/* XXX for now, literals are val-sized: two cells! */
+void mu_runtime_lit_()      { PUSH(*(val *)IP); IP += sizeof(val)/sizeof(cell); }
 
 /* Compile the following word */
-void mu_runtime_compile()   { mu_runtime_lit_(); mu_comma(); }
+void mu_runtime_compile()   { PUSH(*IP++); mu_cell_comma(); }
 
 
 /*
  * These are the control structure runtime workhorses.
  */
-#define BRANCH    (IP = (xt_cell *)_STAR(IP))
+#define BRANCH    (IP = UNHEAPIFY(*IP))
 #define SKIP      (IP++)
 
 void mu_runtime_branch_()           { BRANCH; }
@@ -141,9 +149,9 @@ void mu_runtime_next_()
 
 void mu_runtime_do_()   /* (do)  ( limit start) */
 {
-    RPUSH((addr)_STAR(IP++));   /* push following branch address for (leave) */
-    RPUSH(ST1);                 /* limit */
-    RPUSH(TOP - ST1);           /* index = start - limit */
+    RPUSH((addr)UNHEAPIFY(*IP++));  /* push following branch address for (leave) */
+    RPUSH(ST1);                     /* limit */
+    RPUSH(TOP - ST1);               /* index = start - limit */
     DROP(2);
 }
 
@@ -171,7 +179,7 @@ void mu_runtime_plus_loop_()    /* (+loop)  ( incr) */
 /* leave the do loop early */
 void mu_runtime_leave()
 {
-    IP = (xt_cell *)RP[2];      /* jump to address saved on R stack */
+    IP = (cell *)RP[2];         /* jump to address saved on R stack */
     RP += 3;                    /* pop "do" context */
 }
 
