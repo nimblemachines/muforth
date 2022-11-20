@@ -75,6 +75,10 @@ void mu_shift_right()   { ST1 = BIGSHIFT ? SIGN(ST1) : ST1 >> TOP; DROP(1); }
 void mu_cells()        { TOP <<= CELL_SHIFT; }
 void mu_cell_slash()   { TOP >>= CELL_SHIFT; }  /* signed & flooring! */
 
+/* For convenience, let's define these here. */
+void mu_vals()        { TOP <<= 3; }
+void mu_val_slash()   { TOP >>= 3; }  /* signed & flooring! */
+
 /* fetch and store character (really _byte_) values */
 void mu_cfetch()  { TOP = *(uint8_t *)TOP; }
 void mu_cstore()  { *(uint8_t *)TOP = ST1; DROP(2); }

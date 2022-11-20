@@ -81,7 +81,7 @@ void mu_runtime_exit()      { UNNEST; }
 void mu_runtime_lit_()      { PUSH(*(val *)IP); IP += sizeof(val)/sizeof(cell); }
 
 /* Compile the following word */
-void mu_runtime_compile()   { PUSH(*IP++); mu_p_comma(); }
+void mu_runtime_compile()   { PUSH_ADDR(*IP++); mu_p_comma(); }
 
 
 /*
