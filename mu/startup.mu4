@@ -23,7 +23,7 @@ new :
 
 compiler
 : ;   compile ^
-      [  token [  .compiler. find huh?  cell,  ]  ^ [
+      [  token [  .compiler. find huh?  p,  ]  ^ [
 forth
 
 : literal   compile (lit)  , ;
@@ -114,7 +114,7 @@ forth
 : tuck   swap over ;           ( a b - b a b)
 
 ( Back up over last token parsed from the input so we can re-parse it.)
-: untoken   parsed drop  first! ;
+: untoken   parsed drop  first ! ;
 
 ( First, we need compiler versions of ( and char. Since we no longer hide
   words as they are being defined, we need to be careful about how we do
@@ -130,7 +130,7 @@ forth
 
 ( Tick)
 : chain'  token'  huh?  ;
-: \chain  chain'  cell,  ;
+: \chain  chain'  p,  ;
 
 ( 28-apr-2000. Do we ever -really- want to search anything other than .forth.?)
 : '   .forth.  chain'  ;
@@ -266,8 +266,8 @@ compiler
   the token is on the runtime or forth chains, postpone its compilation
   until the word that we're compiling executes. Got that? ;-)
 
-: \   .compiler. token'  if cell, ^ then
-         .runtime. find  huh?  compile compile  cell, ;
+: \   .compiler. token'  if , ^ then
+         .runtime. find  huh?  literal  ['] p,  p, ;
 
 forth
 
@@ -369,7 +369,7 @@ here 0 ,
 ( does> fixes up the does ip of the last <does> word to point to the code
   after "does>" in the caller.)
 
-: does>  pop  last-created @  cell! ;
+: does>  pop  last-created @  p! ;
 
 
 ( The underlying engine for all "create/does>" words. It allocates no data
@@ -382,7 +382,7 @@ here 0 ,
 ( Everything is defined in terms of `create'.)
 : create
    new  <does>
-   here last-created !  0 cell, ( placeholder for does ip)
+   here last-created !  0 p, ( placeholder for does ip)
    does> ;  ( make the does ip point *somewhere*)
 
 : constant  ( value)
@@ -673,7 +673,7 @@ variable unwinding
 -- -----------------------------------------------------------------------
 -- Fluid binding (dynamically-scoped variables)
 -- -----------------------------------------------------------------------
-( Restore saved value of a variable.)
+( Restore saved value of a normal val-sized variable.)
 : restore
    r> ( ra)   r> r>  ( value addr) !   >r ( ra) ;
 
@@ -684,6 +684,25 @@ variable unwinding
    r> ( ra)
    over ( addr) >r  swap @  ( value)  >r
    link restore  ( push cleanup)
+   remove >r     ( normal return - unlink and cleanup)
+   >r ( ra) ;
+
+( Sometimes we need to save and restore values from C code - the
+  interpreter is the main example of this - and since the C values are
+  pointer-sized - ie cells - we can't use @ and ! to save and restore the
+  value, so we need special copies of restore and preserve for this!)
+
+( Restore saved value of a cell-sized variable.)
+: p-restore
+   r> ( ra)   r> r>  ( value addr) p!   >r ( ra) ;
+
+( Preserve the value of a cell-sized variable for the duration of the
+  execution of the calling word.)
+
+: p-preserve  ( addr)  ( address of cell-sized variable)
+   r> ( ra)
+   over ( addr) >r  swap p@  ( value)  >r
+   link p-restore  ( push cleanup)
    remove >r     ( normal return - unlink and cleanup)
    >r ( ra) ;
 
@@ -1438,11 +1457,15 @@ defer .extra-prompt  ' nope is .extra-prompt
    depth [ 4096 64 - #] > if   ." too many items on the stack"  then ;
 is ?stack
 
+( Be careful here! start, end, first, and line are cell-size values in C
+  code. We have to use a slightly different method to preserve and restore
+  them.)
+
 : evaluate  ( a u)
-   start preserve  end preserve  ( save input source)
-   first preserve                ( save our place in the input)
-   over first !
-   over start !  + end !
+   start p-preserve  end p-preserve  ( save input source)
+   first p-preserve                  ( save our place in the input)
+   over first p!
+   over start p!  + end p!
    interpret ;
 
 variable lines-read
@@ -1488,6 +1511,7 @@ variable zloading    ( C-string name of file being loaded)
    read-file ( z" a u)
    zloading preserve  rot zloading !
    line preserve  1 line !
+   cr ." raw-load-file"
    line on-exit add-lines-read
    depth  on-exit check-depth
    -- depth  on-exit show-depths

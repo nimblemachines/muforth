@@ -17,8 +17,8 @@
 /*
  * Dictionary is kept cell-aligned. Cells are 32 bits.
  */
-       intptr_t heap;   /* pointer to start of heap space, as an integer value */
-static cell     *hp;    /* heap pointer: points to next free cell in heap space */
+       cell *heap;  /* pointer to start of heap space */
+static cell *hp;    /* heap pointer: points to next free cell in heap space */
 
 /*
  * A struct dict_name represents what Forth folks often call a "head" - a
@@ -81,9 +81,9 @@ static cell     *hp;    /* heap pointer: points to next free cell in heap space 
  * dict_name).
  */
 
-#define FOLLOW_LINK(plink)  UNHEAPIFY(*plink)
-#define MAKE_LINK(plink)    HEAPIFY(plink)
-#define NULL_LINK           UNHEAPIFY(0)
+#define FOLLOW_LINK(plink)  (cell **)(*plink)
+#define MAKE_LINK(plink)    (cell *)(plink)
+#define NULL_LINK           NULL
 
 /*
  * Cells are 32 bits, so ALIGN_SIZE is 4.
@@ -94,7 +94,7 @@ struct dict_name
 {
     char            suffix[SUFFIX_LEN];     /* last 3 characters of name */
     unsigned char   length;                 /* 255 max; 0 means hidden */
-    cell            link;                   /* link to preceding link */
+    cell            *link;                  /* link to preceding link */
 };
 
 /*
@@ -104,7 +104,7 @@ struct dict_name
 struct dict_entry
 {
     struct dict_name    name;
-    cell                code;   /* offset from mu_do_colon */
+    code                code;
 };
 
 /* bogus C-style dictionary init */
@@ -132,7 +132,7 @@ struct inm initial_runtime[] = {
 /* XXX needed any more? */
 void mu_push_h0()       /* push address of start of dictionary */
 {
-    PUSH(heap);
+    PUSH_ADDR(heap);
 }
 
 void mu_here()          /* push current _value_ of heap pointer */
@@ -141,21 +141,22 @@ void mu_here()          /* push current _value_ of heap pointer */
 }
 
 /*
- * cell, (cell comma) copies the cell on the top of the stack into the dictionary,
- * and advances the heap pointer by one cell. Note that hp is kept
- * cell-aligned.
+ * p, (p comma) copies a cell-sized pointer on the top of the stack into
+ * the dictionary, and advances the heap pointer by one cell. Note that hp
+ * is kept cell-aligned.
  */
 
-void mu_cell_comma()
+void mu_p_comma()
 {
-    assert(ALIGNED(hp) == (intptr_t)hp, "misaligned (cell comma)");
+    assert(ALIGNED(hp) == (intptr_t)hp, "misaligned (p comma)");
     *hp++ = POP;
 }
 
 /*
  * , (comma) copies the val on the top of the stack into the dictionary,
  * and advances the heap pointer by one val. Note that hp is kept
- * cell-aligned - not val-aligned!
+ * cell-aligned - not val-aligned! (though this might need to change with
+ * different platforms!)
  */
 
 void mu_comma()
@@ -200,7 +201,7 @@ void mu_find()
 {
     char *token = (char *) ST2;
     cell length = ST1;
-    cell *plink = (cell *)TOP;
+    cell **plink = (cell **)TOP;
 
     struct dict_entry *pde;
 
@@ -238,8 +239,8 @@ void mu_find()
 /*
  * new_name creates a new dictionary (name) entry and returns it
  */
-static cell *new_name(
-    cell *plink, char *name, int length, int hidden)
+static cell **new_name(
+    cell **plink, char *name, int length, int hidden)
 {
     struct dict_name *pnm;  /* the new name */
     int prefix_bytes;
@@ -279,7 +280,7 @@ static cell *new_name(
     hp = (cell *)(pnm + 1);
 
 #ifdef BEING_DEFINED
-    fprintf(stderr, "%x %p %.*s\n", pnm->link, plink, length, name);
+    fprintf(stderr, "%p %p %.*s\n", &pnm->link, plink, length, name);
 #endif
 
     /* Return address of link field */
@@ -291,7 +292,7 @@ static cell *new_name(
  * links it onto the chain represented by plink.
  */
 static void new_linked_name(
-    cell *plink, char *name, int length)
+    cell **plink, char *name, int length)
 {
     /* create new name & link onto front of chain */
     *plink = MAKE_LINK(new_name(FOLLOW_LINK(plink), name, length, !HIDDEN));
@@ -300,7 +301,7 @@ static void new_linked_name(
 /* (linked-name)  ( a u chain) */
 void mu_linked_name_()
 {
-    new_linked_name((cell *)TOP, (char *)ST2, ST1);
+    new_linked_name((cell **)TOP, (char *)ST2, ST1);
     DROP(3);
 }
 
@@ -385,9 +386,15 @@ void mu_linked_name_()
  * link field. This can then be used for dictionary searches, or to set
  * current (so that later definitions are added to the chain).
  */
+#ifdef MU_ADDR_32
+    #define MUCHAIN_CELLS 2
+#else
+    #define MUCHAIN_CELLS 1
+#endif
+
 static void mu_do_chain()
 {
-    PUSH_ADDR(W + 2);   /* push the address of muchain's link field */
+    PUSH_ADDR(W + MUCHAIN_CELLS);   /* push the address of muchain's link field */
 }
 
 /*
@@ -406,20 +413,20 @@ static void mu_do_chain()
  * plink points to the chain that this chain is _named_ in. It will always
  * be the .forth. chain.
  */
-static cell *new_chain(
-    cell *plink, char *name)
+static cell **new_chain(
+    cell **plink, char *name)
 {
     new_linked_name(plink, name, strlen(name));
-    *hp++ = CODE(mu_do_chain);  /* set code pointer */
+    *hp++ = (cell)mu_do_chain;  /* set code pointer */
     return new_name(NULL, "muchain", 7, HIDDEN);
 }
 
 /*
  * All the words defined by this function are CODE words. Their bodies are
- * defined in C; this routine compiles a code pointer into the dict entry
+ * defined in C; this routine compiles into the dict entry a code pointer
  * that points to the C function.
  */
-static void init_chain(cell *plink, cell *anchor_link, struct inm *pinm)
+static void init_chain(cell **plink, cell **anchor_link, struct inm *pinm)
 {
     /*
      * Set the beginning, "anchor", link for the chain. For sealed chains,
@@ -430,22 +437,20 @@ static void init_chain(cell *plink, cell *anchor_link, struct inm *pinm)
 
     for (; pinm->name != NULL; pinm++)
     {
-        cell code_field = CODE(pinm->code);
-
         new_linked_name(plink, pinm->name, strlen(pinm->name));
-        *hp++ = code_field;     /* initialize code field */
+        *hp++ = (cell)pinm->code;   /* initialize code field */
     }
 }
 
 static void allocate()
 {
-    heap = (intptr_t)calloc(HEAP_CELLS, sizeof(cell));
+    heap = (cell *)calloc(HEAP_CELLS, sizeof(cell));
 
-    if (heap == 0)
+    if (heap == NULL)
         die("couldn't allocate memory");
 
     /* init heap pointer */
-    hp = (cell *)heap;
+    hp = heap;
 }
 
 /*
@@ -457,9 +462,9 @@ static void allocate()
  *
  * init_dict() sets everything up.
  */
-static cell *forth_chain;
-static cell *compiler_chain;
-static cell *runtime_chain;
+static cell **forth_chain;
+static cell **compiler_chain;
+static cell **runtime_chain;
 
 void muboot_push_forth_chain()
 {
@@ -482,8 +487,6 @@ void init_dict()
 
     allocate();
 
-    forth_bootstrap = hp++;
-    
     /*
      * First, create in our "bootstrap" forth chain .forth. , .compiler. ,
      * and .runtime. chains that look and smell like the ones that will
@@ -491,12 +494,12 @@ void init_dict()
      * like a normal word, but the name is always "muchain" and its length
      * byte is 0.
      */
-    forth_chain    = new_chain(forth_bootstrap, ".forth.");
-    compiler_chain = new_chain(forth_bootstrap, ".compiler.");
-    runtime_chain  = new_chain(forth_bootstrap, ".runtime.");
+    forth_chain    = new_chain(&forth_bootstrap, ".forth.");
+    compiler_chain = new_chain(&forth_bootstrap, ".compiler.");
+    runtime_chain  = new_chain(&forth_bootstrap, ".runtime.");
 
     /* Populate the .forth. chain with words defined in C. */
-    init_chain(forth_chain, FOLLOW_LINK(forth_bootstrap), initial_forth);
+    init_chain(forth_chain, FOLLOW_LINK(&forth_bootstrap), initial_forth);
 
     /* Populate the .compiler. chain with words defined in C. */
     init_chain(compiler_chain, NULL_LINK, initial_compiler);
@@ -517,7 +520,7 @@ void init_dict()
     PUSH_ADDR("execut"); PUSH(6); PUSH_ADDR(forth_chain); mu_find();
 
     /* Write the dict contents to stdout. */
-    fwrite(UNHEAPIFY(0), sizeof(cell), hp - (cell *)heap, stdout);
+    fwrite(heap, sizeof(cell), hp - heap, stdout);
 
     /* Write the stack contents to stdout. */
     fwrite(SP, sizeof(val), SP0 - SP, stdout);
@@ -528,7 +531,9 @@ void init_dict()
 
 void mu_dump()
 {
+    fprintf(stderr, "heap origin %p\n", heap);
+
     /* Write the dict contents to stdout. */
-    fwrite(UNHEAPIFY(0), sizeof(cell), hp - (cell *)heap, stdout);
+    fwrite(heap, sizeof(cell), hp - heap, stdout);
     fflush(stdout);
 }

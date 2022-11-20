@@ -27,14 +27,14 @@ void mu_u2slash()  { TOP = (uval) TOP >>  1; }
  * Representation of truth values
  *
  * In C, booleans are represent by integers. Zero means false, and anything
- * non-zero means true. But the value returned by a comparison operator --
+ * non-zero means true. But the value returned by a C comparison operator --
  * "<" for example -- is always 0 or 1.
  *
  * Forth works similarly, and in its earliest days, comparison words like
  * "<" or "0=" returned 0 for false and 1 for true. But starting in 1983 or
  * so this was changed. The "standard" way now, in Forth, is to return -1
  * (all ones) for true. This value is more useful, and it can be ANDed with
- * other values to produces useful results without needing to jump.
+ * other values to produce useful results without needing to jump.
  *
  * In the following code you will see the arithmetic negation ("-") of
  * several comparison operators. This simply converts the C true (1) to the
@@ -64,18 +64,24 @@ void mu_shift_left()    { ST1 = BIGSHIFT ? 0 :         ST1 << TOP; DROP(1); }
 void mu_ushift_right()  { ST1 = BIGSHIFT ? 0 :  (uval) ST1 >> TOP; DROP(1); }
 void mu_shift_right()   { ST1 = BIGSHIFT ? SIGN(ST1) : ST1 >> TOP; DROP(1); }
 
+#ifdef MU_ADDR_32
+    #define CELL_SHIFT 2
+#else
+    #define CELL_SHIFT 3
+#endif
+
 /* By defining these here, we don't need to export the cell size to Forth.
  * This saves a word in the dictionary. ;-) */
-void mu_cells()        { TOP <<= 2; }
-void mu_cell_slash()   { TOP >>= 2; }  /* signed & flooring! */
+void mu_cells()        { TOP <<= CELL_SHIFT; }
+void mu_cell_slash()   { TOP >>= CELL_SHIFT; }  /* signed & flooring! */
 
 /* fetch and store character (really _byte_) values */
 void mu_cfetch()  { TOP = *(uint8_t *)TOP; }
 void mu_cstore()  { *(uint8_t *)TOP = ST1; DROP(2); }
 
 /* fetch and store cell values (32 bit) */
-void mu_cell_fetch()  { TOP =  *(cell *)TOP; }
-void mu_cell_store()  { *(cell *)TOP  = ST1; DROP(2); }
+void mu_p_fetch()  { TOP =  *(cell *)TOP; }
+void mu_p_store()  { *(cell *)TOP  = ST1; DROP(2); }
 
 /* fetch and store values (64 bit) */
 void mu_fetch()       { TOP =  *(val *)TOP; }
@@ -121,11 +127,8 @@ void mu_star()    { ST1 *= TOP; DROP(1); }
 
 void mu_uslash_mod()  /* u1 u2 -- um uq */
 {
-    uval umod;
-    uval uquot;
-
-    uquot = (uval)ST1 / TOP;
-    umod  = (uval)ST1 % TOP;
+    uval uquot = (uval)ST1 / TOP;
+    uval umod  = (uval)ST1 % TOP;
     ST1 = umod;
     TOP = uquot;
 }
@@ -156,11 +159,8 @@ void mu_uslash_mod()  /* u1 u2 -- um uq */
  */
 void mu_slash_mod()  /* n1 n2 -- m q */
 {
-    val mod;
-    val quot;
-
-    quot = ST1 / TOP;
-    mod  = ST1 % TOP;
+    val quot = ST1 / TOP;
+    val mod  = ST1 % TOP;
 
 #ifdef MU_DIVISION_IS_SYMMETRIC
     /*
@@ -178,7 +178,6 @@ void mu_slash_mod()  /* n1 n2 -- m q */
     ST1 = mod;
     TOP = quot;
 }
-
 
 void mu_string_equal()   /* a1 len1 a2 len2 -- flag */
 {

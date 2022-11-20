@@ -20,31 +20,30 @@
 /* C version of state variable */
 static code state = &muboot_interpret_token;
 
-/* These three variables represent the source being interpreted. */
+/*
+ * These three variables are read and written from Forth; each C type needs
+ * to fit exactly into a cell.
+ */
 static char *start;     /* input source text */
 static char *end;
-static int lineno;      /* line number - incremented for each newline */
-
 static char *first;     /* goes from start to end */
+
+/* We read and write this from Forth using @ and !; it has to be a val. */
+static val lineno;      /* line number - incremented for each newline */
 
 int parsed_lineno;              /* captured with first character of token */
 struct string parsed;           /* for errors */
 static struct string skipped;   /* whitespace skipped before token */
 static struct string trailing;  /* whitespace skipped after token */
 
-/* We want to be able to get and set the interpreter source. */
-void mu_interp_fetch()  { PUSH_ADDR(start); PUSH_ADDR(end); PUSH(lineno); }
-void mu_interp_store()  { lineno = POP; end = (char *)POP; start = (char *)POP; }
-
-/* We sometimes need to get and set first from Forth code. */
-void mu_first_fetch()   { PUSH_ADDR(first); }
-void mu_first_store()   { first = (char *)POP; }
+/* Push addresses of the four crucial interpreter source variables. */
+void mu_push_start()    { PUSH_ADDR(&start); }
+void mu_push_end()      { PUSH_ADDR(&end); }
+void mu_push_line()     { PUSH_ADDR(&lineno); }  /* we call it "line" in muforth */
+void mu_push_first()    { PUSH_ADDR(&first); }
 
 /* Push captured line number */
-void mu_at_line()
-{
-    PUSH(parsed_lineno);
-}
+void mu_at_line()   { PUSH(parsed_lineno); }
 
 void mu_push_parsed()
 {
@@ -190,7 +189,7 @@ static void muboot_compile_token()
     mu_find();
     if (POP)
     {
-        mu_cell_comma();
+        mu_p_comma();
         return;
     }
     mu_complain();

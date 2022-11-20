@@ -10,12 +10,16 @@
 
 #include "env.h"
 
-/* XXX need this to compile - not for ever */
-#define _(cell)         (cell)
+#ifdef MU_ADDR_32
+    #define CELL_SHIFT 2
+    #define MUCHAIN_CELLS 2
+#else
+    #define CELL_SHIFT 3
+    #define MUCHAIN_CELLS 1
+#endif
 
-/* Heap cells are 32 bits; stack values are 64 bits. */
-typedef  int32_t   cell;
-
+/* Heap cells are the size of a pointer; stack values are 64 bits. */
+typedef uintptr_t   cell;   /* heap cell */
 typedef  int64_t    val;    /* stack value - data or return stack */
 typedef uint64_t   uval;    /* unsigned stack value */
 
@@ -28,31 +32,21 @@ typedef uintptr_t  addr;    /* intptr_t and uintptr_t are integer types that
                                 unsigned will zero-extend. */
 
 /* pointer and cell types */
-/* Code field contains an *offset* from mu_do_colon. */
-/* XXX make this so that mu_do_colon spells "colo" or ":   " or ??? */
-#define CODE(f) (cell)(f - mu_do_colon)
-#define FUN(c)  (code)(c + mu_do_colon)
 
-typedef void (*code)(void);     /* machine POINTER to word's machine code */
+typedef void (*code)(void);     /* POINTER to word's machine code */
+typedef code *xt;               /* POINTER to code field */
 
 /* Forth VM execution registers */
 extern val  *SP;    /* parameter stack pointer */
 extern val  *RP;    /* return stack pointer */
-extern cell *IP;    /* instruction pointer */
-extern cell  *W;    /* on entry, points to the current Forth word */
+extern xt   *IP;    /* instruction pointer; points to an xt */
+extern xt    W;     /* on entry, points to the current Forth word */
 
 /* dictionary size */
-/* Cells are 32 bits. Let's allocate 2Mi cells - 8MiB of heap. */
+/* Let's allocate 8MiB of heap, regardless of cell size. */
 #define HEAP_CELLS      ((8 * 1024 * 1024) / sizeof(cell))
-extern intptr_t heap;   /* pointer to start of heap space, as an integer value */
-
-/*
- * HEAPIFY turns a host address into a heap-relative address;
- * UNHEAPIFY goes the other way, and casts to a (cell *) because that's
- * almost always what we want.
- */
-#define HEAPIFY(host_addr)    ((intptr_t)(host_addr) - heap)
-#define UNHEAPIFY(heap_addr)    (cell *)((heap_addr) + heap)
+/* XXX heap or h0 ? */
+extern cell *heap;  /* pointer to start of heap space */
 
 /* data and return stacks */
 /* NOTE: Even on 32-bit platforms the R stack is 64 bits wide! This makes
@@ -107,9 +101,6 @@ extern struct string parsed;    /* last token parsed */
  * taking no arguments. Other functions need to be put here explicitly.
  */
 #include "public.h"
-
-/* engine-itc.c */
-void mu_do_colon();
 
 /* error.c */
 void die(const char *zmsg);
