@@ -480,7 +480,8 @@ void muboot_push_runtime_chain()
 
 void init_dict()
 {
-    addr *forth_bootstrap;  /* we need this to "bootstrap" the .forth. chain */
+    /* we need this to "bootstrap" the .forth. chain */
+    addr *forth_bootstrap = NULL_LINK;
 
     allocate();
 
