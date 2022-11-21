@@ -514,7 +514,7 @@ void init_dict()
     init_chain(runtime_chain, forth_chain, initial_runtime);
 }
 
-#ifdef DEBUG
+#ifdef DEBUG_DICT
 void mu_dump()
 {
     fprintf(stderr, "heap origin %p\n", heap);
