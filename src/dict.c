@@ -15,7 +15,8 @@
  */
 
 /*
- * Dictionary is kept addr-aligned. Addrs are 32 bits.
+ * Dictionary is kept addr-aligned. Addrs are the size of a machine
+ * address: 32 bits on 32-bit machines, 64 bits on 64-bit machines.
  */
        addr *heap;  /* pointer to start of heap space */
 static addr *hp;    /* heap pointer: points to next free addr in heap space */
@@ -58,7 +59,7 @@ static addr *hp;    /* heap pointer: points to next free addr in heap space */
  * adopts (as dforth did before it). Instead of -following- the link field,
  * the name -precedes- it, starting with padding, then the characters of
  * the name, then its length (one byte), followed directly by the link.
- * (The padding puts the link on a cell boundary.)
+ * (The padding puts the link on an addr boundary.)
  *
  * Experienced C programmers will immediately notice a problem: structs
  * (such as the one we want to use to define the structure of dictionary
@@ -69,12 +70,13 @@ static addr *hp;    /* heap pointer: points to next free addr in heap space */
  * and bug-free code, but how?
  *
  * My solution is a bit weird, but it works rather well. Since I know that
- * there will be at least -one- cell (7 bytes and a length) of name I will
- * define a struct that represents only the last seven characters of the
- * name, the length, and the link; the previous characters are "off the
- * map" as far as C is concerned, but there is an easy way to address them.
- * (To get to the beginning of a name, take the address of the suffix, add
- * the SUFFIX_LEN (7), and subtract the length.)
+ * the characters of the name will consume at least one addr (3 or 7 bytes,
+ * depending on the machine, and a length byte), I define a struct that
+ * represents only the last 3 or 7 characters of the name, the length, and
+ * the link; the previous characters are "off the map" as far as C is
+ * concerned, but there is an easy way to address them. (To get to the
+ * beginning of a name, take the address of the suffix, add the SUFFIX_LEN,
+ * and subtract the length.)
  *
  * Links still point to links; adjustments are made in a couple of places
  * to convert a pointer to a link into a pointer to a name entry (struct
@@ -176,8 +178,7 @@ void mu_comma()
 void mu_allot()    { hp += ADDR_ALIGNED(POP) / sizeof(addr); }
 
 /* Align TOP to cell boundary */
-/* XXX should be called simply "aligned" */
-void mu_cell_aligned()  { TOP = CELL_ALIGNED(TOP); }
+void mu_aligned()       { TOP = CELL_ALIGNED(TOP); }
 
 /* Align TOP to addr boundary */
 void mu_addr_aligned()  { TOP = ADDR_ALIGNED(TOP); }
@@ -335,7 +336,7 @@ void mu_linked_name_()
  *
  * The user can define their own chains.
  *
- * The body of a chain word -- .forth. for instance -- contains a pointer
+ * The body of a chain word - .forth. for instance - contains a pointer
  * to the last defined word on that chain. When executed, a chain word
  * pushes the address of this pointer, which can then be searched (using
  * find) or used to set the variable current, which causes all subsequent
@@ -344,7 +345,7 @@ void mu_linked_name_()
  * Chains are either *sealed* or *anchored*. In a sealed chain the tail
  * link pointer is NULL. Searching a sealed chain will only find words
  * defined in that chain. In an anchored chain, the tail link pointer
- * points into another chain -- the one anchored *to* -- and searches of
+ * points into another chain - the one anchored *to* - and searches of
  * the first chain will continue into the second.
  *
  * There are two ways to do this anchoring: static and dynamic. In static
@@ -392,14 +393,14 @@ void mu_linked_name_()
  * current (so that later definitions are added to the chain).
  */
 #ifdef MU_ADDR_32
-    #define MUCHAIN_CELLS 2
+    #define MUCHAIN_ADDRS 2
 #else
-    #define MUCHAIN_CELLS 1
+    #define MUCHAIN_ADDRS 1
 #endif
 
 static void mu_do_chain()
 {
-    PUSH_ADDR(W + MUCHAIN_CELLS);   /* push the address of muchain's link field */
+    PUSH_ADDR(W + MUCHAIN_ADDRS);   /* push the address of muchain's link field */
 }
 
 /*
