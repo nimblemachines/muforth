@@ -151,7 +151,6 @@ void mu_here()          /* push current _value_ of heap pointer */
 
 void mu_addr_comma()
 {
-    assert(ADDR_ALIGNED(hp) == (intptr_t)hp, "misaligned (addr comma)");
     *hp++ = POP;
 }
 
@@ -164,7 +163,6 @@ void mu_addr_comma()
 
 void mu_comma()
 {
-    assert(ADDR_ALIGNED(hp) == (intptr_t)hp, "misaligned (comma)");
     *(cell *)hp = POP;
     hp += sizeof(cell) / sizeof(addr);
 }
@@ -250,8 +248,6 @@ static addr **new_name(
 {
     struct dict_name *pnm;  /* the new name */
     int prefix_bytes;
-
-    assert(ADDR_ALIGNED(hp) == (intptr_t)hp, "misaligned (new_name)");
 
     /*
      * Since we're using one byte to store the length, cap length at 255.
