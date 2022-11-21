@@ -392,15 +392,10 @@ void mu_linked_name_()
  * link field. This can then be used for dictionary searches, or to set
  * current (so that later definitions are added to the chain).
  */
-#ifdef MU_ADDR_32
-    #define MUCHAIN_ADDRS 2
-#else
-    #define MUCHAIN_ADDRS 1
-#endif
-
 static void mu_do_chain()
 {
-    PUSH_ADDR(W + MUCHAIN_ADDRS);   /* push the address of muchain's link field */
+    /* push the address of muchain's link field by skipping over "muchain". */
+    PUSH_ADDR(W + sizeof(cell)/sizeof(addr));
 }
 
 /*

@@ -29,7 +29,7 @@ static char *end;
 static char *first;     /* goes from start to end */
 
 /* We read and write this from Forth using @ and !; it has to be a cell. */
-static cell lineno;      /* line number - incremented for each newline */
+static cell lineno;     /* line number - incremented for each newline */
 
 int parsed_lineno;              /* captured with first character of token */
 struct string parsed;           /* for errors */
@@ -128,15 +128,15 @@ static void scan(int delim)
 
 void mu_token()  /* -- start len */
 {
-    skip();         /* skip leading whitespace */
-    scan(' ');   /* scan for trailing whitespace and capture token */
+    skip();             /* skip leading whitespace */
+    scan(' ');          /* scan for trailing whitespace and capture token */
     mu_push_parsed();   /* push parsed token */
 }
 
 void mu_parse()  /* delim -- start len */
 {
     /* The first character of unseen input is the first character of token. */
-    scan(POP);   /* scan for trailing delimiter and capture token */
+    scan(POP);          /* scan for trailing delimiter and capture token */
     mu_push_parsed();   /* push parsed token */
 }
 
