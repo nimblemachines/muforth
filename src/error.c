@@ -21,6 +21,7 @@ void die(const char* zmsg)
 }
 
 /* abort() is deferred via this variable */
+/* xt, being a pointer type, is an addr-sized, not cell-sized, value. */
 static xt xt_abort = NULL;
 
 void mu_abort()     /* zmsg */

@@ -28,8 +28,8 @@ static char *start;     /* input source text */
 static char *end;
 static char *first;     /* goes from start to end */
 
-/* We read and write this from Forth using @ and !; it has to be a val. */
-static val lineno;      /* line number - incremented for each newline */
+/* We read and write this from Forth using @ and !; it has to be a cell. */
+static cell lineno;      /* line number - incremented for each newline */
 
 int parsed_lineno;              /* captured with first character of token */
 struct string parsed;           /* for errors */
@@ -189,7 +189,7 @@ static void muboot_compile_token()
     mu_find();
     if (POP)
     {
-        mu_p_comma();
+        mu_addr_comma();
         return;
     }
     mu_complain();
@@ -212,7 +212,7 @@ static void muboot_show_stack()
     int i;
     fprintf(stderr, "  --");
     for (i = 0; i < 4; i++)
-        fprintf(stderr, "  %16llx", (uval)SP[3-i]);
+        fprintf(stderr, "  %16llx", (ucell)SP[3-i]);
     fprintf(stderr, "\n");
     fflush(stderr);
 }

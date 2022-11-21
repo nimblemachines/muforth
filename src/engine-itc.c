@@ -44,7 +44,7 @@
 
 void mu_execute()
 {
-    val *rp_saved;
+    cell *rp_saved;
 
     rp_saved = RP;
 
@@ -71,17 +71,17 @@ static void mu_do_does()
     PUSH_ADDR(W + 1);   /* push the address of the word's body */
 }
 
-void mu_set_colon_code() { PUSH_ADDR(mu_do_colon); mu_p_comma(); }
-void mu_set_does_code()  { PUSH_ADDR(mu_do_does);  mu_p_comma(); }
+void mu_set_colon_code() { PUSH_ADDR(mu_do_colon); mu_addr_comma(); }
+void mu_set_does_code()  { PUSH_ADDR(mu_do_does);  mu_addr_comma(); }
 
 /* Normal exit */
 void mu_runtime_exit()      { UNNEST; }
 
 /* Push an inline literal */
-void mu_runtime_lit_()      { PUSH(*(val *)IP); IP += sizeof(val)/sizeof(cell); }
+void mu_runtime_lit_()      { PUSH(*(cell *)IP); IP += sizeof(cell)/sizeof(addr); }
 
 /* Compile the following word */
-void mu_runtime_compile()   { PUSH_ADDR(*IP++); mu_p_comma(); }
+void mu_runtime_compile()   { PUSH_ADDR(*IP++); mu_addr_comma(); }
 
 
 /*
