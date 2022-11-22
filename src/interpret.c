@@ -22,7 +22,8 @@ static code state = &muboot_interpret_token;
 
 /*
  * These three variables are read and written from Forth; each C type needs
- * to fit exactly into a cell.
+ * to fit exactly into an addr, and we read, write, and preserve using
+ * addr@ addr! and addr-preserve.
  */
 static char *start;     /* input source text */
 static char *end;

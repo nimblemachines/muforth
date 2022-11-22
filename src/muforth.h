@@ -38,8 +38,6 @@ extern xt     W;    /* on entry, points to the current Forth word */
 /* dictionary size */
 /* Let's allocate 8MiB of heap, regardless of addr size. */
 #define HEAP_ADDRS      ((8 * 1024 * 1024) / sizeof(addr))
-/* XXX heap or h0 ? */
-extern addr *heap;  /* pointer to start of heap space */
 
 /* data and return stacks */
 /* NOTE: Even on 32-bit platforms the R stack is 64 bits wide! This makes
