@@ -196,11 +196,11 @@ void mu_minus_case()  { match = strncasecmp; }
 
 /*
  * find takes a token (a u) and a chain (the head of a vocab word list) and
- * searches for the token on that chain. If found, it returns the address
- * of the code field of the word; if -not- found, it leaves the token (a u)
- * on the stack, and returns false (0).
+ * searches for the token on that chain. If found, it returns an "execution
+ * token" (xt) - the address of the code field - and a true flag; if -not-
+ * found, it leaves the token (a u) on the stack, and returns false.
  */
-/* find  ( a u chain - a u 0 | code -1) */
+/* find  ( a u chain - a u 0 | xt -1) */
 void mu_find()
 {
     char *token = (char *) ST2;
