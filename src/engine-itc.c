@@ -80,8 +80,11 @@ void mu_runtime_exit()      { UNNEST; }
 /* Push an inline literal */
 void mu_runtime_lit_()      { PUSH(*(cell *)IP); IP += sizeof(cell)/sizeof(addr); }
 
+/* Compile an xt into the dictionary. */
+void mu_compile_comma()     { mu_addr_comma(); }
+
 /* Compile the following word */
-void mu_runtime_compile()   { PUSH_ADDR(*IP++); mu_addr_comma(); }
+void mu_runtime_compile()   { PUSH_ADDR(*IP++); mu_compile_comma(); }
 
 
 /*
