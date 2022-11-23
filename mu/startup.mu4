@@ -1,36 +1,6 @@
-here
-   .forth. ,
+token (  .forth.  (linked-name)
+   <:> ] (lit) [  token ) drop c@  ,  ]  parse 2drop ^ [
 
-token current  .forth.  (linked-name)
-   <:> ]   (lit)  [  ,  ]  ^ [
-
-token new  current @  (linked-name)
-   <:> ]
-      token
-      nope
-      current @  (linked-name)
-   ^ [
-
-new :
-   <:> ]
-      new <:>  ]
-   ^ [
-
-: definitions  current !  ^ [
-: forth        .forth. definitions  ^ [
-: compiler  .compiler. definitions  ^ [
-: runtime    .runtime. definitions  ^ [
-
-compiler
-: ;   compile ^
-      [  token [  .compiler. find huh?  compile,  ]  ^ [
-forth
-
-: literal   compile (lit)  , ;
-: #]        literal  ] ;
-
-: char   token  drop  c@ ;
-: (    [ char ) #]  parse  2drop ;
 
 ( Phew! now we can have comments!)
 
@@ -100,6 +70,81 @@ forth
   So, here goes; now we start extending the language, bit by bit.)
 
 
+( The bit of inscrutable poetry at the beginning of this file creates the
+  word  (  which uses parse  to look for a closing  )  ( character, and
+  throws away the parsed text.)
+
+( Next we want to create the  current  variable, but we have no defining
+  words to help us. We need to create a create/does word completely by
+  hand. We do it in two phases.)
+
+( First, create an empty does> clause, and leave on the stack the IP
+  pointing to the ^/EXIT/UNNEST.)
+
+here  ] ^ [
+
+( Next, create in the  .forth.  chain a <does> word named current, point it
+  to the empty does> clause above, and copy in the address of the  .forth.
+  chain as its initial value.)
+
+token current  .forth.  (linked-name)
+   <does> addr, ( ip of empty does> clause)  .forth. ,  ( initial value)
+
+( With  current  defined we can now create the word  new  which we will use
+  from now on to create new names in the dictionary. Instead of using
+  .forth.  as above, we create new names in the chain pointed to by  current .)
+
+( But before we define  new  let's create another  (  word, this time in the
+  .compiler.  chain, so we can comment the following code. It's a little
+  complicated, since they have the same name. So we will first find the forth
+  (  and then compile it by hand.)
+
+token (  .compiler.  (linked-name)
+   <:>  token ( .forth. find huh?  compile,  ] ^ [  ( call the forth ( )
+
+token new  .forth.  (linked-name)  ( new is defined in the .forth. chain)
+   <:> ]
+      token
+      nope       ( placeholder for code we paste in later!)
+      current @  (linked-name)   ( link new word onto current chain, not .forth.)
+   ^ [
+
+new :
+   <:> ]
+      new <:>  ]
+   ^ [
+
+( By convention, names of dictionary chains start and end with dots. When a
+  dictionary chain word is executed, it pushes the address of its link
+  pointer - which in turns points to the last word defined on the chain.
+
+  If we want to make a chain the "current" one that receives all new
+  definitions, we execute the chain, and then execute "definitions". But
+  that's a lot to type, and we do this a lot, so in general when I create a
+  new chain - with the dots in its name - I also create a word *without* the
+  dots, that simply calls the chain word and then calls definitions.
+
+  Let's do that for our three existing chains.)
+
+: definitions  current !  ^ [
+: forth        .forth. definitions  ^ [
+: compiler  .compiler. definitions  ^ [
+: runtime    .runtime. definitions  ^ [
+
+( We still don't have  ;  so let's define it. It lives in the compiler
+  chain, and when executed, it compiles  ^  and then executes  [  to switch
+  back to interpret state from compiling state. Since  [  lives in the
+  .compiler.  chain, we have to search for it in a complicated way.)
+
+compiler
+: ;   compile ^
+      [  token [  .compiler. find huh?  compile,  ]  ^ [
+forth
+
+: literal   compile (lit)  , ;
+: #]        literal  ] ;
+
+
 ( !! NOTE !! Do -NOT- change this part of the file without thinking VERY
   hard first. Make changes below the line marked `Add changes below this
   line', otherwise it may be difficult to diagnose problems added by new
@@ -116,10 +161,8 @@ forth
 ( Back up over last token parsed from the input so we can re-parse it.)
 : untoken   parsed drop  first addr! ;
 
-( First, we need compiler versions of ( and char. Since we no longer hide
-  words as they are being defined, we need to be careful about how we do
-  this. So let's define some words that are useful for searching specific
-  dictionary chains and compiling words from them.)
+( Let's define some words that are useful for searching specific dictionary
+  chains and compiling words from them.)
 
 ( Roll tokenizing and searching into one.)
 : token'   token  rot  find ;   ( chain - a u F | body T)
@@ -129,8 +172,8 @@ forth
   and target compiler.)
 
 ( Tick)
-: chain'  token'  huh?  ;
-: \chain  chain'  compile,  ;
+: chain'  token'  huh? ;
+: \chain  chain'  compile, ;
 
 ( 28-apr-2000. Do we ever -really- want to search anything other than .forth.?)
 : '   .forth.  chain' ;
@@ -145,9 +188,6 @@ compiler
 ( XXX: is this useful? Here? Maybe in a target compiler...)
 : \f   .runtime. \chain ;
 : \c  .compiler. \chain ;  ( until we have \ ; we need this for "if")
-
-( Ok, now we can define our compiler comment char, ( .)
-: (    \f ( ;
 forth
 
 
@@ -158,11 +198,12 @@ forth
 : 2   [ 1 2* #] ;
 
 ( On and off)
-: on   -1 swap !  ;
-: off   0 swap !  ;
+: on   -1 swap ! ;
+: off   0 swap ! ;
 
 : bl  [ 2 2* 2* 2* 2* #] ;  ( space character)
 
+: char   token  drop  c@ ;  ( grab the first character of the following token)
 : ctrl   char  [ bl 2* ( 64) #]  xor ;  ( how you get ^? = 127.)
 compiler
 : char   \f char literal ;
