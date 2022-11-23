@@ -12,10 +12,16 @@
 #include <errno.h>      /* XXX should this be sys/errno.h ? */
 #include <stdio.h>
 
+/* Shared with Forth code. */
+static char *being_loaded = NULL;   /* name of file currently being loaded */
+
+void mu_push_being_loaded()     { PUSH_ADDR(&being_loaded); }
+
 /* A bit of a crock, but only called if we haven't set up a catch frame. */
 void die(const char* zmsg)
 {
-    fprintf(stderr, "startup.mu4, line %d: %.*s %s\n",
+    fprintf(stderr, "%s, line %d: %.*s %s\n",
+        being_loaded ? being_loaded : "startup.mu4",
         parsed_lineno, (int)parsed.length, parsed.data, zmsg);
     exit(1);
 }

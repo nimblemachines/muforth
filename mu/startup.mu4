@@ -1538,16 +1538,17 @@ is ?stack
 variable lines-read
 : add-lines-read  ( dummy)   drop  line @ 1-  lines-read +! ;
 
-variable zloading    ( C-string name of file being loaded)
+( check-depth only prints anything if depth has changed since the file
+  started loading _and_ being-loaded is non-zero - ie, we're loading a
+  file.)
 
-( check-depth only prints anything out if depth has changed since the file
-  started loading _and_ zloading is non-zero - ie, we're loading a file.)
+( being-loaded is defined in C, so use addr words to access it.)
 
 : check-depth  ( saved-depth)
    unwinding @ if  drop  ^  then
    depth swap -  1- ( use show-depths to see the "standard" difference!)
-   ?if  zloading @ ?if
-      cr  ."   [ "  zcount type  ." : +depth " . ."  ] "  then  then ;
+   ?if  being-loaded addr@ ?if
+      cr  ."   [ "  count type  ." : +depth " . ."  ] "  then  then ;
 
 : show-depths  ( saved)   depth .  . ;
 
@@ -1561,7 +1562,7 @@ variable zloading    ( C-string name of file being loaded)
   the stack depth hasn't been altered.
 
   NOTE: We wait until we've both opened and read the file before resetting
-  zloading and line, so we should get more accurate error locations!
+  being-loaded and line, so we should get more accurate error locations!
 
   Because raw-load-file does *not* preserve the radix, mode, or current
   chain, any changes made to them by the loaded file will remain after the
@@ -1576,7 +1577,7 @@ variable zloading    ( C-string name of file being loaded)
    out-channel preserve  >stderr
    dup open-file-ro ( z" fd)  dup on-exit close-file
    read-file ( z" a u)
-   zloading preserve  rot zloading !
+   being-loaded addr-preserve  rot being-loaded addr!
    line preserve  1 line !
    0 on-exit add-lines-read
    depth  on-exit check-depth
@@ -1708,14 +1709,18 @@ Copyright (c) 2002-2022 David Frech (read the LICENSE for details)
 Type 'settings' to see a few of muforth's tweakable behaviours.
 " ;
 
-( If zloading non-zero, print filename; if @line *also* non-zero, print
-  linenumber as well.)
+( If being-loaded is non-zero, print filename; if @line is *also* non-zero,
+  print linenumber as well.)
 
 : .where
-   zloading @  ?if  zcount type
+   being-loaded addr@  ?if  count type
       @line ?if  ." , line "  radix preserve decimal  (u.) type  then
       ." : "
    then ;
+
+( The error string could have come from C code, in which case it will *not*
+  have a preceding count. We need to using zcount rather than count to
+  compute its length.)
 
 : .error  ( z")
    >stderr  cr  .where  parsed type space  zcount type ;
@@ -1753,9 +1758,9 @@ ld lib/du-cached.mu4
    decimal \ [
    >stderr banner
    -consumed +sep +case +radix +stack ( defaults - reset these how you like)
-   z" (command line)" zloading !  line off
+   z" (command line)" being-loaded addr!  line off
    command-line  catch evaluate ?error
-   zloading off
+   0 being-loaded addr!
    begin  catch quit ?error  again ;
 
 ( Identify ourselves.)
