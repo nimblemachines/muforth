@@ -71,12 +71,12 @@ token (  .forth.  (linked-name)
 
 
 ( The bit of inscrutable poetry at the beginning of this file creates the
-  word  (  which uses parse  to look for a closing  )  ( character, and
+  word  (  which uses  parse  to look for a closing  )  ( character, and
   throws away the parsed text.)
 
-( Next we want to create the  current  variable, but we have no defining
-  words to help us. We need to create a create/does word completely by
-  hand. We do it in two phases.)
+( We want to create the  current  variable, but we have no defining words
+  to help us. We need to create a create/does word completely by hand. We
+  do it in two phases.)
 
 ( First, create an empty does> clause, and leave on the stack the IP
   pointing to the ^/EXIT/UNNEST.)
@@ -119,11 +119,28 @@ new :
       new <:>  ]
    ^ [
 
+( We don't have  ;  so let's define it. It lives in the compiler chain, and
+  when executed, it compiles  ^  and then executes  [  to switch back to
+  interpret state from compiling state. Since  [  lives in the .compiler.
+  chain, we have to search for it in a complicated way.)
+
+.compiler. current !  ( make .compiler. the current chain)
+
+: ;   compile ^
+      [  token [  .compiler. find huh?  compile,  ]  ^ [
+
+.forth. current !  ( switch back to .forth.)
+
 ( By convention, names of dictionary chains start and end with dots. When a
   dictionary chain word is executed, it pushes the address of its link
   pointer - which in turns points to the last word defined on the chain.
 
-  If we want to make a chain the "current" one that receives all new
+  To make it the current chain, we store this pointer into current. Let's
+  create a meaningful name for that.)
+
+: definitions  current ! ;
+
+( If we want to make a chain the "current" one that receives all new
   definitions, we execute the chain, and then execute "definitions". But
   that's a lot to type, and we do this a lot, so in general when I create a
   new chain - with the dots in its name - I also create a word *without* the
@@ -131,22 +148,14 @@ new :
 
   Let's do that for our three existing chains.)
 
-: definitions  current !  ^ [
-: forth        .forth. definitions  ^ [
-: compiler  .compiler. definitions  ^ [
-: runtime    .runtime. definitions  ^ [
+: forth        .forth. definitions ;
+: compiler  .compiler. definitions ;
+: runtime    .runtime. definitions ;
 
-( We still don't have  ;  so let's define it. It lives in the compiler
-  chain, and when executed, it compiles  ^  and then executes  [  to switch
-  back to interpret state from compiling state. Since  [  lives in the
-  .compiler.  chain, we have to search for it in a complicated way.)
-
-compiler
-: ;   compile ^
-      [  token [  .compiler. find huh?  compile,  ]  ^ [
-forth
-
+( Create a literal in the word currently being defined.)
 : literal   compile (lit)  , ;
+
+( End a bracketed computation and use the result to create a literal.)
 : #]        literal  ] ;
 
 
