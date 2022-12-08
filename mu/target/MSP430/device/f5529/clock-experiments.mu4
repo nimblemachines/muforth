@@ -1,0 +1,225 @@
+( This file is part of muforth: https://muforth.nimblemachines.com/
+
+  Copyright 2002-2022 David Frech. (Read the LICENSE for details.)
+
+loading MSP430F5529 clock experiments
+
+__meta
+hex
+ram
+
+( Experimenting to get things sorted out so I can finally flash the serial chat
+  code on the F5529.)
+
+( On the F5529 Launchpad there is a 4 Mhz crystal connected to XT2. We want
+  to use it to drive the DCO/PLL to get a 16/24/25 Mhz clock.
+
+  At reset, we are running from the DCOCLOCK which is [possibly] being
+  controlled by the FLL, using the REFOCLK as a reference.)
+
+code xt2-on
+   -- On F5529, P5SEL.2, when set, connects XT2 to the pins.
+   %0000_0100 # P5SEL & bisb
+
+   -- Set highest drive current for XT2
+   -- c000 # UCSCTL6 & bis
+
+   -- Turn on XT2 and wait for it to start.
+   1100 # UCSCTL6 & bic    -- turn off XT2OFF and XT2BYPASS bits
+   begin
+      -- Clear fault flag
+      8 ( XT2OFFG) # UCSCTL7 & bicb
+
+      -- Loop until XT2 fault flag remains clear
+      8 ( XT2OFFG) # UCSCTL7 & bitb
+   0= until
+   next  ;c
+
+#4,000,000  2*  #115,200 /  1+ 2/  #16 /mod   -- UCBFx UCBRx
+
+code dco-init
+   -- We are about to switch to 4M from 8M, so change our baud rate
+   -- divisors.
+   ( from above) # UCA1BR0 & mov
+   ( from above) 4 << 1 + ( UCOS16=1) # UCA1MCTL & mov
+
+   -- Switch SMCLK and MCLK to XT2 while we set up the DCO and FLL
+   255 ( SELA=2, SELM=5, SELS=5) # UCSCTL4 & mov
+
+   -- FLLD=1 (/2), FLLN=5f (*96)
+   105f # UCSCTL2 & mov
+
+   -- Select XT2 as FLLREFCLK and divide it to 250 kHz (4M/16)
+   55 ( SELREF=5, FLLREFDIV=5) # UCSCTL3 & movb
+
+   -- Set range suitable for DCO freq of 48M.
+   70 # UCSCTL1 & movb
+
+   -- Wait for everything to be ok.
+   begin
+      -- Clear fault flag
+      1 ( DCOFFG) # UCSCTL7 & bicb
+
+      -- Loop until DCO fault flag remains clear
+      1 ( DCOFFG) # UCSCTL7 & bitb
+   0= until
+   next  ;c
+
+#24,000,000  2*  #115,200 /  1+ 2/  #16 /mod   -- UCBFx UCBRx
+
+code >dco
+   -- We are about to switch to 24M from 4M, so change our baud rate
+   -- divisors.
+   ( from above) # UCA1BR0 & mov
+   ( from above) 4 << 1 + ( UCOS16=1) # UCA1MCTL & mov
+
+   -- Switch SMCLK and MCLK to DCOCLKDIV.
+   244 ( SELA=2, SELM=4, SELS=4) # UCSCTL4 & mov
+   next  ;c
+
+code dcorsel!
+   top UCSCTL1 & mov    -- set new value of DCORSEL
+   top pop
+   begin
+      -- Clear fault flag
+      1 ( DCOFFG) # UCSCTL7 & bicb
+
+      -- Loop until DCO fault flag remains clear
+      1 ( DCOFFG) # UCSCTL7 & bitb
+   0= until
+   next  ;c
+
+
+( Those were the piecemeal test. What follows is the chat4 code verbatim,
+  to test out.)
+
+( The power control logic on the F5529 is *incredibly* baroque and
+  complicated, and I think it is causing failures at high MCLK frequencies,
+  because at reset Vcore is set to its lowest level - to save power - and the
+  process of increasing it involves a breathtaking alphabet soup of
+  registers, register bits, and complicated programming!
+
+  I'd like to see if the basic code works. It's possible to run at 8M MCLK
+  at the lowest Vcore setting, so we are going to modify the startup code to
+  do that instead. Once that is working I can try to configure Vcore to a
+  higher setting! Argh.
+
+  TI makes everything *much* more complicated than it needs to be!)
+
+code test
+
+.ifdef fast-clock-code
+
+   ( This is the 24M MCLK, 48M DCO version.)
+   -- First, we have to start up the external xtal oscillator, XT2.
+   -- On F5529, P5SEL.2, when set, connects XT2 to the pins.
+   %0000_0100 # P5SEL & bisb
+
+   -- Turn on XT2 and wait for it to start.
+   1100 # UCSCTL6 & bic    -- turn off XT2OFF and XT2BYPASS bits
+   begin
+      -- Clear fault flag
+      8 ( XT2OFFG) # UCSCTL7 & bicb
+
+      -- Loop until XT2 fault flag remains clear
+      8 ( XT2OFFG) # UCSCTL7 & bitb
+   0= until
+
+   -- Next, switch SMCLK and MCLK to XT2 while we set up the DCO and FLL.
+   255 ( SELA=2, SELM=5, SELS=5) # UCSCTL4 & mov
+
+   -- We are going to run the DCO at 48M, but use its output divided by 2.
+   -- DCO =   D * N * FLLREF = 2 * 96 * 250k = 48M
+   -- DCOCLKDIV = N * FLLREF =     96 * 250k = 24M
+   -- FLLD=1 (/2), FLLN=5f (*96)
+   105f # UCSCTL2 & mov
+
+   -- Select XT2 as FLLREFCLK and divide it to 250 kHz (4M/16)
+   55 ( SELREF=5, FLLREFDIV=5) # UCSCTL3 & movb
+
+   -- Set range suitable for DCO freq of 48M: range 7.
+   70 # UCSCTL1 & movb
+
+   -- Wait for everything to be ok.
+   begin
+      -- Clear fault flag
+      1 ( DCOFFG) # UCSCTL7 & bicb
+
+      -- Loop until DCO fault flag remains clear
+      1 ( DCOFFG) # UCSCTL7 & bitb
+   0= until
+
+   -- Finally, switch SMCLK and MCLK from XT2 to DCOCLKDIV.
+   244 ( SELA=2, SELM=4, SELS=4) # UCSCTL4 & mov
+
+#24,000,000  2*  #115,200 /  1+ 2/  #16 /mod   -- UCBFx UCBRx
+
+   -- We are about to switch to 24M from 4M, so change our baud rate
+   -- divisors.
+   ( from above) # UCA1BR0 & mov
+   ( from above) 4 << 1 + ( UCOS16=1) # UCA1MCTL & mov
+
+.else  ( slow clock test code)
+
+   ( This is the 8M MCLK, 16M DCO version.)
+
+   -- First, we have to start up the external xtal oscillator, XT2.
+   -- On F5529, P5SEL.2, when set, connects XT2 to the pins.
+   %0000_0100 # P5SEL & bisb
+
+   -- Turn on XT2 and wait for it to start.
+   1100 # UCSCTL6 & bic    -- turn off XT2OFF and XT2BYPASS bits
+   begin
+      -- Clear fault flag
+      8 ( XT2OFFG) # UCSCTL7 & bicb
+
+      -- Loop until XT2 fault flag remains clear
+      8 ( XT2OFFG) # UCSCTL7 & bitb
+   0= until
+
+   -- Next, switch SMCLK and MCLK to XT2 while we set up the DCO and FLL.
+   255 ( SELA=2, SELM=5, SELS=5) # UCSCTL4 & mov
+
+   -- We are going to run the DCO at 16M, but use its output divided by 2.
+   -- DCO =   D * N * FLLREF = 2 * 32 * 250k = 16M
+   -- DCOCLKDIV = N * FLLREF =     32 * 250k = 8M
+   -- FLLD=1 (/2), FLLN=1f (*32)
+   101f # UCSCTL2 & mov
+
+   -- Select XT2 as FLLREFCLK and divide it to 250 kHz (4M/16)
+   55 ( SELREF=5, FLLREFDIV=5) # UCSCTL3 & movb
+
+   -- Set range suitable for DCO freq of 16M: range 5.
+   50 # UCSCTL1 & movb
+
+   -- Wait for everything to be ok.
+   begin
+      -- Clear fault flag
+      1 ( DCOFFG) # UCSCTL7 & bicb
+
+      -- Loop until DCO fault flag remains clear
+      1 ( DCOFFG) # UCSCTL7 & bitb
+   0= until
+
+   -- Finally, switch SMCLK and MCLK from XT2 to DCOCLKDIV.
+   244 ( SELA=2, SELM=4, SELS=4) # UCSCTL4 & mov
+
+.then
+
+   -- Hopefully that all worked!
+
+   -- Flash the leds to show that we are alive.
+
+   -- leds on
+   1 # P1DIR & movb  ( led1 attached to p1.0)
+   1 # P1OUT & movb
+   80 # P4DIR & movb  ( led2 attached to p4.7)
+   80 # P4OUT & movb
+
+   -- delay a bit
+   0 # push  begin  1 # sp ) sub  0= until  2 # sp add
+
+   -- leds off
+   0 # P1OUT & movb
+   0 # P4OUT & movb
+   next  ;c
