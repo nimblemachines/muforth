@@ -219,7 +219,7 @@ Vreset handler
    -- set SP to end of RAM
    @ram #ram +  # sp mov
 
-.ifndef in-ram  ( the flash-based code already did all this)
+.ndef in-ram  .ndef bsl-ram-chat  .and .if  ( the flash-based code already did all this)
 
    -- disable watchdog timer
    WDTKEY 80 + # WDTCTL & mov
@@ -277,36 +277,61 @@ Vreset handler
 
 ( If device contains a UCS module, set it up. On the F5529 Launchpad there
   is a 4 Mhz crystal connected to XT2. We want to use it to drive the
-  DCO/PLL to get a 16/24/25 Mhz clock.)
+  DCO/PLL to get a 16/24/25 Mhz clock.
+
+  At reset, we are running from the DCOCLOCK which is [possibly] being
+  controlled by the FLL, using the REFOCLK as a reference.)
 
 .equates. .contains UCSCTL0 .if
 
-0 .if
-   -- On F5529, P5SEL.2 and .3 need to be 1 to connect XT2 to the pins.
-   -- %0000_1100 # P5SEL & movb
-   %0000_0100 # P5SEL & movb     -- is P5SEL.2 enough? datasheet thinks so
+   ( Until we can configure the Vcore voltage to its highest setting -
+     which is a stupidly complicated process! - we can only run the CPU at
+     8M.)
 
-   -- Set highest drive current for XT2
-   c000 # UCSCTL6 & bis
+   ( This is the 8M MCLK, 16M DCO version.)
+
+   -- First, we have to start up the external xtal oscillator, XT2.
+   -- On F5529, P5SEL.2, when set, connects XT2 to the pins.
+   %0000_0100 # P5SEL & bisb
 
    -- Turn on XT2 and wait for it to start.
    1100 # UCSCTL6 & bic    -- turn off XT2OFF and XT2BYPASS bits
    begin
-      -- Clear fault flags
+      -- Clear fault flag
       8 ( XT2OFFG) # UCSCTL7 & bicb
-      2 ( OFIFG) # SFRIFG1 & bicb
 
       -- Loop until XT2 fault flag remains clear
       8 ( XT2OFFG) # UCSCTL7 & bitb
    0= until
 
-   -- Switch SMCLK and MCLK to XT2 while we set up the DCO and FLL
-   77 ( SELM+SELS bits) # UCSCTL4 & bic
-   55 ( SELM=XT2, SELS=XT2) #  UCSCTL4 & bis
+   -- Next, switch SMCLK and MCLK to XT2 while we set up the DCO and FLL.
+   255 ( SELA=2, SELM=5, SELS=5) # UCSCTL4 & mov
 
-   -- Divide XT2 to 1 Mhz
-   -- Switch MCLK to DCO
-.then
+   -- We are going to run the DCO at 16M, but use its output divided by 2.
+   -- DCO =   D * N * FLLREF = 2 * 32 * 250k = 16M
+   -- DCOCLKDIV = N * FLLREF =     32 * 250k = 8M
+   -- FLLD=1 (/2), FLLN=1f (*32)
+   101f # UCSCTL2 & mov
+
+   -- Select XT2 as FLLREFCLK and divide it to 250 kHz (4M/16)
+   55 ( SELREF=5, FLLREFDIV=5) # UCSCTL3 & movb
+
+   -- Set range suitable for DCO freq of 16M: range 5.
+   50 # UCSCTL1 & movb
+
+   -- Wait for everything to be ok.
+   begin
+      -- Clear fault flag
+      1 ( DCOFFG) # UCSCTL7 & bicb
+
+      -- Loop until DCO fault flag remains clear
+      1 ( DCOFFG) # UCSCTL7 & bitb
+   0= until
+
+   -- Finally, switch SMCLK and MCLK from XT2 to DCOCLKDIV.
+   244 ( SELA=2, SELM=4, SELS=4) # UCSCTL4 & mov
+
+   -- Hopefully that all worked!
 
 .else
 
@@ -351,7 +376,22 @@ abort
    FKEY #39 ( divisor-1) +  %0100_0000 ( MCLK)  + # FCTL2 & mov
 .then
 
-.then  ( not in-ram)
+.ifdef f5529   ( flash the leds on the Launchpad)
+   -- leds on
+   1 # P1DIR & movb  ( led1 attached to p1.0)
+   1 # P1OUT & movb
+   80 # P4DIR & movb  ( led2 attached to p4.7)
+   80 # P4OUT & movb
+
+   -- delay a bit
+   0 # push  begin  1 # sp ) sub  0= until  2 # sp add
+
+   -- leds off
+   0 # P1OUT & movb
+   0 # P4OUT & movb
+.then  ( f5529 - flash the leds)
+
+.then  ( not in-ram or bsl-ram-chat)
 
    ( This is here so that native code can simply return and it will
      re-enter the chat code with a proper stack.)
