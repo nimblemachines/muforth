@@ -92,13 +92,13 @@ label version
 ( The commit is followed by a pointer to the chat entry code.)
 label chat-entry-vector   0 ,
 
-label get-byte
-   begin  01 # chat-uart-ifg & bitb  0!= until
-   chat-uart-rxbuf & top movb  ret  ;c
+( Load the device-specific init code, and device-specific versions of
+  get-byte and put-byte.)
 
-label put-byte
-   begin  02 # chat-uart-ifg & bitb  0!= until
-   top chat-uart-txbuf & movb  ret  ;c
+( G2553 uses chat2 right now, but having this here might be helpful.)
+.ifdef g2553   ld target/MSP430/device/g2553/chat-support.mu4  .then
+.ifdef fr6989  ld target/MSP430/device/fr6989/chat-support.mu4  .then
+.ifdef f5529   ld target/MSP430/device/f5529/chat-support.mu4  .then
 
 label get-word
    get-byte c  top push  ( save low byte)
@@ -136,10 +136,6 @@ label read-words
 label write-word
    get-word c  top mp ) mov   2 # mp add  ret  ;c
 
-( We need this to change the MPU settings on FRAM devices.)
-label write-byte
-   get-byte c  top mp ) movb  1 # mp add  ret  ;c
-
 .equates. .contains FCTL1 .if
 
 label set-flash-command
@@ -161,7 +157,7 @@ label flash-word
    FKEY # FCTL3 & mov            -- clear FLOCK
    fcmd FCTL1 & mov              -- write flash command - must have FKEY!
    top mp ) mov  2 # mp add      -- write word and incr pointer
-.def in-ram  .def bsl-ram-chat  .or .if
+.ifdef in-ram
    begin  FBUSY # FCTL3 & bit  0= until
 .then
    FKEY # FCTL1 & mov            -- clear command
@@ -169,6 +165,12 @@ label flash-word
    FKEY FLOCK + # FCTL3 & mov    -- set FLOCK
    top fstat bis                 -- OR resulting flash status into fstat
    ret  ;c
+
+.else  ( FRAM device)
+
+( We need this to change the MPU settings on FRAM devices.)
+label write-byte
+   get-byte c  top mp ) movb  1 # mp add  ret  ;c
 
 .then
 
@@ -180,11 +182,13 @@ label command-table
    ( 43) run ,
    ( 44) read-words ,
    ( 45) write-word ,
-   ( 46) write-byte ,
-.equates. .contains FCTL1 .if
+.equates. .contains FCTL1 .if  ( flash device)
+   ( 46) write-word ,  ( host never uses this on flash devices)
    ( 47) set-flash-command ,
    ( 48) get-flash-status ,
    ( 49) flash-word ,
+.else  ( FRAM device)
+   ( 46) write-byte ,
 .then
 
 label process
@@ -219,179 +223,19 @@ Vreset handler
    -- set SP to end of RAM
    @ram #ram +  # sp mov
 
-.ndef in-ram  .ndef bsl-ram-chat  .and .if  ( the flash-based code already did all this)
+.ifndef in-ram  ( the flash-based code already did all this)
 
    -- disable watchdog timer
    WDTKEY 80 + # WDTCTL & mov
 
-.equates. .contains MPUCTL0 .if     -- FRAM part with memory protection
-   -- let segment3 cover everything for now
-   MPUKEY 0001 + # MPUCTL0 & mov    -- unlock and enable MPU
-   0200 # MPUSAM & bic              -- turn off W bit for segment 3
-   MPUCTL0 1+ ( high byte) & clrb   -- re-lock MPU
+   ( Call the device-specific initialization code. This will set up ports,
+     clocks, UART, etc, and flash leds, if any.)
+
+   device-init c
 .then
 
-.equates. .contains PM5CTL0  .ndef f5529  .and .if
-   1 # PM5CTL0 & bic                -- unlock i/o port pins
-.then
-
-( If this is an FRAM device, set the controller to insert 1 wait state. We
-  are about to switch to a 16 MHz CPU clock, which requires 1 wait state.)
-
-.equates. .contains FRCTL0 .if
-   FRKEY 1 4 << + # FRCTL0 & mov    -- unlock FRAM controller; set 1 wait state
-   FRCTL0 1+ ( high byte) & clrb    -- lock FRAM controller
-.then
-
-( If there is a 16 MHz calibration value in the info area, use it and set
-  the DCO to generate 16 MHz MCLK and SMCLK.)
-
-.equates. .contains CAL_BC1_16MHZ .if  ( we need to set up the DCO trim ourselves)
-   "0ffff # CAL_DCO_16MHZ & cmp     -- if Info A has been erased, don't use trim
-   0= if
-      -- Set defaults that might work to get chat going...
-      %10_00_1111 # BCSCTL1 & movb  -- RSEL=15
-      a0 # DCOCTL & movb            -- not quite the middle?
-   else
-      -- Set clock to factory-calibrated 16 MHz
-      -- See G2553 datasheet, p15
-      CAL_BC1_16MHZ & BCSCTL1 & movb
-      CAL_DCO_16MHZ & DCOCTL & movb
-   then
-   BCSCTL2 & clrb
-
-.else
-
-( If device contains a CS module, it has been factory calibrated. All we
-  need to do is to set the right divisors for the DCO to generate 16 MHz
-  MCLK and SMCLK clocks.)
-
-.equates. .contains CSCTL0 .if  ( DCO trimmed at factory; just choose divisors)
-   -- Right now this is for the FR6989. But other devices should work too.
-   CSKEY # CSCTL0 & mov          -- unlock CS module
-   %0100_1000 # CSCTL1 & mov     -- set DCORSEL=1, DCOFSEL=4 (16 MHz)
-   CSCTL3 & clr                  -- set DIVM and DIVS to /1
-   CSCTL0 1+ ( high byte) & clrb -- lock CS module
-
-.else
-
-( If device contains a UCS module, set it up. On the F5529 Launchpad there
-  is a 4 Mhz crystal connected to XT2. We want to use it to drive the
-  DCO/PLL to get a 16/24/25 Mhz clock.
-
-  At reset, we are running from the DCOCLOCK which is [possibly] being
-  controlled by the FLL, using the REFOCLK as a reference.)
-
-.equates. .contains UCSCTL0 .if
-
-   ( Until we can configure the Vcore voltage to its highest setting -
-     which is a stupidly complicated process! - we can only run the CPU at
-     8M.)
-
-   ( This is the 8M MCLK, 16M DCO version.)
-
-   -- First, we have to start up the external xtal oscillator, XT2.
-   -- On F5529, P5SEL.2, when set, connects XT2 to the pins.
-   %0000_0100 # P5SEL & bisb
-
-   -- Turn on XT2 and wait for it to start.
-   1100 # UCSCTL6 & bic    -- turn off XT2OFF and XT2BYPASS bits
-   begin
-      -- Clear fault flag
-      8 ( XT2OFFG) # UCSCTL7 & bicb
-
-      -- Loop until XT2 fault flag remains clear
-      8 ( XT2OFFG) # UCSCTL7 & bitb
-   0= until
-
-   -- Next, switch SMCLK and MCLK to XT2 while we set up the DCO and FLL.
-   255 ( SELA=2, SELM=5, SELS=5) # UCSCTL4 & mov
-
-   -- We are going to run the DCO at 16M, but use its output divided by 2.
-   -- DCO =   D * N * FLLREF = 2 * 32 * 250k = 16M
-   -- DCOCLKDIV = N * FLLREF =     32 * 250k = 8M
-   -- FLLD=1 (/2), FLLN=1f (*32)
-   101f # UCSCTL2 & mov
-
-   -- Select XT2 as FLLREFCLK and divide it to 250 kHz (4M/16)
-   55 ( SELREF=5, FLLREFDIV=5) # UCSCTL3 & movb
-
-   -- Set range suitable for DCO freq of 16M: range 5.
-   50 # UCSCTL1 & movb
-
-   -- Wait for everything to be ok.
-   begin
-      -- Clear fault flag
-      1 ( DCOFFG) # UCSCTL7 & bicb
-
-      -- Loop until DCO fault flag remains clear
-      1 ( DCOFFG) # UCSCTL7 & bitb
-   0= until
-
-   -- Finally, switch SMCLK and MCLK from XT2 to DCOCLKDIV.
-   244 ( SELA=2, SELM=4, SELS=4) # UCSCTL4 & mov
-
-   -- Hopefully that all worked!
-
-.else
-
-z" No BCS calibration, CS module, or UCS module found. Your clock is unsupported."
-abort
-
-.then .then .then
-
-   -- Configure UART for 115,200 bps, 8 bits, no parity
-   81 # chat-uart-ctl1 & bisb    -- enable SMCLK
-                                 -- hold UART in reset while configuring
-   chat-uart-ctl0 & clrb         -- reset to defaults: 8 bits, no parity, 1 stop
-
-.ifdef chat-uart-brw
-   chat-uart-brw &  \f swap #  \f swap mov
-.else
-   chat-uart-br1 & clrb          -- set baud rate divisor high byte to 0
-   chat-uart-br &  \f swap #  \f swap movb
-                                 -- set baud rate divisor low byte
-.then
-
-.ifdef chat-uart-mctlw
-   chat-uart-mctlw &  \f swap # \f swap  mov
-.else
-   chat-uart-mctl &  \f swap # \f swap  movb
-.then
-
-   01 # chat-uart-ctl1 & bicb    -- bring UART out of reset
-
-   -- Connect correct port pins to UART RXD and TXD, based on chat-port-*
-   -- equates in the chip's equates file. Only two of the following lines
-   -- will match and get compiled.
-.ifdef chat-port-sel0-ones   chat-port-sel0-ones # chat-port-sel0 & bisb   .then
-.ifdef chat-port-sel1-ones   chat-port-sel1-ones # chat-port-sel1 & bisb   .then
-.ifdef chat-port-sel0-zeros  chat-port-sel0-zeros # chat-port-sel0 & bicb   .then
-.ifdef chat-port-sel1-zeros  chat-port-sel1-zeros # chat-port-sel1 & bicb   .then
-
-( G2553 has this register; F5529 does not!)
-.equates. .contains FCTL2 .if  ( Flash control register)
-   -- Set up flash clock; needs to be between 257 and 476 kHz (no joke)
-   -- We're running at 16M, so set it to 16M/40 = 400k.
-   FKEY #39 ( divisor-1) +  %0100_0000 ( MCLK)  + # FCTL2 & mov
-.then
-
-.ifdef f5529   ( flash the leds on the Launchpad)
-   -- leds on
-   1 # P1DIR & movb  ( led1 attached to p1.0)
-   1 # P1OUT & movb
-   80 # P4DIR & movb  ( led2 attached to p4.7)
-   80 # P4OUT & movb
-
-   -- delay a bit
-   0 # push  begin  1 # sp ) sub  0= until  2 # sp add
-
-   -- leds off
-   0 # P1OUT & movb
-   0 # P4OUT & movb
-.then  ( f5529 - flash the leds)
-
-.then  ( not in-ram or bsl-ram-chat)
+   -- Initialize the UART.
+   uart-init c
 
    ( This is here so that native code can simply return and it will
      re-enter the chat code with a proper stack.)
@@ -399,16 +243,13 @@ abort
    begin  interact c  again  ;c
 
 
-( Set BSL flag to _not_ mass erase if wrong password entered during BSL
-  "hello" sequence.)
+( If possible, set a BSL flag to _not_ mass erase if wrong password entered
+  during BSL "hello" sequence.)
 
 here
 .equates. .contains Vbslkey .if
    Vbslkey goto  0 ,
 .else .equates. .contains Vbslsig1 .if
    Vbslsig1 goto  0aaaa dup , ,  ( sig1 and sig2)
-.else
-   ." Do you have to do something special to prevent the BSL from erasing your chip?"
-   -- abort
 .then .then
 goto

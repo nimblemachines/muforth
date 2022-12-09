@@ -1,0 +1,79 @@
+( This file is part of muforth: https://muforth.nimblemachines.com/
+
+  Copyright 2002-2022 David Frech. (Read the LICENSE for details.)
+
+loading MSP430 serial chat protocol (FR6989 support)
+
+hex
+__meta
+
+label get-byte
+   begin  01 # UCA1IFG & bitb  0!= until
+   UCA1RXBUF & top movb  ret  ;c
+
+label put-byte
+   begin  02 # UCA1IFG & bitb  0!= until
+   top UCA1TXBUF & movb  ret  ;c
+
+.ifndef in-ram
+
+label device-init
+   -- let segment3 cover everything for now
+   MPUKEY 0001 + # MPUCTL0 & mov    -- unlock and enable MPU
+   0200 # MPUSAM & bic              -- turn off W bit for segment 3
+   MPUCTL0 1+ ( high byte) & clrb   -- re-lock MPU
+
+   1 # PM5CTL0 & bic                -- unlock i/o port pins
+
+   FRKEY 1 4 << + # FRCTL0 & mov    -- unlock FRAM controller; set 1 wait state
+   FRCTL0 1+ ( high byte) & clrb    -- lock FRAM controller
+
+( If device contains a CS module, it has been factory calibrated. All we
+  need to do is to set the right divisors for the DCO to generate 16 MHz
+  MCLK and SMCLK clocks.)
+
+   -- Right now this is for the FR6989. But other devices should work too.
+   CSKEY # CSCTL0 & mov          -- unlock CS module
+   %0100_1000 # CSCTL1 & mov     -- set DCORSEL=1, DCOFSEL=4 (16 MHz)
+   CSCTL3 & clr                  -- set DIVM and DIVS to /1
+   CSCTL0 1+ ( high byte) & clrb -- lock CS module
+
+   ( Flash the leds on the Launchpad)
+   -- leds on
+   1 # P1DIR & bisb  ( led1 attached to p1.0)
+   1 # P1OUT & bisb
+   80 # P9DIR & bisb  ( led2 attached to p9.7)
+   80 # P9OUT & bisb
+
+   -- delay a bit
+   0 # push  begin  1 # sp ) sub  0= until  2 # sp add
+
+   -- leds off
+   1 # P1OUT & bicb
+   80 # P9OUT & bicb
+   ret  ;c
+.then  ( not in-ram)
+
+label uart-init
+   -- Configure UART for 115,200 bps, 8 bits, no parity
+   81 # UCA1CTL1 & bisb    -- enable SMCLK
+                           -- hold UART in reset while configuring
+   UCA1CTL0 & clrb         -- reset to defaults: 8 bits, no parity, 1 stop
+
+( Baud rate divisor and modulation bits.)
+.ifndef slow-chat  ( compute values for 115,200 bps)
+   8     ( baud rate divisor = 16,000,000/16/115,200)
+   0f7a1 ( UCOS16=1; UCBRFx=0a; UCBRSx=f7)
+.else              ( compute for 9600 bps)
+   #104  ( baud rate divisor = 16,000,000/16/9600)
+   0d621 ( UCOS16=1; UCBRFx=02; UCBRSx=d6)
+.then
+   ( mctl from above) # UCA1MCTLW & mov
+   ( baud divisor from above) # UCA1BRW & mov
+
+   01 # UCA1CTL1 & bicb    -- bring UART out of reset
+
+   ( Connect P3.4 to UART TXD, P3.5 to UART RXD. SEL0=1, SEL1=0)
+   %0011_0000 # P3SEL0 & bisb
+   %0011_0000 # P3SEL1 & bicb
+   ret  ;c
