@@ -292,6 +292,9 @@ static addr **new_name(
 /*
  * new_linked_name creates a new, non-hidden dictionary (name) entry and
  * links it onto the chain represented by plink.
+ *
+ * This is only used by C code! Forth code will create unlinked names and
+ * use show to link them when they are complete.
  */
 static void new_linked_name(
     addr **plink, char *name, int length)
@@ -300,12 +303,36 @@ static void new_linked_name(
     *plink = MAKE_LINK(new_name(FOLLOW_LINK(plink), name, length, !HIDDEN));
 }
 
-/* (linked-name)  ( a u chain) */
-void mu_linked_name_()
+/*
+ * For Forth code, we are now creating names that link *to* the head of the
+ * chain on which they are defined, but the chain isn't changed to point to
+ * the new name until the new definition is "finished".
+ *
+ * show changes the chain to point to the new word.
+ */
+
+/* Remember the last name and the last chain for "show". */
+static addr *last_name;
+static addr **last_chain;
+
+/* (unlinked-name)  ( a u chain) */
+void mu_unlinked_name_()
 {
-    new_linked_name((addr **)TOP, (char *)ST2, ST1);
+    addr **plink = (addr **)TOP;
+    char *name = (char *)ST2;
+    int length = ST1;
+
+    /* create new name & link onto front of chain, but don't change chain */
+    last_name = MAKE_LINK(new_name(FOLLOW_LINK(plink), name, length, !HIDDEN));
+    last_chain = plink;
     DROP(3);
 }
+
+/*
+ * Once the definition is complete, execute show to link it onto the chain
+ * on which it was defined.
+ */
+void mu_show()  { *last_chain = last_name; }
 
 /*
  * Structure of dictionary chains
