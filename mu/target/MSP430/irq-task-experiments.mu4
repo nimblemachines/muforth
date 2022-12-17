@@ -1,0 +1,207 @@
+( This file is part of muforth: https://muforth.nimblemachines.com/
+
+  Copyright 2002-2022 David Frech. (Read the LICENSE for details.)
+
+loading MSP430 IRQ and task experiments
+
+( We want to try - for the first time! - to get interrupt-driven serial i/o
+  and some kind of timer tick working.)
+
+__meta
+decimal
+
+( Initially we are going to use a ram-based vector table, so we don't want
+  to use "handler" to define our handlers. Instead we just use label, and
+  then run some init code to copy our handler addresses into the ram vector
+  table.)
+
+( XXX [ and #] are wonky in mixed environment. Skip using them for now, though
+  this needs to be fixed.)
+
+@ram #ram +  equ @ram-end
+
+( Create a ram-resident handler. This creates a target word that
+  initializes the vector when it is executed.)
+
+meta: ram-handler  ( vector-offset)
+   @ram-end +  "0ffff and  ( ram vector address)  __asm
+   constant does> @+ swap ! ;
+
+2variable ticks  ( high word at lower address, Forth style)
+: 2@  @+ @  swap ;  ( cell at lower address to TOP)
+: 2!  !+ ! ;
+
+code now   ( - low)   top push  v ticks cell+ & top mov  next  ;c
+: longnow  ( - low high)  ticks 2@ ;  ( ha ha)
+
+( Wait while now - future < 0.)
+: wait  ( #ticks)
+   now +  ( future)
+   begin  now over -  0< while  pause  repeat  drop ;
+
+
+0  ( initial link)
+( #u #r #d: #cells for user area, R stack, D stack)
+   4  0  0 task snoop  ( dog? cat? bug?)
+   4 16 16 task taska
+   4 16 16 task taskb
+   4 16 16 task taskc
+         circle snoop
+
+hex
+
+( Only PC and SR get pushed when a handler executes, so be careful to save
+  any other registers before using them.)
+
+( The only thing we do is increment the 32-bit tick counter.)
+( NOTE: it's two cycles faster - 2 vs 4 - to do a conditional branch rather
+  and unconditional add into the high word.)
+
+Vwatchdog ram-handler init-watchdog-handler
+   v ticks cell+ & inc  ( incr low word)  CS if
+      v ticks & inc  ( add carry into high word)
+   then  reti  ;c
+
+( Queues.)
+( XXX add a task pointer to the queue? Or load a register with the task to
+  wake before calling common rx service routine? To make the ISR totally
+  generic it needs to know the address of the queue and the address of the
+  task to wake. This means two pushes, two pops - to save/restore regs - and
+  two loads. If the task address is part of the queue structure, we reduce
+  this to one pop, one push, and one load!)
+
+0 equ q.room
+1 equ q.avail
+2 equ q.read
+3 equ q.write
+4 equ q.data
+
+#16 equ q.size  ( "standard" size, so we can write the wrap code generically.)
+
+q.data q.size + buffer q-rx
+
+( Zero avail, read, and write; store q.size in room.)
+: q-init  ( q)  0 q.size rot !+ ! ;
+
+( NOTE: The usci handlers need to handle *both* tx and rx interrupts if
+  both are enabled. For now we are going to have the tx side be polled and
+  only the rx side interrupt-driven.)
+
+Vusci-a0 ram-handler init-usci-a0-handler
+   w push  v q-rx # w mov
+   q.room w +) decb  0>= if  ( there's room for a byte)
+      x push  q.write w +) x movb ( get write offset)  w x add
+      UCA0RXBUF & q.data x +) movb ( store received byte)  w x sub
+      x inc  q.size 1- # x and ( wrap)  x q.write w +) movb
+      q.avail w +) incb  CS if
+         v taska # w mov  run # v task.status w +) mov  then
+      x pop  w pop  reti  then
+   q.room w +) incb  UCA0RXBUF & w movb ( read and discard)
+   w pop  reti  ;c
+
+Vusci-a1 ram-handler init-usci-a1-handler
+   w push  v q-rx # w mov
+   q.room w +) decb  0>= if  ( there's room for a byte)
+      x push  q.write w +) x movb ( get write offset)  w x add
+      UCA1RXBUF & q.data x +) movb ( store received byte)  w x sub
+      x inc  q.size 1- # x and ( wrap)  x q.write w +) movb
+      q.avail w +) incb  CS if
+         v taska # w mov  run # v task.status w +) mov  then
+      x pop  w pop  reti  then
+   q.room w +) incb  UCA1RXBUF & w movb ( read and discard)
+   w pop  reti  ;c
+
+code q@  ( q - b)
+   q.read top +) x movb ( get read offset)  top x add
+   q.data x +) w movb ( read byte)  q.room top +) incb  top x sub
+   x inc  q.size 1- # x and ( wrap)  x q.read top +) movb
+   w top mov  next  ;c
+
+( In the V25 kernel there is a long comment about how the decrement of
+  avail and the resulting conditional change to the calling task's status
+  have to be *atomic*. If an interrupt occurs between them that increments
+  avail and wakes the task - which is still awake - and *then* the task puts
+  itself to sleep, we've missed a wakeup. And that's bad. ;-)
+
+( We could write this code in Forth using +irq and -irq, but it's important
+  and used a lot, so let's write it in assembler.
+
+  NOTE: the effect of dint and eint is delayed by one instruction. Hence
+  the pop *after* the dint.)
+
+code down  ( n q - pause?)
+   dint  w pop  w q.avail top +) subb  u< if  ( not enough avail; need to sleep)
+      'user & w mov  robin # v task.status w +) mov
+   then  eint  top top subc  next ;c
+
+( By using popb to load lo into w, and by movb'ing top into x, we make sure
+  that we have pure byte values with no gunk in the high byte.)
+
+code lohi>  ( lo hi - w)
+   w popb  top x movb  x swpb  w x bis  x top mov  next  ;c
+
+( Here again we are careful to movb to clear the high byte. NOTE that pushb
+  does *not* clear the high byte of the value that it pushes!)
+
+code >hilo  ( w - hi lo)
+   top w movb ( lo)  top swpb  top x movb ( hi)  x push  w top mov  next ;c
+
+: recv  q-rx q@ ;
+: await  ( n q)  down if pause then ;
+: w>  2 q-rx await  recv recv  lohi> ;
+: b>  1 q-rx await  recv ;
+
+( Send a byte down the wire.)
+: >b   begin  pause  UCA0IFG c@  2 and  until  UCA0TXBUF c! ;
+: >bx  begin         UCA0IFG c@  2 and  until  UCA0TXBUF c! ; ( non-tasking version - for testing)
+: >w   >hilo  >b >b ;
+
+( For manually sending bytes to the looped-back receiver.)
+: >bs  ( n)  0 do  i >b  loop ;
+: bs>  ( n)  for b> next ;
+
+: init-uart0
+   -- Set up the ports to connect uart0 to P3.3 and 3.4.
+   -- P3SEL=1 selects the uart.
+   %0001_1000 P3SEL cset!
+
+   -- Set up everything else to make uart0 work.
+   81 UCA0CTL1 c!  ( reset, SMCLK src)
+   -- 80 ( UCLISTEN) UCA0STAT cset!  ( set loopback mode)
+   #13 UCA0BR0 !  1 UCA0MCTL c! ( 115,200 bps)
+   1 UCA0CTL1 cclr! ( bring uart0 out of reset)
+   -- 1 ( RX) UCA0IE cset! ( has to be done with uart out of reset!)
+   ;
+
+( Turn on RX interrupt.)
+: init-uart1
+   1 ( RX) UCA1IE cset! ( has to be done with uart out of reset!) ;
+
+( Install the vectors into the ram table and set the bit that puts the
+  vectors into ram.)
+
+: init-irqs
+   init-watchdog-handler
+   -- init-usci-a0-handler
+   -- init-usci-a1-handler
+   1 ( SYSRIVECT) SYSCTL set! ;
+
+code +irq   eint  next  ;c
+code -irq   dint  next  ;c
+
+: start-timer
+   5a15 ( timer mode, SMCLK/8192) WDTCTL !
+   1 ( WDTIE) SFRIE1 set! ;
+
+: sending ( dly char 'task)  2 swap  #activate  begin  over wait  dup >b  again  ;
+
+: xx
+   [ ' snoop >body #] init-tasks
+   snoop [ 'user #] !
+   [ sp0 #] task.sp0 !
+   task.status wake
+   0 0 ticks 2!  init-irqs  init-uart0  start-timer  +irq
+   #1 61 taska sending  #5 62 taskb sending  #25 63 taskc sending
+   ;
+
+: tt  ( n)  for pause next ;  ( run the task loop n times)

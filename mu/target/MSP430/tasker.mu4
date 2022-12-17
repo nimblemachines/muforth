@@ -4,38 +4,138 @@
 
 loading MSP430 multitasker
 
+( Define a new task, allot space in RAM for stacks and user area, and
+  create a ROMable word that pushes the address of its user area when
+  executed.)
+
+variable #user   ( user variable bytes allocated)
+
 __meta
 
-ram  ( XXX for testing)
-
 { h @ } ram
-label 'user  0 ,  ( for now, just keep the user pointer in RAM)
-                  ( could keep it in a register too - got plenty)
-label #woken  0 ,
+label 'user  0 ,   ( for now, just keep the user pointer in RAM)
+                   ( could keep it in a register too - got plenty)
+label #woken  0 ,  ( count of tasks woken on each loop; for idle task)
 { h ! }
 
-{ variable #user   ( user variable bytes allocated) }
-meta: user  ( #bytes)
-   #user @ constant  #user +!
-   ;code  top push  'user & top mov  2 w +) top add  next  ;c
+meta: user  ( #cells)
+   #user @ constant  cells #user +!
+   ;code  top push  'user & top mov  w ) top add  next  ;c
 
-02 user task.status
-02 user task.link
-02 user task.top       ( saved SP - top of data stack)
-02 user task.bottom    ( sp0 - bottom of data stack)
+( Allocate bottom up - from low memory to high. rp0 - the bottom of the
+  return stack - is also the address of the user area.)
+
+meta: task  ( link #u #r #s - 'link)
+   h @ push ( save region)  ram
+   cells allot ( D stack)  here ( sp0)  swap
+   cells allot ( R stack)   here ( rp0)  rot
+   cells allot ( user area)  ( link sp0 rp0)  pop h ! ( restore region)
+   constant ( rp0)  , ( sp0)  , ( link)
+   here 3 cells -  ( 'link) ;
+
+meta: circle  ( 'link)   ' >body  2 cells +  image-! ;
+
+
+( Structure of a task.
+
+  Return stack grows downward from task.status.
+  Data stack grows downward from the value stored in task.sp0.
+  task.link points to next task's status slot.)
+
+01 user task.status     ( pointer to run or robin)
+01 user task.link       ( link to next task)
+01 user task.sp0        ( address of bottom of data stack)
+01 user task.saved-sp   ( saved address of top of data stack)
 
 code pause
-   top push  count push  rp push  ip push
-   'user & w mov  sp ' task.top >value w +) mov  ( fall thru)  ;c
+   top push  loop push  rp push  ip push
+   'user & w mov  sp v task.saved-sp w +) mov  ( fall thru)  ;c
 
 label wait
-   ' task.link   >value w +) w  mov  ( follow link)
-   ' task.status >value w +) pc mov  ( jump thru status)  ;c
+label robin
+   v task.link   w +) w  mov  ( follow link)
+   v task.status w +) pc mov  ( jump thru status)  ;c
 
 label run
-   ' task.top    >value w +) sp mov  w 'user & mov  1 # #woken & add
-   ip pop  rp pop  count pop  top pop  next  ;c
+   w 'user & mov  1 # #woken & add
+   v task.saved-sp w +) sp mov
+   ip pop  rp pop  loop pop  top pop  next  ;c
 
+: wake  ( 'task)  [ run   #]  swap ! ;
+: lull  ( 'task)  [ robin #]  swap ! ;
+: stop  task.status lull  pause ;
+
+code sp!  ( empty data stack)
+   'user & w mov  v task.sp0 w +) sp mov  ( reset sp to sp0)
+   "cafe # top mov  ( empty stack "sentinel" value)  next  ;c
+
+code rp!  ( empty return stack)
+   'user & rp mov  ( reset rp to rp0, aka user area)
+   "face # rpush  ( push empty return stack sentinel value)  next  ;c
+
+code depth  ( - #cells)
+   top push  'user & w mov  v task.sp0 w +) top mov  sp top sub
+   top asr  top dec  next  ;c
+
+( The simplest thing to do is to start each task's code with "rp! sp!".
+  Trying to do the equivalent, at arm's length, is awkward. But even to
+  start off another task, we have to push its register context onto its
+  stack, so that "run" that pop everything and start running.)
+
+: theirs  ( 'task 'user | 'user 'task - a)  +  task.status - ;
+: 1push   ( a w - a-2)  ( push w onto a)  swap cell-  tuck ! ;
+
+( Create empty data and return stacks.)
+: empty-stack         ( 'task - sp)   task.sp0 theirs @  "cafe 1push ;
+: empty-return-stack  ( 'task - rp)     ( 'task is rp0)  "face 1push ;
+
+: move-stack-items  ( x1 .. xn n 'task sp - 'task sp)
+   swap >r  ( move 'task out of the way)
+   over cells -  ( make space for items)  dup >r ( save sp)
+   swap for !+ next drop  ( move, starting from top towards bottom)
+   r> r> swap ;
+
+( Need to push, in order: top loop rp ip. If stack is non-empty, then we
+  push:   "cafe <stack items> loop rp ip.)
+
+: stack-top  ( 'task sp ip)
+   >r  "dead 1push ( loop)
+   over empty-return-stack  ( 'task sp rp)
+   1push ( rp)  r> 1push ( ip)
+   over task.saved-sp theirs !  wake ;
+
+: #activate ( x1 .. xn n 'task)
+   dup empty-stack  ( 'task sp)
+   move-stack-items  ( 'task sp)
+   r> stack-top ;
+
+: activate ( 'task)
+   dup empty-stack  ( 'task sp)
+   r> stack-top ;
+
+( During init, w points to the flash-based task definition, which contains
+  a pointer to the task's user area - aka rp0 - then the value of sp0, and
+  lastly a link to the next task definition.
+
+  x will in general point to the task being initialized, and y to the task
+  that x links to.)
+
+code init-tasks  ( 'task-def)
+   -- ' maestro >body # w mov  w z mov ( to see when we are done)
+   top w mov
+   0 w +) y mov ( get next task pointer)
+   begin
+      y x mov                         ( next is now current)
+      robin # v task.status x +) mov  ( task is asleep)
+      2 w +)  v task.sp0    x +) mov  ( set stack bottom [sp0] from definition)
+      4 w +)                   w mov  ( follow link to next definition)
+      0 w +)                   y mov  ( get next task pointer)
+      y       v task.link   x +) mov  ( link current to next)
+   -- w z cmp  0= until  next  ;c
+   w top cmp  0= until  top pop  next  ;c
+
+
+.ifdef idle-task
 
 ( Idle task)
 ( Unlike a normal task, whose status field points either to wait - if
@@ -51,3 +151,5 @@ label run
 label idle
    #woken & tst  #woken & clr
    wait 0= until  ( sleep!!)  nop  wait j  ;c
+
+.then  ( idle-task)
