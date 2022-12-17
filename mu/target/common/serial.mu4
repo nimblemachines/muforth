@@ -11,41 +11,49 @@ loading Serial expect/send
          here set-termios-target-raw
   ( fd)  here set-termios  ( set to raw!) ;
 
-variable fd-target
+defer target-tty
 
-( tty-target returns fd of tty connected to target. If not yet opened,
-  opens it, and sets it to target-raw.)
+: lazy-target-tty  ( - fd)
+   create  0 , ( fd)  token, drop ( filename)  does>
+   dup @  =if nip ^ then ( already opened!)  drop
+   dup cell+ addr+ ( skip fd and string count)  open-file-rw  ( a fd)
+   dup rot ( fd fd a)  !  dup target-raw  ( fd) ;
 
-: tty-target  fd-target @  =if ^ then ( already opened!)  drop
-   z" serial-target" open-file-rw  ( this should be a symlink to device)
-   dup fd-target !  dup target-raw  ( fd) ;
+( serial-target and serial-target2 should be symlinks to
+  /dev/tty<something> devices)
 
+lazy-target-tty  std-target-tty serial-target
+lazy-target-tty  alt-target-tty serial-target2
+
+( Abbrevs)
+: std-target   now std-target-tty is target-tty ;  std-target
+: alt-target   now alt-target-tty is target-tty ;
 
 ( We want to have several easy-to-use words that read, modify, and
-  write back tty-target's termios, so let's make that easy.)
+  write back target-tty's termios, so let's make that easy.)
 
-: using-tty-target
-   tty-target here get-termios drop
+: using-target-tty
+   target-tty here get-termios drop
               here pop addr@ execute  ( execute the following word)
-   tty-target here set-termios ;
+   target-tty here set-termios ;
 
-: bps   ( speed)    using-tty-target  set-termios-speed          ;
-: ignore-parity     using-tty-target  set-termios-ignore-parity  ;
-: even-parity       using-tty-target  set-termios-even-parity    ;
-: odd-parity        using-tty-target  set-termios-odd-parity     ;
+: bps   ( speed)    using-target-tty  set-termios-speed          ;
+: ignore-parity     using-target-tty  set-termios-ignore-parity  ;
+: even-parity       using-target-tty  set-termios-even-parity    ;
+: odd-parity        using-target-tty  set-termios-odd-parity     ;
 
 
 ( Recv from, send to target.)
-: _send  tty-target  >emit ;
-: _recv  tty-target  <key ;
+: _send  target-tty  >emit ;
+: _recv  target-tty  <key ;
 
 ( flush throws away bytes in the input queue; drain waits until all bytes
   in the output queue have been transmitted.)
 
-: flush  tty-target  tty-iflush ;
-: drain  tty-target  tty-drain ;
+: flush  target-tty  tty-iflush ;
+: drain  target-tty  tty-drain ;
 
-: icount  ( - chars-waiting)  tty-target  tty-icount ;
+: icount  ( - chars-waiting)  target-tty  tty-icount ;
 
 ( Spying on the protocol.)
 variable spy  spy off
