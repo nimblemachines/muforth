@@ -96,7 +96,7 @@ void mu_set_termios_user_raw()
     set_termios_raw(pti);
     pti->c_oflag |= (OPOST);    /* set opost, so newlines become CR/LF */
     pti->c_lflag |= (ISIG);     /* accept special chars and gen signals */
-    pti->c_cc[VMIN] = 1;
+    pti->c_cc[VMIN] = 1;        /* wait forever for a character */
     pti->c_cc[VTIME] = 0;
     DROP(1);
 }
@@ -123,11 +123,30 @@ void mu_set_termios_target_raw()
 {
     struct termios *pti = (struct termios *) TOP;
     set_termios_raw(pti);
-    pti->c_cflag &= ~(CRTSCTS);   /* no handshaking */
-    pti->c_cflag |= (CLOCAL);     /* no modem signalling */
-    pti->c_cc[VMIN] = 0;          /* return even if no chars avail */
-    pti->c_cc[VTIME] = 20;        /* timeout in decisecs */
+    pti->c_cflag &= ~(CRTSCTS);     /* no handshaking */
+    pti->c_cflag |= (CLOCAL);       /* no modem signalling */
+    pti->c_cc[VMIN] = 1;            /* wait forever for a character */
+    pti->c_cc[VTIME] = 0;
     DROP(1);
+}
+
+/* set-termios-timeout  ( timeout termios) */
+void mu_set_termios_timeout()
+{
+    struct termios *pti = (struct termios *) TOP;
+    int timeout = ST1;      /* requested timeout in seconds; 0 means forever */
+
+    if (timeout == 0)
+    {
+        pti->c_cc[VMIN] = 1;    /* wait forever for a character */
+        pti->c_cc[VTIME] = 0;
+    }
+    else
+    {
+        pti->c_cc[VMIN] = 0;    /* return even if no chars available */
+        pti->c_cc[VTIME] = timeout * 10;    /* VTIME is in decisecs */
+    }
+    DROP(2);
 }
 
 /* stack: ( speed termios - ) */
