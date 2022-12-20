@@ -21,10 +21,6 @@ ld target/ARM/v6-m/kernel-itc.mu4
 
 ( Compile the first 32 bits of the current muforth Git commit.)
 
-.ifdef in-ram
-   1 Ki buffer setup-log
-.then
-
 here equ version
    muforth-commit drop 8 evaluate  ,
 
@@ -73,7 +69,8 @@ here equ string0
  0409 le, ( LANGID = 0409 = US English)
 
 here equ string1
-   u" Fücken Awesöme Innövation Läb"
+--   u" Fücken Awesöme Innövation Läb"
+   u" Nîmble Machînes Awesöme Innövation Läb"
 
 here equ string2
    u" STM32 USB testbed"
@@ -94,9 +91,11 @@ code h@+   ( a - w a+2)            0 top +) w ldrh   w dpush1
                                    begin   2 # top top adds   next  ;c
 code h!+   ( w a - a+2)  w dpop1   0 top +) w strh   again  ;c
 
-code cells   2 # top top lsls   next  ;c
 code rdrop  [r]   w rpop1   next  ;c
 : 2drop   drop drop ;
+
+( Do the set, then the clr.)
+: setclr!  ( setbits clrbits addr)  >r  swap r@ set!  r> clr! ;
 
 : (dispatch)  ( index)
    1+ cells r@ +
@@ -114,16 +113,19 @@ compiler: :]  ( end a jump table)
 : ep0-clear  ( clear-bits)
    8080 xor  [ %01 9 << ( EP_TYPE=control) #] or  USB_EP0R ! ;
 
-meta: ep0-update  ( stat mask)
-   does> h@+ h@  ( stat mask)  invert
+: ep0-update  ( toggles clear-bits)
+   invert  ( turn clear-bits into an and-mask)
    USB_EP0R @
       8080 or  ( keep CTR_x bits)
-      and  ( mask off data toggles and other direction STAT bits)
-      xor  ( toggle *our* STAT bits)
+      and  ( clear toggle bits we don't want to change)
+      xor  ( toggle *our* STAT or DTOG bits)
    USB_EP0R ! ;
 
-meta: ep0-out  ( stat)   create  #12 << ( STAT_RX) h,  4070 h,  ep0-update ;
-meta: ep0-in   ( stat)   create    4 << ( STAT_TX) h,  7040 h,  ep0-update ;
+meta: does-ep0-update
+   does> h@+ h@  ( toggles clear-bits)  ep0-update ;
+
+meta: ep0-out  ( toggles)   create  #12 << ( STAT_RX) h,  4070 h,  does-ep0-update ;
+meta: ep0-in   ( toggles)   create    4 << ( STAT_TX) h,  7040 h,  does-ep0-update ;
 
 ( Endpoint STAT bits.
 
@@ -205,10 +207,6 @@ code usb>  ( usb mem - usb+2 mem+2)
 : usb-disconnect
    [ 1 #15 << #]  ( DPPU - pullup bit)  USB_BCDR clr! ;
 
-( Delay a bit.)
-         ( clks/sec)  ( ms/sec)  ( clks/loop)
-: ms   [ #48,000,000   #1,000 /   #17 / #]  *  wait ;
-
 .else  ( do something with port pins? assuming F303 here...)
 
 : periph-clock-init
@@ -216,21 +214,17 @@ code usb>  ( usb mem - usb+2 mem+2)
    [ 1 #17 << #] RCC_AHBENR set!  ( GPIOA - USB pins are on port A) ;
 
 : usb-connect
-   [ %1111 #22 << #] GPIOA_MODER clr!
-   [ %1010 #22 << #] GPIOA_MODER set!  ( alt fn for PA11 and 12)
+   [ %1010 #22 << #]
+   [ %0101 #22 << #] GPIOA_MODER setclr!  ( alt fn for PA11 and 12)
    [ %1111 #22 << #] GPIOA_OSPEEDR set!  ( high speed for PA11 and 12)
    [   0ee #12 << #] GPIOA_AFRH set!  ( af14 = usb; for PA11 and 12) ;
 
 ( Send a "single-ended zero" onto the USB bus: hold both D+ and D- low.)
 : usb-disconnect
    [   %11 #11 << #] GPIOA_BRR !  ( drive PA11 and 12 low)
-   [ %1111 #22 << #] GPIOA_MODER clr!
-   [ %0101 #22 << #] GPIOA_MODER set!  ( gp output mode for PA11 and 12)
+   [ %0101 #22 << #]
+   [ %1010 #22 << #] GPIOA_MODER setclr!  ( gp output mode for PA11 and 12)
    [   %11 #11 << #] GPIOA_OTYPER set!  ( make PA11 and 12 open-drain) ;
-
-( Delay a bit.)
-         ( clks/sec)  ( ms/sec)  ( clks/loop)
-: ms   [ #72,000,000   #1,000 /   #17 / #]  *  wait ;
 
 .then
 
@@ -350,21 +344,15 @@ variable memaddr
 0080 equ CTR_TX
 
 : handle-transaction
-   USB_EP0R @  dup CTR_RX and  if
+   USB_EP0R @  dup CTR_RX and if
       CTR_RX ep0-clear
-      [ 1 #11 << #] ( SETUP) and if
-         setup-token
-      ^ then
-      out-token
-   ^ then
-   CTR_TX and if
-      CTR_TX ep0-clear
-      in-token
-   then ;
+      [ 1 #11 << #] ( SETUP) and if  setup-token ^  then  out-token ^
+   then
+   CTR_TX and if  CTR_TX ep0-clear  in-token  then ;
 
 : handle-reset
    80 USB_DADDR !  ( clear address but set EF - enable function - bit.)
-   0 ep0-clear  expect-setup-token ;
+   [ CTR_RX CTR_TX + #] ep0-clear  expect-setup-token ;
 
 : usb-init
    ( Set up endpoint buffers.)
@@ -379,20 +367,20 @@ variable memaddr
    h!+ h!+ h!+ h!
 .then
 
-   1 ( FRES) USB_CNTR !  ( set reset bit and clear power down bit)
-   -- 100 wait
-   USB_CNTR off  ( clear reset bit and power down bits) ;
+   USB_CNTR  1 ( FRES) over !  ( set reset bit and clear power down bit)
+   ( USB_CNTR) off  ( clear reset bit and power down bits) ;
 
-( First handle all transactions, then handle other interrupts.)
-( XXX use dup to reduce USB_ISTR literals?)
+( First handle reset interrupt, then handle all transactions.)
 : process-usb
-   begin
-      USB_ISTR @  [ 1 #15 << #] ( CTR) and  while  handle-transaction
-   repeat
    USB_ISTR @
-   USB_ISTR off
-   [ 1 #10 << #] ( RESET) and if  handle-reset  then
-   ;
+   USB_ISTR off  ( clear all writable interrupts)
+   [ 1 #10 << #] ( RESET) and if  handle-reset  ^  then
+
+   begin
+      USB_ISTR @  [ 1 #15 << #] ( CTR) and
+   while
+      handle-transaction
+   repeat ;
 
 : wait-for-rdy  ( regaddr)
    begin  dup c@  2 and  until  ( wait for RDY bit)  drop ;
@@ -401,7 +389,7 @@ variable memaddr
 
 : clock-init
    1 ( HSI48ON) [ RCC_CR2 2 + #] tuck c!  wait-for-rdy ( wait for HSI48RDY)
-   6 ( ~latency) FLASH_ACR  1 ( latency) over  set! clr!  ( we need one cycle for 48 MHz clock!)
+   1 ( latency) ( set) 6 ( clr) FLASH_ACR setclr!  ( we need one cycle for 48 MHz clock!)
    3 ( SW=HSI48 as sysclk)  RCC_CFGR tuck c!
    begin  dup c@ %1111 =  until  ( SW=HSI48 and SWS=HSI48)  drop
 
