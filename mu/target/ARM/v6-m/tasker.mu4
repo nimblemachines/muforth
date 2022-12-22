@@ -1,0 +1,133 @@
+( This file is part of muforth: https://muforth.nimblemachines.com/
+
+  Copyright 2002-2022 David Frech. (Read the LICENSE for details.)
+
+loading ARM v6-M multitasker
+
+( Define a new task, allot space in RAM for stacks and user area, and
+  create a ROMable word that pushes the address of its user area when
+  executed.)
+
+variable #user   ( user variable bytes allocated)
+
+__meta
+
+meta: user  ( #cells)
+   #user @ constant  cells #user +!
+   ;code  top dpush1   up top mov   0 w +) w ldr   w top top adds   next  ;c
+
+( Allocate bottom up - from low memory to high. rp0 - the bottom of the
+  return stack - is also the address of the user area.)
+
+meta: task  ( link #u #r #s - 'link)
+   h @ push ( save region)  ram
+   cells allot ( D stack)  here ( sp0)  swap
+   cells allot ( R stack)   here ( rp0)  rot
+   cells allot ( user area)  ( link sp0 rp0)  pop h ! ( restore region)
+   constant ( rp0)  , ( sp0)  , ( link)
+   here 3 cells -  ( 'link) ;
+
+meta: circle  ( 'link)   ' >body  2 cells +  image-! ;
+
+
+( Structure of a task.
+
+  Return stack grows downward from task.status.
+  Data stack grows downward from the value stored in task.sp0.
+  task.link points to next task's status slot.)
+
+01 user task.status     ( pointer to run or robin)
+01 user task.link       ( link to next task)
+01 user task.sp0        ( address of bottom of data stack)
+01 user task.saved-sp   ( saved address of top of data stack)
+
+( NOTE: registers are pushed not in the order that they are specified, but
+  with the lower register numbers at lower addresses.)
+
+( NOTE: Currently we push a "sentinel" value - hex deadc0de - onto the
+  return stack. This can help find the return stack when dumping memory,
+  but it wastes memory. I'm thinking of making it optional - perhaps "ifdef
+  debug".)
+
+code pause
+   up w mov   { top ip rp ix } push
+   sp x mov   >v task.saved-sp w +) x str  ( fall thru)  ;c
+
+label wait
+label robin
+   >v task.link   w +) w ldr         ( follow link)
+   >v task.status w +) x ldr   x bx  ( jump thru status)  ;c
+
+label run
+   ( XXX increment #woken - should be in a register!)
+   >v task.saved-sp w +) x ldr   x sp mov
+   { top ip rp ix } pop   w up mov   next  ;c
+
+: wake  ( 'task)  [ run   1+ #]  swap ! ;
+: lull  ( 'task)  [ robin 1+ #]  swap ! ;
+: stop  task.status lull  pause ;
+
+code sp!  ( empty data stack)
+   up w mov   >v task.sp0 w +) x ldr   x sp mov  ( reset sp to sp0)
+   "decafbad top lit  ( empty stack "sentinel" value)   next  ;c
+
+code rp!  ( empty return stack)
+   up rp mov  ( reset rp to rp0, aka user area)
+   "deadc0de w lit   w rpush1  ( push empty return stack sentinel value)
+   next  ;c
+
+code depth  ( - #cells)
+   sp x mov   { top } push   up w mov   >v task.sp0 w +) top ldr
+   x top top subs   cellshift # top top asrs ( #bytes to #cells)
+   next  ;c
+
+: theirs  ( 'task 'user | 'user 'task - a)  +  task.status - ;
+: 1push   ( a w - a-2)  ( push w onto a)  swap cell-  tuck ! ;
+
+( Create empty data and return stacks.)
+: empty-stack         ( 'task - sp)   task.sp0 theirs @  "decafbad 1push ;
+: empty-return-stack  ( 'task - rp)     ( 'task is rp0)  "deadc0de 1push ;
+
+: move-stack-items  ( x1 .. xn n 'task sp - 'task sp)
+   swap >r  ( move 'task out of the way)
+   over cells -  ( make space for items)  dup >r ( save sp)
+   swap for !+ next drop  ( move, starting from top towards bottom)
+   r> r> swap ;
+
+( Need to push, in order: top ip rp ix. If stack is non-empty, then we
+  push:   "decafbad <stack items> ip rp ix.)
+
+: stack-top  ( 'task sp ip)
+   1push ( ip)
+   over empty-return-stack ( 'task sp rp)  1push ( rp)
+   0 1push ( ix)
+   over task.saved-sp theirs !  wake ;
+
+: #activate ( x1 .. xn n 'task)
+   dup empty-stack  ( 'task sp)
+   move-stack-items  ( 'task sp)
+   r> stack-top ;
+
+: activate ( 'task)
+   dup empty-stack  ( 'task sp)
+   r> stack-top ;
+
+( During init, w points to the flash-based task definition, which contains
+  a pointer to the task's user area - aka rp0 - then the value of sp0, and
+  lastly a link to the next task definition.
+
+  x will in general point to the task being initialized, and y to the task
+  that x links to.)
+
+code init-tasks  ( 'task-def)
+   top w mov
+   robin 1+ z lit  ( pointer to status routine for sleeping tasks)
+   0 w +) y ldr  ( get user area pointer)
+   begin
+      y x mov                                   ( next is now current)
+                     >v task.status x +) z str  ( task is asleep: store robin in status)
+      4 w +) y ldr   >v task.sp0    x +) y str  ( set stack bottom [sp0] from definition)
+      8 w +) w ldr                              ( follow link to next definition)
+      0 w +) y ldr   >v task.link   x +) y str  ( link current to next)
+   w top cmp  0= until   top dpop1   next  ;c
+   pool,
