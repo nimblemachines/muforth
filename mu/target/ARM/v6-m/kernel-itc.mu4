@@ -61,7 +61,7 @@ assembler
 : dpop4  ( r1 r2 r3 r4)  4 regs>mask  asm{{  pop  }} ;
 
 ( Return stack macros.)
-( These are pushed in the order given on the stack.)
+( These are pushed so that r1 is the *top* of the R stack.)
 : rpush1  ( r1)       push  asm{{  1 cells # rp rp subs
                                    0 rp +)  \f pop  str  }} ;
 : rpush2  ( r2 r1)   2push  asm{{  2 cells # rp rp subs
@@ -123,20 +123,16 @@ code*    (branch)   [r]
 label branch        0 ip +) ip ldr  ( follow branch)   next  ;c
 code*   (0branch)   [r]  top top tst                   top dpop1   branch 0!= until
                     ( fall thru)  ;c
-label  skip         4 # ip ip adds   next  ( skip branch address)  ;c
+label skip          4 # ip ip adds   next  ( skip branch address)  ;c
 code*  (?0branch)   [r]  top top tst   skip 0= until   top dpop1   branch j  ;c
 code*  (=0branch)   [r]  top top tst   skip 0= until               branch j  ;c
 
-.ifdef loop-in-reg
-
-( NOTE: This is untranslated RISC-V code, *not* ARM!)
-
 ( Fast version, using loop register)
 code* (for)   [r]  ( u)
-   ix rpush1   top ix mv   top pop1   next  ;c
+   ix rpush1   top ix mov   top dpop1   next  ;c
 
 code* (next)  [r]
-   -1 ix ix addi  branch ix 0= until  ix rpop1   skip j  ;c
+   1 # ix ix subs  branch 0= until  ix rpop1   skip j  ;c
 
 ( Do-loop frame looks like this:
 
@@ -150,10 +146,10 @@ code* (next)  [r]
   calculated as index + limit.)
 
 code* (do)  [r]  ( limit start)
-   top w mv     ( w = start)
-   top x pop2   ( x = limit)
-   ix x rpush2  ( push ix reg and limit onto R)
-   w x ix sub   ( index = start - limit)
+   top w mov      ( w = start)
+   { top x } pop  ( x = limit)
+   ix x rpush2    ( push ix reg and limit onto R)
+   x w ix subs    ( index = start - limit)
    next  ;c
 
 ( Increment index. If it overflows to zero, restore ix register, pop
@@ -161,10 +157,9 @@ code* (do)  [r]  ( limit start)
   the backwards jump.)
 
 code* (loop)  [r]
-   1 ix ix addi   branch ix 0= until
+   1 # ix ix adds   branch 0= until
 label undo
-   cell rp ix lw        ( restore saved ix from R stack)
-   2 cells rp rp addi   ( pop R stack frame)
+   ix w rpop2  ( restore ix from R stack and pop do-loop frame)
    skip j  ;c
 
 ( Add incr to index. If the sign of index has changed, we've crossed the
@@ -172,60 +167,13 @@ label undo
   the backwards jump.)
 
 code* (+loop)  [r]  ( incr)
-   ix x mv  ( save ix *before* adding incr)
-   top ix ix add   top pop1   ix x x xor   undo x 0>= until
+   ix x mov  ( save ix *before* adding incr)
+   top ix ix adds   top dpop1   ix x x eors   undo 0>= until
    branch j  ;c
 
 ( Push current loop index. User-visible index = index + limit)
 code i   [r]  ( - index)
-   0 rp w lw   ix w w add   wpush j  ;c
-
-.else  ( keeping for/next and do/loop index on R stack, not in a register)
-
-( for is just >r.)
-code* (next)  [r]
-   0 rp +) x ldr   1 # x x subs   0 rp +) x str
-   branch 0= until   cell # rp rp adds   skip j  ;c
-
-( Do-loop frame looks like this:
-
-  +---------+
-  |  limit  |
-  +---------+
-  |  index  |<--- rp
-  +---------+
-
-   "User-visible" index is calculated as index + limit.)
-
-code* (do)   [r]  ( limit start)
-   2 cells # rp rp subs  ( make room on R stack - all in one go)
-   x dpop1        cell rp +) x   str  ( save limit to R)
-   x top top subs    0 rp +) top str  ( index = start - limit)
-label poptop
-   top dpop1   next  ;c
-
-( Increment index. If it overflows to zero, pop stack frame, skip backwards
-  jump, and continue. If non-zero, simply take the backwards jump.)
-
-code* (loop)  [r]
-   0 rp +) x ldr   1 # x x adds   0 rp +) x str   branch 0= until
-label undo
-   2 cells # rp rp adds   skip j  ;c
-
-( Add incr to index. If the sign of index has changed, we've crossed the
-  threshold, so pop stack frame, skip backwards jump, and continue.
-  Otherwise, take the backwards jump.)
-
-code* (+loop)  [r]  ( incr)
-   0 rp +) x ldr  ( index)   x top top add   0 rp +) top str
-   top x x eors   top dpop1   undo 0>= until   branch j  ;c
-
-( Push current loop index. User-visible index = index + limit)
-code i   [r]  ( - index)
-  0 rp +) x ldr  ( index)   cell rp +) w ldr  ( limit)
-  x w w adds   wpush j  ;c
-
-.then
+   0 rp +) w ldr   ix w w adds   wpush j  ;c
 
 ( Allocate buffer space _before_ defining the constant that pushes the
   buffer's address. This way we can define buffers in ram as well as in
@@ -281,8 +229,7 @@ code nth   [r]  ( w_n .. w_0 t - w_n .. w_0 w_t)
 : -rot    rot  rot ;  [r]
 
 ( Return stack ops.)
-align  implements (for)
-code >r   [r]  ( w)        top rpush1   poptop j  ;c
+code >r   [r]  ( w)        top rpush1   label poptop   top dpop1   next  ;c
 code r>   [r]  ( - w)         w rpop1   wpush j  ;c
 code r@   [r]  ( - w)   0 rp +) w ldr   wpush j  ;c
 
@@ -456,7 +403,7 @@ ram
 .ifdef pico-sp
 
 code bug  [r]
-   { top ip rp } push
+   { top ip rp ix } push
    pico-sp w lit   0 w +) y ldr  ( restore picoboot sp)
         sp x mov   0 w +) x str  ( save forth sp)
    y sp mov
@@ -467,16 +414,16 @@ implements continue-forth  __asm
    pico-sp w lit   0 w +) x ldr  ( load forth sp)
    sp y mov        0 w +) y str  ( save picoboot sp)
    x sp mov
-   { top ip rp } pop   dsb   isb   next  ;c
+   { top ip rp ix } pop   dsb   isb   next  ;c
    pool,
 
 .else
 
 code bug  [r]
-   { top ip rp } push   0 bkpt  ;c
+   { top ip rp ix } push   0 bkpt  ;c
 
 implements continue-forth  __asm
-   { top ip rp } pop   dsb   isb   next  ;c
+   { top ip rp ix } pop   dsb   isb   next  ;c
 
 .then
 
@@ -487,11 +434,6 @@ __host
 
 h !  ( restore region)
 
-( Make it easy to get to the key target registers from meta.)
-meta
-: sp@   tsp @  2 \m cells  +  ;  ( skip IP and RP)
-: rp@   trp @ ;
-: ip@   tip @ ;
 forth
 
 ( Show some indication of whether a word is still executing. If IP is
@@ -501,16 +443,13 @@ forth
 : executing?   ( ip - f)   [ \m trampoline @  2 \m cells + #]  - ;
 
 : .ip
-   \m ip@  dup .h32  executing? if  ." * "  ^  then  ( done)  2sp ;
-
-: .sp
-   \m sp@  .h32__ ;
+   tip @  dup .h32  executing? if  ." * "  ^  then  ( done)  2sp ;
 
 
 -: ( forth version of .regs)
-   cr  ."       SP        RP        IP"
-       (  00000000  00000000  00000000 )
-   cr          .sp   trp .tr       .ip ;
+   cr  ."       IX        SP        RP        IP"
+       (  00000000  00000000  00000000  00000000 )
+   cr      tix .tr   tsp .tr   trp .tr       .ip ;
    is .regs
 
 
