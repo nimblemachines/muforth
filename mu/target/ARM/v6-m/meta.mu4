@@ -164,22 +164,28 @@ variable @vectors
 : +vectors  @vectors @ + ;
 
 ( Capture address of vector table and allot space for it in flash or ram.
-  Vector table alignment depends on the number of vectors. We round this up
-  to a power of two and then multiply by 4 - the size of the target cell.
 
-  We align the *size* of the table to a multiple of 16, just for neatness.
+  According to the v6-M and v7-M architecture reference manuals, the vector
+  table *origin* should be 32-word aligned, or aligned to a 128 byte boundary.
+  The bottom seven bits are zero.
 
-  Supply a reset SP value or 0. If you use 0, the top of ram will be used.)
+  We align the *size* of the vector table to a multiple of 16, for
+  neatness, and so it's easy to read using "du".
+
+  You should supply a reset SP value or 0 to vector-table. If you use 0,
+  the top of ram will be used as the reset SP.)
 
 : vector-table  ( reset-sp)
-   \m here  ( in current region)
-   \eq LAST_irq  round-up-to-power-of-two  ( this is our alignment)
-   aligned-by  dup \m goto  @vectors !
-   \eq LAST_irq  16 aligned-by  \m allot
-
-   ( Now set up the reset SP value.)
+   ( Calculate the reset SP value.)
    dup 0= if  drop  @ram #ram + ( use default: top of ram)  then
-   0 +vectors image-! ;
+
+   create
+      \m here  ( in current region)
+      [ 32 \m cells #] aligned-by  ( this is *origin* alignment)
+      dup \m goto  ( set here to origin)
+      dup , ( origin)  image-! ( set first cell of table to reset SP)
+      \eq LAST_irq  16 aligned-by  \m allot  ( allot space)
+   does> @  @vectors ! ;
 
 : unvectored?  ( offset - f)  +vectors image-@  "0ffff_ffff = ;
 
@@ -187,10 +193,8 @@ meta
 : handler  ( vector-offset)
    \m here 1+ ( thumb!) swap  +vectors image-!  __asm ;
 
-( Set all unset vectors to point to this vector - usually RESET.)
-: default-handler  ( default-vector-offset)
-   \m handler  ( force it, in case it's been set already)
-   ( then set all unset handlers to this address)
+( Set all unset vectors to point to "here".)
+: default-handler
    \eq LAST_irq  \m cell ( from RESET to LAST) do
       i unvectored? if  i  \m handler  ( set it)  then
    \m cell +loop ;

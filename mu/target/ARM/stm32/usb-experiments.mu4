@@ -10,7 +10,9 @@ __meta
 hex
 
 { h @ } flash  ( save region and set to flash)
-0 vector-table  ( lay down a vector table, using end of ram as initial SP)
+
+( Lay down a vector table, using end of ram as initial SP)
+0 vector-table flash-vectors   flash-vectors
 
 { h ! }  ( restore region pointer)
 ld target/ARM/v6-m/kernel-itc.mu4
@@ -394,16 +396,18 @@ variable memaddr
    begin  dup c@ %1111 =  until  ( SW=HSI48 and SWS=HSI48)  drop
 
    ( Set up CRS - clock recovery system.)
+   ( XXX do we need CEN?)
    [ 1 6 << #] ( AUTOTRIMEN) CRS_CR set!  ( turn on autotrimming of 48M HSI clock) ;
 
-: led-init
+: flash-leds
    -- Turn on clock to Port C
    ( Ports -FED_CBA- )
         [ %0000_1000  #16 << #] RCC_AHBENR set!
    -- Make PC6 to PC9 outputs
-   [ %01010101 #12 << #] GPIOC_MODER set! ;
+   [ %01010101 #12 << #] GPIOC_MODER set!
+   -- Flash!
+   %11_1100_0000 dup GPIOC_BSRR !  2_0000 wait  GPIOC_BRR ! ;
 
-: flash-leds   %11_1100_0000 dup GPIOC_BSRR !  2_0000 wait  GPIOC_BRR ! ;
 
 .else  ( hopefully STM32F303)
 
@@ -419,21 +423,21 @@ variable memaddr
    2 ( SW=PLL as sysclk)  RCC_CFGR tuck c!
    begin  dup c@ %1010 =  until  ( SW=PLL and SWS=PLL)  drop ;
 
-: led-init
+: flash-leds
    -- Turn on clock to Port E
    ( Ports GFED_CBAH )
         [ %0010_0000  #16 << #] RCC_AHBENR set!
    -- Make PE8 to PE15 outputs
-   5555_0000 GPIOE_MODER set! ;
-
-: flash-leds  0000_ff00 dup GPIOE_BSRR !  3_0000 wait  GPIOE_BRR ! ;
+   5555_0000 GPIOE_MODER set!
+   -- Flash!
+   0000_ff00 dup GPIOE_BSRR !  3_0000 wait  GPIOE_BRR ! ;
 
 .then
 
 here ]  ( chip-init)
    periph-clock-init
    usb-disconnect
-   clock-init  led-init  flash-leds
+   clock-init  flash-leds
    usb-init
    usb-connect
    begin  process-usb  again  [
@@ -450,7 +454,8 @@ Reset_exc handler
 HardFault_exc handler
    here b  ;c  ( hang)
 
-NMI_exc default-handler
+NMI_exc handler
+default-handler
    lr bx  ;c  ( return to sender!!)
 
 ram
@@ -458,7 +463,7 @@ ram
 : tt  ( test)
    periph-clock-init
    usb-disconnect
-   clock-init  led-init  flash-leds
+   clock-init  flash-leds
    usb-init ;
 
 : go

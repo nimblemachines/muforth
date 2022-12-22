@@ -10,14 +10,26 @@ loading STM32F072xB example startup code
 __meta
 hex
 
-{ h @ } flash  ( save region and set to flash)
-0 vector-table  ( lay down a vector table, using end of ram as initial SP)
+flash
+0 vector-table flash-vectors ( lay down a vector table, using end of ram as initial SP)
+flash-vectors
 
-{ h ! }  ( restore region pointer)
+.ifdef isr-debug  ( to debug handlers in ram)
+ram-vectors  @vectors @  ( get ram table origin)
+flash-vectors  ( make it current table)
+
+( This was an interesting experiment, but mapping the RAM to 0000_0000 is a
+  better way to test and use RAM-resident handlers. (See SYSCFG_CFGR1 in
+  the user manual for the details.)
+
+default-handler
+   IPSR w mrs ( move sys to reg) ( get exception number)
+   2 # w w lsls ( convert to offset)
+   ( ram table origin) x lit   x w w adds   0 w +) x ldr   x bx  ;c
+   pool,
+.then
+
 ld target/ARM/v6-m/kernel-itc.mu4
-
-: wait-for-rdy  ( regaddr)
-   begin  dup c@  2 and  until  ( wait for RDY bit)  drop ;
 
 ( Even though the documentation gives conflicting messages - the schematic
   says that it's connected, but the user manual says that it isn't - it
@@ -29,24 +41,27 @@ ld target/ARM/v6-m/kernel-itc.mu4
   crystal-less clock source, even for USB applications. We will use this as
   our system clock.)
 
+: wait-for-rdy  ( regaddr)
+   begin  dup c@  2 and  until  ( wait for RDY bit)  drop ;
+
 : clock-init
+   1 ( latency) FLASH_ACR set!  ( we need one cycle for 48 MHz clock!)
    1 ( HSI48ON) [ RCC_CR2 2 + #] tuck c!  wait-for-rdy ( wait for HSI48RDY)
    3 ( SW=HSI48 as sysclk)  RCC_CFGR tuck c!
    begin  dup c@ %1111 =  until  ( SW=HSI48 and SWS=HSI48)  drop ;
 
-: ports-init
+: wait   for next ;
+: flash-leds
    -- Turn on clock to Port C
    ( Ports -FED_CBA- )
         [ %0000_1000  #16 << #] RCC_AHBENR set!
    -- Make PC6 to PC9 outputs
-   [ %01010101 #12 << #] GPIOC_MODER set! ;
-
-: wait   for next ;
-: flash-leds   %11_1100_0000 dup GPIOC_BSRR !  2_0000 wait  GPIOC_BRR ! ;
+   [ %01010101 #12 << #] GPIOC_MODER set!
+   -- Flash!
+   %11_1100_0000 dup GPIOC_BSRR !  2_0000 wait  GPIOC_BRR ! ;
 
 here ]  ( chip-init)
-   1 ( latency) FLASH_ACR set!  ( we need one cycle for 48 MHz clock!)
-   clock-init  ports-init  flash-leds  begin again  [
+   clock-init  flash-leds  begin again  [
 
 Reset_exc handler
    -- Startup code!
@@ -60,9 +75,10 @@ Reset_exc handler
 HardFault_exc handler
    here b  ;c  ( hang)
 
-NMI_exc default-handler
+( This will be the default handler if isr-debug is not defined.)
+NMI_exc handler
+default-handler
    lr bx  ;c  ( return to sender!!)
-
 
 ( NOTES about the F072-Discovery board.)
 
@@ -74,7 +90,4 @@ NMI_exc default-handler
   PC7  LD6  S   blue
   PC8  LD4  W   orange
   PC9  LD5  E   green
-
-  ST-LINK is connected to USART1_RX and _TX; PC5 and PC4, resp.
-  USART1 is AF7 for PC4 and PC5.
 )

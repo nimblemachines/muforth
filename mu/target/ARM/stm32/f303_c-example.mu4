@@ -11,38 +11,40 @@ __meta
 hex
 
 { h @ } flash  ( save region and set to flash)
-0 vector-table  ( lay down a vector table, using end of ram as initial SP)
+( Lay down a vector table, using end of ram as initial SP.)
+0 vector-table flash-vectors
+flash-vectors  ( make it current vector table)
 
 { h ! }  ( restore region pointer)
 ld target/ARM/v6-m/kernel-itc.mu4
-
-: wait-for-rdy  ( regaddr)
-   begin  dup c@  2 and  until  ( wait for RDY bit)  drop ;
 
 ( Turn on HSE, which is driven by an 8 Mhz signal from the ST-LINK. Use it
   to drive the PLL to 72 Mhz - x9 - and when the PLL stabilizes, switch to
   it as the system clock source.)
 
+: wait-for-rdy  ( regaddr)
+   begin  dup c@  2 and  until  ( wait for RDY bit)  drop ;
+
 : clock-init
+   2 ( latency) FLASH_ACR set!  ( we need two cycles for 72 MHz clock!)
    5 ( HSEON + HSEBYP) [ RCC_CR 2 + #] tuck c!  wait-for-rdy ( wait for HSERDY)
    001d_0000 RCC_CFGR ! ( USBPRE=/1.5; PLLMUL=9; PLLSRC=HSE)
    1 ( PLLON)          [ RCC_CR 3 + #] tuck c!  wait-for-rdy ( wait for PLLRDY)
    2 ( SW=PLL as sysclk)  RCC_CFGR tuck c!
    begin  dup c@ %1010 =  until  ( SW=PLL and SWS=PLL)  drop ;
 
-: ports-init
+: wait   for next ;
+: flash-leds
    -- Turn on clock to Port E
    ( Ports GFED_CBAH )
         [ %0010_0000  #16 << #] RCC_AHBENR set!
    -- Make PE8 to PE15 outputs
-   5555_0000 GPIOE_MODER set! ;
-
-: wait   for next ;
-: flash-leds  0000_ff00 dup GPIOE_BSRR !  3_0000 wait  GPIOE_BRR ! ;
+   5555_0000 GPIOE_MODER set!
+   -- Flash!
+   0000_ff00 dup GPIOE_BSRR !  3_0000 wait  GPIOE_BRR ! ;
 
 here ]  ( chip-init)
-   2 ( latency) FLASH_ACR set!  ( we need two cycles for 72 MHz clock!)
-   clock-init  ports-init  flash-leds  begin again  [
+   clock-init  flash-leds  begin again  [
 
 Reset_exc handler
    -- Startup code!
@@ -56,7 +58,8 @@ Reset_exc handler
 HardFault_exc handler
    here b  ;c  ( hang)
 
-NMI_exc default-handler
+NMI_exc handler
+default-handler
    lr bx  ;c  ( return to sender!!)
 
 
