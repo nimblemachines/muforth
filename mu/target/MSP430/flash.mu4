@@ -72,27 +72,46 @@ order to re-flash it. Consult a local guru. ;-)" ;
    then ;
 
 
-: flash-buffer   pad  1 Ki  + ;    ( scratch space)
+( Verifying that host and target images are the same.)
+
+( Prepare to do a comparison or computation between data read from the
+  target into a buffer, and data in our memory image. Read a chunk from the
+  target into pad, and set m to point to the beginning of pad.
+
+  Be careful about setting m. Some chunked read implementations use it, so
+  set it *after* doing the read.)
+
+: setup-comparison  ( 'target len - 'target len)
+   2dup pad -rot t.ReadChunk  ( 'target len)  pad m ! ;
+
+variable noisy-verify?  ( Whether to print differences.)
+
+( Little endian.)
+: mcell*   m* m*  lohi> ;
+
+( Accumulate - by logically OR-ing - any differences.)
+: verify-cell  ( diff a - diff' a)
+   dup image-@ mcell* xor  ( diff a xor)
+   =if  noisy-verify? @ if  over u. ( print address that differs)  then  then
+   rot or  swap ;
 
 : ?skip-commit  ( a u - a u)  over @boot =  if  4 -4 v+  then ;
 
-( Be careful about setting m. Some chunked read implementations use it, so
-  set it *after* doing the read.)
-
-: verify-chunk  ( 'target len - 'target+len)
+: verify-chunk  ( diff 'target len - diff' 'target+len)
    ?skip-commit
-   cr ." verifying "  over u.  dup u.  ." : "
+   noisy-verify? @ if
+      cr ." verifying "  over u.  dup u.  ." : "
+   then
    2dup + push
-   2dup flash-buffer -rot t.ReadChunk
-   ( 'target len)  swap image+ m !  ( we'll use m* to read image)
-   ( len)  flash-buffer swap
-   for  c@+ swap  m*  xor  if  m @ image-  -1 +a u.  then  next  drop
+   ( diff 'target len)  setup-comparison
+   \m aligned  \m cell/ for  verify-cell  \m cell+  next  drop
    pop ;
 
 ( Do 256 bytes at a time. The chat protocol can only specify 255 words at a
   time.)
 
-: verify-region
+: verify-region  ( 'target len - diff)
+   0 -rot  ( diff)
    100 /mod  ( r q)  swap push  for  100 verify-chunk  next
                         pop  =if  ( rem) verify-chunk  drop ^  then  2drop ;
 
@@ -102,7 +121,18 @@ order to re-flash it. Consult a local guru. ;-)" ;
 : verify
    radix preserve hex
    h preserve  flash
-   region ( a len)  ?empty-region  verify-region  ( program image)
+   noisy-verify? on
+   region ( a len)  ?empty-region  verify-region drop  ( program image)
    @boot  \m here  u< if
-      @vectors #vectors  verify-region
+      @vectors #vectors  verify-region drop
    then ;
+
+( Called when we connect to target to make sure host's and target's flash
+  regions are the same.)
+
+-: ( verify-quietly)  ( - 0 if same, non-zero if different)
+   noisy-verify? off
+   region ( a len)  verify-region  ( program image)
+   @boot  \m here  u< if
+      @vectors #vectors  verify-region  or  ( combine diffs)
+   then ;   is verify-quietly
