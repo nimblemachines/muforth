@@ -50,6 +50,56 @@ defer .regname  ( so others can override with their particular convention)
    ." r"  .udec ;  is .regname
 
 
+( We would like to print "significant" addresses - like equates - in a
+  symbolic way, both here in the disassembler and in the decompiler. Let's
+  define a few utility words to make that easier.)
+
+: value-matches?  ( value 'link - match?)  link> >body @ = ;
+
+( NOTE: This code will search *through* muchain links!)
+-: ( value 'link - 'link -1 | value 0)
+   dup         hidden? if  drop  0  ^  then  ( ignore hidden and muchain)
+   2dup value-matches? if  nip  -1  ^  then
+                           drop  0 ;
+
+( Given a constant value, find the host dictionary entry, if one exists,
+  that contains a constant that matches it.)
+
+: find-constant  ( value chain - 'link -1 | value 0)
+   over push  [ #]  swap  forall-words  pop over = 0= ;
+
+( XXX is this the right name? It goes from a link to a name of *any* kind
+  of word in the dict, not just target words.)
+
+: .target  ( 'link)  link>name type ;
+: .equate  ( 'link offset)  swap .target  ?if  ."  + " .udec  then ;
+
+( Let's be smart about equates. Most equates are multiples of two. If we
+  are using a byte offset, we won't match the equate. We need to match the
+  aligned value and then print the difference, if any. But some equates are
+  *not* multiples of two; for these we want to look for an exact match.
+
+  Let's try to match equates *twice*: the first time we look for an exact
+  match; the second time for a two-byte-aligned match, which we will print
+  with an offset, if any.)
+
+: equate?  ( a - 'link offset -1 | 0)
+   ( First, look for an exact match.)
+   dup
+   .equates. find-constant if  nip  0 -1  ^  then
+
+   ( If that fails, looked for an aligned match.)
+   -2 and ( addr aligned-addr)
+   .equates. find-constant if  swap  1 and  -1  ^  then
+   2drop  0 ;
+
+( If address is found in equates, print its *name*; otherwise, just print
+  the hex value.)
+
+: .?equate
+   dup equate? if  .equate  drop ^  then  .hex ;
+
+
 ( Remember, 2op instructions have this form:
   oooo_ssss_DbSS_dddd   o=op, s=srcreg, d=destreg, S=srcmode, D=destmode
 
@@ -65,18 +115,11 @@ defer .regname  ( so others can override with their particular convention)
 
 .ifndef prefix-disasm  ( default to postfix version!)
 
-( When printing offsets and immediate values, if the number is 8000-ffff
-  also print the negative number, in parentheses, that it represents.)
+: .o  ( off)  .?equate ;
+: .i  ( imm)  .?equate  ." #" ;
 
-: .both  ( n)
-   dup .hex space
-   sext  dup 0< if  ." ( "  dup .hex  ." ) "  then  drop ;
-
-: .o  ( off)  .both ;
-: .i  ( imm)  .both  ." #" ;
-
-: .pcrel      p @  cell* sext  +  .hcell ;  ( no & suffix)
-: .absolute        cell*          .hcell  ."  &" ;
+: .pcrel      p @  cell* sext  +  .?equate ;  ( no & suffix)
+: .absolute        cell*          .?equate  ."  &" ;
 
 : .reg       ( ea)            ea>reg  .regname ;
 : .indirect  ( ea)            ea>reg  .regname ."  )"  ;
@@ -85,18 +128,11 @@ defer .regname  ( so others can override with their particular convention)
 
 .else ( prefix disassembler)
 
-( When printing offsets and immediate values, if the number is 8000-ffff
-  also print the negative number, in parentheses, that it represents.)
+: .o  ( off)         .?equate ;
+: .i  ( imm)  ." #"  .?equate ;
 
-: .both  ( n)
-   dup .hex
-   sext  dup 0< if  ." ("  dup .hex  ." )"  then  drop ;
-
-: .o  ( off)         .both ;
-: .i  ( imm)  ." #"  .both ;
-
-: .pcrel      p @  cell* sext  +  .hcell ;  ( no & prefix)
-: .absolute        cell*    ." &" .hcell ;
+: .pcrel      p @  cell* sext  +  .?equate ;  ( no & prefix)
+: .absolute        cell*    ." &" .?equate ;
 
 : .reg       ( ea)  ea>reg        .regname ;
 : .indirect  ( ea)  ea>reg  ." (" .regname ." )" ;

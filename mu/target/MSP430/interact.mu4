@@ -274,10 +274,57 @@ host-seekeys msp-seekeys  128 cells cmove
    dup _addr  dup .hex-cells
    drop ;
 
-msp-seekeys -2
+( Support for interactive decompiling.)
+: dec+  ( a - a' 0)   2 advance  0 ;
+: dec-  ( a - a' 0)  -2 advance  0 ;
+
+defer 1smart-dec
+defer 1smart-dis
+
+msp-seekeys -2                                    ( XXX are these stack comments right???)
    2dup  du-mode dumping        >target  skip+  skip-  1dump        ( a - a')
    2dup  du-mode dumping-chars  >target  skip+  skip-  1dump-chars  ( a - a')
-         du-mode disasming      >target  dis+   dis-   1dis         ( a - a')
+   2dup  du-mode decompiling    >target  dec+   dec-   1smart-dec
+         du-mode disasming      >target  dis+   dis-   1smart-dis   ( a - a')
+
+( begin ARM code)
+meta
+variable target-do-colon
+variable target-do-const
+variable target-do-var
+forth
+
+: .target-code  ( a)
+   p !  cell*  ( code field)
+   0 disasming drop
+   dup                  p @ = if  drop  ." code "      ^  then
+   0 decompiling drop ( start decompiling a colon definition)
+   dup \m target-do-colon @ = if  drop  ." : "         ^  then
+   dup \m target-do-const @ = if  drop  ." constant "  ^  then
+   dup \m target-do-var   @ = if  drop  ." variable "  ^  then
+   .hcell_  ." (unknown code field) " ( print value and mark as "unknown") ;
+
+: 1dec  ( a)
+   dup  .addr  .nesting space
+   p !  cell*  dup .hcell_
+   dup -2 and ea !  ( default ea: fetch cell and round down)
+   .target-runtime. find-constant if  .target space  ^  then
+   equate?  if  .equate space  then ;
+
+: ?switch  ( a - a | <nothing> )
+   dup  p !  cell*  ea !  ( default ea: fetch cell)
+   dup .target-runtime. find-constant if  push ( 'link)
+      dup .addr  .nesting space
+      .target-code  pop .target space  shunt  ^  then
+
+   drop ;
+
+( Generic decompiler. Switches modes any time a target word points to
+  current address.)
+-: ( a)  ?switch  1dis ;  is 1smart-dis
+-: ( a)  ?switch  1dec ;  is 1smart-dec
+
+( end ARM code)
 
 msp-seekeys 'seekeys !  ( switch over to our bindings)
 
