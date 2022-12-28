@@ -11,9 +11,13 @@ __meta
 hex
 
 { h @ } flash  ( save region and set to flash)
-0 vector-table  ( lay down a vector table, using end of ram as initial SP)
+
+( Lay down a vector table, using end of ram as initial SP)
+0 vector-table flash-vectors
+flash-vectors  ( make it the current table)
 
 { h ! }  ( restore region pointer)
+
 ld target/ARM/v6-m/kernel-itc.mu4
 
 : wait-for-rdy  ( regaddr)
@@ -33,6 +37,7 @@ comment %%
   it as the system clock source.)
 
 : clock-init
+   1 ( latency) FLASH_ACR set!  ( we need one cycle for 48 MHz clock!)
    5 ( HSEON + HSEBYP) [ RCC_CR 2 + #] tuck c!  wait-for-rdy ( wait for HSERDY)
    0011_0000 RCC_CFGR ! ( PLLMUL=6; PLLSRC=HSE)
    1 ( PLLON)          [ RCC_CR 3 + #] tuck c!  wait-for-rdy ( wait for PLLRDY)
@@ -42,16 +47,15 @@ comment %%
 : ports-init
    -- Turn on clock to Port C
    ( Ports -FED_CBA- )
-        [ %0000_1000  #16 << #] RCC_AHBENR +!
+        [ %0000_1000  #16 << #] RCC_AHBENR set!
    -- Make PC8 and PC9 outputs
-   [ %0101 #16 << #] GPIOC_MODER ! ;
+   [ %0101 #16 << #] GPIOC_MODER set! ;
 
 : wait   for next ;
-: flash-leds   %11_0000_0000 GPIOC_ODR !  2_0000 wait  0 GPIOC_ODR ! ;
+: flash-leds   %11_0000_0000 dup GPIOC_BSRR !  2_0000 wait  GPIOC_BRR ! ;
 
 here ]  ( chip-init)
-   1 ( latency) FLASH_ACR +!  ( we need one cycle for 48 MHz clock!)
-   clock-init  ports-init  flash-leds  bug  [
+   clock-init  ports-init  flash-leds  begin again  [
 
 Reset_exc handler
    -- Startup code!
@@ -65,7 +69,8 @@ Reset_exc handler
 HardFault_exc handler
    here b  ;c  ( hang)
 
-NMI_exc default-handler
+NMI_exc handler
+default-handler
    lr bx  ;c  ( return to sender!!)
 
 
@@ -78,4 +83,3 @@ NMI_exc default-handler
   PC8   LD4   blue
   PC9   LD3   green
 )
-

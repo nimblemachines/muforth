@@ -10,24 +10,13 @@ loading STM32F072xB example startup code
 __meta
 hex
 
-flash
-0 vector-table flash-vectors ( lay down a vector table, using end of ram as initial SP)
-flash-vectors
+{ h @ } flash  ( save region and set to flash)
 
-.ifdef isr-debug  ( to debug handlers in ram)
-ram-vectors  @vectors @  ( get ram table origin)
-flash-vectors  ( make it current table)
+( Lay down a vector table, using end of ram as initial SP)
+0 vector-table flash-vectors
+flash-vectors  ( make it the current table)
 
-( This was an interesting experiment, but mapping the RAM to 0000_0000 is a
-  better way to test and use RAM-resident handlers. (See SYSCFG_CFGR1 in
-  the user manual for the details.)
-
-default-handler
-   IPSR w mrs ( move sys to reg) ( get exception number)
-   2 # w w lsls ( convert to offset)
-   ( ram table origin) x lit   x w w adds   0 w +) x ldr   x bx  ;c
-   pool,
-.then
+{ h ! }  ( restore region pointer)
 
 ld target/ARM/v6-m/kernel-itc.mu4
 
@@ -50,18 +39,19 @@ ld target/ARM/v6-m/kernel-itc.mu4
    3 ( SW=HSI48 as sysclk)  RCC_CFGR tuck c!
    begin  dup c@ %1111 =  until  ( SW=HSI48 and SWS=HSI48)  drop ;
 
-: wait   for next ;
-: flash-leds
+: ports-init
    -- Turn on clock to Port C
    ( Ports -FED_CBA- )
         [ %0000_1000  #16 << #] RCC_AHBENR set!
    -- Make PC6 to PC9 outputs
-   [ %01010101 #12 << #] GPIOC_MODER set!
-   -- Flash!
+   [ %01010101 #12 << #] GPIOC_MODER set! ;
+
+: wait   for next ;
+: flash-leds
    %11_1100_0000 dup GPIOC_BSRR !  2_0000 wait  GPIOC_BRR ! ;
 
 here ]  ( chip-init)
-   clock-init  flash-leds  begin again  [
+   clock-init  ports-init  flash-leds  begin again  [
 
 Reset_exc handler
    -- Startup code!
@@ -75,7 +65,6 @@ Reset_exc handler
 HardFault_exc handler
    here b  ;c  ( hang)
 
-( This will be the default handler if isr-debug is not defined.)
 NMI_exc handler
 default-handler
    lr bx  ;c  ( return to sender!!)
