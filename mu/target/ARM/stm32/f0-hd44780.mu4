@@ -1,0 +1,412 @@
+( This file is part of muforth: https://muforth.nimblemachines.com/
+
+  Copyright 2002-2023 David Frech. (Read the LICENSE for details.)
+
+loading Hitachi HD44780 display (STM32F0 support)
+
+__meta
+hex
+
+( Interface connections. We're using the 4-bit interface, and if we treat
+  the display as write-only - it's a 5v device and we are talking to it
+  with a 3v microcontroller - we only need E and RS in addition.
+
+  Let's use Port C. Here is how to connect it to the LCD:
+
+  Port  LCD  Pin*
+  ====  ===  ===
+  PC12   D7   14
+  PC11   D6   13
+  PC10   D5   12
+  PC9    D4   11
+
+  PC8    E     6
+         R/nW  5    tie low
+  PC7    RS    4
+
+         Vo    3    contrast; tying to Gnd often works
+         5v    2    since we are not reading from LCD, this is ok
+        Gnd    1
+
+  *LCD pin numbers assume 14-pin, 2x7 connector. I'm not sure how the
+  single-row inline connectors are pinned out.)
+
+
+{ h @ } flash
+
+( Lay down a vector table, using end of ram as initial SP)
+0 vector-table flash-vectors
+flash-vectors
+
+{ h ! }
+
+ld target/ARM/v6-m/kernel-itc.mu4
+
+
+( Interface timing.
+
+  Let's try using delays so we don't have to read from the LCD. This way we
+  can tie R/nW low, and not worry about 3v versus 5v issues.
+
+  We want to calculate a loop count from a delay time in us. We can do
+  48,000,000/4 loops per second, or 48,000,000/4,000,000 loops per us. To get
+  from us to loops, multiply by 12.
+
+  XXX When running from Flash, it seems like it takes almost twice as long.
+  Do I want to multiply by 6 for Flash versions?)
+
+meta: microsec  ( us - counts)  #12 * ;  ( ram)
+-- meta: microsec  ( us - counts)  8 * ;  ( flash)
+
+meta: delay   ( counts)  constant
+   ;code  0 w +) w ldr   begin   1 # w w subs   0= until   next  ;c
+
+
+( Delay 100us after every normal command. The HD44780U datasheet says it
+  takes about 37us after each command, but my old LCD - an Hitachi LM-018L
+  from 1997 - could be much slower.)
+
+  #100 microsec  delay 100us
+
+( Delay 5ms after a long command - Home or Clear. Again, the datasheet
+  specifies a much shorter time - 1.5ms - but let's be conservative.)
+
+#5,000 microsec  delay 5ms
+#15,000 microsec  delay 15ms
+
+( Delay for a half cycle - about 500ns)
+  1 microsec 2/  delay H
+
+: lcd-port-init
+   ( Ports -FED_CBA- )
+        [ %0000_1000  #16 << #] RCC_AHBENR set!
+   [ %0101_0101_0101 #20 << #] GPIOC_MODER set!  ( gen purpose outputs) ;
+
+: E/   [ 1 8 << #] GPIOC_BSRR ! ;
+: E\   [ 1 8 << #] GPIOC_BRR ! ;
+
+: RS/  [ 1 7 << #] GPIOC_BSRR ! ;
+: RS\  [ 1 7 << #] GPIOC_BRR ! ;
+
+( Shift the high nybble up to bits 12 to 15. Complement it and shift those
+  bits up to 28 to 31. This way we can set and clear all the bits in one
+  operation.)
+
+: data!  ( byte)
+   5 <<  1e00 and  ( set bits)
+   dup 1e00 xor ( clear bits)  #16 << +
+   GPIOC_BSRR ! ;
+
+( Do one interface bus cycle.)
+: wr4  ( data)   data!  H  E/  H  E\ ;
+
+( Do two 4-bit cycles for each 8-bit transfer.)
+: wr8  ( data)   dup  wr4 ( hi)  4 <<  wr4 ( lo)  100us ;
+
+: cmd   ( byte)  RS\ wr8 ;  ( send a command byte)
+: data  ( byte)  RS/ wr8  15ms  ;  ( send a byte of data: pixels to character generator
+                              RAM, or char to display RAM)
+
+ld target/common/hd44780.mu4  ( basic "driver" code)
+
+( There is room in the HD44780 character generator RAM [CGRAM] for 8 custom
+  5x8 characters, or 4 custom 5x10 characters.
+
+  The character numbers - essentially the "ASCII" values - are 0 to 7 for
+  the 5x8 characters, or 0, 2, 4, or 6 for the 5x10 characters.
+
+  The CGRAM address is the character number times 8.)
+
+( Load the *entire* CGRAM - 64 bytes' worth.)
+( 'code must have the stack effect ( 'code n i - 'code n' x)
+( x is the value stored into the CGRAM slot.)
+( If desired, i can be used to "calculate" a pattern.)
+
+: cg-fill  ( 'code n)
+   0 cgram  #64 0 do  over i swap execute  data  15ms  loop  2drop  0 at ;
+
+-: ( 'code n i - 'code n' x)  drop dup ;  dup
+: cg-clear  [ #]   0 cg-fill ;  ( fill CGRAM with all zeros)
+: cg-box    [ #] 0ff cg-fill ;  ( fill CGRAM with all ones)
+
+-: ( 'code n i - 'code n' x)  drop invert dup ;
+: cg-grey   [ #] 0aa cg-fill ;  ( fill CGRAM with checkerboard pattern)
+
+-: ( 'code n i - 'code n' x)  over + c@ ;
+: shapes!  ( body)  [ #] swap  cg-fill ;
+
+__host
+
+variable #row
+
+meta
+: .      2* ;
+: @      2* 1+ ;
+: |      radix preserve binary  cr dup  <# # # # # # #> type
+         \m c,  1 #row +!  0 ;
+
+: |shape  ( 0 - 0)  ( pad to next 8 byte shape boundary)
+   #row @  negate 7 and  for \m | next ;
+
+: shape
+   \m |shape  #row @  8 / equ ;
+
+forth
+
+__meta
+
+meta: shapes
+   create  #row off  0 ( initial pattern)
+   does> shapes! ;
+
+meta: ;shapes  |shape  drop ( pattern) ;
+
+
+shapes misc-shapes
+
+shape heart
+   . . . . .   |
+   . @ . @ .   |
+   @ @ @ @ @   |
+   @ @ @ @ @   |
+   @ @ @ @ @   |
+   . @ @ @ .   |
+   . . @ . .   |
+
+shape bell
+   . . . . .   |
+   . . @ . .   |
+   . @ @ @ .   |
+   . @ @ @ .   |
+   . @ @ @ .   |
+   @ @ @ @ @   |
+   . . @ . .   |
+
+shape up-arrow
+   . . @ . .   |
+   . @ @ @ .   |
+   @ . @ . @   |
+   . . @ . .   |
+   . . @ . .   |
+   . . @ . .   |
+   . . @ . .   |
+
+shape down-arrow
+   . . @ . .   |
+   . . @ . .   |
+   . . @ . .   |
+   . . @ . .   |
+   @ . @ . @   |
+   . @ @ @ .   |
+   . . @ . .   |
+
+shape para  ( pilcrow)
+   . @ @ @ @   |
+   @ . @ . @   |
+   @ . @ . @   |
+   . @ @ . @   |
+   . . @ . @   |
+   . . @ . @   |
+   . . @ . @   |
+
+shape copyright
+   . @ @ @ .   |
+   @ @ . @ @   |
+   @ . @ . @   |
+   @ . @ @ @   |
+   @ . @ . @   |
+   @ @ . @ @   |
+   . @ @ @ .   |
+
+shape lambda
+   @ @ . . .   |
+   . . @ . .   |
+   . . @ . .   |
+   . @ . @ .   |
+   . @ . @ .   |
+   @ . . . @   |
+   @ . . . @   |
+
+shape tilde
+   . . . . .   |
+   . @ . . .   |
+   @ . @ . @   |
+   @ . @ . @   |
+   . . . @ .   |
+   . . . . .   |
+   . . . . .   |
+
+;shapes
+
+shapes mathy-shapes
+
+shape times
+. . . . .   |
+@ . . . @   |
+. @ . @ .   |
+. . @ . .   |
+. @ . @ .   |
+@ . . . @   |
+. . . . .   |
+
+shape divide
+. . . . .   |
+. . @ . .   |
+. . . . .   |
+@ @ @ @ @   |
+. . . . .   |
+. . @ . .   |
+. . . . .   |
+
+shape less-or-eq
+. . . @ .   |
+. . @ . .   |
+. @ . . .   |
+. . @ . .   |
+. . . @ .   |
+. . . . .   |
+@ @ @ @ @   |
+
+shape greater-or-eq
+. @ . . .   |
+. . @ . .   |
+. . . @ .   |
+. . @ . .   |
+. @ . . .   |
+. . . . .   |
+@ @ @ @ @   |
+
+shape not-eq
+. . . @ .   |
+. . . @ .   |
+@ @ @ @ @   |
+. . @ . .   |
+@ @ @ @ @   |
+. @ . . .   |
+. @ . . .   |
+
+shape sqrt
+. . @ @ @   |
+. . @ . .   |
+. . @ . .   |
+. . @ . .   |
+@ . @ . .   |
+. @ @ . .   |
+. . @ . .   |
+
+shape empty-set
+. . . . @   |
+. @ @ @ .   |
+@ . . @ @   |
+@ . @ . @   |
+@ @ . . @   |
+. @ @ @ .   |
+@ . . . .   |
+
+shape nicer-star
+. . @ . .   |
+@ . @ . @   |
+. @ @ @ .   |
+. . @ . .   |
+. @ @ @ .   |
+@ . @ . @   |
+. . @ . .   |
+
+;shapes
+
+__host
+
+meta
+undef .
+undef @
+undef |
+forth
+
+__meta
+
+
+#2,000,000 microsec delay ..  ( is this a good pause?)
+
+: ram-chars   #16 0 do  i data  14 cmd  loop ;
+: chars   ( first - last)  20 for  dup data 1+  next ;
+: ll  ( first - last)  ( two lines)  clear  chars  40 at  chars ;
+
+8 text goats " pygmy goats jump quickly "
+
+: shape-demo
+      ugly   " There are 8 user-definable shapes." type
+      40 at  " I've defined *two* demo sets." type .. ..
+      clear  " First, some miscellaneous shapes:" type
+      cg-box  40 at  ram-chars misc-shapes .. ..
+       0 at  " Now, some math-oriented ones:    " type
+             cg-grey mathy-shapes .. ..
+      ;
+
+: demo
+   lcd-init  -cursor
+   begin
+      ugly
+      " Demo of STM32F072B Discovery board and" 0 at type
+      " Hitachi HD44780 LCD display." 40 at type .. ..
+      clear  " First, the basic 5x7 shapes:" type .. ..
+             20 ll  ..  clear chars  drop ..
+      clear  " Now the Japanese character shapes:" type .. ..
+      clear  a0 ll  drop ..
+      clear  " Finally, the 5x10 shapes:" type .. ..
+      fancy  e0 chars  drop ..
+      clear  " And an example of using them:" type .. ..
+      clear  goats ..
+      shape-demo
+   again  [
+
+
+( Startup code.)
+
+( Even though the documentation gives conflicting messages - the schematic
+  says that it's connected, but the user manual says that it isn't - it
+  seems that the 8 MHz clock from the ST-LINK is *not* in fact routed to the
+  OSC_IN pin on the F072.
+
+  Instead, the F072 has a 48 MHz HSI - high speed internal - clock that can
+  synchronize with the frame fields from USB, so it can be used as a
+  crystal-less clock source, even for USB applications. We will use this as
+  our system clock.)
+
+: wait-for-rdy  ( regaddr)
+   begin  dup c@  2 and  until  ( wait for RDY bit)  drop ;
+
+: clock-init
+   1 ( latency) FLASH_ACR set!  ( we need one cycle for 48 MHz clock!)
+   1 ( HSI48ON) [ RCC_CR2 2 + #] tuck c!  wait-for-rdy ( wait for HSI48RDY)
+   3 ( SW=HSI48 as sysclk)  RCC_CFGR tuck c!
+   begin  dup c@ %1111 =  until  ( SW=HSI48 and SWS=HSI48)  drop ;
+
+: ports-init
+   -- Turn on clock to Port C
+   ( Ports -FED_CBA- )
+        [ %0000_1000  #16 << #] RCC_AHBENR set!
+   -- Make PC6 to PC9 outputs
+   [ %01010101 #12 << #] GPIOC_MODER set! ;
+
+: wait   for next ;
+: flash-leds
+   %11_1100_0000 dup GPIOC_BSRR !  2_0000 wait  GPIOC_BRR ! ;
+
+here ]  ( chip-init)
+   clock-init  ports-init  flash-leds  demo  [
+
+Reset_exc handler
+   -- Startup code!
+   -- Since we have a Forth kernel, let's write the startup code in Forth!
+   sp rp mov   #64 cells # sp sp sub  ( RP at end of flash; SP below)
+   ( chip-init)  ip  lit
+   "decafbad     top lit
+   next  ;c
+   pool,
+
+HardFault_exc handler
+   here b  ;c  ( hang)
+
+NMI_exc handler
+default-handler
+   lr bx  ;c  ( return to sender!!)
