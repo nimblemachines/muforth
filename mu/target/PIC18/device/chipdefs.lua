@@ -1,6 +1,6 @@
 -- This file is part of muforth: https://muforth.nimblemachines.com/
 
--- Copyright (c) 2002-2022 David Frech. (Read the LICENSE for details.)
+-- Copyright (c) 2002-2023 David Frech. (Read the LICENSE for details.)
 
 -- Equates for several PIC18 variants, "scraped" from Microchip datasheets.
 -- From here we generate muforth code!
