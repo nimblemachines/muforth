@@ -1,0 +1,144 @@
+( This file is part of muforth: https://muforth.nimblemachines.com/
+
+  Copyright 2002-2023 David Frech. (Read the LICENSE for details.)
+
+loading ARM v6-M IRQ and task experiments (STM32F072)
+
+( Currently testing this code on the STM32F072 Discovery board.)
+
+__meta
+decimal
+
+ram
+ram-vectors  ( use the vector table that target/ARM/v6-m/build.mu4 allocated)
+
+HardFault_exc handler
+   begin again  ;c  ( hang)
+
+NMI_exc handler
+default-handler
+   lr bx  ;c  ( return to sender!!)
+
+ld target/ARM/v6-m/kernel-itc.mu4
+ld target/ARM/v6-m/tasker.mu4
+
+( Interrupt hardware pushes 8 32-bit values, after possibly aligning the
+  stack to an 8-byte boundary, so we need room for potentially 9 more
+  values on the stack. This is the *hardware* stack, which we are using for
+  the *data* stack.
+
+  While 16 data stack cells might sound like enough for most uses, let's
+  increase it to 32 to make room for the interrupt state.)
+
+0  ( initial link)
+( #u #r #d: #cells for user area, R stack, D stack)
+   4  0  0 task snoop  ( dog? cat? bug?)
+   4 16 32 task taska
+   4 16 32 task taskb
+   4 16 32 task taskc
+                        circle snoop
+hex
+
+( We have the option of clocking the Systick timer from the HCLK [48M] or
+  HCLK/8 [6M]. As far as settings the bits in the SYST_CSR, the first is
+  the "processor" clock; the second is the "reference" clock, which is the
+  default.
+
+  Let's try a 250us tick; 4000 ticks/s, or 6M/1500.)
+
+: systick-init
+   #1,500 SYST_RVR !   ( reload value)
+   0 SYST_CVR !        ( count register; any write clears it)
+   3 SYST_CSR set! ;   ( enable the counter and the interrupt)
+
+variable ticks
+
+SysTick_exc handler
+   >v ticks w lit   0 w +) x ldr   1 # x x adds   0 w +) x str   lr bx  ;c
+
+SVCall_exc handler
+   >v ticks w lit   "f00d_d00d x lit   0 w +) x str   lr bx  ;c
+   pool,
+
+( This is a silly test, just to see if the SVCall exception vectors
+  properly. If it does, ticks will get set to "f00d_d00d.)
+
+code ticks!   0 # svc   next  ;c
+
+( Fetch state that describes how exceptions will be processed. I wrote this
+  just so I could get a sense of how these registers are set up. It is
+  otherwise unused.)
+
+( NOTE: At reset, PRIMASK is 0, which means interrupts are *enabled*.)
+
+code exc   ( - control primask MSP PSP)
+   PSP w mrs
+   MSP x mrs
+   PRIMASK y mrs
+   CONTROL z mrs
+   { top z y x } push   w top mov   next  ;c
+
+: uart-init
+   -- First, enable clocks to Port A. We are using uart1 on pins PA9 and PA10.
+   [ 1 #17 << #] RCC_AHBENR set!
+
+   -- Enable clocks to uart1 as well.
+   [ 1 #14 << #] RCC_APB2ENR set!
+
+   -- Set mode bits (%10) and alternate function (AF1) for uart.
+   [ %1010 #9       2*  << #] GPIOA_MODER set!  ( 2 bits per pin)
+   [    11 #9  8 -  4 * << #] GPIOA_AFRH set!   ( 4 bits per pin)
+
+   -- Now for the uart itself.
+   USART1_CR1  0 over ! ( reset and disable USART)
+   %1100 ( TE+RE) ( enable tx and rx)  over set!
+   [ #48,000,000 #115,200 / #] USART1_BRR !
+   1 ( UE) ( enable USART)  swap set! ;
+
+: ?status  ( bit)
+   begin  pause  USART1_ISR @  over and  until  drop ;
+
+: b>  ( - b)   [ 1 #5 << ( RXNE bit) #] ?status  USART1_RDR @ ;
+: >b  ( b)     [ 1 #7 << ( TXE bit)  #] ?status  USART1_TDR ! ;
+
+: delay  ( n)  ( just a count of pause's right now)
+   #100 *  for pause next ;
+
+( This activates tasks to send characters to the uart in an endless loop.)
+: sending  ( delay char task)
+   2 swap  #activate   begin  over delay  dup >b  again ;
+
+( Store top of stack into the task pointer. Not generally useful, but
+  needed for testing.)
+
+code up!  ( 'task)  top up mov   top dpop1   next  ;c
+
+code +irq  cpsie   next  ;c  ( clears PRIMASK)
+code -irq  cpsid   next  ;c  ( sets PRIMASK)
+
+( Instead of mapping the flash to 0000_0000, map the RAM there. This way we
+  can have a vector table at the start of the RAM and have total control of
+  the interrupts.)
+
+: vectors-to-ram    3 SYSCFG_CFGR1 ! ;
+
+( A short name because I was typing this over and over to test. This word
+  sets everything up.)
+
+: xx
+   vectors-to-ram
+   systick-init
+   uart-init
+   [ ' snoop >body #] init-tasks  ( puts everyone to sleep, including us)
+   snoop up! ( "become" the snoop task)
+   task.status wake  ( wake ourselves so that we can run the task loop
+                       without losing control of the cpu)
+   #1 61 taska sending  #5 62 taskb sending  #25 63 taskc sending
+   ;
+
+( Another short name to run the task loop a bunch of times. The SysTick
+  timer is frozen in debug mode, so it will not increment unless the task
+  loop is running!)
+
+( I usually do something like 4000 tt.)
+: tt  ( n)  for pause next ;  ( run the task loop n times)
