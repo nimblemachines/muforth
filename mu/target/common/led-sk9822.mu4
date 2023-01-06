@@ -1,0 +1,179 @@
+( This file is part of muforth: https://muforth.nimblemachines.com/
+
+  Copyright 2002-2022 David Frech. (Read the LICENSE for details.)
+
+loading Support for SK9822 RGB LED chip (eg Adafruit Dotstars)
+
+( The serial protocol is very simple. It is a series of 32-bit "frames":
+  a start frame that is all 0 bits, followed by an RGB frame for each LED
+  in the string, followed by an end frame consisting of enough "dummy" bits
+  -- 0 or 1 -- to clock the LED frames to the end of the string.
+
+  The RGB frame has a 5-bit intensity field in addition to the R, G, and B values:
+
+    111n_nnnn bbbb_bbbb gggg_gggg rrrr_rrrr
+
+  nn is intensity, bb is blue, gg is green, rr is red.
+
+  See
+
+    https://cpldcpu.wordpress.com/2014/11/30/understanding-the-apa102-superled/
+    https://cpldcpu.wordpress.com/2016/12/13/sk9822-a-clone-of-the-apa102/
+
+  for a helpful discussion of how these chip LEDs work, how many bits are
+  *actually* required in the end frame, and how their behavior departs from
+  the specification in the datasheet.
+)
+
+hex
+__meta
+ram
+
+( XXX We have switched to using the F072 Disco board.)
+
+( The Dotstar cable has 4 colored wires:
+  Red = 5v
+  Black = Gnd
+  Yellow = SPI clock => PB3
+  Green =  SPI data  => PB5
+)
+
+: spi-init
+   ( Enable clock to PortB and SPI1.)
+   4_0000 ( PBEN) RCC_AHBENR set!
+   [ 1 #12 << #] ( SPI1EN) RCC_APB2ENR set!
+
+   ( Set up port pins for SPI1. PortB AF0 is SPI1.)
+   [ %10_00_10 6 << #] ( 10 bits for both PB3 and PB5)
+      dup GPIOB_MODER !   ( alternate function out)
+      --  GPIOB_OSPEEDR !  ( med speed: 10M)
+      drop  0 GPIOB_OSPEEDR !  ( low speed: 2M)
+   
+   ( Set up SPI1. Start by disabling it.)
+   0 SPI1_CR1 !
+
+   %100_100 ( BR=/32 MSTR) SPI1_CR1 !
+   1704 ( FRXTH=1, DS=8bits, SSOE=1) SPI1_CR2 !
+
+   ( Enable SPI1.)
+   40 ( SPE) SPI1_CR1 set! ;
+
+( XXX use a special >b to write the values into a buffer so I can grab them
+  and make sure everything looks right?)
+
+: >b  ( b)     begin  SPI1_SR @  2 ( TXE)  and until  SPI1_DR c! ;
+-- : b>  ( - b)   begin  SPI1_SR @  1 ( RXNE) and until  SPI1_DR c@ ;
+
+( I have 117 LEDs in my string. Update this value for yours.)
+#117 equ #led
+
+variable rheo ( rheostat for fading)
+variable grey ( added "whiteness")
+
+( XXX fade could multiply each component by a fractional binary number.)
+: scale  ( i frac | frac i - i)  *  0_8000 + ( round)  10 u>> ;
+: fade   grey @ +  rheo @  scale ;
+
+: >frame  ( r g b i)  >b  fade >b  fade >b  fade >b ;
+: start ;
+: end      [ #led 1+ 2/ ( # of extra clocks needed)  #31 + #32 / ( #frames) #]
+           for  0 0 0 0  >frame  next ;
+
+variable brightness
+( Send an RGB+brightness packet down the wire.)
+: >led    ( r g b)  brightness @ 1f and  ( 0 to 31) 0e0 or  >frame ;
+
+( XXX send full brightness)
+-- : >led    ( r g b)  0ff  >frame ;
+
+: led-init   spi-init  8 brightness !  0_0200 rheo !  0 grey ! ;
+
+
+: rgb@   ( a - r g b a+3)   c@+ c@+ c@+ ;
+: rgb!   ( r g b a - a+3)   >r  swap rot ( b g r)  r>  c!+ c!+ c!+ ;
+
+variable 'color
+meta: color  ( r g b)  create  rot c,  swap c,  c,
+                       does>  'color @execute ;
+( R  G  B)
+ ff 00 00 color r
+ 00 ff 00 color g
+ 00 00 ff color b
+
+ 00 ff ff color c  ( cyan = -red)
+ ff 00 ff color m  ( magenta = -green)
+ ff ff 00 color y  ( yellow = -blue)
+
+ 40 40 40 color w  ( low intensity white)
+ 00 00 00 color z  ( black - zero)
+
+: sec   ( n)  ( delay for n seconds, approx. For/next loop takes ~11 cycles)
+   for   #1212 for  #1200 for next  next  next ;
+
+: 5min       #5 sec ;
+: 30min   #1800 sec ;
+
+: send-once   ( 'color)  rgb@ drop  >led ;
+: send-three  ( 'color)  dup send-once  dup send-once  send-once ;
+: send-four   ( 'color)  dup send-once  send-three ;
+: 3-on-3-off  ( 'color)
+   start
+   #20 for  dup send-three  [ ' z >body ] literal  send-three  next  drop
+   end  5min ;
+
+: send-all    ( 'color)  start  #led for  dup send-once  next  drop  end ;
+
+: once    ['] send-once   'color ! ;
+: threes  ['] 3-on-3-off  'color ! ;
+: fours   ['] send-four   'color ! ;
+: all     ['] send-all    'color ! ;
+
+( Color wheel: RGB primaries, CMY secondaries)
+: wheel   r y g c b m ;
+
+: primary-loop   start  for  wheel  next  end ;
+: primaries*4    fours   5  primary-loop ;
+: primaries      once  #20  primary-loop ;
+
+: cmy     once  #20  start  for  c m y  z z z  next  end ;
+
+: doit
+   begin
+      all  wheel
+      primaries    5min
+      -- threes  wheel
+      primaries*4  5min
+      cmy   5min
+   again ;
+
+: ramp  1_0000 100 do  i rheo !  primaries  20 +loop ;
+
+: w   for next ;
+: mono
+   0 grey !  1_0000 rheo !
+   100 0 do  i  start
+      #led for  dup dup dup >led  next  drop
+   end  1_0000 w  loop ;
+
+
+.ifdef testing
+
+( How many LEDs do we have? I'm going to overestimate - there should be
+  around 120 - and drive 200 and then count. Groups of ten: rgbcmywwww.)
+
+: howmany  once  start  #20 for  wheel  w w w w  next  end ;
+
+.then
+
+
+.ifdef colors-in-memory
+
+#led 3 * buffer leds
+
+: show   start  leds #led for  rgb@ >r >led r>  next  drop  end ;
+
+variable 'led
+: rgb,  ( r g b)  'led @  rgb!  'led ! ;
+: new   leds 'led !  ['] rgb, 'color ! ;
+
+.then
