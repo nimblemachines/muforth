@@ -1,0 +1,44 @@
+( This file is part of muforth: https://muforth.nimblemachines.com/
+
+  Copyright 2002-2022 David Frech. (Read the LICENSE for details.)
+
+loading Chat (host)
+
+.ifndef tty-target
+   ld target/common/serial.mu4
+.then
+
+hex
+
+: >b  send ;
+: b>  recv ;
+
+: >w  >3210  >b >b >b >b ;
+: w>  b> b> b> b>  0123> ;
+
+: >count   ( #bytes - #bytes')  \m aligned  dup  \m cell/ >b ;
+
+: c.version            10 >b  w> ( ip)  w> ( commit) ;
+: c.read   ( buf a u)  11 >b  swap >w  >count  for  b> swap c!+          next  drop ;
+: c.write  ( buf a u)  12 >b  swap >w  >count  for          c@+ swap >b  next  drop ;
+
+: c.hello  ( - chunk-size)
+   #115,200 bps  drain flush  c.version swap
+   cr ." Chat firmware version "  radix preserve hex  u.
+   @ram u< not if  ." (in RAM)"  then
+   #256 ;
+
+: c.get-status  ( - sp pc)  "deadc0de dup ;
+: c.run         ( pc sp)  2drop chat-fail ;
+
+: c.erase  chat-fail ;
+: c.flash  chat-fail ;
+
+: c.read-v
+   cr ." read "  2 nth u.  over u.  dup u.  c.read ;
+
+: c.write-v
+   cr ." write "  2 nth u.  over u.  dup u.  c.write ;
+
+: chat
+   chat-via  c.hello  c.get-status  c.run  c.read  c.write  c.erase  c.flash ;
