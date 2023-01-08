@@ -10,17 +10,17 @@ ld target/common/serial.mu4
 
 hex
 
-( Usual comm basics.)
-: >b  send ;
-: b>  recv ;
-
-: >w  >lohi  >b >b ;  ( big-endian)
-
 ( To make spying on the protocol easier to deal with, break up the printed
   bytes into "packets" in a semantically meaningful way. How about this
   stupid name, which is easy to remember:)
 
 : ?spkt  ( spy packet, or "spiked")  spy @ if  cr  then ;
+
+( Usual comm basics.)
+: >b  send ;
+: b>  recv ;
+
+: >w  >lohi  >b >b ;  ( big-endian)
 
 
 ( The command format is very simple:
@@ -54,24 +54,36 @@ hex
            dup 42 = if drop error" Bad chip id" then
                43 = if      error" CRC mismatch" then ;
 
-: >buf  ( a u)        for  c@+ swap >b  next drop ;
-: crc   ( a u - crc)  ffff -rot  crc16-buf ;
+: >buf  ( buf u)        for  c@+ swap >b  next drop ;
+: crc   ( buf u - crc)  ffff -rot  crc16-buf ;
 
 ( #bytes is the count of bytes in the *payload*. We add 1 to include the
   command byte in the total length.)
 
 : >cmd  ( cmd #bytes)  ?spkt  char $ >b  1+ >b ( len)  >b ( cmd) ;
-: <flash>  ( a u cmd)   over 2 + >cmd  over >w ( addr)  >buf  ?ack ;
+: <flash>  ( buf a u cmd)   over 2 + >cmd  swap >w ( addr)  >buf  ?ack ;
 
-: b.identify  ( chip)  30  2  >cmd  >w                                               ?ack ;
-: b.setup              31  3  >cmd  a5f1 >w ( keys)  00 >b ( bank)                   ?ack ;
-: b.erase     ( a u)      32  <flash> ;
-: b.write     ( a u)      33  <flash> ;
-: b.verify    ( a u)   34  6  >cmd  over >w ( addr1)  2dup + 1- >w ( addr2)  crc >w  ?ack ;
-: b.run                36  2  >cmd  0 >w                                             ?ack ;
+: b.identify  ( chip)  30  2  >cmd  >w                                  ?ack ;
+: b.setup              31  3  >cmd  a5f1 >w ( keys)  00 >b ( bank)      ?ack ;
+: b.erase    ( buf a u)   32  <flash> ;
+: b.write    ( buf a u)   33  <flash> ;
+: b.verify   ( buf a u)   34  6  >cmd  over >w ( addr1)  tuck + 1- >w ( addr2)
+                                                                crc >w  ?ack ;
+: b.run                   36  2  >cmd  0 >w                             ?ack ;
 
 ( This is really just for testing - initially with an EFM8BB1LCK board.)
 : hi
    #115200 bps  drain  flush
    ff >b  ( send autobaud training byte)
-   3001 ( device and derivative id for EFM8BB10F8G_QSOP) b.identify ;
+   3001 ( device and derivative id for EFM8BB10F8G_QSOP24) b.identify ;
+
+: erase-reset-vector
+   pad 0000 0 b.erase  ( erase first 512 bytes) ;
+
+: test-crc
+   ( Create a buffer containing: 00 01 02 .. 7f.)
+   pad  80 0 do  i swap c!+  loop  drop
+   ( Program buffer to device at address 0080.)
+   pad  0080 80 b.erase
+   ( Verify.)
+   pad  0080 80 b.verify ;
