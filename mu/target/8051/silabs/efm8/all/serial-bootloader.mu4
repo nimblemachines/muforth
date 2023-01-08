@@ -63,27 +63,29 @@ hex
 : >cmd  ( cmd #bytes)  ?spkt  char $ >b  1+ >b ( len)  >b ( cmd) ;
 : <flash>  ( buf a u cmd)   over 2 + >cmd  swap >w ( addr)  >buf  ?ack ;
 
-: b.identify  ( chip)  30  2  >cmd  >w                                  ?ack ;
-: b.setup              31  3  >cmd  a5f1 >w ( keys)  00 >b ( bank)      ?ack ;
-: b.erase    ( buf a u)   32  <flash> ;
-: b.write    ( buf a u)   33  <flash> ;
-: b.verify   ( buf a u)   34  6  >cmd  over >w ( addr1)  tuck + 1- >w ( addr2)
+: b.erase+write  ( buf a u)   32  <flash> ;
+: b.write        ( buf a u)   33  <flash> ;
+
+: b.identify  ( chip)    30  2  >cmd  >w                                ?ack ;
+: b.setup                31  3  >cmd  a5f1 >w ( keys)  00 >b ( bank)    ?ack ;
+: b.verify   ( buf a u)  34  6  >cmd  over >w ( addr1)  tuck + 1- >w ( addr2)
                                                                 crc >w  ?ack ;
-: b.run                   36  2  >cmd  0 >w                             ?ack ;
+: b.run                  36  2  >cmd  0 >w                              ?ack ;
 
 ( This is really just for testing - initially with an EFM8BB1LCK board.)
 : hi
    #115200 bps  drain  flush
    ff >b  ( send autobaud training byte)
-   3001 ( device and derivative id for EFM8BB10F8G_QSOP24) b.identify ;
+   3001 ( device and derivative id for EFM8BB10F8G_QSOP24) b.identify
+   b.setup  ( send flash keys to device) ;
 
 : erase-reset-vector
-   pad 0000 0 b.erase  ( erase first 512 bytes) ;
+   pad 0000 0 b.erase+write  ( erase first 512 bytes, write 0 bytes) ;
 
 : test-crc
    ( Create a buffer containing: 00 01 02 .. 7f.)
    pad  80 0 do  i swap c!+  loop  drop
-   ( Program buffer to device at address 0080.)
-   pad  0080 80 b.erase
+   ( Erase page at 0200 and program buffer to device at address 0200.)
+   pad  0200 80 b.erase+write
    ( Verify.)
-   pad  0080 80 b.verify ;
+   pad  0200 80 b.verify ;
