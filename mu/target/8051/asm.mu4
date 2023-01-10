@@ -26,6 +26,8 @@ assembler
 : #   ( n - imm)  8051_dada_00 + ;
 forth
 
+: ?reg   \a r0 \a a within 0= if error" only r0 to r7 allowed" then ;
+
 : >bit  ( off bit# - bit-address)
    over 20 30 within  ( bit-addressable ram region)
    if  swap 20 -  3 <<  +  ^  then
@@ -43,11 +45,15 @@ assembler
 : /  ( bit#)  negate ;  ( complement bit)
 forth
 
+: b,  \m c, ;
+: w,  \m , ;
+
 ( Testing)
 : .h16     radix preserve hex   <#  # # # #  #>  type ;
 : .h8      radix preserve hex   <#      # #  #>  type ;
-: c,   .h8 space  1 \m allot ;
-: op,  cr  \m here  .h16 space space  c, ;
+: b,   .h8 space  1 \m allot ;
+: w,   >lohi  b, b, ;
+: op,  cr  \m here  .h16 space space  b, ;
 ( End testing)
 
 ( A common operation: add some bits into the op, then comma into the
@@ -56,37 +62,45 @@ forth
 : +op,   ( bits op)  + op, ;
 
 : a?    ( ea - f)  \a a = ;
-: imm,  ( imm op)  4 +op,  c, ;
+: c?    ( ea - f)  \a c = ;
+
+: imm,  ( imm op)  4 +op,  b, ;
 : imm?  ( ea - f)  -100 and  0 \a # = ;
 
-: dir,  ( dir op)   5 +op,  c, ;
+: dir,  ( dir op)   5 +op,  b, ;
 : dir?  ( ea - f)  100 u< ;
 
-: indirect?  ( ea - f)  \a @dptr  \a r0  within ;
+: indirect2?  ( ea - f)  \a @r0    \a r0  within ;
+: indirect3?  ( ea - f)  \a @dptr  \a r0  within ;
 
-( Make sure ea is indirect, not reg)
-: indirect  ( indir op)
-   over indirect?  if  4 - +op, ^  then
-   error" only indirect addressing allowed" ;
+( Make sure ea is @r0 or @r1.)
+: indirect2  ( indir op)
+   over indirect2? if  +op, ^  then
+   error" only @r0 and @r1 allowed" ;
+
+( Make sure ea is @r0, @r1, or @dptr.)
+: indirect3  ( indir op)
+   over indirect3? if  4 - +op, ^  then
+   error" only @r0, @r1, and @dptr allowed" ;
 
 ( ea can be direct, indirect, or register.)
-: dir-or-reg  ( ea op)
+: dir-or-regi  ( ea op)
    over dir? if  dir, ^  then  ( direct)
    +op, ;  ( indirect or register)
 
-: a-dir-or-reg  ( a op | dir op | ireg op | reg op )
+: a-dir-or-regi  ( a op | dir op | ireg op | reg op )
    over a? if  4 +op,  drop  ^  then
-   dir-or-reg ;
+   dir-or-regi ;
 
 ( src for adest can be immed, direct, indirect, or register.)
 : adest  ( ea op | imm op)
    over imm? if  imm, ^  then  ( immediate)
-   dir-or-reg ;
+   dir-or-regi ;
 
 ( NOTE: for dir as dest, imm as src, compilation sequence is op dir imm.)
 : dirdest  ( a dir op | imm dir op)
-   push ( op)  over imm? if  pop 3 +op,  c, ( dir)  c, ( imm)  ^  then
-   over a? if  pop 2 +op,  c, ( dir)  drop ( .a)  ^  then
+   push ( op)  over imm? if  pop 3 +op,  b, ( dir)  b, ( imm)  ^  then
+   over a? if  pop 2 +op,  b, ( dir)  drop ( .a)  ^  then
    error" invalid src for direct dest" ;
 
 : adest-or-dirdest    ( ea a op | imm a op | a dir op | imm dir op)
@@ -95,19 +109,19 @@ forth
    error" invalid dest" ;
 
 ( Bitop: Carry flag is dest. If bit was complemented, the bit number will
-  have been *negated*.)
+  have been *negated*. NOTE: This only works for anl and orl, not mov!)
 
-: cdest  ( bit op)
-   8 >>  over 0< if  8 >>  swap negate swap  then  op, c, ( bit#) ;
+: cdest-logical  ( bit op)
+   8 >>  over 0< if  8 >>  swap negate swap  then  op,  b, ( bit#) ;
 
 : ?abs-reachable  ( dest - dest)
    dup  \m here 2 +  xor  [ -1 #11 << #] and
    if error" dest and src not in same 2 Ki page" then ;
 
 : ajump  constant  does> @  ( dest op)
-   ?abs-reachable  over 8 >> 7 and ( hi bits)  +op,  c, ( low) ;
+   ?abs-reachable  over 8 >> 7 and ( hi bits)  +op,  b, ( low) ;
 
-: ljump  constant  does> @  ( dest op)  op,  >lohi c, c, ;
+: ljump  constant  does> @  ( dest op)  op,  w, ;
 
 : ?a  ( a op - op)  ( make sure a is specified, or error)
    swap a? 0=  if error" only A allowed" then ;
@@ -123,8 +137,10 @@ forth
 ( Your basic one byte instruction.)
 : 0op  constant  does> @  op, ;
 
-: stackop  constant  does> @
-   dup dir? if  op, c, ( dir)  ^  then
+: bitop    constant  does> @  ( bit op)  op,  b, ( bit#) ;
+
+: stackop  constant  does> @  ( dir op)
+   dup dir? if  op, b, ( dir)  ^  then
    error" invalid address" ;
 
 ( 2op-arith can only have A as dest. Src can be immed, direct, indirect, or
@@ -143,28 +159,36 @@ forth
 
 : 2op-logical-bit  constant  does> @  ( ea a op | imm a op |
                                        a dir op | imm dir op | bit c op)
-   over \a c = if  nip  cdest ^  then
+   over \a c = if  nip  cdest-logical ^  then
    adest-or-dirdest ;
 
-( dest can be A, direct, indirect, or register.)
-: mov-immsrc  ( imm a op | imm reg op | imm dir op)
-   a-dir-or-reg  c, ( imm) ;
+: c-or-bit  ( c op | bit# op)
+   over c? if  op,  drop  ^  then  8 >>  op,  b, ( bit#) ;
+
+: a-c-or-bit  ( a op | c op | bit# op)
+   over a? if  op,  drop  ^  then  8 >>  c-or-bit ;
+
+( dest can be DPTR, A, direct, indirect, or register.)
+: mov-immsrc  ( imm16 dptr op | imm a op | imm reg op | imm dir op)
+   over \a dptr = if  drop  90 op,  w, ( imm16)  ^  then
+   a-dir-or-regi  b, ( imm) ;
 
 : mov-dirdest  ( dir dir op | reg dir op)
    swap push ( dest)
-   over dir? if  ( dir to dir)  dir, ( op src)  pop c, ( dest) ^  then
-   +op,  pop c, ( dest) ;
+   over dir? if  ( dir to dir)  dir, ( op src)  pop b, ( dest) ^  then
+   +op,  pop b, ( dest) ;
 
-: mov-dirsrc  ( dir reg op)  +op,  c, ( dir) ;
-: mov-adest  ( dir a op | reg a op)  nip  dir-or-reg ;
-: mov-asrc  ( a dir op | a reg op)  dir-or-reg  drop ;
+: mov-dirsrc  ( dir reg op)  +op,  b, ( dir) ;
+: mov-adest  ( dir a op | reg a op)  nip  dir-or-regi ;
+: mov-asrc  ( a dir op | a reg op)  dir-or-regi  drop ;
 
 assembler
 ( Let's do mov first, so the reader can glance up to read the
   implementations of each sub-type.)
 
 ( The big kahuna! A million variations.)
-: mov  ( imm a | imm reg | imm dir |
+: mov  (  bit# c | c bit# |
+         imm16 dptr | imm a | imm reg | imm dir |
          dir a | reg a |
          a dir | a reg |
          dir dir | reg dir |
@@ -173,6 +197,8 @@ assembler
    ( NOTE: the order of these is important! Don't reshuffle.)
    dup a?     if  e0 mov-adest  ^  then
    over a?    if  f0 mov-asrc  ^  then
+   dup c?     if  drop  a2 op, b, ( bit)  ^ then
+   over c?    if  drop  92 op, b, ( bit)  ^ then
    over imm?  if  70 mov-immsrc  ^  then
    dup dir?   if  80 mov-dirdest  ^  then
    over dir?  if  a0 mov-dirsrc  ^  then
@@ -182,14 +208,14 @@ assembler
 
 : inc  ( a | dir | ireg | reg | dptr)
    dup \a dptr = if  a3 op,  drop  ^  then
-   00 ( op)  a-dir-or-reg ;
+   00 ( op)  a-dir-or-regi ;
 
 01 ajump       ajmp
 02 ljump       ljmp
 03 a-only      rr
 
 : dec  ( a | dir | ireg | reg)
-   10 ( op)  a-dir-or-reg ;
+   10 ( op)  a-dir-or-regi ;
 
 11 ajump       acall
 12 ljump       lcall
@@ -208,6 +234,7 @@ b08250 2op-logical-bit anl
 
 ( 70, 80, a0, e0, f0 are all species of mov)
 
+80 2op-arith   cjne  ( structure words will compile and fixup rel8 offset)
 84 ab-only     div
 a4 ab-only     mul
 90 2op-arith   subb
@@ -215,13 +242,56 @@ c0 2op-arith   xch   ( this isn't quite right: it allows immediate which it shou
 c0 stackop     push
 c4 a-only      swap
 d0 stackop     pop
+: djnz   d0 ?reg +op, ;  ( structure words will compile and fixup rel8 offset)
 d4 a-only      da    ( deprecated! for BCD computations! pretty much useless!)
+
+( Conditional jumps. Note that the sense of the condition tested is
+  *opposite* to that of the jump. Hence never compiles an unconditional
+  jump.)
+
+( XXX what's a good name for this?)
+10 bitop bclr-force?  ( jbc)  ( jump if bit set, then clear bit)
+20 bitop bclr?  ( jb)
+30 bitop bset?  ( jnb)
+
+40 0op u>=    ( jc)
+50 0op u<     ( jnc)
+60 0op 0!=    ( jz)
+70 0op 0=     ( jnz)
+80 0op never  ( sjmp)
+
+( This instruction, like "div ab" and "mul ab" only has one valid form:
+  jmp @a+dptr.)
+
+: jmp   \a @a+dptr xor if error" only @a+dptr allowed" then  73 op, ;
 
 : movc  ( src a)
    83 ( a+pc)  ?a  ( src op)  swap \a @a+dptr = if  10 +  then
    op, ;
 
 : movx  ( indir a | a indir)
-   dup a? if  drop  e0 indirect ^  then  nip  f0 indirect ;
+   dup a? if  drop  e0 indirect3 ^  then  nip  f0 indirect3 ;
+
+: xchd   d0 indirect2 ;
+
+( This isn't complicated in the least!)
+: cpl    ( a | c | bit#)  b2b3f4  a-c-or-bit ;
+: clr    ( a | c | bit#)  c2c3e4  a-c-or-bit ;
+: setb       ( c | bit#)  d2d3      c-or-bit ;
 
 forth
+
+( Control structures.)
+
+( Branch offsets are relative to the *following* instruction, which starts
+  right after the offset, which is always the last byte. When compiled,
+  branches leave a fixup offset pointing just *past* the byte to be fixed
+  up.)
+
+( Tests to see if a value fits into a field of a certain bit width.)
+: ufits?  ( value bits - f)     u>>        0= ;   ( unsigned)
+: sfits?  ( value bits - f)   1- >>  1+  2 u< ;   ( signed)
+
+: s8?  ( n - flag)  8 sfits? ;  ( if signed value fits in 8 bits)
+
+( Still to come: the control structure definitions!)
