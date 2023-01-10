@@ -15,7 +15,8 @@ setlocal softtabstop=3
 " makes tabbing and BSing at the start of a line feel like using real tabs.
 setlocal smarttab
 
-" what I used with emacs - so not _everything_ changes ;-)
+" I've edited a *lot* of muforth code with this set to 75. Changing this might
+" cause a lot of different reformatting!
 setlocal textwidth=75
 
 " so auto-formatting works nicely - but only do it in comments, not in code
@@ -32,7 +33,6 @@ setlocal formatoptions=cql
 setlocal comments=s:(\ ,m:\ \ ,ex:),b:--
 
 " Make keyword matching better (so w and friends work better). Since in Forth
-" anything can be a keyword, let's let Vim know that. @ means all alphanumeric
-" (including international characters); then we add all the printable ASCII,
-" including punctuation.
-setlocal iskeyword=@,!-~,^(,^),^-,^_
+" anything can be a keyword, let's let Vim know that. Basically we consider
+" all printable ASCII, excluding parens, to be keyword characters.
+setlocal iskeyword=!-~,^(,^),192-255
