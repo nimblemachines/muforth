@@ -122,7 +122,7 @@ XBR2 0xE3 Port I/O Crossbar 2
 sfrs = {}
 for name, addr, descr in string.gmatch(sfr_list, "([%u%d]+) 0x(%x%x) ([%w%p ]+)") do
     -- print(name, addr, descr)
-    sfrs[#sfrs+1] = { name = name, addr = addr:lower(), descr = descr }
+    sfrs[#sfrs+1] = { name = name, addr = tonumber(addr, 16), descr = descr }
 end
 
 table.sort(sfrs, function(x,y)
@@ -130,5 +130,5 @@ table.sort(sfrs, function(x,y)
 end)
 
 for _,s in ipairs(sfrs) do
-    print(string.format("%2s equ  %-12s | %s", s.addr, s.name, s.descr))
+    print(string.format("%03x equ  %-12s | %s", s.addr, s.name, s.descr))
 end
