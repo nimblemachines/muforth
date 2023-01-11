@@ -22,8 +22,9 @@ assembler
  8 8 regs r0 r1 r2 r3 r4 r5 r6 r7
 10 6 regs a ab c dptr @a+dptr @a+pc
 
-( dada is sorta like data! This specifies immediate data.)
-: #   ( n - imm)  8051_dada_00 + ;
+( dada is sorta like data! This specifies immediate data. Since we might be
+  loading dptr with a 16-bit value, let's leave room for 16 bits of data.)
+: #   ( n - imm)  8051_dada_0000 + ;
 forth
 
 : ?reg   \a r0 \a a within 0= if error" only r0 to r7 allowed" then ;
@@ -65,7 +66,7 @@ forth
 : c?    ( ea - f)  \a c = ;
 
 : imm,  ( imm op)  4 +op,  b, ;
-: imm?  ( ea - f)  -100 and  0 \a # = ;
+: imm?  ( ea - f)  -1_0000 and  0 \a # = ;
 
 : dir,  ( dir op)   5 +op,  b, ;
 : dir?  ( ea - f)  100 u< ;
@@ -124,20 +125,23 @@ forth
 : ljump  constant  does> @  ( dest op)  op,  w, ;
 
 : ?a  ( a op - op)  ( make sure a is specified, or error)
-   swap a? 0=  if error" only A allowed" then ;
+   over a? if  nip ^  then
+   error" only A allowed" ;
+
+: ?ab  ( ab op - op)  ( make sure ab is specified, or error)
+   over \a ab = if  nip ^  then
+   error" only AB allowed" ;
 
 ( A is required to be mentioned, but doesn't change the op.)
 : a-only  constant  does> @  ( a op)  ?a op, ;
 
 ( AB is required to be mentioned, but doesn't change the op.)
-: ab-only  constant  does> @  ( ab op)
-   swap \a ab xor if error" only AB allowed" then
-   op, ;
+: ab-only  constant  does> @  ( ab op)  ?ab op, ;
 
 ( Your basic one byte instruction.)
 : 0op  constant  does> @  op, ;
 
-: bitop    constant  does> @  ( bit op)  op,  b, ( bit#) ;
+: bitop  constant  does> @  ( bit op)  op,  b, ( bit#) ;
 
 : stackop  constant  does> @  ( dir op)
    dup dir? if  op, b, ( dir)  ^  then
@@ -159,7 +163,7 @@ forth
 
 : 2op-logical-bit  constant  does> @  ( ea a op | imm a op |
                                        a dir op | imm dir op | bit c op)
-   over \a c = if  nip  cdest-logical ^  then
+   over c? if  nip  cdest-logical ^  then
    adest-or-dirdest ;
 
 : c-or-bit  ( c op | bit# op)
@@ -170,7 +174,7 @@ forth
 
 ( dest can be DPTR, A, direct, indirect, or register.)
 : mov-immsrc  ( imm16 dptr op | imm a op | imm reg op | imm dir op)
-   over \a dptr = if  drop  90 op,  w, ( imm16)  ^  then
+   over \a dptr = if  2drop  90 op,  w, ( imm16)  ^  then
    a-dir-or-regi  b, ( imm) ;
 
 : mov-dirdest  ( dir dir op | reg dir op)
@@ -180,7 +184,7 @@ forth
 
 : mov-dirsrc  ( dir reg op)  +op,  b, ( dir) ;
 : mov-adest  ( dir a op | reg a op)  nip  dir-or-regi ;
-: mov-asrc  ( a dir op | a reg op)  dir-or-regi  drop ;
+: mov-asrc   ( a dir op | a reg op)       dir-or-regi  drop ;
 
 assembler
 ( Let's do mov first, so the reader can glance up to read the
