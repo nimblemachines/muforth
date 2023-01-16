@@ -73,11 +73,30 @@ hex
 : b.run                  36  2  >cmd  0 >w                              ?ack ;
 
 ( This is really just for testing - initially with an EFM8BB1LCK board.)
-: hi
+: b.hello
    #115200 bps  drain  flush
    ff >b  ( send autobaud training byte)
    3001 ( device and derivative id for EFM8BB10F8G_QSOP24) b.identify
    b.setup  ( send flash keys to device) ;
+
+: erase?  ( 'target - erase?)   [ /page 1- #] and  0= ;
+
+: chunk  ( 'target len - 'target+len)
+   cr over u.  dup u.
+   2dup + push  over image+ -rot  ( buf a u)
+   over erase? if  ." erase+write"  b.erase+write  pop ^  then
+                   ." write"        b.write        pop ;
+
+: blast-region  ( a len)
+   80 /mod ( r q)  swap push  for  80 chunk  next
+                     pop  =if  ( rem) chunk  drop ^  then  2drop ;
+
+: blast
+   h preserve  b.hello  flash region  2dup blast-region
+   over image+ -rot  b.verify ;
+
+
+.ifdef testing
 
 : erase-reset-vector
    pad 0000 0 b.erase+write  ( erase first 512 bytes, write 0 bytes) ;
@@ -89,3 +108,5 @@ hex
    pad  0200 80 b.erase+write
    ( Verify.)
    pad  0200 80 b.verify ;
+
+.then  ( testing)
