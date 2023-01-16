@@ -24,10 +24,8 @@ assembler
 
 ( dada is sorta like data! This specifies immediate data. Since we might be
   loading dptr with a 16-bit value, let's leave room for 16 bits of data.)
-: #   ( n - imm)  8051_dada_0000 + ;
+: #   ( n - imm)  0ffff and  8051_dada_0000 + ;
 forth
-
-: ?reg   \a r0 \a a within 0= if error" only r0 to r7 allowed" then ;
 
 : >bit  ( off bit# - bit-address)
    over 20 30 within  ( bit-addressable ram region)
@@ -46,16 +44,12 @@ assembler
 : /  ( bit#)  negate ;  ( complement bit)
 forth
 
-: b,  \m c, ;
-: w,  \m , ;
+: simple-b,   \m c, ;
+: simple-w,   \m , ;
 
-( Testing)
-: .h16     radix preserve hex   <#  # # # #  #>  type ;
-: .h8      radix preserve hex   <#      # #  #>  type ;
-: b,   dup .h8 space  \m c, ;
-: w,   >lohi  b, b, ;
-: op,  cr  \m here  .h16 space space  b, ;
-( End testing)
+defer b,   ' simple-b, is b,
+defer w,   ' simple-w, is w,
+defer op,  ' simple-b, is op,
 
 ( A common operation: add some bits into the op, then comma into the
   dictionary.)
@@ -246,11 +240,10 @@ c0 2op-arith   xch   ( this isn't quite right: it allows immediate which it shou
 c0 stackop     push
 c4 a-only      swap
 d0 stackop     pop
-: djnz   d0 ?reg +op, ;  ( structure words will compile and fixup rel8 offset)
 d4 a-only      da    ( deprecated! for BCD computations! pretty much useless!)
 
 ( Conditional jumps. Note that the sense of the condition tested is
-  *opposite* to that of the jump. Hence never compiles an unconditional
+  *opposite* to that of the jump. Hence "never" compiles an unconditional
   jump.)
 
 ( XXX what's a good name for this?)
@@ -264,7 +257,18 @@ d4 a-only      da    ( deprecated! for BCD computations! pretty much useless!)
 70 0op 0=     ( jnz)
 80 0op never  ( sjmp)
 
-( This instruction, like "div ab" and "mul ab" only has one valid form:
+( Testing for equality is the cjne instruction.)
+: =  ( imm a | dir a | imm regi)
+   b0  over a? if  nip  over dir? if  dir, ^  then  imm, ^  then
+   +op,  b, ( imm) ;
+
+( Decrement and check if zero. djnz instruction.)
+: decz?   ( reg | dir)
+   d0  over dir? if  dir, ^  then
+   over \a r0 \a a within ( reg) if  +op, ^  then
+   error" only r0 to r7 allowed" ;
+
+( The jmp instruction, like "div ab" and "mul ab", only has one valid form:
   jmp @a+dptr.)
 
 : jmp   \a @a+dptr xor if error" only @a+dptr allowed" then  73 op, ;
@@ -298,4 +302,23 @@ forth
 
 : s8?  ( n - flag)  8 sfits? ;  ( if signed value fits in 8 bits)
 
-( Still to come: the control structure definitions!)
+defer debug-image-c!  ' image-c! is debug-image-c!
+
+( Jump offsets are relative to the *following* instruction.)
+assembler
+( Resolve a relative jump from src to dest.)
+: resolve  ( src dest)
+   over -  dup s8? if  swap 1- debug-image-c! ^ then
+   error" relative jump out of range" ;
+
+( Control structure words.)
+: if      (      - src )  1 \m allot  \m here ;  ( leave address of byte *following* offset)
+: then    ( src  -     )  \m here   \a resolve ;
+: else    ( src1 - src2)  \a never  \a if  swap  \a then ;
+
+: begin   ( - dest)       \m here ;
+: until   ( dest)         \a if  swap  \a resolve ;
+: again   ( dest)         \a never  \a until ;
+: while   ( dest - src dest)   \a if  swap ;
+: repeat  ( src dest)     \a again  \a then ;
+forth
