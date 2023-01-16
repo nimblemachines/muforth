@@ -1,0 +1,165 @@
+( This file is part of muforth: https://muforth.nimblemachines.com/
+
+  Copyright 2002-2023 David Frech. (Read the LICENSE for details.)
+
+loading Chat (target)
+
+( Since we don't yet have a meta/target/cross compiler for the 8051, and
+  may never, let's make it easy to write "label" words in assembler.)
+
+meta
+: label   current preserve  meta  \m here constant  __asm ;
+assembler
+: ;c   __meta ;
+
+( Shorthand for jumps and calls.)
+: c   \a acall ;
+: j   \a ajmp ;
+forth
+
+__meta
+hex
+
+( Taking inspiration from the wildly successful HC08 serial chat protocol.
+
+  Responds to the following commands. NOTE: these are hex values!
+
+00 - 0f  Idle        - these command bytes are ignored
+1b - ff  Idle        - these command bytes are ignored
+
+10  version-addr     - get the address of the version commit
+11  set-addr         - set dptr to 16-bit address
+12  run
+13  get-status
+14  flash-setup      - set command and flash keys
+15  read-flash       - read one byte of flash, inc dptr
+16  read-ram         - read one byte of ram, inc dptr
+17  read-xram        - read one byte of xram, inc dptr
+18  write-flash      - as above, but write one byte
+19  write-ram
+1a  write-xram
+)
+
+( Like all chat code, we have do the following:
+
+  * set up the clock or clocks;
+  * turn off the watchdog
+  * set up the uart
+  * enter a chat loop, interpreting commands from the host
+)
+
+( Reset vector.)
+label reset-vector  2 allot
+
+( Compile the first 32 bits of the current muforth Git commit. When asked
+  for the version, return these four bytes, in big-endian order.)
+
+label version
+   muforth-commit drop 8 evaluate  >0123  c, c, c, c,
+
+( Host uses send and recv. Let's do the same here.)
+label recv-byte
+   begin  SCON0 .0 ( RI) bset? until
+   SCON0 .0 clr   SBUF0 r7 mov   ret  ;c
+
+( This assumes that reset code has set TI.)
+label send-byte
+   begin  SCON0 .1 ( TI) bset? until
+   SCON0 .1 clr   r7 SBUF0 mov   ret  ;c
+
+( Return word value in r6:r7)
+label recv-word   recv-byte c   07 r6 mov   recv-byte j  ;c
+
+( Byte is in A.)
+label inc-and-put
+   dptr inc   a r7 mov   send-byte j  ;c
+
+( RAM variables.)
+08 equ flash-command
+09 equ flash-key1
+0a equ flash-key2
+
+label do-command
+   r7 decz? if ( version-addr)  version # dptr mov   ret   then
+   r7 decz? if ( set-addr)  recv-word c   r6 DPH mov   r7 DPL mov   ret  then
+   r7 decz? if ( run)
+      recv-byte c  ( SP)   r7 SP mov
+      01 pop   PSW pop   ret  then
+
+   r7 decz? if ( get-status)
+      SP r7 mov   send-byte j  then
+
+   r7 decz? if ( flash-setup)
+      recv-byte c ( cmd)   r7 flash-command mov
+      recv-word c ( keys)  r6 flash-key1 mov   r7 flash-key2 mov   ret  then
+
+   r7 decz? if ( read-flash)
+      a clr   @a+dptr a movc   inc-and-put j  then
+
+   r7 decz? if ( read-ram)
+      DPL r0 mov   @r0 a mov   inc-and-put j  then
+
+   r7 decz? if ( read-xram)
+      @dptr a movx   inc-and-put j  then
+
+   r7 decz? if ( write-flash)
+      recv-byte c   r7 a mov   a cpl   0!= if  ( only prog if not ff)
+         flash-command PSCTL mov  ( set program and/or erase bits)
+         flash-key1 FLKEY mov   flash-key2 FLKEY mov  ( unlock flash)
+         r7 a mov   a @dptr movx
+         0 # PSCTL mov  ( clear program and erase bits)
+      then  inc-and-put j  then  ( send byte back to say we are done)
+      
+   r7 decz? if ( write-ram)
+      recv-byte c   DPL r0 mov   07 @r0 mov   dptr inc   ret  then
+
+   r7 decz? if ( write-xram)
+      recv-byte c   r7 a mov   a @dptr mov   dptr inc  then  ( fall thru)
+
+   ( unknown command)  ret  ;c
+
+label process
+   recv-byte c ( cmd)
+   r7 a mov   -0f # a add   a r7 mov
+   do-command j  ;c
+
+( Push registers and start conversing with host.)
+label chat-entry
+   ( call has already pushed PC)
+   PSW push   01 push ( dsp)
+   -- We no longer disable interrupts by default when entering chat.
+   begin  process c  again  ;c
+
+( This creates a slot for the PC which can be replaced with the address of
+  native code to execute. That code can end with a return instruction, which
+  will return to the call to interact below, and then re-enter chat with
+  the same stack layout: a PC slot below a "protective" return address. It's
+  easier to visualize than to explain. ;-)
+
+label interact
+   begin  chat-entry c  again  ;c
+
+label do-reset
+   -- set SP to end of RAM - #64
+   #ram  #64 - # SP mov
+
+   -- disable watchdog timer
+   0de # WDTCN mov
+   0ad # WDTCN mov
+
+   ( Execute the device-specific initialization code, which is copied
+     *inline* here. This will set up ports, clocks, UART, etc, and flash
+     leds, if any.)
+
+( XXX eventually, protect this with an .ifdef when we have multiple chips
+  to support.)
+ld target/8051/silabs/efm8/bb1/chat-support.mu4
+
+   ( This is here so that native code can simply return and it will
+     re-enter the chat code with a proper stack.)
+
+   begin  interact c  again  ;c
+
+here
+reset-vector goto  __asm  do-reset ajmp  ;c
+goto
