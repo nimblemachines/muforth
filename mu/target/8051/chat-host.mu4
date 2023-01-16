@@ -1,0 +1,105 @@
+( This file is part of muforth: https://muforth.nimblemachines.com/
+
+  Copyright 2002-2023 David Frech. (Read the LICENSE for details.)
+
+loading 8051 chat (host)
+
+hex
+
+( Taking inspiration from the wildly successful HC08 serial chat protocol.
+
+  Responds to the following commands. NOTE: these are hex values!
+
+00 - 0f  Idle        - these command bytes are ignored
+1b - ff  Idle        - these command bytes are ignored
+
+10  version-addr     - get the address of the version commit
+11  set-addr         - set dptr to 16-bit address
+12  run
+13  get-status
+14  flash-setup      - set command and flash keys
+15  read-flash       - read one byte of flash, inc dptr
+16  read-ram         - read one byte of ram, inc dptr
+17  read-xram        - read one byte of xram, inc dptr
+18  write-flash      - as above, but write one byte
+19  write-ram
+1a  write-xram
+)
+
+: >b   send ;
+: b>   recv ;
+
+: >w    >lohi  >b >b ;
+: >cmd  ?spkt  >b ;
+
+( "cx.<something>" words are chat *transport* code.
+  "c.<something>" words are the high-level chat interface code.)
+
+-- ------------------------------------------------------------------------
+-- Chat transport interface
+-- ------------------------------------------------------------------------
+
+: cx.idle                    0 >cmd ;
+: cx.version-addr           10 >cmd ;  ( then read 4 bytes of flash)
+: cx.set-addr     ( a)      11 >cmd  >w ;
+
+: cx.read-flash   ( - b)    15 >cmd      b> ;
+: cx.read-ram     ( - b)    16 >cmd      b> ;
+: cx.read-xram    ( - b)    17 >cmd      b> ;
+
+: cx.write-flash  ( b)      18 >cmd  >b ;
+: cx.write-ram    ( b)      19 >cmd  >b ;
+: cx.write-xram   ( b)      1a >cmd  >b ;
+
+-- ------------------------------------------------------------------------
+-- Helper code
+-- ------------------------------------------------------------------------
+
+( Send two no-ops, let them transmit, *then* throw away any input bytes.)
+: c.resync  cx.idle  cx.idle  drain  flush ;
+
+: c.get-version  ( - n)
+   cx.version-addr
+   cx.read-flash  cx.read-flash  cx.read-flash  cx.read-flash
+   3210> ;
+
+: c.setup-chunk  ( buf a u - #bytes)
+   swap cx.set-addr  swap m ! ;
+
+: 4#   # # # # ;
+
+-- ------------------------------------------------------------------------
+-- Chat interface
+-- ------------------------------------------------------------------------
+
+: c.hello  ( - #chunk)
+   #115200 bps  c.resync
+   cr ." Chat firmware version "  c.get-version
+   radix preserve  hex  sep preserve  -sep   <# 4# 4# #> type
+   #128 ;
+
+( XXX This needs to look at the current region and *choose* whether to read
+  flash, ram, or xram. Right now we are going to default to reading flash,
+  just to get everything working.
+
+  OR, the interact code can define separate read/write words for all the
+  memory spaces, and we can simply call them here.)
+
+: c.read    ( buf a u)
+   -- cr  ." c.read "  2 nth u.  over u.  dup u.
+   c.setup-chunk  for  cx.read-flash  m&  next ;
+
+( XXX for now, just have these complain. Once chat is working, flesh this
+  out.)
+
+: c.write                  chat-fail ;
+: c.get-status  ( - sp)    chat-fail ;
+: c.run         ( pc sp)   chat-fail ;
+: c.flash-begin            chat-fail ;
+: c.flash-end              chat-fail ;
+: c.erase     ( a)         chat-fail ;
+: c.program   ( buf a u)   chat-fail ;
+
+: chat   chat-via
+   c.hello  c.get-status  c.run  c.read  c.write
+   c.flash-begin  c.flash-end  c.erase  c.program ;
