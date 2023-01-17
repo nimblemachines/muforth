@@ -7,14 +7,18 @@ loading 8051 chat (target)
 ( Since we don't yet have a meta/target/cross compiler for the 8051, and
   may never, let's make it easy to write "label" words in assembler.)
 
+hex
+
 meta
 : label   current preserve  meta  \m here constant  __asm ;
 assembler
 : ;c   __meta ;
+: bank3  ( reg - dir)
+   dup \a r0 \a a within if  7 and  18 +  ^  then
+   error" only r0 to r7 allowed" ;
 forth
 
 __meta
-hex
 
 ( Taking inspiration from the wildly successful HC08 serial chat protocol.
 
@@ -66,23 +70,22 @@ label send-byte
    SCON0 .1 clr   r7 SBUF0 mov   ret  ;c
 
 ( Return word value in r6:r7)
-label recv-word   recv-byte acall   07 r6 mov   recv-byte ajmp  ;c
+label recv-word   recv-byte acall   r7 bank3 r6 mov   recv-byte ajmp  ;c
 
 ( Byte is in A.)
 label inc-and-put
    dptr inc   a r7 mov   send-byte ajmp  ;c
 
-( RAM variables.)
-08 equ flash-command
-09 equ flash-key1
-0a equ flash-key2
+( RAM variables. Why not put these directly into regs?)   comment %%
+18 3 + equ flash-command  ( r3, bank 3)
+18 4 + equ flash-key1     ( r4, bank 3)
+18 5 + equ flash-key2     ( r5, bank 3)  %%
 
 label do-command
    r7 decz? if ( version-addr)  version # dptr mov   ret   then
    r7 decz? if ( set-addr)  recv-word acall   r6 DPH mov   r7 DPL mov   ret  then
    r7 decz? if ( run)
-      recv-byte acall  ( SP)   r7 SP mov
-      01 pop   PSW pop   ret  then
+      recv-byte acall  ( SP)   r7 SP mov   PSW pop   ret  then
 
    r7 decz? if ( get-status)
       SP r7 mov   send-byte ajmp  then
@@ -98,14 +101,14 @@ label do-command
 
    r7 decz? if ( write-flash)
       recv-byte acall   r7 a mov   a cpl   0!= if  ( only prog if not ff)
-         flash-command PSCTL mov  ( set program and/or erase bits)
-         flash-key1 FLKEY mov   flash-key2 FLKEY mov  ( unlock flash)
+         r3 ( flash-command) PSCTL mov  ( set program and/or erase bits)
+         r4 ( key1) FLKEY mov   r5 ( key2) FLKEY mov  ( unlock flash)
          r7 a mov   a @dptr movx
          0 # PSCTL mov  ( clear program and erase bits)
       then  inc-and-put ajmp  then  ( send byte back to say we are done)
 
    r7 decz? if ( write-ram)
-      recv-byte acall   DPL r0 mov   07 @r0 mov   dptr inc   ret  then
+      recv-byte acall   DPL r0 mov   r7 bank3 @r0 mov   dptr inc   ret  then
 
    r7 decz? if ( write-xram)
       recv-byte acall   r7 a mov   a @dptr movx   dptr inc  then  ( fall thru)
@@ -120,7 +123,7 @@ label process
 ( Push registers and start conversing with host.)
 label chat-entry
    ( call has already pushed PC)
-   PSW push   01 push ( dsp)
+   PSW push   18 # PSW orl  ( switch to reg bank 3)
    -- We no longer disable interrupts by default when entering chat.
    begin  process acall  again  ;c
 
