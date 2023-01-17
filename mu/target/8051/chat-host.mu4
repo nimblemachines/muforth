@@ -10,22 +10,22 @@ hex
 
   Responds to the following commands. NOTE: these are hex values!
 
-00 - 0f  Idle        - these command bytes are ignored
-1b - ff  Idle        - these command bytes are ignored
+00 - 0f  idle        - these command bytes are ignored
+1a - ff  idle        - these command bytes are ignored
 
 10  version-addr     - get the address of the version commit
 11  set-addr         - set dptr to 16-bit address
-12  run
-13  get-status
+12  run              - set the machine SP, pop R1, PSW, and PC
+13  get-status       - get the machine SP
 
-15  read-flash       - read one byte of flash, inc dptr
-16  read-ram         - read one byte of ram, inc dptr
-17  read-xram        - read one byte of xram, inc dptr
+14  read-flash       - read one byte of flash, inc dptr
+15  read-ram         - read one byte of ram, inc dptr
+16  read-xram        - read one byte of xram, inc dptr
 
-18  write-flash      - erase a page or program one byte,
+17  write-flash      - erase a page or program one byte,
                      - inc dptr, return status byte
-19  write-ram        - write one byte to ram, inc dptr
-1a  write-xram       - write one byte to xram, inc dptr
+18  write-ram        - write one byte to ram, inc dptr
+19  write-xram       - write one byte to xram, inc dptr
 )
 
 : >b   send ;
@@ -70,9 +70,8 @@ variable cx-space  ( 0 = flash, 1 = ram, 2 = xram)
 : cx.run          ( rp)     12 >cmd  >b ;
 : cx.get-status   ( - rp)   13 >cmd      b> ;
 
-( XXX change this when we re-flash the chat code, removing command 14.)
-: cx.read   ( - b)          15  cx-space @ +  >cmd  b> ;
-: cx.write  ( b)            18  cx-space @ +  >cmd  >b  ?flash-status ;
+: cx.read   ( - b)          14  cx-space @ +  >cmd  b> ;
+: cx.write  ( b)            17  cx-space @ +  >cmd  >b  ?flash-status ;
 
 
 -- ------------------------------------------------------------------------
@@ -119,20 +118,19 @@ variable cx-space  ( 0 = flash, 1 = ram, 2 = xram)
   the stack is at a lower address than the top. Also, the machine stack
   pointer - which we are here calling RP - points *at* the last byte pushed.
 
-  Stack bottom is set by reset code to 0bf.)
+  So that we don't go crazy, let's pretend that RP is post-increment rather
+  than pre-increment, and adjust it when reading or writing the actual
+  register.)
 
-( We are not quite there yet. ;-)
-: c.run   ( pc rp)   chat-fail ;
+: c.run   ( sp psw pc rp)  dup push  4 - set-ram-addr
+   >hilo cx.write cx.write ( pc)  cx.write ( psw)  cx.write ( sp)
+   pop 1- ( make pre-increment) cx.run ;
 
-( XXX As an experiment, just copy the stack to pad so we can take a look.
-  We should ideally store it either in the ram image or in a special
-  chat-frame buffer like the S08 code.
-
-  Subtract pad from m to get byte count.)
-
-: c.get-status  ( - rp)
-   cx.get-status ( rp)  dup cx.set-addr  ( set addr to RP)  ram-space
-   pad m !  dup 0c0 - ( #bytes)  for  cx.read m&  next ;
+: c.get-status  ( - rp pc psw sp)
+   cx.get-status ( rp)  1+ ( make post-increment)  2 -  ( skip last ret addr)
+   dup 4 - ( back up over: r1, psw, pc)
+   set-ram-addr  cx.read cx.read lohi> ( pc - oddly little-endian)
+   cx.read ( psw)  cx.read ( sp) ;
 
 : c.read    ( buf a u)
    -- cr  ." c.read "  2 nth u.  over u.  dup u.
@@ -143,8 +141,8 @@ variable cx-space  ( 0 = flash, 1 = ram, 2 = xram)
 
 ( Write magic numbers into flash key variables.)
 : c.flash-begin
-   \eq flash-key1 set-ram-addr
-   0a5 cx.write  0f1 cx.write ;
+   \eq flash-command set-ram-addr
+   0 cx.write  0a5 cx.write  0f1 cx.write ;
 
 : c.flash-end
    \eq flash-command set-ram-addr

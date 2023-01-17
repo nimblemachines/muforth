@@ -15,8 +15,8 @@ variable chat-vector
 
 0
 chat-cmd t.hello       ( - chunk-size)
-chat-cmd t.get-status  ( - sp)
-chat-cmd t.run         ( pc sp)
+chat-cmd t.get-status  ( - rp pc psw sp)
+chat-cmd t.run         ( sp psw pc rp)
 chat-cmd t.read        ( buf a u)
 chat-cmd t.write       ( buf a u)
 chat-cmd t.flash-begin
@@ -45,12 +45,21 @@ variable /chunk  ( chunk size, as reported by debug interface)
                                     pop  =if  ( rem) copy-chunk  drop ^  then  2drop ;
 
 variable ram-copied  ( pointer to first un-copied byte)
+variable xram-copied  ( pointer to first un-copied byte)
 
-: copy-ram
-   h preserve  ram
-   ram-copied @  dup 0= if  drop  region drop  then
+( Copy ram or xram. We pass the address of correct copied count variable,
+  and set the region before calling the copy.)
+
+: copy-(x)ram  ( 'copied)
+   dup @  dup 0= if  drop  region drop ( origin)  then
    \m here  over -  copy-region
-   \m here  ram-copied ! ;
+   \m here  swap ! ;
+
+( Clunky but straighforward.)
+: copy-both-rams
+   h preserve
+    ram  ram-copied copy-(x)ram
+   xram xram-copied copy-(x)ram ;
 
 ( Define local copies of target registers. Before executing code on the
   target, we "push" these values to the target, and after executing code,
@@ -58,22 +67,41 @@ variable ram-copied  ( pointer to first un-copied byte)
   the registers with .regs .)
 
 ( Name these so they don't conflict with assembler names.)
-variable tsp    ( target SP)
-variable trp    ( target RP)
-variable tip    ( target IP)
-variable tix    ( target loop index counter)
+variable tsp    ( target SP, aka R1)
+variable trp    ( target RP, the machine stack pointer)
+variable tpc    ( target PC)
+variable tpsw   ( target PSW)
 
-: get-regs   t.get-status  tsp ! ;
+: get-regs         t.get-status   tsp !  tpsw !  tpc !      trp ! ;
+: set-regs  ( pc - sp psw pc rp)  tsp @  tpsw @  rot ( pc)  trp @ ;
 
-: 2sp   space space ;
-: .tr   ( variable)  ( "target register")  @ .hcell 2sp ;
+defer .regs
 
-defer .regs    now nope is .regs
+( These are handy.)
+: 4#  # # # # ;
+: .bits8  binary  <#  4#  4#  #> type ;
+: .h16       hex  <#  4#  #> type ;
+
+: .w  ( a)  space space  @ .h16 ;
+
+: .asm-regs
+   radix preserve
+   cr    ." CA-RRV-P    RP    SP    PC"
+   (        10000100  00c7  00b6  009d )
+   cr  tpsw @ .bits8
+                    trp .w
+                          tsp .w
+                                tpc .w ;
+' .asm-regs is .regs
+
 defer verify-quietly
+
+( XXX Shut off the "quiet" verify until we figure out how to fix the verify code.)
+-d noverify
 
 : hi
    chatting on  >chat  t.hello  /chunk !  get-regs  .regs
-   ram-copied off  copy-ram
+   ram-copied off  xram-copied off  copy-both-rams
 .ifndef noverify
    h preserve  flash region  nip if  ( non-empty)  verify-quietly if  ( differs)
       cr ." WARNING: Target's flash image differs from host's. Run flash-image?"
@@ -84,14 +112,12 @@ defer verify-quietly
 : chat-via   pop  chat-vector !  hi ;
 
 
-.ifdef notyet
-
 ( XXX I *really* need a better name for this!)
-: kick     ( pc)  copy-ram  tsp @  t.run ;   ( don't wait for target)
+: kick     ( pc)  copy-both-rams  set-regs  t.run ;   ( don't wait for target)
 : runwait  ( pc)  kick  get-regs ;   ( wait for target)
 
-( For running random bits of code.)
-: call   ( pc)  runwait  .regs ;
+( For running random bits of code. rx suggests "remote execute".)
+: rx   ( pc)  runwait  .regs ;
 
 ( Useful when testing new reset startup code, such as a RAM-resident
   version of the serial chat code.)
@@ -99,6 +125,8 @@ defer verify-quietly
 variable 'reset
 : reset    'reset @  kick ;
 
+
+.ifdef notyet
 
 ( Because the target "caches" the top of the stack in a register, and
   because the trampoline code loads this register before execution, and
@@ -232,9 +260,6 @@ host-seekeys 8051-seekeys  128 cells cmove
       -valid
    then
    drop ;
-
-( XXX The second value here is an *address mask*. It obviously is going to
-  vary by target, so we have to figure out how to make these more generic.)
 
 8051-seekeys  -1  du-mode dumping     >target  skip+  skip-  1dump  ( a - a')
 8051-seekeys  -1  du-mode xrefing     >target  skip+  skip-  1xref  ( a - a')
