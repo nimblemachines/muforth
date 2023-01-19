@@ -50,20 +50,13 @@ hex
    /chunk @  /mod  ( r q)  swap push  for  /chunk @  flash-chunk  next
                                     pop  =if  ( rem) flash-chunk  drop ^  then  2drop ;
 
-( Check to see if we're going to clobber the bootloader and complain if
-  we're not executing from RAM.)
-
-( XXX Do nothing right now. We only need to do this when trying to program
-  the flash from chat code - which doesn't exist yet. ;-)
-
-: ?clobbering-loader  ( a u - a u)  ;
-
-: ?align-region  ( a u - a u)  dup  [ \m cell  1- #] and  0= if ^ then
+: ?align-region  ( a u - a u)
+   dup  flash-alignment 1-  and  0= if ^ then
    cr ." WARNING: The flash region does not end on a target cell boundary." ;
 
 : flash-image
-   h preserve  flash region ( a u)  ?align-region  ?clobbering-loader
-   t.flash-begin  flash-region  t.flash-end ;
+   h preserve  flash region ( a u)  ?align-region  ?flash-check
+   t.flash-begin  2dup flash-region  flash-special  t.flash-end ;
 
 
 ( Verifying that host and target images are the same.)
@@ -75,50 +68,58 @@ hex
   Be careful about setting m. Some chunked read implementations use it, so
   set it *after* doing the read.)
 
-: setup-comparison  ( 'target len - 'target len)
-   2dup pad -rot t.read  ( 'target len)  pad m ! ;
+: setup-comparison  ( a u)   pad -rot t.read  pad m ! ;
 
 variable noisy-verify?  ( Whether to print differences.)
 
-( Little endian.)
-: mcell*   m* m* m* m*  0123> ;
+( Verify a single "item" - byte, halfword, word - and return the bitwise or
+  of the byte-by-byte differences. We use flash-alignment as the number of
+  bytes to compare.)
 
-( Accumulate - by logically OR-ing - any differences.)
-: verify-word    ( diff a - diff' a)
-   dup image-@ mcell* xor  ( diff a xor)
-   =if  noisy-verify? @ if  over u. ( print address that differs)  then  then
-   rot or  swap ;
+: verify-item  ( a - diff)
+   dup skip-verify? if  flash-alignment m +!  drop 0 ^  then
+   image+  flash-alignment  over + swap  0 -rot  ( 0 end start)
+   do  i c@  m* xor  or  loop ;
 
-: verify-chunk  ( diff 'target #chunk - diff' 'target+#chunk)
+: ?verify-show  ( a diff)
+   if  noisy-verify? @ if  dup u. ( print address that differs)  then  then
+   drop ;
+
+: verify-chunk  ( diff a u - diff' a+u)
    -- cr ." verify "  over u.  dup u.
-   2dup + push
-   ( diff 'target len)  setup-comparison
-   \m aligned  \m cell/ for  verify-word  \m cell+  next  drop
+   2dup + push  2dup setup-comparison  over + swap
+   do  i verify-item  ( diff diff2)  i over ?verify-show
+       or ( diff')  flash-alignment +loop
    pop ;
 
 ( Verify using the same chunk size that we used for flashing; the variable
   /chunk - which is set by the interact code based on a value received from
   the debug interface - tells us how big each chunk should be.)
 
-: verify-region  ( 'target len - diff')
+: verify-region  ( a u - diff)
    0 -rot  ( diff)
    /chunk @  /mod  ( r q)  swap push  for  /chunk @  verify-chunk  next
                                     pop  =if  ( rem) verify-chunk  drop ^  then  2drop ;
 
-: ?empty-region  ( a u - a u)  =if ^ then
-   cr ." WARNING: The flash region is empty. verify will always report no change." ;
+: ?empty-region  ( a u - a u)  =if ^ then  ( exit if non-empty)
+   noisy-verify? @ if
+      cr ." WARNING: The flash region is empty. verify will always report no change."
+   then ;
+
+: do-verify  ( noisy? - diff)
+   noisy-verify? !
+   h preserve  flash region ( a u)  ?empty-region  ?align-region  ?verify-check
+   2dup verify-region -rot  verify-special  or ;
 
 : verify
    radix preserve hex  ( print mis-matched addresses in hex)
-   h preserve  flash region ( a len)  ?empty-region  ?align-region
-   noisy-verify? on  verify-region  drop ;
+   -1 do-verify drop ;
 
-( Called when we connect to target to make sure host's and target's flash
-  regions are the same.)
+( Called when we connect to the target to make sure that the host's and
+  target's flash regions are the same.)
 
 -: ( verify-quietly)  ( - 0 if same, non-zero if different)
-   h preserve  flash region ( a len)  ?align-region
-   noisy-verify? off  verify-region ;  is verify-quietly
+   0 do-verify ;  is verify-quietly
 
 
 ( Read an image from the target into the host image.)
