@@ -66,14 +66,29 @@ variable xram-copied  ( pointer to first un-copied byte)
   we "pull" the new values. We used the local, cached values when printing
   the registers with .regs .)
 
+( First, an array of the byte sized registers, r0 to r7. These can be read
+  and written using the regular host c@ and c!.)
+
+8 buffer chat-regs
+: r-reg  ( n)   constant  does> @  chat-regs + ;
+: r-regs  ( start count)   for  dup r-reg 1+  next  drop ;
+meta
+0 8 r-regs r0 r1 r2 r3 r4 r5 r6 r7
+forth
+
 ( Name these so they don't conflict with assembler names.)
 variable tsp    ( target SP, aka R1)
 variable trp    ( target RP, the machine stack pointer)
 variable tpc    ( target PC)
 variable tpsw   ( target PSW)
 
-: get-regs         t.get-status   tpsw !  tpc !      trp ! ;
-: set-regs  ( pc - pc rp)                            trp @ ;
+: get-regs
+   t.get-status   tpsw !  tpc !  trp !
+   h preserve  ram  chat-regs 0 8 t.read ;
+
+: set-regs  ( pc - pc rp)
+   h preserve  ram  chat-regs 0 8 t.write
+   trp @ ;
 
 defer .regs
 
@@ -81,17 +96,17 @@ defer .regs
 : 4#  # # # # ;
 : .bits8  binary  <#  4#  4#  #> type ;
 : .h16       hex  <#  4#  #> type ;
+: .h8        hex  <#  # #  #> type ;
 
-: .w  ( a)  space space  @ .h16 ;
+: .w   ( a)  @  space .h16 ;
+: .rregs   8 0 do  i 3 and 0= if space then
+                   i chat-regs + c@  space .h8  loop ;
 
 : .asm-regs
    radix preserve
-   cr    ." CA-RRV-P    RP    SP    PC"
-   (        10000100  00c7  00b6  009d )
-   cr  tpsw @ .bits8
-                    trp .w
-                          tsp .w
-                                tpc .w ;
+   cr    ." CA-RRV-P  R0 R1 R2 R3  R4 R5 R6 R7    RP   PC"
+   (        10000100  00 01 02 03  04 05 06 07  00b6 009d )
+   cr  tpsw @ .bits8  .rregs  space           tsp .w  tpc .w ;
 ' .asm-regs is .regs
 
 defer verify-quietly
