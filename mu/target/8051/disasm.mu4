@@ -1,0 +1,307 @@
+( This file is part of muforth: https://muforth.nimblemachines.com/
+
+  Copyright 2002-2023 David Frech. (Read the LICENSE for details.)
+
+loading 8051 disassembler
+
+( A question: Why is it so hard to write a disassembler for a simple 8-bit
+  processor?)
+
+hex
+
+( Since we are dealing with 8-bit opcodes, it seems silly to waste 2 cells
+  storing the mask and match, so let's write them as mask_match.)
+
+( Matching primitives.)
+: match?   ( op mask+match - op f)  >hilo push  over and 0ff and  pop = ;
+: exact?   ( op      match - op f)              over                  = ;
+
+.assembler. chain .disassembler.
+: inst,   .disassembler. \chain ;
+: inst@   addr@+ swap ;
+: .inst-name   >name type ;  ( print instruction name from cfa)
+: .inst   space .inst-name ;
+
+( fetch next instruction OPCODE byte and print it as hex)
+: o*  ( - op)  c*  dup .h8_ ;
+
+( 1 byte instruction; print padding+inst)
+: .inst1  ( op inst - op)
+            6 spaces .inst ;
+
+( 2 byte instruction; fetch 2nd byte; print padding+inst)
+: .inst2  ( op inst - op op2)
+   o* swap  3 spaces .inst ;
+
+( 3 byte instruction; fetch 2nd & 3rd bytes; print inst)
+: .inst3  ( op inst - op op2 op3)
+   o* o* rot         .inst ;
+
+
+( Compiling the instruction table.
+
+  If a match is found, the token [instruction name] following the match is
+  printed; depending on the match type, the cfa following the token may be
+  executed, and then the word that called match is exited. This shortcuts any
+  further tests.
+
+  If no match was found, the token and cfa are skipped, and the matching
+  continues apace.
+
+  Different types of matching operations:
+
+  exact    exactly matches the op byte; prints op name only
+  exacto   exactly matches the op byte; prints op name, then executes
+           following cfa to print operands
+  match    does a masked match; executes following cfa to print operands
+)
+
+( It seems like we should be able to factor out common code here; factoring is
+  made difficult because we are manipulating the return stack! I'm not
+  going to worry about a few cells of repeated common code. ;-)
+
+: (exact)   ( op      match - op)
+   exact? if  pop inst@ .inst1    drop          ^  then  pop addr+       push ;
+
+: (exacto)  ( op      match - op)
+   exact? if  pop inst@ .inst1    addr@ execute ^  then  pop addr+ addr+ push ;
+
+: (match)   ( op mask+match - op)
+   match? if  pop addr@+ ( inst)  addr@ execute ^  then  pop addr+ addr+ push ;
+
+compiler
+: exact    compile (exact)   inst, ;
+: exacto   compile (exacto)  inst, ;
+: match    compile (match)   inst, ;
+forth
+
+
+: -trailing  ( a u - a u')  ( strip trailing blanks)
+   over + ( end)  begin  1-  dup c@ bl -  until  over -  1+ ;
+
+: .a     ."  a" ;
+: .ab    ."  ab" ;
+: .c     ."  c" ;
+: .dptr  ."  dptr" ;
+: .@dptr  ."  @dptr" ;
+: .@a+dptr   ."  @a+dptr" ;
+: .@a+pc     ."  @a+pc" ;
+
+: .h    radix preserve hex  (u.) type ;
+: ._h   space .h ;
+: ._h8  space .h8 ;
+
+: .imm  ."  #" .h ;
+
+: row  ( op - row)  0f and ;
+
+( x6 is @r0, x7 is @r1, x8 - xf is r0 - r7)
+: .regi  ( op - op)
+   z" @r0@r1r0 r1 r2 r3 r4 r5 r6 r7 "
+   over row  6 - 3 * +  3 -trailing  space type ;
+
+( x4 is @dptr, x6 is @r0, x7 is @r1)
+: .ireg3  ( op - op)
+   dup row  4 = if .@dptr ^ then  .regi ;
+
+( XXX need to lookup SFRs and print name if defined)
+: .dir   ( op off - op)  ._h8 ;
+
+: .dptr-imm16  ( op inst - op)
+   .inst3  hilo> .dptr .imm ;
+
+( @r0 or @r1)
+: .indirect2  ( op inst - op)  .inst1 .a .regi ;
+
+( @dptr, @r0, or @r1)
+: .indirect3  ( op inst - op)
+   .inst1  4 +  dup 10 and if ( asrc) .ireg3 .a ^  then
+   ( adest) .a .ireg3 ;
+
+: .a-regi  ( op - op)
+   dup row  4 = if  .a ^  then  .regi ;
+
+: .a-dir-regi  ( op inst - op)
+   over row  5 = if  .inst2 ( dir)  .dir ^  then  .inst1 .a-regi ;
+
+: .2op-arith  ( op inst - op)
+   over row  dup 4 = if  drop  .inst2 ( imm)  .a .imm  ^  then
+                 5 = if        .inst2 ( dir)  .a .dir  ^  then
+   .inst1 .a .regi ;
+
+: .dir-imm  ( op inst - op)
+   .inst3 ( dir imm)  swap .dir .imm ;
+
+: .2op-logical  ( op inst - op)
+   over row  dup 2 = if  drop  .inst2 ( dir)  .dir .a  ^  then
+                 3 = if        .dir-imm  ^  then
+   2op-arith ;
+
+: .bitnum   ( n)  ." ." >digit emit ;
+
+: .bit  ( bit#)
+   dup 80 u< if  dup 7 and swap  3 >> 20 +  .h8 .bitnum ^  then
+   dup 7 and swap  -8 and  .dir  .bitnum ;
+
+: .csrc-bit      ( op inst - op)   .inst2 ( bit) .bit      .c   ;
+: .bitop         ( op inst - op)   .inst2 ( bit)           .bit ;
+: .cdest-bit     ( op inst - op)   .inst2 ( bit) .c        .bit ;
+: .cdest-notbit  ( op inst - op)   .inst2 ( bit) .c  ." /" .bit ;
+
+
+: sext8  ( b - offset)  dup 80 and if  100 -  then ;
+: .rel8  ( offset)  sext8  p @ +  ._h ;
+
+: .rel-dest  ( op inst - op)  .inst2 ( rel)                .rel8 ;
+: .bit-rel8  ( op inst - op)  .inst3 ( bit rel)  swap .bit .rel8 ;
+
+: .abs-dest  ( op inst - op)
+   .inst2 ( lo)  over 0e0 and  3 <<  swap +  p @ -800 and  +  ._h ;
+
+: .long-dest  ( op - op)
+   .inst3 ( hi lo)  hilo> ._h ;
+
+: .1op-dir  ( op inst - op)  .inst2 ( dir) .dir ;
+
+: .mov-imm  ( op inst - op)
+   over row  5 = if  .dir-imm ^  then
+   .inst2 ( imm)  swap .a-regi swap  .imm ;
+
+: .mov-dirdest  ( op inst - op)
+   over row  5 = if  .inst3 ( src dest) .dir .dir ^  then
+   .inst2 .dir .regi ;
+
+: .mov-dirsrc  ( op inst - op)
+   .inst2 ( dir)  swap .regi swap  .dir ;
+
+: .mov-adest  ( op inst - op)
+   over row  5 = if  .inst2 ( dir) .a .dir ^  then
+   .inst1 .a .regi ;
+
+: .mov-asrc  ( op inst - op)
+   over row  5 = if  .inst2 ( dir) .dir .a ^  then
+   .inst1 .regi .a ;
+
+: .a-imm-rel8     ( op inst - op)  .inst3 ( imm rel)  swap  .a .imm .rel8 ;
+: .a-dir-rel8     ( op inst - op)  .inst3 ( dir rel)  swap  .a .dir .rel8 ;
+: .regi-imm-rel8  ( op inst - op)  .inst3 ( imm rel)  swap  rot .regi -rot  .imm .rel8 ;
+
+: .dir-rel8    ( op inst - op)  .inst3 ( dir rel)  swap .dir .rel8 ;
+: .regi-rel8   ( op inst - op)  .inst2 ( rel)  swap .regi swap  .rel8 ;
+
+.disassembler. definitions
+: *undefined* ;
+: sjmp ;
+: jbc ;
+: jb ;
+: jnb ;
+: jc ;
+: jnc ;
+: jz ;
+: jnz ;
+: djnz ;
+: cjne ;
+forth
+
+: shred  ( op)
+   00 exact nop
+
+   0ff_10 match jbc .bit-rel8
+   0ff_20 match jb .bit-rel8
+   0ff_30 match jnb .bit-rel8
+
+   0ff_40 match jc .rel-dest
+   0ff_50 match jnc .rel-dest
+   0ff_60 match jz .rel-dest
+   0ff_70 match jnz .rel-dest
+
+   0ff_80 match sjmp .rel-dest  ( can't use exact because instruction > 1 byte long)
+
+   0ff_90 match mov .dptr-imm16  ( ditto)
+   0ff_a0 match orl .cdest-notbit
+   0ff_b0 match anl .cdest-notbit
+   0ff_c0 match push .1op-dir
+   0ff_d0 match pop .1op-dir
+
+   1f_01 match ajmp  .abs-dest
+   1f_11 match acall .abs-dest
+
+   0ff_02 match ljmp .long-dest  ( ditto)
+   0ff_12 match lcall .long-dest  ( ditto)
+
+   22 exact ret
+   32 exact reti
+
+   0ff_72 match orl .cdest-bit
+   0ff_82 match anl .cdest-bit
+   0ff_92 match mov .csrc-bit
+   0ff_a2 match mov .cdest-bit
+
+   0ff_b2 match cpl .bitop
+   0ff_c2 match clr .bitop
+   0ff_d2 match setb .bitop
+
+   03 exacto rr .a
+   13 exacto rrc .a
+   23 exacto rl .a
+   33 exacto rlc .a
+
+   73 exacto jmp .@a+dptr
+   83 exacto movc .@a+pc
+   93 exacto movc .@a+dptr
+
+   0a3 exacto inc .dptr
+   0b3 exacto cpl .c
+   0c3 exacto clr .c
+   0d3 exacto setb .c
+
+    84 exacto div .ab
+   0a4 exacto mul .ab
+   0c4 exacto swap .a
+   0d4 exacto da .a
+   0e4 exacto clr .a
+   0f4 exacto cpl .a
+
+   0a5 exact *undefined*
+
+   0ec_e0 match movx .indirect3
+
+   0f0_00 match inc .a-dir-regi
+   0f0_10 match dec .a-dir-regi
+
+   0f0_20 match add .2op-arith
+   0f0_30 match addc .2op-arith
+
+   0f0_40 match orl .2op-logical  ( includes x2 and x3)
+   0f0_50 match anl .2op-logical
+   0f0_60 match xrl .2op-logical
+
+   0f0_90 match subb .2op-arith
+   0f0_c0 match xch .2op-arith  ( except 0c4 is swap a)
+   0f0_e0 match mov .2op-arith  ( except 0e4 is clr a)
+
+   0f0_70 match mov .mov-imm
+   0f0_80 match mov .mov-dirdest
+   0f0_a0 match mov .mov-dirsrc
+   0f0_e0 match mov .mov-adest
+   0f0_f0 match mov .mov-asrc
+
+   0ff_b4 match cjne .a-imm-rel8
+   0ff_b5 match cjne .a-dir-rel8
+   0f0_b0 match cjne .regi-imm-rel8
+
+   0fe_d6 match xchd .indirect2
+
+   0ff_d5 match djnz .dir-rel8
+   0f8_d8 match djnz .regi-rel8
+
+  ." ???" ;  ( this should never happen!)
+
+( Support for interactive disassembly.)
+: dis+  ( a - a' 0)  drop  p @  0 advance  0 ;
+: dis-  ( a - a' 0)            -8 advance  0 ;  ( arbitrary backward offset)
+
+( The workhorse.)
+: 1dis  ( a)
+   dup .addr  .nesting space
+   p !  o* ( op)  shred drop  space ;
