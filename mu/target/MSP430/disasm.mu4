@@ -54,20 +54,6 @@ defer .regname  ( so others can override with their particular convention)
   symbolic way, both here in the disassembler and in the decompiler. Let's
   define a few utility words to make that easier.)
 
-: value-matches?  ( value 'link - match?)  link> >body @ = ;
-
-( NOTE: This code will search *through* muchain links!)
--: ( value 'link - 'link -1 | value 0)
-   dup         hidden? if  drop  0  ^  then  ( ignore hidden and muchain)
-   2dup value-matches? if  nip  -1  ^  then
-                           drop  0 ;
-
-( Given a constant value, find the host dictionary entry, if one exists,
-  that contains a constant that matches it.)
-
-: find-constant  ( value chain - 'link -1 | value 0)
-   over push  [ #]  swap  forall-words  pop over = 0= ;
-
 ( XXX is this the right name? It goes from a link to a name of *any* kind
   of word in the dict, not just target words.
 
@@ -85,21 +71,25 @@ defer .regname  ( so others can override with their particular convention)
   match; the second time for a two-byte-aligned match, which we will print
   with an offset, if any.)
 
-: is-equate?  ( a - 'link offset -1 | 0)
+: equate?  ( a - 'link offset -1 | 0)
    ( First, look for an exact match.)
-   dup
-   .equates. find-constant if  nip  0 -1  ^  then
+   dup .equates. find-constant if  nip  0 -1  ^  then
 
    ( If that fails, looked for an aligned match.)
-   -2 and ( addr aligned-addr)
+   dup -2 and ( addr aligned-addr)
    .equates. find-constant if  swap  1 and  -1  ^  then
-   2drop  0 ;
+   drop  0 ;
 
 ( If address is found in equates, print its *name*; otherwise, just print
   the hex value.)
 
 : .equate-or-hex
-   dup is-equate? if  .equate  drop ^  then  .hex ;
+   dup equate? if  .equate drop ^  then  .hex ;
+
+( Do the same search for labels that we did for equates, but without the
+  "fuzzy" matching.)
+
+: label?  ( addr - 0 | 'link -1)  .labels. find-constant ;
 
 
 ( Remember, 2op instructions have this form:
@@ -165,6 +155,9 @@ defer .regname  ( so others can override with their particular convention)
 : >jmpdest  ( op - dest)
    dup 1ff and  swap 200 and -  2*  p @  + ;
 
+: .jmpdest  ( addr)
+   dup label? if  nip .target ^  then  .hcell ;
+
 ( Print jmp opcode.)
 : .jop  ( op - op)
    z" jnz jz  jnc jc  jn  jge jl  jmp "  over #10 >>  7 and  2* 2*  +
@@ -181,7 +174,7 @@ defer .regname  ( so others can override with their particular convention)
 : .2op   ( op cfa - op)
    over src>ea .easrc space  over dest>ea .eadest space  .op .byte ;
 
-: .jmp  ( op - op)  dup >jmpdest .hcell_  .jop ;
+: .jmp  ( op - op)  dup >jmpdest .jmpdest space  .jop ;
 
 .else ( prefix disassembler)
 
@@ -193,7 +186,7 @@ defer .regname  ( so others can override with their particular convention)
 : .2op   ( op cfa - op)
    .op .byte space  dup src>ea .easrc space  dup dest>ea .eadest ;
 
-: .jmp  ( op - op)  .jop space  dup >jmpdest .hcell ;
+: .jmp  ( op - op)  .jop space  dup >jmpdest .jmpdest ;
 
 .then
 
@@ -259,28 +252,14 @@ defer .regname  ( so others can override with their particular convention)
 ( That's all folks!)
 ;
 
-( Given a target cfa find the host dictionary entry in .target. or
-  .target-runtime. that matches, if one exists.)
-
-: cfa-matches?  ( cfa 'link - match?)  link> >body @ ( target-cfa)  =  ;
-
--: ( target-cfa 'link - 'link -1 | target-cfa 0)
-   dup  hidden? if  drop  0  ^  then
-   2dup cfa-matches? if  nip  -1  ^  then
-   drop  0 ;
-
-: cfa>link  ( target-cfa - 'link -1 | target-cfa 0)
-   dup  [ #]  .target-runtime.  forall-words  tuck = 0= ;
-
 ( Support for interactive disassembly.)
 : dis+  ( a - a' 0)  drop  p @  0 advance  0 ;
 : dis-  ( a - a' 0)            -4 advance  0 ;  ( back up a bit)
 
 ( The workhorse.)
 : 1dis  ( a)
+   dup label? if
+      over _addr .nesting space  ." label " .target  then
    dup .addr  .nesting space
    p !  cell*  ( op)  dup .hcell_ space
-   p @  ( now a cell ahead)  over = if  ( maybe a code pointer?)
-      dup  \m cell-  cfa>link if  ( and has a name)
-         link>name  ." code "  type  drop  ^  then  then
    ."   "  shred  drop ;

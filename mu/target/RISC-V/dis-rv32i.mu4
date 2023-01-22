@@ -94,7 +94,11 @@ variable instr-pc  ( points to _start_ of current instruction)
 : .3reg   .rd_  .rs1_  .rs2 ;
 : .rs1-off  ( op imm - op)   .imm  ." ("  .rs1  ." )" ;
 
-: .rel-dest  ( off)   instr-pc @ +  dup ea !  .u32 ;
+: label?  ( addr)  .labels. find-constant ;
+
+: .rel-dest  ( off)
+   instr-pc @ +  dup ea !
+   dup label? if  nip link>name type ^  then  .u32 ;
 
 : .undecoded   ." *undecoded*" ;
 : .unimplemented  ." *unimplemented*" ;
@@ -172,16 +176,12 @@ variable instr-pc  ( points to _start_ of current instruction)
 : .dret    ." dret" ;
 : .ret  dup 28 >>  3 and  z" ushm" +  1 type  ." ret" ;
 
--:  ( csr 'link - csr exit?)
-   dup muchain? if  drop  -1  ^  then  ( exit - found a muchain)
-   dup  hidden? if  drop   0  ^  then  ( skip)
-   2dup link> >body @  = if  ( found it!)  link>name  type  -1  ^  then
-   drop  0 ;
+: csr?  ( addr - 0 | 'link -1)  .csr. find-constant ;
 
-: .csrname  ( addr)  [ #] .csr. forall-words  drop ;
-: .csrnum   swap  space space  .(hex) ;  ( print last, as a "comment")
-: .csrreg   dup 20 >>  ( addr)  swap  over .csrname ;
-: .csrboth  .csrreg  .csrnum ;
+: .csrname  ( addr)  csr? if  link>name type  then ;
+: .csrnum   ( addr op - op)  swap  space space  .(hex) ;  ( print last, as a "comment")
+: .csrreg   ( op - addr op)  dup 20 >>  ( addr)  swap  over .csrname ;
+: .csrboth  ( op - op)  .csrreg  .csrnum ;
 
 ( Print a "write op": w/s/c for write/set/clear.)
 : .csrwop  ( op - op)   dup funct3> 3 and  z" ?wsc" +  1 type ;
@@ -380,7 +380,9 @@ decimal
 ( The workhorse.)
 : 1dis  ( a)
    dup  ea !  ( default ea: stay put)
-   dup .addr  .nesting space  dup  p !  instr-pc !
+   dup label? if
+      over _addr .nesting space  ." label "  link>name type  then
+   dup .addr .nesting space  dup  p !  instr-pc !
    op* ( low16)  dup op16? if
                   4 spaces  dup .h16__  shred16  else
       op* ( hi16) 16 <<  +  dup .h32__  shred32  then

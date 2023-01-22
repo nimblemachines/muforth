@@ -75,22 +75,7 @@ defer .reg  ( reg)
 
 
 ( We would like to print "significant" addresses - like equates - in a
-  symbolic way, both here in the disassembler and in the decompiler. Let's
-  define a few utility words to make that easier.)
-
-: value-matches?  ( value 'link - match?)  link> >body @ = ;
-
-( NOTE: This code will search *through* muchain links!)
--: ( value 'link - 'link -1 | value 0)
-   dup         hidden? if  drop  0  ^  then  ( ignore hidden and muchain)
-   2dup value-matches? if  nip  -1  ^  then
-                           drop  0 ;
-
-( Given a constant value, find the host dictionary entry, if one exists,
-  that contains a constant that matches it.)
-
-: find-constant  ( value chain - 'link -1 | value 0)
-   over push  [ #]  swap  forall-words  pop over = 0= ;
+  symbolic way, both here in the disassembler and in the decompiler.)
 
 : .target  ( 'link)  link>name type ;
 : .equate  ( 'link offset)  swap .target  ?if  ."  + " .udec  then ;
@@ -107,13 +92,12 @@ defer .reg  ( reg)
 
 : equate?  ( a - 'link offset -1 | 0)
    ( First, look for an exact match.)
-   dup
-   .equates. find-constant if  nip  0 -1  ^  then
+   dup .equates. find-constant if  nip  0 -1  ^  then
 
    ( If that fails, looked for an aligned match.)
-   -4 and ( addr aligned-addr)
+   dup -4 and ( addr aligned-addr)
    .equates. find-constant if  swap  3 and  -1  ^  then
-   2drop  0 ;
+   drop  0 ;
 
 
 ( 16-bit instructions.)
@@ -275,8 +259,11 @@ defer .reg  ( reg)
 : .undef  ." undef  "  i8  imm ;
 : .svc    ." svc    "  i8  imm ;
 
+: label? ( a - 0 | 'link -1)  .labels. find-constant ;
+
 : .branch-pc  ( hword-offset)
-   hoff>  instr-pc @  >branch-pc  +  dup set-ea  .u32 ;
+   hoff>  instr-pc @  >branch-pc  +  dup set-ea
+   dup label? if nip link>name type ^ then  .u32 ;
 
 : .cond  ( cc)
    0f and  z" beqbnebcsbccbmibplbvsbvcbhiblsbgebltbgtbleb??b??" .op3 ;
@@ -412,7 +399,9 @@ defer shred32   ' shred32-v6m is shred32
 ( The workhorse.)
 : 1dis  ( a)
    dup  set-ea  ( default ea: stay put)
-   dup .addr  .nesting space  dup  p !  instr-pc !
+   dup label? if
+      over _addr .nesting space  ." label " .target  then
+   dup .addr .nesting space  dup  p !  instr-pc !
              op*  ( op1) dup .op  dup thumb16? if
                                 6 spaces    shred16  else
       10 <<  op*  ( op2) dup .op  space  +  shred32  then

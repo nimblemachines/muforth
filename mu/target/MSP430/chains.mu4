@@ -33,8 +33,8 @@ forth  decimal
   metacompiler using variable references; compilation of the kernel will
   patch these with actual addresses of target code.
 
-  .meta. is chained to .equates., so searching .meta. will also search
-  .equates.
+  .meta. is chained to .labels., which is chained to .equates., so
+  searching .meta. will also search .labels. and .equates.
 
   .opcodes2. contains an "alternative" set of opcodes whose names end with
   a comma. This is a form preferred by some.
@@ -66,10 +66,12 @@ forth  decimal
   manipulation words on this chain as well, we make it easier to do
   debugging: you'll get the host's swap or dup rather than the target's.
 
+
   Simple, right? ;-)
 
           sealed .equates.    ( chip equates and other constants for target)
- .equates. chain .meta.       ( the `meta' version of .forth.)
+ .equates. chain .labels.     ( labels chains to equates)
+  .labels. chain .meta.       ( the `meta' version of .forth.; chains to .labels.)
           sealed .opcodes2.   ( the alternative opcode set)
 .opcodes2. chain .assembler.  ( the host-resident target assembler)
 
@@ -125,6 +127,33 @@ forth
 : .and  .and ;
 : .not  .not ;
 forth
+
+
+( Given a constant value, find the host dictionary entry, if one exists,
+  that contains a constant that matches it. It does *not* search through
+  muchain connections; if it sees a muchain, it returns "not found".
+
+  This is useful for printing out SFRs, CSRs, equates, labels, and such.)
+
+: find-constant  ( value chain - 0 | 'link -1)
+   begin
+      addr@ =while
+      dup muchain? if  2drop 0 ^  then  ( not found)
+      dup  hidden? 0= if
+         2dup link> >body @  = if  ( found it!)  nip -1 ^  then
+      then
+   repeat  2drop 0  ( not found) ;
+
+( Similar to find-constant, but searches *through* muchain links, rather
+  than stopping when it sees a muchain.)
+
+: find-constant-chained  ( value chain - 0 | 'link -1)
+   begin
+      addr@ =while
+      dup  hidden? 0= if  ( skip muchain and hidden entries)
+         2dup link> >body @  = if  ( found it!)  nip -1 ^  then
+      then
+   repeat  2drop 0  ( not found) ;
 
 
 ( Metacompiler token consumers. Let's put them all in one place so we can
