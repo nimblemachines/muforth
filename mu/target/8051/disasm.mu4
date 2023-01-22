@@ -104,8 +104,30 @@ forth
 : .ireg3  ( op - op)
    dup row  4 = if .@dptr ^ then  .regi ;
 
-( XXX need to lookup SFRs and print name if defined)
-: .dir   ( op off - op)  ._h8 ;
+: .regbank  ( r)
+   space
+   dup 3 >> 3 and ?if  ." bank"  >digit emit  ." ."  then
+   ." r" 7 and >digit emit ;
+
+( Search through a chain trying to find a word whose body contains the
+  value. Return 0 if not found, -1 and a link to the word if found.)
+
+: find-value  ( value 'link - 0 | 'link -1)
+   begin
+      addr@ =while
+      dup muchain? if  2drop 0 ^  then  ( not found)
+      dup  hidden? 0= if
+         2dup link> >body @  = if  ( found it!)  nip -1 ^  then
+      then
+   repeat  2drop 0  ( not found) ;
+
+: sfr?  ( addr - 0 | 'link -1)  .equates. find-value ;
+
+: .dir   ( op off - op)
+   dup 20 u< if  .regbank ^  then
+   dup 80 u< if  ( RAM)  ._h8 ^  then
+   dup sfr? if  nip link>name space type ^ then
+   ._h8 ;
 
 : .dptr-imm16  ( op inst - op)
    .inst3  hilo> .dptr .imm ;
@@ -149,17 +171,22 @@ forth
 : .cdest-notbit  ( op inst - op)   .inst2 ( bit) .c  ." /" .bit ;
 
 
+: .jump-dest  ( a)
+   dup ea !
+   dup .meta. find-value if  nip link>name space type ^  then
+   ._h ;
+
 : sext8  ( b - offset)  dup 80 and if  100 -  then ;
-: .rel8  ( offset)  sext8  p @ +  ._h ;
+: .rel8  ( offset)  sext8  p @ +  .jump-dest ;
 
 : .rel-dest  ( op inst - op)  .inst2 ( rel)                .rel8 ;
 : .bit-rel8  ( op inst - op)  .inst3 ( bit rel)  swap .bit .rel8 ;
 
 : .abs-dest  ( op inst - op)
-   .inst2 ( lo)  over 0e0 and  3 <<  swap +  p @ -800 and  +  ._h ;
+   .inst2 ( lo)  over 0e0 and  3 <<  swap +  p @ -800 and  +  .jump-dest ;
 
 : .long-dest  ( op - op)
-   .inst3 ( hi lo)  hilo> ._h ;
+   .inst3 ( hi lo)  hilo> .jump-dest ;
 
 : .1op-dir  ( op inst - op)  .inst2 ( dir) .dir ;
 
@@ -303,5 +330,9 @@ forth
 
 ( The workhorse.)
 : 1dis  ( a)
-   dup .addr  .nesting space
-   p !  o* ( op)  shred drop  space ;
+   dup .meta. find-value if
+      over _addr .nesting space  ." label " link>name type
+   then
+   dup .addr .nesting space
+   dup ea ! ( jump to self)
+    p !  o* ( op)  shred drop  space ;
