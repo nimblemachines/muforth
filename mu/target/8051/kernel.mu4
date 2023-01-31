@@ -38,41 +38,49 @@ compiler
 
 assembler
 : load-literal   >lohi  asm{  # r4 mov  # r5 mov } ;
+: nip   ( a b - b)  asm{  r1 inc  r1 inc } ;
+: push2  ( reg)
+   dup 1+ ( rhi rlo)
+   asm{  a mov  r1 dec  a @r1 mov
+         a mov  r1 dec  a @r1 mov } ;
 
+: pop2  ( reg)
+   dup 1+ swap ( rlo rhi)
+   asm{  @r1 a mov  r1 inc  a \f swap mov
+         @r1 a mov  r1 inc  a \f swap mov } ;
+
+( op1 computes to low byte; op2 the high byte. For logical operations these
+  will be the same.)
+
+: binop  ( op2 op1)
+   asm{  r7 a mov  r5 +op,  a r7 mov
+         r6 a mov  r4 +op,  a r6 mov } ;
 forth
 
 
 __meta
 
 ( Push top - aka dup.)
-label dup
-   r7 a mov ( lo)  r1 dec  a @r1 mov
-   r6 a mov ( hi)  r1 dec  a @r1 mov  ret  ;c
+label dup   r6 push2  ret  ;c
 
 ( Pop top - aka drop.)
-label drop
-   @r1 a mov ( hi)  r1 inc  a r6 mov
-   @r1 a mov ( lo)  r1 inc  a r7 mov  ret  ;c
-   
+label drop  r6 pop2  ret  ;c
+
 ( Push top, then move w into top.)
 label w-is-new-top
    ( Push top)  dup acall
    ( Move w to top)
    r5 a mov ( lo)  a r7 mov
    r4 a mov ( hi)  a r6 mov  ret  ;c
-   
-( Push the value in w - r4:r5 - onto the stack.)
-label wpush
-   r5 a mov ( lo)  r1 dec  a @r1 mov
-   r4 a mov ( hi)  r1 dec  a @r1 mov  ret  ;c
-   
-( Pop the top value on the data stack into r4:r5 - aka w.)
-label wpop
-   @r1 a mov ( hi)  r1 inc  a r4 mov
-   @r1 a mov ( lo)  r1 inc  a r5 mov  ret  ;c
 
-label nip   ( a b - b)
-   r1 inc  r1 inc  ret  ;c
+( Push the value in w - r4:r5 - onto the stack.)
+label wpush  r4 push2  ret  ;c
+
+( Pop the top value on the data stack into r4:r5 - aka w.)
+label wpop   r4 pop2  ret  ;c
+
+label xpush  r2 push2  ret  ;c
+label xpop   r2 pop2  ret  ;c
 
 label over  ( a b - a b a)
    wpop acall  r1 dec  r1 dec  w-is-new-top ajmp  ;c
@@ -81,13 +89,9 @@ label tuck  ( a b - b a b)
    wpop acall  dup acall  wpush ajmp  ;c
 
 label rot   ( a b c - b c a)
-   ( Pop b into r2:r3.)
-   @r1 a mov ( hi)  r1 inc  a r2 mov
-   @r1 a mov ( lo)  r1 inc  a r3 mov
+   ( Pop b into r2:r3.)  xpop acall
    ( Pop a into w.)  wpop acall
-   ( Push b.)
-   r3 a mov ( lo)  r1 dec  a @r1 mov
-   r2 a mov ( hi)  r1 dec  a @r1 mov
+   ( Push b.)  xpush acall
    ( Push c - aka top - and make a - aka w - new top.)
    w-is-new-top ajmp  ;c
 
@@ -105,20 +109,16 @@ label -
 
 label +
    wpop acall
-   r7 a mov  r5 a add   a r7 mov
-   r6 a mov  r4 a addc  a r6 mov  ret  ;c
-
-label and
-   wpop acall
-   r7 a mov  r5 a anl  a r7 mov
-   r6 a mov  r4 a anl  a r6 mov  ret  ;c
+   "30 "20 ( addc add) binop  ret  ;c
 
 label or
    wpop acall
-   r7 a mov  r5 a orl  a r7 mov
-   r6 a mov  r4 a orl  a r6 mov  ret  ;c
+   "40 "40 ( orl orl) binop  ret  ;c
+
+label and
+   wpop acall
+   "50 "50 ( anl anl) binop  ret  ;c
 
 label xor
    wpop acall
-   r7 a mov  r5 a xrl  a r7 mov
-   r6 a mov  r4 a xrl  a r6 mov  ret  ;c
+   "60 "60 ( xrl xrl) binop  ret  ;c
