@@ -1,0 +1,42 @@
+( This file is part of muforth: https://muforth.nimblemachines.com/
+
+  Copyright 2002-2023 David Frech. (Read the LICENSE for details.)
+
+( Moved F072 init code here, so it can be shared among projects.)
+
+__meta
+hex
+
+( Even though the documentation gives conflicting messages - the schematic
+  says that it's connected, but the user manual says that it isn't - it
+  seems that the 8 MHz clock from the ST-LINK is *not* in fact routed to the
+  OSC_IN pin on the F072.
+
+  Instead, the F072 has a 48 MHz HSI - high speed internal - clock that can
+  synchronize with the frame fields from USB, so it can be used as a
+  crystal-less clock source, even for USB applications. We will use this as
+  our system clock.)
+
+: wait-for-rdy  ( regaddr)
+   begin  dup c@  2 and  until  ( wait for RDY bit)  drop ;
+
+: clock-init
+   1 ( latency) FLASH_ACR set!  ( we need one cycle for 48 MHz clock!)
+   1 ( HSI48ON) [ RCC_CR2 2 + #] tuck c!  wait-for-rdy ( wait for HSI48RDY)
+   3 ( SW=HSI48 as sysclk)  RCC_CFGR tuck c!
+   begin  dup c@ %1111 =  until  ( SW=HSI48 and SWS=HSI48)  drop
+
+   ( Set up CRS - clock recovery system.)
+   ( XXX do we need CEN?)
+   [ 1 6 << #] ( AUTOTRIMEN) CRS_CR set!  ( turn on autotrimming of 48M HSI clock) ;
+
+: led-init
+   -- Turn on clock to Port C
+   ( Ports -FED_CBA- )
+        [ %0000_1000  #16 << #] RCC_AHBENR set!
+   -- Make PC6 to PC9 outputs
+   [ %01010101 #12 << #] GPIOC_MODER set! ;
+
+: wait   for next ;
+: flash-leds
+   %11_1100_0000 dup GPIOC_BSRR !  2_0000 wait  GPIOC_BRR ! ;

@@ -19,39 +19,10 @@ flash-vectors  ( make it the current table)
 { h ! }  ( restore region pointer)
 
 ld target/ARM/v6-m/kernel-itc.mu4
-
-( Even though the documentation gives conflicting messages - the schematic
-  says that it's connected, but the user manual says that it isn't - it
-  seems that the 8 MHz clock from the ST-LINK is *not* in fact routed to the
-  OSC_IN pin on the F072.
-
-  Instead, the F072 has a 48 MHz HSI - high speed internal - clock that can
-  synchronize with the frame fields from USB, so it can be used as a
-  crystal-less clock source, even for USB applications. We will use this as
-  our system clock.)
-
-: wait-for-rdy  ( regaddr)
-   begin  dup c@  2 and  until  ( wait for RDY bit)  drop ;
-
-: clock-init
-   1 ( latency) FLASH_ACR set!  ( we need one cycle for 48 MHz clock!)
-   1 ( HSI48ON) [ RCC_CR2 2 + #] tuck c!  wait-for-rdy ( wait for HSI48RDY)
-   3 ( SW=HSI48 as sysclk)  RCC_CFGR tuck c!
-   begin  dup c@ %1111 =  until  ( SW=HSI48 and SWS=HSI48)  drop ;
-
-: ports-init
-   -- Turn on clock to Port C
-   ( Ports -FED_CBA- )
-        [ %0000_1000  #16 << #] RCC_AHBENR set!
-   -- Make PC6 to PC9 outputs
-   [ %01010101 #12 << #] GPIOC_MODER set! ;
-
-: wait   for next ;
-: flash-leds
-   %11_1100_0000 dup GPIOC_BSRR !  2_0000 wait  GPIOC_BRR ! ;
+ld target/ARM/stm32/f0/72_b-init.mu4
 
 here ]  ( chip-init)
-   clock-init  ports-init  flash-leds  begin again  [
+   clock-init  led-init  flash-leds  begin again  [
 
 Reset_exc handler
    -- Startup code!

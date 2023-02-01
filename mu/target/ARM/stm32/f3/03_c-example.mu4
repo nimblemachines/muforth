@@ -19,38 +19,10 @@ flash-vectors  ( make it current vector table)
 { h ! }  ( restore region pointer)
 
 ld target/ARM/v6-m/kernel-itc.mu4
-
-( Turn on HSE, which is driven by an 8 Mhz signal from the ST-LINK. Use it
-  to drive the PLL to 72 Mhz - x9 - and when the PLL stabilizes, switch to
-  it as the system clock source.
-
-  Be careful to only run the APB1 bus at 36 Mhz!)
-
-: wait-for-rdy  ( regaddr)
-   begin  dup c@  2 and  until  ( wait for RDY bit)  drop ;
-
-: clock-init
-   2 ( latency) FLASH_ACR set!  ( we need two cycles for 72 MHz clock!)
-   5 ( HSEON + HSEBYP) [ RCC_CR 2 + #] tuck c!  wait-for-rdy ( wait for HSERDY)
-   001d_0400 RCC_CFGR ! ( USBPRE=/1.5; PLLMUL=9; PLLSRC=HSE; APB1=/2)
-
-   1 ( PLLON)          [ RCC_CR 3 + #] tuck c!  wait-for-rdy ( wait for PLLRDY)
-   2 ( SW=PLL as sysclk)  RCC_CFGR tuck c!
-   begin  dup c@ %1010 =  until  ( SW=PLL and SWS=PLL)  drop ;
-
-: ports-init
-   -- Turn on clock to Port E
-   ( Ports GFED_CBAH )
-        [ %0010_0000  #16 << #] RCC_AHBENR set!
-   -- Make PE8 to PE15 outputs
-   5555_0000 GPIOE_MODER set! ;
-
-: wait   for next ;
-: flash-leds
-   0000_ff00 dup GPIOE_BSRR !  3_0000 wait  GPIOE_BRR ! ;
+ld target/ARM/stm32/f3/03_c-init.mu4
 
 here ]  ( chip-init)
-   clock-init  ports-init  flash-leds  begin again  [
+   clock-init  led-init  flash-leds  begin again  [
 
 Reset_exc handler
    -- Startup code!
