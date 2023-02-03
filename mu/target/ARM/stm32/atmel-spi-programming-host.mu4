@@ -1,0 +1,44 @@
+( This file is part of muforth: https://muforth.nimblemachines.com/
+
+  Copyright 2002-2023 David Frech. (Read the LICENSE for details.)
+
+loading Atmel SPI flash programming (host)
+
+( This is the host-side code to drive
+  target/ARM/stm32/atmel-spi-programming-core.mu4)
+
+( We need to talk to the ST-LINK. Load a stripped-down version of the
+  support code.)
+
+-d stlink-ram-only
+ld target/ARM/debug/stlink-v2.mu4
+
+( We need to know where to find the data structures in the STM32 memory.
+  They are conveniently placed at the start of RAM. We are going to call
+  directly into the stlink support code to read and write the STM32 memory.
+  We can't use the "interact" versions - t.read, t.write, etc - because they
+  will be associated with the 8051 target!)
+
+hex
+
+2000_0000  ( ram origin)
+dup constant data   #64 +  ( flash page data buffer)
+dup constant sema     4 +  ( semaphore + stm32 command)
+
+dup constant cmd      1+   ( flash command)
+dup constant addr-hi  1+   ( flash addr, high byte)
+dup constant addr-lo  1+   ( flash addr, low byte)
+dup constant count    1+   ( byte count to transfer)
+    constant toggle        ( flash command toggle - for AVR)
+
+( Remote execute command.)
+: rx-cmd  ( cmd)
+   deca_f000 + pad lew!  pad sema 4 st.write  ( write to STM32 memory)
+   ( Keep reading semaphore until STM32 signals that it is done.)
+   begin  pad sema 4 st.read  pad lew@ face_d000 = until ;  
+
+: +reset ;
+: -reset ;
+
+: +prog ;
+: -prog ;

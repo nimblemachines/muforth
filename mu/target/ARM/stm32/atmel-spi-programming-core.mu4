@@ -1,0 +1,287 @@
+( This file is part of muforth: https://muforth.nimblemachines.com/
+
+  Copyright 2002-2023 David Frech. (Read the LICENSE for details.)
+
+loading Atmel SPI flash programming (STM32 core)
+
+( It might seem rather odd that this is here, but I'm interested in using
+  an STM32 Discovery board as a "programming pod" for Atmel 8051 and AVR
+  microcontrollers, which have a simple SPI interface for erasing,
+  programming, and reading the on-chip memories and configuration bytes.
+
+  The AVR and AT89LP [Atmel's 8051 variant] have similar but not identical
+  command protocols. I'm thinking of leaving the details to the host, and
+  putting just the "plumbing" here.
+
+  The idea is basically this:
+
+  [1] the STM32 chip sits in a loop, reading a word of the RAM until a
+  magic number appears there. This is the "semaphore" signal from the host
+  that a command packet is available. When it sees the magic word, it goes
+  to step 2.
+
+  [2] The STM32 turns around and talks to the target chip via SPI, sending
+  the command, address, and any data bytes to the target, and reading its
+  response. It buffers the response, and then writes a different magic number
+  to the semaphore word, signaling the host that it has completed the
+  command.
+
+  Then it goes back to [1]. The host reads the buffered target response,
+  creates a new command packet, and sets the semaphore word.
+
+  The communication between the STM32 and the host can be over ST-LINK,
+  which means that no USB-serial interface is necessary. The STM32 Discovery
+  board can power the target as well.
+
+  There is no need to flash this code into the STM32. It can easily run
+  from RAM.)
+
+__meta
+decimal
+
+( The ST-LINK code will have written some flash programming routines into
+  ram. We don't need these, so let's back up over them and start fresh.)
+
+ram  wipe
+
+( We want to put the data structures that the host will use to communicate
+  with the STM32 at the beginning of RAM so we know where to find them.
+  Remember: when *using* this code, the host will have loaded AVR or 8051
+  code into the memory spaces. It will have no idea about how the memory of
+  the STM32 is laid out, so we set up a simple, constant layout - data first,
+  then the program.)
+
+( Let's put the big stuff first. Makes it easy to find when debugging.)
+here equ data    64 allot  ( flash page data buffer)
+
+here equ sema  cell allot  ( semaphore + stm32 command)
+
+here equ cmd      1 allot  ( flash command)
+here equ addr-hi  1 allot  ( flash addr, high byte)
+here equ addr-lo  1 allot  ( flash addr, low byte)
+here equ count    1 allot  ( byte count to transfer)
+here equ toggle   1 allot  ( flash command toggle - for AVR)
+align
+
+hex
+
+( We want to write this code in Forth, so let's load the Forth kernel.)
+ld target/ARM/v6-m/kernel-itc.mu4
+
+-- ------------------------------------------------------------------------
+-- Chip init
+-- ------------------------------------------------------------------------
+.ifdef stm32f072
+   ld target/ARM/stm32/f0/72_b-init.mu4
+.then
+.ifdef stm32f303
+   ld target/ARM/stm32/f3/03_c-init.mu4
+.then
+
+: spi-init
+   -- First, enable clocks to Port B. We are using SPI1 on pins PB3, PB4, and
+   -- PB5, and using PB6 and PB7 as GPIO pins (target /RST, target /SS)
+   ( Ports -FED_CBA- )
+        [ %0000_0100  #16 << #] RCC_AHBENR set!
+
+   -- Enable clock to SPI1 as well.
+   [ 1 #12 << #] RCC_APB2ENR set!
+
+   -- Set mode bits and alternate function for SPI.
+   -- F072: SPI is AF0. F303: SPI is AF5.
+   -- Mode %01 is output ; mode %10 is alternate function
+   [ %0101_101010 #3  2*  << #] GPIOB_MODER set!  ( 2 bits per pin)
+   [         0fff #3  4 * << #] GPIOB_AFRL clr!   ( 4 bits per pin)
+.ifdef stm32f303
+   [         0555 #3  4 * << #] GPIOB_AFRL set!   ( 4 bits per pin)
+
+   -- Also divide APB2 clock /2 so we can get SPI to run slowly enough.
+   [ 4 #11 << #] RCC_CFGR set! ( APB2=/2)
+.then
+
+   -- Now for SPI1 itself. When setting the clock divisor we will enable it.
+   0 SPI1_CR1 ! ( reset and disable)
+   1700 SPI1_CR2 !  ( FRXTH=1, datasize 8 bits) ;
+
+( For the SPI clock settings below, we are dividing 48M, in the case of the
+  F072, and 36M, in the case of the F303. I'll show the divided clocks like this:
+  F072/F303.)
+
+( For unprogrammed AVR chips; they are running at 1M; max SPI clock 250k.)
+( S08 code uses 230k.)
+: clock-slow  ( 187.5k/140.6k)
+   %1_111_100 ( SPE=1, /256, MSTR=1, CPOL,CPHA=00) SPI1_CR1 ! ( config and enable) ;
+
+( For AVR chips with DIV8 fuse unprogrammed; they are running at 8M; max SPI clock 2M.)
+( S08 code uses 1.536M.)
+: clock-medium  ( 1.5M/1.125M)
+   %1_100_100 ( SPE=1, /32, MSTR=1, CPOL,CPHA=00) SPI1_CR1 ! ( config and enable) ;
+
+( For AT89LP chips. Max SPI clock 5M.)
+: clock-fast  ( 3M/2.25M)
+   %1_011_100 ( SPE=1, /16, MSTR=1, CPOL,CPHA=00) SPI1_CR1 ! ( config and enable) ;
+
+: ?status-set   ( bits)   begin  SPI1_SR @   over and     until  drop ;
+: ?status-clr   ( bits)   begin  SPI1_SR @   over and  0= until  drop ;
+
+( Send and recv a byte via SPI.)
+: >b>  ( b1 - b2)
+   2  ( TXE bit) ?status-set  SPI1_DR c!
+   1 ( RXNE bit) ?status-set  SPI1_DR c@ ;
+
+( Send and recv a byte, but discard the response.)
+: >b   >b> drop ;
+
+( Since we are going to be reading a buffer sent to us by the host, let's
+  have nice words for that.)
+
+variable p
+: p@   p @  c@       ;  ( read next byte from buf, don't incr)
+: p*   p @  c@+  p ! ;  ( read next byte from buf, incr)
+: p&   p @  c!+  p ! ;  ( write next byte to buf, incr)
+
+: >p>   p@ >b> p& ;     ( read from buf, send byte, recv byte, write to buf)
+:  p>    0 >b> p& ;     ( send dummy byte, recv byte, write to buf)
+: >p    p* >b     ;     ( read from buf, send byte, recv and discard byte)
+
+: ss\  ( assert /SS)      [ 1 6 << #] GPIOB_BSRR ! ;
+: ss/  ( de-assert /SS)   [ 1 6 << #] GPIOB_BRR ! ;
+
+: rst\  ( assert /RST)      [ 1 7 << #] GPIOB_BSRR ! ;
+: rst/  ( de-assert /RST)   [ 1 7 << #] GPIOB_BRR ! ;
+
+( Start an SPI packet.)
+: <spi
+   ss\  ( assert SS) ;
+
+( End an SPI packet.)
+: spi>
+   ( Wait until FTLVL = 00 and BSY = 0.)
+   [ 3 #11 <<  1 #7 << + #] ?status-clr
+   ss/  ( de-assert SS) ;
+
+
+-- ------------------------------------------------------------------------
+-- Jump tables
+-- ------------------------------------------------------------------------
+: (dispatch)  ( index)
+   1+ cells r@ +
+   dup r@ @ u< if  r> drop  @execute ^  then
+   drop  r> @ >r  ( skip jump table and keep executing) ;
+
+compiler: [:  ( start a jump table)
+   \t (dispatch) ,  here  0 , ( ip past last cfa) ;
+
+compiler: :]  ( end a jump table)
+   here  swap  image-! ;
+
+
+-- ------------------------------------------------------------------------
+-- LED flash test
+-- ------------------------------------------------------------------------
+.ifdef testing
+.ifdef stm32f072
+( LEDs are connected to PC6 to PC9. Let's just add 6 to the command and
+  flash that LED.)
+
+: do-command  ( cmd)
+   6 +  1 swap << ( mask)  dup GPIOC_BSRR !  2_0000 wait  GPIOC_BRR ! ;
+.then  ( f072)
+
+.ifdef stm32f303
+( LEDs are connected to PE8 to PE15. Let's just add 8 to the command and
+  flash that LED.)
+
+: do-command  ( cmd)
+   8 +  1 swap << ( mask)  dup GPIOE_BSRR !  3_0000 wait  GPIOE_BRR ! ;
+.then  ( f303)
+.then  ( testing)
+
+-- ------------------------------------------------------------------------
+-- AVR programming
+-- ------------------------------------------------------------------------
+( TODO)
+: avr-single ;
+: avr-bulk-read ;
+: avr-bulk-write ;
+
+-- ------------------------------------------------------------------------
+-- AT89LP programming using fixed-length payloads, no prefix, no /SS
+-- ------------------------------------------------------------------------
+( Mostly for the AT89LP51/52.)
+
+( This version does *not* use /SS or the 0aa 55 prefix, and the data
+  payload is always either 1 byte or 64 bytes.)
+
+( TODO)
+: at89-single ;
+: at89-bulk-read ;
+: at89-bulk-write ;
+
+-- ------------------------------------------------------------------------
+-- AT89LP programming using variable-length payload, command prefix, and /SS
+-- ------------------------------------------------------------------------
+( For AT89LP828, 3240, 6440.)
+
+( This version uses SPI slave select [/SS] to bracket the command packet,
+  and also prefixes every command with 0aa 55.)
+
+( Start an SPI packet, send the prefix bytes, setup command buffer.)
+: <pkt   <spi  0aa >b  55 >b  cmd p ! ;
+
+( End a programming packet.)
+: pkt>   spi> ;
+
+( Send cmd, addr-hi, and addr-lo, discarding responses. Setup data buffer.)
+: setup-bulk   <pkt  >p >p >p  data p ! ;
+
+( The three transaction types to define: single, bulk-read, bulk-write.)
+
+( Send cmd, addr-hi, addr-lo, and one dummy byte, saving all responses.)
+: at89-ss-single       <pkt  >p> >p> >p> p>  pkt> ;
+
+( For bulk commands, send cmd and address bytes, then send or recv a
+  buffer of data.)
+
+: at89-ss-bulk-read    setup-bulk  count c@ for  p>  next  pkt> ;
+: at89-ss-bulk-write   setup-bulk  count c@ for  >p  next  pkt> ;
+
+.then
+
+-- ------------------------------------------------------------------------
+-- Core command processing loop
+-- ------------------------------------------------------------------------
+.ifndef testing
+
+( Command index is above the word that it executes.)
+: do-command  ( n)
+            ( 10    11          12            13          14 )
+   10 - [:  rst\  rst/  clock-slow  clock-medium  clock-fast
+                      ( 15                 16                  17 )
+                avr-single      avr-bulk-read      avr-bulk-write
+                      ( 18                 19                  1a )
+            at89-ss-single  at89-ss-bulk-read  at89-ss-bulk-write
+                      ( 1b                 1c                  1d )
+               at89-single     at89-bulk-read     at89-bulk-write  :] ;
+.then
+
+here ]  ( chip-init)
+   clock-init  led-init  spi-init  flash-leds
+   ss/  rst/
+   begin
+      "face_d000 sema !  ( ready for another command)
+      0  begin  drop  sema @  dup "ffff_ff00 and  "deca_f000 =  until
+      0ff and  ( command byte)  do-command
+   again [
+
+( Startup code! Since we have a Forth kernel, let's write the startup code
+  in Forth!)
+
+label startup
+   ( Ignore the sp we were passed. Set rp to top of ram, sp below.)
+   @ram #ram + rp lit   rp sp mov   #64 cells # sp sp sub
+   cpsid  ( disable interrupts)
+   ( chip-init)  ip  lit
+   "decafbad     top lit
+   next  ;c
+   pool,
