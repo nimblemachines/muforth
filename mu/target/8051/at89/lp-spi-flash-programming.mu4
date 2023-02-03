@@ -1,0 +1,51 @@
+( This file is part of muforth: https://muforth.nimblemachines.com/
+
+  Copyright 2002-2023 David Frech. (Read the LICENSE for details.)
+
+loading Atmel AT89LP SPI flash programming
+( XXX should this be "flash programming via SPI" instead?)
+
+( This is for programming AT89LP428, 828, 3240, and 6440. The AT89LP51 and
+  52 are slightly different, but I'm thinking of supporting them as well.)
+
+( Connection diagram looks like this:
+
+  Signal  STM32  6440
+  ======  =====  ====
+   SCK     PB3    8 
+   MISO    PB4    7
+   MOSI    PB5    6
+   /SS     PB6    5
+)
+
+( XXX Move the 0aa 55 preamble out of the STM32 code and put it here
+  instead, with a byte count for commands? 3 or 5?)
+
+hex
+
+ld target/ARM/stm32/atmel-spi-programming-host.mu4
+
+: +prog  ( enable programming)
+   st.connect  spi.fast-clock  spi.+reset  at89-ss-family
+   0ac 53 single-cmd ;  ( result in pad)
+
+: -prog   spi.-reset ;
+
+: read-spi   ( spi-cmd addr count buf)
+   over 2push ( buf count)  0 swap ( toggle is unused)
+   setup-bulk-cmd
+   1 ( read) rx-family-cmd
+   pop data pop st.read  ( Read data buffer from STM32.) ;
+   
+: write-spi  ( spi-cmd addr count buf)
+   over 2push ( buf count)  0 swap ( toggle is unused)
+   setup-bulk-cmd
+   pop data pop st.write ( Copy data buffer to STM32.)
+   2 ( write) rx-family-cmd ;
+
+( Read first 3 bytes of Atmel signature page.)
+: device-id  ( - id0 id1 id2)
+   38 0 3 pad read-spi  pad c@+ c@+ c@ ;
+
+: read-status
+   60 0 single-cmd  pad 3 + c@ ;

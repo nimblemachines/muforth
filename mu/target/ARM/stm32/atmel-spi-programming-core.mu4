@@ -52,15 +52,13 @@ ram  wipe
   then the program.)
 
 ( Let's put the big stuff first. Makes it easy to find when debugging.)
-here equ data    64 allot  ( flash page data buffer)
+here equ data         64 allot  ( flash page data buffer)
+here equ semaphore  cell allot  ( semaphore + stm32 command)
 
-here equ sema  cell allot  ( semaphore + stm32 command)
-
-here equ cmd      1 allot  ( flash command)
-here equ addr-hi  1 allot  ( flash addr, high byte)
-here equ addr-lo  1 allot  ( flash addr, low byte)
-here equ count    1 allot  ( byte count to transfer)
-here equ toggle   1 allot  ( flash command toggle - for AVR)
+here equ cmd           1 allot  ( flash command)
+here equ addr          2 allot  ( flash addr)
+here equ count         1 allot  ( byte count to transfer)
+here equ toggle        1 allot  ( flash command toggle - for AVR)
 align
 
 hex
@@ -109,17 +107,17 @@ ld target/ARM/v6-m/kernel-itc.mu4
 
 ( For unprogrammed AVR chips; they are running at 1M; max SPI clock 250k.)
 ( S08 code uses 230k.)
-: clock-slow  ( 187.5k/140.6k)
-   %1_111_100 ( SPE=1, /256, MSTR=1, CPOL,CPHA=00) SPI1_CR1 ! ( config and enable) ;
+: slow-clock  ( 187.5k/140.6k)
+   %1_101_111_100 ( SSM,SSI=11, SPE=1, /256, MSTR=1, CPOL,CPHA=00) SPI1_CR1 ! ( config and enable) ;
 
 ( For AVR chips with DIV8 fuse unprogrammed; they are running at 8M; max SPI clock 2M.)
 ( S08 code uses 1.536M.)
-: clock-medium  ( 1.5M/1.125M)
-   %1_100_100 ( SPE=1, /32, MSTR=1, CPOL,CPHA=00) SPI1_CR1 ! ( config and enable) ;
+: medium-clock  ( 1.5M/1.125M)
+   %1_101_100_100 ( SSM,SSI=11, SPE=1, /32, MSTR=1, CPOL,CPHA=00) SPI1_CR1 ! ( config and enable) ;
 
 ( For AT89LP chips. Max SPI clock 5M.)
-: clock-fast  ( 3M/2.25M)
-   %1_011_100 ( SPE=1, /16, MSTR=1, CPOL,CPHA=00) SPI1_CR1 ! ( config and enable) ;
+: fast-clock  ( 3M/2.25M)
+   %1_101_011_100 ( SSM,SSI=11, SPE=1, /16, MSTR=1, CPOL,CPHA=00) SPI1_CR1 ! ( config and enable) ;
 
 : ?status-set   ( bits)   begin  SPI1_SR @   over and     until  drop ;
 : ?status-clr   ( bits)   begin  SPI1_SR @   over and  0= until  drop ;
@@ -144,11 +142,11 @@ variable p
 :  p>    0 >b> p& ;     ( send dummy byte, recv byte, write to buf)
 : >p    p* >b     ;     ( read from buf, send byte, recv and discard byte)
 
-: ss\  ( assert /SS)      [ 1 6 << #] GPIOB_BSRR ! ;
-: ss/  ( de-assert /SS)   [ 1 6 << #] GPIOB_BRR ! ;
+: ss\  ( assert /SS)      [ 1 6 << #] GPIOB_BRR ! ;
+: ss/  ( de-assert /SS)   [ 1 6 << #] GPIOB_BSRR ! ;
 
-: rst\  ( assert /RST)      [ 1 7 << #] GPIOB_BSRR ! ;
-: rst/  ( de-assert /RST)   [ 1 7 << #] GPIOB_BRR ! ;
+: rst\  ( assert /RST)      [ 1 7 << #] GPIOB_BRR ! ;
+: rst/  ( de-assert /RST)   [ 1 7 << #] GPIOB_BSRR ! ;
 
 ( Start an SPI packet.)
 : <spi
@@ -256,7 +254,7 @@ compiler: :]  ( end a jump table)
 ( Command index is above the word that it executes.)
 : do-command  ( n)
             ( 10    11          12            13          14 )
-   10 - [:  rst\  rst/  clock-slow  clock-medium  clock-fast
+   10 - [:  rst\  rst/  slow-clock  medium-clock  fast-clock
                       ( 15                 16                  17 )
                 avr-single      avr-bulk-read      avr-bulk-write
                       ( 18                 19                  1a )
@@ -267,10 +265,10 @@ compiler: :]  ( end a jump table)
 
 here ]  ( chip-init)
    clock-init  led-init  spi-init  flash-leds
-   ss/  rst/
+   ss/  rst/  ( deassert both)
    begin
-      "face_d000 sema !  ( ready for another command)
-      0  begin  drop  sema @  dup "ffff_ff00 and  "deca_f000 =  until
+      "face_d000 semaphore !  ( ready for another command)
+      0  begin  drop  semaphore @  dup "ffff_ff00 and  "deca_f000 =  until
       0ff and  ( command byte)  do-command
    again [
 
