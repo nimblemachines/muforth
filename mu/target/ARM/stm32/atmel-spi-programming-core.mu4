@@ -98,13 +98,31 @@ ld target/ARM/v6-m/kernel-itc.mu4
 -- --------------------------------------------------------------------
 -- SPI building blocks
 -- --------------------------------------------------------------------
+( NOTE: Delays are approximate and vary depending on the CPU - Cortex-M0 vs
+  M0+ vs M3. We are going to be conservative in the following sense: we
+  will calculate based on the *fastest* machine; our delays will be longer on
+  a slower machine, but not by much, and that way both will work.
+
+  NEXT takes 6 cycles on a fast cpu; (next) ( takes NEXT + 5 on a fast
+  machine.
+
+  There are several overheads of NEXT, plus the execution time of H, that
+  will lower the clock speed.)
+
+variable h-delay
+: slow-clock      [ cpuclk    #250,000 /  #22 / #]  h-delay ! ;  ( 250k)
+: medium-clock    [ cpuclk  #2,000,000 /  #22 / #]  h-delay ! ;  ( 2M)
+: fast-clock      [ cpuclk  #5,000,000 /  #22 / #]  h-delay ! ;  ( 5M)
+
+: H  ( delay a half cycle)   h-delay @ wait ;
+
 : >mask  ( bit - mask)  1 swap << ;
 : bit/  ( bit)  >mask GPIOB_BSRR ! ;
 : bit\  ( bit)  >mask GPIOB_BRR ! ;
 
 3 constant SCK  ( SCK on PB3.)
-: sck/   SCK bit/ ;
-: sck\   SCK bit\ ;
+: sck/   SCK bit/  H ;
+: sck\   SCK bit\  H ;
 
 ( MISO on PB4.)
 : bit@   ( - bit)  GPIOB_IDR @  4 >>  1 and ;
@@ -130,35 +148,17 @@ ld target/ARM/v6-m/kernel-itc.mu4
 ( Switch a Port B bit from output to input.)
 : tristate  ( bit#)  %11 swap 2* <<  GPIOB_MODER clr! ;
 
-( NOTE: Delays are approximate and vary depending on the CPU - Cortex-M0 vs
-  M0+ vs M3. We are going to be conservative in the following sense: we
-  will calculate based on the *fastest* machine; our delays will be longer on
-  a slower machine, but not by much, and that way both will work.
-
-  NEXT takes 6 cycles on a fast cpu; (next) ( takes NEXT + 5 on a fast
-  machine.
-
-  There are several overheads of NEXT, plus the execution time of H, that
-  will lower the clock speed.)
-
-variable h-delay
-: slow-clock      [ cpuclk    #250,000 /  #22 / #]  h-delay ! ;  ( 250k)
-: medium-clock    [ cpuclk  #2,000,000 /  #22 / #]  h-delay ! ;  ( 2M)
-: fast-clock      [ cpuclk  #5,000,000 /  #22 / #]  h-delay ! ;  ( 5M)
-
-: H  ( delay a half cycle)   h-delay @ wait ;
-
-: sck/\  sck/  H  sck\  H ;  ( do one clock cycle)
+: sck/\  sck/  sck\ ;  ( do one clock cycle)
 
 ( Write a byte, in 8 clocks, using SPI.)
-: >s   ( b)        8 for  dup bit! 2*   sck/\             next  drop ;
+: >s   ( b)        8 for  dup bit! 2*   sck/\                  next  drop ;
 
 ( Read a byte, in 8 clocks, using SPI.)
-: s>   ( - b)   0  8 for                sck/\  2* bit@ +  next ;
+: s>   ( - b)   0  8 for                sck/  2* bit@ +  sck\  next ;
 
 ( Write and read a byte, in 8 clocks, using SPI.)
 : >s>  ( out - in)
-   0 swap  8 for  dup bit! 2*  sck/\  swap  2* bit@ +  swap  next  drop ;
+   0 swap  8 for  dup bit! 2*  sck/  H  swap  2* bit@ +  swap  sck\  H  next  drop ;
 
 ( Start an SPI packet.)
 : <spi   ss\  ( assert SS) ;
