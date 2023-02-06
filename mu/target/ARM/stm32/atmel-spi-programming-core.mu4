@@ -90,20 +90,21 @@ ld target/ARM/v6-m/kernel-itc.mu4
 
    0 GPIOB_ODR !
    -- Set mode bits. Mode %00 is input; %01 is output.
-   -- All are outputs except for MISO - PB4.
+   -- Set all Port B bits to input.
    0 GPIOB_MODER !
-   [ %0101_0100_01 #3  2*  << #] GPIOB_MODER set!  ( 2 bits per pin)
-   -- Set speed to high.
+   -- Set output speed to high.
    0 GPIOB_OSPEEDR !
    [ %1111_1111_11 #3  2*  << #] GPIOB_OSPEEDR set!  ( 2 bits per pin) ;
 
 -- --------------------------------------------------------------------
 -- SPI building blocks
 -- --------------------------------------------------------------------
+( XXX define SCK, MISO, MOSI, SS, RST as bit numbers. Then assert,
+  de-assert, drive, and tristate would just take a bit number.)
 
 ( SCK on PB3.)
-: clk/   [ 1 3 << #] GPIOB_BSRR ! ;
-: clk\   [ 1 3 << #] GPIOB_BRR ! ;
+: sck/   [ 1 3 << #] GPIOB_BSRR ! ;
+: sck\   [ 1 3 << #] GPIOB_BRR ! ;
 
 ( MISO on PB4.)
 : bit@   ( - bit)  GPIOB_IDR @  4 >>  1 and ;
@@ -120,6 +121,21 @@ ld target/ARM/v6-m/kernel-itc.mu4
 ( /RST on PB7.)
 : rst/  ( de-assert /RST)   [ 1 7 << #] GPIOB_BSRR ! ;
 : rst\  ( assert /RST)      [ 1 7 << #] GPIOB_BRR ! ;
+
+( Switch a Port B bit from input to output.)
+: drive-bit     ( bit#)  %01 swap 2* <<  GPIOB_MODER set! ;
+
+( Switch a Port B bit from output to input.)
+: tristate-bit  ( bit#)  %11 swap 2* <<  GPIOB_MODER clr! ;
+
+( To save space, these 6 definitions should probably be create/does words.)
+: drive-sck    3 drive-bit ;
+: drive-mosi   5 drive-bit ;
+: drive-ss     6 drive-bit ;
+
+: tristate-sck    3 tristate-bit ;
+: tristate-mosi   5 tristate-bit ;
+: tristate-ss     6 tristate-bit ;
 
 ( NOTE: Delays are approximate and vary depending on the CPU - Cortex-M0 vs
   M0+ vs M3. We are going to be conservative in the following sense: we
@@ -139,17 +155,17 @@ variable h-delay
 
 : H  ( delay a half cycle)   h-delay @ wait ;
 
-: clk/\  clk/  H  clk\  H ;  ( do one clock cycle)
+: sck/\  sck/  H  sck\  H ;  ( do one clock cycle)
 
 ( Write a byte, in 8 clocks, using SPI.)
-: >s   ( b)        8 for  dup bit! 2*   clk/\             next  drop ;
+: >s   ( b)        8 for  dup bit! 2*   sck/\             next  drop ;
 
 ( Read a byte, in 8 clocks, using SPI.)
-: s>   ( - b)   0  8 for                clk/\  2* bit@ +  next ;
+: s>   ( - b)   0  8 for                sck/\  2* bit@ +  next ;
 
 ( Write and read a byte, in 8 clocks, using SPI.)
 : >s>  ( out - in)
-   0 swap  8 for  dup bit! 2*  clk/\  swap  2* bit@ +  swap  next  drop ;
+   0 swap  8 for  dup bit! 2*  sck/\  swap  2* bit@ +  swap  next  drop ;
 
 ( Start an SPI packet.)
 : <spi   ss\  ( assert SS) ;
@@ -373,19 +389,31 @@ label startup
    clock-init  led-init  spi-init  flash-leds
    ss/  rst/  ( deassert both)  fast-clock ;
 
-: cc  ss/ ss\ ;  ( for HC595 test)
+: cc  <spi  >s>  spi> ;  ( for HC595 test)
 
-: +prog   rst\  <pkt  0ac >s>  53 >s>  pkt> ;
+: +prog
+   rst\ 3_0000 wait
+   ss/ drive-ss  H  sck\ drive-sck  H  drive-mosi  H
+   <pkt  0ac >s>  53 >s>  pkt> ;
+
+: -prog
+   ss/  tristate-mosi  H  rst/  tristate-sck  H  tristate-ss ;
+
 : +prog2  rst\  <pkt  0ac >s>  53 >s>  s> s>  pkt> ;
 : +prog3  rst\  <spi  0aa >s>  55 >s>  0ac >s>  53 >s>  spi> ;
 : +prog4  rst\  <spi  0aa >s>  55 >s>  0ac >s>  53 >s>  s> s>  spi> ;
 
-: -prog   rst/ ;
 : status     <pkt  60 >s>  s> s> s>  pkt> ;
 : device-id  <pkt  38 >s 0 >s 0 >s  s> s> s>  pkt> ;
 
-: xx
+: xx-deprecated
    +prog   status  device-id  -prog
    +prog2  status  device-id  -prog
    +prog3  status  device-id  -prog
    +prog4  status  device-id  -prog ;
+
+: yy
+   +prog   status  device-id  -prog
+   +prog   status  device-id  -prog
+   +prog   status  device-id  -prog
+   +prog   status  device-id  -prog ;
