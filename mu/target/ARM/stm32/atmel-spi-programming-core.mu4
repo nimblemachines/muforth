@@ -99,43 +99,35 @@ ld target/ARM/v6-m/kernel-itc.mu4
 -- --------------------------------------------------------------------
 -- SPI building blocks
 -- --------------------------------------------------------------------
-( XXX define SCK, MISO, MOSI, SS, RST as bit numbers. Then assert,
-  de-assert, drive, and tristate would just take a bit number.)
+: >mask  ( bit - mask)  1 swap << ;
+: bit/  ( bit)  >mask GPIOB_BSRR ! ;
+: bit\  ( bit)  >mask GPIOB_BRR ! ;
 
-( SCK on PB3.)
-: sck/   [ 1 3 << #] GPIOB_BSRR ! ;
-: sck\   [ 1 3 << #] GPIOB_BRR ! ;
+3 constant SCK  ( SCK on PB3.)
+: sck/   SCK bit/ ;
+: sck\   SCK bit\ ;
 
 ( MISO on PB4.)
 : bit@   ( - bit)  GPIOB_IDR @  4 >>  1 and ;
 
-( MOSI on PB5.)
+5 constant MOSI  ( MOSI on PB5.)
 : bit!   ( bit)  ( sample hi bit - 80 - and drive MOSI with it)
-   [ 1 5 << #] ( MOSI)  GPIOB_BRR ( bit clear register)
+   MOSI >mask  GPIOB_BRR ( bit clear register)
    rot 80 and  if  [ GPIOB_BSRR GPIOB_BRR - #] + ( bit set register)  then  ! ;
 
-( /SS on PB6.)
-: ss/  ( de-assert /SS)   [ 1 6 << #] GPIOB_BSRR ! ;
-: ss\  ( assert /SS)      [ 1 6 << #] GPIOB_BRR ! ;
+6 constant SS  ( /SS on PB6.)
+: ss/  ( de-assert /SS)   SS bit/ ;
+: ss\  ( assert /SS)      SS bit\ ;
 
-( /RST on PB7.)
-: rst/  ( de-assert /RST)   [ 1 7 << #] GPIOB_BSRR ! ;
-: rst\  ( assert /RST)      [ 1 7 << #] GPIOB_BRR ! ;
+7 constant RST  ( /RST on PB7.)
+: rst/  ( de-assert /RST)   RST bit/ ;
+: rst\  ( assert /RST)      RST bit\ ;
 
 ( Switch a Port B bit from input to output.)
-: drive-bit     ( bit#)  %01 swap 2* <<  GPIOB_MODER set! ;
+: drive     ( bit#)  %01 swap 2* <<  GPIOB_MODER set! ;
 
 ( Switch a Port B bit from output to input.)
-: tristate-bit  ( bit#)  %11 swap 2* <<  GPIOB_MODER clr! ;
-
-( To save space, these 6 definitions should probably be create/does words.)
-: drive-sck    3 drive-bit ;
-: drive-mosi   5 drive-bit ;
-: drive-ss     6 drive-bit ;
-
-: tristate-sck    3 tristate-bit ;
-: tristate-mosi   5 tristate-bit ;
-: tristate-ss     6 tristate-bit ;
+: tristate  ( bit#)  %11 swap 2* <<  GPIOB_MODER clr! ;
 
 ( NOTE: Delays are approximate and vary depending on the CPU - Cortex-M0 vs
   M0+ vs M3. We are going to be conservative in the following sense: we
@@ -393,17 +385,17 @@ label startup
 
 : +prog
    rst\ 3_0000 wait
-   ss/ drive-ss  H  sck\ drive-sck  H  drive-mosi  H
+   ss/ SS drive  H  sck\ SCK drive  H  MOSI drive  H
    <pkt  0ac >s>  53 >s>  pkt> ;
 
 : -prog
-   ss/  tristate-mosi  H  rst/  tristate-sck  H  tristate-ss ;
+   ss/  MOSI tristate  H  rst/  SCK tristate  H  SS tristate ;
 
 : +prog2  rst\  <pkt  0ac >s>  53 >s>  s> s>  pkt> ;
 : +prog3  rst\  <spi  0aa >s>  55 >s>  0ac >s>  53 >s>  spi> ;
 : +prog4  rst\  <spi  0aa >s>  55 >s>  0ac >s>  53 >s>  s> s>  spi> ;
 
-: status     <pkt  60 >s>  s> s> s>  pkt> ;
+: status     <pkt  60 >s 0 >s 0 >s  s>        pkt> ;
 : device-id  <pkt  38 >s 0 >s 0 >s  s> s> s>  pkt> ;
 
 : xx-deprecated
