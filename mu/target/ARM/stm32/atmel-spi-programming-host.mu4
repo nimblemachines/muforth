@@ -22,12 +22,18 @@ ld target/ARM/debug/stlink-v2.mu4
 hex
 
 2000_0000  ( STM32 ram origin)
-dup constant data      #64 +  ( flash page data buffer)
+dup constant data             ( flash page data buffer)
+
+.ifdef avr  #256 +  .else  #64 +  .then
+
 dup constant semaphore   4 +  ( semaphore + stm32 command)
-    constant cmd              ( flash command)
-           ( addr             ( flash addr: high byte, low byte)
-           ( count            ( byte count to transfer)
-           ( toggle           ( flash command toggle - for AVR)
+dup constant cmd         1 +  ( flash command)
+           ( addr )      2 +  ( flash addr: high byte, low byte)
+           ( result )         ( single byte result)
+           ( toggle )    1 +  ( flash command toggle - for AVR)
+           ( count )     2 +  ( byte count to transfer)
+
+cmd - constant #cmd           ( length of cmd buffer)
 
 ( Remote execute command.)
 : rx-cmd  ( cmd)
@@ -39,23 +45,18 @@ dup constant semaphore   4 +  ( semaphore + stm32 command)
   Mostly the STM32 just needs to change a setting or drive a GPIO high or
   low.)
 
-: spi.+reset         10 rx-cmd ;
-: spi.-reset         11 rx-cmd ;
+: spi.reset-low      10 rx-cmd ;
+: spi.reset-high     11 rx-cmd ;
 
 : spi.slow-clock     12 rx-cmd ;
 : spi.medium-clock   13 rx-cmd ;
 : spi.fast-clock     14 rx-cmd ;
 
-( There are three sets of three commands in the STM32 firmware, one set per
-  family. In each family the three commands, in order, are:
-  single  bulk-read  bulk-write.)
+( These are the workhorse commands.)
+: spi.single         15 rx-cmd ;
+: spi.bulk-read      16 rx-cmd ;
+: spi.bulk-write     17 rx-cmd ;
 
-variable family  ( avr, at89-ss, at89)
-: rx-family-cmd  family @ +  rx-cmd ;
-
-: avr-family      15 family ! ;
-: at89-ss-family  18 family ! ;
-: at89-family     1b family ! ;
 
 variable spy  ( to spy on the protocol)
 : spy-write  ( buf count)
@@ -64,18 +65,81 @@ variable spy  ( to spy on the protocol)
 : spy-read   ( buf count)
    spy @ if  cr  for  c@+ swap  ." <".h8_  next  drop ^  then  2drop ;
 
-( Copy cmd, addr, count, and toggle into pad, and copy to STM32.)
-: setup-bulk-cmd  ( spi-cmd addr toggle count)
-   2push  pad m !
-   swap m& ( cmd)  >lohi m& m& ( addr)
-   pop m& ( count)  pop m& ( toggle)
-   ( Copy cmd buffer to STM32.)  pad cmd 5 st.write  pad 5 spy-write ;
-
-( Setup a single cmd, execute it, and read back the result.)
-: single-cmd  ( spi-cmd addr)
-   0 0  setup-bulk-cmd  0 ( single) rx-family-cmd
-   ( Read result from STM32.)  pad cmd 4 st.read  pad 4 spy-read ;
-
 ( Testing)
 : st@  ( a - w)  ( read a word of memory via ST-LINK)
    pad swap 4 st.read  pad lew@ ;
+
+
+.ifdef avr
+-- ------------------------------------------------------------------------
+-- AVR programming
+-- ------------------------------------------------------------------------
+: setup-single  ( avr-cmd addr data)
+   pad m !
+   rot m& ( cmd)  swap >lohi m& m& ( addr)  m& ( data)
+   pad cmd 4 st.write  pad 4 spy-write ;
+
+: setup-bulk  ( avr-cmd addr toggle buf len - buf len)
+   2push ( buf len)
+   pad m !
+   rot m& ( cmd)  swap >lohi m& m& ( addr)  m& ( toggle)
+   r@ >hilo m& m& ( count)
+   pad cmd #cmd st.write  pad #cmd spy-write
+   2pop ;
+
+( The existing AVR code needs the following 9 commands defined:)
+: avr.Hello  st.connect ;
+
+: avr.ResetHigh  spi.reset-high ;
+: avr.ResetLow   spi.reset-low ;
+
+: avr.SlowClock  spi.slow-clock ;
+: avr.FastClock  spi.medium-clock ;
+
+: avr.Read    ( avr-cmd addr data)
+   setup-single  spi.single
+   pad cmd 4 st.read  pad 4 spy-read ;
+
+: avr.Write   avr.Read ;
+
+: avr.BulkRead   ( avr-cmd addr toggle buf len)
+   setup-bulk ( buf len)
+   spi.bulk-read
+   data swap ( buf addr len)  st.read ;
+
+: avr.BulkWrite  ( avr-cmd addr toggle buf len)
+   setup-bulk ( buf len)
+   data swap ( buf addr len)  st.write
+   spi.bulk-write ;
+
+.then  ( avr)
+
+
+.ifdef at89lp  ( at89lp51/52)
+-- ------------------------------------------------------------------------
+-- AT89LP programming using fixed-length payloads, no prefix, no /SS
+-- ------------------------------------------------------------------------
+( TODO)
+.then  ( at89lp)
+
+
+.ifdef at89lp-ss  ( at89lp828/6440)
+-- ------------------------------------------------------------------------
+-- AT89LP programming using variable-length payload, command prefix, and /SS
+-- ------------------------------------------------------------------------
+( Copy cmd, addr, result placeholder, and count, into pad, and copy to STM32.)
+: setup-bulk  ( cmd addr count)
+   pad m !
+   rot m& ( cmd)  swap >lohi m& m& ( addr)  0 m& ( result)  >hilo m& m& ( count)
+   pad cmd #cmd st.write  pad #cmd spy-write ;
+
+( Setup a single cmd, execute it, and read back the result.)
+: at89.single  ( cmd addr)
+   0  setup-bulk  spi.single
+   pad cmd 4 st.read  pad 4 spy-read ;
+
+( TODO)
+: at89.bulk-read ;
+: at89.bulk-write ;
+
+.then  ( at89lp-ss)

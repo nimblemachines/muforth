@@ -4,8 +4,6 @@
 
 loading Atmel SPI flash programming (STM32 core)
 
--d bitbang  ( let's try this and see if it's any better!)
-
 ( It might seem rather odd that this is here, but I'm interested in using
   an STM32 Discovery board as a "programming pod" for Atmel 8051 and AVR
   microcontrollers, which have a simple SPI interface for erasing,
@@ -54,13 +52,19 @@ ram  wipe
   then the program.)
 
 ( Let's put the big stuff first. Makes it easy to find when debugging.)
-here equ data         64 allot  ( flash page data buffer)
+here equ data                   ( flash page data buffer)
+
+.ifdef avr  256 allot  .else  64 allot  .then
+
 here equ semaphore  cell allot  ( semaphore + stm32 command)
 
 here equ cmd           1 allot  ( flash command)
-here equ addr          2 allot  ( flash addr)
-here equ count         1 allot  ( byte count to transfer)
+here equ addr                   ( flash addr)
+here equ addr-hi       1 allot
+here equ addr-lo       1 allot
+here equ result                 ( single byte result)
 here equ toggle        1 allot  ( flash command toggle - for AVR)
+here equ count         2 allot  ( byte count to transfer)
 align
 
 hex
@@ -86,14 +90,16 @@ ld target/ARM/v6-m/kernel-itc.mu4
    ( Ports -FED_CBA- )
         [ %0000_0100  #16 << #] RCC_AHBENR set!
 
-.ifdef bitbang
-
+   -- Clear port B
    0 GPIOB_ODR !
-   -- Set all Port B bits to input.
+   -- Set all Port B pins to input.
    0 GPIOB_MODER !
-   -- Set output speed to high.
+   -- Set output speed to medium.
    0 GPIOB_OSPEEDR !
-   [ %1111_1111_11 #3  2*  << #] GPIOB_OSPEEDR set!  ( 2 bits per pin) ;
+   [ %0101_0101_01 #3  2*  << #] GPIOB_OSPEEDR set!  ( 2 bits per pin) ;
+
+   -- Set output speed to high.
+   -- [ %1111_1111_11 #3  2*  << #] GPIOB_OSPEEDR set!  ( 2 bits per pin) ;
 
 -- --------------------------------------------------------------------
 -- SPI building blocks
@@ -121,8 +127,8 @@ variable h-delay
 : bit\  ( bit)  >mask GPIOB_BRR ! ;
 
 3 constant SCK  ( SCK on PB3.)
-: sck/   SCK bit/  H ;
-: sck\   SCK bit\  H ;
+: sck/   SCK bit/ ;
+: sck\   SCK bit\ ;
 
 ( MISO on PB4.)
 : bit@   ( - bit)  GPIOB_IDR @  4 >>  1 and ;
@@ -148,98 +154,19 @@ variable h-delay
 ( Switch a Port B bit from output to input.)
 : tristate  ( bit#)  %11 swap 2* <<  GPIOB_MODER clr! ;
 
-: sck/\  sck/  sck\ ;  ( do one clock cycle)
+( Write a byte.)
+: >s   ( b)
+      8 for  dup bit! 2*  sck/ H                         sck\ H  next  drop ;
 
-( Write a byte, in 8 clocks, using SPI.)
-: >s   ( b)        8 for  dup bit! 2*   sck/\                  next  drop ;
+( Read a byte.)
+: s>   ( - b)
+   0  8 for               sck/ H        2* bit@ +        sck\ H  next ;
 
-( Read a byte, in 8 clocks, using SPI.)
-: s>   ( - b)   0  8 for                sck/  2* bit@ +  sck\  next ;
-
-( Write and read a byte, in 8 clocks, using SPI.)
+( Write and read a byte.)
 : >s>  ( out - in)
-   0 swap  8 for  dup bit! 2*  sck/  H  swap  2* bit@ +  swap  sck\  H  next  drop ;
+   0 swap
+      8 for  dup bit! 2*  sck/ H  swap  2* bit@ +  swap  sck\ H  next  drop ;
 
-( Start an SPI packet.)
-: <spi   ss\  ( assert SS) ;
-
-( End an SPI packet.)
-: spi>   ss/  ( de-assert SS) ;
-
-.else  ( hardware SPI)
-
-   -- Enable clock to SPI1 as well.
-   [ 1 #12 << #] RCC_APB2ENR set!
-
-   -- Set mode bits and alternate function for SPI.
-   -- F072: SPI is AF0. F303: SPI is AF5.
-   -- Mode %01 is output ; mode %10 is alternate function
-   [ %1111_111111 #3  2*  << #] GPIOB_MODER clr!  ( 2 bits per pin)
-   [ %0101_101010 #3  2*  << #] GPIOB_MODER set!  ( 2 bits per pin)
-   -- Set speed to ~10M.
-   [ %1111_111111 #3  2*  << #] GPIOB_OSPEEDR clr!  ( 2 bits per pin)
-   [ %0101_010101 #3  2*  << #] GPIOB_OSPEEDR set!  ( 2 bits per pin)
-
-   [         0fff #3  4 * << #] GPIOB_AFRL clr!   ( 4 bits per pin)
-.ifdef stm32f303
-   [         0555 #3  4 * << #] GPIOB_AFRL set!   ( 4 bits per pin)
-
-   -- Also divide APB2 clock /2 so we can get SPI to run slowly enough.
-   [ 4 #11 << #] RCC_CFGR set! ( APB2=/2)
-.then
-
-   -- Now for SPI1 itself. When setting the clock divisor we will enable it.
-   0 SPI1_CR1 ! ( reset and disable)
-   1700 SPI1_CR2 !  ( FRXTH=1, datasize 8 bits) ;
-
-( For the SPI clock settings below, we are dividing 48M, in the case of the
-  F072, and 36M, in the case of the F303. I'll show the divided clocks like this:
-  F072/F303.)
-
-( For unprogrammed AVR chips; they are running at 1M; max SPI clock 250k.)
-( S08 code uses 230k.)
-: slow-clock  ( 187.5k/140.6k)
-   %1_101_111_100 ( SSM,SSI=11, SPE=1, /256, MSTR=1, CPOL,CPHA=00) SPI1_CR1 ! ( config and enable) ;
-
-( For AVR chips with DIV8 fuse unprogrammed; they are running at 8M; max SPI clock 2M.)
-( S08 code uses 1.536M.)
-: medium-clock  ( 1.5M/1.125M)
-   %1_101_100_100 ( SSM,SSI=11, SPE=1, /32, MSTR=1, CPOL,CPHA=00) SPI1_CR1 ! ( config and enable) ;
-
-( For AT89LP chips. Max SPI clock 5M.)
-: fast-clock  ( 3M/2.25M)
-   %1_101_011_100 ( SSM,SSI=11, SPE=1, /16, MSTR=1, CPOL,CPHA=00) SPI1_CR1 ! ( config and enable) ;
-
-: ?status-set   ( bits)   begin  SPI1_SR @   over and     until  drop ;
-: ?status-clr   ( bits)   begin  SPI1_SR @   over and  0= until  drop ;
-
-( Send and recv a byte via SPI.)
-: >s>  ( b1 - b2)
-   2  ( TXE bit) ?status-set  SPI1_DR c!
-   1 ( RXNE bit) ?status-set  SPI1_DR c@ ;
-
-: >s   ( b)      >s> drop ;  ( Send and recv a byte, but discard the response.)
-: s>   ( - b)  0 >s> ;       ( Send dummy byte, recv byte)
-
-( /SS on PB6.)
-: ss\  ( assert /SS)      [ 1 6 << #] GPIOB_BRR ! ;
-: ss/  ( de-assert /SS)   [ 1 6 << #] GPIOB_BSRR ! ;
-
-( /RST on PB7.)
-: rst\  ( assert /RST)      [ 1 7 << #] GPIOB_BRR ! ;
-: rst/  ( de-assert /RST)   [ 1 7 << #] GPIOB_BSRR ! ;
-
-( Start an SPI packet.)
-: <spi
-   ss\  ( assert SS) ;
-
-( End an SPI packet.)
-: spi>
-   ( Wait until FTLVL = 00 and BSY = 0.)
-   [ 3 #11 <<  1 #7 << + #] ?status-clr
-   ss/  ( de-assert SS) ;
-
-.then  ( ndef bitbang - aka hardware SPI)
 
 ( Since we are going to be reading a buffer sent to us by the host, let's
   have nice words for that.)
@@ -267,35 +194,30 @@ compiler: [:  ( start a jump table)
 compiler: :]  ( end a jump table)
    here  swap  image-! ;
 
--- ------------------------------------------------------------------------
--- LED flash test
--- ------------------------------------------------------------------------
-.ifdef testing
-.ifdef stm32f072
-( LEDs are connected to PC6 to PC9. Let's just add 6 to the command and
-  flash that LED.)
 
-: do-command  ( cmd)
-   6 +  1 swap << ( mask)  dup GPIOC_BSRR !  2_0000 wait  GPIOC_BRR ! ;
-.then  ( f072)
-
-.ifdef stm32f303
-( LEDs are connected to PE8 to PE15. Let's just add 8 to the command and
-  flash that LED.)
-
-: do-command  ( cmd)
-   8 +  1 swap << ( mask)  dup GPIOE_BSRR !  3_0000 wait  GPIOE_BRR ! ;
-.then  ( f303)
-.then  ( testing)
-
+.ifdef avr
 -- ------------------------------------------------------------------------
 -- AVR programming
 -- ------------------------------------------------------------------------
-( TODO)
-: avr-single ;
-: avr-bulk-read ;
-: avr-bulk-write ;
+: send-cmd
+   ( Save data pointer, send cmd and addr, restore data pointer.)
+   p @  cmd p !  >p >p >p  p !
+   ( Toggle cmd.)
+   toggle c@  cmd c@  over xor  dup cmd c!
+   ( If cmd toggled to zero, or if toggle *is* zero, incr addr-lo.)
+   and 0= if  addr-lo dup c@ 1+  swap c!  then ;
 
+: setup-bulk  ( - count)  data p !  count h@ ;
+
+( The three transaction types to define: single, bulk-read, bulk-write.)
+: single      cmd p !  >p> >p> >p> >p> ;
+: bulk-read   setup-bulk  for  send-cmd  p>  next ;
+: bulk-write  setup-bulk  for  send-cmd  >p  next ;
+
+.then  ( avr)
+
+
+.ifdef at89lp
 -- ------------------------------------------------------------------------
 -- AT89LP programming using fixed-length payloads, no prefix, no /SS
 -- ------------------------------------------------------------------------
@@ -305,10 +227,15 @@ compiler: :]  ( end a jump table)
   payload is always either 1 byte or 64 bytes.)
 
 ( TODO)
-: at89-single ;
-: at89-bulk-read ;
-: at89-bulk-write ;
+( The three transaction types to define: single, bulk-read, bulk-write.)
+: single ;
+: bulk-read ;
+: bulk-write ;
 
+.then  ( at89lp)
+
+
+.ifdef at89lp-ss
 -- ------------------------------------------------------------------------
 -- AT89LP programming using variable-length payload, command prefix, and /SS
 -- ------------------------------------------------------------------------
@@ -318,50 +245,47 @@ compiler: :]  ( end a jump table)
   and also prefixes every command with 0aa 55.)
 
 ( Start an SPI packet, send the prefix bytes, setup command buffer.)
-: <pkt   <spi  0aa >s  55 >s  cmd p ! ;
+: <pkt   ss\  0aa >s  55 >s  cmd p ! ;
 
 ( End a programming packet.)
-: pkt>   spi> ;
+: pkt>   ss/ ;
 
 ( Send cmd, addr-hi, and addr-lo, discarding responses. Setup data buffer.)
-: setup-bulk   <pkt  >p >p >p  data p ! ;
+: setup-bulk  ( - count)  <pkt  >p >p >p  data p !  count h@ ;
 
 ( The three transaction types to define: single, bulk-read, bulk-write.)
 
 ( Send cmd, addr-hi, addr-lo, and one dummy byte, saving all responses.)
-: at89-ss-single       <pkt  >p> >p> >p> p>  pkt> ;
+: single       <pkt  >p> >p> >p> p>  pkt> ;
 
 ( For bulk commands, send cmd and address bytes, then send or recv a
   buffer of data.)
 
-: at89-ss-bulk-read    setup-bulk  count c@ for  p>  next  pkt> ;
-: at89-ss-bulk-write   setup-bulk  count c@ for  >p  next  pkt> ;
+: bulk-read    setup-bulk  for  p>  next  pkt> ;
+: bulk-write   setup-bulk  for  >p  next  pkt> ;
 
-.then
+.then  ( at89lp-ss)
+
 
 -- ------------------------------------------------------------------------
 -- Core command processing loop
 -- ------------------------------------------------------------------------
-.ifndef testing
-
 ( Command index is above the word that it executes.)
 : do-command  ( n)
             ( 10    11          12            13          14 )
    10 - [:  rst\  rst/  slow-clock  medium-clock  fast-clock
-                      ( 15                 16                  17 )
-                avr-single      avr-bulk-read      avr-bulk-write
-                      ( 18                 19                  1a )
-            at89-ss-single  at89-ss-bulk-read  at89-ss-bulk-write
-                      ( 1b                 1c                  1d )
-               at89-single     at89-bulk-read     at89-bulk-write  :] ;
-.then
+              ( 15         16          17 )
+            single  bulk-read  bulk-write  :] ;
 
 here ]  ( chip-init)
    clock-init  led-init  spi-init  flash-leds
    ss/  rst/  ( deassert both)
+.ifdef avr
+   slow-clock  sck\  SCK drive  RST drive  MOSI drive
+.then
    begin
-      "face_d000 semaphore !  ( ready for another command)
-      0  begin  drop  semaphore @  dup "ffff_ff00 and  "deca_f000 =  until
+      face_d000 semaphore !  ( ready for another command)
+      0  begin  drop  semaphore @  dup ffff_ff00 and  deca_f000 =  until
       0ff and  ( command byte)  do-command
    again [
 
@@ -373,17 +297,24 @@ label startup
    @ram #ram + rp lit   rp sp mov   #64 cells # sp sp sub
    cpsid  ( disable interrupts)
    ( chip-init)  ip  lit
-   "decafbad     top lit
+   deca_fbad     top lit
    next  ;c
    pool,
+
+
+( XXX The following is for interactive testing and needs to go away
+  eventually.)
+
+.ifdef testing
+
+.ifdef at89lp-ss
 
 ( Testing. Set things up as if for an at89lp chip.)
 : tt
    clock-init  led-init  spi-init  flash-leds
    RST drive  rst/  fast-clock ;
 
-: cc  <spi  >s>  spi> ;  ( for HC595 test)
-
+( XXX Still not sure if this tristate/drive dance is necessary!)
 : +prog
    rst\ 3_0000 wait
    ss/ SS drive  H  sck\ SCK drive  H  MOSI drive  H
@@ -400,14 +331,60 @@ label startup
 : status     <pkt  60 >s 0 >s 0 >s  s>        pkt> ;
 : device-id  <pkt  38 >s 0 >s 0 >s  s> s> s>  pkt> ;
 
-: xx-deprecated
-   +prog   status  device-id  -prog
-   +prog2  status  device-id  -prog
-   +prog3  status  device-id  -prog
-   +prog4  status  device-id  -prog ;
+.then  ( at89lp-ss)
 
-: yy
-   +prog   status  device-id  -prog
-   +prog   status  device-id  -prog
-   +prog   status  device-id  -prog
-   +prog   status  device-id  -prog ;
+
+( Let's try the atmega324.)
+.ifdef avr
+: tt
+   clock-init  led-init  spi-init  flash-leds
+   slow-clock  sck\  rst/  SCK drive  RST drive  MOSI drive ;
+
+: >lohi  ( w - lo hi)
+   dup  0ff and  swap 8 >> ;
+
+: >hilo  ( w - hi lo)
+   >lohi swap ;
+
+: shuffle  ( cmd addr data - data addr-lo addr-hi cmd)
+   -rot  >lohi  rot ;
+
+: test-bulk  ( cmd addr toggle count)
+   >r  shuffle  cmd c!+ c!+ c!+ c!+
+   r> >hilo rot c!+ c! ;
+
+: avr   ( cmd addr data)   shuffle  cmd c!+ c!+ c!+ c!  single ;
+
+: avr2  ( cmd addr data - r2)  avr  addr-lo c@ ;
+: avr3  ( cmd addr data - r3)  avr  result c@ ;
+
+: +prog
+   rst\  3_0000 wait  0ac 53_00 0 avr2 ;
+
+: -prog  rst/ ;
+
+: status
+   0f0 0 0 avr3 ;
+
+: read-sig
+   30 0 0 avr3
+   30 1 0 avr3
+   30 2 0 avr3 ;
+
+: read-fuses
+   50 00_00 0 avr3
+   58 08_00 0 avr3
+   50 08_00 0 avr3 ;
+
+: read-lock
+   58 0 0 avr3 ;
+
+: index
+   100 0 do  i dup data + c!  loop ;
+
+: wipe
+   100 0 do  0ff i data + c!  loop ;
+
+.then  ( avr)
+
+.then  ( interactive)
