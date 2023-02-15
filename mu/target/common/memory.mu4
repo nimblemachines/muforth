@@ -2,42 +2,66 @@
 
   Copyright 2002-2023 David Frech. (Read the LICENSE for details.)
 
--- loading Memory image (generic)
+-- loading Core memory
 
 ( NOTE: Before loading this code, define the following values that
   describe the target:
 
     cell-bytes  -- number of bytes in a cell
-    addr-bits   -- number of bits in an address
     big-endian or little-endian  -- target's endianness
-
-  Additionally, if the target is a Harvard architecture machine, the symbol
-  "harvard" should be defined.
 
   *After* loading this code, the deferred word "choose-image" [see below]
   must be set to code specific to the target machine and its architecture.)
 
-: power-of-two?  ( n)
-   begin  dup 1 and 0=  while  u2/  repeat  1 = ;
+( Utility words for address and image sizes.)
+: log2  ( n - exp mant)
+   0 swap  begin  dup 1 and 0= while  1 u+  u2/  repeat ;
 
-( Memory images are prefixed by their current pointer, origin, and size in
-  bytes.)
+: power-of-two?  ( n)  log2 nip  1 = ;
 
-variable h    ( dictionary pointer pointer; points to current image)
+( We are separating the notion of memory *images* and *regions*. An image
+  has a size and an address; a region has an origin pointer, a current
+  pointer, and an associated image.
+
+  It is useful to have, eg, app, bootloader, signature, and vector
+  *regions* in the flash *image*.)
+
+( Regions have an origin pointer, a "current" pointer [what  here
+  returns], and an associated image. When a region is created, it stores a
+  pointer to the image's first byte in its body, before the here and origin
+  pointers.)
+
+( XXX This should probably be called r instead, but there is a *lot* of
+  code that does "h preserve" that would have to change... I guess that
+  qualifies as a leaky abstraction.)
+
+variable h    ( dictionary pointer pointer; points to current *region*)
 : dp   h @ ;  ( dictionary pointer)
+: make-region  ( 'image)
+   create  ,  0 , 0 ,  ( image, ptr, origin)
+   does> cell+ h ! ;  ( h points to ptr cell)
 
-: make-image  ( origin #bytes)
-   dup power-of-two?  0= if  error" image size not a power of 2"  then
-   create  swap  dup , , ( ptr origin)  dup , ( size)   allot
-   does>  h ! ;
+-: ( tell us which region is current)
+   dp ?if  ."  ("  cell- body> >name type  ." )"  then ;  is .extra-prompt
 
--: ( tell us which image is current)
-   ."  ("  dp  body> >name type  ." )" ;  is .extra-prompt
+( Memory images should be stored in the dictionary like strings: prefixed
+  by their length. When we push an image, we push the address of its first
+  byte, but the previous cell countains the count, if we want to do bounds
+  checking or address wrapping.
 
-( Simple but inefficient!)
-: @image  dp  cell+ @         ( origin) ;
-: #image  dp  cell+ cell+ @   ( image size) ;
-: 'image  dp  [ 3 cells #] +  ( image address) ;
+  Images are unnamed! They are "addressable" only as a by-product of a
+  *region* that points into an image.)
+
+( Create an image and leave a pointer to it.)
+: make-image  ( #bytes - 'image)
+   aligned  dup power-of-two?  0= if  error" image size not a power of 2"  then
+   dup ,  here  swap allot ;
+
+: 'image  dp cell- @ ;      ( image address is stored in region)
+: #image  'image cell- @ ;  ( image size)
+
+( Wrap an address to "fit" into the current image.)
+: wrap   #image 1-  and ;
 
 ( Target can be a von Neumann or Harvard architecture machine, so we let
   the user decide how to handle choosing an image based on a target
@@ -52,10 +76,13 @@ variable h    ( dictionary pointer pointer; points to current image)
   target address. In this case, choose-image will probably do nothing, and
   the user has to choose the image that they are interested in.)
 
+( XXX This should maybe be called choose-region, since the images are
+  nameless, and any region that points to a particular image will work.)
+
 defer choose-image  ( target)
 : image+  ( target - host)
    h preserve ( choose-image might change it)  dup choose-image
-   #image 1- and  'image + ;
+   wrap 'image + ;
 
 : image-c@   image+ c@ ;
 : image-c!   image+ c! ;
@@ -94,15 +121,13 @@ defer choose-image  ( target)
 ( The above mess left the address of a "cell@" word on the stack.)
 : du-target
    [ #]    is |cell@
-   addr-bits  |addr !
+   #image log2 drop  |addr !  ( XXX does this make sense?)
    cell-bytes |cell ! ;
 
 -: ( buf a u)  swap image+ -rot  cmove ;  ( read from image)
 : >image
    [ #]    is |read
    du-target ;
-
->image  ( default to image; this can change once we are chatting with target.)
 
 meta
 cell-bytes constant cell
@@ -111,7 +136,9 @@ cell-bytes constant cell
 : cell+  \m cell + ;
 : cell-  \m cell - ;
 
-: here   ( - a)  dp @ ;
+: here    ( - a)  dp       @ ;
+: origin  ( - a)  dp cell+ @ ;  ( "region drop" also works)
+
 : goto   ( a)    dp ! ;   ( set region pointer to a)
 : allot  ( n)    dp +! ;
 
