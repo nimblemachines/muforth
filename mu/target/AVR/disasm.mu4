@@ -36,12 +36,19 @@ comment asm-fields
 : K3  ( bit op - bits)    swap  07 and  or ;
 asm-fields
 
+: label?   ( addr - 0 | 'link -1)  .labels.  find-constant ;
+: equate?  ( addr - 0 | 'link -1)  .equates. find-constant ;
+: .name_   ( 'link)  link>name type space ;
+
 ( Standard ways of printing different "types".)
 : .r  ( reg)  ." r"  radix preserve  decimal  u. ;
 : .i  ( imm)   .h8_ ;
-: .a  ( addr)  .hcell_ ;
-: .ioa  ( io-addr)  20 +  .hcell_ ;
+: .a  ( addr)  .haddr_ ;
 : .o  ( offset) .h8_ ;
+
+: .dest  ( a)  dup label?  if  .name_ drop ^  then  .a ;
+: .eq    ( a)  dup equate? if  .name_ drop ^  then  .a ;
+: .ioa   ( io-addr)  20 +  .eq ;
 
 ( Extracting various fields.)
 : 00r  ( op - op reg)  dup 0f and ;
@@ -73,7 +80,7 @@ asm-fields
    dup 7 and  over 7 >> 18 and or  over 8 >> 20 and or  ( op offset) .o
    dup 8 and if  ." ,y" ^  then  ." ,z" ;
 
-: .data-space    Rd .r  cell* .a ;
+: .data-space    Rd .r  cell* .eq ;
 
 : .stack-reg    Rd .r ;
 
@@ -90,7 +97,7 @@ asm-fields
 
 : .long-branch
    dup 1 and  over 3 >> 3e and or  10 <<  ( high word)
-   cell* or  2*  dup ea !  .a ;
+   cell* or  2*  dup ea !  .dest ;
 
 : .immw
    dup 4 >>  3 and  2*  #24 +  .r  ( high reg pair)
@@ -100,9 +107,9 @@ asm-fields
    dup 3 >> 1f and .ioa  ( address)
    B3 u. ;
 
-: .io    Rd .r  00r  over 5 >> 30 and or .ioa ;
+: .io    Rd .r  00r  over 5 >> 30 and or  .ioa ;
 
-: >dest  ( word-offset)  2* ( byte-offset)  p @ +a  dup ea !  .a ;
+: >dest  ( word-offset)  2* ( byte-offset)  p @ +a  dup ea !  .dest ;
 
 : .rel-branch
    dup 0fff and  dup 800 and if  -1000 +  then  ( sign extend)
@@ -253,6 +260,9 @@ forth
 
 ( The workhorse.)
 : 1dis  ( a)
-   dup .addr  dup 2/ .a  .nesting space
+   dup label? if
+      dup _addr addr-digits 1+ spaces  .nesting space  ." label " .name_
+   then
+   dup .addr  dup 2/ .hcell_  .nesting space
    p !  cell*  ( op)  dup .hcell_  space
    shred  drop ;
