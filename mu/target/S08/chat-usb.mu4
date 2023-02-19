@@ -106,20 +106,6 @@ out-buffer 6 + equ wLength
 2 xvar memptr
 2 xvar memcount
 
-.ifdef with-bufptr
-1 xvar bufptr
-.then
-
-( I've changed the code to keep the "bufptr" - a one-byte index into the
-  in-buffer or out-buffer - on the stack instead of in a zero-page variable.
-  The code is two bytes longer this way, and executes a tiny bit slower, but
-  I like the idea of having less global state kicking around.
-
-  The original code is still there. If you want to use it, just put
-
-    -d with-bufptr
-
-  on the command line when loading this code.)
 
 ( Be careful! Values in standard USB requests are _little-endian_. To read
   word values - like addresses and counts - we cannot use ldhx!
@@ -152,15 +138,6 @@ label ready-endpt  ( HX points to EP buffer control byte, A has count)
 label prepare-next-in
    memcount ) ldhx  0!= if
       buflen0 # cphx  u> if  ( whole packet)  buflen0 # ldx  then
-.ifdef with-bufptr
-      bufptr ) clr  .x psh ( count)
-      begin
-         memptr ) ldhx  0 ,x lda  1 # aix  memptr ) sthx
-         .h clr  bufptr ) ldx  in-buffer ,x sta  .x inc  bufptr ) stx
-         memcount ) ldhx  -1 # aix ( decr count)  memcount ) sthx
-      0 ,s decz? until  .a pul
-      bufptr ) ldx  ( in count)
-.else
       .a clr  .a psh ( bufptr)  .x psh ( count)
       begin
          memptr ) ldhx  0 ,x lda  1 # aix  memptr ) sthx
@@ -168,7 +145,6 @@ label prepare-next-in
          memcount ) ldhx  -1 # aix ( decr count)  memcount ) sthx
       0 ,s decz? until  .a pul
       .x pul ( bufptr; this is in-count)
-.then
    then
    ( fall thru)  ;c
 
@@ -357,21 +333,12 @@ label setup-or-out-token
    out-count ) lda  0= if  expect-setup-token j  then
 
    ( Otherwise, we've got a data payload. Copy it.)
-.ifdef with-bufptr
-   bufptr ) clr  .a psh  ( count)
-   begin
-      .h clr  bufptr ) ldx  out-buffer ,x lda  .x inc  bufptr ) stx
-      memptr ) ldhx  write-byte c  1 # aix  memptr ) sthx
-      memcount ) ldhx  -1 # aix ( decr count)  memcount ) sthx
-   0 ,s decz? until  .a pul
-.else
    .x clr  .x psh ( bufptr)  .a psh  ( count)
    begin
       .h clr  1 ,s ( bufptr) ldx  out-buffer ,x lda  1 ,s ( bufptr) inc
       memptr ) ldhx  write-byte c  1 # aix  memptr ) sthx
       memcount ) ldhx  -1 # aix ( decr count)  memcount ) sthx
    0 ,s decz? until  2 # ais
-.then
 
    ( If memcount zero, we've received all the data; queue up status IN token.)
    memcount ) ldhx   finish-control-write 0!= until
