@@ -13,27 +13,31 @@ loading Atmel SPI flash programming (host)
 -d stlink-ram-only
 ld target/ARM/debug/stlink-v2.mu4
 
+.ifdef st.read
+
 ( We need to know where to find the data structures in the STM32 memory.
   They are conveniently placed at the start of RAM. We are going to call
   directly into the stlink support code to read and write the STM32 memory.
   We can't use the "interact" versions - t.read, t.write, etc - because they
   will be associated with the 8051 target!)
 
-hex
+decimal
 
-2000_0000  ( STM32 ram origin)
-dup constant data             ( flash page data buffer)
-
-.ifdef avr  #256 +  .else  #64 +  .then
-
+"2000_0000  ( STM32 ram origin)
+dup constant data      256 +  ( memory read/write buffer)
 dup constant semaphore   4 +  ( semaphore + stm32 command)
+
 dup constant cmd         1 +  ( flash command)
            ( addr )      2 +  ( flash addr: high byte, low byte)
            ( result )         ( single byte result)
            ( toggle )    1 +  ( flash command toggle - for AVR)
-           ( count )     2 +  ( byte count to transfer)
+           ( count )          ( byte count to transfer)
+           ( out-count)  2 +  ( byte count to send)
+           ( in-count)   2 +  ( byte count to recv)
 
 cmd - constant #cmd           ( length of cmd buffer)
+
+hex
 
 ( Remote execute command.)
 : rx-cmd  ( cmd)
@@ -49,13 +53,12 @@ cmd - constant #cmd           ( length of cmd buffer)
 : spi.reset-high     11 rx-cmd ;
 
 : spi.slow-clock     12 rx-cmd ;
-: spi.medium-clock   13 rx-cmd ;
-: spi.fast-clock     14 rx-cmd ;
+: spi.fast-clock     13 rx-cmd ;
 
 ( These are the workhorse commands.)
-: spi.single         15 rx-cmd ;
-: spi.bulk-read      16 rx-cmd ;
-: spi.bulk-write     17 rx-cmd ;
+: spi.single         14 rx-cmd ;
+: spi.bulk-read      15 rx-cmd ;
+: spi.bulk-write     16 rx-cmd ;
 
 
 variable spy  ( to spy on the protocol)
@@ -87,20 +90,22 @@ variable spy  ( to spy on the protocol)
    pad cmd #cmd st.write  pad #cmd spy-write
    2pop ;
 
-( The existing AVR code needs the following 9 commands defined:)
+( The existing AVR code needs the following commands defined:)
 : avr.Hello  st.connect ;
+: avr.Bye  ;  ( XXX is there anything to do here?)
 
 : avr.ResetHigh  spi.reset-high ;
 : avr.ResetLow   spi.reset-low ;
 
 : avr.SlowClock  spi.slow-clock ;
-: avr.FastClock  spi.medium-clock ;
+: avr.FastClock  spi.fast-clock ;
 
-: avr.Read    ( avr-cmd addr data)
+: avr.Read    ( avr-cmd addr data)  ( leaves result in pad)
    setup-single  spi.single
    pad cmd 4 st.read  pad 4 spy-read ;
 
-: avr.Write   avr.Read ;
+: avr.Write   ( avr-cmd addr data)
+   setup-single  spi.single ;
 
 : avr.BulkRead   ( avr-cmd addr toggle buf len)
    setup-bulk ( buf len)
@@ -143,3 +148,5 @@ variable spy  ( to spy on the protocol)
 : at89.bulk-write ;
 
 .then  ( at89lp-ss)
+
+.then  ( st.read)

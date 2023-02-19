@@ -52,10 +52,7 @@ ram  wipe
   then the program.)
 
 ( Let's put the big stuff first. Makes it easy to find when debugging.)
-here equ data                   ( flash page data buffer)
-
-.ifdef avr  256 allot  .else  64 allot  .then
-
+here equ data        256 allot  ( memory read/write buffer)
 here equ semaphore  cell allot  ( semaphore + stm32 command)
 
 here equ cmd           1 allot  ( flash command)
@@ -64,8 +61,9 @@ here equ addr-hi       1 allot
 here equ addr-lo       1 allot
 here equ result                 ( single byte result)
 here equ toggle        1 allot  ( flash command toggle - for AVR)
-here equ count         2 allot  ( byte count to transfer)
-align
+here equ count                  ( byte count to transfer)
+here equ out-count     2 allot  ( byte count to write)
+here equ in-count      2 allot  ( byte count to read)
 
 hex
 
@@ -92,80 +90,63 @@ ld target/ARM/v6-m/kernel-itc.mu4
 
    -- Clear port B
    0 GPIOB_ODR !
-   -- Set all Port B pins to input.
+   -- Set PB3, 5, 6, and 7 to output.
    0 GPIOB_MODER !
+   [ %0101_0100_01  3 2* << #] GPIOB_MODER set!  ( 2 bits per pin)
    -- Set output speed to medium.
    0 GPIOB_OSPEEDR !
-   [ %0101_0101_01 #3  2*  << #] GPIOB_OSPEEDR set!  ( 2 bits per pin) ;
-
-   -- Set output speed to high.
-   -- [ %1111_1111_11 #3  2*  << #] GPIOB_OSPEEDR set!  ( 2 bits per pin) ;
+   [ %0101_0100_01  3 2* << #] GPIOB_OSPEEDR set!  ( 2 bits per pin) ;
 
 -- --------------------------------------------------------------------
 -- SPI building blocks
 -- --------------------------------------------------------------------
-( NOTE: Delays are approximate and vary depending on the CPU - Cortex-M0 vs
-  M0+ vs M3. We are going to be conservative in the following sense: we
-  will calculate based on the *fastest* machine; our delays will be longer on
-  a slower machine, but not by much, and that way both will work.
+: bit/  ( bit)  GPIOB_BSRR ! ;
+: bit\  ( bit)  GPIOB_BRR ! ;
 
-  NEXT takes 6 cycles on a fast cpu; (next) ( takes NEXT + 5 on a fast
-  machine.
+( SCK on PB3.)
+: sck/   [ 1 3 << #] bit/ ;
+: sck\   [ 1 3 << #] bit\ ;
 
-  There are several overheads of NEXT, plus the execution time of H, that
-  will lower the clock speed.)
+( Half cycle delay. Needed to slow the clock down a bit.)
+: H ;
 
-variable h-delay
-: slow-clock      [ cpuclk    #250,000 /  #22 / #]  h-delay ! ;  ( 250k)
-: medium-clock    [ cpuclk  #2,000,000 /  #22 / #]  h-delay ! ;  ( 2M)
-: fast-clock      [ cpuclk  #5,000,000 /  #22 / #]  h-delay ! ;  ( 5M)
+( Do one clock cycle, including any delays.)
+: sck/\   sck/ H sck\ ;
 
-: H  ( delay a half cycle)   h-delay @ wait ;
-
-: >mask  ( bit - mask)  1 swap << ;
-: bit/  ( bit)  >mask GPIOB_BSRR ! ;
-: bit\  ( bit)  >mask GPIOB_BRR ! ;
-
-3 constant SCK  ( SCK on PB3.)
-: sck/   SCK bit/ ;
-: sck\   SCK bit\ ;
+( XXX Do we care that bit! and bit@, written in Forth, are rather slow? If
+  we wanted to bitbang faster, these should be code words.)
 
 ( MISO on PB4.)
-: bit@   ( - bit)  GPIOB_IDR @  4 >>  1 and ;
+: bit@   ( bits - bits')
+   2*  GPIOB_IDR @  4 >>  1 and  + ;
 
-5 constant MOSI  ( MOSI on PB5.)
-: bit!   ( bit)  ( sample hi bit - 80 - and drive MOSI with it)
-   MOSI >mask  GPIOB_BRR ( bit clear register)
-   rot 80 and  if  [ GPIOB_BSRR GPIOB_BRR - #] + ( bit set register)  then  ! ;
+( Amusing note: The standard Forth-style pronunciation of bit! is "bit bang". ;-)
 
-6 constant SS  ( /SS on PB6.)
-: ss/  ( de-assert /SS)   SS bit/ ;
-: ss\  ( assert /SS)      SS bit\ ;
+( MOSI on PB5.)
+: bit!   ( bits - bits')  ( sample hi bit - 80 - and drive MOSI with it)
+   dup  [ 1 5 << #]  GPIOB_BRR ( bit clear register)
+   rot 80 and  if  [ GPIOB_BSRR GPIOB_BRR - #] + ( bit set register)  then  !
+   2* ;
 
-7 constant RST  ( /RST on PB7.)
-: rst/  ( de-assert /RST)   RST bit/ ;
-: rst\  ( assert /RST)      RST bit\ ;
+( /SS on PB6.)
+: ss/  ( de-assert /SS)   [ 1 6 << #] bit/ ;
+: ss\  ( assert /SS)      [ 1 6 << #] bit\ ;
 
-( Set mode bits. Mode %00 is input; %01 is output.)
-
-( Switch a Port B bit from input to output.)
-: drive     ( bit#)  %01 swap 2* <<  GPIOB_MODER set! ;
-
-( Switch a Port B bit from output to input.)
-: tristate  ( bit#)  %11 swap 2* <<  GPIOB_MODER clr! ;
+( /RST on PB7.)
+: rst/  ( de-assert /RST)   [ 1 7 << #] bit/ ;
+: rst\  ( assert /RST)      [ 1 7 << #] bit\ ;
 
 ( Write a byte.)
 : >s   ( b)
-      8 for  dup bit! 2*  sck/ H                         sck\ H  next  drop ;
+   8 for  bit!  sck/\  next  drop ;
 
 ( Read a byte.)
 : s>   ( - b)
-   0  8 for               sck/ H        2* bit@ +        sck\ H  next ;
+   0  8 for  bit@  sck/\  next ;
 
 ( Write and read a byte.)
 : >s>  ( out - in)
-   0 swap
-      8 for  dup bit! 2*  sck/ H  swap  2* bit@ +  swap  sck\ H  next  drop ;
+   0 swap  8 for  bit!  swap bit@ swap  sck/\  next  drop ;
 
 
 ( Since we are going to be reading a buffer sent to us by the host, let's
@@ -268,21 +249,55 @@ compiler: :]  ( end a jump table)
 
 
 -- ------------------------------------------------------------------------
+-- Serial communication
+-- ------------------------------------------------------------------------
+: uart-init
+   -- First, enable clocks to Port A. We are using uart1 on pins PA9 and PA10.
+   [ 1 #17 << #] RCC_AHBENR set!
+
+   -- Enable clocks to uart1 as well.
+   [ 1 #14 << #] RCC_APB2ENR set!
+
+   -- Set mode bits (%10) and alternate function (AF1) for uart.
+   [ %1010 #9       2*  << #] GPIOA_MODER set!  ( 2 bits per pin)
+   [    11 #9  8 -  4 * << #] GPIOA_AFRH set!   ( 4 bits per pin)
+
+   -- Now for the uart itself.
+   USART1_CR1  0 over ! ( reset and disable USART)
+   %1100 ( TE+RE) ( enable tx and rx)  over set!
+   [ cpuclk #38,400 / #] USART1_BRR !
+   1 ( UE) ( enable USART)  swap set! ;
+
+: ?status  ( bit)
+   begin  USART1_ISR @  over and  until  drop ;
+
+: uart-recv  ( - b)   [ 1 #5 << ( RXNE bit) #] ?status  USART1_RDR @ ;
+: uart-send  ( b)     [ 1 #7 << ( TXE bit)  #] ?status  USART1_TDR ! ;
+
+: uart-send-recv
+   data p !  out-count h@ for  p* uart-send  next
+   data p !   in-count h@ for  uart-recv p&  next ;
+
+
+-- ------------------------------------------------------------------------
 -- Core command processing loop
 -- ------------------------------------------------------------------------
+( XXX forget about changing clock speed for now.)
+: fast-clock ;
+: slow-clock ;
+
 ( Command index is above the word that it executes.)
 : do-command  ( n)
-            ( 10    11          12            13          14 )
-   10 - [:  rst\  rst/  slow-clock  medium-clock  fast-clock
-              ( 15         16          17 )
-            single  bulk-read  bulk-write  :] ;
+           ( 10    11       12           13 )
+   10 - [:  rst\  rst/  slow-clock  fast-clock
+           (  14       15         16 )
+            single  bulk-read  bulk-write
+           (      17 )
+            uart-send-recv  :] ;
 
 here ]  ( chip-init)
-   clock-init  led-init  spi-init  flash-leds
-   ss/  rst/  ( deassert both)
-.ifdef avr
-   slow-clock  sck\  SCK drive  RST drive  MOSI drive
-.then
+   clock-init  led-init  spi-init  uart-init  flash-leds
+   fast-clock  ss/  rst/  sck\
    begin
       face_d000 semaphore !  ( ready for another command)
       0  begin  drop  semaphore @  dup ffff_ff00 and  deca_f000 =  until
@@ -307,39 +322,6 @@ label startup
 
 .ifdef testing
 
-.ifdef at89lp-ss
-
-( Testing. Set things up as if for an at89lp chip.)
-: tt
-   clock-init  led-init  spi-init  flash-leds
-   RST drive  rst/  fast-clock ;
-
-( XXX Still not sure if this tristate/drive dance is necessary!)
-: +prog
-   rst\ 3_0000 wait
-   ss/ SS drive  H  sck\ SCK drive  H  MOSI drive  H
-   -- <pkt  0ac >s>  53 >s>  pkt> ;
-   <pkt  0ac >s>  53 >s>  s> s>  pkt> ;  ( send 4 bytes, not 2)
-
-: -prog
-   ss/  MOSI tristate  H  rst/  SCK tristate  H  SS tristate ;
-
-: +prog2  rst\  <pkt  0ac >s>  53 >s>  s> s>  pkt> ;
-: +prog3  rst\  <spi  0aa >s>  55 >s>  0ac >s>  53 >s>  spi> ;
-: +prog4  rst\  <spi  0aa >s>  55 >s>  0ac >s>  53 >s>  s> s>  spi> ;
-
-: status     <pkt  60 >s 0 >s 0 >s  s>        pkt> ;
-: device-id  <pkt  38 >s 0 >s 0 >s  s> s> s>  pkt> ;
-
-.then  ( at89lp-ss)
-
-
-( Let's try the atmega324.)
-.ifdef avr
-: tt
-   clock-init  led-init  spi-init  flash-leds
-   slow-clock  sck\  rst/  SCK drive  RST drive  MOSI drive ;
-
 : >lohi  ( w - lo hi)
    dup  0ff and  swap 8 >> ;
 
@@ -349,14 +331,45 @@ label startup
 : shuffle  ( cmd addr data - data addr-lo addr-hi cmd)
    -rot  >lohi  rot ;
 
-: test-bulk  ( cmd addr toggle count)
-   >r  shuffle  cmd c!+ c!+ c!+ c!+
-   r> >hilo rot c!+ c! ;
+: index  ( offset)
+   100 0 do  dup i +   i data + c!  loop  drop ;
 
-: avr   ( cmd addr data)   shuffle  cmd c!+ c!+ c!+ c!  single ;
+: wipe
+   100 0 do  0ff i data + c!  loop ;
 
+.ifdef at89lp-ss
+
+( Testing. Set things up as if for an at89lp chip.)
+: tt
+   clock-init  led-init  spi-init  flash-leds
+   ss/  sck\ ;
+
+: ss-bulk-setup  ( cmd addr count)  count h!  >lohi rot  cmd  c!+ c!+ c! ;
+: ss   ( cmd addr data)   shuffle  cmd c!+ c!+ c!+ c!  single  cmd 3 + c@ ;
+: rd   ( cmd addr count)  ss-bulk-setup  bulk-read ;
+: wr   ( cmd addr count)  ss-bulk-setup  bulk-write ;
+
+: +prog
+   0ac 5300 0 ss  cmd 2 + c@ ;
+
+.then  ( at89lp-ss)
+
+
+( Let's try the atmega324.)
+.ifdef avr
+: tt
+   clock-init  led-init  spi-init  flash-leds
+   rst/  sck\ ;
+
+: avr-bulk-setup  ( cmd addr toggle count)
+   count h!  shuffle  cmd c!+ c!+ c!+ c! ;
+
+: avr   ( cmd addr data)  shuffle  cmd c!+ c!+ c!+ c!  single ;
 : avr2  ( cmd addr data - r2)  avr  addr-lo c@ ;
 : avr3  ( cmd addr data - r3)  avr  result c@ ;
+
+: rd   ( cmd addr toggle count)  avr-bulk-setup  bulk-read ;
+: wr   ( cmd addr toggle count)  avr-bulk-setup  bulk-write ;
 
 : +prog
    rst\  3_0000 wait  0ac 53_00 0 avr2 ;
@@ -378,12 +391,6 @@ label startup
 
 : read-lock
    58 0 0 avr3 ;
-
-: index
-   100 0 do  i dup data + c!  loop ;
-
-: wipe
-   100 0 do  0ff i data + c!  loop ;
 
 .then  ( avr)
 
