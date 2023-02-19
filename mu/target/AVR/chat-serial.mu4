@@ -2,7 +2,7 @@
 
   Copyright 2002-2023 David Frech. (Read the LICENSE for details.)
 
-loading AVR chat-over-serial
+loading AVR serial chat (core)
 
 __meta
 
@@ -31,45 +31,13 @@ uart connection.
   Go executes code from the address set by SetAddr
 %%
 
-.ifndef mega8515
-   z" This code currently only supports the mega8515 device." abort
+.ndef mega164  .ndef mega324  .ndef mega644  .and .and .if
+   z" This code currently only supports the mega164/324/644 devices." abort
 .then
-
-( 8515 registers
-0040 reg  UBRRH    | URSEL -- -- -- UBRR[11:8] 159
-0040 reg  UUCSRC   | URSEL   UMSEL   UPM1    UPM0    USBS    UCSZ1   UCSZ0   UCPOL
-002c reg  UDR      | USART I/O Data Register 155
-002b reg  UCSRA    | RXC     TXC     UDRE    FE      DOR     PE      U2X     MPCM
-002a reg  UCSRB    | RXCIE   TXCIE   UDRIE   RXEN    TXEN    UCSZ2   RXB8    TXB8
-0029 reg  UBRRL    | USART Baud Rate Register Low Byte 159
-
-  48/88/168 registers
-00c6 reg  UDR0     | USART I/O Data Register 193
-00c5 reg  UBRR0H   | USART Baud Rate Register High 197
-00c4 reg  UBRR0L   | USART Baud Rate Register Low 197
-00c2 reg  UCSR0C   | UMSEL01 UMSEL00 UPM01 UPM00 USBS0 UCSZ01/UDORD0 UCSZ00/UCPHA0 UCPOL0 195/210
-00c1 reg  UCSR0B   | RXCIE0  TXCIE0  UDRIE0  RXEN0   TXEN0   UCSZ02  RXB80   TXB80
-00c0 reg  UCSR0A   | RXC0    TXC0    UDRE0   FE0     DOR0    UPE0    U2X0    MPCM0
-
-  164/324/644 registers
-00ce reg  UDR1     | USART1 I/O Data Register 189
-00cd reg  UBRR1H   | --      --      --      --      USART1  Baud    Rate    Register
-00cc reg  UBRR1L   | USART1 Baud Rate Register Low Byte 193/206
-00ca reg  UCSR1C   | UMSEL11 UMSEL10 --      --      --      UDORD1  UCPHA1  UCPOL1
-00c9 reg  UCSR1B   | RXCIE1  TXCIE1  UDRIE1  RXEN1   TXEN1   UCSZ12  RXB81   TXB81
-00c8 reg  UCSR1A   | RXC1    TXC1    UDRE1   FE1     DOR1    UPE1    U2X1    MPCM1
-00c6 reg  UDR0     | USART0 I/O Data Register 189
-00c5 reg  UBRR0H   | --      --      --      --      USART0  Baud    Rate    Register
-00c4 reg  UBRR0L   | USART0 Baud Rate Register Low Byte 193/206
-00c2 reg  UCSR0C   | UMSEL01 UMSEL00 --      --      --      UDORD0  UCPHA0  UCPOL0
-00c1 reg  UCSR0B   | RXCIE0  TXCIE0  UDRIE0  RXEN0   TXEN0   UCSZ02  RXB80   TXB80
-00c0 reg  UCSR0A   | RXC0    TXC0    UDRE0   FE0     DOR0    UPE0    U2X0    MPCM0
-)
-
-flash
 
 comment register-use
 
+  r0/r1              is used for writing flash (via SPM instruction)
   r26/27 -- aka x -- is used for status and data bytes
   r30/31 -- aka z -- is used to point to memory
 
@@ -78,144 +46,80 @@ comment register-use
 
 register-use
 
-label run-application
-.meta. .contains application-task-hook .if
-   ( caller save the chat registers so application doesn't have to worry
-     about them.)
-   z pushw  x pushw
-   application-task-hook rcall
-   x popw  z popw
-.then
-   ret  ;c
-
-.ifdef rxirq  ( interrupt-driven receive)
-
-( We're going to want to do interrupt-driven receive, so set up the UART RX
-  ISR, and an 8-byte ring buffer/queue where we store the received bytes.)
-
-1 var qcount  ( negative count of chars in buffer)
-1 var qwr     ( index used by ISR when writing bytes into queue)
-1 var qrd     ( index used by task when reading bytes from queue)
-
-#8 var qbuf
+( Start, stop, and run the application.)
+ld target/AVR/chat-app.mu4
 
 ( Let's run the UART at 125kb/s. Baud rate divisor = fosc/bps/16 - 1.)
-label uart-init
-   xl clr  qcount xl sts  qwr xl sts  qrd xl sts
-   #8_000 ( fosc = 8M)  #125 /  #16 /  1 - >hilo
-   xl ldi  xh ldi  UBRRH xh out  UBRRL xl out
-   %1001_1000 xl ldi  UCSRB xl out  ( enable RXC interrupt, RX, and TX)
+( No, let's run the UART at 38,400 b/s. Baud rate divisor = fosc/bps/16 - 1.)
+label serial-init
+   -- #8_000 ( fosc = 8M)  #125 /  #16 /  1 - >hilo
+   #8,000,000 ( fosc = 8M)  #38,400 /  #16 /  1 - >hilo
+   xl ldi  xh ldi  UBRR1H xh out  UBRR1L xl out
+   %0001_1000 xl ldi  UCSR1B xl out  ( enable RX and TX)
    ( chip defaults to 8bits, 1stop, no parity at reset)
-   ret  ;c
+   ( fall thru)  ;c
 
-USART_RXC handler
-   x pushw  tl push  SREG xl in  xl push  ( push X, tl, and SREG)
+( Called when we re-enter chat after executing code. Necessary for I2C;
+  no-op for us.)
 
-   qwr xh lds  ( get write index)  xh xl mov  ( save a copy)
-   xh inc  07 xh andi  ( increment and wrap)  qwr xh sts  ( update)
-   qcount xh lds  xh dec  qcount xh sts  ( decr count)
-   xh clr  ( xl has qwr offset before incr)
-   qbuf negate ( since we have to use subi/sbci!)  >hilo
-      xl subi  xh sbci  ( add qwr to qbuf address)
-   UDR tl in  ( get byte)  x@ tl st  ( save in buffer)
+label serial-ack   ret  ;c
 
-   ( Restore SREG, pop tl, xl & xh, and exit handler)
-   xl pop  SREG xl out  tl pop  x popw  reti  ;c
+( Host uses send and recv. Let's do the same here.)
 
-( If there is a byte waiting in the queue, fetch it and return. Otherwise,
-  call run-application, and then try again.)
+( For chat dispatch loop.)
+label recv-command-byte  ;c
 
-label get-cmd
-label uart-read
-   begin
-      cli  qcount xl lds  xl tst  0< if
-         xl inc  qcount xl sts  sei
-
-         ( fetch next char)
-         qrd xh lds  ( get read index)  xh xl mov  ( save a copy)
-         xh inc  07 xh andi  ( increment and wrap)  qrd xh sts  ( update)
-         xh clr  ( xl has qrd offset before incr)
-         qbuf negate ( since we have to use subi/sbci!)  >hilo
-            xl subi  xh sbci  ( add qrd to qbuf address)
-         x@ xl ld  ( get char)  ret
-      then
-      sei
-      run-application rcall
-   again  ;c
-
-.else  ( polled receive)
-
-( Let's run the UART at 125kb/s. Baud rate divisor = fosc/bps/16 - 1.)
-label uart-init
-   #8_000 ( fosc = 8M)  #125 /  #16 /  1 - >hilo
-   xl ldi  xh ldi  UBRRH xh out  UBRRL xl out
-   %0001_1000 xl ldi  UCSRB xl out  ( enable RX and TX)
-   ( chip defaults to 8bits, 1stop, no parity at reset)
-   ret  ;c
-
-( While waiting, run the application.)
-label get-cmd
+label recv-byte
    ( Wait for RXC - receive complete)
-   begin  run-application rcall  7 UCSRA sbis  again
-   UDR xl in  ret  ;c
+   begin  UCSR1A xl in  7 ( RXC) xl sbrs  again
+   UDR1 xl in  ret  ;c
 
-label uart-read
-   ( Wait for RXC - receive complete)
-   begin  7 UCSRA sbis  again
-   UDR xl in  ret  ;c
-
-.then
-
-label uart-write
+( NOTE: clobbers xh)
+label send-byte
    ( Wait for UDRE - data register empty)
-   begin  5 UCSRA sbis  again
-   UDR xl out  ret  ;c
+   begin  UCSR1A xh in  5 ( UDRE) xh sbrs  again
+   UDR1 xl out  ret  ;c
+
+label recv-word
+   recv-byte rcall  xl push
+   recv-byte rcall  xl xh mov  xl pop  ret  ;c
+
+label send-word
+   xh push  ( send-byte will clobber it)
+   send-byte rcall  xl pop  send-byte rjmp  ;c
+
+( EEPROM read/write.)
+ld target/AVR/eeprom.mu4
+
+( Flash self-programming support.)
+ld target/AVR/flash-self-prog.mu4
 
 ( Command routines.)
+label read-data-cmd
+     z+ xl ld  send-byte rjmp  ;c
 
-label read-data
-     z+ xl ld  uart-write rjmp  ;c
+label write-data-cmd
+   recv-byte rcall  z+ xl st  ret  ;c
 
-label read-program
-   pmz+ xl ld  uart-write rjmp  ;c
+label read-eeprom-cmd
+   read-eeprom-byte rcall  1 z adiw  send-byte rjmp  ;c
 
-label set-addr
-   uart-read rcall  xl zl mov
-   uart-read rcall  xl zh mov  ret  ;c
+label read-flash-cmd
+   pmz+ xl ld  send-byte rjmp  ;c
 
-label write-data
-   uart-read rcall  z+ xl st  ret  ;c
+( The following commands take several ms to complete; each one sends a byte
+  to the host to signal completeion.)
 
-@ram #ram + ( ramend)
-2 - dup equ go-pc
-2 -     equ go-x
+label write-eeprom-cmd
+   recv-byte rcall  write-eeprom-byte rcall
+   1 z adiw  send-byte rjmp  ;c
 
-label go
-   ( host has set z via set-addr cmd!)
-   go-pc xl lds  go-pc 1+ xh lds  xl push  xh push  ( big-endian!)
-   go-x  xl lds  go-x 1+  xh lds  ret  ;c
+( Recv a word and a byte command from host; write word and cmd to flash;
+  return contents of SPMCSR as flash status.)
 
-( Command dispatch.)
-label process
-   get-cmd rcall
+label write-flash-cmd
+   recv-word rcall  x 0 movw  recv-byte rcall ( cmd)  do-spm rcall
+   2 z adiw  SPMCSR xl in  send-byte rjmp  ;c
 
-   10 xl cpi  set-addr      0= not until
-   11 xl cpi  read-program  0= not until
-   12 xl cpi  read-data     0= not until
-   13 xl cpi  write-data    0= not until
-   14 xl cpi  go            0= not until
-
-   ( unknown... return, and get called again)
-   ret  ;c
-
-RESET default-handler
-   go-x 1-  ( stack bottom)  >hilo
-   xl ldi  SPL xl out
-   xl ldi  SPH xl out
-
-.meta. .contains application-init-hook .if
-   application-init-hook rcall
-.then
-
-   uart-init rcall
-   begin  process rcall  again  ;c
+( Load chat entry, dispatch, and init.)
+ld target/AVR/chat-loop.mu4

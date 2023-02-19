@@ -35,7 +35,7 @@ Commands for a simple client debug stub for talking to an AVR chip over IIC.
 
   SetAddr sets the address to be used for reading & writing memory
 
-  Go execute code from the address set by SetAddr
+  Go executes code from the address set by SetAddr
 %%
 
 -- %0001_000 2* equ slave-addr
@@ -65,18 +65,11 @@ Status codes for slave receive mode:
 Status codes for slave transmit mode:
 
   a8  own addr+read received and ACKed
+  b0  as above, but lost arbitration first
   b8  data byte xmitted and ACKed
   c0  as above, but NACKed
   c8  last byte xmitted (TWEA=0), ACKed
 %%
-
-.ifdef bootloader
-   boot
-   .def mega168  fuses @ 0=  .and .if  0f8dfe0 fuses !  .then
-.else
-   app
-   .def mega168  fuses @ 0=  .and .if  0f9dfe0 fuses !  .then
-.then
 
 comment register-use
 
@@ -89,56 +82,17 @@ comment register-use
 
 register-use
 
+( Start, stop, and run the application.)
+ld target/AVR/chat-app.mu4
 
-( If we have a bootloader, it means that the app part can be present or
-  absent, running or stopped, etc. So we need some space to keep track of
-  the state of the app, and we need some calls that are not relevant for the
-  simpler case of no bootloader.)
-
-.ifdef bootloader
-
-( Above the stack, reserve two bytes to be used as flags for bootloader.)
-
-@ram #ram + ( ramend)  2 -  equ app-running
-           app-running 1-   equ stack-bottom
-
-( Returns Z set if running.)
-label app-running?
-   app-running xl lds  0ff xl cpi  begin begin begin  ret  ;c
-
-label app-start
-   xl clr  app-running xl sts  ( set to false)
-   ( Flag byte at end of application space. Set to 55 if app present.)
-   @boot 1- >hilo  zl ldi  zh ldi  pmz xl ld  55 xl cpi  0= until
-   0ff xl ldi  app-running xl sts  ( set to true)
-   application-start-hook j  ;c
-
-label app-stop
-   app-running? rcall  0= until
-   xl clr  app-running xl sts  ( set to false)
-   application-stop-hook j  ;c
-
-label app-run
-   app-running? rcall  0= until  application-run-hook j  ;c
-
-.else  ( no bootloader - app is always present, and no need for hooks)
-
-@ram #ram + ( ramend)  1-  ( stack bottom)  equ stack-bottom
-
-label app-start
-   application-start j  ;c
-
-label app-run
-   application-run j  ;c
-
-.then
-
+( Peculiar code required to send and recv bytes via I2C.)
 
 label restart  ( pop one return, ack int, then return)
    x popw
-   ( fall thru)
+   ( fall thru)  ;c
 
 ( Ack TWINT. Make sure TWEA and TWEN also set.)
+label serial-ack  ( for chat-entry)
 label ack-twint
    tw-reset xh ldi  TWCR xh sts  ret  ;c
 
@@ -157,7 +111,7 @@ label wait-twint
    0 popw  z popw
    TWSR xl lds  0f8 xl andi  ret  ;c
 
-label read-byte
+label recv-byte
    wait-twint rcall
    80 xl cpi  restart  0= until  ( restart protocol)
    TWDR xl lds  ack-twint rjmp  ;c
@@ -177,178 +131,86 @@ label expect-start
    wait-twint rcall
    0a0 xl cpi  restart  0= until  ( we should see START/RESTART)
    ack-twint rcall
-   ( fall thru)
+   ( fall thru)  ;c
 
 ( Returns to caller if either we were just addressed, or the last byte
   written was ACKed by the master.)
 
-label write-another?
+label send-another?
    wait-twint rcall
    0e8 xl andi  0a8 xl cpi  restart  0= until  ( match a8 and b8)  ret  ;c
 
 ( After sending byte and acking interrupt, wait for ACK/NACK and only
   return to caller if ok to send another byte.)
 
-label write-byte
-   TWDR xl sts  ack-twint rcall  write-another? rjmp  ;c
+label send-byte
+   TWDR xl sts  ack-twint rcall  send-another? rjmp  ;c
 
+label recv-word
+   recv-byte rcall  xl push
+   recv-byte rcall  xl xh mov  xl pop  ret  ;c
 
-( Address in zh/zl; data to xl; clobbers xh)
-label read-eeprom-byte
-   SREG xh in  ( save interrupt state)  cli
-   EEARH zh out  EEARL zl out  ( set read address)
-   0 ( EERE) EECR sbi  ( set EEPROM read enable bit)  EEDR xl in
-   SREG xh out  ret  ;c
+label send-word
+   xh push  ( send-byte will clobber it)
+   send-byte rcall  xl pop  send-byte rjmp  ;c
 
-( Address in zh/zl; data from xl; clobbers xh)
-label write-eeprom-byte
-   SREG xh in  ( save interrupt state)  cli
-   EEARH zh out  EEARL zl out  ( set write address)
-   EEDR xl out  ( set write data)
-   4 xl ldi  EECR xl out  ( erase+write; set EEMPE - master write enable)
-   1 ( EEPE) EECR sbi  ( set EEPROM write enable)
-   SREG xh out  ( reset interrupt state)
-   begin  1 ( EEPE) EECR sbic  again  ret  ;c
+( EEPROM read/write.)
+ld target/AVR/eeprom.mu4
 
+( Flash self-programming support.)
+ld target/AVR/flash-self-prog.mu4
 
-.ifdef bootloader
-
-( Support for self-programming.)
-
-( Bits in SPMCSR:
-  SPMIE   RWWSB   --      RWWSRE  BLBSET  PGWRT   PGERS   SELFPRGEN
-    7       6      5        4       3       2       1       0        )
-
-label do-spm
-   SREG xh in  cli  SPMCSR xl out  spm  SREG xh out
-   begin  SPMCSR xl in  0 xl sbrc  again  ret  ;c
-
-
-( On word writes, keep streaming bytes from TWI into memory, until
-  read-byte gets something other than an 80 status.)
-
-label write-word
-   begin  read-byte rcall  xl 0 mov  ( low byte to r0)
-          read-byte rcall  xl 1 mov  ( hi byte to r1)
-          %0000_0001 ( SELFPRGEN)  xl ldi  do-spm rcall
-          2 z adiw
-   again  ;c
-
-label erase-page
-   %0000_0011 (  PGERS + SELFPRGEN)  xl ldi  do-spm rjmp  ;c
-
-label program-page
-   %0000_0101 (  PGWRT + SELFPRGEN)  xl ldi  do-spm rjmp  ;c
-
-label clear-page-buffer
-   %0001_0001 ( RWWSRE + SELFPRGEN)  xl ldi  do-spm rjmp  ;c
-
-.then
-
-
-( Command routines.)
-( On reads, keep streaming bytes from memory to TWI, as long as last byte
-  was ACKed.)
-
-label read-data
-   expect-start rcall
-   begin    z+ xl ld  write-byte rcall  again  ;c
-
-label read-program
-   expect-start rcall
-   begin  pmz+ xl ld  write-byte rcall  again  ;c
-
-label read-eeprom
-   expect-start rcall
-   begin  read-eeprom-byte rcall  1 z adiw  write-byte rcall  again  ;c
-
-label set-addr
-   read-byte rcall  xl zl mov
-   read-byte rcall  xl zh mov  ret  ;c
-
-( On writes, keep streaming bytes from TWI into memory, until read-byte
-  gets something other than an 80 status.)
-
-label write-data
-   begin  read-byte rcall  z+ xl st  again  ;c
-
-label write-eeprom
-   begin  read-byte rcall  write-eeprom-byte rcall  1 z adiw  again  ;c
-
-
-( Clear TWEA so we NACK our address while executing code. Do this without
-  resetting TWINT again.)
-
-label go
-   TWCR xl lds  1 TWEA << invert xl andi  TWCR xl sts
-   x popw  ( throw away top return address)
-   xl pop  ( padding)  xl pop  SREG xl out  ( pop status)
-   t popw  x popw  y popw  z popw  ( pop all 4 pointer regs)
-   ret  ;c
-
-
-( Dispatch.)
-label process
-   wait-twint rcall
-   ack-twint rcall
-   60 xl cpi  process  0= until  ( wait til addressed as slave+write)
-   read-byte rcall  ( cmd)
-
-   10 xl cpi  set-addr      0= not until
-   11 xl cpi  read-program  0= not until
-   12 xl cpi  read-data     0= not until
-   13 xl cpi  write-data    0= not until
-   14 xl cpi  go            0= not until
-   15 xl cpi  read-eeprom   0= not until
-   16 xl cpi  write-eeprom  0= not until
-
-.ifdef bootloader
-
-   ( Support for self-programming.)
-   20 xl cpi  0= if  write-word         rjmp  then
-   21 xl cpi  0= if  erase-page         rjmp  then
-   22 xl cpi  0= if  program-page       rjmp  then
-   23 xl cpi  0= if  clear-page-buffer  rjmp  then
-   24 xl cpi  0= if  app-start          rjmp  then
-   25 xl cpi  0= if  app-stop           rjmp  then
-
-.then
-
-   ( unknown... restart!)
-   ret  ;c
-
-label chat-entry  ( callable from other code!)
-   ( Unless host changes it, stacked PC points to caller - usually interact.)
-   z pushw  y pushw  x pushw  t pushw  ( push all 4 pointer regs)
-   SREG xl in  xl push  ( push status)  xl push ( padding)
-
-   ack-twint rcall
-   begin  process rcall  again  ;c
-
-label interact
-   begin  chat-entry rcall  again  ;c
-
-RESET default-handler
-   stack-bottom  >hilo
-   xl ldi  SPL xl out
-   xl ldi  SPH xl out
-
+( Called by chat startup code.)
+label serial-init
    ( Set TWI slave address from EEPROM)
    zh clr  zl clr  read-eeprom-byte rcall  1 invert xl andi  TWAR xl out
 
 .ifdef mega168
-
    ( Set up SCL/SDA pins as inputs with pullups enabled: PC4 and PC5)
    xl clr  DDRC xl out  30 xl ldi  PORTC xl out
 
 .else  ( prob mega164/324/644/1284)
-
    ( Set up SCL/SDA pins as inputs with pullups enabled: PC0 and PC1)
    xl clr  DDRC xl out  03 xl ldi  PORTC xl out
 
 .then
+   ret  ;c
 
-   ( Call application start, if app present)
-   app-start rcall
+( On reads, keep streaming bytes from memory to TWI, as long as last byte
+  was ACKed.)
 
-   begin  interact rcall  again  ;c
+( Command routines.)
+label read-data-cmd
+   expect-start rcall
+   begin    z+ xl ld  send-byte rcall  again  ;c
+
+label read-flash-cmd
+   expect-start rcall
+   begin  pmz+ xl ld  send-byte rcall  again  ;c
+
+label read-eeprom-cmd
+   expect-start rcall
+   begin  read-eeprom-byte rcall  1 z adiw  send-byte rcall  again  ;c
+
+( On writes, keep streaming bytes from TWI into memory, until recv-byte
+  gets something other than an 80 status.)
+
+label write-data-cmd
+   begin  recv-byte rcall  z+ xl st  again  ;c
+
+label write-eeprom-cmd
+   begin  recv-byte rcall  write-eeprom-byte rcall  1 z adiw  again  ;c
+
+label write-flash-cmd
+   begin  recv-word rcall  x 0 movw  recv-byte rcall ( cmd)  do-spm rcall
+          2 z adiw  again  ;c
+
+( For chat dispatch loop.)
+label recv-command-byte
+   wait-twint rcall
+   ack-twint rcall
+   60 xl cpi  recv-command-byte  0= until  ( wait til addressed as slave+write)
+   recv-byte rjmp  ( cmd)  ;c
+
+( Load chat entry, dispatch, and init.)
+ld target/AVR/chat-loop.mu4
