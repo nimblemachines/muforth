@@ -4,16 +4,39 @@
 
 loading AVR programming over SPI
 
+variable fuses  ( fuse at byte 0; hfuse @ 1; efuse @ 2)
+variable locks  ( lock bits)
+
+comment %%
+We need to have loaded a "driver" that defines the following words:
+
+  avr.Hello
+  avr.Bye
+
+  avr.ResetHigh
+  avr.ResetLow
+
+  avr.SlowClock
+  avr.FastClock
+
+  avr.Read       ( avr-cmd addr data)  ( leaves result in pad)
+  avr.Write      ( avr-cmd addr data)
+  avr.BulkRead   ( avr-cmd addr toggle buf len)
+  avr.BulkWrite  ( avr-cmd addr toggle buf len)
+%%
+
+.ifdef avr.Hello
+
 hex
 
 ( Having loaded a simple driver that talks to either a serial-connected or
   USB-connected device that can talk SPI to an AVR target, load the bulk of
   the commands for talking to the target.)
 
-: avr2  ( b0 b1 b2 b3 - r2)  ( do command; return second-to-last byte of response)
+: avr2  ( cmd addr data - r2)  ( do command; return second-to-last byte of response)
    avr.Read  pad 2 + c@ ;
 
-: avr3  ( b0 b1 b2 b3 - r3)  ( do command; return last byte of response)
+: avr3  ( cmd addr data - r3)  ( do command; return last byte of response)
    avr.Read  pad 3 + c@ ;
 
 : us  #1000 *  ( ns)  0 swap  nanosleep ;
@@ -25,7 +48,7 @@ hex
 
 : +prog  ( enable programming)
    avr.Hello  avr.SlowClock
-   4 for  +reset  0ac 53 0 0 avr2  53 = if  pop drop ^ then
+   4 for  +reset  0ac 53_00 0 avr2  53 = if  pop drop ^ then
           -reset  next
    ." Couldn't enable serial programming" ;
 
@@ -37,13 +60,10 @@ hex
 .else             avr.SlowClock
 .then             ;
 
-: sig  ( - s0 s1 s2)
-   30 0 0 0 avr3
-   30 0 1 0 avr3
-   30 0 2 0 avr3 ;
-
-variable fuses  ( fuse at byte 0; hfuse @ 1; efuse @ 2)
-variable locks  ( lock bits)
+: read-sig  ( - s0 s1 s2)
+   30 0 0 avr3
+   30 1 0 avr3
+   30 2 0 avr3 ;
 
 ( NOTE: wait polling is *not* available on the mega8515. You have to simply
   delay instead. Also, the 8515 lacks an efuse, so let's reflect that here
@@ -60,43 +80,43 @@ variable locks  ( lock bits)
 
 ( efuse doesn't exist on 8515)
 : read-fuses  ( - fuses = fuse at byte 0; hfuse @ 1)
-   50 0 0 0 avr3
-   58 8 0 0 avr3  ( fuse hfuse)
+   50 00_00 0 avr3
+   58 08_00 0 avr3  ( fuse hfuse)
    lohi> ;
 
 : write-fuses  ( fuses = fuse at byte 0; hfuse @ 1)
-   >hilo push  0ac 0a0 0  pop  avr.Write  ( write fuse bits)   wait-fuse
-         push  0ac 0a8 0  pop  avr.Write  ( write hfuse bits)  wait-fuse ;
+   >hilo push  0ac 0a0_00  pop  avr.Write  ( write fuse bits)   wait-fuse
+         push  0ac 0a8_00  pop  avr.Write  ( write hfuse bits)  wait-fuse ;
 
 ( Since the datasheet is silent on the topic of how long it takes to
   program the lock bits, we assume it's the same as writing the fuses.)
 
 : write-locks  ( locks)
-   push  0ac 0e0 0  pop  avr.Write  wait-fuse ;
+   push  0ac 0e0_00  pop  avr.Write  wait-fuse ;
 
 .else  ( everything but the 8515)
 
 ( Use wait polling.)
 : ?busy
-   begin  0f0 0 0 0 avr3  1 and  0= until ;
+   begin  0f0 0 0 avr3  1 and  0= until ;
 
 : wait-eeprom   ?busy ;
 : wait-flash    ?busy ;
 : wait-erase    ?busy ;
 
 : read-fuses  ( - fuses = fuse at byte 0; hfuse @ 1; efuse @ 2)
-   50 0 0 0 avr3
-   58 8 0 0 avr3
-   50 8 0 0 avr3  ( fuse hfuse efuse)
+   50 00_00 0 avr3
+   58 08_00 0 avr3
+   50 08_00 0 avr3  ( fuse hfuse efuse)
    lohi>  lohi> ;
 
 : write-fuses  ( fuses = fuse at byte 0; hfuse @ 1; efuse @ 2)
-   >hilo push  0ac 0a0 0  pop  avr.Write  ( write fuse bits)   ?busy
-   >hilo push  0ac 0a8 0  pop  avr.Write  ( write hfuse bits)  ?busy
-         push  0ac 0a4 0  pop  avr.Write  ( write efuse bits)  ?busy ;
+   >hilo push  0ac 0a0_00  pop  avr.Write  ( write fuse bits)   ?busy
+   >hilo push  0ac 0a8_00  pop  avr.Write  ( write hfuse bits)  ?busy
+         push  0ac 0a4_00  pop  avr.Write  ( write efuse bits)  ?busy ;
 
 : write-locks  ( locks)
-   push  0ac 0e0 0  pop  avr.Write  ?busy ;
+   push  0ac 0e0_00  pop  avr.Write  ?busy ;
 
 .then
 
@@ -108,7 +128,7 @@ variable locks  ( lock bits)
    ^ then  then  drop ;
 
 : read-locks  ( - locks)
-   58 0 0 0 avr3 ;
+   58 0 0 avr3 ;
 
 : prog-locks
    locks @ =if  ( if locks to program...)
@@ -119,7 +139,7 @@ variable locks  ( lock bits)
 
 ( This leaves the fuses alone but resets the lock bits.)
 : erase-chip
-   0ac 80 0 0 avr.Write  wait-erase ;
+   0ac 80_00 0 avr.Write  wait-erase ;
 
 
 ( Instead of reusing the memory dump's p pointer - the semantics of which
@@ -129,11 +149,9 @@ variable pp ( programming pointer - contains a target address)
 : pp&  ( b)    pp @  image-c!  1 pp +! ;
 : pp*  ( - b)  pp @  image-c@  1 pp +! ;
 
-: image-pp@  ( - host-addr)  pp @  image+ ;
-
-: ppw      ( pp, as word pointer)          pp @  u2/ ;
-: pphilo   ( - addr-hi addr-lo)            pp @  >hilo ;
-: ppwhilo  ( - word-addr-hi word-addr-lo)  ppw   >hilo ;
+: pp-byte  ( - word-addr)  pp @         ; ( pp, as byte pointer)
+: pp-word  ( - word-addr)  pp @  u2/    ; ( pp, as word pointer)
+: pp-host  ( - host-addr)  pp @  image+ ; ( pp, as host [image] pointer)
 
 
 ( Read just the first few kb of the chip. This is _really_ slow, and is
@@ -141,12 +159,12 @@ variable pp ( programming pointer - contains a target address)
   versions print a . for every 128 bytes read.)
 
 : read-flash-slowly
-   flash-image  erase  0 pp !
+   app  erase-image  0 pp !
    +prog  fast-clock
    [ 1 Ki #64 / #] for
       #64 for  ( 64 words, 128 bytes)
-         20  ppwhilo  0  avr3  pp&  ( read flash lo byte)
-         28  ppwhilo  0  avr3  pp&  ( read flash hi byte)
+         20  pp-word  0  avr3  pp&  ( read flash lo byte)
+         28  pp-word  0  avr3  pp&  ( read flash hi byte)
       next  char . emit
    next
    -prog ;
@@ -157,30 +175,30 @@ variable pp ( programming pointer - contains a target address)
   buffer this size! So let's always read 128 byte chunks instead.)
 
 : read-flash
-   flash-image  erase  0 pp !
+   app  erase-image  0 pp !
    [ #flash #128 / #] for
-      20  ppwhilo  8  image-pp@  #128  avr.BulkRead
+      20  pp-word  8  pp-host  #128  avr.BulkRead
       #128 pp +!
       char . emit
    next ;
 
 : read-eeprom
-   eeprom-image  erase  0 pp !
-   [ #eeprom 20 / #] for  ( read in 128 byte chunks)
-      0a0  pphilo  0  image-pp@  20  avr.BulkRead
-      20 pp +!
+   eeprom  erase-image  0 pp !
+   [ #eeprom #128 / #] for  ( read in 128 byte chunks)
+      0a0  pp-byte  0  pp-host  #128  avr.BulkRead
+      #128 pp +!
       char . emit
    next ;
 
 : read-eeprom-slowly
-   eeprom-image  erase  0 pp !
+   eeprom  erase-image  0 pp !
    #eeprom for
-      0a0  pphilo  0  avr3  pp&
+      0a0  pp-byte  0  avr3  pp&
       char . emit
    next ;
 
 : read-chip
-   'h preserve  image preserve
+   h preserve
    +prog  fast-clock
    read-flash  read-eeprom  read-fuses fuses !  read-locks locks !
    -prog ;
@@ -198,8 +216,8 @@ b/page 2/  constant w/page
   Both hi-addr and lo-addr are broken into bytes - big-endian! - to send
   via SPI to the chip.)
 
-: lo-addr   ppw  [ w/page 1- #]      and  >hilo ;
-: hi-addr   ppw  [ w/page negate #]  and  >hilo ;
+: lo-addr   pp-word  [ w/page 1-     #]  and ;
+: hi-addr   pp-word  [ w/page negate #]  and ;
 
 ( NOTE: prog-region and prog-eeprom are _not_ standalone; they can only be
   called after prog mode is set and the SPI clock set properly.)
@@ -208,8 +226,8 @@ b/page 2/  constant w/page
    region  swap pp !  ( len)
    b/page 1- + ( round up)  b/page / for  ( program flash pages)
       cr ."    page "  pp @  u.
-      40  lo-addr  8  image-pp@  b/page  avr.BulkWrite
-      4c  hi-addr  0                     avr.Write  wait-flash  ( program page)
+      40  lo-addr  8  pp-host  b/page  avr.BulkWrite
+      4c  hi-addr  0                   avr.Write  wait-flash  ( program page)
       b/page pp +!
       -- char . emit
    next ;
@@ -229,8 +247,7 @@ b/page 2/  constant w/page
 : prog-ee-byte
    pp @  pp*  ( addr byte)
    dup  0ff =  if  2drop ^  then  ( skip if byte is 0ff)
-   push  0c0  swap >hilo  pop  avr.Write
-   wait-eeprom
+   0c0 -rot  avr.Write  wait-eeprom
    char . emit ;
 
 : prog-eeprom
@@ -244,7 +261,7 @@ b/page 2/  constant w/page
    cr  ." REMINDER: Have you checked in muforth and projects/ code?
 You should if you want the signature's commits to be correct!"  cr
    radix preserve  hex
-   'h preserve  image preserve
+   h preserve
    +prog  ( slow-clock)  erase-chip  prog-fuses  -prog
    +prog  fast-clock  prog-flash  prog-eeprom  prog-locks  -prog ;
 
@@ -262,17 +279,17 @@ You should if you want the signature's commits to be correct!"  cr
 
 : verify-flash
    cr  ." Verifying flash "
-   flash-image  0 pp !  #flash ( len)
+   app  0 pp !  #flash ( len)
    #127 +  #128 /  for
-      20  ppwhilo  8  pad  #128  avr.BulkRead
+      20  pp-word  8  pad  #128  avr.BulkRead
       verify-pad
    next ;
 
 : verify-eeprom
    cr  ." Verifying eeprom "
-   eeprom-image  0 pp !  #eeprom ( len)
+   eeprom  0 pp !  #eeprom ( len)
    #127 +  #128 /  for
-      0a0  pphilo  0  pad  #128  avr.BulkRead
+      0a0  pp-byte  0  pad  #128  avr.BulkRead
       verify-pad
    next ;
 
@@ -288,17 +305,17 @@ You should if you want the signature's commits to be correct!"  cr
 
 : verify
    radix preserve  hex
-   'h preserve  image preserve
+   h preserve
    +prog  fast-clock
    verify-flash  verify-eeprom  verify-fuses  verify-locks
    -prog ;
 
 : save-image
-   'h preserve  image preserve  ( so it gets reset when we're done)
+   h preserve
    token, create-file ( fd)
    ( header)  dup  " muforth AVR img "  write
-   ( flash)   dup  flash-image   'image  #image  write
-   ( eeprom)  dup  eeprom-image  'image  #image  write
+   ( flash)   dup  app     'image  #image  write
+   ( eeprom)  dup  eeprom  'image  #image  write
    ( fuses)   dup                 fuses  8       write
    ( lock bits)  dup              locks  8       write
    close-file ;
@@ -311,8 +328,10 @@ You should if you want the signature's commits to be correct!"  cr
    token, open-file-ro ( fd)
    ( check header)  dup  pad #16  read  #16 xor if  error" no header"  then
       " muforth AVR img " pad #16  string= not if  error" not an AVR image"  then
-   ( read flash)   dup  flash-image   'image  #image  read  u.
-   ( read eeprom)  dup  eeprom-image  'image  #image  read  u.
+   ( read flash)   dup  app     'image  #image  read  u.
+   ( read eeprom)  dup  eeprom  'image  #image  read  u.
    ( read fuses)   dup                 fuses  8       read  u.
    ( read lock bits)  dup              locks  8       read  u.
    close-file  app ;
+
+.then  ( avr.Hello)

@@ -2,14 +2,50 @@
 
   Copyright 2002-2023 David Frech. (Read the LICENSE for details.)
 
-loading AVR memory image
+loading AVR memory
 
-( Space for compiling into. AVRs can get big; for now let's limit ourselves
-  to 128k address space. Since the program space is word-addressed, this
-  means 64k words.
+decimal
 
-  XXX: We should really define this in a device/xxx file that gets loaded
-  _before_ this one.)
+( Define the basics of the target's memory.)
+ 2 constant cell-bytes
+         -d little-endian
+
+ld target/common/memory.mu4   ( generic memory image support)
+' drop is choose-image ( see above file for an explanation)
+
+ #flash make-image
+   dup make-region app
+   dup make-region signature
+       make-region boot
+
+( For lazy typists: "signature" is hard to type, but nice to have [in
+  files] as documentation. For interactive use, let's make a synonym.)
+
+: sig   signature ;
+
+#ram 2* make-image  ( since ram starts at 0100, double size to keep it a power of 2)
+   make-region ram
+
+#eeprom make-image
+   make-region eeprom
+
+
+( Initialization.)
+: erase-image  'image #image "ff fill ;  ( fills *current* image)
+: wipe
+   ram     erase-image
+   eeprom  erase-image
+   app     erase-image ;  ( leaves app as current region)
+
+app  ( set h to *something* for >image)
+>image  ( default to image; this can change once we are chatting with target.)
+
+( For existing AVR code.)
+: +a  ( a1 a2 - sum)  +  wrap ;  ( add and wrap to image boundary)
+: image-  ( host - target)  'image -  wrap ;
+
+
+.ifdef legacy-avr-memory
 
 ( Memory images should be stored in the dictionary like strings: prefixed
   by their length. When we push an image, we push the address of its first
@@ -145,3 +181,5 @@ forth
 : boot!    ( boot-origin)  dup 'boot  2!  ( set ptr and origin to origin) ;
 : ee!    ( eeprom-origin)  dup 'ee    2!  ( set ptr and origin to origin) ;
 : sig!      ( sig-origin)  dup 'sig   2!  ( set ptr and origin to origin) ;
+
+.then  ( legacy-avr-memory)

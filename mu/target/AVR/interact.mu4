@@ -6,6 +6,73 @@ loading AVR interaction
 
 variable chatting
 
+variable chat-vector
+: chat-cmd   ( index - index+1)  dup  addrs constant  1+
+             does> @  chat-vector @ =if  +  addr@ execute  ^  then  2drop
+                error" Not connected to a chat-capable target" ;
+
+: chat-fail   error" Chat command not implemented" ;
+
+0
+chat-cmd t.hello         ( - chunk-size)
+chat-cmd t.get-status    ( - ??)
+chat-cmd t.run           ( ??)
+chat-cmd t.read-space    ( buf a u space)
+chat-cmd t.write-data    ( buf a u)
+chat-cmd t.write-eeprom  ( buf a u)
+chat-cmd t.flash-begin
+chat-cmd t.flash-end
+chat-cmd t.erase         ( a)
+chat-cmd t.program       ( buf a u)
+drop
+
+( Choose a space based on host region.)
+: choose-space
+   h preserve
+   'image  app dup 'image = if drop 0 ^ then  ( flash)
+           ram     'image = if      1 ^ then  ( ram/data)
+                                    2 ;       ( eeprom)
+
+: t.read  ( buf a u)  choose-space t.read-space ;
+
+: >chat
+   ['] t.read   is |read    ( read from connected target)
+   du-target  ( use the settings from the memory code) ;
+
+( Chunk size is reported by the debug interface. Always use this when
+  copying RAM contents or programming the flash!)
+
+variable /chunk  ( chunk size, as reported by debug interface)
+
+: copy-chunk  ( 'target len - 'target+len)
+   -- cr ." copy-chunk "  2dup swap u. u.
+   2dup + push  over image+ -rot t.write-data  pop ;
+
+: copy-region  ( a u)
+   -- cr ." copy-region "  2dup swap u. u.
+   /chunk @  /mod ( r q)  swap push  for   /chunk @  copy-chunk  next
+                                    pop  =if  ( rem) copy-chunk  drop ^  then  2drop ;
+
+variable ram-copied  ( pointer to first un-copied byte)
+( XXX fix)
+: copy-ram ;
+: get-regs ;
+: .regs ;
+
+: hi
+   chatting on  >chat  t.hello  /chunk !  get-regs  .regs
+   ram-copied off  copy-ram
+   -- now __chatting is __meta  __meta ;
+   ;
+
+: chat-via   pop  chat-vector !  hi ;
+
+
+
+
+
+.ifdef legacy-interact
+
 ( XXX Don't define chat words unless there is support in a connected
   device. Right now if no USB device is plugged in, the serial host code is
   loaded, which is currently behind the times and doesn't support chatting
@@ -176,7 +243,8 @@ mode __target
 : chat  error" No connected chat-capable target." ;
 : >chat ;
 
-.then
+.then  ( zpread)
+.then  ( legacy-interact)
 
 
 ( Set |@ and |c@ to _some_ form of target fetch. Prefer to get bytes from
@@ -196,64 +264,34 @@ mode __target
 ( Default key action is to run host key code)
 host-seekeys avr-seekeys  128 cells cmove
 
-( Dump one line of memory from target program memory.)
+( Support for dumping memory)
 : 1dump  ( a)
-   hex-bytes
-   >image    >prog  dup .addr  dup .hex-cells
+   hex-bytes  ( set field width)
+   >image   dup .addr  dup .hex-bytes
    chatting @ if
       -valid
-      >chat  >prog  dup _addr  dup .hex-cells
+      >chat   dup _addr  dup .hex-bytes
       -valid
    then
-   drop ;
+   drop ( a) ;
 
 ( So we can easily look at the signature embedded into the image.)
 : 1dump-chars  ( a)
    hex-bytes
-   >target >prog
+   >target
    dup _addr  dup .chars
    dup .addr  dup .hex-bytes
-   dup _addr  dup .hex-cells
    drop ;
 
-( In the strange case that we switch to dumping data via the 'a' key, but
-  don't happen to be connected to a target, we'll get "deadbeef" to remind
-  us.)
-
-: 1dump-data  ( a)
-   hex-bytes
-   >target >data
-   dup _addr  dup .chars
-   dup .addr  dup .hex-bytes
-   dup _addr  dup .hex-cells
-   drop ;
-
-( Dumping EEPROM)
-: 1dump-ee  ( a)
-   hex-bytes
-   >image    >ee  dup .addr  dup .hex-bytes
-   chatting @ if
-      -valid
-      >chat  >ee  dup _addr  dup .hex-bytes
-      -valid
-   then
-   drop ;
-
-
-avr-seekeys  -1
-   2dup  du-mode dumping        >target  skip+  skip-  1dump        ( a - a')
-   2dup  du-mode dumping-data   >target  skip+  skip-  1dump-data   ( a - a')
-   2dup  du-mode dumping-chars  >target  skip+  skip-  1dump-chars  ( a - a')
-   2dup  du-mode dumping-ee     >target  skip+  skip-  1dump-ee     ( a - a')
-         du-mode disasming      >target  dis+   dis-   1dis         ( a - a')
+avr-seekeys  -1  du-mode dumping        >target  skip+  skip-  1dump        ( a - a')
+avr-seekeys  -1  du-mode dumping-chars  >target  skip+  skip-  1dump-chars  ( a - a')
+avr-seekeys  -1  du-mode disasming      >target  dis+   dis-   1dis         ( a - a')
 
 avr-seekeys 'seekeys !  ( switch over to our bindings)
 
-key: d  ( a - a 0)   dumping  0 ;
-key: a  ( a - a 0)   dumping-data  0 ;
-key: e  ( a - a 0)   dumping-ee  0 ;
+key: d  ( a - a 0)   dumping        0 ;
 key: C  ( a - a 0)   dumping-chars  0 ;  ( small c is "call")
-key: i  ( a - a 0)   disasming  0 ;
+key: i  ( a - a 0)   disasming      0 ;
 
 host-seekeys 'seekeys !  ( back to host bindings)
 
@@ -263,14 +301,8 @@ host-seekeys 'seekeys !  ( back to host bindings)
 ( make an alias so we can still get to it)
 : _du  du ;
 
-: du   ( a - a')   dumping     inspect ;
-: dis  ( a - a')   disasming   inspect ;
-: de   ( a - a')   dumping-ee  inspect ;
-
-: da  ( a - a')  ( dump DAta)
-   chatting @ 0= if error" no connected target - no data memory available"  then
-   dumping-data  inspect ;
-
+: du   ( a - a')   dumping    inspect ;
+: dis  ( a - a')   disasming  inspect ;
 
 meta
 : du   du ;

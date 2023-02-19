@@ -18,11 +18,12 @@ __meta
   re-implement a lot of that code: the command dispatch table, and the
   basic handling of SETUP, IN, and OUT tokens. But code to enumerate the
   device, and the device descriptors, are *not* repeated here. We only
-  implement the "vendor specific" requests required to do BDM.)
+  implement the "vendor specific" requests required to toggle pins and talk
+  SPI.)
 
 hex
 
-10 constant buflen0  ( buffer length, and hence max packet size, for endpoint 0)
+40 constant buflen0  ( buffer length, and hence max packet size, for endpoint 0)
 
 1860 equ 'usb            ( USB RAM origin; buffer descriptors live here)
 1880 equ 'usb-buffers    ( endpoint RAM from here to 195f)
@@ -137,7 +138,7 @@ label avr-write-commands  ( all are control writes)
 label stall
    EPCTL0 1 bset ( STALL)  rts  ;c
 
-( The JS and JM parts -- the USB parts that this code is going to run on --
+( The JS and JM parts - the USB parts that this code is going to run on -
   both have 16-bit-capable SPI ports, so we specify SPIDL instead of SPID
   for the SPI data register.)
 
@@ -152,17 +153,19 @@ label SpiTx  ( Sends char in A; returns recvd char in A)
 1 zvar addr-lo
 1 zvar toggle
 
-2 zvar total-count  ( negated 16-bit count, big-endian!)
+2 zvar memcount  ( 16-bit count, big-endian!)
 
-label toggle-data  ( HX points to EP buffer control byte)
+( Set endpoint count byte and toggle DATA0/1 bit.)
+label ready-endpt  ( HX points to EP buffer control byte, A has count)
+   1 ,x sta  ( count)
    0 ,x lda  40 # and ( data0/1)  match-data1 # eor  0 ,x sta  rts  ;c
 
 ( wValue and following bytes have the following meaning:
   avr-cmd  addr-hi  addr-lo  dummy/toggle)
 
 label save-command
-   .a clr  wLength    ) sub  total-count 1+ ) sta  ( negate and store length)
-   .a clr  wLength 1+ ) sbc  total-count    ) sta
+   wLength    ) lda  memcount 1+ ) sta
+   wLength 1+ ) lda  memcount    ) sta
    wValue ) ldhx  avr-cmd ) sthx
    wIndex ) ldhx  addr-lo ) sthx
    rts  ;c
@@ -171,56 +174,63 @@ label bulk-read
    save-command c
    ( fall thru)
 
+( We always want to queue up either a short packet or a zero-length packet
+  as the last packet. In particular this means that if the last part of the
+  string _exactly_ fills a packet, we queue up a zero-length to follow it,
+  to make sure to signal to the host that this is the end of the data
+  stage. See USB spec 8.5.3.2.)
+
 ( Read data from chip and copy into IN buffer.)
+( Exit with in-count in X)
 label prepare-next-in
-   total-count ) ldhx  0!= if  ( still data to read)
-      buflen0 negate # cphx  u< if  ( whole packet)  buflen0 negate # ldx  then
-      .h clr  .h psh ( bufptr)  .x neg  .x psh ( count)
+   memcount ) ldhx  0!= if  ( still data to read)
+      buflen0 # cphx  u> if  ( whole packet)  buflen0 # ldx  then
+      .a clr  .a psh ( bufptr)  .x psh ( count)
       begin
-         .x clr
+         .h clr  .x clr
 
          ( resend command, addr, and dummy bytes)
          begin  avr-cmd ,x lda  SpiTx c  .x inc  4 # cpx  0= until
 
          ( put last byte returned into in-buffer)
-         1 ,s ldx  in-buffer ,x sta  .x inc  1 ,s stx
-         total-count 1+ ) inc  0= if  total-count ) inc  then
+         1 ,s ldx  in-buffer ,x sta  1 ,s inc
+         memcount ) ldhx  -1 # aix ( decr count)  memcount ) sthx
 
          ( toggle cmd byte and incr addr-lo if toggled back to 0)
          toggle ) lda  avr-cmd ) eor  avr-cmd ) sta
          toggle ) and  0= if  addr-lo ) inc  ( in zpage!)  then
 
-      0 ,s decz? until  2 # ais  ( pop repeat count and bufptr)
+      0 ,s decz? until
+      .a pul  .x pul ( bufptr; this is in-count)
    then
    ( in-count in x)
    ( fall thru)
 
 ( Enter with in-count in X)
-label prepare-fixed-in
-   in-count ) stx
-   ( toggle DATA0/1)  in-control # ldhx  toggle-data c  ( fall thru)
+label prepare-in-xcount
+   txa  in-control # ldhx  ready-endpt c  ( fall thru)  ;c
 
-( Get ready to receive another SETUP token.)
+( Get ready to receive another SETUP DATA0 token, or an OUT DATA1 token.
+  The host will send an empty DATA1 as a status stage.)
+
 label expect-setup-token
-   match-data1 # lda  out-control ) sta
-   ( fall thru)
+   .a clr  out-control ) sta  ( fall thru)  ;c
 
-( Jump here if out-control has already been toggled.)
 label expect-out-token  ( expect OUT or SETUP, really)
-   buflen0 # lda  out-count ) sta
+   buflen0 # lda  out-control # ldhx  ready-endpt c
    CTL 5 bclr ( TSUSPEND off - resume processing)
    rts  ;c
 
-( Instruction payload -- 4 bytes -- is in the SETUP packet, starting at
+( Instruction payload - 4 bytes - is in the SETUP packet, starting at
   wValue. It uses the wValue and wIndex fields. Bytes returned by the AVR
   are stored in the IN buffer for later retrieval by read-result.)
 
 label single-avr-cmd
-   .x clr  .h clr
+   .h clr  .x clr
    begin  wValue ,x lda  SpiTx c  in-buffer ,x sta  .x inc
           4 # cpx  0= until
 
-   bmRequestType ) lda  80 # and  ( read)  prepare-fixed-in  0= until
+   bmRequestType ) lda  80 # and  ( read)  prepare-in-xcount 0= until
    ( otherwise write, so fall thru)
 
 ( Prepare to return status - a zero-length IN transaction. Also be ready to
@@ -229,21 +239,18 @@ label single-avr-cmd
 
 label finish-control-write
    ( Setup IN status stage)
-   .a clr  in-count ) sta  ( zero-length DATA1 transaction)
-   match-data1 # lda  in-control ) sta
-   expect-setup-token j  ;c
+   .x clr  ( zero-length DATA1 transaction)  prepare-in-xcount j  ;c
 
 label bulk-write
    wLength ) ldhx  finish-control-write  0!= until
    save-command c
    expect-setup-token j  ( wait for OUT or new SETUP)  ;c
 
-( Return NAK on IN.)
-label nak-in
-   .a clr  in-control ) sta  rts  ;c
+( Receipt of SETUP has set out-control's data toggle to 0. Set in-control's
+  as well.)
 
 label setup-token
-   nak-in c
+   .a clr  in-control ) sta   ( Reset IN endpoint to DATA0.)
 
 ( NOTE: Command numbers are all given in HEX.)
 ( assume vendor request)
@@ -265,22 +272,22 @@ label setup-or-out-token
    ( OUT token)
    ( If last OUT was zero-length, it was a status transaction for a
      control read, so get ready for a new SETUP.)
-   out-count ) lda  expect-setup-token  0!= until
+   out-count ) ldx  expect-setup-token  0!= until
 
    ( Otherwise, we've got a bulk write data payload. Write bytes to target
      via SPI, by repeating single byte write commands. Be careful about
      toggling the command byte for program memory reads and writes.)
 
-   .h clr  .h psh ( bufptr)  .a psh ( out-count)
+   .a clr  .a psh ( bufptr)  .x psh ( out-count)
    begin
-      .x clr
+      .h clr  .x clr
 
       ( resend command & addr bytes)
       begin  avr-cmd ,x lda  SpiTx c  .x inc  3 # cpx  0= until
 
       ( send byte from out-buffer)
-      1 ,s ldx  out-buffer ,x lda  SpiTx c  .x inc  1 ,s stx
-      total-count 1+ ) inc  0= if  total-count ) inc  then
+      1 ,s ldx  out-buffer ,x lda  SpiTx c  1 ,s inc
+      memcount ) ldhx  -1 # aix ( decr count)  memcount ) sthx
 
       ( toggle cmd byte and incr addr-lo if toggled back to 0)
       toggle ) lda  avr-cmd ) eor  avr-cmd ) sta
@@ -288,12 +295,13 @@ label setup-or-out-token
 
    0 ,s decz? until  2 # ais
 
-   ( If total-count zero, we've received all the data; queue up status IN token.)
-   total-count ) ldhx  0= if  finish-control-write j  then
+   ( If memcount zero, we've received all the data; queue up status IN token.)
+   memcount ) ldhx   finish-control-write 0!= until
+   -- memcount ) ldhx  0= if  finish-control-write j  then
 
-   ( total-count non-zero; expect more data.)
-   ( toggle DATA0/1)  out-control # ldhx  toggle-data c
+   ( memcount non-zero; expect more data.)
    expect-out-token j  ;c
+
 
 ( An IN token is either part of a data stage of a control read, or it is
   the status stage of a control write. Status IN's are always zero bytes
@@ -306,11 +314,10 @@ label setup-or-out-token
 label in-token
    ( If last IN was a full packet, ready some more data.)
    in-count ) lda  buflen0 # cmp  0= if  prepare-next-in j  then
-   ( fall thru)
 
-label nak-in-expect-setup
-   nak-in c  ( further IN's will return NAK)
+   ( Last packet was partial or zero-length; no further IN's expected.)
    expect-setup-token j  ;c
+
 
 ( XXX To convert process-usb into an interrupt handler, jumps to
   setup-or-out-token, in-token, and nak-in-expect-setup should really be
@@ -328,7 +335,7 @@ label process-usb
    INTSTAT 7 bset? if ( STALLF)
       EPCTL0 1 bclr ( remove EPSTALL)
       INTSTAT 7 bset  ( ack STALL)
-      nak-in-expect-setup j  ( get ready to receive SETUP)
+      expect-setup-token j  ( get ready to receive SETUP)
    then
    rts  ;c
 

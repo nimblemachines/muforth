@@ -9,36 +9,33 @@ loading AVR SPI-over-serial programmer (host)
 
 hex
 
-: !chat   <# ;  ( init hld)
-: b>   hld @  c!  1 hld +! ;
-
-: shuffle  ( b0 b1 b2 b3 - b3 b2 b1 b0)  swap  2swap  swap ;
+: shuffle  ( avr-cmd addr data - data addr-lo addr-hi avr-cmd)
+   -rot  >lohi  rot ;
 
 ( Commands)
 
 ( Send 4 bytes over SPI; receive 4 back, save in pad)
-: avr.Read   ( b0 b1 b2 b3)
+: avr.Read   ( avr-cmd addr data)
    shuffle
-   !chat  21 send  4 for  send  recv b>  next ;
+   pad m !  21 send  4 for  send  recv m&  next ;
 
-: avr.Write  ( b0 b1 b2 b3)  avr.Read ;
+: avr.Write   ( avr-cmd addr data)  avr.Read ;
 
-: avr.Bye  ( End session, return to chat command loop)  00 send ;
 : avr.ResetLow   22 send ;
 : avr.ResetHigh  23 send ;
 : avr.SlowClock  ( 250k)  24 send ;
 : avr.FastClock  ( 2M)    25 send ;
 
-: setup-bulk   ( avr-cmd ahi alo toggle buf len cmd - len)
+: setup-bulk   ( avr-cmd addr toggle buf len cmd - len)
    2push ( len cmd)  m !
    shuffle  pop send ( cmd)  4 for  send  next
    pop ( len)  dup send ;
 
-: avr.BulkRead   ( cmd ahi alo toggle buf len)
+: avr.BulkRead   ( avr-cmd addr toggle buf len)
    m preserve
    26 setup-bulk   for  recv m&  next ;
 
-: avr.BulkWrite  ( cmd ahi alo toggle buf len)
+: avr.BulkWrite  ( avr-cmd addr toggle buf len)
    m preserve
    27 setup-bulk   for  m* send  next ;
 
@@ -50,3 +47,5 @@ hex
    @avrprog c.SetPC c.Run
 .then
    " AVRp1" await  ( match signature) ;
+
+: avr.Bye  ( End session, return to chat command loop)  00 send ;

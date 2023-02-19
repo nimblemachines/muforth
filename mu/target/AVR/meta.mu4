@@ -67,7 +67,7 @@ mode __meta
 
 : uncompile  ( #words)
    notag
-   \m here  swap  for  -2 +a  -1 ( 0ffff) over  image-!  next  org ;
+   \m here  swap  for  -2 +a  -1 ( 0ffff) over  image-!  next  \m goto ;
 
 -- ------------------------------------------------------------------------
 -- Macros defining register convention and stack operations
@@ -308,29 +308,27 @@ forth
 mode __target-colon
 
 
-.ifdef bootloader
-   .ifndef #boot
-      z" The selected device doesn't support a separate bootloader memory space."
-      abort
-   .then
+.ifdef #boot
    ( calculate start of boot space)
    #flash  #boot  .ifdef bootsz  bootsz >>  .then  -  constant @boot
 .else
+   ." The selected device doesn't support a separate bootloader memory space."
+   ." Setting @boot to the end of flash."
    #flash  constant @boot  ( not used - set it to past end of flash)
 .then
 
 
 ( Interrupt vectors and handlers.)
 : big-vectors?   [ #flash  16 Ki u< not #] ;
-: *vector  ( vector# - offset)  big-vectors?  if  4 * ^  then  2* ;
-: @vector  ( vector# - addr)  *vector  \m origin  + ;
+: vectors  ( vector# - offset)  big-vectors?  if  4 * ^  then  2* ;
+: @vector  ( vector# - addr)  vectors  \m origin  + ;
 
 ( Calculate the _offset_ past the vectors.)
-: #vectors   [ \eq LAST_VECTOR 1+ *vector #] ;
+: #vectors   [ \eq LAST_VECTOR 1+ vectors #] ;
 
 : vector,  ( vector# dest)  ( compile jmp or rjmp to handler)
-   h preserve
-   swap  @vector org  big-vectors? if  \a jmp  ^  then  \a rjmp ;
+   dp preserve
+   swap  @vector \m goto  big-vectors? if  \a jmp  ^  then  \a rjmp ;
 
 ( Return true if vector has _not_ been set. For two-word vectors - on
   devices with 16Ki and larger flash - assume that if first word - the jmp
@@ -341,16 +339,12 @@ mode __target-colon
 meta
 : handler  ( vector#)  \m here  vector,  __asm ;
 
-( Set all unset vectors to point to this vector - usually RESET.)
-: default-handler  ( vector#)
-   \m handler  ( force it, in case it's been set already)
-   ( then set all unset handlers to this address)
+( Set all unset vectors to point to \m here.)
+: default-handler
+   ( Set all unset handlers to current address.)
    0  \eq LAST_VECTOR 1+  for
       dup unvectored? if  dup  \m handler  ( set it)  then  1+  next
    drop ;
-
-forth
-
 
 ( Now that we know the origins of all the regions and the size and number
   of the vectors, let's make a word that skips the vectors - in the current
@@ -359,13 +353,18 @@ forth
 ( XXX Assuming no allocations have yet been done, this could be defined more
   simply as "#vectors allot".)
 
-: skip-vectors   \m origin  #vectors +  org ;
+: skip-vectors   \m origin  #vectors +  \m goto ;
+forth
 
 : clean-slate
    wipe  ( erase all memory images)
-   0 ee!  @ram ram!  0 app!  @boot boot!  @boot [ 1 Ki 2/ #] - sig! ;
+   eeprom    0 region!
+   ram    @ram region!
+   signature   @boot [ 1 Ki 2/ #] - region!
+   boot  @boot region!
+   app       0 region! ;
 
-clean-slate
+clean-slate  ( leaves us in app region)
 
 
 meta
@@ -390,7 +389,7 @@ meta
   jump. Then resolve using hooks, which recompiles the jmp to point to here.)
 
 : hook    \m label  0 \a jmp  __meta ;
-: hooks   h preserve  \m here  .meta. chain' execute  org  \a jmp ;
+: hooks   dp preserve  \m here  .labels. chain' execute  \m goto  \a jmp ;
 
 : '  .target. chain' execute ;  ( get target word's constant value)
 
@@ -418,8 +417,9 @@ forth
 ( XXX keep?)
 meta
 : var   ( bytes)
-   'ram @  dup equ  +  dup 'ram ! ( allot)
-   @ram #ram +  swap u<  if error" No available ram"  then ;
+   h preserve  ram
+   \m here equ  \m allot
+   @ram #ram +  \m here u<  if error" No available ram"  then ;
 
 forth
 
@@ -434,47 +434,22 @@ forth
 -- ------------------------------------------------------------------------
 -- Signatures - how we built the target image
 -- ------------------------------------------------------------------------
-
 meta
+: cr,  #LF \m c, ;  ( add a newline)
+
 : string,  ( a u)
    \m here image+ swap  ( a image u)  dup \m allot  cmove ;
 
-: cr,  #LF \m c, ;  ( add a newline)
-: z,     0 \m c, ;  ( add a zero terminator)
+: "   char " parse  \m string, ;
 
-: sig"   char " parse  \m string,  \m cr, ;
+( Save muforth commit, creation time, and build command. End the signature,
+  and align.)
 
-forth
-
-( based-on: creates words whose bodies are lists of addresses of words,
-  just like colon words.)
-
-here ]  \m cr, ;  ( end each created word with a call to cr, )
-: based-on:  create  ]
-   does>  [ #] push  ( 'body)  dup push  ( ip)
-   body> >name
-   \m string,  "   " \m string,
-   ( run the rest of the create'd word) ;
-
-meta
-
-( muforth version)
-based-on: muforth-commit
-   muforth-commit  drop 8  \m string, ;
-
-( Timestamping with creation date.)
-based-on: creation-date
-   clock time"  \m string, ;
-
-( Compile the command line into the image, prefixing it with "./muforth".)
-based-on: build-command
-   " ./muforth " \m string,
-   command-line  count  \m string, ;
-
-( Finishing the job.)
-: end-sig
-   \m z, ( terminate!)
-   \m here 1 and if  \m z,  then  ( align!) ;
+: build-info
+   " muforth-commit: " \m string,  muforth-commit  drop 8  \m string,  \m cr,
+   " creation-date: "  \m string,  clock time"  \m string,  \m cr,
+   " build-command: ./muforth "  \m string,  command-line  \m string,  \m cr,
+   0 \m align, ;
 
 forth
 
