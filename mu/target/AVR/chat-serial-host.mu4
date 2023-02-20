@@ -1,0 +1,157 @@
+( This file is part of muforth: https://muforth.nimblemachines.com/
+
+  Copyright 2002-2023 David Frech. (Read the LICENSE for details.)
+
+loading AVR serial chat (host)
+
+hex
+
+( Taking inspiration from the wildly successful HC08 serial chat protocol.
+
+  Responds to the following commands. NOTE: these are hex values!
+
+00 - 0f  idle        - these command bytes are ignored
+1a - ff  idle        - these command bytes are ignored
+
+10  version-addr     - get the address of the version commit
+11  set-addr         - set dptr to 16-bit address
+12  run              - set the machine SP, pop R1, PSW, and PC
+13  get-status       - get the machine SP
+
+14  read-flash       - read one byte of flash, incr Z
+15  read-data        - read one byte of ram/data space, incr Z
+16  read-eeprom      - read one byte of xram, incr Z
+
+17  write-flash      - write a word to flash page buffer, incr Z by 2
+18  write-data       - write one byte to ram/data space, incr Z
+19  write-eeprom     - write one byte to eeprom, incr Z
+)
+
+: >b   send ;
+: b>   recv ;
+
+: >w        >hilo  >b >b ;
+: w>   b> b> lohi> ;
+
+: >cmd  ?spkt  >b ;
+
+( "cx.<something>" words are chat *transport* code.
+  "c.<something>" words are the high-level chat interface code.)
+
+variable cx-space  ( 0 = flash, 1 = data, 2 = eeprom)
+: flash-space     cx-space off ;
+: data-space    1 cx-space ! ;
+
+
+-- ------------------------------------------------------------------------
+-- Chat transport interface
+-- ------------------------------------------------------------------------
+
+: cx.idle                     0 >cmd ;
+: cx.version-addr            10 >cmd ;  ( then read 4 bytes of flash)
+: cx.set-addr      ( a)      11 >cmd  >w ;
+
+: cx.run                     12 >cmd ;
+: cx.get-status    ( - rp)   13 >cmd      w> ;
+
+: cx.read          ( - b)    14  cx-space @ +  >cmd  b> ;
+
+: cx.write-flash   ( w cmd - status)
+                             17 >cmd  swap >w  >b  b> drop ;
+: cx.write-data    ( b)      18 >cmd  >b ;
+: cx.write-eeprom  ( b)      19 >cmd  >b           b> drop ;
+
+: cx.app-start               1a >cmd ;
+: cx.app-stop                1b >cmd ;
+
+-- ------------------------------------------------------------------------
+-- Helper code
+-- ------------------------------------------------------------------------
+
+( Send two no-ops, let them transmit, *then* throw away any input bytes.)
+: c.resync  cx.idle  cx.idle  drain  flush ;
+
+: c.get-version  ( - n)
+   cx.version-addr  flash-space
+   cx.read  cx.read  cx.read  cx.read  0123> ;
+
+( Set memory address and m.)
+: c.setup-chunk  ( buf a u - #bytes)
+   swap cx.set-addr  swap m ! ;
+
+: 4#   # # # # ;
+
+: set-ram-addr  ( a)  cx.set-addr  data-space ;
+
+-- ------------------------------------------------------------------------
+-- Chat interface
+-- ------------------------------------------------------------------------
+
+: c.hello  ( - #chunk)
+   #38400 bps  c.resync
+   cr ." Chat firmware version "  c.get-version
+   radix preserve  hex  sep preserve  -sep   <# 4# 4# #> type
+   #128 ;
+
+( The machine stack pointer - which we are here calling RP - points *below*
+  the last byte pushed. Push is: store, then decrement. This is an "empty
+  descending" stack. Most machines use a "full descending" stack.
+
+  Another way to think of it: for an empty descending stack, push is
+  post-decrement, pop is pre-increment.
+
+  For a full descending stack, push is pre-decrement, pop is
+  post-increment.
+
+  So that we don't go crazy, let's adjust RP so we can pretend it is a full
+  descending stack. When we read RP, we add 1. Before we write it back, we
+  subtract 1.)
+
+: c.run           ( rp)   1- cx.set-addr ( set RP)  cx.run ;
+: c.get-status  ( - rp)      cx.get-status 1+ ;  ( adjust RP)
+
+( Interact code handles which memory space we are reading.)
+: c.read-space   ( buf a u space)
+   -- cr  ." c.read "  2 nth u.  over u.  dup u.
+   cx-space !
+   c.setup-chunk  for  cx.read m&  next ;
+
+: c.write-data   ( buf a u)
+   c.setup-chunk  for  m* cx.write-data  next ;
+
+: c.write-eeprom   ( buf a u)
+   c.setup-chunk  for  m* cx.write-eeprom  next ;
+
+( Before re-flashing we want to stop the app, and get-status to make sure
+  that it's finished.)
+
+: c.app-stop    cx.app-stop  cx.get-status drop ;
+
+: c.flash-begin ;
+
+( After flashing, we have to re-enable the RWW section and start the app
+  running again.)
+
+: c.flash-end
+   0 cx.set-addr ( beginning of flash)
+   0 %0001_0001 ( RWWSRE + SPMEN) cx.write-flash  ( re-enable RWW section) ;
+
+: c.erase     ( a)
+   cx.set-addr  0 %0000_0011 ( PGERS + SPMEN) cx.write-flash  ( erase page) ;
+
+( For each word in buf, write it to the chip's flash page buffer, then send
+  the page program command.)
+
+: c.program   ( buf a u)
+   over push ( save addr)
+   c.setup-chunk  ( set address)
+   1+ 2/ for  m* m* lohi>  %0000_0001 ( SPMEN) cx.write-flash  next
+   pop cx.set-addr  ( set address again)
+   0 %0000_0101 ( PGWRT + SPMEN) cx.write-flash  ( write page buffer to flash) ;
+
+: chat   chat-via
+   c.hello  c.get-status  c.run  c.read-space  c.write-data  c.write-eeprom
+   cx.app-start  c.app-stop  c.flash-begin  c.flash-end  c.erase  c.program ;
+
+( Testing)
+: index  0 \m goto  80 0 do  i \m c,  loop ;
