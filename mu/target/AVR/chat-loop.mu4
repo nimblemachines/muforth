@@ -19,16 +19,20 @@ label version-cmd
 label set-addr-cmd
    recv-word rcall  x z movw  ret  ;c
 
+
+( If the app is *running*, enable interrupts while our code executes,
+  otherwise disable them.)
+
 ( Host will use set-address to set Z to new SP.)
 label run-cmd
    cli  SPL zl out  SPH zh out
-   x popw  ( throw away top return address)
-   x popw  ( pop status+padding)  SREG xl out
+   x popw  ( pop status+padding)  7f xl andi  ( zero I bit)
+   app-running xh lds  80 xh andi  xh xl or  ( I bit)  SREG xl out
    t popw  x popw  y popw  z popw  ( pop all 4 pointer regs)
    ret  ;c
 
 label get-status-cmd
-   SPL xl in  SPH xh in  send-word rjmp  ;c
+   SPL xl in  SPH xh in  2 x adiw ( skip ra)  send-word rjmp  ;c
 
 ( Command dispatch.)
 label command-table
@@ -64,7 +68,7 @@ label process
 label chat-entry  ( callable from other code!)
    ( Unless host changes it, stacked PC points to caller - usually interact.)
    z pushw  y pushw  x pushw  t pushw  ( push all 4 pointer regs)
-   xh clr  ( padding)  SREG xl in  x pushw  ( push status)
+   SREG xl in  xh clr  ( padding)  x pushw  ( push status)
    serial-ack rcall  ( ack-twint on IIC, no-op on uart)
    begin  process rcall  again  ;c
 

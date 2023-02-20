@@ -66,26 +66,31 @@ label serial-ack   ret  ;c
 
 ( Host uses send and recv. Let's do the same here.)
 
-( For chat dispatch loop.)
-label recv-command-byte  ;c
+( For both recv-byte and send-byte we want to run the app while we are
+  either waiting for a byte to go out or to come in.
 
+  app-run saves and restores r0, r1 and Z around calling the app.)
+
+( Could clobber xh.)
+label recv-command-byte  ;c  ( For chat dispatch loop.)
 label recv-byte
    ( Wait for RXC - receive complete)
-   begin  UCSR1A xl in  7 ( RXC) xl sbrs  again
+   begin  app-run rcall  UCSR1A xl in  7 ( RXC) xl sbrs  again
    UDR1 xl in  ret  ;c
 
-( NOTE: clobbers xh)
+( Could clobber xh.)
 label send-byte
+   xl push  ( app might clobber it; and app-run doesn't save it)
    ( Wait for UDRE - data register empty)
-   begin  UCSR1A xh in  5 ( UDRE) xh sbrs  again
-   UDR1 xl out  ret  ;c
+   begin  app-run rcall  UCSR1A xl in  5 ( UDRE) xl sbrs  again
+   xl pop  UDR1 xl out  ret  ;c
 
 label recv-word
    recv-byte rcall  xl push
    recv-byte rcall  xl xh mov  xl pop  ret  ;c
 
 label send-word
-   xh push  ( send-byte will clobber it)
+   xh push  ( send-byte might clobber it)
    send-byte rcall  xl pop  send-byte rjmp  ;c
 
 ( EEPROM read/write.)
