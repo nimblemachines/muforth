@@ -2,7 +2,7 @@
 
   Copyright 2002-2023 David Frech. (Read the LICENSE for details.)
 
-loading PIC18 SPI flash programming (STM32 core)
+loading PIC16/18 SPI flash programming (STM32 core)
 
 ( It might seem rather odd that this is here, but I'm interested in using
   an STM32 Discovery board as a "programming pod" for Microchip PIC16 and
@@ -170,6 +170,18 @@ ld target/ARM/v6-m/kernel-itc.mu4
 
 
 -- --------------------------------------------------------------------
+-- Buffering sent and received data
+-- --------------------------------------------------------------------
+( Since we are going to be reading a buffer sent to us by the host, let's
+  have nice words for that.)
+
+variable p
+: p@   p @  c@       ;  ( read next byte from buf, don't incr)
+: p*   p @  c@+  p ! ;  ( read next byte from buf, incr)
+: p&   p @  c!+  p ! ;  ( write next byte to buf, incr)
+
+
+-- --------------------------------------------------------------------
 -- SPI2 - for testing
 -- --------------------------------------------------------------------
 : spi2-init
@@ -179,8 +191,8 @@ ld target/ARM/v6-m/kernel-itc.mu4
    ( Pins PB13 to PB15 to SPI2 [AF0].)
    [ %101010 #13 2* << #] GPIOB_MODER set!
 
-   ( Slave mode, SPE=0, CPOL,CPHA=01)
-   0201 SPI2_CR1 !
+   ( Slave mode, LSB first, SPE=0, CPOL,CPHA=01)
+   0281 SPI2_CR1 !
    1700 SPI2_CR2 !
    40 ( SPE) SPI2_CR1 set! ( enable) ;
 
@@ -214,9 +226,6 @@ ld target/ARM/v6-m/kernel-itc.mu4
    -- Let's pull up PB4 so that if the slave isn't driving it we will read 0ff.
    [ %01  4 2* << #] GPIOB_PUPDR set!  ( 2 bits per pin) ;
 
-: pb4-out   [ %01 4 2* << #] GPIOB_MODER set! ;
-: pb4-in    [ %11 4 2* << #] GPIOB_MODER clr! ;
-
 : bit/  ( bit)  GPIOB_BSRR ! ;
 : bit\  ( bit)  GPIOB_BRR ! ;
 
@@ -224,12 +233,16 @@ ld target/ARM/v6-m/kernel-itc.mu4
 : rst/  ( de-assert /RST)   [ 1 5 << #] bit/ ;
 : rst\  ( assert /RST)      [ 1 5 << #] bit\ ;
 
+.ifdef pic18f-q
+
+.ifdef slow-bits
+
 ( ICSPCLK on PB3.)
 : clk/   [ 1 3 << #] bit/ ;
 : clk\   [ 1 3 << #] bit\ ;
 
-( XXX Do we care that bit! and bit@, written in Forth, are rather slow? If
-  we wanted to bitbang faster, these should be code words.)
+: pb4-out   [ %01 4 2* << #] GPIOB_MODER set! ;
+: pb4-in    [ %11 4 2* << #] GPIOB_MODER clr! ;
 
 ( NOTE: In bit@ and bit! we try to do approximately the same amount of
   "computation" during the high and low halves of the clock.)
@@ -246,24 +259,48 @@ ld target/ARM/v6-m/kernel-itc.mu4
    rot clk/  0< if  [ GPIOB_BSRR GPIOB_BRR - #] + ( bit set register)  then  !
    2*  clk\ ;
 
-( Write some bits.)
-: >bits   ( bits count)
-   tuck  #32 swap - <<  swap  pb4-out  for  bit!  next  drop  pb4-in ;
+( Write some bits. bits and bits' are left-justified.)
+: >bits   ( bits count - bits')   pb4-out  for  bit!  next  pb4-in ;
 
-( Read some bits.)
-: bits>   ( count - bits)      0  swap for  bit@  next ;
+( Read some bits. bits is right-justified.)
+: bits>   ( count - bits)          0  swap for  bit@  next ;
 
+.else  ( ndef slow-bits)
 
--- --------------------------------------------------------------------
--- Buffering sent and received data
--- --------------------------------------------------------------------
-( Since we are going to be reading a buffer sent to us by the host, let's
-  have nice words for that.)
+__host
+assembler
+: nop3  ( for Cortex-M0)  \m here 2 + \a again ;  ( jump to following instruction)
+forth
+__meta
 
-variable p
-: p@   p @  c@       ;  ( read next byte from buf, don't incr)
-: p*   p @  c@+  p ! ;  ( read next byte from buf, incr)
-: p&   p @  c!+  p ! ;  ( write next byte to buf, incr)
+( Assembler versions, for speed.)
+code >bits  ( bits count - bits')
+   w dpop1  GPIOB_MODER ( base) x lit
+   %01 4 2* << z lit  0 x ( MODER) +) y ldr  z y y orrs  0 x +) y str  ( pb4 output)
+   1 3 << # y movs  ( PB3: clock)
+   1 4 << # z movs  ( PB4: data)
+   begin
+      18 x ( BSRR) +) y str  ( clock high)
+      w w tst  0< if  18 x ( BSRR) +) z str  else  28 x ( BRR) +) z str  nop3  then  ( drive bit)
+      28 x ( BRR) +) y str  ( clock low)
+      1 # w w lsls  ( 2*)
+   1 # top top subs  0= until
+   %11 4 2* << z lit  0 x ( MODER) +) y ldr  z y y bics  0 x +) y str  ( pb4 input)
+   w top mov  next  ;c
+
+code bits>  ( count - bits)
+   0 # w movs  GPIOB_MODER ( base) x lit
+   1 3 << # y movs  ( PB3: clock)
+   begin
+      18 x ( BSRR) +) y str  ( clock high)
+      1 # w w lsls ( 2*)  nop3
+      10 x ( IDR) +) z ldr  1 # z z lsrs
+      28 x ( BRR) +) y str  ( clock low)
+      y z z ands  3 # z z lsrs  z w w adds  ( add in low bit)
+   1 # top top subs  0= until
+   w top mov  next  ;c  pool,
+
+.then  ( ndef slow-bits)
 
 -- : >p>   p@ >s> p& ;     ( read from buf, send byte, recv byte, write to buf)
 -- :  p>       s> p& ;     ( send dummy byte, recv byte, write to buf)
@@ -271,7 +308,7 @@ variable p
 
 
 -- ------------------------------------------------------------------------
--- PIC programming
+-- PIC18F-Q programming
 -- ------------------------------------------------------------------------
 : t_enter_prog  1 ms ;
 : t_dly  ( nominally 1us)  1 us ;
@@ -283,22 +320,106 @@ variable p
   into the target, MSB first.)
 
 : +prog
-   0 TIM3_CNT !
-   rst\  t_enter_prog  [ token MCHP drop bew@ #] #32 >bits  t_enter_prog ;
+   rst\  t_enter_prog  [ token MCHP drop bew@ #] #32 >bits drop  t_enter_prog ;
 
 ( Send a command; delay.)
-: cmd   ( b)  8 >bits  t_dly ;
+: >cmd  ( payload cmd - payload<<9)  #23 <<  + 2*  8 >bits  t_dly ;
+
+( Send a bare command with no payload; delay.)
+: cmd     ( cmd)  0 swap >cmd drop ;
 
 ( Send a command; delay; send a payload.)
-: cmd+wr  ( load cmd)  cmd  #24 >bits ;
+: cmd+wr  ( payload cmd)  >cmd  #24 >bits  drop ;
 
 ( Send a command; delay; recv a payload.)
-: cmd+rd  ( cmd - load)  cmd  #24 bits> ;
+: cmd+rd  ( cmd - payload)  cmd  #24 bits>  2/ 0ffff and ;
 
-: tt  timer-init  icsp-init  spi2-init  +prog ;
+: !p   ( a)      80 cmd+wr  t_dly ;
+: p@+  ( - u)   0fe cmd+rd  t_dly ;
+: p!+  ( w)     0e0 cmd+wr  t_prog_flash ;
 
-: pc!  ( pc)  2*  80 cmd+wr  t_dly ;
-: pc@+  ( - u)   0fe cmd+rd  t_dly ;
+: tt  timer-init  icsp-init  rst/  spi2-init  +prog
+      3f_fffc !p  p@+ p@+ ;
+
+.then ( pic18f-q)
+
+
+-- ------------------------------------------------------------------------
+-- PIC16F145x programming
+-- ------------------------------------------------------------------------
+.ifdef pic16f145x
+
+( ICSPCLK on PB3.)
+: clk/   [ 1 3 << #] bit/ ;
+: clk\   [ 1 3 << #] bit\ ;
+
+( ICSPDAT on PB4.)
+: pb4-out   [ %01 4 2* << #] GPIOB_MODER set! ;
+: pb4-in    [ %11 4 2* << #] GPIOB_MODER clr! ;
+
+( NOTE: In bit@ and bit! we try to do approximately the same amount of
+  "computation" during the high and low halves of the clock.)
+
+( Read bit on PB4, shift in from the left - ie, LSB first.)
+: bit@   ( bits - bits')
+   clk/  u2/  GPIOB_IDR @  10  clk\  and  [ #31 4 - #] <<  + ;
+
+( Amusing note: The standard Forth-style pronunciation of bit! is "bit bang". ;-)
+
+( Drive bit on PB4.)
+: bit!   ( bits - bits')  ( sample low bit and drive PB4 with it)
+   dup  [ 1 4 << #]  GPIOB_BRR ( bit clear register)
+   rot  clk/  1 and if  [ GPIOB_BSRR GPIOB_BRR - #] + ( bit set register)  then  !
+   u2/  clk\ ;
+
+( Write some bits. bits and bits' are right-justified.)
+: >bits   ( bits count - bits')   pb4-out  for  bit!  next  pb4-in ;
+
+( Read some bits. bits is left-justified.)
+: bits>   ( count - bits)          0  swap for  bit@  next ;
+
+: t_enter_prog  1 ms ;
+: t_dly  ( nominally 1us)  1 us ;
+: t_erase  #11 ms ;  ( bulk or page erase)
+: t_prog_eeprom_config  #11 ms ;
+: t_prog_flash  #75 us ;
+
+( The string "MCHP" is the initialization bit string that must be clocked
+  into the target, LSB first. Everything else is LSB first as well, unlike
+  the PIC18F-Q.)
+
+: +prog
+   rst\  t_enter_prog  [ token MCHP drop bew@ #] #32 >bits drop  t_enter_prog ;
+
+( On the 16F145x, commands are 6 bits and the payload is 16 bits: 14 bits
+  of data, plus a start and stop bit.)
+
+( Send a command; delay.)
+: >cmd  ( cmd payload - payload')  7 << +  6 >bits  t_dly ;
+
+( Send a bare command with no payload; delay.)
+: cmd     ( cmd)  0 >cmd drop ;
+
+( Send a command; delay; send a payload.)
+: cmd+wr  ( payload cmd)  swap >cmd  #16 >bits  drop ;
+
+( Send a command; delay; recv a payload.)
+: cmd+rd  ( cmd - payload)  cmd  #16 bits>  ( #17 u>>  03fff and) ;
+
+: config!  ( w)  00 cmd+wr  t_dly ;  ( load configuration latch; set addr to 8000)
+: prog!    ( w)  02 cmd+wr  t_dly ;  ( load program memory latch)
+: p@     ( - w)  04 cmd+rd  t_dly ;  ( read program/config memory)
+: p+             06 cmd     t_dly ;  ( increment address)
+: !p             16 cmd     t_dly ;  ( reset address to 0000)
+
+( Call this uu because I want to use this PIC as a USB device. ;-)
+: uu  timer-init  icsp-init  spi2-init  rst/  +prog ;
+
+: rr  uu
+      !p  p@ p+ p@  0 config!  p+ p+ p+ p+ p+  p@ p+ p@ ;
+
+.then ( pic16f145x)
+
 
 -- ------------------------------------------------------------------------
 -- Serial communication - UART
