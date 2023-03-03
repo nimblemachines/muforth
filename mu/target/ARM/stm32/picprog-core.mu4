@@ -1,0 +1,393 @@
+( This file is part of muforth: https://muforth.nimblemachines.com/
+
+  Copyright 2002-2023 David Frech. (Read the LICENSE for details.)
+
+loading PIC18 SPI flash programming (STM32 core)
+
+( It might seem rather odd that this is here, but I'm interested in using
+  an STM32 Discovery board as a "programming pod" for Microchip PIC16 and
+  PIC18 microcontrollers, which have a simple SPI interface for erasing,
+  programming, and reading the on-chip memories and configuration bytes.
+
+  The idea is basically this:
+
+  [1] the STM32 chip sits in a loop, reading a word of the RAM until a
+  magic number appears there. This is the "semaphore" signal from the host
+  that a command packet is available. When it sees the magic word, it goes
+  to step 2.
+
+  [2] The STM32 turns around and talks to the target chip via SPI, sending
+  the command, and reading or writing the payload, if any. It buffers the
+  response, and then writes a different magic number to the semaphore word,
+  signaling the host that it has completed the command.
+
+  Then it goes back to [1]. The host reads the buffered target response,
+  creates a new command packet, and sets the semaphore word.
+
+  Programming the flash, EEPROM, and config bytes is done one word/byte at
+  a time. It makes sense to buffer several of these and do them all at once,
+  but initially I want to just be able to talk to the chip.
+
+  The communication between the STM32 and the host can be over ST-LINK,
+  which means that no USB-serial interface is necessary. The STM32 Discovery
+  board can power the target as well.
+
+  There is no need to flash this code into the STM32. It can easily run
+  from RAM.)
+
+__meta
+decimal
+
+( The ST-LINK code will have written some flash programming routines into
+  ram. We don't need these, so let's back up over them and start fresh.)
+
+ram  wipe
+
+( We want to put the data structures that the host will use to communicate
+  with the STM32 at the beginning of RAM so we know where to find them.
+  Remember: when *using* this code, the host will have loaded PIC code into
+  the memory spaces. It will have no idea about how the memory of the STM32
+  is laid out, so we set up a simple, constant layout - data first, then the
+  program.)
+
+( Let's put the big stuff first. Makes it easy to find when debugging.)
+here equ data        256 allot  ( memory read/write buffer)
+here equ semaphore  cell allot  ( semaphore + stm32 command)
+
+( XXX this needs to change; left over from AVR/8051 copy-pasta.)
+here equ cmd           1 allot  ( flash command)
+here equ addr                   ( flash addr)
+here equ addr-hi       1 allot
+here equ addr-lo       1 allot
+here equ result                 ( single byte result)
+here equ toggle        1 allot  ( flash command toggle - for AVR)
+here equ count                  ( byte count to transfer)
+here equ out-count     2 allot  ( byte count to write)
+here equ in-count      2 allot  ( byte count to read)
+
+hex
+
+( We want to write this code in Forth, so let's load the Forth kernel.)
+ld target/ARM/v6-m/kernel-itc.mu4
+
+-- ------------------------------------------------------------------------
+-- Chip init
+-- ------------------------------------------------------------------------
+.ifdef stm32f072
+   #48,000,000 equ cpuclk
+   ld target/ARM/stm32/f0/72_b-init.mu4
+.then
+.ifdef stm32f303
+   #72,000,000 equ cpuclk
+   ld target/ARM/stm32/f3/03_c-init.mu4
+.then
+
+
+-- ------------------------------------------------------------------------
+-- Timers and delays
+-- ------------------------------------------------------------------------
+( The PIC programming process requires several delays. Some are a few
+  microseconds; others, a few milliseconds. Let's use one of the timers to
+  do accurate timing.
+
+  TIM6 and TIM7 are basic timers. Let's use TIM6.
+
+  We are going to clock the timer at 1Mhz, and set it up for "one-shot"
+  mode. It will stop counting and set the "update" flag when the count
+  register reaches the reload value.)
+
+( XXX run TIM7 in an endless loop so we can test that TIM6 is doing the
+  right thing? Not a bad idea. TIMx_ARR resets to 0ffff, so we can leave it
+  alone.)
+
+( Run timer7 full bore!)
+: timer7-init
+   -- [ cpuclk #1,000,000 / 1- #] TIM7_PSC !  ( set prescaler)
+   0 TIM7_PSC !  ( set prescaler)
+   1 ( CEN) TIM7_CR1 ! ( start it!) ;
+
+( We are going to use TIM3 to count clock pulses coming out of SPI1 SCK.
+  I'm not convinced that it's working!
+
+  We are going to use the external trigger input, TIM3_ETR, which is AF0 on
+  pin PD2.)
+
+: timer3-init
+   ( Clock to port D.)
+   [ 1 #16 4 ( D) + << #] RCC_AHBENR set!
+
+   ( AF0 on PD2.)
+   [ %10 2 2* << #] GPIOD_MODER set!  ( 2 bits per pin)
+
+   ( Clock to TIM3.)
+   2 RCC_APB1ENR set!
+
+   ( Trigger on falling edge of ext trigger input.)
+   c000 TIM3_SMCR !
+
+   ( Enable timer.)
+   1 ( CEN) TIM3_CR1 ! ;
+
+: ?timer
+   0 TIM6_SR !
+   1 ( CEN) TIM6_CR1 set!
+   begin  TIM6_SR @  until ;
+
+: timer-init
+   [ 3 4 << #] RCC_APB1ENR set!  ( enable clocks to TIM6 and TIM7)
+   timer7-init  timer3-init
+   8 ( OPM - one pulse mode) TIM6_CR1 !
+   [ cpuclk #1,000,000 / 1- #] TIM6_PSC !  ( set prescaler)
+   1 TIM6_EGR ! ( generate update event) ;
+
+: us  ( n)  ( delay n microseconds)
+   TIM6_ARR !  ?timer ;
+
+: ms  ( n)  #1000 * us ;
+
+: ttest  ( n)
+   TIM7_CNT @  swap us  TIM7_CNT @  swap - ;
+
+
+-- --------------------------------------------------------------------
+-- Big- and little-endian values
+-- --------------------------------------------------------------------
+( Little endian.)
+
+( Split a value into its high part and low byte.)
+: >hilo  ( v - hi lo)  dup 8 u>>  swap [ 1 8 << 1- #] and ;
+
+( Join a low byte and a high part into a value.)
+: lohi>  ( lo hi - v)  8 << or ;
+
+( Big endian.)
+
+( Split a value into its low byte and high part.)
+: >lohi  ( v - lo hi)  >hilo  swap ;
+
+( Join a high part and a low byte into a value.)
+: hilo>  ( hi lo - v)         swap  lohi> ;
+
+
+-- --------------------------------------------------------------------
+-- SPI2 - for testing
+-- --------------------------------------------------------------------
+: spi2-init
+   ( Clock to SPI2.)
+   [ 1 #14 << #] RCC_APB1ENR set!
+
+   ( Pins PB13 to PB15 to SPI2 [AF0].)
+   [ %101010 #13 2* << #] GPIOB_MODER set!
+
+   ( Slave mode, SPE=0, CPOL,CPHA=01)
+   0201 SPI2_CR1 !
+   1700 SPI2_CR2 !
+   40 ( SPE) SPI2_CR1 set! ( enable) ;
+
+-- --------------------------------------------------------------------
+-- Bitbanged half-duplex SPI
+-- --------------------------------------------------------------------
+( I'm giving up - again! - on the STM32's SPI interface. It seems to
+  broken, and the design makes it somewhere between difficult and
+  impossible to talk to the PIC programming interface, which *shares* a
+  single bi-directional data line between master and slave.
+
+  I'm going to use PB3 as ICSPCLK, PB4 as the bi-directional ICSPDAT, and
+  PB5 as /MCLR output.)
+
+: icsp-init
+   -- First, enable clocks to Port B.)
+   ( Ports -FED_CBA- )
+        [ %0000_0100  #16 << #] RCC_AHBENR set!
+
+   -- Clear port B
+   0 GPIOB_ODR !
+
+   -- Set PB3 and PB5 to output; PB4 will toggle between input and output.
+   -- Mode %00 is input; %01 is output.
+   [ %0100_01  3 2*  << #] GPIOB_MODER !  ( 2 bits per pin)
+
+   -- Set output speed to medium.
+   0 GPIOB_OSPEEDR !
+   [ %0101_01  3 2* << #] GPIOB_OSPEEDR set!  ( 2 bits per pin)
+
+   -- Let's pull up PB4 so that if the slave isn't driving it we will read 0ff.
+   [ %01  4 2* << #] GPIOB_PUPDR set!  ( 2 bits per pin) ;
+
+: pb4-out   [ %01 4 2* << #] GPIOB_MODER set! ;
+: pb4-in    [ %11 4 2* << #] GPIOB_MODER clr! ;
+
+: bit/  ( bit)  GPIOB_BSRR ! ;
+: bit\  ( bit)  GPIOB_BRR ! ;
+
+( /MCLR - aka /RST - on PB5.)
+: rst/  ( de-assert /RST)   [ 1 5 << #] bit/ ;
+: rst\  ( assert /RST)      [ 1 5 << #] bit\ ;
+
+( ICSPCLK on PB3.)
+: clk/   [ 1 3 << #] bit/ ;
+: clk\   [ 1 3 << #] bit\ ;
+
+( XXX Do we care that bit! and bit@, written in Forth, are rather slow? If
+  we wanted to bitbang faster, these should be code words.)
+
+( NOTE: In bit@ and bit! we try to do approximately the same amount of
+  "computation" during the high and low halves of the clock.)
+
+( Read bit on PB4.)
+: bit@   ( bits - bits')
+   clk/  2*  GPIOB_IDR @  4  clk\  >>  1 and  + ;
+
+( Amusing note: The standard Forth-style pronunciation of bit! is "bit bang". ;-)
+
+( Drive bit on PB4.)
+: bit!   ( bits - bits')  ( sample hi bit - 8000_0000 - and drive PB4 with it)
+   dup  [ 1 4 << #]  GPIOB_BRR ( bit clear register)
+   rot clk/  0< if  [ GPIOB_BSRR GPIOB_BRR - #] + ( bit set register)  then  !
+   2*  clk\ ;
+
+( Write some bits.)
+: >bits   ( bits count)
+   tuck  #32 swap - <<  swap  pb4-out  for  bit!  next  drop  pb4-in ;
+
+( Read some bits.)
+: bits>   ( count - bits)      0  swap for  bit@  next ;
+
+
+-- --------------------------------------------------------------------
+-- Buffering sent and received data
+-- --------------------------------------------------------------------
+( Since we are going to be reading a buffer sent to us by the host, let's
+  have nice words for that.)
+
+variable p
+: p@   p @  c@       ;  ( read next byte from buf, don't incr)
+: p*   p @  c@+  p ! ;  ( read next byte from buf, incr)
+: p&   p @  c!+  p ! ;  ( write next byte to buf, incr)
+
+-- : >p>   p@ >s> p& ;     ( read from buf, send byte, recv byte, write to buf)
+-- :  p>       s> p& ;     ( send dummy byte, recv byte, write to buf)
+-- : >p    p* >s     ;     ( read from buf, send byte)
+
+
+-- ------------------------------------------------------------------------
+-- PIC programming
+-- ------------------------------------------------------------------------
+: t_enter_prog  1 ms ;
+: t_dly  ( nominally 1us)  1 us ;
+: t_erase  #11 ms ;  ( bulk or page erase)
+: t_prog_eeprom_config  #11 ms ;
+: t_prog_flash  #75 us ;
+
+( The string "MCHP" is the initialization bit string that must be clocked
+  into the target, MSB first.)
+
+: +prog
+   0 TIM3_CNT !
+   rst\  t_enter_prog  [ token MCHP drop bew@ #] #32 >bits  t_enter_prog ;
+
+( Send a command; delay.)
+: cmd   ( b)  8 >bits  t_dly ;
+
+( Send a command; delay; send a payload.)
+: cmd+wr  ( load cmd)  cmd  #24 >bits ;
+
+( Send a command; delay; recv a payload.)
+: cmd+rd  ( cmd - load)  cmd  #24 bits> ;
+
+: tt  timer-init  icsp-init  spi2-init  +prog ;
+
+: pc!  ( pc)  2*  80 cmd+wr  t_dly ;
+: pc@+  ( - u)   0fe cmd+rd  t_dly ;
+
+-- ------------------------------------------------------------------------
+-- Serial communication - UART
+-- ------------------------------------------------------------------------
+: uart-init
+   -- First, enable clocks to Port A. We are using uart1 on pins PA9 and PA10.
+   [ 1 #16 1 ( A) + << #] RCC_AHBENR set!
+
+   -- Enable clocks to uart1 as well.
+   [ 1 #14 << #] RCC_APB2ENR set!
+
+   -- Set mode bits (%10) and alternate function (AF1) for uart.
+   [ %1010 #9       2*  << #] GPIOA_MODER set!  ( 2 bits per pin)
+   [    11 #9  8 -  4 * << #] GPIOA_AFRH set!   ( 4 bits per pin)
+
+   -- Now for the uart itself.
+   USART1_CR1  0 over ! ( reset and disable USART)
+   %1100 ( TE+RE) ( enable tx and rx)  over set!
+   [ cpuclk #38,400 / #] USART1_BRR !
+   1 ( UE) ( enable USART)  swap set! ;
+
+: ?uart-status  ( bit)
+   begin  USART1_ISR @  over and  until  drop ;
+
+: uart-recv  ( - b)   [ 1 #5 << ( RXNE bit) #] ?uart-status  USART1_RDR @ ;
+: uart-send  ( b)     [ 1 #7 << ( TXE bit)  #] ?uart-status  USART1_TDR ! ;
+
+: uart-send-recv
+   data p !  out-count h@ for  p* uart-send  next
+   data p !   in-count h@ for  uart-recv p&  next ;
+
+
+-- ------------------------------------------------------------------------
+-- Jump tables
+-- ------------------------------------------------------------------------
+: (dispatch)  ( index)
+   1+ cells r@ +
+   dup r@ @ u< if  r> drop  @execute ^  then
+   drop  r> @ >r  ( skip jump table and keep executing) ;
+
+compiler: [:  ( start a jump table)
+   \t (dispatch) ,  here  0 , ( ip past last cfa) ;
+
+compiler: :]  ( end a jump table)
+   here  swap  image-! ;
+
+
+-- ------------------------------------------------------------------------
+-- Core command processing loop
+-- ------------------------------------------------------------------------
+( Command index is above the word that it executes.)
+: do-command  ( n)
+           ( 10    11        12 )
+   10 - [:  rst\  rst/  uart-send-recv  :] ;
+
+here ]  ( chip-init)
+   clock-init  led-init  timer-init  icsp-init  uart-init  flash-leds
+   rst/
+   begin
+      face_d000 semaphore !  ( ready for another command)
+      0  begin  drop  semaphore @  dup ffff_ff00 and  deca_f000 =  until
+      0ff and  ( command byte)  do-command
+   again [
+
+( Startup code! Since we have a Forth kernel, let's write the startup code
+  in Forth!)
+
+label startup
+   ( Ignore the sp we were passed. Set rp to top of ram, sp below.)
+   @ram #ram + rp lit   rp sp mov   #64 cells # sp sp sub
+   cpsid  ( disable interrupts)
+   ( chip-init)  ip  lit
+   deca_fbad     top lit
+   next  ;c
+   pool,
+
+
+( XXX The following is for interactive testing and needs to go away
+  eventually.)
+
+.ifdef testing
+
+: shuffle  ( cmd addr data - data addr-lo addr-hi cmd)
+   -rot  >lohi  rot ;
+
+: index  ( offset)
+   100 0 do  dup i +   i data + c!  loop  drop ;
+
+: wipe
+   100 0 do  0ff i data + c!  loop ;
+
+.then  ( testing (interactive)
