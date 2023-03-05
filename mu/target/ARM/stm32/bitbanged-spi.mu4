@@ -1,0 +1,213 @@
+( This file is part of muforth: https://muforth.nimblemachines.com/
+
+  Copyright 2002-2023 David Frech. (Read the LICENSE for details.)
+
+loading STM32 Bitbanged SPI
+
+( This is currently for programming Microchip PIC16 and PIC18 processors,
+  which use a *shared* bi-directional data line instead of separate MOSI
+  and MISO. They also tend use a CPOL=0, CPHA=1 style: clock idles low, but
+  data is clocked in on the *falling* [second] edge of the clock.
+
+  I should probably disentangle the clock and data settings and make the
+  code generic, so it can be used for AVR and 8051 devices as well, which
+  *do* use separate MOSI and MISO, and clock data on the *rising* edge.)
+
+
+.ndef lsb-first  .ndef msb-first .and .if
+   z" You need to define either lsb-first or msb-first" abort
+.then
+
+.ndef slow-bits  .ndef fast-bits .and .if
+   z" You need to define either slow-bits or fast-bits" abort
+.then
+
+
+hex
+__meta
+
+-- --------------------------------------------------------------------
+-- Bitbanged half-duplex SPI
+-- --------------------------------------------------------------------
+( I'm giving up - again! - on the STM32's SPI interface. It seems to
+  broken, and the design makes it somewhere between difficult and
+  impossible to talk to the PIC programming interface, which *shares* a
+  single bi-directional data line between master and slave.
+
+  I'm going to use PB3 as clock, PB4 as the bi-directional data, and
+  PB5 as the active-low reset output.)
+
+: bitbanged-spi-init
+   -- First, enable clocks to Port B.)
+   ( Ports -FED_CBA- )
+        [ %0000_0100  #16 << #] RCC_AHBENR set!
+
+   -- Clear port B. Clock idles low; target will be reset.
+   0 GPIOB_ODR !
+
+   -- Set PB3 and PB5 to output; PB4 will toggle between input and output.
+   -- Mode %00 is input; %01 is output.
+   [ %0100_01  3 2*  << #] GPIOB_MODER !  ( 2 bits per pin)
+
+   -- Set output speed to medium.
+   -- Our max toggle rate is going to be around 5Mhz.
+   0 GPIOB_OSPEEDR !
+   [ %0101_01  3 2* << #] GPIOB_OSPEEDR set!  ( 2 bits per pin)
+
+   -- Let's pull up PB4 so that if the slave isn't driving it we will read
+   -- all one bits.
+   [ %01  4 2* << #] GPIOB_PUPDR set!  ( 2 bits per pin) ;
+
+: bit/  ( bit)  GPIOB_BSRR ! ;
+: bit\  ( bit)  GPIOB_BRR ! ;
+
+( Reset - aka /MCLR on the PIC - on PB5.)
+: reset/  ( de-assert reset)   [ 1 5 << #] bit/ ;
+: reset\  ( assert reset)      [ 1 5 << #] bit\ ;
+
+
+( First, let's define the "reference" implementations, in Forth. These will
+  be somewhat slow. I haven't measured, but I think they toggle at around
+  250kHz.)
+
+.ifdef slow-bits
+
+( Clock on PB3.)
+: clk/   [ 1 3 << #] bit/ ;
+: clk\   [ 1 3 << #] bit\ ;
+
+( Set the direction for PB4.)
+: pb4-out   [ %01 4 2* << #] GPIOB_MODER set! ;
+: pb4-in    [ %11 4 2* << #] GPIOB_MODER clr! ;
+
+
+( Older PICs used an LSB-first protocol; newer ones use MSB-first, to be
+  more SPI-compatible. We define both styles.)
+
+.ifdef msb-first
+
+( NOTE: In bit@ and bit! we try to do approximately the same amount of
+  "computation" during the high and low halves of the clock.)
+
+( Read bit on PB4.)
+: bit@   ( bits - bits')
+   clk/  2*  GPIOB_IDR @  4  clk\  >>  1 and  + ;
+
+( Amusing note: The standard Forth-style pronunciation of bit! is "bit bang". ;-)
+
+( Drive bit on PB4.)
+: bit!   ( bits - bits')  ( sample hi bit - 8000_0000 - and drive PB4 with it)
+   dup  [ 1 4 << #]  GPIOB_BRR ( bit clear register)
+   rot clk/  0< if  [ GPIOB_BSRR GPIOB_BRR - #] + ( bit set register)  then  !
+   2*  clk\ ;
+
+( Write some bits. bits and bits' are left-justified.)
+: >bits   ( bits count - bits')   pb4-out  for  bit!  next  pb4-in ;
+
+( Read some bits. bits is right-justified.)
+: bits>   ( count - bits)          0  swap for  bit@  next ;
+
+.then  ( ifdef msb-first)
+
+.ifdef lsb-first
+
+( NOTE: In bit@ and bit! we try to do approximately the same amount of
+  "computation" during the high and low halves of the clock.)
+
+( Read bit on PB4, shift in from the left - ie, LSB first.)
+: bit@   ( bits - bits')
+   clk/  u2/  GPIOB_IDR @  10  clk\  and  [ #31 4 - #] <<  + ;
+
+( Amusing note: The standard Forth-style pronunciation of bit! is "bit bang". ;-)
+
+( Drive bit on PB4.)
+: bit!   ( bits - bits')  ( sample low bit and drive PB4 with it)
+   dup  [ 1 4 << #]  GPIOB_BRR ( bit clear register)
+   rot  clk/  1 and if  [ GPIOB_BSRR GPIOB_BRR - #] + ( bit set register)  then  !
+   u2/  clk\ ;
+
+( Write some bits. bits and bits' are right-justified.)
+: >bits   ( bits count - bits')   pb4-out  for  bit!  next  pb4-in ;
+
+( Read some bits. bits is left-justified.)
+: bits>   ( count - bits)          0  swap for  bit@  next ;
+
+.then  ( lsb-first)
+
+.then  ( slow-bits)
+
+
+( Next, the high-performance versions of >bits and bits>. These are capable
+  of toggling at just over 5Mhz. I had to put in some no-ops to slow them
+  down a bit.)
+
+.ifdef fast-bits
+
+{
+assembler
+( Macro to assemble a three-cycle no-op.)
+: nop3  ( for Cortex-M0)  \m here 2 + \a again ;  ( jump to following instruction)
+forth
+}
+
+.ifdef msb-first
+
+code >bits  ( bits count - bits')
+   w dpop1  GPIOB_MODER ( base) x lit
+   %01 4 2* << z lit  0 x ( MODER) +) y ldr  z y y orrs  0 x +) y str  ( pb4 output)
+   1 3 << # y movs  ( PB3: clock)
+   1 4 << # z movs  ( PB4: data)
+   begin
+      1 # w w lsls  ( shift left; high bit -> carry)
+      18 x ( BSRR) +) y str  ( clock high)
+      cs if  18 x ( BSRR) +) z str  else  28 x ( BRR) +) z str  nop  then  ( drive bit)
+      28 x ( BRR) +) y str  ( clock low)
+   1 # top top subs  0= until
+   %11 4 2* << z lit  0 x ( MODER) +) y ldr  z y y bics  0 x +) y str  ( pb4 input)
+   w top mov  next  ;c
+
+code bits>  ( count - bits)
+   0 # w movs  GPIOB_MODER ( base) x lit
+   1 3 << # y movs  ( PB3: clock)
+   begin
+      18 x ( BSRR) +) y str  ( clock high)
+      1 # w w lsls ( shift left)  nop3 ( wait for output to propagate)
+      10 x ( IDR) +) z ldr  #27 # z z lsls  #31 # z z lsrs ( bit4 -> bit0; other bits 0)
+      28 x ( BRR) +) y str  ( clock low)
+      z w w adds  ( add in low bit)
+   1 # top top subs  0= until
+   w top mov  next  ;c  pool,
+
+.then ( msb-first)
+
+.ifdef lsb-first
+
+code >bits  ( bits count - bits')
+   w dpop1  GPIOB_MODER ( base) x lit
+   %01 4 2* << z lit  0 x ( MODER) +) y ldr  z y y orrs  0 x +) y str  ( pb4 output)
+   1 3 << # y movs  ( PB3: clock)
+   1 4 << # z movs  ( PB4: data)
+   begin
+      1 # w w lsrs  ( shift right; low bit -> carry)
+      18 x ( BSRR) +) y str  ( clock high)
+      cs if  18 x ( BSRR) +) z str  else  28 x ( BRR) +) z str  nop  then  ( drive bit)
+      28 x ( BRR) +) y str  ( clock low)
+   1 # top top subs  0= until
+   %11 4 2* << z lit  0 x ( MODER) +) y ldr  z y y bics  0 x +) y str  ( pb4 input)
+   w top mov  next  ;c
+
+code bits>  ( count - bits)
+   0 # w movs  GPIOB_MODER ( base) x lit
+   1 3 << # y movs  ( PB3: clock)
+   begin
+      18 x ( BSRR) +) y str  ( clock high)
+      1 # w w lsrs  ( shift right)  nop3 ( wait for output to propagate)
+      10 x ( IDR) +) z ldr  4 # z z lsrs  #31 # z z lsls ( bit4 -> bit31; other bits 0)
+      28 x ( BRR) +) y str  ( clock low)
+      z w w adds  ( add in high bit)
+   1 # top top subs  0= until
+   w top mov  next  ;c  pool,
+
+.then  ( lsb-first)
+
+.then  ( fast-bits)
