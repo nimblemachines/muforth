@@ -73,60 +73,26 @@ ld target/ARM/v6-m/kernel-itc.mu4
 -- ------------------------------------------------------------------------
 -- Chip init
 -- ------------------------------------------------------------------------
+#48,000,000 equ cpuclk
 .ifdef stm32f072
-   #48,000,000 equ cpuclk
    ld target/ARM/stm32/f0/72_b-init.mu4
 .then
 .ifdef stm32f303
-   #72,000,000 equ cpuclk
+   -d cpuclk-48m
    ld target/ARM/stm32/f3/03_c-init.mu4
 .then
 
-: spi-init
-   -- First, enable clocks to Port B. We are using SPI1 on pins PB3, PB4, and
-   -- PB5, and using PB6 and PB7 as GPIO pins (target /SS, target /RST, resp.)
-   ( Ports -FED_CBA- )
-        [ %0000_0100  #16 << #] RCC_AHBENR set!
+( Let's define our own words for reading and writing memory.)
+variable p
+: p*   p @  c@+  p ! ;  ( read next byte from buf, incr)
+: p&   p @  c!+  p ! ;  ( write next byte to buf, incr)
 
-   -- Clear port B
-   0 GPIOB_ODR !
-   -- Set PB3, 5, 6, and 7 to output.
-   0 GPIOB_MODER !
-   [ %0101_0100_01  3 2* << #] GPIOB_MODER set!  ( 2 bits per pin)
-   -- Set output speed to medium.
-   0 GPIOB_OSPEEDR !
-   [ %0101_0100_01  3 2* << #] GPIOB_OSPEEDR set!  ( 2 bits per pin) ;
 
 -- --------------------------------------------------------------------
 -- SPI building blocks
 -- --------------------------------------------------------------------
 : bit/  ( bit)  GPIOB_BSRR ! ;
 : bit\  ( bit)  GPIOB_BRR ! ;
-
-( SCK on PB3.)
-: sck/   [ 1 3 << #] bit/ ;
-: sck\   [ 1 3 << #] bit\ ;
-
-( Half cycle delay. Needed to slow the clock down a bit.)
-: H ;
-
-( Do one clock cycle, including any delays.)
-: sck/\   sck/ H sck\ ;
-
-( XXX Do we care that bit! and bit@, written in Forth, are rather slow? If
-  we wanted to bitbang faster, these should be code words.)
-
-( MISO on PB4.)
-: bit@   ( bits - bits')
-   2*  GPIOB_IDR @  4 >>  1 and  + ;
-
-( Amusing note: The standard Forth-style pronunciation of bit! is "bit bang". ;-)
-
-( MOSI on PB5.)
-: bit!   ( bits - bits')  ( sample hi bit - 80 - and drive MOSI with it)
-   dup  [ 1 5 << #]  GPIOB_BRR ( bit clear register)
-   rot 80 and  if  [ GPIOB_BSRR GPIOB_BRR - #] + ( bit set register)  then  !
-   2* ;
 
 ( /SS on PB6.)
 : ss/  ( de-assert /SS)   [ 1 6 << #] bit/ ;
@@ -136,39 +102,25 @@ ld target/ARM/v6-m/kernel-itc.mu4
 : rst/  ( de-assert /RST)   [ 1 7 << #] bit/ ;
 : rst\  ( assert /RST)      [ 1 7 << #] bit\ ;
 
-( Write a byte.)
-: >s   ( b)
-   8 for  bit!  sck/\  next  drop ;
+ld target/ARM/stm32/bitbanged-spi-full-duplex.mu4
 
-( Read a byte.)
-: s>   ( - b)
-   0  8 for  bit@  sck/\  next ;
+( Send and receive a full 32 bits.)
+: >s>  ( bits - bits')  #32 >bits> ;
 
-( Write and read a byte.)
-: >s>  ( out - in)
-   0 swap  8 for  bit!  swap bit@ swap  sck/\  next  drop ;
+( Send 32 bits.)
+: >s   ( bits)       >s> drop ;
 
-
-( Since we are going to be reading a buffer sent to us by the host, let's
-  have nice words for that.)
-
-variable p
-: p@   p @  c@       ;  ( read next byte from buf, don't incr)
-: p*   p @  c@+  p ! ;  ( read next byte from buf, incr)
-: p&   p @  c!+  p ! ;  ( write next byte to buf, incr)
-
-: >p>   p@ >s> p& ;     ( read from buf, send byte, recv byte, write to buf)
-:  p>       s> p& ;     ( send dummy byte, recv byte, write to buf)
-: >p    p* >s     ;     ( read from buf, send byte, recv and discard byte)
+( Receive 32 bits.)
+: s>   ( - bits)   0 >s> ;
 
 
 .ifdef avr
 -- ------------------------------------------------------------------------
 -- AVR programming
 -- ------------------------------------------------------------------------
-: send-cmd
-   ( Save data pointer, send cmd and addr, restore data pointer.)
-   p @  cmd p !  >p >p >p  p !
+: load-cmd  ( - cmd+addr)
+   ( Load cmd and address.)
+   cmd @  0ff00_0000 bic  ( remove toggle from last byte)
    ( Toggle cmd.)
    toggle c@  cmd c@  over xor  dup cmd c!
    ( If cmd toggled to zero, or if toggle *is* zero, incr addr-lo.)
@@ -177,9 +129,12 @@ variable p
 : setup-bulk  ( - count)  data p !  count h@ ;
 
 ( The three transaction types to define: single, bulk-read, bulk-write.)
-: single      cmd p !  >p> >p> >p> >p> ;
-: bulk-read   setup-bulk  for  send-cmd  p>  next ;
-: bulk-write  setup-bulk  for  send-cmd  >p  next ;
+
+( Send cmd, addr-hi, addr-lo, and one dummy byte, saving all responses.)
+: single      cmd @  >s>  cmd ! ;
+
+: bulk-read   setup-bulk  for  load-cmd               >s>  #24 u>> p&  next ;
+: bulk-write  setup-bulk  for  load-cmd  p* #24 << +  >s               next ;
 
 .then  ( avr)
 
@@ -211,25 +166,26 @@ variable p
 ( This version uses SPI slave select [/SS] to bracket the command packet,
   and also prefixes every command with 0aa 55.)
 
-( Start an SPI packet, send the prefix bytes, setup command buffer.)
-: <pkt   ss\  0aa >s  55 >s  cmd p ! ;
+( Start an SPI packet; send the prefix bytes.)
+: <pkt   ( - cmd+addr)   ss\  55aa #16 >bits> drop  ;
 
 ( End a programming packet.)
 : pkt>   ss/ ;
 
 ( Send cmd, addr-hi, and addr-lo, discarding responses. Setup data buffer.)
-: setup-bulk  ( - count)  <pkt  >p >p >p  data p !  count h@ ;
+: setup-bulk  ( - data #words)
+   <pkt  cmd @  #24 >bits> drop  data  count h@  3 + 2 u>> ;
 
 ( The three transaction types to define: single, bulk-read, bulk-write.)
 
 ( Send cmd, addr-hi, addr-lo, and one dummy byte, saving all responses.)
-: single       <pkt  >p> >p> >p> p>  pkt> ;
+: single       <pkt  cmd @  >s>  cmd !  pkt> ;
 
 ( For bulk commands, send cmd and address bytes, then send or recv a
-  buffer of data.)
+  buffer of data, in 4-byte pieces.)
 
-: bulk-read    setup-bulk  for  p>  next  pkt> ;
-: bulk-write   setup-bulk  for  >p  next  pkt> ;
+: bulk-read    setup-bulk  for            s>  swap !+   next  drop  pkt> ;
+: bulk-write   setup-bulk  for  @+ swap  >s             next  drop  pkt> ;
 
 .then  ( at89lp-ss)
 
@@ -394,7 +350,7 @@ compiler: :]  ( end a jump table)
 
 here ]  ( chip-init)
    clock-init  led-init  spi-init  uart-init  i2c-init  flash-leds
-   fast-clock  ss/  rst/  sck\
+   fast-clock  ss/  rst/
    begin
       face_d000 semaphore !  ( ready for another command)
       0  begin  drop  semaphore @  dup ffff_ff00 and  deca_f000 =  until
@@ -501,7 +457,7 @@ variable #nacks
 ( Testing. Set things up as if for an at89lp chip.)
 : tt
    clock-init  led-init  spi-init  flash-leds
-   ss/  sck\ ;
+   ss/ ;
 
 : ss-bulk-setup  ( cmd addr count)  count h!  >lohi rot  cmd  c!+ c!+ c! ;
 : ss   ( cmd addr data)   shuffle  cmd c!+ c!+ c!+ c!  single  cmd 3 + c@ ;
@@ -509,7 +465,7 @@ variable #nacks
 : wr   ( cmd addr count)  ss-bulk-setup  bulk-write ;
 
 : +prog
-   0ac 5300 0 ss  cmd 2 + c@ ;
+   0ac 5300 0 ss drop  cmd 2 + c@ ;
 
 .then  ( at89lp-ss)
 
@@ -518,7 +474,7 @@ variable #nacks
 .ifdef avr
 : tt
    clock-init  led-init  spi-init  flash-leds
-   rst/  sck\ ;
+   rst/ ;
 
 : avr-bulk-setup  ( cmd addr toggle count)
    count h!  shuffle  cmd c!+ c!+ c!+ c! ;
