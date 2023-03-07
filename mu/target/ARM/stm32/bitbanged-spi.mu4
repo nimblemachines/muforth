@@ -29,15 +29,15 @@ __meta
 -- --------------------------------------------------------------------
 -- Bitbanged half-duplex SPI
 -- --------------------------------------------------------------------
-( I'm giving up - again! - on the STM32's SPI interface. It seems to
-  broken, and the design makes it somewhere between difficult and
-  impossible to talk to the PIC programming interface, which *shares* a
-  single bi-directional data line between master and slave.
+( I'm giving up on the STM32's SPI interface. It seems to be broken, and
+  the design makes it somewhere between difficult and impossible to talk to
+  the PIC programming interface, which *shares* a single bi-directional data
+  line between master and slave.
 
   I'm going to use PB3 as clock, PB4 as the bi-directional data, and
   PB5 as the active-low reset output.)
 
-: bitbanged-spi-init
+: spi-init
    -- First, enable clocks to Port B.)
    ( Ports -FED_CBA- )
         [ %0000_0100  #16 << #] RCC_AHBENR set!
@@ -55,7 +55,7 @@ __meta
    [ %0101_01  3 2* << #] GPIOB_OSPEEDR set!  ( 2 bits per pin)
 
    -- Let's pull up PB4 so that if the slave isn't driving it we will read
-   -- all one bits.
+   -- one bits.
    [ %01  4 2* << #] GPIOB_PUPDR set!  ( 2 bits per pin) ;
 
 : bit/  ( bit)  GPIOB_BSRR ! ;
@@ -101,12 +101,6 @@ __meta
    rot clk/  0< if  [ GPIOB_BSRR GPIOB_BRR - #] + ( bit set register)  then  !
    2*  clk\ ;
 
-( Write some bits. bits and bits' are left-justified.)
-: >bits   ( bits count - bits')   pb4-out  for  bit!  next  pb4-in ;
-
-( Read some bits. bits is right-justified.)
-: bits>   ( count - bits)          0  swap for  bit@  next ;
-
 .then  ( ifdef msb-first)
 
 .ifdef lsb-first
@@ -126,13 +120,13 @@ __meta
    rot  clk/  1 and if  [ GPIOB_BSRR GPIOB_BRR - #] + ( bit set register)  then  !
    u2/  clk\ ;
 
-( Write some bits. bits and bits' are right-justified.)
-: >bits   ( bits count - bits')   pb4-out  for  bit!  next  pb4-in ;
+.then  ( lsb-first)
 
 ( Read some bits. bits is left-justified.)
 : bits>   ( count - bits)          0  swap for  bit@  next ;
 
-.then  ( lsb-first)
+( Write some bits. bits and bits' are right-justified.)
+: >bits   ( bits count - bits')   pb4-out  for  bit!  next  pb4-in ;
 
 .then  ( slow-bits)
 
@@ -160,7 +154,7 @@ code >bits  ( bits count - bits')
    begin
       1 # w w lsls  ( shift left; high bit -> carry)
       18 x ( BSRR) +) y str  ( clock high)
-      cs if  18 x ( BSRR) +) z str  else  28 x ( BRR) +) z str  nop  then  ( drive bit)
+      cs if  18 x ( BSRR) +) z str  else  28 x ( BRR) +) z str  nop3  then  ( drive bit)
       28 x ( BRR) +) y str  ( clock low)
    1 # top top subs  0= until
    %11 4 2* << z lit  0 x ( MODER) +) y ldr  z y y bics  0 x +) y str  ( pb4 input)
@@ -190,7 +184,7 @@ code >bits  ( bits count - bits')
    begin
       1 # w w lsrs  ( shift right; low bit -> carry)
       18 x ( BSRR) +) y str  ( clock high)
-      cs if  18 x ( BSRR) +) z str  else  28 x ( BRR) +) z str  nop  then  ( drive bit)
+      cs if  18 x ( BSRR) +) z str  else  28 x ( BRR) +) z str  nop3  then  ( drive bit)
       28 x ( BRR) +) y str  ( clock low)
    1 # top top subs  0= until
    %11 4 2* << z lit  0 x ( MODER) +) y ldr  z y y bics  0 x +) y str  ( pb4 input)
