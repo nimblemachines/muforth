@@ -40,7 +40,7 @@ hex
   device, and the device descriptors, are *not* repeated here. We only
   implement the "vendor specific" requests required to do BDM.)
 
-10 constant buflen0  ( buffer length, and hence max packet size, for endpoint 0)
+40 constant buflen0  ( buffer length, and hence max packet size, for endpoint 0)
 
 1860 equ 'usb            ( USB RAM origin; buffer descriptors live here)
 1880 equ 'usb-buffers    ( endpoint RAM from here to 195f)
@@ -177,9 +177,6 @@ label init-pins
 
 ( The building blocks.)
 
-label half-cycle-delay
-   here 2 + c  ( fall thru)
-
 ( These delays assume our JS16 is running at 24M.)
 
 .ifdef fast-iic
@@ -215,11 +212,10 @@ label c-rising
   words so that they look like timing diagrams!)
 
 macro Q   quarter-cycle-delay c  ;m
-macro H   half-cycle-delay c     ;m
 
 macro D/  SDA-drive bclr   ;m
 macro D\  SDA-drive bset   ;m
-macro C/  c-rising c     ;m
+macro C/  c-rising c       ;m
 macro C\  SCL-drive bset   ;m
 
 label drive-d  ( drive value of C onto bus)
@@ -229,11 +225,11 @@ label drive-d  ( drive value of C onto bus)
 macro D@  SDA-pin bset? if then  ( sets C with pin value!)  ;m
 macro D!  drive-d c    ;m
 
-label stop-bit      Q  D\  Q  C/     H      D/   rts  ( line now idle)  ;c
-label send-bit      Q  D!  Q  C/     H      C\   rts  ;c
+label stop-bit      Q  D\  Q  C/  Q  D/          rts  ( line now idle)  ;c
+label send-bit      Q  D!  Q  C/  Q      Q  C\   rts  ;c
 label recv-bit      Q  D/  Q  C/  Q  D@  Q  C\   rts  ;c
 label restart-bit   Q  D/  Q  C/                 ( fall thru)
-label start-bit                      H      D\    H    C\  rts  ;c
+label start-bit                   Q  D\  Q  C\   rts  ;c
 
 ( Byte to send in A. Send MSB first. Return ACK bit in A.)
 label send-byte
@@ -253,37 +249,37 @@ label recv-byte
 
 1 zvar total-count
 
-label toggle-control  ( HX points to EP buffer control byte)
+( Set endpoint count byte and toggle DATA0/1 bit.)
+label ready-endpt  ( HX points to EP buffer control byte, A has count)
+   1 ,x sta  ( count)
    0 ,x lda  40 # and ( data0/1)  match-data1 # eor  0 ,x sta  rts  ;c
 
 ( Read data from chip and copy into IN buffer.)
 label prepare-next-in
-   total-count ) lda  0!= if  ( still data to read)
-      .h clr  .x clr  ( bufptr)
-      buflen0 # cmp  u>= if  ( whole packet)  buflen0 # lda  then
-      .a psh  begin
-         .a clr  total-count ) dec  0= if  .a inc  then  ( ACK)
-         recv-byte c
-         in-buffer ,x sta  .x inc
+   total-count ) ldx  0!= if  ( still data to read)
+      buflen0 # cpx  u> if  ( whole packet)  buflen0 # ldx  then
+      .x psh ( count)  .h clr  .x clr  ( bufptr)
+      begin
+         .a clr ( ACK)  total-count ) dec  0= if  .a inc ( NACK)  then
+         recv-byte c  in-buffer ,x sta  .x inc
       0 ,s decz? until  .a pul
-      txa  ( in-count to a)
+      ( in-count in X)
       total-count ) tst  0= if  stop-bit c  then
    then
    ( fall thru)
 
-( Enter with in-count in A)
-label prepare-fixed-in
-   in-count ) sta
-   ( toggle DATA0/1)  in-control # ldhx  toggle-control c  ( fall thru)
+( Enter with in-count in X)
+label prepare-in-xcount
+   txa  in-control # ldhx  ready-endpt c  ( fall thru)  ;c
 
-( Get ready to receive another SETUP token.)
+( Get ready to receive another SETUP DATA0 token, or an OUT DATA1 token.
+  The host will send an empty DATA1 as a status stage.)
+
 label expect-setup-token
-   match-data1 # lda  out-control ) sta
-   ( fall thru)
+   .a clr  out-control ) sta  ( fall thru)  ;c
 
-( Jump here if out-control has already been toggled.)
 label expect-out-token  ( expect OUT or SETUP, really)
-   buflen0 # lda  out-count ) sta
+   buflen0 # lda  out-control # ldhx  ready-endpt c
    CTL 5 bclr ( TSUSPEND off - resume processing)
    rts  ;c
 
@@ -297,9 +293,8 @@ label finish-iic-write
 
 label finish-control-write
    ( Setup IN status stage)
-   .a clr  in-count ) sta  ( zero-length DATA1 transaction)
-   match-data1 # lda  in-control ) sta
-   expect-setup-token j  ;c
+   .x clr  ( zero-length DATA1 transaction)
+   prepare-in-xcount j  ;c
 
 ( wValue is iic-cmd and wIndex is slave-addr.)
 
@@ -318,14 +313,14 @@ label send-command
 
 label bulk-write
    send-command c  ( save wLength, send START, slave addr+write, cmd)
-   wLength ) lda  0!=  finish-iic-write  until
+   wLength ) lda  finish-iic-write 0!= until
    expect-setup-token j  ( wait for OUT or new SETUP)  ;c
 
 ( Don't start talking to the slave at all for 0-length reads. It would just
   break things.)
 
 label bulk-read
-   wLength ) lda  0!=  prepare-fixed-in  until
+   wLength ) ldx  prepare-in-xcount 0!= until
    send-command c  ( save wLength, send START, slave addr+write, cmd)
    restart-bit c
    wIndex ) lda  1 # ora  ( slave addr + read)  send-byte c
@@ -333,21 +328,20 @@ label bulk-read
 
 ( Read last IN buffer of ACK bits from chip.)
 label read-acks
-   wLength ) lda  prepare-fixed-in j  ;c
+   wLength ) ldx  prepare-in-xcount j  ;c
 
 ( Ping slave. Just send START bit, slave address+write, and STOP bit, and
   return the value of the ACK bit.)
 
 label ping-slave
    slave+write c  ( returns ACK in A)  stop-bit c
-   in-buffer ) sta  1 # lda  prepare-fixed-in j  ;c
+   in-buffer ) sta  1 # ldx  prepare-in-xcount j  ;c
 
-( Return NAK on IN.)
-label nak-in
-   .a clr  in-control ) sta  rts  ;c
+( Receipt of SETUP has set out-control's data toggle to 0. Set in-control's
+  as well.)
 
 label setup-token
-   nak-in c
+   .a clr  in-control ) sta   ( Reset IN endpoint to DATA0.)
 
 ( NOTE: Command numbers are all given in HEX.)
 ( assume vendor request)
@@ -378,7 +372,7 @@ label setup-or-out-token
      read it back - though it'll only see the ACK bits of the last OUT.)
 
    .h clr  .x clr  ( bufptr)
-   .a psh  ( repeat out-count times)
+   .a psh  ( out-count)
    begin
       ( send byte from out-buffer)
       ( XXX logical OR all the ACK bits?)
@@ -391,13 +385,11 @@ label setup-or-out-token
    0= if  finish-iic-write j  then
 
    ( total-count non-zero; expect more data.)
-   ( toggle DATA0/1)  out-control # ldhx  toggle-control c
    expect-out-token j  ;c
 
 ( An IN token is either part of a data stage of a control read, or it is
   the status stage of a control write. Status IN's are always zero bytes
-  long; sometimes the last IN of the data stage is also zero bytes long -
-  see copy-to-in for details.
+  long; sometimes the last IN of the data stage is also zero bytes long.
 
   The upshot is that if the last packet wasn't full we should expect no
   more IN transactions.)
@@ -405,11 +397,10 @@ label setup-or-out-token
 label in-token
    ( If last IN was a full packet, ready some more data.)
    in-count ) lda  buflen0 # cmp  0= if  prepare-next-in j  then
-   ( fall thru)
 
-label nak-in-expect-setup
-   nak-in c  ( further IN's will return NAK)
+   ( Last packet was partial or zero-length; no further IN's expected.)
    expect-setup-token j  ;c
+
 
 ( XXX To convert process-usb into an interrupt handler, jumps to
   setup-or-out-token, in-token, and nak-in-expect-setup should really be
@@ -427,7 +418,7 @@ label process-usb
    INTSTAT 7 bset? if ( STALLF)
       EPCTL0 1 bclr ( remove EPSTALL)
       INTSTAT 7 bset  ( ack STALL)
-      nak-in-expect-setup j  ( get ready to receive SETUP)
+      expect-setup-token j  ( get ready to receive SETUP)
    then
    rts  ;c
 
