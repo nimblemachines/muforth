@@ -409,31 +409,36 @@ ram
   stack, registers popped, words execute, re-push, copy back to host...
   Much easier than stuffing things into register slots on stack frame!)
 
-.ifdef pico-sp
+.ifdef picoboot.exec
 
-code bug  [r]
-   { top ip rp ix } push
-   pico-sp w lit   0 w +) y ldr  ( restore picoboot sp)
-        sp x mov   0 w +) x str  ( save forth sp)
-   y sp mov
-   { pc } pop  ;c
+( Before executing any Forth code, we need to save any ARM ABI callee-saved
+  registers. All of the Forth VM regs are callee-saved, by design. So we
+  push these when we save the lr, and restore them when returning to
+  PICOBOOT.)
 
 implements continue-forth  __asm
-   { lr } push
-   pico-sp w lit   0 w +) x ldr  ( load forth sp)
-   sp y mov        0 w +) y str  ( save picoboot sp)
-   x sp mov
-   { top ip rp ix } pop   dsb   isb   next  ;c
+   { lr top ip rp ix } push   sp y mov
+   pico-sp w lit
+   0 w +) x ldr  ( load forth sp)
+   0 w +) y str  ( save picoboot sp)
+   x sp mov   { top ip rp ix } pop   dsb   isb   next  ;c
+
+code bug  [r]
+   { top ip rp ix } push   sp x mov
+   pico-sp w lit
+   0 w +) y ldr  ( restore picoboot sp)
+   0 w +) x str  ( save forth sp)
+   y sp mov   { pc top ip rp ix } pop  ;c
    pool,
 
 .else
 
-code bug  [r]
-   { top ip rp ix } push   0 bkpt  ;c
-
 implements continue-forth  __asm
    cpsid  ( disable interrupts)
    { top ip rp ix } pop   dsb   isb   next  ;c
+
+code bug  [r]
+   { top ip rp ix } push   0 bkpt  ;c
 
 .then
 
