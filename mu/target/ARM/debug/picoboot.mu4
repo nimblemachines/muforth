@@ -58,8 +58,8 @@ variable spy  ( whether to spy on the protocol)
 : .b     m*                  .h8_ ;
 : .w     m* m* m* m*  0123>  .h32 space ;
 : ?spy
-   radix preserve
    spy @ if
+      radix preserve
       cr  cmdbuf 8 +  m !  ( skip magic and token)
       .b ( cmd)
       7 m +!  ( skip to command bytes)  .w ( addr?)  .w ( #bytes?)
@@ -98,13 +98,13 @@ variable spy  ( whether to spy on the protocol)
   aligned.
 )
 
-: picoboot.exclusive  ( bExclusive)    0 1 01  <pico  >b                          pico>  ack> ;
-: picoboot.erase      ( size addr)     0 8 03  <pico  ( addr) >w  ( size) >w      pico>  ack> ;
-: picoboot.read   ( buf size addr)  over 8 84  <pico  ( addr) >w  ( size) dup >w  pico>  uread   ack< ;
-: picoboot.write  ( buf size addr)  over 8 05  <pico  ( addr) >w  ( size) dup >w  pico>  uwrite  ack> ;
-: picoboot.exit-xip                    0 0 06  <pico                              pico>  ack> ;
-: picoboot.enter-xip                   0 0 07  <pico                              pico>  ack> ;
-: picoboot.exec            ( addr)     0 4 08  <pico  1+ ( addr+thumb) >w         pico>  ack> ;
+: picoboot.exclusive  ( bExclusive)   0 1 01  <pico  >b                               pico>  ack> ;
+: picoboot.erase      ( addr size)    0 8 03  <pico  swap ( addr) >w  ( size) >w      pico>  ack> ;
+: picoboot.read   ( buf addr size)  dup 8 84  <pico  swap ( addr) >w  ( size) dup >w  pico>  uread   ack< ;
+: picoboot.write  ( buf addr size)  dup 8 05  <pico  swap ( addr) >w  ( size) dup >w  pico>  uwrite  ack> ;
+: picoboot.exit-xip                   0 0 06  <pico                                   pico>  ack> ;
+: picoboot.enter-xip                  0 0 07  <pico                                   pico>  ack> ;
+: picoboot.exec            ( addr)    0 4 08  <pico  1+ ( addr+thumb) >w              pico>  ack> ;
 
 
 variable rom-func-table
@@ -115,10 +115,10 @@ variable rom-table-lookup
 
 ( These are the commands required by the chat/debug interface.)
 : pi.version
-   pad 4 0010 picoboot.read  pad lew@
+   pad 0010 4 picoboot.read  pad lew@
    dup  00ff_ffff and  0001754d ( "Mu" 01) =  if
       #24 u>>  cr ." PICOBOOT v" u.
-      pad 6 0014 picoboot.read
+      pad 0014 6 picoboot.read
       pad h@+ h@+ h@+ drop
       rom-table-lookup !  rom-data-table !  rom-func-table !  ^  then
    drop  ." Hmm. No version found in the ROM." ;
@@ -129,52 +129,57 @@ variable rom-table-lookup
    pi.version
    #256 ;  ( so we get correct alignment for reading and writing flash)
 
-h @  ram
-\m here  constant pico-sp  0 \m ,
+
+h @ ( save region ptr)
+ram
 __meta
 
-label read-4-words
-   { w x y z } top ldm   3 cells # rp rp sub   { x y z } rp stm   w top mov   lr bx  ;c
+here equ pico-sp  cell allot  ( used to call Forth code)
+here equ addr     cell allot  ( memory address)
+here equ count    cell allot  ( memory count)
+here equ data     #256 allot  ( memory read/write buffer)
 
+( PICOBOOT has stupid and unnecessary limits on what we can read: only the
+  first 8KiB of the 16KiB ROM, flash only starting at multiples of 256 and
+  lengths of 256, and none of the I/O space.
 
-( This starts executing with a small stack in USB ram. We push the LR that
-  will get us back to PICOBOOT, and then immediately switch to a stack set
-  up by the host, and once that is done, we save the PICOBOOT sp back into
-  the same slot.)
+  Since PICOBOOT allows us to *execute* arbitrary code, let's just write a
+  simple memory read function with none of PICOBOOT's silly limitations!
+  We'll use this to read the memory into a buffer in ram, and then use
+  PICOBOOT's read command to read the ram over USB.
 
-label execute-assembly
-   { lr } push
-   pico-sp w lit   0 w +) x ldr  ( load forth sp)
-   sp y mov        0 w +) y str  ( save picoboot sp)
-   x sp mov
-   { top w } pop   sp rp mov   w sp mov   dsb   isb   top blx
-   rp sp mov
-   { top } push
-   pico-sp w lit   0 w +) y ldr  ( restore picoboot sp)
-        sp x mov   0 w +) x str  ( save forth sp)
-   y sp mov
-   { pc } pop  ;c
-   pool,
+  As long we use only caller-saved registers, we don't need to save
+  anything.)
 
+label pico-read-memory
+   addr w lit   { x y } w ldm  ( x=addr, y=count, w=data)
+   begin   4 # y y subs  x y r+) z ldr   w y r+) z str  0= until
+   lr bx  ;c  pool,  ( this will word-align ram region)
 
-align  ( make sure RAM region is word-aligned)
 __host
-h !
+h ! ( restore region ptr)
 
 : pi.get-status   ( - sp pc)
-   pad 4 pico-sp picoboot.read  pad lew@  "deadbeef ;
+   pad \m pico-sp 4 picoboot.read  pad lew@  "deadbeef ;
 
 : pi.run      ( pc sp)
-   pad lew!  pad 4 pico-sp picoboot.write
+   pad lew!  pad \m pico-sp 4 picoboot.write
    picoboot.exec ;
 
-: pi.read     ( buf a u)  swap  picoboot.read ;
-: pi.write    ( buf a u)  swap  picoboot.write ;
+: pi.read     ( buf a u)
+   swap pad lew! ( addr)  dup pad \m cell+ lew! ( count)
+   pad \m addr 8 picoboot.write  \m pico-read-memory picoboot.exec ( copy to data)
+   \m data swap picoboot.read ( read from data into buf) ;
 
-: pi.erase    ( a)   4 Ki swap  picoboot.erase ;
-: pi.flash    ( buf a u)  swap  picoboot.write ;
+: pi.write    ( buf a u)  picoboot.write ;
+
+: pi.flash-begin ;
+: pi.flash-end ;
+: pi.erase    ( a)   4 Ki  picoboot.erase ;
+: pi.program  ( buf a u)   picoboot.write ;
 
 : pico
-   chat-via  pi.hello  pi.get-status  pi.run  pi.read  pi.write  pi.erase  pi.flash ;
+   chat-via  pi.hello  pi.get-status  pi.run  pi.read  pi.write
+             pi.flash-begin  pi.flash-end  pi.erase  pi.program ;
 
 .then  ( ifdef picoboot)
