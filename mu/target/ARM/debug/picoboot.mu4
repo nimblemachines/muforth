@@ -83,53 +83,7 @@ variable spy  ( whether to spy on the protocol)
 : ack<   pad 1 uwrite ;
 
 
-( PICOBOOT commands.)
-
-( Important NOTES about the following commands.
-
-  bExclusive: 0 = allow mass storage;
-              1 = no mass storage;
-              2 = eject mass storage
-
-  When erasing the Flash, addr is a 4 Ki aligned sector address, and size
-  is 4 Ki aligned count of bytes to erase.
-
-  When reading from or writing to Flash, addr and size must be 256-byte
-  aligned.
-)
-
-: picoboot.exclusive  ( bExclusive)   0 1 01  <pico  >b                               pico>  ack> ;
-: picoboot.erase      ( addr size)    0 8 03  <pico  swap ( addr) >w  ( size) >w      pico>  ack> ;
-: picoboot.read   ( buf addr size)  dup 8 84  <pico  swap ( addr) >w  ( size) dup >w  pico>  uread   ack< ;
-: picoboot.write  ( buf addr size)  dup 8 05  <pico  swap ( addr) >w  ( size) dup >w  pico>  uwrite  ack> ;
-: picoboot.exit-xip                   0 0 06  <pico                                   pico>  ack> ;
-: picoboot.enter-xip                  0 0 07  <pico                                   pico>  ack> ;
-: picoboot.exec            ( addr)    0 4 08  <pico  1+ ( addr+thumb) >w              pico>  ack> ;
-
-
-variable rom-func-table
-variable rom-data-table
-variable rom-table-lookup
-
-: h@+  ( a - h a+2)  c@+ c@+  push  lohi>  pop ;
-
-( These are the commands required by the chat/debug interface.)
-: pi.version
-   pad 0010 4 picoboot.read  pad lew@
-   dup  00ff_ffff and  0001754d ( "Mu" 01) =  if
-      #24 u>>  cr ." PICOBOOT v" u.
-      pad 0014 6 picoboot.read
-      pad h@+ h@+ h@+ drop
-      rom-table-lookup !  rom-data-table !  rom-func-table !  ^  then
-   drop  ." Hmm. No version found in the ROM." ;
-
-: pi.hello   ( - chunk-size)
-   picoboot.reset
-   picoboot.exit-xip  ( needed if we want to read the flash!)
-   pi.version
-   #256 ;  ( so we get correct alignment for reading and writing flash)
-
-
+( RAM-resident helper functions and buffer space.)
 h @ ( save region ptr)
 ram
 __meta
@@ -151,13 +105,58 @@ here equ data     #256 allot  ( memory read/write buffer)
   As long we use only caller-saved registers, we don't need to save
   anything.)
 
+( Read from high memory to low.)
 label pico-read-memory
    addr w lit   { x y } w ldm  ( x=addr, y=count, w=data)
    begin   4 # y y subs  x y r+) z ldr   w y r+) z str  0= until
    lr bx  ;c  pool,  ( this will word-align ram region)
 
+( We want to be able to read the flash, so set up the XIP machinery.)
+ld target/ARM/raspi/pico-stage2.mu4
+
 __host
 h ! ( restore region ptr)
+
+
+( PICOBOOT commands.)
+
+( Important NOTE about the following commands:
+
+    >>> NONE OF THE FLASH-RELATED COMMANDS FUCKING WORK!!! <<<
+
+  Consequently, support for them has been removed.)
+
+: picoboot.read   ( buf addr size)  dup 8 84  <pico  swap ( addr) >w  ( size) dup >w  pico>  uread   ack< ;
+: picoboot.write  ( buf addr size)  dup 8 05  <pico  swap ( addr) >w  ( size) dup >w  pico>  uwrite  ack> ;
+: picoboot.exec            ( addr)    0 4 08  <pico  1+ ( addr+thumb) >w              pico>  ack> ;
+
+variable stage2-has-run
+
+: ?stage2
+   stage2-has-run @  if ^ then
+   \m stage2 picoboot.exec  ( set up XIP so we can read the flash)
+   stage2-has-run on ;
+
+variable rom-func-table
+variable rom-data-table
+variable rom-table-lookup
+
+: h@+  ( a - h a+2)  c@+ c@+  push  lohi>  pop ;
+
+( These are the commands required by the chat/debug interface.)
+: pi.version
+   pad 0010 4 picoboot.read  pad lew@
+   dup  00ff_ffff and  0001754d ( "Mu" 01) =  if
+      #24 u>>  cr ." PICOBOOT v" u.
+      pad 0014 6 picoboot.read
+      pad h@+ h@+ h@+ drop
+      rom-table-lookup !  rom-data-table !  rom-func-table !  ^  then
+   drop  ." Hmm. No version found in the ROM." ;
+
+: pi.hello   ( - chunk-size)
+   picoboot.reset
+   pi.version
+   #256 ;
 
 : pi.get-status   ( - sp pc)
    pad \m pico-sp 4 picoboot.read  pad lew@  "deadbeef ;
@@ -167,19 +166,21 @@ h ! ( restore region ptr)
    picoboot.exec ;
 
 : pi.read     ( buf a u)
+   ?stage2  ( make sure we can read from flash)
    swap pad lew! ( addr)  dup pad \m cell+ lew! ( count)
    pad \m addr 8 picoboot.write  \m pico-read-memory picoboot.exec ( copy to data)
    \m data swap picoboot.read ( read from data into buf) ;
 
 : pi.write    ( buf a u)  picoboot.write ;
 
-: pi.flash-begin ;
+: pi.flash-begin
+   error" PICOBOOT's support for programming the flash is broken;
+use a UF2 file instead." ;
+
 : pi.flash-end ;
-: pi.erase    ( a)   4 Ki  picoboot.erase ;
-: pi.program  ( buf a u)   picoboot.write ;
 
 : pico
    chat-via  pi.hello  pi.get-status  pi.run  pi.read  pi.write
-             pi.flash-begin  pi.flash-end  pi.erase  pi.program ;
+             pi.flash-begin  pi.flash-end  chat-fail  chat-fail ;
 
 .then  ( ifdef picoboot)
