@@ -4,7 +4,8 @@
 
 ( Fiddle around with the console/terminal colors.)
 
-ld target/common/endian.mu4
+ld lib/ansi-terminal-colors.mu4
+
 
 ( Room for 16 colors, plus a few extra: for cursor, selection, etc)
 
@@ -17,23 +18,9 @@ ld target/common/endian.mu4
 
 24 array+ palette
 
-( Sequence of each subset of 8 colors.
-  Index, in binary, is 421
-                       bgr)
-
-0 constant black    ( +black = grey)
-1 constant red
-2 constant green             (   4       2      1 )
-3 constant yellow   ( -blue  =         green + red)
-4 constant blue
-5 constant magenta  ( -green = blue          + red)
-6 constant cyan     ( -red   = blue  + green      )
-7 constant white
-( Add 8 to a color index to make it "bright".)
-
 ( Indices for the "extra" color values.)
-16 constant fg
-17 constant bg
+16 constant foreground
+17 constant background
 18 constant cursor
 19 constant selection-bg
 
@@ -73,48 +60,13 @@ variable component
    red pal@  cursor pal! ( I'm enjoying having a *very* visible cursor!) ;
 
 
-( terminal ESC sequences)
+( .fg reads the color from our palette table at a particular index, and
+  sets it as the current foreground using a "truecolor" escape sequence.)
 
-( print-in-order style - easier to read than pictured numeric?)
-: <esc   ." [" ;
--- : <esc   ." ESC[" ;  ( uncomment this line to see the escape sequences)
+: .fg  ( color#)
+   pal@ ( rgb)  0 ( -bright) 30 ( fg) rot  (ansi-rgb-color) type ;
 
-: esc>   char m emit ;
-
-: attrib    (u.) type ;
-: attrib;   attrib  char ; emit ;
-: 2attrib;  ( fg/bg attrib)  swap 8 + attrib;  attrib; ;
-
-defer .ansi
-
-( ANSI escape sequence)
-( NOTE: This code can erroneously generate bold+bg - eg "1;43" - when given
-  a color number greater than 7.)
-
--: ( color# fg/bg)
-   radix preserve  decimal  <esc
-   over  16 u< if  swap 8 u/mod  ?if attrib; then  + attrib  esc>  ^ then
-                                 5  2attrib;         attrib  esc> ;
-
-( -truecolor means use the terminal's existing colors - 8, 16, or 256.)
-: -truecolor  [ #]  is .ansi ;   -truecolor ( default)
-
-( Truecolor escape sequence)
-: .true   ( rgb fg/bg)
-   radix preserve  decimal
-   <esc  2  2attrib;  >lohi >lohi ( b g r)  attrib;  attrib;  attrib  esc> ;
-
-( +truecolor means read the color from our palette table at a particular
-  index, and set it as the current foreground using the "truecolor" escape
-  sequence.)
-
--: ( color# fg/bg)   push  pal@  ( rgb)  pop  .true ;
-: +truecolor  [ #]  is .ansi ;
-
-: .fg  ( color#)  30 .ansi ;
-: .bg  ( color#)  40 .ansi ;  ( UNUSED in this file!)
-
-: normal  <esc  0 attrib  esc> ;
+: normal  ." [0m" ;
 
 ( Show all colors.)
 : bright  ( color# - brightcolor#)  8 + ;
@@ -148,28 +100,33 @@ defer .ansi
 
   NOTE: this requires a 256-color-capable terminal or emulator.)
 
+: .ansi256  ( color#)  0 ( -bright) 30 ( fg) rot  (ansi-256-color) type ;
+
 : cube666
    radix preserve  6 radix !  ( base 6!!)
    normal  6 0 do  cr  6 0 do  cr  6 0 do
-      k  6 *  j +   6 *  i +  dup  16 + .fg  ( set color)
+      k  6 *  j +   6 *  i +  dup  16 + .ansi256  ( set color)
       <#  # # #  #> type space  ( print color number)
    loop  loop  loop  normal ;
 
 ( Print the greyscale ramp subset of the 256-color space.)
 : grey24
    normal  cr  24 0 do
-      i [ 16  6 6 6 * *  + #] + .fg  ( set color)
+      i [ 16  6 6 6 * *  + #] + .ansi256  ( set color)
       i <#  # #  #> type space  ( print color number)
    loop  normal ;
 
 ( What about a 16x16x16 cube? We need to use truecolor escape sequences to
-  print this, so it will look terrible if you terminal or emulator does not
-  understand these sequences.)
+  print this, so it will look terrible if your console or terminal emulator
+  does not understand these sequences.)
+
+: .true  ( b g r)  lohi> lohi> ( rgb)
+   0 ( -bright) 30 ( fg) rot  (ansi-rgb-color) type ;
 
 : cube-true
    radix preserve  hex
    normal  16 0 do  cr  16 0 do  cr  16 0 do
-      k 16 *  j 16 *   i 16 *  ( r g b)  30 .true  ( set color)
+      i 16 *  j 16 *   k 16 *  ( b g r)  .true  ( set color)
       k 16 *  j +   16 *  i +   <#  # # #  #> type space  ( print color number)
    loop  loop  loop  normal ;
 
@@ -177,7 +134,7 @@ defer .ansi
 : grey-true
    radix preserve  hex
    normal  cr  16 0 do
-      i 16 *  i 16 *   i 16 *  ( r g b)  30 .true  ( set color)
+      i 16 *  dup dup ( b g r)  .true  ( set color)
       i 16 *  i +  16 *  i +   <#  # # #  #> type space  ( print color number)
    loop  normal ;
 
@@ -304,8 +261,8 @@ fi
 : export-windows-term  ( fg bg cursor selection)
    cr  ."         {"
    >>json  " name" .quoted  :_  token ( name) .quoted ,_
-   fg            " foreground"           .json-color ,_
-   bg            " background"           .json-color ,_
+   foreground    " foreground"           .json-color ,_
+   background    " background"           .json-color ,_
    cursor        " cursorColor"          .json-color ,_
    selection-bg  " selectionBackground"  .json-color ,_
    .json-palette
@@ -358,8 +315,10 @@ hex
 ( It's not clear to me that the selectionBackground color in Windows
   Terminal really *works*. Let's just set it to the cursor color.)
 
-: set-fgbg  ( fg bg)  bg pal!  fg pal!  cursor pal@  selection-bg pal! ;
+: set-fgbg  ( fg bg)  background pal!  foreground pal!  cursor pal@  selection-bg pal! ;
 
 ( For dark schemes use white as fg, black as bg. Switch them for light schemes.)
 : dark   white pal@  black pal@  set-fgbg ;
 : light  black pal@  white pal@  set-fgbg ;
+
+decimal
