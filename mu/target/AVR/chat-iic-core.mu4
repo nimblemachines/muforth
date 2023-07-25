@@ -137,13 +137,16 @@ label send-another?
 label send-byte
    TWDR xl sts  ack-twint rcall  send-another? rjmp  ;c
 
-label recv-word
-   recv-byte rcall  xl push
-   recv-byte rcall  xl xh mov  xl pop  ret  ;c
+( Like the read-memory commands, we expect a start/restart to initiate the
+  read.)
 
 label send-word
-   xh push  ( send-byte will clobber it)
-   send-byte rcall  xl pop  send-byte rjmp  ;c
+   x 0 movw  expect-start rcall
+   0 xl mov  send-byte rcall  1 xl mov  send-byte rjmp  ;c
+
+label recv-word
+   recv-byte rcall  xl 0 mov
+   recv-byte rcall  xl 1 mov  0 x movw  ret  ;c
 
 ( EEPROM read/write.)
 ld target/AVR/eeprom.mu4
@@ -183,8 +186,8 @@ label read-eeprom-cmd
    expect-start rcall
    begin  read-eeprom-byte rcall  1 z adiw  send-byte rcall  again  ;c
 
-( On writes, keep streaming bytes from TWI into memory, until recv-byte
-  gets something other than an 80 status.)
+( When writing to data space - ram and i/o - keep streaming bytes from TWI
+  into memory, until recv-byte gets something other than an 80 status.)
 
 label write-data-cmd
    begin  recv-byte rcall  z+ xl st  again  ;c
@@ -193,6 +196,7 @@ label write-eeprom-cmd
    begin  recv-byte rcall  write-eeprom-byte rcall  1 z adiw  again  ;c
 
 label write-flash-cmd
+   app-stop rcall  ( sanity: stop the application and disable interrupts)
    begin  recv-word rcall  x 0 movw  recv-byte rcall ( cmd)  do-spm rcall
           2 z adiw  again  ;c
 
@@ -200,7 +204,7 @@ label write-flash-cmd
 label recv-command-byte
    wait-twint rcall
    ack-twint rcall
-   60 xl cpi  recv-command-byte  0= until  ( wait til addressed as slave+write)
+   60 xl cpi  recv-command-byte  0= until  ( wait until addressed as slave+write)
    recv-byte rjmp  ( cmd)  ;c
 
 ( Load chat entry, dispatch, and init.)
