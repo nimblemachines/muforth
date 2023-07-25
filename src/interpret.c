@@ -52,6 +52,11 @@ void mu_push_parsed()
     PUSH(parsed.length);
 }
 
+void mu_empty_parsed()
+{
+    parsed.length = 0;
+}
+
 void mu_push_skipped()
 {
     PUSH_ADDR(skipped.data);

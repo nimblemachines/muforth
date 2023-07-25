@@ -1075,11 +1075,16 @@ forth
 variable in-channel    ( these point to channels)
 variable out-channel
 
+: stdout?   out-channel @ stdout = ;
+: stderr?   out-channel @ stderr = ;
+
 : writes  out-channel ! ;
 : reads   in-channel  ! ;
-: <stdin   stdin reads  ;
+
+: <stdin   stdin reads  ;  <stdin  ( sanity)
+
 : >stdout  stdout writes ;
-: >stderr  stderr writes ;  <stdin  >stderr  ( sanity)
+: >stderr  stderr writes ;
 
 : writes-file  ( fd)
    file-channel !  file-channel writes ;
@@ -1097,8 +1102,12 @@ variable charbuf  ( for >emit and <key)
 
 : emit   ( char)  out-channel @  >emit+ ;
 
+( common ASCII names)
+ctrl H  constant #BS   --   8
 ctrl J  constant #LF   --  10
 ctrl M  constant #CR   --  13
+ctrl [  constant #ESC  --  27
+ctrl ?  constant #DEL  -- 127
 
 : space      bl emit ;
 : cr        #LF emit  ( emit newline; assumes OPOST)
@@ -1107,6 +1116,9 @@ ctrl M  constant #CR   --  13
 : type   ( a u)
    out-channel @  2dup ( u channel)  >col +! ( incr column by count)
    @ ( fd)  -rot  write ;
+
+: -trailing  ( a u - a u')  ( strip trailing blanks)
+   over + ( end)  begin  1-  dup c@ bl -  until  over -  1+ ;
 
 ( If textwidth + col >= width, then cr.)
 : ?wrap  ( textwidth)
@@ -1204,6 +1216,9 @@ variable sep  ( include "thousands" separators in numbers - or not.)
 ( Useful.)
 : ?  @ .  ;
 
+( Copy a string to the beginning of the number area.)
+: "hold  ( a n)  dup negate  hld +!  hld @  swap cmove  ;
+
 
 ( String primitives.)
 
@@ -1245,7 +1260,7 @@ variable sep  ( include "thousands" separators in numbers - or not.)
   string, returning the address, length, and the new "return address": the
   address of the cell following the string.)
 
-: skip-string    ( 'count - a u ra)  addr@+ swap ( a u)  2dup + 1+ addr-aligned ;
+: skip-string   ( 'count - a u ra)  addr@+ swap ( a u)  2dup + 1+ addr-aligned ;
 
 ( Here are the two string literal primitives mentioned above.)
 runtime
@@ -1270,14 +1285,149 @@ forth
 : ."   char " parse  type ;
 
 ( Compiled strings.)
-defer warn
-
 compiler
 :  "   ( - a c)   compile (")   \f z"  drop ;
 : z"   ( - z")    compile (z")  \f z"  drop ;
 : ."              \c "   compile type ;
-: error"          \c z"  compile abort ;  ( compile a C-style string for abort)
-: warn"           \c z"  compile warn ;   ( ditto for warn)
+forth
+
+
+( File loading primitives.)
+
+( Be careful here! start, end, and first are addr-sized values in C code.
+  We have to use a slightly different method to preserve and restore them.)
+
+: evaluate  ( a u)
+   start addr-preserve  end addr-preserve  ( save input source)
+   first addr-preserve           ( save our place in the input)
+   over first addr!
+   over start addr!  + end addr!
+   interpret ;
+
+variable lines-read
+: add-lines-read  ( dummy)   drop  line @ 1-  lines-read +! ;
+
+( check-depth only prints anything if depth has changed since the file
+  started loading _and_ being-loaded is non-zero - ie, we're loading a
+  file.)
+
+( being-loaded is defined in C, so use addr words to access it.)
+
+: check-depth  ( saved-depth)
+   unwinding @ if  drop  ^  then
+   depth swap -  1- ( use show-depths to see the "standard" difference!)
+   ?if  being-loaded addr@ ?if
+      cr  ."   [ "  count type  ." : +depth " . ."  ] "  then  then ;
+
+: show-depths  ( saved)   depth .  . ;
+
+( raw-load-file reads and interprets a file containing muforth code.
+
+  Before reading anything, it resets the radix to decimal, resets the
+  interpreter mode to the host forth interpreter, and sets the .forth. vocab
+  chain as the destination for new definitions. It also redirects the console
+  output to stderr, and sets up a few checking and cleanup routines to be
+  executed on exit; most importantly, to close the file, and to check that
+  the stack depth hasn't been altered.
+
+  NOTE: We wait until we've both opened and read the file before resetting
+  being-loaded and line, so we should get more accurate error locations!
+
+  Because raw-load-file does *not* preserve the radix, mode, or current
+  chain, any changes made to them by the loaded file will remain after the
+  file is loaded. This is useful for loading a set of development tools that
+  need to change into a metacompiler state, and perhaps switch to hex. See
+  target/S08/build.mu4 for an example.)
+
+: raw-load-file  ( z")
+   decimal
+   \ [    ( return to host forth...)
+   forth  ( ... and compile into .forth. chain)
+   dup open-file-ro ( z" fd)  dup on-exit close-file
+   read-file ( z" a u)
+   being-loaded addr-preserve  rot being-loaded addr!
+   line preserve  1 line !
+   0 on-exit add-lines-read
+   depth  on-exit check-depth
+   -- depth  on-exit show-depths
+   evaluate ;
+
+( Save radix, state, and current, then call raw-load-file to actually load
+  and interpret the file. Unlike raw-load-file, above, load-file preserves
+  the radix, mode, and current chain.)
+
+: load-file  ( z")
+   radix preserve  state preserve  current preserve
+   raw-load-file ;
+
+( Consumes a token - a filename - and loads it, preserving settings.)
+: ld  token, load-file ;
+
+( Ditto, but allows durable changes to settings.)
+: ld!  token, raw-load-file ;
+
+
+( Colorized text, and sensible handling of stdout vs stderr.
+
+  In general, unless we are printing something "special" - a banner,
+  prompt, warning, error, or the stack state - we want to print to stdout and
+  use the normal text color.)
+
+variable colorize?
+: +color  colorize? on ;
+: -color  colorize? off ;
+
+ld lib/ansi-terminal-colors.mu4
+
+( Initially I'm going to set this up with foreground colors only, but it
+  would be nicer to be able to specify *both* foreground and background
+  colors for each kind of text.
+
+  I'm also going to use rgb colors. I might later try to find some suitable
+  colors within the 6x6x6 color cube from the 256-color palette.)
+
+: colorized  ( rgb)  constant  does> @  ( rgb)
+   >stderr  colorize? @ if  0 fg rot (ansi-rgb-color) type ^ then  drop ;
+
+( I'm thinking we need the following *kinds* of text:
+  - normal      text the user types, or that running code generates
+  - info        sign-on banner, loading messages, etc
+  - status      stack display and prompts
+  - delimiter   clarify bracketing, like the double parens in loading
+  - warning
+  - error
+)
+
+( Experimental)
+( Can we do bold separately from setting a color?)
+: bold     ." [1m" ;
+: unbold   ." [22m" ;
+
+( This is a special case.)
+: normal-text   >stderr  ." [0m"  >stdout ;
+
+hex
+93A1A1 ( blue-grey) colorized info-text
+97bcc6 ( cyan) colorized status-text
+bdd64f ( green) colorized delimiter-text
+e2c279 ( yellow) colorized warning-text
+e76980 ( red) colorized error-text
+decimal
+
+
+( With colors we can do nice warnings and errors.)
+
+( Show a warning.)
+: warn  ( a u)   warning-text  ." Warning: " type  normal-text ;
+
+( Interactive versions.)
+: warn"   char " parse         warn ;
+: error"  \f z"  empty-parsed  abort ;  ( compile a C-style string for abort)
+
+( Compiled versions.)
+compiler
+: warn"   \c "   compile warn ;
+: error"  \c z"  compile abort ;  ( compile a C-style string for abort)
 forth
 
 
@@ -1286,19 +1436,19 @@ forth
 : being-defined  constant  does> @  [ ' new addr+ addr+ #]  addr! ;
 
 ( To warn of re-defining a word.)
--: ( a u)  2dup current @ find if  out-channel preserve  >stderr
-     drop  2dup type ."  again.  "  ^  then  2drop ;
+-: ( a u)  2dup current @ find if  warning-text
+     drop  2dup type ."  again.  "  normal-text ^  then  2drop ;
 being-defined -redef
  -redef
 
 ( A useful list of words as they're being defined.)
 -: ( a u)   radix preserve hex  sep preserve  -sep
-   out-channel preserve >stderr
+   info-text
    out-channel @ >col @ if cr then
    ( print stack depth)  depth 2 - .
    ( print current)  current @ >chain-name type space space
    -- ( print here)  here u.
-   ( print name being defined)  2dup type cr ;
+   ( print name being defined)  2dup type cr  normal-text ;
 being-defined -v  ( be verbose)
 -- -v
 
@@ -1423,69 +1573,6 @@ being-defined -v  ( be verbose)
   possible confusion of using "M" thinking it means 2^20 rather than 10^6.)
 
 
-( This is useful whether or not we have clock support, so let's move it
-  outside of the .ifdef.)
-
-: "hold  ( a n)  dup negate  hld +!  hld @  swap cmove  ;
-
-
-.ifdef clock
-
-( Time, timestamp.)
-: ##     ( n)   # #  drop  ;
-
-( Separators)
-: ":   char : hold  ;
-: "-   char - hold  ;
-: ".   char . hold  ;
-: ||   bl hold  ;  ( a space)
-
-: month"  ( n - a n)  ( n is 0--11)
-   3 *  z" janfebmaraprmayjunjulaugsepoctnovdec" +  3 ;
-
-( clock returns a count of seconds since 1970-jan-01 00:00:00 UTC,
-  the Unix "epoch".)
-
-( leaves a 0 which is consumed by #>)
-: <date>   ( year month mday yday - 0)
-   drop  ## "-  month" "hold "-  #s ( year) ;
-
-: <hh:mm:ss>  ( hms)        ## ":  ## ":  ## ;
-: <hh:mm>     ( hms)  drop ( sec)  ## ":  ## ;
-
-: (time")  ( year month mday yday hour min sec 'zone #zone - a #)
-   radix preserve  decimal  <#  "hold  ( zone)  ||  <hh:mm:ss>  ||  <date>  #> ;
-
-: (short-time")  ( year month mday yday hour min sec 'zone #zone - a #)
-   radix preserve  decimal  <#  2drop ( zone)  <hh:mm>  ||  <date>  #> ;
-
-: (date")  ( year month mday yday hour min sec 'zone #zone - a #)
-   radix preserve  decimal  <#  2drop 2drop drop  <date>  #> ;
-
-: date    ( epoch - y m d yday)  local-time  2drop 2drop drop ;
-
-: utc"    ( epoch - a n)         utc  (time") ;
-: date"   ( epoch - a n)  local-time  (date") ;
-: time"   ( epoch - a n)  local-time  (time") ;
-: short-time"
-          ( epoch - a n)  local-time  (short-time") ;
-
-( Better primitives? More elegant, certainly.)
-: s->sm    ( s - s m)    60 u/mod ;
-: s->smh   ( s - s m h)  s->sm  s->sm ;
-: s->smhd  ( s - s m h d)  s->smh  24 u/mod ;
-: sm->s    60 * + ;
-: smh->s   sm->s  sm->s ;
-: smhd->s  24 * +  smh->s ;
-
-( If anyone had any idea how long a year really is, we could also define
-  s->smhdy and smhdy->s. ;-)
-
-: smhq->s  6 * +  smh->s ;  ( sec min hr quarter-day)
-: smhdy->s  [ 365 3 * 366 + #] * ( quarter-days/yr)  push 4 * pop +  smhq->s ;
-
-.then ( time support)
-
 
 defer ?show-radix
 
@@ -1514,11 +1601,12 @@ defer ?show-stack
       Should that be another setting?)
 -: depth ?if
       sep preserve  -sep
-      out-channel preserve >stderr
+      status-text
       stderr >col @ if cr then
       radix @ push  decimal  dup 2 u.r space  1-  ." =>"  pop radix !
       stderr >width @  5 -  18 / 1-  ( max # of stack items to print)
       min  0 max  0 swap  do  i nth  18 .r  -1 +loop
+      normal-text
    then ;
 
 : +stack      [ #]  is ?show-stack ;
@@ -1528,7 +1616,10 @@ defer ?show-stack
 ( show ` Ok', then mode-prompt, then perhaps radix)
 defer .extra-prompt  ' nope is .extra-prompt
 : .mode-prompt   state @  cell+  @execute ;
-: .prompt   ."  Ok"   .mode-prompt  ?show-radix  .extra-prompt ;
+: .prompt
+   status-text
+   ."  Ok"   .mode-prompt  ?show-radix  .extra-prompt
+   normal-text ;
 
 ( set prompt in compile mode)
 -: ."  (compiling)" ;   ' ] >body cell+ !
@@ -1538,92 +1629,23 @@ defer .extra-prompt  ' nope is .extra-prompt
    depth [ 4096 64 - #] > if   ." too many items on the stack"  then ;
 is ?stack
 
-( Be careful here! start, end, and first are addr-sized values in C code.
-  We have to use a slightly different method to preserve and restore them.)
-
-: evaluate  ( a u)
-   start addr-preserve  end addr-preserve  ( save input source)
-   first addr-preserve           ( save our place in the input)
-   over first addr!
-   over start addr!  + end addr!
-   interpret ;
-
-variable lines-read
-: add-lines-read  ( dummy)   drop  line @ 1-  lines-read +! ;
-
-( check-depth only prints anything if depth has changed since the file
-  started loading _and_ being-loaded is non-zero - ie, we're loading a
-  file.)
-
-( being-loaded is defined in C, so use addr words to access it.)
-
-: check-depth  ( saved-depth)
-   unwinding @ if  drop  ^  then
-   depth swap -  1- ( use show-depths to see the "standard" difference!)
-   ?if  being-loaded addr@ ?if
-      cr  ."   [ "  count type  ." : +depth " . ."  ] "  then  then ;
-
-: show-depths  ( saved)   depth .  . ;
-
-( raw-load-file reads and interprets a file containing muforth code.
-
-  Before reading anything, it resets the radix to decimal, resets the
-  interpreter mode to the host forth interpreter, and sets the .forth. vocab
-  chain as the destination for new definitions. It also redirects the console
-  output to stderr, and sets up a few checking and cleanup routines to be
-  executed on exit; most importantly, to close the file, and to check that
-  the stack depth hasn't been altered.
-
-  NOTE: We wait until we've both opened and read the file before resetting
-  being-loaded and line, so we should get more accurate error locations!
-
-  Because raw-load-file does *not* preserve the radix, mode, or current
-  chain, any changes made to them by the loaded file will remain after the
-  file is loaded. This is useful for loading a set of development tools that
-  need to change into a metacompiler state, and perhaps switch to hex. See
-  target/S08/build.mu4 for an example.)
-
-: raw-load-file  ( z")
-   decimal
-   \ [    ( return to host forth...)
-   forth  ( ... and compile into .forth. chain)
-   out-channel preserve  >stderr
-   dup open-file-ro ( z" fd)  dup on-exit close-file
-   read-file ( z" a u)
-   being-loaded addr-preserve  rot being-loaded addr!
-   line preserve  1 line !
-   0 on-exit add-lines-read
-   depth  on-exit check-depth
-   -- depth  on-exit show-depths
-   evaluate ;
-
-( Save radix, state, and current, then call raw-load-file to actually load
-  and interpret the file. Unlike raw-load-file, above, load-file preserves
-  the radix, mode, and current chain.)
-
-: load-file  ( z")
-   radix preserve  state preserve  current preserve
-   raw-load-file ;
-
-( Consumes a token - a filename - and loads it, preserving settings.)
-: ld  token, load-file ;
-
-( Ditto, but allows durable changes to settings.)
-: ld!  token, raw-load-file ;
-
+( Make loading files more useful.)
 defer load-stats  ( show space consumed, or simply close double parens)
 
 ( how much dictionary space was consumed?)
 -: ( show-consumed)  ( here)
    unwinding @ if  drop  ^ then
    radix preserve  decimal
-   out-channel preserve  >stderr
-   here swap -  space .  ." bytes )) " ;
+   info-text
+   here swap -  space . ." bytes "  delimiter-text  ." )) "
+   normal-text ;
 
 : +consumed  [ #] is load-stats ;
 
+( XXX how do I color this?)
 -: ( dont-show-consumed)  ( here)
-   drop  unwinding @ if ^ then  ." )) " ;
+   drop  unwinding @ if ^ then
+   delimiter-text  ." )) "  normal-text ;
 
 : -consumed  [ #] is load-stats ;  -consumed
 
@@ -1632,7 +1654,7 @@ defer load-stats  ( show space consumed, or simply close double parens)
   rest of the command line.)
 
 : loading
-   cr ." (( "  #LF parse type  space
+   delimiter-text  cr ." (( "  info-text  #LF parse type  space  normal-text
    here  on-exit load-stats  interpret ;
 
 ( Define words for use with the conditional compilation words.  No matter
@@ -1640,6 +1662,11 @@ defer load-stats  ( show space consumed, or simply close double parens)
 
 : -d   current preserve  forth  -1 constant ;
 : -f   ( load file)  ld! ;  ( don't preserve settings!)
+
+
+.ifdef clock
+   ld lib/time-date.mu4
+.then ( time support)
 
 
 : settings  ."
@@ -1735,10 +1762,11 @@ Type 'settings' to see a few of muforth's tweakable behaviours.
   have a preceding count. We need to use zcount rather than count to
   compute its length.)
 
+( XXX which kind of text used for location? info doesn't seem right.)
 : .error  ( z")
-   >stderr  cr  .where  parsed type space  zcount type ;
+   info-text  cr  .where  parsed tuck type if space then
+   error-text  zcount type  normal-text ;
 
-' .error  is warn
 : ?error  ( z")   ?if  .error  r>  -1 unwind  >r  then ;
 
 
@@ -1763,14 +1791,14 @@ ld lib/du-cached.mu4
 .then
 
 : quit
-   begin  ?stack  cr  typing evaluate  >stderr  .prompt  ?show-stack  again ;
+   begin  ?stack  cr  typing evaluate  .prompt  ?show-stack  again ;
    ( infinite loop, until error... )
 
 : warm
    [ .runtime. chain' throw #] 'abort addr!
    decimal \ [
-   >stderr banner
-   -consumed +sep +case +radix +stack ( defaults - reset these how you like)
+   -consumed +sep +case +color +radix +stack ( defaults - reset these how you like)
+   info-text  banner  normal-text
    z" (command line)" being-loaded addr!  line off
    command-line  catch evaluate ?error
    0 being-loaded addr!
