@@ -4,78 +4,145 @@
 
 loading AVR chat over IIC (host)
 
-hex
-
 ( The following is code to talk to my simple "debug stub" running on an
   Atmel AVR, using its default slave address, 0fe. NOTE: Slave addresses
   are sent shifted left, with LSB = 0.)
 
 ( You can find the debug stub's code in target/AVR/chat-iic-core.mu4)
 
+( This code uses code running on an STM32 Discovery board as an
+  interlocutor, converting packets of data into IIC exchanges with a slave
+  device.
 
-variable iic-slave  0fe iic-slave !  ( default)
-                    0b0 iic-slave !  ( testing)
+  *That* code is in target/ARM/stm32/atmel-spi-programming-core.mu4, and
+  the host interface to it is in
+  target/ARM/stm32/atmel-spi-programming-host.mu4.)
 
-variable zpad  ( so we don't clobber pad)
-: avr-iic-read   ( len cmd)  iic-slave @  rot zpad  iic.Read ;
-: avr-iic-write  ( len cmd)  iic-slave @  rot zpad  iic.Write ;
+hex
 
-: avr-sync   begin  iic-slave @  iic.Ping  0= until ;
+( Taking inspiration from the wildly successful HC08 serial chat protocol.
 
-( Standard form for interact - we might also be using the serial chat for
-  devices that lack an IIC interface.)
+  Responds to the following commands. NOTE: these are hex values!
 
-: avrchat.Hello    iic.Hello ;
+00 - 0f  idle        - these command bytes are ignored
+1c - ff  idle        - these command bytes are ignored
 
-( Because we're using the Z register on the AVR as a memory address
-  pointer, let's prefix these words with 'z'. It's easy to type and sounds
-  cool.)
+10  version-addr     - get the address of the version commit
+11  set-addr         - set dptr to 16-bit address
+12  run              - set the machine SP, pop R1, PSW, and PC
+13  get-status       - get the machine SP
 
-: z!  ( addr)  zpad leh!  2  10 avr-iic-write ;
-: zgo                     0  14 avr-iic-write  avr-sync ;
+14  read-flash       - read one byte of flash, incr Z
+15  read-data        - read one byte of ram/data space, incr Z
+16  read-eeprom      - read one byte of xram, incr Z
 
-: zsetup  ( buf addr len cmd - cmd slave len buf)
-   rot z!  ( buf len cmd)  rot push  ( len cmd)
-   iic-slave @  rot  ( cmd slave len)  pop ;
+17  write-flash      - write a word to flash page buffer, incr Z by 2
+18  write-data       - write one byte to ram/data space, incr Z
+19  write-eeprom     - write one byte to eeprom, incr Z
 
-: zpread   ( buf addr len)  11 zsetup  iic.Read ;   ( read program memory)
-: zread    ( buf addr len)  12 zsetup  iic.Read ;   ( read data memory)
-: zwrite   ( buf addr len)  13 zsetup  iic.Write ;  ( write data memory)
+1a  app-start
+1b  app-stop
+)
 
-: zeread   ( buf addr len)  15 zsetup  iic.Read ;   ( read eeprom)
-: zewrite  ( buf addr len)  16 zsetup  iic.Write ;  ( write eeprom)
+variable iic-slave  0d0 iic-slave !  ( master)
 
-.ifdef oldzcmds
-( Here and elsewhere we use * to mean "fetch byte with post-increment",
-  cell* to mean "fetch cell with post-increment", and & to be the store
-  versions of these)
+( "ix.<something>" words are IIC chat *transport* code.
+  "i.<something>" words are the high-level IIC chat interface code.)
 
-: zp*      ( - b)           1  11 avr-iic-read  zpad c@ ;    ( program memory)
-: zpcell*  ( - w)           2  11 avr-iic-read  zpad leh@ ;  ( program memory)
-: z*       ( - b)           1  12 avr-iic-read  zpad c@ ;
-: zcell*   ( - w)           2  12 avr-iic-read  zpad leh@ ;
-: z&       ( b)  zpad c!    1  13 avr-iic-write ;
-: zcell&   ( w)  zpad leh!  2  13 avr-iic-write ;
-.then
+( This uses pad as buffer.)
+: ix.setup-pad  ( len cmd - cmd slave len buf)   swap  iic-slave @ swap  pad ;
+: ix.read   ( len cmd)  ix.setup-pad  iic.Read ;
+: ix.write  ( len cmd)  ix.setup-pad  iic.Write ;
+: ix.cmd        ( cmd)  0 swap ix.write ;
 
-.ifdef bootloader
+: ix.get-version  ( v)              10 ix.cmd  4 14 ix.read  pad lew@ ;
+: ix.set-addr     ( a)  pad leh!  2 11 ix.write ;
+: ix.run         ( rp)  pad leh!  2 12 ix.write ;
+: ix.get-status  ( - rp)          2 13 ix.read  pad leh@ ;
 
-( XXX bring up to speed with zread/zwrite etc?)
+( This uses a buffer passed to us.)
+: ix.setup-buf  ( buf a u cmd - cmd slave u buf)
+   cr  ." ix.setup-buf in  "  3 nth u.  2 nth u.  over u.  dup u.
+   rot ix.set-addr  ( buf u cmd)  rot push  ( u cmd)
+   iic-slave @  rot  ( cmd slave u)  pop
+   cr  ." ix.setup-buf out "  3 nth u.  2 nth u.  over u.  dup u.
+   cr
+   ;
 
-( Support for self-programming.)
-: avr-prog-cmd    ( addr cmd)  swap z!  0 swap  avr-iic-write ;
+: ix.read-buf   ( buf a u cmd)  ix.setup-buf  iic.Read ;
+: ix.write-buf  ( buf a u cmd)  ix.setup-buf  iic.Write ;
 
-: zpwrite  ( buf addr len)    20 zsetup  iic.Write ;
-: zpcell&  ( w)  zpad leh!  2 20 avr-iic-write ;
-: zerase   ( addr)            21 avr-prog-cmd ;   ( erase flash page)
-: zprog    ( addr)            22 avr-prog-cmd ;   ( program flash page from buf)
-: zclear                    0 23 avr-iic-write ;  ( clear page buffer)
+( Unlike the -buf words above, this is used for byte- or word-at-a-time
+  reads or writes.)
 
-( To start and stop the application.)
-: zstart                    0 24 avr-iic-write ;
-: zstop                     0 25 avr-iic-write ;
+: ix.setup-chunk  ( buf a u - u)   swap ix.set-addr  swap m ! ;
 
-( write a few words to flash page)
-: zing  ( addr)  dup z!  b/page  over + swap  do  i zpcell&  2 +loop ;
+-- ------------------------------------------------------------------------
+-- Chat interface
+-- ------------------------------------------------------------------------
+: i.hello  ( - #chunk)
+   iic.Hello  ( start up USB command loop)
+   cr ." Chat firmware version "  ix.get-version
+   radix preserve  hex  sep preserve  -sep   <# 4# 4# #> type
+   #128 ;
 
-.then
+( The machine stack pointer - which we are here calling RP - points *below*
+  the last byte pushed. Push is: store, then decrement. This is an "empty
+  descending" stack. Most machines use a "full descending" stack.
+
+  Another way to think of it: for an empty descending stack, push is
+  post-decrement, pop is pre-increment.
+
+  For a full descending stack, push is pre-decrement, pop is
+  post-increment.
+
+  So that we don't go crazy, let's adjust RP so we can pretend it is a full
+  descending stack. When we read RP, we add 1. Before we write it back, we
+  subtract 1.)
+
+: i.run           ( rp)   1- ix.set-addr ( set RP)  ix.run ;
+: i.get-status  ( - rp)      ix.get-status 1+ ;  ( adjust RP)
+
+( Interact code handles which memory space we are reading.)
+: i.read-space   ( buf a u space)  14 +  ix.read-buf ;
+
+: ix.write-flash  ( word flash-cmd - SPMCSR)
+   pad 2 + c!  pad leh!  3 17 ix.write  1 1c ix.read  pad c@ ;
+
+: i.write-data   ( buf a u)  18 ix.write-buf ;
+
+: ix.write-eeprom  ( byte - EECR)
+   pad c!  1 19 ix.write  1 1d ix.read  pad c@ ;
+
+: i.write-eeprom   ( buf a u)
+   ix.setup-chunk  for  m* ix.write-eeprom u. next ;
+
+: i.app-start   1a ix.cmd ;
+: i.app-stop    1b ix.cmd  ix.get-status drop ;
+
+: i.flash-begin ;
+
+( After flashing, we have to re-enable the RWW section and start the app
+  running again.)
+: i.flash-end
+   0 ix.set-addr ( beginning of flash)
+   0 %0001_0001 ( RWWSRE + SPMEN) ix.write-flash u. ( re-enable RWW section) ;
+
+: i.erase     ( a)
+   ix.set-addr  0 %0000_0011 ( PGERS + SPMEN) ix.write-flash u. ( erase page) ;
+
+( For each word in buf, write it to the chip's flash page buffer, then send
+  the page program command.)
+
+( Initially, send word + flash command over and over. Later, put them into
+  a buffer and do one big write.)
+
+: i.program   ( buf a u)
+   over push ( save addr)  ix.setup-chunk
+   1+ 2/ for  m* m* lohi>  %0000_0001 ( SPMEN) ix.write-flash u.  next
+   pop ix.set-addr  ( set address again)
+   0 %0000_0101 ( PGWRT + SPMEN) ix.write-flash u. ( write page buffer to flash) ;
+
+: iic   chat-via
+   i.hello  i.get-status  i.run  i.read-space  i.write-data  i.write-eeprom
+   i.app-start  i.app-stop  i.flash-begin  i.flash-end  i.erase  i.program ;
