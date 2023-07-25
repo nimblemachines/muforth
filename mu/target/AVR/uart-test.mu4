@@ -1,0 +1,75 @@
+( This file is part of muforth: https://muforth.nimblemachines.com/
+
+  Copyright 2002-2023 David Frech. (Read the LICENSE for details.)
+
+loading AVR UART test
+
+__meta
+hex
+
+( Just stream bytes out TX initially, to make sure that chip is alive and
+  well.)
+
+( No, let's run the UART at 38,400 b/s. Baud rate divisor = fosc/bps/16 - 1.)
+label uart-init
+   -- #8_000 ( fosc = 8M)  #125 /  #16 /  1 - >hilo
+   #8,000,000 ( fosc = 8M)  #38,400 /  #16 /  1- >lohi
+   xl ldi  UBRR1H xl out  xl ldi  UBRR1L xl out
+   %0001_1000 xl ldi  UCSR1B xl out  ( enable RX and TX)
+   06 xl ldi  UCSR1C xl out  ( 8bits, 1stop, no parity)
+   ret  ;c
+
+( Host uses send and recv. Let's do the same here.)
+label recv-byte
+   ( Wait for RXC - receive complete)
+   begin  UCSR1A xl in  7 ( RXC) xl sbrs  again
+   UDR1 xl in  ret  ;c
+
+( NOTE: clobbers xh)
+label send-byte
+   ( Wait for UDRE - data register empty)
+   begin  UCSR1A xh in  5 ( UDRE) xh sbrs  again
+   UDR1 xl out  ret  ;c
+
+label ldi-test
+   xl clr     send-byte rcall
+   01 xl ldi  send-byte rcall
+   02 xl ldi  send-byte rcall
+   04 xl ldi  send-byte rcall
+   08 xl ldi  send-byte rcall
+
+   10 xl ldi  send-byte rcall
+   20 xl ldi  send-byte rcall
+   40 xl ldi  send-byte rcall
+   80 xl ldi  send-byte rjmp  ;c
+
+label spew
+   40 xl ldi  begin  send-byte rcall  xl inc  5f xl andi  again  ;c
+
+label echo
+   begin  recv-byte rcall  send-byte rcall  again  ;c
+
+label a-cmd   char A xl ldi  send-byte rjmp  ;c
+label b-cmd   char B xl ldi  send-byte rjmp  ;c
+label c-cmd   char C xl ldi  send-byte rjmp  ;c
+label d-cmd   char D xl ldi  send-byte rjmp  ;c
+
+( Testing dispatch)
+label command-table
+   a-cmd rjmp  b-cmd rjmp  c-cmd rjmp  d-cmd rjmp  ;c
+
+label process
+   recv-byte rcall  ( cmd)
+   10 xl subi  ( 00 to 0f become large unsigned numbers)
+   process command-table - 2/ xl cpi u< if  xh clr
+      command-table u2/ ( word address) negate >hilo  xl subi  xh sbci
+      xl push  xh push ( big-endian!)
+   then ( unknown... return, and get called again)
+   ret  ;c
+
+RESET handler
+   @ram #ram + 1- >hilo  xl ldi  SPL xl out  xl ldi  SPH xl out
+   uart-init rcall
+   begin  process rcall  again  ;c
+   -- spew rjmp  ;c
+   -- echo rjmp  ;c

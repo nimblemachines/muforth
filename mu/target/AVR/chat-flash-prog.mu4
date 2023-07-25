@@ -1,0 +1,34 @@
+( This file is part of muforth: https://muforth.nimblemachines.com/
+
+  Copyright 2002-2023 David Frech. (Read the LICENSE for details.)
+
+( Support for self-programming.)
+
+( Bits in SPMCSR:
+  SPMIE   RWWSB   --      RWWSRE  BLBSET  PGWRT   PGERS   SELFPRGEN
+    7       6      5        4       3       2       1       0        )
+
+label do-spm
+   SREG xh in  cli  SPMCSR xl out  spm  SREG xh out
+   begin  SPMCSR xl in  0 xl sbrc  again  ret  ;c
+
+
+( On word writes, keep streaming bytes from TWI into memory, until
+  read-byte gets something other than an 80 status.)
+
+label write-word
+   begin  read-byte rcall  xl 0 mov  ( low byte to r0)
+          read-byte rcall  xl 1 mov  ( hi byte to r1)
+          %0000_0001 ( SELFPRGEN)  xl ldi  do-spm rcall
+          2 z adiw
+   again  ;c
+
+label erase-page
+   %0000_0011 (  PGERS + SELFPRGEN)  xl ldi  do-spm rjmp  ;c
+
+label program-page
+   %0000_0101 (  PGWRT + SELFPRGEN)  xl ldi  do-spm rjmp  ;c
+
+label clear-page-buffer
+   %0001_0001 ( RWWSRE + SELFPRGEN)  xl ldi  do-spm rjmp  ;c
+
