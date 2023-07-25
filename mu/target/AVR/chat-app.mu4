@@ -17,21 +17,18 @@ hex
 
 ( The app-running flag is ff when running, 00 when stopped.)
 
-( Returns Z clear if present. Z will be set if the vector contains ffff.
-  The two ff bytes are anded together; this is ff only if both were ff.
-  Then we complement that. This is 00 only if both bytes started out as ff.)
-
+( Returns Z set if present. App is present if 0000 contains 940c - a long jmp.)
 label app-present?
    0 dup ( app reset vector)  zl ldi  zh ldi  pmz+ xl ld  pmz xh ld
-   xh xl and  xl com  ( if it was 0ff, it's now 00)  ret  ;c
+   0c xl cpi  0= if  94 xh cpi  then  ret  ;c
 
 ( Returns Z set if running.)
 label app-running?
-   app-running xl lds  0ff xl cpi  begin begin begin  ret  ;c
+   app-running xl lds  0ff xl cpi  begin  ret  ;c
 
 label app-start
    xl clr  app-running xl sts  ( set to false)
-   app-present? rcall  0= not until
+   app-present? rcall  0= until
    0ff xl ldi  app-running xl sts  ( set to true)
    0 ( apps reset vector) jmp  ;c
 
@@ -39,9 +36,10 @@ label app-start
   enable flag, just to be sure.)
 
 label app-stop
-   app-running? rcall  0= until
-   xl clr  app-running xl sts  ( set to false)
-   application-stop-hook call  cli  ret  ;c
+   app-running? rcall  0= if
+      xl clr  app-running xl sts  ( set to false)
+      application-stop-hook call
+   then  cli  ret  ;c
 
 ( If we end up running the application, caller save the chat registers so
   the application doesn't have to worry about them. We only care about Z
@@ -49,7 +47,7 @@ label app-stop
   value in R0/R1 to write to flash.)
 
 label app-run
-   app-running? rcall  0= until
+   app-running? rcall  0= if
    z pushw  0 pushw
    application-run-hook c
-   0 popw  z popw  ret  ;c
+   0 popw  z popw  then  ret  ;c
