@@ -18,7 +18,7 @@
 
 megax4_reg = [[
 (0xCE) UDR1 USART1 I/O Data Register 189
-(0xCD) UBRR1H -- -- -- -- USART1 Baud Rate Register High Byte 193/206
+(0xCD) UBRR1H USART1 Baud Rate Register High Byte 193/206
 (0xCC) UBRR1L USART1 Baud Rate Register Low Byte 193/206
 (0xCB) Reserved -- -- -- -- -- -- -- --
 (0xCA) UCSR1C UMSEL11 UMSEL10 -- -- -- UDORD1 UCPHA1 UCPOL1 191/205
@@ -26,7 +26,7 @@ megax4_reg = [[
 (0xC8) UCSR1A RXC1 TXC1 UDRE1 FE1 DOR1 UPE1 U2X1 MPCM1 189/204
 (0xC7) Reserved -- -- -- -- -- -- -- --
 (0xC6) UDR0 USART0 I/O Data Register 189
-(0xC5) UBRR0H -- -- -- -- USART0 Baud Rate Register High Byte 193/206
+(0xC5) UBRR0H USART0 Baud Rate Register High Byte 193/206
 (0xC4) UBRR0L USART0 Baud Rate Register Low Byte 193/206
 (0xC3) Reserved -- -- -- -- -- -- -- --
 (0xC2) UCSR0C UMSEL01 UMSEL00 -- -- -- UDORD0 UCPHA0 UCPOL0 191/205
@@ -121,7 +121,7 @@ megax4_reg = [[
 0x25 (0x45) TCCR0B FOC0A FOC0B -- -- WGM02 CS02 CS01 CS00 107
 0x24 (0x44) TCCR0A COM0A1 COM0A0 COM0B1 COM0B0 -- -- WGM01 WGM00 109
 0x23 (0x43) GTCCR TSM -- -- -- -- -- PSRASY PSR5SYNC 159
-0x22 (0x42) EEARH -- -- -- -- EEPROM Address Register High Byte 23
+0x22 (0x42) EEARH EEPROM Address Register High Byte 23
 0x21 (0x41) EEARL EEPROM Address Register Low Byte 23
 0x20 (0x40) EEDR EEPROM Data Register 23
 0x1F (0x3F) EECR -- -- EEPM1 EEPM0 EERIE EEMPE EEPE EERE 23
@@ -289,7 +289,7 @@ megax8_reg = [[
 0x25 (0x45) TCCR0B FOC0A FOC0B -- -- WGM02 CS02 CS01 CS00
 0x24 (0x44) TCCR0A COM0A1 COM0A0 COM0B1 COM0B0 -- -- WGM01 WGM00
 0x23 (0x43) GTCCR TSM -- -- -- -- -- PSRASY PSRSYNC 141/163
-0x22 (0x42) EEARH (EEPROM Address Register High Byte) 5. 22
+0x22 (0x42) EEARH EEPROM Address Register High Byte 22
 0x21 (0x41) EEARL EEPROM Address Register Low Byte 22
 0x20 (0x40) EEDR EEPROM Data Register 22
 0x1F (0x3F) EECR -- -- EEPM1 EEPM0 EERIE EEMPE EEPE EERE 22
@@ -441,20 +441,20 @@ dofile 'target/S08/device/string.lua'
 function show_vectors(v, size)
     vt = {}
     name_max = 0  -- width of name field
+    addr_max = 0
     v = v:gsub("%$(%x)", "0x%1")   -- replace $ with 0x to normalise
-    for num, addr, name, desc in v:gmatch("(%d+) (0x%x+) ([%w_]+) (.-)\n") do
-        if desc ~= "Reserved" then
-            table.insert(vt, { addr=addr/size, desc=desc, name=name })
-        end
+    for _, addr, name, desc in v:gmatch("(%d+) (0x%x+) ([%w_]+) (.-)\n") do
+        addr = addr/size    -- we want addr's to be consecutive numbers
+        table.insert(vt, { addr=addr, desc=desc, name=name })
         if #name > name_max then name_max = #name end
-        --print (addr, desc, name)
+        if addr > addr_max then addr_max = addr end
     end
-
-    --print (name_max)
+    -- Add a dummy "vector" so we know how big the vector table is.
+    table.insert(vt, { addr=addr_max+1,
+                       desc="dummy vector to mark end of vector table",
+                       name="LAST_VECTOR" })
 
     for _,vec in ipairs(vt) do
-        -- print(string.format("#%02d  %05x  vec  %s  ( %s)",
-        -- 0x10000-vec.addr, vec.addr, vec.name..(" "):rep(name_max-#vec.name), vec.desc))
         print(string.format("%04x vector  %s  ( %s)",
             vec.addr, vec.name..(" "):rep(name_max-#vec.name), vec.desc))
     end
@@ -463,7 +463,7 @@ end
 
 function show_regs(s)
     s = s:gsub("%$(%x)", "0x%1")   -- replace $ with 0x to normalise
-    local pat = "%((0x%x+)%) ([%w_/]+)" .. (" ([%w<-]+)"):rep(8)
+    local pat = "%((0x%x+)%) ([%w_/]+)" .. (" ([%u%d-]+)"):rep(8)
 
 -- (0x60) WDTCSR WDIF WDIE WDP3 WDCE WDE WDP2 WDP1 WDP0 55
 -- 0x3F (0x5F) SREG I T H S V N Z C 10
@@ -473,16 +473,14 @@ function show_regs(s)
         if l:match "^%s*$" or l:match "Reserved" then return end
         local addr, reg, b7, b6, b5, b4, b3, b2, b1, b0 = l:match(pat)
         if addr then
-            print (string.format("%04x reg  %-8s | "..("%-7s "):rep(8),
+            print(string.format("%04x reg  %-8s | "..("%-7s "):rep(7).."%s",
                                  addr, reg, b7, b6, b5, b4, b3, b2, b1, b0))
             return
         end
 
 -- (0xC6) UDR0 USART I/O Data Register 193
         addr, reg, desc = l:match "%((0x%x+)%) ([%w_]+) (.+)"
-        print (string.format("%04x reg  %-8s | %s", addr, reg, desc))
-        -- print (string.format("! %s failed to match - need exactly 8 items after name",
-        --       reg))
+        print(string.format("%04x reg  %-8s | %s", addr, reg, desc))
     end
 
     for l in s:lines() do
@@ -492,9 +490,12 @@ function show_regs(s)
 end
 
 function show_heading(s)
-    print (string.format(
-        "( Equates for ATMEGA%s. Extracted from the datasheet using Lua!)", s))
-    print()
+    print(string.format([[
+( Equates for ATMEGA%s.
+
+  This file was automagically generated; do *not* edit it! Instead, edit
+  mu/target/AVR/device/chipdefs.lua.)
+]],s))
 end
 
 function show_part(name, vec, vecsize, reg)
@@ -503,7 +504,6 @@ function show_part(name, vec, vecsize, reg)
     show_regs(reg)
 end
 
--- show_part(" (common)", common_vec, common_sfr)
-show_part("164/324/644",  megax4_vec, 2, megax4_reg)
+show_part("164/324/644/1284",  megax4_vec, 2, megax4_reg)
 show_part("48/88/168/328", megax8_vec, 1, megax8_reg)
 show_part("8515", mega8515_vec, 1, mega8515_reg)
