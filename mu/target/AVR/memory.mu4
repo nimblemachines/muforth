@@ -24,21 +24,44 @@ ld target/common/memory.mu4   ( generic memory image support)
 
 : sig   signature ;
 
-#ram 2* make-image  ( since ram starts at 0100, double size to keep it a power of 2)
+( Since ram starts at a non-zero offset into data space - specifically, at
+  @ram - we want to make sure that the ram region - from @ram to @ram #ram +
+  - fits into the ram image, which needs to be a power of 2 in size.
+
+  The easiest way to do this is to take the larger of @ram and #ram - we
+  assume they are both powers of 2! - and double it.)
+
+@ram #ram max 2* make-image  ( ensure that [@ram #ram +] is within the ram image)
    make-region ram
 
 #eeprom make-image
    make-region eeprom
 
 
-( Initialization.)
-: erase-image  'image #image "ff fill ;  ( fills *current* image)
-: wipe
-   ram     erase-image
-   eeprom  erase-image
-   app     erase-image ;  ( leaves app as current region)
+.ifdef #boot
+   ( calculate start of boot space)
+   #flash  #boot  .ifdef bootsz  bootsz >>  .then  -  constant @boot
+.else
+   warn"
+The selected device doesn't support a separate bootloader memory space.
+Setting @boot to the end of flash."
+   #flash  constant @boot  ( not used - set it to past end of flash)
+.then
 
-( For existing AVR code.)
+
+( Initialization.)
+: erase-image   'image #image "ff fill ;  ( fills *current* image)
+: wipe
+   ram      erase-image        @ram region!
+   eeprom   erase-image           0 region!
+   app      erase-image           0 region!  ( erases image for app, sig, boot)
+   signature   @boot [ 1 Ki 2/ #] - region!
+   boot        @boot                region! ;
+
+wipe app  ( leaves app as current region)
+
+
+( Compatibility shims for existing AVR code.)
 : +a  ( a1 a2 - sum)  +  wrap ;  ( add and wrap to image boundary)
 : image-  ( host - target)  'image -  wrap ;
 
