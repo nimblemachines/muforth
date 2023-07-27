@@ -313,16 +313,27 @@ mode __target-colon
 
 
 ( Interrupt vectors and handlers.)
-: big-vectors?   [ #flash  16 Ki u< not #] ;
-: vectors  ( vector# - offset)  big-vectors?  if  4 * ^  then  2* ;
+#flash 16 Ki u< .if
+
+( Chip has small vectors - each entry is a single-word rjmp instruction.)
+
+: vectors  ( vector# - offset)  2* ;
 : @vector  ( vector# - addr)  vectors  \m origin  + ;
+: vector,  ( vector# dest)  ( compile rjmp to handler)
+   dp preserve  swap  @vector \m goto  \a rjmp ;
+
+.else
+
+( Chip has big vectors - each entry is a two-word jmp instruction.)
+: vectors  ( vector# - offset)  4 * ;
+: @vector  ( vector# - addr)  vectors  \m origin  + ;
+: vector,  ( vector# dest)  ( compile jmp to handler)
+   dp preserve  swap  @vector \m goto  \a jmp ;
+
+.then
 
 ( How many vectors are there?)
 \eq LAST_VECTOR constant #vectors
-
-: vector,  ( vector# dest)  ( compile jmp or rjmp to handler)
-   dp preserve
-   swap  @vector \m goto  big-vectors? if  \a jmp  ^  then  \a rjmp ;
 
 ( Return true if vector has _not_ been set. For two-word vectors - on
   devices with 16Ki and larger flash - assume that if first word - the jmp
@@ -368,6 +379,9 @@ meta
 
 ( Use hook to define the hook. This creates a label and compiles a long
   jump. Then resolve using hooks, which recompiles the jmp to point to here.)
+
+( XXX should we use rjmp on devices with less than 16Ki flash? We could put
+  the definitions of hook and hooks in an ifdef similar to the vector code.)
 
 : hook    \m label  0 \a jmp  __meta ;
 : hooks   dp preserve  \m here  .labels. chain' execute  \m goto  \a jmp ;
