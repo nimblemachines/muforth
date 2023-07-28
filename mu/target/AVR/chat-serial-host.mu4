@@ -123,22 +123,22 @@ variable cx-space  ( 0 = flash, 1 = data, 2 = eeprom)
 : c.write-eeprom   ( buf a u)
    c.setup-chunk  for  m* cx.write-eeprom  next ;
 
-( Before re-flashing we want to stop the app, and get-status to make sure
-  that it's finished.)
+( Before flashing, we have to stop the app. We get status to make sure it's
+  finished executing.)
 
-: c.app-stop    cx.app-stop  cx.get-status drop ;
-
-: c.flash-begin ;
+: c.flash-begin
+   cx.app-stop  cx.get-status drop ;
 
 ( After flashing, we have to re-enable the RWW section and start the app
   running again.)
 
 : c.flash-end
    0 cx.set-addr ( beginning of flash)
-   0 %0001_0001 ( RWWSRE + SPMEN) cx.write-flash  ( re-enable RWW section) ;
+   0 %0001_0001 ( RWWSRE + SELFPRGEN) cx.write-flash  ( re-enable RWW section)
+   cx.app-start ;
 
 : c.erase     ( a)
-   cx.set-addr  0 %0000_0011 ( PGERS + SPMEN) cx.write-flash  ( erase page) ;
+   cx.set-addr  0 %0000_0011 ( PGERS + SELFPRGEN) cx.write-flash  ( erase page) ;
 
 ( For each word in buf, write it to the chip's flash page buffer, then send
   the page program command.)
@@ -146,13 +146,16 @@ variable cx-space  ( 0 = flash, 1 = data, 2 = eeprom)
 : c.program   ( buf a u)
    over push ( save addr)
    c.setup-chunk  ( set address)
-   1+ 2/ for  m* m* lohi>  %0000_0001 ( SPMEN) cx.write-flash  next
+   1+ 2/ for  m* m* lohi>  %0000_0001 ( SELFPRGEN) cx.write-flash  next
    pop cx.set-addr  ( set address again)
-   0 %0000_0101 ( PGWRT + SPMEN) cx.write-flash  ( write page buffer to flash) ;
+   0 %0000_0101 ( PGWRT + SELFPRGEN) cx.write-flash  ( write page buffer to flash) ;
+
+( NOTE: We are *provisionally* removing app-start and app-stop from the
+  chat-via array, and *deprecating* their use in interact.mu4.)
 
 : chat   chat-via
    c.hello  c.get-status  c.run  c.read-space  c.write-data  c.write-eeprom
-   cx.app-start  c.app-stop  c.flash-begin  c.flash-end  c.erase  c.program ;
+   chat-fail  chat-fail  c.flash-begin  c.flash-end  c.erase  c.program ;
 
 ( Testing)
 : index  0 \m goto  80 0 do  i \m c,  loop ;
