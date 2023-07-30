@@ -20,7 +20,7 @@ hex
 
 ( These two values are modified by timer overflow interrupt.)
 1 var heart-index     ( how far we are into our 256-point pwm cycle)
-1 var heart-wakeups   ( decr by timer ISR when index rolls over)
+( heart task's status byte)
 
 ( These three values are modified by the heartbeat task, which is woken up
   every time the interrupt's increment of heart-index overflows.)
@@ -38,7 +38,8 @@ label timer0-overflow-handler
    x pushw  SREG xl in  xl push  ( push X and SREG)
    heart-index xl lds  -2 xl subi  heart-index xl sts
    0= if ( index rolled over)
-      heart-wakeups xh lds  xh dec  heart-wakeups xh sts
+      ( wake the app/heart task)
+      app-user-area xh lds  xh dec  app-user-area xh sts
    then
    heart-output xh lds  xh xl cp ( index - output)
    u< if  heart-led cbi  ( LED on)   else
@@ -49,20 +50,24 @@ label timer0-overflow-handler
 label heart-init
    heart-led sbi  ( LED off)
    heart-led DDRA PORTA - + ( convert PORTx to DDRx) sbi  ( set pin as output)
-   xl clr  heart-index xl sts  heart-wakeups xl sts
+   xl clr  heart-index xl sts
            heart-sawtooth xl sts  heart-polarity xl sts  heart-output xl sts
    00 xl ldi  TCCR0A xl out  ( set up timer0 - normal mode)
    01 xl ldi  TCCR0B xl out  ( set timer0 clock to CPU/1)
    01 xl ldi  TIMSK0 xl out  ( enable TOVR0)
    sei  ret  ;c
 
+( We use timer0 overflow to wake the heart task.)
 label heart-task
-   cli  heart-wakeups xl lds  xl tst  0< if
-      xl inc  heart-wakeups xl sts  sei
+   heart-init rcall
+   begin
+      sei  app-yield  ( macro)
       heart-sawtooth xl lds  xl inc  heart-sawtooth xl sts
       heart-polarity xh lds
       0= if  ( sawtooth rolled over)
          xh com  heart-polarity xh sts  ( complement)
       then
       xh xl eor  heart-output xl sts  ( new output trigger point)
-   then  sei  ret  ;c
+      ( Consume one of our wakeups.)
+      cli  app-user-area xl lds  xl inc  app-user-area xl sts
+   again  ;c

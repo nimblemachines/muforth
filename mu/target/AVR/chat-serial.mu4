@@ -2,7 +2,7 @@
 
   Copyright 2002-2023 David Frech. (Read the LICENSE for details.)
 
-loading AVR serial chat (core)
+loading AVR serial (uart) chat (core)
 
 __meta
 hex
@@ -22,11 +22,8 @@ comment register-use
 
 register-use
 
-( Start, stop, and run the application.)
-ld target/AVR/chat-app.mu4
-
 ( Let's run the UART at 38,400 b/s. Baud rate divisor = fosc/bps/16 - 1.)
-label serial-init
+label uart-init
    -- #8_000 ( fosc = 8M)  #125 /  ( 125kbps)
    #8,000,000 ( fosc = 8M)  #38,400 /
    #16 /  1- x ldiw  UBRR1H xh out  UBRR1L xl out
@@ -36,25 +33,21 @@ label serial-init
 
 ( Host uses send and recv. Let's do the same here.)
 
-( For both recv-byte and send-byte we want to run the app while we are
-  either waiting for a byte to go out or to come in.
-
-  app-run saves and restores r0, r1 and Z around calling the app.)
+( For both recv-byte and send-byte we want to yield while we are waiting
+  for a byte to go out or to come in.)
 
 ( Could clobber xh.)
 label recv-command-byte  ( For chat dispatch loop.)
 label recv-byte
    ( Wait for RXC - receive complete)
-   begin  app-run rcall  yield rcall
-         UCSR1A xl in  7 ( RXC) xl sbrs  again
+   begin  yield rcall  UCSR1A xl in  7 ( RXC) xl sbrs  again
    UDR1 xl in  ret  ;c
 
 ( Could clobber xh.)
 label send-byte
-   xl push  ( app might clobber it; and app-run doesn't save it)
+   xl push  ( XXX maybe should be saved by yield?)
    ( Wait for UDRE - data register empty)
-   begin  app-run rcall  yield rcall
-          UCSR1A xl in  5 ( UDRE) xl sbrs  again
+   begin  yield rcall  UCSR1A xl in  5 ( UDRE) xl sbrs  again
    xl pop  UDR1 xl out  ret  ;c
 
 label recv-word
@@ -98,5 +91,34 @@ label write-flash-cmd
    recv-word rcall  x 0 movw  recv-byte rcall ( cmd)  do-spm rcall
    2 z adiw  SPMCSR xl in  send-byte rjmp  ;c
 
-( Load chat entry, dispatch, and init.)
+( Load chat entry and command loop.)
 ld target/AVR/chat-loop.mu4
+
+( The uart chat task!)
+label uart-chat-task
+   uart-init rcall
+   begin  interact rcall  again  ;c
+
+RESET handler
+label start-tasks
+   ( Before we do anything else, let's start with a clean slate, by zeroing
+     the entire RAM.)
+
+   @ram y ldiw  #ram x ldiw  g0 clr  begin  y+ g0 st  1 x sbiw  0= until
+
+   ( Set up a temporary stack - so we can call setup-task! - below the task
+     stacks. In this case there are two stacks, each 32 cells in size.)
+
+   @ram #ram +  #64 cells - 1- x ldiw  sp!-unsafe
+
+   ( If an app isn't present, this will crash! The code has to start with a
+     runnable app task present.)
+
+   app-user-area y ldiw
+   0 ( app RESET vector) 2/ x ldiw  ( starting pc)
+   setup-task rcall
+
+   ( switch user areas)  next-task
+   uart-chat-task 2/ x ldiw ( starting pc)
+   setup-task rcall
+   run-task rjmp  ( this starts uart-chat-task running)  ;c

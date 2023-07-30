@@ -2,19 +2,22 @@
 
   Copyright 2002-2023 David Frech. (Read the LICENSE for details.)
 
-loading AVR chat over IIC (core)
-
-( Unlike the related simple version, this one allows streaming reads and
-  writes.)
-
-( NOTE!! Atmel calls the IIC interface "TWI" - two-wire interface. While
-  I'm calling it IIC everywhere else, in this file it makes no sense to do
-  anything except use Atmel's conventions, esp since several registers and
-  constants have "TWI" baked into their names.)
+loading AVR I2C chat (core)
 
 __meta
-
 hex
+
+2 var exc-pc  ( captured "exception" pc and sp for catch and throw)
+2 var exc-sp
+
+label catch
+   x popw  x pushw  exc-pc x stw
+   sp@  2 x adiw ( skip ra)  exc-sp x stw  ret  ;c
+
+label throw
+   exc-sp x ldw  sp!
+   exc-pc x ldw  x pushw  ret  ;c
+
 
 7 equ TWINT  ( bit#)  ( ack after all other actions)
 6 equ TWEA   ( bit#)  ( enable receipt of slave address)
@@ -25,7 +28,7 @@ hex
 1 TWEN  << or equ tw-reset
 
 
-comment 
+comment
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Status codes for slave receive mode:
 
@@ -53,30 +56,23 @@ Register-use:
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 
-( Start, stop, and run the application.)
-ld target/AVR/chat-app.mu4
+( Ack TWINT. Make sure TWEA and TWEN also set. Then Wait for TWINT; read
+  status; mask prescaler bits; return in xl)
 
-( Peculiar code required to send and recv bytes via I2C.)
-
-label restart  ( pop one return, ack int, then return)
-   x popw
-   ( fall thru)  ;c
-
-( Ack TWINT. Make sure TWEA and TWEN also set.)
-label serial-ack  ( for chat-entry)
-label ack-twint
-   tw-reset xh ldi  TWCR xh sts  ret  ;c
-
-( Wait for TWINT; read status; mask prescaler bits; return in xl)
-( app-run will save and restore r0, r1 and Z.)
-label wait-twint
-   begin  app-run rcall  TWCR xl lds  TWINT xl sbrs  again
+label await-twint
+   tw-reset xh ldi  TWCR xh sts  ( ack TWINT)
+   begin  yield rcall  TWCR xl lds  TWINT xl sbrs  again
    TWSR xl lds  0f8 xl andi  ret  ;c
 
+( XXX Let's make this an rjmp for now. If it seems like the right solution
+  we can rename restart to throw. ;-)
+
+label restart   throw rjmp  ;c
+
 label recv-byte
-   wait-twint rcall
+   await-twint rcall
    80 xl cpi  restart  0= until  ( restart protocol)
-   TWDR xl lds  ack-twint rjmp  ;c
+   TWDR xl lds  ret  ;c
 
 ( This is a bit tricky! Since the host had to send a new transaction for
   the read, on the first byte we're going to see _two_ interrupts: first,
@@ -90,31 +86,32 @@ label recv-byte
   byte, and we'll get a c0 status, and restart.)
 
 label expect-start
-   wait-twint rcall
+   await-twint rcall
    0a0 xl cpi  restart  0= until  ( we should see START/RESTART)
-   ack-twint rcall
    ( fall thru)  ;c
 
 ( Returns to caller if either we were just addressed, or the last byte
   written was ACKed by the master.)
 
 label send-another?
-   wait-twint rcall
+   await-twint rcall
    0e8 xl andi  0a8 xl cpi  restart  0= until  ( match a8 and b8)  ret  ;c
 
 ( After sending byte and acking interrupt, wait for ACK/NACK and only
   return to caller if ok to send another byte.)
 
 label send-byte
-   TWDR xl sts  ack-twint rcall  send-another? rjmp  ;c
+   TWDR xl sts  send-another? rjmp  ;c
 
 ( Like the read-memory commands, we expect a start/restart to initiate the
   read.)
 
+( XXX we can use the stack here)
 label send-word
    x 0 movw  expect-start rcall
    0 xl mov  send-byte rcall  1 xl mov  send-byte rjmp  ;c
 
+( XXX ditto here: use the stack)
 label recv-word
    recv-byte rcall  xl 0 mov
    recv-byte rcall  xl 1 mov  0 x movw  ret  ;c
@@ -126,9 +123,9 @@ ld target/AVR/eeprom.mu4
 ld target/AVR/flash-self-prog.mu4
 
 ( Called by chat startup code.)
-label serial-init
-   ( Set TWI slave address from EEPROM)
-   zh clr  zl clr  read-eeprom-byte rcall  1 invert xl andi  TWAR xl out
+label i2c-init
+   ( Set I2C slave address from EEPROM)
+   0 z ldiw  read-eeprom-byte rcall  1 invert xl andi  TWAR xl out
 
 .ifdef mega168
    ( Set up SCL/SDA pins as inputs with pullups enabled: PC4 and PC5)
@@ -141,7 +138,7 @@ label serial-init
 .then
    ret  ;c
 
-( On reads, keep streaming bytes from memory to TWI, as long as last byte
+( On reads, keep streaming bytes from memory to I2C as long as last byte
   was ACKed.)
 
 ( Command routines.)
@@ -157,7 +154,7 @@ label read-eeprom-cmd
    expect-start rcall
    begin  read-eeprom-byte rcall  1 z adiw  send-byte rcall  again  ;c
 
-( When writing to data space - ram and i/o - keep streaming bytes from TWI
+( When writing to data space - ram and i/o - keep streaming bytes from I2C
   into memory, until recv-byte gets something other than an 80 status.)
 
 label write-data-cmd
@@ -172,10 +169,38 @@ label write-flash-cmd
 
 ( For chat dispatch loop.)
 label recv-command-byte
-   wait-twint rcall
-   ack-twint rcall
-   60 xl cpi  recv-command-byte  0= until  ( wait until addressed as slave+write)
+   ( wait until addressed as slave+write)
+   begin  await-twint rcall  60 xl cpi  0= until
    recv-byte rjmp  ( cmd)  ;c
 
-( Load chat entry, dispatch, and init.)
+( Load chat entry and command loop.)
 ld target/AVR/chat-loop.mu4
+
+( The I2C chat task!)
+label i2c-chat-task
+   i2c-init rcall
+   begin  interact rcall  again  ;c
+
+RESET handler
+label start-tasks
+   ( Before we do anything else, let's start with a clean slate, by zeroing
+     the entire RAM.)
+
+   @ram y ldiw  #ram x ldiw  g0 clr  begin  y+ g0 st  1 x sbiw  0= until
+
+   ( Set up a temporary stack - so we can call setup-task! - below the task
+     stacks. In this case there are two stacks, each 32 cells in size.)
+
+   @ram #ram +  #64 cells - 1- x ldiw  sp!-unsafe
+
+   ( If an app isn't present, this will crash! The code has to start with a
+     runnable app task present.)
+
+   app-user-area y ldiw
+   0 ( app RESET vector) 2/ x ldiw  ( starting pc)
+   setup-task rcall
+
+   ( switch user areas)  next-task
+   i2c-chat-task 2/ x ldiw ( starting pc)
+   setup-task rcall
+   run-task rjmp  ( this starts i2c-chat-task running)  ;c

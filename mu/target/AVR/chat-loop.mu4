@@ -19,20 +19,27 @@ label version-cmd
 label set-addr-cmd
    recv-word rcall  x z movw  ret  ;c
 
-
-( If the app is *running*, enable interrupts while our code executes,
-  otherwise disable them.)
+( XXX For simplicity, disable interrupts while our code executes. This is
+  not ideal, as the user doesn't get a good sense of whether interrupts are
+  enabled or not; they will always show as *disabled*.)
 
 ( Host will use set-address to set Z to new SP.)
 label run-cmd
-   cli  SPH zh out  SPL zl out
-   x popw  ( pop status+padding)  7f xl andi  ( zero I bit)
-   app-running xh lds  80 xh andi  xh xl or  ( I bit)  SREG xl out
+   x popw  ( pop SREG+padding)  SREG xl out  cli
+   SPH zh out  SPL zl out
    t popw  x popw  y popw  z popw  ( pop all 4 pointer regs)
    ret  ;c
 
 label get-status-cmd
    sp@  2 x adiw ( skip ra)  send-word rjmp  ;c
+
+( NOTE: This code assumes that the app is interrupt-driven!)
+( XXX When we restart the app, it's usually because we have re-flashed it.
+  We need to re-run setup-task for the app task before starting it!)
+
+( Start and stop the app by changing its status byte.)
+label app-start     0ff xl ldi  app-user-area xl sts  sei  ret  ;c
+label app-stop     cli  xl clr  app-user-area xl sts  ret  ;c
 
 ( Command dispatch.)
 label command-table
@@ -69,34 +76,12 @@ label chat-entry  ( callable from other code!)
    ( Unless host changes it, stacked PC points to caller - usually interact.)
    z pushw  y pushw  x pushw  t pushw  ( push all 4 pointer regs)
    SREG xl in  xh clr  ( padding)  x pushw  ( push status)
+
+.labels. .contains catch .if
+   catch rcall  ( for I2C only)
+.then
+
    begin  process rcall  again  ;c
 
 label interact
    begin  chat-entry rcall  again  ;c
-
-.ifdef tasking
-
-label serial-chat-task
-   serial-init rcall  ( init uart or i2c)
-
-   ( Call application start, if app present)
-   app-start rcall
-
-   begin  interact rcall  again  ;c
-
-.else
-
-RESET handler
-   ( Before we do anything else, let's start with a clean slate.)
-   @ram y ldiw  #ram x ldiw  g0 clr  begin  y+ g0 st  1 x sbiw  0= until
-
-   stack-bottom x ldiw  SPH xh out  SPL xl out
-
-   serial-init rcall  ( init uart or i2c)
-
-   ( Call application start, if app present)
-   app-start rcall
-
-   begin  interact rcall  again  ;c
-
-.then  ( tasking)

@@ -15,10 +15,6 @@
 
 loading AVR tasks (simple)
 
-__meta
-
-2 var up  ( user pointer)
-
 ( Allocate the two stacks. By making the stack + user area exactly 64
   bytes, we can xor the user pointer with 64 to switch tasks!
 
@@ -28,15 +24,37 @@ __meta
   "loops" through your tasks.
 
   The first word - really the first *byte* - of the user area is the status
-  flag; the second is the saved sp. A status of 0 means runnable; non-zero
+  flag; the second is the saved sp. A status of that is <0 means runnable; >=0
   means stopped. Doing it this way makes it easy to use the status field as a
   counting semaphore.)
 
-@ram #ram +
-  2 cells - dup constant task1-user-area
- 32 cells -     constant task2-user-area
+assembler
+( Macro to switch to the "next" task; in this case it just toggles between
+  *two* tasks. Used in yield and also in boot RESET startup code, which
+  sets up the task user areas.)
 
-( World's shortest multi-tasker!)
+: next-task   asm{  32 cells xl ldi  xl yl eor } ;  ( change if stacks change)
+: app-yield   asm{  @boot 1 vectors + call } ;
+forth
+
+__meta
+
+@ram #ram +
+  2 cells - dup equ chat-user-area
+ 32 cells -     equ app-user-area
+
+2 var up  ( user pointer)
+
+( We have to make sure that the very *first* piece of code loaded into the
+  boot region, after the RESET vector, is yield.)
+
+here  origin 1 vectors +  xor .if
+   origin  1 vectors +  goto
+   warn"
+Boot region contains code after the RESET vector. This will break
+the tasking code. That code has been removed... "
+.then
+
 label yield
    z pushw  y pushw  0 pushw  ( XXX change this to suit your needs)
    up y ldw  ( get current user pointer)
@@ -45,28 +63,28 @@ label yield
    ( We have to find a task to run. It's possible that an interrupt could
      wake a sleeping task, so we just try and try until something is ready.
 
-     If one of the tasks is a chat/debug stub, its status is always 0, so
+     If one of the tasks is a chat/debug stub, its status is always <0, so
      it will always run.)
 
    begin
-      ( Switch tasks - by xoring a bit in y!)  64 xl ldi  xl yl eor
+      ( Switch tasks - by xoring a bit in y!)  next-task
       ( If you had more tasks, you would add and mask.)
-      0 ,y xl ld ( status byte)  xl tst  0= until
+      0 ,y xl ld ( status byte)  xl tst  0< until
 
-   ( Found one; fall through to restore to run it.)
+   ( Found one; fall through to run it.)
 
-( XXX is there a better name for this?)
-label restore
+label run-task
    up y stw  ( set user pointer)
    2 x ldu  sp!  ( restore sp from user area)
    0 popw  y popw  z popw  ( this has to match the pushes, in reverse)
    ret  ;c
 
 ( setup-task has to leave space for, or push a value for, every register
-  mentioned in yield and restore. In this case, we are saving and restoring
+  mentioned in yield and run-task. In this case, we are saving and restoring
   three register pairs: 0/1, y, and z. We don't care what their initial
-  values are, but we have to make space for them, so that the initial restore
-  which sets things running will end up with sp pointing to the right place.)
+  values are, but we have to make space for them, so that the initial call
+  to run-task which sets things running will end up with sp pointing to the
+  right place.)
 
 label setup-task  ( initial pc in x, user area in y)
    ( Create an initial stack frame, including starting PC.)
@@ -75,7 +93,7 @@ label setup-task  ( initial pc in x, user area in y)
    ( push initial regs: 3*2 + 1 for empty descending fixup)
    7 z sbiw  ( reg values are all "don't care")
    2 z stu  ( save temp sp to user area)
-   0 x ldiw  0 x stu  ( set status to zero: runnable)
+   "00ff x ldiw  0 x stu  ( set initial status: runnable)
    ret  ;c
 
 comment
@@ -84,14 +102,14 @@ comment
   because it sets up and runs to top-level routines that make up your
   program. Consider this a template to start from.)
 
-label task1
+label chat-task
    ( do some init stuff)
    begin  ...  yield rcall ...  again  ;c
 
-label task2  ( same structure as task1)  ;c
+label app-task  ...  ( same structure)  ;c
 
 RESET handler
-label start-both-tasks
+label start-tasks
    ( Before we do anything else, let's start with a clean slate, by zeroing
      the entire RAM.)
 
@@ -102,11 +120,12 @@ label start-both-tasks
 
    @ram #ram +  64 cells - 1- x ldiw  sp!-unsafe
 
-   task1-user-area y ldiw
-   task1 2/ x ldiw ( starting pc)
+   app-user-area y ldiw
+   app-task ( app RESET vector) 2/ x ldiw  ( starting pc)
    setup-task rcall
 
-   ( switch user areas)  64 xl ldi  xl yl eor
-   task2 2/ x ldiw  ( starting pc)
-   setup-task rcall  restore rjmp  ( this starts task2 running)  ;c
+   ( switch user areas)  next-task
+   chat-task 2/ x ldiw ( starting pc)
+   setup-task rcall
+   run-task rjmp  ( this starts chat-task running)  ;c
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
