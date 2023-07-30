@@ -287,14 +287,15 @@ ld target/ARM/stm32/bitbanged-spi-full-duplex.mu4
    STOPF ?i2c-status drop  ( wait for it to happen) ;
 
 ( read=1, write=0)
-: i2c-start?  ( 'count rd/nwr - nack?)
+: i2c-start?  ( count rd/nwr - nack?)
    ( read=1, write=0) #10 <<
    addr c@ ( slave-addr, low bit 0) +
-   over h@ ( count) #16 << +  I2C2_CR2 !
+   swap ( count) #16 << +  I2C2_CR2 !
    data p !
 
+.ifdef i2c-multiple-starts
    ( See if device responds.)
-   1000 ( #tries)
+   4 ( #tries)
    begin
       [ NACKF STOPF + #] I2C2_ICR !  ( clear any STOPF or NACKF bits)
       START I2C2_CR2 set!
@@ -303,17 +304,34 @@ ld target/ARM/stm32/bitbanged-spi-full-duplex.mu4
    while
       ( nack; send STOP bit; delay; try again)
       i2c-stop  100 wait
+      result c@ 1+  result c!  ( count the nack)
    1- =until
    ( nacked over and over; give up)
-   swap h!  ( status=Bad)  -1 ( nack?)
+   drop  -1 ( nack?)  ^
    then
    ( got something other than nack; continue)
-   swap h!  0 ;
+   drop   0 ;
+
+.else
+
+   [ NACKF STOPF + #] I2C2_ICR !  ( clear any STOPF or NACKF bits)
+   START I2C2_CR2 set!
+   [ TC NACKF TXIS RXNE + + + #] ?i2c-status
+   NACKF and if
+      ( nack; send STOP bit; delay)
+      i2c-stop  100 wait
+      result c@ 1+  result c!  ( count the nack)
+      -1 ^
+   then
+   ( got something other than nack; continue)
+   0 ;
+
+.then
 
 : i2c-send-recv
-   0 result c!  ( status=Ok)
-   out-count      0 ( write)  i2c-start? if ^ then  begin  p* i2c-send  until
-   in-count   ?if 1 ( read)   i2c-start? if ^ then  begin  i2c-recv p&  until  then
+   0 result c!  ( Ok)
+   out-count h@     0 ( write)  i2c-start? if ^ then  begin  p* i2c-send  until
+   in-count  h@ ?if 1 ( read)   i2c-start? if ^ then  begin  i2c-recv p&  until  then
    i2c-stop  100 wait ( a small delay helps!) ;
 
 
@@ -402,7 +420,7 @@ variable #nacks
       0 #nacks ! ;
 
 ( send/recv)
-: s/r  ( #out #in - continue?)  in-count h!  out-count h!  i2c-send-recv
+: s/r  ( #out #in)  in-count h!  out-count h!  i2c-send-recv
    result c@  #nacks +! ;
 
 : #out  p @ data - ;
@@ -415,6 +433,9 @@ variable #nacks
 : ix  80 0 do    i  data 1+ i +  c!  loop ;
 : iz  80 0 do  0ff  data 1+ i +  c!  loop ;
 : ixf  ( - #out)  0  40 for  dup p& 1+  dup p& 1+  1 p&  next  drop  #out ;
+
+: ee  ( reset eeprom data)
+   0 ii-set-addr  44 33 22 d0 19 data c!+ c!+ c!+ c!+ c!  5 0 s/r ;
 
 : ii-rd  ( count space addr)  ii-set-addr  14 + data c!  1 swap s/r ;
 : ii-wr  ( count space addr)  ii-set-addr  17 + data c!  ix  1+ 0 s/r ;
