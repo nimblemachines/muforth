@@ -15,6 +15,7 @@ label catch
    sp@  2 x adiw ( skip ra)  exc-sp x stw  ret  ;c
 
 label throw
+label restart
    exc-sp x ldw  sp!
    exc-pc x ldw  x pushw  ret  ;c
 
@@ -57,17 +58,12 @@ Register-use:
 
 
 ( Ack TWINT. Make sure TWEA and TWEN also set. Then Wait for TWINT; read
-  status; mask prescaler bits; return in xl)
+  status; mask prescaler bits; return status in xl. Clobbers xh.)
 
 label await-twint
    tw-reset xh ldi  TWCR xh sts  ( ack TWINT)
    begin  yield rcall  TWCR xl lds  TWINT xl sbrs  again
    TWSR xl lds  0f8 xl andi  ret  ;c
-
-( XXX Let's make this an rjmp for now. If it seems like the right solution
-  we can rename restart to throw. ;-)
-
-label restart   throw rjmp  ;c
 
 label recv-byte
    await-twint rcall
@@ -103,18 +99,16 @@ label send-another?
 label send-byte
    TWDR xl sts  send-another? rjmp  ;c
 
-( Like the read-memory commands, we expect a start/restart to initiate the
-  read.)
+( As with the read-memory commands, we expect a start/restart to initiate
+  the read.)
 
-( XXX we can use the stack here)
 label send-word
-   x 0 movw  expect-start rcall
-   0 xl mov  send-byte rcall  1 xl mov  send-byte rjmp  ;c
+   x pushw  expect-start rcall
+   xl pop  send-byte rcall  xl pop  send-byte rjmp  ;c
 
-( XXX ditto here: use the stack)
 label recv-word
-   recv-byte rcall  xl 0 mov
-   recv-byte rcall  xl 1 mov  0 x movw  ret  ;c
+   recv-byte rcall  xl push
+   recv-byte rcall  xl xh mov  xl pop  ret  ;c
 
 ( EEPROM read/write.)
 ld target/AVR/eeprom.mu4
