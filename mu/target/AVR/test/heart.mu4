@@ -1,0 +1,68 @@
+( This file is part of muforth: https://muforth.nimblemachines.com/
+
+  Copyright 2012-2023 David Frech. (Read the LICENSE for details.)
+
+loading AVR heartbeat (software PWM) (testing)
+
+__meta
+hex
+
+( Output to modulate - probably connected to an LED.)
+4 PORTA ( bit port) 2constant heart-led
+
+( We want the heartbeat to be a triangle wave. The simplest way to achieve
+  this, with the fewest glitches and corner cases, is to XOR a sawtooth
+  wave at frequency f with a polarity square wave at f/2.)
+
+( 00 01 02 ... fc fd fe ff 00 01 02 ... fc fd fe ff     Sawtooth
+  00 00 00 ... 00 00 00 00 ff ff ff ... ff ff ff ff     Polarity
+  00 01 02 ... fc fd fe ff ff fe fd ... 03 02 01 00     Output)
+
+( These two values are modified by timer overflow interrupt.)
+1 var heart-index     ( how far we are into our 256-point pwm cycle)
+1 var heart-wakeups   ( decr by timer ISR when index rolls over)
+
+( These three values are modified by the heartbeat task, which is woken up
+  every time the interrupt's increment of heart-index overflows.)
+1 var heart-sawtooth  ( current sawtooth pwm value)
+1 var heart-polarity  ( current polarity value - 00 or ff)
+1 var heart-output    ( current output pwm = sawtooth xor polarity)
+
+( At 8M clock, timer overflows at 31.25k, or every 32us.
+
+  We increment heart-index by 2, so software PWM loop takes 128 cycles;
+  otherwise, at 8M clock the heartbeat is a bit too slow!)
+
+TIMER0_OVF handler  ( Timer/Counter0 Overflow)
+label timer0-overflow-handler
+   x pushw  SREG xl in  xl push  ( push X and SREG)
+   heart-index xl lds  -2 xl subi  heart-index xl sts
+   0= if ( index rolled over)
+      heart-wakeups xh lds  xh dec  heart-wakeups xh sts
+   then
+   heart-output xh lds  xh xl cp ( index - output)
+   u< if  heart-led cbi  ( LED on)   else
+          heart-led sbi  ( LED off)  then
+   ( Restore SREG, pop xl & xh, and exit handler)
+   xl pop  SREG xl out  x popw  reti  ;c
+
+label heart-init
+   heart-led sbi  ( LED off)
+   heart-led DDRA PORTA - + ( convert PORTx to DDRx) sbi  ( set pin as output)
+   xl clr  heart-index xl sts  heart-wakeups xl sts
+           heart-sawtooth xl sts  heart-polarity xl sts  heart-output xl sts
+   00 xl ldi  TCCR0A xl out  ( set up timer0 - normal mode)
+   01 xl ldi  TCCR0B xl out  ( set timer0 clock to CPU/1)
+   01 xl ldi  TIMSK0 xl out  ( enable TOVR0)
+   sei  ret  ;c
+
+label heart-task
+   cli  heart-wakeups xl lds  xl tst  0< if
+      xl inc  heart-wakeups xl sts  sei
+      heart-sawtooth xl lds  xl inc  heart-sawtooth xl sts
+      heart-polarity xh lds
+      0= if  ( sawtooth rolled over)
+         xh com  heart-polarity xh sts  ( complement)
+      then
+      xh xl eor  heart-output xl sts  ( new output trigger point)
+   then  sei  ret  ;c

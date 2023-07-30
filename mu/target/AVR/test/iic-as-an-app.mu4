@@ -1,0 +1,91 @@
+( This file is part of muforth: https://muforth.nimblemachines.com/
+
+  Copyright 2002-2023 David Frech. (Read the LICENSE for details.)
+
+( We want to rewrite and then test the I2C code as an *app*, with the
+  *serial* bootloader talking to the host. The I2C app will be talking to
+  STM32 code running on a separate instance of muforth.)
+
+( So we can write the I2C app in a natural way, it's going to have its own
+  stack, kind of like a mini-multi-tasker.
+
+  I'm thinking also of having a buffer to record the sequence of I2C status
+  values that are received, as a window into the workings of I2C on AVR.)
+
+loading AVR testing version of I2C code as an "app"
+
+__meta
+
+ram
+64 var status-log  ( we want to use "3f and" to wrap)
+32 cells allot ( stack space)
+2 var our-saved-sp  ( also stack-bottom!)
+2 var their-saved-sp  ( the bootloader's stack pointer)
+2 var exc-pc  ( captured pc and sp for catch and throw)
+2 var exc-sp
+
+app
+ld target/AVR/app-prelude.mu4
+ld target/AVR/test/heart.mu4
+
+hooks application-run-hook
+label restore ( XXX name?)
+   our-saved-sp y ldiw  ( point to "user area")
+   SPL xl in  SPH xh in  2 ,y xl st  3 ,y xh st  ( save their sp)
+   0 ,y xl ld  1 ,y xh ld  SREG g0 in  cli
+   SPH xh out  SPL xl out  ( restore our sp)  SREG g0 out
+   ( XXX pop regs)  0 popw  y popw  z popw  ret  ;c
+
+label yield  ( push regs, save sp)
+   ( XXX push regs)  z pushw  y pushw  0 pushw
+   our-saved-sp y ldiw  ( point to "user area")
+   SPL xl in  SPH xh in  0 ,y xl st  1 ,y xh st  ( save our sp)
+   2 ,y xl ld  3 ,y xh ld  SREG g0 in  cli
+   SPH xh out  SPL xl out  ( restore their sp)  SREG g0 out
+   ret  ;c
+
+label catch
+   x popw  x pushw  exc-pc x stw
+   SPL xl in  SPH xh in  2 x adiw ( skip ra)  exc-sp x stw  ret  ;c
+   
+label throw
+   exc-sp x ldw  SREG g0 in  cli
+   SPH xh sts  SPL xl sts  SREG g0 out
+   exc-pc x ldw  x pushw  ret  ;c
+
+hooks application-stop-hook
+label application-stop
+   cli  ret  ;c
+
+( All unset vectors - in app space - should stop the application and then
+  jump to bootloader reset vector.)
+
+-- default-handler
+label default-interrupt-handler
+   application-stop c  @boot jmp  ;c
+
+( Testing - crashed when I set up the I2C chat. Let's start small.)
+label just-the-heartbeat
+   heart-init rcall  begin  yield rcall  heart-task rcall  again  ;c
+
+( XXX we have an interesting choice: we can run the *-init routines in
+  the app-start-hook [aka reset handler], or we can put the init code at
+  the start of the app, to run *once*. We are doing the latter here.)
+
+-- RESET handler
+label heart-setup
+   ( Create an initial stack frame, including starting PC.)
+   our-saved-sp y ldiw  ( point to "user area")
+   just-the-heartbeat 2/ x ldiw  -y xl st  -y xh st  ( big endian!)
+   ( XXX push initial regs)
+   1 y sbiw ( empty descending stack!)  our-saved-sp y stw  ret  ;c
+
+( Log the status byte from TWSR, passed in xl.)
+-- label log-init   status-log y ldiw  ret  ;c
+label log-twsr   y+ xl st  63 yl andi ( wrap)  ret  ;c
+
+( Load core I2C chat code.)
+ld target/AVR/test/chat-iic-core.mu4
+
+( Load chat entry, dispatch, and init.)
+ld target/AVR/test/chat-loop.mu4
