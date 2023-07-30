@@ -19,26 +19,27 @@ label version-cmd
 label set-addr-cmd
    recv-word rcall  x z movw  ret  ;c
 
-( XXX For simplicity, disable interrupts while our code executes. This is
-  not ideal, as the user doesn't get a good sense of whether interrupts are
-  enabled or not; they will always show as *disabled*.)
+( We treat the interrupt enable [I] bit specially. When running code we
+  combine the *current* state of the I bit with the rest of the status bits
+  from the stack frame. This way the user knows the state of the I bit, and
+  it doesn't accidentally get set or reset just by running a piece of code.)
 
 ( Host will use set-address to set Z to new SP.)
 label run-cmd
-   x popw  ( pop SREG+padding)  SREG xl out  cli
-   SPH zh out  SPL zl out
+   SREG xh in  80 xh andi  ( get current I bit)
+   cli  SPH zh out  SPL zl out  ( safely set SP)
+   xl pop ( saved SREG)  7f xl andi  xh xl or  SREG xl out
+   xl pop ( padding)
    t popw  x popw  y popw  z popw  ( pop all 4 pointer regs)
    ret  ;c
 
 label get-status-cmd
    sp@  2 x adiw ( skip ra)  send-word rjmp  ;c
 
-( NOTE: This code assumes that the app is interrupt-driven!)
-( XXX When we restart the app, it's usually because we have re-flashed it.
-  We need to re-run setup-task for the app task before starting it!)
+( NOTE: When we stop the app task, we disable interrupts, in case it is
+  using them. When we start the task, it is up to the app to re-enable
+  interrupts or not.)
 
-( Start and stop the app by changing its status byte.)
-label app-start     0ff xl ldi  app-user-area xl sts  sei  ret  ;c
 label app-stop     cli  xl clr  app-user-area xl sts  ret  ;c
 
 ( Command dispatch.)
