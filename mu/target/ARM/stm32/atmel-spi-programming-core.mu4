@@ -52,18 +52,24 @@ ram  wipe
   then the program.)
 
 ( Let's put the big stuff first. Makes it easy to find when debugging.)
-here equ data        256 allot  ( memory read/write buffer)
-here equ semaphore  cell allot  ( semaphore + stm32 command)
+here equ data         256 allot  ( memory read/write buffer)
+here equ semaphore   cell allot  ( semaphore + stm32 command)
 
-here equ cmd           1 allot  ( flash command)
-here equ addr                   ( flash addr)
-here equ addr-hi       1 allot
-here equ addr-lo       1 allot
-here equ result                 ( single byte result)
-here equ toggle        1 allot  ( flash command toggle - for AVR)
-here equ count                  ( byte count to transfer)
-here equ out-count     2 allot  ( byte count to write)
-here equ in-count      2 allot  ( byte count to read)
+( This command block is pretty specific to AVR/AT89LP SPI programming.)
+here equ cmd         1 allot  ( flash command)
+here equ addr                 ( flash addr)
+here equ addr-hi     1 allot
+here equ addr-lo     1 allot
+here equ result               ( single byte result)
+here equ toggle      1 allot  ( flash command toggle - for AVR)
+here equ count       2 allot  ( byte count to transfer)
+                     2 allot  ( padding to word boundary)
+
+( This is for UART and I2C communications, in concert with the data array.)
+here equ station     1 allot  ( slave/target/station address for I2C/RS485 bus)
+here equ #send       1 allot  ( byte count to send)
+here equ #recv       1 allot  ( byte count to recv)
+here equ nack        1 allot  ( NACK flag)
 
 hex
 
@@ -102,6 +108,8 @@ variable p
 : rst/  ( de-assert /RST)   [ 1 7 << #] bit/ ;
 : rst\  ( assert /RST)      [ 1 7 << #] bit\ ;
 
+( Default to assembler versions of the bitbanging code.)
+-d fast-bits
 ld target/ARM/stm32/bitbanged-spi-full-duplex.mu4
 
 ( Send and receive a full 32 bits.)
@@ -217,8 +225,8 @@ ld target/ARM/stm32/bitbanged-spi-full-duplex.mu4
 : uart-send  ( b)     [ 1 #7 << ( TXE bit)  #] ?status  USART1_TDR ! ;
 
 : uart-send-recv
-   data p !  out-count h@ for  p* uart-send  next
-   data p !   in-count h@ for  uart-recv p&  next ;
+   data p !  #send c@ for  p* uart-send  next
+   data p !  #recv c@ for  uart-recv p&  next ;
 
 
 -- ------------------------------------------------------------------------
@@ -274,65 +282,42 @@ ld target/ARM/stm32/bitbanged-spi-full-duplex.mu4
 1 #13 << equ START
 1 #14 << equ STOP
 
-: i2c-send  ( b - done?)
-   [ TC TXIS + #] ?i2c-status
-   TXIS and if  I2C2_TXDR !  0  ^  then  ( TC)  drop ( b)  -1 ;
-
-: i2c-recv  ( - done? b)
-   [ TC RXNE + #] ?i2c-status
-   RXNE and if  0  I2C2_RXDR @  ^  then  ( TC)  -1 0 ;
-
-: i2c-stop
-   STOP I2C2_CR2 set! ( request STOP bit generation)
-   STOPF ?i2c-status drop  ( wait for it to happen) ;
-
 ( read=1, write=0)
-: i2c-start?  ( count rd/nwr - nack?)
+: i2c-start  ( count rd/-wr)
    ( read=1, write=0) #10 <<
-   addr c@ ( slave-addr, low bit 0) +
-   swap ( count) #16 << +  I2C2_CR2 !
+   swap ( count) #16 << +
+   station c@ ( slave-addr, low bit 0) +  I2C2_CR2 !
    data p !
 
-.ifdef i2c-multiple-starts
-   ( See if device responds.)
-   4 ( #tries)
-   begin
-      [ NACKF STOPF + #] I2C2_ICR !  ( clear any STOPF or NACKF bits)
-      START I2C2_CR2 set!
-      [ TC NACKF TXIS RXNE + + + #] ?i2c-status
-      NACKF and
-   while
-      ( nack; send STOP bit; delay; try again)
-      i2c-stop  100 wait
-      result c@ 1+  result c!  ( count the nack)
-   1- =until
-   ( nacked over and over; give up)
-   drop  -1 ( nack?)  ^
-   then
-   ( got something other than nack; continue)
-   drop   0 ;
+   START I2C2_CR2 set! ( send start bit and addr+r/-wr) ;
 
-.else
+( If we got a NACK back, store a 1 in the nack slot, and return to to the
+  *caller* of i2c-send-recv with an empty stack.
 
-   [ NACKF STOPF + #] I2C2_ICR !  ( clear any STOPF or NACKF bits)
-   START I2C2_CR2 set!
-   [ TC NACKF TXIS RXNE + + + #] ?i2c-status
-   NACKF and if
-      ( nack; send STOP bit; delay)
-      i2c-stop  100 wait
-      result c@ 1+  result c!  ( count the nack)
-      -1 ^
-   then
-   ( got something other than nack; continue)
-   0 ;
+  If we got a valid status and no NACK, return that status to our caller.)
 
-.then
+( XXX Ugly but simple - ?nack exits from i2c-send-recv by dropping 3 ra's)
 
+: ?nack  ( status-mask - status | <nothing>)
+   ?i2c-status
+   dup NACKF and if
+      NACKF I2C2_ICR !  ( clear NACKF)  drop ( status)
+      r> drop  r> drop  r> drop  ( exit from i2c-send-recv)
+      1 nack c!  ( set the nack flag for usb client)
+   then ;
+
+: i2c-send?  ( - more?)  [ NACKF TC TXIS + + #] ?nack  TXIS and ;
+: i2c-recv?  ( - more?)  [ NACKF TC RXNE + + #] ?nack  RXNE and ;
+
+: i2c-send-buf   begin  i2c-send? while  p* I2C2_TXDR !  repeat ;
+: i2c-recv-buf   begin  i2c-recv? while  I2C2_RXDR @ p&  repeat ;
+
+( Send/recv once. Caller needs to deal with retrying after a NACK.)
 : i2c-send-recv
-   0 result c!  ( Ok)
-   out-count h@     0 ( write)  i2c-start? if ^ then  begin  p* i2c-send  until
-   in-count  h@ ?if 1 ( read)   i2c-start? if ^ then  begin  i2c-recv p&  until  then
-   i2c-stop  100 wait ( a small delay helps!) ;
+   0 nack c!  ( Ok)
+   #send c@     0 ( write)  i2c-start  i2c-send-buf
+   #recv c@ ?if 1 ( read)   i2c-start  i2c-recv-buf  then
+   STOP I2C2_CR2 set! ( send STOP bit)  100 wait ;
 
 
 -- ------------------------------------------------------------------------
@@ -412,24 +397,56 @@ label startup
 
 .ifdef i2c
 
-: 5ms  [ cpuclk #200 /  #13 / #] wait ;
+( For recording the NACKs resulting from a series of send-recv calls. This
+  way it's possible, by counting, to see which calls got NACKed and which
+  succeeded.)
 
-variable #nacks
+#128 buffer tears  ( as in "trail of")
+variable t
+: #t  t @ tears - ;
+: t&  t @  c!  1 t +! ;
+
 : ii  clock-init  led-init  spi-init  i2c-init  flash-leds
-      0d0 addr c! ( slave address) rst\  1000 wait  rst/
-      0 #nacks ! ;
+      0d0 station c! ( i2c address) rst\  1000 wait  rst/
+      tears t ! ;
 
+( Useful delays if we want them.)
+( Compute the number of times to loop. Do this on the host, then pass the
+  result to wait, which consumes a loop count.)
+
+( We have to calculate this here because cpuclk is only visible in meta
+  mode. ;-)
+
+cpuclk ( clks/s)  #1,000,000 ( us/s) /  ( => clks/us)
+{
+: us  ( us)
+   [ ( clks/us) #] *  ( => clks)  #13 ( clks/loop) /  ( => loops) ;
+
+: ms   #1000 *  us ;
+}
+
+( Try a few times if we get a NACK.)
 ( send/recv)
-: s/r  ( #out #in)  in-count h!  out-count h!  i2c-send-recv
-   result c@  #nacks +! ;
+: s/r  ( #out #in)
+   #recv c!  #send c!
+   0 ( #nacks)  #10 ( tries)
+   begin
+      i2c-send-recv  nack c@
+   while
+      [ 5 ms #] wait  swap 1+ swap  1- dup 0=
+   until
+   then  drop ( tries)  t& ( record tear) ;
 
 : #out  p @ data - ;
 
 : iv  10 data c! 1 0 s/r  14 data c! 1 4 s/r ;
 : isp  13 data c! 1 2 s/r  data c@+ c@ lohi> 1+ ;
 : ii-set-addr  ( a)  >hilo 11 data c!+ c!+ c!  3 0 s/r ;
-: iaa  ( addr)
-  10 for  dup ii-set-addr  next drop ;
+
+: ii-stop   1b data c!  1 0 s/r ;
+: ii-start  1a data c!  1 0 s/r ;
+
+: iaa  ( addr)  10 for  dup ii-set-addr  next drop ;
 : ix  80 0 do    i  data 1+ i +  c!  loop ;
 : iz  80 0 do  0ff  data 1+ i +  c!  loop ;
 : ixf  ( - #out)  0  40 for  dup p& 1+  dup p& 1+  1 p&  next  drop  #out ;
@@ -460,17 +477,12 @@ variable #nacks
    0 ii-set-addr
    11 ( re-enable RWW)  ii-set-flash-cmd  0 s/r ;
 
-: ?nack  #nacks @ if  r> drop  then ;
-
 : ii-wr-flash  ( addr)
-   0 #nacks !
-   dup ii-flash-erase  ?nack
-   dup ii-flash-write-words  ?nack
-       ii-flash-write-page  ?nack
+   ii-stop
+   dup ii-flash-erase
+   dup ii-flash-write-words
+       ii-flash-write-page
    ii-flash-enable ;
-
-: ii-stop   1b data c!  1 0 s/r ;
-: ii-start  1a data c!  1 0 s/r ;
 
 .then  ( i2c)
 

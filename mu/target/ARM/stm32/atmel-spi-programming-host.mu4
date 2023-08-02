@@ -27,15 +27,20 @@ decimal
 dup constant data      256 +  ( memory read/write buffer)
 dup constant semaphore   4 +  ( semaphore + stm32 command)
 
+( This command block is pretty specific to AVR/AT89LP SPI programming.)
 dup constant cmd         1 +  ( flash command)
            ( addr )      2 +  ( flash addr: high byte, low byte)
            ( result )         ( single byte result)
            ( toggle )    1 +  ( flash command toggle - for AVR)
-           ( count )          ( byte count to transfer)
-           ( out-count)  2 +  ( byte count to send)
-           ( in-count)   2 +  ( byte count to recv)
+           ( count )     2 +  ( byte count to transfer)
+dup cmd - constant #flash-cmd ( length of flash cmd buffer)
+                         2 +  ( padding to word boundary)
 
-cmd - constant #cmd           ( length of cmd buffer)
+( This is for UART and I2C communications, in concert with the data array.
+  It consists of 4 bytes: station, #send, #recv, #err. We call it
+  "serial-cmd" since it's metadata for the serial comm words.)
+
+constant serial-cmd
 
 hex
 
@@ -60,6 +65,9 @@ hex
 : spi.bulk-read      15 rx-cmd ;
 : spi.bulk-write     16 rx-cmd ;
 
+( These are for serial communications.)
+: uart.send-recv     17 rx-cmd ;
+: i2c.send-recv      18 rx-cmd ;
 
 variable spy  ( to spy on the protocol)
 : spy-write  ( buf count)
@@ -87,7 +95,7 @@ variable spy  ( to spy on the protocol)
    pad m !
    rot m& ( cmd)  swap >lohi m& m& ( addr)  m& ( toggle)
    r@ >hilo m& m& ( count)
-   pad cmd #cmd st.write  pad #cmd spy-write
+   pad cmd #flash-cmd st.write  pad #flash-cmd spy-write
    2pop ;
 
 ( The existing AVR code needs the following commands defined:)
@@ -136,7 +144,7 @@ variable spy  ( to spy on the protocol)
 : setup-bulk  ( cmd addr count)
    pad m !
    rot m& ( cmd)  swap >lohi m& m& ( addr)  0 m& ( result)  >hilo m& m& ( count)
-   pad cmd #cmd st.write  pad #cmd spy-write ;
+   pad cmd #flash-cmd st.write  pad #flash-cmd spy-write ;
 
 ( Setup a single cmd, execute it, and read back the result.)
 : at89.single  ( cmd addr)

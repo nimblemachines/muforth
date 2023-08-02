@@ -1,0 +1,196 @@
+( This file is part of muforth: https://muforth.nimblemachines.com/
+
+  Copyright 2002-2023 David Frech. (Read the LICENSE for details.)
+
+( The following is code to talk to a simple "debug stub" running on an
+  Atmel AVR. The chip is addressed using a station address. Note that I2C
+  station addresses are sent shifted left, with LSB = 0.)
+
+( You can find the debug stub's code in target/AVR/chat-iic-core.mu4)
+
+( This code uses code running on an STM32 Discovery board as an
+  interlocutor, converting packets of data into I2C exchanges with a slave
+  device.
+
+  *That* code is in target/ARM/stm32/atmel-spi-programming-core.mu4, and
+  our interface to it is in
+  target/ARM/stm32/atmel-spi-programming-host.mu4.)
+
+hex
+
+( Taking inspiration from the wildly successful HC08 serial chat protocol.
+
+  Responds to the following commands. NOTE: these are hex values!
+
+00 - 0f  idle        - these command bytes are ignored
+1c - ff  idle        - these command bytes are ignored
+
+10  version-addr     - get the address of the version commit
+11  set-addr         - set dptr to 16-bit address
+12  run              - set the machine SP, pop R1, PSW, and PC
+13  get-status       - get the machine SP
+
+14  read-flash       - read one byte of flash, incr Z
+15  read-data        - read one byte of ram/data space, incr Z
+16  read-eeprom      - read one byte of xram, incr Z
+
+17  write-flash      - write a word to flash page buffer, incr Z by 2
+18  write-data       - write one byte to ram/data space, incr Z
+19  write-eeprom     - write one byte to eeprom, incr Z
+
+1a  app-start
+1b  app-stop
+)
+
+variable station  0d0 station !  ( default to master for testing)
+
+( The primitive we have available is simple: i2c-send-recv. It will send
+  out-count characters from a buffer and then turn around and receive
+  in-count characters into that same buffer.
+
+  The send and receive counts, a NACK flag, and a station address, are
+  contained in a separate command buffer.
+
+  The data buffer and the command buffers are passed to and from the STM32
+  via st.read and st.write - reads and writes via the ST-LINK interface.)
+
+( Let's use our "packet" convention.)
+: <pkt   pad m ! ;
+: #pkt   ( - #pkt)  m @ pad - ;  ( size of packet buffer)
+
+: >b   m& ;
+: >w   >hilo >b >b ;
+
+: b>   m* ;
+: w>   b> b> lohi> ;
+
+( Include the contents of a buffer in the packet.)
+: >buf   ( buf u)
+   tuck  m @ ( dest)  swap cmove  m +! ;
+
+variable cmd  ( byte counts and station address)
+
+( NOTE: Sending and receiving zero-length USB packets can cause BSOD
+  *crashes* on Windows when using WSL! This is fixed in recent [> 3.1.0]
+  versions of usbipd-win, but to be safe - and more efficient - let's make
+  sure to only send and receive non-empty USB packets!)
+
+( Send data to stm32, but only if len is non-zero)
+: >data  ( len)  ?if  pad data rot  st.write  then ;
+
+( Read data from stm32, but only if len is non-zero)
+: data>  ( len)  ?if  pad data rot  st.read  then ;
+
+: pkt>   ( #recv)
+   #pkt dup >data             ( copy packet data to stm32)
+
+   ( set up station, #send, #recv)
+   cmd m !  station @ >b  ( #pkt) >b  dup ( #recv) >b
+
+   cmd serial-cmd 4 st.write  ( copy to stm32)
+
+   4 begin  ( try up to 4 times if we get NACKed)
+      i2c.send-recv              ( tell stm32 to transact on I2C bus)
+      cmd serial-cmd 4 st.read   ( read command info - for nack)
+      cmd 3 + c@ ( nack)
+   while
+      0 #5,000,000 nanosleep  ( delay 5ms - chip is probably busy erasing
+                                or programming flash)
+      1- dup 0=
+   until
+      ( NACKed all 4 times)
+      error" There was a problem talking to the chip over I2C."
+   then  drop ( #tries)
+   ( Success!)
+   ( #recv) data>             ( read packet data from stm32)
+   <pkt ( get ready to parse response, if any) ;
+
+: ix.cmd  ( cmd)  <pkt  >b  0 pkt> ;
+
+: ix.get-version
+   10 ix.cmd  <pkt  14 >b  4 pkt>  b> b> b> b> 0123> ;
+
+: ix.set-addr     ( a)     <pkt  11 >b  >w  0 pkt> ;
+: ix.run          ( )            12 ix.cmd ;
+: ix.get-status   ( - rp)  <pkt  13 >b      2 pkt>  w> ;
+
+: ix.app-start   1a ix.cmd ;
+: ix.app-stop    1b ix.cmd ;
+
+: ix.read-buf  ( buf a u cmd)
+   rot ix.set-addr
+   <pkt  >b ( cmd)  dup pkt>  ( buf u)
+   pad -rot cmove ;
+
+( For writing to data and eeprom; cmd contains write+space.)
+: ix.write-buf  ( buf a u cmd)
+   rot ix.set-addr
+   <pkt  >b ( cmd)  >buf  0 pkt> ;
+
+( Flash support.)
+( Helper for copying bytes from a data buffer into the packet buffer.)
+: @>b  ( a - a+1)  c@+ swap  >b ;
+
+: ix.write-page  ( buf a u)
+   swap ix.set-addr
+   <pkt  17 >b
+         1+ 2/ for  @>b @>b  ( copy word)  1 ( SELFPRGEN) >b  next  drop  0 pkt> ;
+
+: ix.flash-command  ( a fcmd)
+   swap ix.set-addr  <pkt  17 >b  0 >w ( dummy)  >b  0 pkt> ;
+
+: ix.erase-page    ( a)      3 ( PGERS  + SELFPRGEN) ix.flash-command ;
+: ix.program-page  ( a)      5 ( PGWRT  + SELFPRGEN) ix.flash-command ;
+
+: ix.flash-enable
+   0 ( beginning of flash)  11 ( RWWSRE + SELFPRGEN) ix.flash-command ;
+
+
+-- ------------------------------------------------------------------------
+-- Chat interface
+-- ------------------------------------------------------------------------
+: i.hello  ( - #chunk)
+   st.connect  ( connect to ST-LINK)
+   cr ." Chat firmware version "  ix.get-version
+   radix preserve  hex  sep preserve  -sep   <# 4# 4# #> type
+   #128 ;
+
+( The machine stack pointer - which we are here calling RP - points *below*
+  the last byte pushed. Push is: store, then decrement. This is an "empty
+  descending" stack. Most machines use a "full descending" stack.
+
+  Another way to think of it: for an empty descending stack, push is
+  post-decrement, pop is pre-increment.
+
+  For a full descending stack, push is pre-decrement, pop is
+  post-increment.
+
+  So that we don't go crazy, let's adjust RP so we can pretend it is a full
+  descending stack. When we read RP, we add 1. Before we write it back, we
+  subtract 1.)
+
+: i.run          ( rp)    1- ix.set-addr  ix.run ;
+: i.get-status   ( - rp)     ix.get-status 1+ ;
+
+( Interact code handles which memory space we are reading.)
+: i.read-space     ( buf a u space)  14 +  ix.read-buf ;
+: i.write-data     ( buf a u)        18    ix.write-buf ;
+: i.write-eeprom   ( buf a u)        19    ix.write-buf ;
+
+( For app-stop we send the app-stop command, then the get-status command -
+  to make sure it's done executing - and throw away the rp.)
+
+: i.flash-begin   ix.app-stop  ix.get-status drop ;
+
+( After flashing, we have to re-enable the RWW section and start the app
+  running again.)
+
+: i.flash-end
+   ix.flash-enable  ix.app-start ;
+
+: i.program   ( buf a u)
+   over push  ix.write-page  pop ix.program-page ;
+
+: i2c   chat-via
+   i.hello  i.get-status  i.run  i.read-space  i.write-data  i.write-eeprom
+   chat-fail  chat-fail  i.flash-begin  i.flash-end  ix.erase-page  i.program ;
