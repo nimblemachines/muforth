@@ -107,6 +107,7 @@ variable cmd  ( byte counts and station address)
       1- dup 0=
    until
       ( NACKed all 4 times)
+      2drop
       error" There was a problem talking to the chip over I2C."
    then  drop ( #tries)
    ( Success!)
@@ -188,17 +189,21 @@ variable cmd  ( byte counts and station address)
 ( For app-stop we send the app-stop command, then the get-status command -
   to make sure it's done executing - and throw away the rp.)
 
-: i.flash-begin   ix.app-stop  ix.get-status drop ;
+: i.app-stop
+   ix.app-stop  ix.get-status drop ;
 
-( After flashing, we have to re-enable the RWW section and start the app
-  running again.)
+( Before flashing, make sure to stop the app.)
+: i.flash-begin   i.app-stop ;
 
-: i.flash-end
-   ix.flash-enable  ix.app-start ;
+( After flashing, we have to re-enable the RWW section. But we don't
+  automatically start the app running again. We want to verify first, at
+  the very least!)
+
+: i.flash-end   ix.flash-enable ;
 
 : i.program   ( buf a u)
    over push  ix.write-page  pop ix.program-page ;
 
 : i2c   chat-via
    i.hello  i.get-status  i.run  i.read-space  i.write-data  i.write-eeprom
-   chat-fail  chat-fail  i.flash-begin  i.flash-end  ix.erase-page  i.program ;
+   ix.app-start  i.app-stop  i.flash-begin  i.flash-end  ix.erase-page  i.program ;
