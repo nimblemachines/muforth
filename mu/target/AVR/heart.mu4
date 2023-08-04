@@ -22,10 +22,14 @@ hex
 1 var heart-index     ( how far we are into our 256-point pwm cycle)
 ( heart task's status byte)
 
-( These three values are modified by the heartbeat task, which is woken up
-  every time the interrupt's increment of heart-index overflows.)
-1 var heart-sawtooth  ( current sawtooth pwm value)
-1 var heart-polarity  ( current polarity value - 00 or ff)
+( sawtooth, polarity, and heart-output are modified by the heartbeat task,
+  which is woken up every time the interrupt's increment of heart-index
+  overflows.)
+
+assembler
+\a xl constant sawtooth  ( xl reg = current sawtooth pwm value)
+\a xh constant polarity  ( xh reg = current polarity value - 00 or ff)
+forth
 1 var heart-output    ( current output pwm = sawtooth xor polarity)
 
 ( At 8M clock, timer overflows at 31.25k, or every 32us.
@@ -50,24 +54,23 @@ label timer0-overflow-handler
 label heart-init
    heart-led sbi  ( LED off)
    heart-led DDRB PORTB - + ( convert PORTx to DDRx) sbi  ( set pin as output)
-   xl clr  heart-index xl sts
-           heart-sawtooth xl sts  heart-polarity xl sts  heart-output xl sts
-   00 xl ldi  TCCR0A xl out  ( set up timer0 - normal mode)
-   01 xl ldi  TCCR0B xl out  ( set timer0 clock to CPU/1)
    01 xl ldi  TIMSK0 xl out  ( enable TOVR0)
+              TCCR0B xl out  ( set timer0 clock to CPU/1)
+   00 xl ldi  TCCR0A xl out  ( set up timer0 - normal mode)
+   ( leave xl set to 00!)
+   heart-index xl sts  ( xl is sawtooth)
+   polarity clr  ( xh is polarity)
    ret  ;c
 
 ( We use timer0 overflow to wake the heart task.)
 label heart-task
    heart-init rcall
    begin
-      sei  yield call  ( long call to boot region)
-      heart-sawtooth xl lds  xl inc  heart-sawtooth xl sts
-      heart-polarity xh lds
-      0= if  ( sawtooth rolled over)
-         xh com  heart-polarity xh sts  ( complement)
+      sei  x pushw  yield call  ( long call to boot region)  x popw
+      sawtooth inc  0= if  ( sawtooth rolled over)
+         polarity com  ( complement)
       then
-      xh xl eor  heart-output xl sts  ( new output trigger point)
+      sawtooth g0 mov  polarity g0 eor  heart-output g0 sts  ( new output trigger point)
       ( Consume one of our wakeups.)
-      cli  heart-user-area xl lds  xl inc  heart-user-area xl sts
+      cli  heart-user-area g0 lds  g0 inc  heart-user-area g0 sts
    again  ;c
