@@ -123,19 +123,22 @@ variable cx-space  ( 0 = flash, 1 = data, 2 = eeprom)
 : c.write-eeprom   ( buf a u)
    c.setup-chunk  for  m* cx.write-eeprom  next ;
 
-( Before flashing, we have to stop the app. We get status to make sure it's
-  finished executing.)
+( For app-stop we send the app-stop command, then the get-status command -
+  to make sure it's done executing - and throw away the rp.)
 
-: c.flash-begin
+: c.app-stop
    cx.app-stop  cx.get-status drop ;
 
-( After flashing, we have to re-enable the RWW section and start the app
-  running again.)
+( Before flashing, make sure to stop the app.)
+: c.flash-begin   c.app-stop ;
+
+( After flashing, we have to re-enable the RWW section. But we don't
+  automatically start the app running again. We want to verify first, at
+  the very least!)
 
 : c.flash-end
    0 cx.set-addr ( beginning of flash)
-   0 %0001_0001 ( RWWSRE + SELFPRGEN) cx.write-flash  ( re-enable RWW section)
-   cx.app-start ;
+   0 %0001_0001 ( RWWSRE + SELFPRGEN) cx.write-flash  ( re-enable RWW section) ;
 
 : c.erase     ( a)
    cx.set-addr  0 %0000_0011 ( PGERS + SELFPRGEN) cx.write-flash  ( erase page) ;
@@ -155,7 +158,7 @@ variable cx-space  ( 0 = flash, 1 = data, 2 = eeprom)
 
 : chat   chat-via
    c.hello  c.get-status  c.run  c.read-space  c.write-data  c.write-eeprom
-   chat-fail  chat-fail  c.flash-begin  c.flash-end  c.erase  c.program ;
+   cx.app-start  c.app-stop  c.flash-begin  c.flash-end  c.erase  c.program ;
 
 ( Testing)
 : index  0 \m goto  80 0 do  i \m c,  loop ;
