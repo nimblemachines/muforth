@@ -36,18 +36,22 @@ label uart-init
 ( For both recv-byte and send-byte we want to yield while we are waiting
   for a byte to go out or to come in.)
 
+( Save and restore chat registers around the call to yield.)
+label chat-yield
+   z pushw  0 pushw  yield rcall  0 popw  z popw  ret  ;c
+
 ( Could clobber xh.)
 label recv-command-byte  ( For chat dispatch loop.)
 label recv-byte
    ( Wait for RXC - receive complete)
-   begin  yield rcall  UCSR1A xl in  7 ( RXC) xl sbrs  again
+   begin  chat-yield rcall  UCSR1A xl in  7 ( RXC) xl sbrs  again
    UDR1 xl in  ret  ;c
 
 ( Could clobber xh.)
 label send-byte
    xl push  ( XXX maybe should be saved by yield?)
    ( Wait for UDRE - data register empty)
-   begin  yield rcall  UCSR1A xl in  5 ( UDRE) xl sbrs  again
+   begin  chat-yield rcall  UCSR1A xl in  5 ( UDRE) xl sbrs  again
    xl pop  UDR1 xl out  ret  ;c
 
 label recv-word
@@ -91,6 +95,33 @@ label write-flash-cmd
    recv-word rcall  x 0 movw  recv-byte rcall ( cmd)  do-spm rcall
    2 z adiw  SPMCSR xl in  send-byte rjmp  ;c
 
+( Tasks and user areas.)
+@ram #ram +  2 cells -  dup equ chat-user-area   #32 cells - ( stack)
+             2 cells -      equ heart-user-area  ( who cares)
+
+( This is unfortunate, but when we get here from the boot RESET handler -
+  from create-tasks - y and th have reasonable values: y points to the
+  first available user area below the chat user area and stack, and th points
+  to the chat user area, so that the next created task will link to it.
+
+  When called from the chat command loop, y and t are unknown. So we have
+  to force them to have the same values as they would at reset, otherwise ...
+  BOOM.)
+
+label app-start
+   chat-user-area th ldi  ( so first created task links to chat task)
+   heart-user-area y ldiw  ( start with the first app task)
+
+   ( Read the app RESET vector; if non-empty, call 0000 to create the app's tasks.)
+   0 ( app RESET vector) z ldiw
+   pmz+ g0 ld  pmz g1 ld  g1 g0 and  g0 com  0= not if  ( unset vector)
+      0 call
+   then
+
+   ( Close the circle. th has pointer to last task created. Put it into the
+     chat-task's next pointer, and return.)
+   chat-user-area y ldiw  1 ,y th st  ret  ;c
+
 ( Load chat entry and command loop.)
 ld target/AVR/chat-loop.mu4
 
@@ -99,25 +130,32 @@ label uart-chat-task
    uart-init rcall
    begin  interact rcall  again  ;c
 
+( Create the chat task first, then the app tasks, descending from high
+  memory to low; finally, point the chat task to the first [lowest] app
+  task.
+
+  Return with y pointing to chat-task.)
+
+label create-tasks
+   chat-user-area y ldiw
+   #32 cells ( tl is stack size; th is don't care) tl ldi
+   uart-chat-task 2/ x ldiw ( starting pc)  create-task rcall
+   app-start rjmp  ( return with y pointing to chat task)  ;c
+
 RESET handler
-label start-tasks
+label system-startup
    ( Before we do anything else, let's start with a clean slate, by zeroing
      the entire RAM.)
 
    @ram y ldiw  #ram x ldiw  g0 clr  begin  y+ g0 st  1 x sbiw  0= until
 
    ( Set up a temporary stack - so we can call setup-task! - below the task
-     stacks. In this case there are two stacks, each 32 cells in size.)
+     stacks. Since the stacks consume at most a 256 byte page, the page
+     below the last one will do fine.)
 
-   @ram #ram +  #64 cells - 1- x ldiw  sp!-unsafe
+   @ram #ram +  256 - 1- x ldiw  sp!-unsafe
 
-   ( If an app isn't present, this will crash! The code has to start with a
-     runnable app task present.)
+   ( Create the tasks and start executing! create-tasks should leave y
+     pointing to the first task to run.)
 
-   ( Read the app RESET vector and use it as the task's initial pc.)
-   app-start rcall
-
-   ( switch user areas)  next-task
-   uart-chat-task 2/ x ldiw ( starting pc)
-   setup-task rcall
-   run-task rjmp  ( this starts uart-chat-task running)  ;c
+   create-tasks rcall  run-task rjmp  ( start chat task)  ;c

@@ -4,52 +4,30 @@
 
 ( This is for non-Forth code that simply needs to switch stack pointers
   between two or more independent tasks. Each task has its own stack and a
-  small "user area"; on every task switch a fixed set of registers - common
-  to all tasks! - is pushed and popped.
+  small "user area"; yield does not push or pop any registers: that is each
+  task's responsibility.
 
   This file should be treated as a template; copy and modify it to fit your
-  needs.
-
-  The registers that are saved and restored, the number of tasks, and the
-  size of the stacks are all variables that depend on your use case.)
+  needs.)
 
 loading AVR tasks (simple)
 
-( Allocate the two stacks. By making the stack + user area exactly 64
-  bytes, we can xor the user pointer with 64 to switch tasks!
+( All of the task stacks live in a single 256 byte page - generally the
+  *last* page of the ram. This way task "pointers" only consume a single
+  byte in the user area, and task switching is very fast: a single byte load!
 
-  If we had more tasks - the number of tasks has to be a power of two to
-  use the simple technique we use here - we could do something similar by
-  adding an offset to the user pointer and masking the result, so that it
-  "loops" through your tasks.
+  The first byte of the user area is the status flag; the second byte is
+  "pointer" to the next task. The next two bytes are the saved sp.
 
-  The first word - really the first *byte* - of the user area is the status
-  flag; the second is the saved sp. A status of that is <0 means runnable; >=0
-  means stopped. Doing it this way makes it easy to use the status field as a
-  counting semaphore.)
-
-assembler
-( next-task is a macro to switch to the "next" task; in this case it just
-  toggles between *two* tasks. Used in yield and also in boot RESET startup
-  code, which sets up the task user areas.
-
-  app-yield is a macro that compiles a long call from the app into the
-  bootloader; yield is the first piece of code after the boot RESET vector.)
-
-: next-task   asm{  32 cells xl ldi  xl yl eor } ;  ( change if stacks change)
-: app-yield   asm{  @boot 1 vectors + call } ;
-forth
+  A status byte that is <0 means runnable; >=0 means stopped. Doing it this
+  way makes it easy to use the status field as a counting semaphore.)
 
 __meta
 
-@ram #ram +
-  2 cells - dup equ chat-user-area
- 32 cells -     equ app-user-area
-
 2 var up  ( user pointer)
 
-( We have to make sure that the very *first* piece of code loaded into the
-  boot region, after the RESET vector, is yield.)
+( We have to make sure that the *very* *first* piece of code loaded into
+  the boot region, after the RESET vector, is yield.)
 
 here  origin 1 vectors +  xor .if
    origin  1 vectors +  goto
@@ -58,8 +36,13 @@ Boot region contains code after the RESET vector. This will break
 the tasking code. That code has been removed... "
 .then
 
+hook create-task-hook
+
+( yield by default pushes no registers! The caller is responsible for
+  saving and restoring, around the call to yield, any registers they care
+  about.)
+
 label yield
-   z pushw  y pushw  0 pushw  ( XXX change this to suit your needs)
    up y ldw  ( get current user pointer)
    sp@  2 x stu  ( save sp into user area)
 
@@ -70,76 +53,64 @@ label yield
      it will always run.)
 
    begin
-      ( Switch tasks - by xoring a bit in y!)  next-task
-      ( If you had more tasks, you would add and mask.)
-      0 ,y xl ld ( status byte)  xl tst  0< until
-
-   ( Found one; fall through to run it.)  ;c
+      1 ,y yl ld  ( follow pointer to next task)
+      0 ,y xl ld  ( load task's status byte)
+   xl tst  0< until
+   ( Found a live one; fall through to run it.)  ;c
 
 label run-task
    up y stw  ( set user pointer)
    2 x ldu  sp!  ( restore sp from user area)
-   0 popw  y popw  z popw  ( this has to match the pushes, in reverse)
-   ret  ;c
+   ret  ( run!)  ;c
 
-( Read the app RESET vector and use it as the task's initial pc.)
-( Leaves y pointing to app-user-area.)
-label app-start
-   app-user-area y ldiw
-   0 ( app RESET vector) x ldiw  ( starting pc)
-   x z movw  pmz+ g0 ld  pmz g1 ld  g1 g0 and  g0 com  0= if  ( unset vector)
-      0 x stu  ( set initial status: not runnable)  ret
-   then
-   ( otherwise, good vector; fall thru)  ;c
-
-( setup-task has to leave space for, or push a value for, every register
-  mentioned in yield and run-task. In this case, we are saving and restoring
-  three register pairs: 0/1, y, and z. We don't care what their initial
-  values are, but we have to make space for them, so that the initial call
-  to run-task which sets things running will end up with sp pointing to the
-  right place.)
-
-label setup-task  ( initial pc in x, user area in y)
-   ( Create an initial stack frame, including starting PC.)
-   y z movw  ( z is our temp "stack pointer")
-   -z xl st  -z xh st  ( push pc: big endian!)
-   ( push initial regs: 3*2 + 1 for empty descending fixup)
-   7 z sbiw  ( reg values are all "don't care")
-   2 z stu  ( save temp sp to user area)
-   "00ff x ldiw  0 x stu  ( set initial status: runnable)
+( Enter with:
+    tl = task stack size
+    th = prev user area low byte pointer
+     x = initial pc
+     y = current user area
+  Exit with:
+    th = current user area low byte pointer
+     y = new empty user area
+)
+hooks create-task-hook
+label create-task
+   ( Create an initial stack frame: just the starting PC.)
+   y z movw                ( z is our temp sp)
+   -z xl st  -z xh st      ( push pc: big endian!)
+   1 z sbiw                ( empty descending fixup)
+   2 z stu                 ( save temp sp to user area)
+   "ff xl ldi  0 ,y xl st  ( set initial status: runnable)
+               1 ,y th st  ( pointer to next task)
+   yl th mov               ( next task = this task)
+   tl yl sub  4 yl subi    ( allocate stack and user area; y = new task)
    ret  ;c
 
 comment
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ( This is example code. It has to be loaded *after* all your other code,
-  because it sets up and runs to top-level routines that make up your
+  because it sets up and runs the top-level routines that make up your
   program. Consider this a template to start from.)
 
-label chat-task
-   ( do some init stuff)
-   begin  ...  yield rcall ...  again  ;c
-
-label app-task  ...  ( same structure)  ;c
+( Every task has roughly the following form:)
+label example-task
+   example-init rcall
+   begin  ...  <push regs>  yield rcall  <pop regs>  ...  again  ;c
 
 RESET handler
-label start-tasks
+label system-startup
    ( Before we do anything else, let's start with a clean slate, by zeroing
      the entire RAM.)
 
    @ram y ldiw  #ram x ldiw  g0 clr  begin  y+ g0 st  1 x sbiw  0= until
 
    ( Set up a temporary stack - so we can call setup-task! - below the task
-     stacks. In this case there are two stacks, each 32 cells in size.)
+     stacks. Since the stacks consume at most a 256 byte page, the page
+     below the last one will do fine.)
 
-   @ram #ram +  64 cells - 1- x ldiw  sp!-unsafe
+   @ram #ram +  256 - 1- x ldiw  sp!-unsafe
 
-   ( Read the app RESET vector and use it as the task's initial pc. If the
-     vector is unprogrammed, disable the task.)
+   ( Create the tasks and start executing! create-tasks should leave y
+     pointing to the first task to run.)
 
-   app-start rcall
-
-   ( switch user areas)  next-task
-   chat-task 2/ x ldiw ( starting pc)
-   setup-task rcall
-   run-task rjmp  ( this starts chat-task running)  ;c
+   create-tasks rcall  run-task rjmp  ;c
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
