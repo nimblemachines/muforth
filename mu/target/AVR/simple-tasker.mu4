@@ -24,7 +24,8 @@ loading AVR tasks (simple)
 
 __meta
 
-2 var up  ( user pointer)
+( User pointer is stored in registers r14 and r15. We have made synonyms
+  for the registers in target/AVR/meta.mu4)
 
 ( We have to make sure that the *very* *first* piece of code loaded into
   the boot region, after the RESET vector, is yield.)
@@ -43,8 +44,8 @@ hook create-task-hook
   about.)
 
 label yield
-   up y ldw  ( get current user pointer)
-   sp@  2 x stu  ( save sp into user area)
+   u y movw  ( get user pointer into y)
+   w sp@  2 w stuw  ( get current sp and save it into user area)
 
    ( We have to find a task to run. It's possible that an interrupt could
      wake a sleeping task, so we just try and try until something is ready.
@@ -53,36 +54,36 @@ label yield
      it will always run.)
 
    begin
-      1 ,y yl ld  ( follow pointer to next task)
-      0 ,y xl ld  ( load task's status byte)
-   xl tst  0< until
+      1 yl ldu  ( follow pointer to next task)
+      0 g0 ldu  ( load task's status byte)
+   g0 tst  0< until
    ( Found a live one; fall through to run it.)  ;c
 
 label run-task
-   up y stw  ( set user pointer)
-   2 x ldu  sp!  ( restore sp from user area)
+   y u movw  ( set user pointer from y)
+   2 w lduw  w sp!  ( restore sp from user area)
    ret  ( run!)  ;c
 
 ( Enter with:
-    tl = task stack size
-    th = prev user area low byte pointer
-     x = initial pc
+ h1:h0 = initial pc
+    h2 = task stack size
+    h3 = prev user area low byte pointer
      y = current user area
   Exit with:
-    th = current user area low byte pointer
+    h3 = current user area low byte pointer
      y = new empty user area
 )
 hooks create-task-hook
 label create-task
    ( Create an initial stack frame: just the starting PC.)
-   y z movw                ( z is our temp sp)
-   -z xl st  -z xh st      ( push pc: big endian!)
-   1 z sbiw                ( empty descending fixup)
-   2 z stu                 ( save temp sp to user area)
-   "ff xl ldi  0 ,y xl st  ( set initial status: runnable)
-               1 ,y th st  ( pointer to next task)
-   yl th mov               ( next task = this task)
-   tl yl sub  4 yl subi    ( allocate stack and user area; y = new task)
+   y x movw                ( x is our temp sp)
+   -x h0 st  -x h1 st      ( push pc: big endian!)
+   1 x sbiw                ( empty descending fixup)
+   2 x stuw                ( save temp sp to user area)
+   "ff h0 ldi  0 h0 stu    ( set initial status: runnable)
+               1 h3 stu    ( pointer to prev task)
+   yl h3 mov               ( prev task = this task)
+   h2 yl sub  4 yl subi    ( allocate stack and user area; y = new task)
    ret  ;c
 
 comment
@@ -101,13 +102,13 @@ label system-startup
    ( Before we do anything else, let's start with a clean slate, by zeroing
      the entire RAM.)
 
-   @ram y ldiw  #ram x ldiw  g0 clr  begin  y+ g0 st  1 x sbiw  0= until
+   @ram x ldiw  #ram w ldiw  g0 clr  begin  x+ g0 st  1 w sbiw  0= until
 
    ( Set up a temporary stack - so we can call setup-task! - below the task
      stacks. Since the stacks consume at most a 256 byte page, the page
      below the last one will do fine.)
 
-   @ram #ram +  256 - 1- x ldiw  sp!-unsafe
+   @ram #ram +  #256 - 1- w ldiw  w sp!-iclear
 
    ( Create the tasks and start executing! create-tasks should leave y
      pointing to the first task to run.)

@@ -104,12 +104,12 @@ label write-flash-cmd
   first available user area below the chat user area and stack, and th points
   to the chat user area, so that the next created task will link to it.
 
-  When called from the chat command loop, y and t are unknown. So we have
+  When called from the chat command loop, y and h3 are unknown. So we have
   to force them to have the same values as they would at reset, otherwise ...
   BOOM.)
 
 label app-start
-   chat-user-area th ldi  ( so first created task links to chat task)
+   chat-user-area h3 ldi  ( so first created task links to chat task)
    heart-user-area y ldiw  ( start with the first app task)
 
    ( Read the app RESET vector; if non-empty, call 0000 to create the app's tasks.)
@@ -118,9 +118,9 @@ label app-start
       0 call
    then
 
-   ( Close the circle. th has pointer to last task created. Put it into the
+   ( Close the circle. h3 has pointer to last task created. Put it into the
      chat-task's next pointer, and return.)
-   chat-user-area y ldiw  1 ,y th st  ret  ;c
+   chat-user-area y ldiw  1 h3 stu  ret  ;c
 
 ( Load chat entry and command loop.)
 ld target/AVR/chat-loop.mu4
@@ -138,8 +138,9 @@ label uart-chat-task
 
 label create-tasks
    chat-user-area y ldiw
-   #32 cells ( tl is stack size; th is don't care) tl ldi
-   uart-chat-task 2/ x ldiw ( starting pc)  create-task rcall
+   uart-chat-task 2/ h0 ldiw ( starting pc)
+   #32 cells ( h2 is stack size; h3 [prev] is don't care) h2 ldi
+   create-task rcall
    app-start rjmp  ( return with y pointing to chat task)  ;c
 
 RESET handler
@@ -147,13 +148,13 @@ label system-startup
    ( Before we do anything else, let's start with a clean slate, by zeroing
      the entire RAM.)
 
-   @ram y ldiw  #ram x ldiw  g0 clr  begin  y+ g0 st  1 x sbiw  0= until
+   @ram x ldiw  #ram w ldiw  g0 clr  begin  x+ g0 st  1 w sbiw  0= until
 
    ( Set up a temporary stack - so we can call setup-task! - below the task
      stacks. Since the stacks consume at most a 256 byte page, the page
      below the last one will do fine.)
 
-   @ram #ram +  256 - 1- x ldiw  sp!-unsafe
+   @ram #ram +  #256 - 1- w ldiw  w sp!-iclear
 
    ( Create the tasks and start executing! create-tasks should leave y
      pointing to the first task to run.)
