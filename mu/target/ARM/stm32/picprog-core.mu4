@@ -96,18 +96,31 @@ ld target/ARM/v6-m/kernel-itc.mu4
   mode. It will stop counting and set the "update" flag when the count
   register reaches the reload value.)
 
-( XXX run TIM7 in an endless loop so we can test that TIM6 is doing the
-  right thing? Not a bad idea. TIMx_ARR resets to 0ffff, so we can leave it
-  alone.)
+: ?timer
+   0 TIM6_SR !
+   1 ( CEN) TIM6_CR1 set!
+   begin  TIM6_SR @  until ;
+
+: us  ( n)  ( delay n microseconds)
+   TIM6_ARR !  ?timer ;
+
+: ms  ( n)  #1000 * us ;
+
+
+.ifdef timer-testing
+
+( Run TIM7 in an endless loop at full speed so we can test that TIM6 is doing
+  the right thing. TIMx_ARR resets to 0ffff, so we can leave it alone.)
 
 ( Run timer7 full bore!)
 : timer7-init
-   -- [ cpuclk #1,000,000 / 1- #] TIM7_PSC !  ( set prescaler)
    0 TIM7_PSC !  ( set prescaler)
    1 ( CEN) TIM7_CR1 ! ( start it!) ;
 
-( We are going to use TIM3 to count clock pulses coming out of SPI1 SCK.
-  I'm not convinced that it's working!
+( NOTE: I used this when I was still trying to use the *hardware* SPI
+  interface. I gave up on trying to get this to work and wrote some bitbanging
+  routines instead. I'm leaving this here because it's an example of using a
+  timer to measure some external input - in this case, counting clock edges.
 
   We are going to use the external trigger input, TIM3_ETR, which is AF0 on
   pin PD2.)
@@ -128,25 +141,18 @@ ld target/ARM/v6-m/kernel-itc.mu4
    ( Enable timer.)
    1 ( CEN) TIM3_CR1 ! ;
 
-: ?timer
-   0 TIM6_SR !
-   1 ( CEN) TIM6_CR1 set!
-   begin  TIM6_SR @  until ;
+: ttest  ( n)
+   TIM7_CNT @  swap us  TIM7_CNT @  swap -  0ffff and ;
+
+.then  ( timer-testing)
+
 
 : timer-init
    [ 3 4 << #] RCC_APB1ENR set!  ( enable clocks to TIM6 and TIM7)
-   timer7-init  timer3-init
+.ifdef timer-testing  timer7-init  timer3-init  .then
    8 ( OPM - one pulse mode) TIM6_CR1 !
    [ cpuclk #1,000,000 / 1- #] TIM6_PSC !  ( set prescaler)
    1 TIM6_EGR ! ( generate update event) ;
-
-: us  ( n)  ( delay n microseconds)
-   TIM6_ARR !  ?timer ;
-
-: ms  ( n)  #1000 * us ;
-
-: ttest  ( n)
-   TIM7_CNT @  swap us  TIM7_CNT @  swap - ;
 
 
 -- --------------------------------------------------------------------
@@ -196,6 +202,7 @@ variable p
 
 ( Load the bitbanged SPI code.)
 -d msb-first
+-d fast-bits  ( use the fast assembly code)
 ld target/ARM/stm32/bitbanged-spi-half-duplex.mu4
 
 : t_enter_prog  1 ms ;
@@ -239,6 +246,7 @@ ld target/ARM/stm32/bitbanged-spi-half-duplex.mu4
 
 ( Load the bitbanged SPI code.)
 -d lsb-first
+-d fast-bits  ( use the fast assembly code)
 ld target/ARM/stm32/bitbanged-spi-half-duplex.mu4
 
 : t_enter_prog  1 ms ;
@@ -258,13 +266,13 @@ ld target/ARM/stm32/bitbanged-spi-half-duplex.mu4
   of data, plus a start and stop bit.)
 
 ( Combine a command and payload; send the command; delay.)
-: cmd+payload  ( cmd payload - payload')  7 << +  6 >bits  t_dly ;
+: cmd+payload  ( payload cmd - payload')  swap 7 << +  6 >bits  t_dly ;
 
 ( Send a bare command with no payload; delay.)
-: cmd     ( cmd)  0 cmd+payload drop ;
+: cmd     ( cmd)  0 swap cmd+payload drop ;
 
 ( Send a command; delay; send a payload.)
-: cmd+wr  ( payload cmd)  swap cmd+payload  #16 >bits  drop ;
+: cmd+wr  ( payload cmd)  cmd+payload  #16 >bits  drop ;
 
 ( Send a command; delay; recv a payload.)
 : cmd+rd  ( cmd - payload)  cmd  #16 bits>  #17 u>>  03fff and ;
@@ -278,7 +286,7 @@ ld target/ARM/stm32/bitbanged-spi-half-duplex.mu4
 ( Call this uu because I want to use this PIC as a USB device. ;-)
 : uu  timer-init  spi-init  reset/  +prog ;
 
-( Read device id and revision a few other things.)
+( Read device id and revision and few other things.)
 : rr  uu
       0 config!  p+ p+ p+ p+  7 for  p@ p+  next ;
 
