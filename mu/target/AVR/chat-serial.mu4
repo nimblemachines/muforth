@@ -96,21 +96,21 @@ label write-flash-cmd
    2 z adiw  SPMCSR xl in  send-byte rjmp  ;c
 
 ( Tasks and user areas.)
-@ram #ram +  2 cells -  dup equ chat-user-area   #32 cells - ( stack)
-             2 cells -      equ heart-user-area  ( who cares)
+@ram #ram +  2 cells - ( user)  dup equ chat-user-area     #32 cells - ( stack)
+             2 cells - ( user)  dup equ heart-user-area      8 cells -
+             2 cells - ( user)  dup equ button0-user-area    8 cells -
+             2 cells - ( user)  dup equ button1-user-area    8 cells -
+drop
 
 ( This is unfortunate, but when we get here from the boot RESET handler -
-  from create-tasks - y and th have reasonable values: y points to the
-  first available user area below the chat user area and stack, and th points
-  to the chat user area, so that the next created task will link to it.
+  from create-tasks - h2 points to the chat user area, so that the next
+  created task will link to it.
 
-  When called from the chat command loop, y and h3 are unknown. So we have
-  to force them to have the same values as they would at reset, otherwise ...
-  BOOM.)
+  When called from the chat command loop, h2 is unknown. We have to set it
+  to point to the chat user area, otherwise ... BOOM.)
 
 label app-start
-   chat-user-area h3 ldi  ( so first created task links to chat task)
-   heart-user-area y ldiw  ( start with the first app task)
+   chat-user-area h2 ldi  ( first task defined will link to chat)
 
    ( Read the app RESET vector; if non-empty, call 0000 to create the app's tasks.)
    0 ( app RESET vector) z ldiw
@@ -118,9 +118,10 @@ label app-start
       0 call
    then
 
-   ( Close the circle. h3 has pointer to last task created. Put it into the
+   ( Close the circle. h2 has pointer to last task created. Put it into the
      chat-task's next pointer, and return.)
-   chat-user-area y ldiw  1 h3 stu  ret  ;c
+
+   chat-user-area y ldiw  1 h2 stu  ret  ;c
 
 ( Load chat entry and command loop.)
 ld target/AVR/chat-loop.mu4
@@ -139,8 +140,7 @@ label uart-chat-task
 label create-tasks
    chat-user-area y ldiw
    uart-chat-task 2/ h0 ldiw ( starting pc)
-   #32 cells ( h2 is stack size; h3 [prev] is don't care) h2 ldi
-   create-task rcall
+   create-task rcall  ( leaves h2 pointing to chat-user-area)
    app-start rjmp  ( return with y pointing to chat task)  ;c
 
 RESET handler

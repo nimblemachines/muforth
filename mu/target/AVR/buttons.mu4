@@ -1,0 +1,73 @@
+( This file is part of muforth: https://muforth.nimblemachines.com/
+
+  Copyright 2002-2023 David Frech. (Read the LICENSE for details.)
+
+( Testing out using multiple samples of the pin state to generate debounced
+  button events.)
+
+( We are going to use PA0 and PA1 as our two button inputs. We turn the
+  pullups on, and assume that our switch pulls them to ground. The built-in
+  pullups are about 35Kohm. Maybe a larger external resistor will help. We'll
+  see.
+
+  The timer task will wake our button tasks at intervals; each button task
+  accumulates pin states until it gets 8 consecutive matching values. It will
+  first wait for 8 consecutive zeros [waiting for switch to close], and then
+  wait for 8 consecutive ones [waiting for switch to open].)
+
+__meta
+hex
+
+( Count of times each button has been pushed.)
+1 var #button0
+1 var #button1
+
+label button-init
+   g0 clr  #button0 g0 sts  ( clear button counts)
+           #button1 g0 sts
+   ret  ;c
+
+label nap  ( delay for one tick)
+   h1 push ( save pin samples)
+   u y movw  cli  0 g0 ldu  g0 inc  0 g0 stu  sei  yield call
+   h1 pop  ret  ;c
+
+label button-incr
+   x@ g0 ld  g0 inc  x@ g0 st  ( incr button push count)  ret  ;c
+
+label sample-button0
+   nap rcall  h1 lsl  0 PINA sbic  1 h1 ori  ( sample button input)  ret  ;c
+
+label sample-button1
+   nap rcall  h1 lsl  1 PINA sbic  1 h1 ori  ( sample button input)  ret  ;c
+
+( Timer interrupt will wake us every XXX us.)
+( testing: this drives the LED on PB1.)
+label button0-task
+   button-init rcall
+   0 PORTA sbi  ( enable pullup on PA0)
+   1 DDRB sbi  ( PB1 output)
+   begin
+      1 PORTB sbi  ( LED PB1 off)
+      0ff h1 ldi  ( this is our collection of pin samples)
+      begin  sample-button0 rcall  0= until  ( until 8 consecutive zeros)
+      1 PORTB cbi  ( LED PB1 on)
+      #button0 x ldiw  button-incr rcall  ( incr pushed count)
+      ( h1 is zero)
+      begin  sample-button0 rcall  0ff h1 cpi  0= until  ( until 8 consecutive ones)
+   again  ;c
+
+( Timer interrupt will wake us every XXX us.)
+( testing: this drives the LED on PB2.)
+label button1-task
+   1 PORTA sbi  ( enable pullup on PA1)
+   2 DDRB sbi  ( PB2 output)
+   begin
+      2 PORTB sbi  ( LED PB2 off)
+      0ff h1 ldi  ( this is our collection of pin samples)
+      begin  sample-button1 rcall  0= until  ( until 8 consecutive zeros)
+      2 PORTB cbi  ( LED PB2 on)
+      #button1 x ldiw  button-incr rcall  ( incr pushed count)
+      ( h1 is zero)
+      begin  sample-button1 rcall  0ff h1 cpi  0= until  ( until 8 consecutive ones)
+   again  ;c
