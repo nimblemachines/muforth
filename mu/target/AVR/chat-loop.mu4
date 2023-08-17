@@ -36,6 +36,27 @@ label run-cmd
 label get-status-cmd
    x sp@  2 x adiw ( skip ra)  send-word rjmp  ;c
 
+( This is unfortunate, but when we get here from the boot RESET handler -
+  from create-tasks - h2 points to the chat user area, so that the next
+  created task will link to it.
+
+  When called from the chat command loop, h2 is unknown. We have to set it
+  to point to the chat user area, otherwise ... BOOM.)
+
+label app-start
+   chat-user-area h2 ldi  ( first task defined will link to chat)
+
+   ( Read the app RESET vector; if non-empty, call 0000 to create the app's tasks.)
+   0 ( app RESET vector) z ldiw
+   pmz+ g0 ld  pmz g1 ld  g1 g0 and  g0 com  0= not if  ( unset vector)
+      0 call
+   then
+
+   ( Close the circle. h2 has pointer to last task created. Put it into the
+     chat-task's next pointer, and return.)
+
+   chat-user-area y ldiw  1 h2 stu  ret  ;c
+
 ( NOTE: When we stop the app, we disable interrupts, in case it is
   using them. When it gets restarted, it is up to the app to re-enable
   interrupts.)
@@ -91,3 +112,54 @@ label chat-entry  ( callable from other code!)
 
 label interact
    begin  chat-entry rcall  again  ;c
+
+label chat-task
+   serial-init rcall  ( initialize serial interface)
+   begin  interact rcall  again  ;c
+
+1 var #wdog-resets  ( this should be the first byte of ram)
+
+RESET handler
+label system-startup
+   ( Let's start with a clean slate, by setting every byte of the RAM to a
+     known state. We set each byte of the task stack page to hex 55 [so it's
+     easier to see how much space each task is really taking] and the rest
+     of the RAM to zero.
+
+     We also want to be careful about counting watchdog resets. If we got a
+     watchdog reset, count it, and start the clearing of ram one byte past the
+     #wdog-resets counter byte.)
+
+   @ram x ldiw ( beginning of ram)
+   #ram #256 - 1- w ldiw  ( size of ram, minus the last page, minus one)
+
+   MCUSR g0 in  3 ( WDRF) g0 sbrs  never  ( watchdog reset)
+      x@ g0 ld  g0 inc  x+ g0 st  ( count it and incr ram pointer)
+      1 w sbiw  ( one fewer byte to zero)
+   then
+   g0 clr  MCUSR g0 out  ( clear all reset flags)
+
+   ( Write zeros to the ram, stopping 257 bytes from the end.)
+   begin  x+ g0 st  1 w sbiw  0= until
+
+   ( Set up a temporary stack - so we can call setup-task! - below the task
+     stacks. Since the stacks consume at most a 256 byte page, the page
+     below the last one will do fine. X points to the last byte of the page
+     before the last one. Because the AVR stack pointer points to the byte
+     *below* the last byte pushed, this is our temporary stack pointer.)
+
+   x sp!-iclear  x+ g0 st  ( zero last byte of temp stack page)
+
+   ( Set every byte of the stack page to 55 hex.)
+   55 h0 ldi  begin  x+ h0 st  xl tst  0= until
+
+   ( Create chat task.)
+   chat-user-area y ldiw
+   chat-task 2/ h0 ldiw ( starting pc)
+   create-task rcall  ( leaves h2 pointing to chat-user-area)
+
+   ( If the app RESET vector is non-empty, app-start will call it, and it
+     will create the app tasks.)
+
+   app-start rcall  ( return with y pointing to chat task)
+   run-task rjmp  ( start chat task)  ;c

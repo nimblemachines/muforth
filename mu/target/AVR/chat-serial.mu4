@@ -23,7 +23,7 @@ comment register-use
 register-use
 
 ( Let's run the UART at 38,400 b/s. Baud rate divisor = fosc/bps/16 - 1.)
-label uart-init
+label serial-init
    -- #8_000 ( fosc = 8M)  #125 /  ( 125kbps)
    #8,000,000 ( fosc = 8M)  #38,400 /
    #16 /  1- x ldiw  UBRR1H xh out  UBRR1L xl out
@@ -95,68 +95,5 @@ label write-flash-cmd
    recv-word rcall  x 0 movw  recv-byte rcall ( cmd)  do-spm rcall
    2 z adiw  SPMCSR xl in  send-byte rjmp  ;c
 
-( Tasks and user areas.)
-@ram #ram +  2 cells - ( user)  dup equ chat-user-area     #32 cells - ( stack)
-             2 cells - ( user)  dup equ heart-user-area      8 cells -
-             2 cells - ( user)  dup equ button0-user-area    8 cells -
-             2 cells - ( user)  dup equ button1-user-area    8 cells -
-drop
-
-( This is unfortunate, but when we get here from the boot RESET handler -
-  from create-tasks - h2 points to the chat user area, so that the next
-  created task will link to it.
-
-  When called from the chat command loop, h2 is unknown. We have to set it
-  to point to the chat user area, otherwise ... BOOM.)
-
-label app-start
-   chat-user-area h2 ldi  ( first task defined will link to chat)
-
-   ( Read the app RESET vector; if non-empty, call 0000 to create the app's tasks.)
-   0 ( app RESET vector) z ldiw
-   pmz+ g0 ld  pmz g1 ld  g1 g0 and  g0 com  0= not if  ( unset vector)
-      0 call
-   then
-
-   ( Close the circle. h2 has pointer to last task created. Put it into the
-     chat-task's next pointer, and return.)
-
-   chat-user-area y ldiw  1 h2 stu  ret  ;c
-
 ( Load chat entry and command loop.)
 ld target/AVR/chat-loop.mu4
-
-( The uart chat task!)
-label uart-chat-task
-   uart-init rcall
-   begin  interact rcall  again  ;c
-
-( Create the chat task first, then the app tasks, descending from high
-  memory to low; finally, point the chat task to the first [lowest] app
-  task.
-
-  Return with y pointing to chat-task.)
-
-label create-tasks
-   chat-user-area y ldiw
-   uart-chat-task 2/ h0 ldiw ( starting pc)
-   create-task rcall  ( leaves h2 pointing to chat-user-area)
-   app-start rjmp  ( return with y pointing to chat task)  ;c
-
-RESET handler
-label system-startup
-   ( Before we do anything else, let's start with a clean slate, by zeroing
-     the entire RAM.)
-
-   @ram x ldiw  #ram w ldiw  g0 clr  begin  x+ g0 st  1 w sbiw  0= until
-
-   ( Set up a temporary stack - so we can call setup-task! - below the task
-     stacks. Since the stacks consume at most a 256 byte page, the page
-     below the last one will do fine.)
-
-   @ram #ram +  #256 - 1- w ldiw  w sp!-iclear
-
-   ( Create the tasks and start executing! create-tasks should leave y
-     pointing to the first task to run.)
-
-   create-tasks rcall  run-task rjmp  ( start chat task)  ;c
