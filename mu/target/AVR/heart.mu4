@@ -46,8 +46,6 @@ label timer0-overflow-handler
    7 xh sbrs  never  ( always jump to then)
       ( Wake the heart task every 128 ticks - every 4.096 ms.)
       heart-user-area xl lds  xl dec  heart-user-area xl sts
-      ( Wake the watchdog task every 128 ticks - every 4.096 ms.)
-      wdog-user-area xl lds  xl dec  wdog-user-area xl sts
    then
 
    3 xh sbrs  never  ( always jump to then)
@@ -62,6 +60,7 @@ label timer0-overflow-handler
    ( Restore SREG and X and exit handler)
    xl pop  SREG xl out  x popw  reti  ;c
 
+( XXX Inline heart-init into heart-task?)
 label heart-init
    heart-led sbi  ( LED off)
    heart-led DDRB PORTB - + ( convert PORTx to DDRx) sbi  ( set pin as output)
@@ -73,11 +72,15 @@ label heart-init
    polarity clr  ( xh is polarity)
    ret  ;c
 
-( We use timer0 overflow to wake the heart task.)
 label heart-task
    heart-init rcall
+
+   ( Enable watchdog.)
+   wdr  18 ( WDCE + WDE) h0 ldi  WDTCSR h0 out
+   8 ( WDE) 5 ( 64K = 0.5s timeout) + h0 ldi  WDTCSR h0 out
+
    begin
-      sei  x pushw  yield call  ( long call to boot region)  x popw
+      sei  x pushw  wdr  yield call  ( long call to boot region)  x popw
       sawtooth inc  0= if  ( sawtooth rolled over)
          polarity com  ( complement)
       then

@@ -66,7 +66,13 @@ label app-start
 
 label app-stop
    cli  chat-user-area    th ldi
-        chat-user-area 1+ th sts  ret  ;c
+        chat-user-area 1+ th sts
+   ( fall thru)  ;c
+
+label watchdog-off
+   wdr  18 ( WDCE + WDE) h0 ldi  WDTCSR h0 out
+   h0 clr  WDTCSR h0 out  ret  ;c
+
 
 ( Command dispatch.)
 label command-table
@@ -121,39 +127,38 @@ label chat-task
 
 RESET handler
 label system-startup
+   ( First things first. Turn off the watchdog, in case we got a watchdog
+     reset and it's still enabled. At reset, SP is set to point to the end
+     of RAM, so it's safe to make subroutine calls without setting it.)
+
+   watchdog-off rcall
+
    ( Let's start with a clean slate, by setting every byte of the RAM to a
-     known state. We set each byte of the task stack page to hex 55 [so it's
-     easier to see how much space each task is really taking] and the rest
-     of the RAM to zero.
+     known state. We do this in stages. First we set each byte of the task
+     stack page - the last page of the RAM - to hex 55 [so it's easier to
+     see how much space each task is really taking], then, using a temporary
+     stack *below* the stack page, we initialize the task user areas; and,
+     lastly, we set the rest of the RAM to zero.
 
      We also want to be careful about counting watchdog resets. If we got a
      watchdog reset, count it, and start the clearing of ram one byte past the
      #wdog-resets counter byte.)
 
-   @ram x ldiw ( beginning of ram)
-   #ram #256 - 1- w ldiw  ( size of ram, minus the last page, minus one)
+   @ram #ram + #256 - 1- x ldiw ( beginning last page of the ram, minus one)
 
-   MCUSR g0 in  3 ( WDRF) g0 sbrs  never  ( watchdog reset)
-      x@ g0 ld  g0 inc  x+ g0 st  ( count it and incr ram pointer)
-      1 w sbiw  ( one fewer byte to zero)
-   then
-   g0 clr  MCUSR g0 out  ( clear all reset flags)
+   ( Set up a temporary stack - so we can call code to create the tasks -
+     below the task stacks. Since the stacks consume at most a 256 byte
+     page, the page below the last one will do fine. X points to the last byte
+     of the page before the last one. Because the AVR stack pointer points to
+     the byte *below* the last byte pushed, this is our temporary stack
+     pointer.)
 
-   ( Write zeros to the ram, stopping 257 bytes from the end.)
-   begin  x+ g0 st  1 w sbiw  0= until
-
-   ( Set up a temporary stack - so we can call setup-task! - below the task
-     stacks. Since the stacks consume at most a 256 byte page, the page
-     below the last one will do fine. X points to the last byte of the page
-     before the last one. Because the AVR stack pointer points to the byte
-     *below* the last byte pushed, this is our temporary stack pointer.)
-
-   x sp!-iclear  x+ g0 st  ( zero last byte of temp stack page)
+   x sp!-iclear  1 x adiw
 
    ( Set every byte of the stack page to 55 hex.)
    55 h0 ldi  begin  x+ h0 st  xl tst  0= until
 
-   ( Create chat task.)
+   ( Create the tasks, starting with the chat task.)
    chat-user-area y ldiw
    chat-task 2/ h0 ldiw ( starting pc)
    create-task rcall  ( leaves h2 pointing to chat-user-area)
@@ -162,4 +167,21 @@ label system-startup
      will create the app tasks.)
 
    app-start rcall  ( return with y pointing to chat task)
+
+   ( Finally, write zeros to the ram, stopping 256 bytes from the end, and
+     skipping - and incrementing! - the first byte if we experienced a
+     watchdog reset.)
+
+   @ram x ldiw  ( beginning of ram)
+   #ram #256 - w ldiw  ( size of ram, minus the last page)
+
+   MCUSR g0 in  3 ( WDRF) g0 sbrs  never  ( watchdog reset)
+      x@ g0 ld  g0 inc  x+ g0 st  ( count it and incr ram pointer)
+      1 w sbiw  ( one fewer byte to zero)
+   then
+   g0 clr  MCUSR g0 out  ( clear all reset flags)
+
+   ( Write zeros to the ram.)
+   begin  x+ g0 st  1 w sbiw  0= until
+
    run-task rjmp  ( start chat task)  ;c
