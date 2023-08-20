@@ -129,8 +129,6 @@ label chat-task
    serial-init rcall  ( initialize serial interface)
    begin  interact rcall  again  ;c
 
-1 var #wdog-resets  ( this should be the first byte of ram)
-
 RESET handler
 label system-startup
    ( First things first. Turn off the watchdog, in case we got a watchdog
@@ -144,22 +142,21 @@ label system-startup
      stack page - the last page of the RAM - to hex 55 [so it's easier to
      see how much space each task is really taking], then, using a temporary
      stack *below* the stack page, we initialize the task user areas; and,
-     lastly, we set the rest of the RAM to zero.
+     lastly, we set the rest of the RAM to zero.)
 
-     We also want to be careful about counting watchdog resets. If we got a
-     watchdog reset, count it, and start the clearing of ram one byte past the
-     #wdog-resets counter byte.)
-
-   @ram #ram + #256 - 1- x ldiw ( beginning last page of the ram, minus one)
+   @ram #ram + #256 - 2 - x ldiw ( beginning last page of the ram, minus two)
 
    ( Set up a temporary stack - so we can call code to create the tasks -
      below the task stacks. Since the stacks consume at most a 256 byte
-     page, the page below the last one will do fine. X points to the last byte
-     of the page before the last one. Because the AVR stack pointer points to
-     the byte *below* the last byte pushed, this is our temporary stack
-     pointer.)
+     page, the page below the last one will do fine.
 
-   x sp!-iclear  1 x adiw
+     Be careful though: we don't want to clobber the last byte of the page
+     below the task stacks, since we are going to keep a count of watchdog
+     resets there. That's why we subtract *two* before setting SP - one,
+     because the AVR uses an empty descending stack; and one to skip the
+     watchdog reset count byte!)
+
+   x sp!-iclear  2 x adiw
 
    ( Set every byte of the stack page to 55 hex.)
    55 h0 ldi  begin  x+ h0 st  xl tst  0= until
@@ -174,20 +171,20 @@ label system-startup
 
    app-start rcall  ( return with y pointing to chat task)
 
-   ( Finally, write zeros to the ram, stopping 256 bytes from the end, and
-     skipping - and incrementing! - the first byte if we experienced a
-     watchdog reset.)
+   ( Read the reset flags; save them in g1; and zero them.)
+   MCUSR g1 in  g0 clr  MCUSR g0 out  ( clear all reset flags)
 
+   ( Finally, write zeros to the ram, stopping 257 bytes from the end.)
    @ram x ldiw  ( beginning of ram)
-   #ram #256 - w ldiw  ( size of ram, minus the last page)
-
-   MCUSR g0 in  3 ( WDRF) g0 sbrs  never  ( watchdog reset)
-      x@ g0 ld  g0 inc  x+ g0 st  ( count it and incr ram pointer)
-      1 w sbiw  ( one fewer byte to zero)
-   then
-   g0 clr  MCUSR g0 out  ( clear all reset flags)
-
-   ( Write zeros to the ram.)
+   #ram #257 - w ldiw  ( size of ram, minus the last page, minus one)
    begin  x+ g0 st  1 w sbiw  0= until
+
+   ( If we experienced a watchdog reset, count it in the last byte of ram
+     before the stack page; otherwise, zero that byte.)
+
+   3 ( WDRF) g1 sbrs  never  ( watchdog reset)
+      x@ g0 ld  g0 inc
+   then
+   x+ g0 st  ( store zero or incremented watchdog reset count)
 
    run-task rjmp  ( start chat task)  ;c
