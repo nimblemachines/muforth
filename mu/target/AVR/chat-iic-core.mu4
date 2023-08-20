@@ -12,11 +12,11 @@ hex
 
 label catch
    x popw  x pushw  exc-pc x stw
-   sp@  2 x adiw ( skip ra)  exc-sp x stw  ret  ;c
+   x sp@  2 x adiw ( skip ra)  exc-sp x stw  ret  ;c
 
 label throw
 label restart
-   exc-sp x ldw  sp!
+   exc-sp x ldw  x sp!
    exc-pc x ldw  x pushw  ret  ;c
 
 
@@ -56,13 +56,17 @@ Register-use:
   meta-compiler's conventions.
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
+( Save and restore chat registers around the call to yield.)
+( XXX Since this is used in only one place it could be inlined.)
+label chat-yield
+   z pushw  0 pushw  yield rcall  0 popw  z popw  ret  ;c
 
 ( Ack TWINT. Make sure TWEA and TWEN also set. Then Wait for TWINT; read
   status; mask prescaler bits; return status in xl. Clobbers xh.)
 
 label await-twint
    tw-reset xh ldi  TWCR xh sts  ( ack TWINT)
-   begin  yield rcall  TWCR xl lds  TWINT xl sbrs  again
+   begin  chat-yield rcall  TWCR xl lds  TWINT xl sbrs  again
    TWSR xl lds  0f8 xl andi  ret  ;c
 
 label recv-byte
@@ -117,7 +121,7 @@ ld target/AVR/eeprom.mu4
 ld target/AVR/flash-self-prog.mu4
 
 ( Called by chat startup code.)
-label i2c-init
+label serial-init
    ( Set I2C slave address from EEPROM)
    0 z ldiw  read-eeprom-byte rcall  1 invert xl andi  TWAR xl out
 
@@ -169,30 +173,3 @@ label recv-command-byte
 
 ( Load chat entry and command loop.)
 ld target/AVR/chat-loop.mu4
-
-( The I2C chat task!)
-label i2c-chat-task
-   i2c-init rcall
-   begin  interact rcall  again  ;c
-
-RESET handler
-label start-tasks
-   ( Before we do anything else, let's start with a clean slate, by zeroing
-     the entire RAM.)
-
-   @ram y ldiw  #ram x ldiw  g0 clr  begin  y+ g0 st  1 x sbiw  0= until
-
-   ( Set up a temporary stack - so we can call setup-task! - below the task
-     stacks. In this case there are two stacks, each 32 cells in size.)
-
-   @ram #ram +  #64 cells - 1- x ldiw  sp!-unsafe
-
-   ( Read the app RESET vector and use it as the task's initial pc. If the
-     vector is unprogrammed, disable the task.)
-
-   app-start rcall
-
-   ( switch user areas)  next-task
-   i2c-chat-task 2/ x ldiw ( starting pc)
-   setup-task rcall
-   run-task rjmp  ( this starts i2c-chat-task running)  ;c
