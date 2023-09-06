@@ -93,6 +93,21 @@ variable p
 : p*   p @  c@+  p ! ;  ( read next byte from buf, incr)
 : p&   p @  c!+  p ! ;  ( write next byte to buf, incr)
 
+( It can sometimes be useful to have an 8M clock available; for instance,
+  when an AVR's fuses select an external clock and there is none. We need
+  the chip to be clocked in order to program it, or even to change the fuses
+  to select an internal clock!
+
+  Let's output an 8M clock on PA8 - our only option - for this or any other
+  use.)
+
+: 8m-clock-output
+   5 [ RCC_CFGR 3 + #] c!  ( select 8M HSI clock, /1 as MCO)
+   [ 1 #17 << #] RCC_AHBENR set!  ( Ensure clocks are enabled to Port A.)
+   -- Set mode bits (%10) and alternate function (AF0) for PA8.
+   [ %10 #8 2* << #] GPIOA_MODER set!  ( 2 bits per pin)
+   -- AF0 is reset default; nothing to do
+   ;
 
 -- --------------------------------------------------------------------
 -- SPI building blocks
@@ -352,8 +367,8 @@ compiler: :]  ( end a jump table)
             uart-send-recv  i2c-send-recv  :] ;
 
 here ]  ( chip-init)
-   clock-init  led-init  spi-init  uart-init  i2c-init  flash-leds
-   fast-clock  ss/  rst/
+   clock-init  led-init  spi-init  uart-init  i2c-init  8m-clock-output
+   flash-leds  fast-clock  ss/  rst/
    begin
       face_d000 semaphore !  ( ready for another command)
       0  begin  drop  semaphore @  dup ffff_ff00 and  deca_f000 =  until
