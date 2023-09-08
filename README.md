@@ -90,8 +90,9 @@ Warning: I wave my arms around a lot, and the audio and video quality isn’t
 that great, but you might find it interesting, or at least amusing.
 
 It’s also hard to see my slides. If you want to “follow along”,
-[download my slides](talks/2008-mar-30-PNCA), and use `less` to view them –
-ideally in a text window that is at least 30 lines high – like so:
+[download my slides](https://raw.githubusercontent.com/nimblemachines/muforth/master/talks/2008-mar-30-PNCA),
+and use `less` to view them – ideally in a text window that is at least 30
+lines high – like so:
 
 ```
 less -30 ~/muforth/talks/2008-mar-30-PNCA
