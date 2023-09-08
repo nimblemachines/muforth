@@ -25,7 +25,7 @@ different architectures and chip families.
 
   * [ARMv5](mu/target/ARM/v5) (originally targeting an ARM AEB-1 board running an ARM7DI processor)
   * [AVR](mu/target/AVR) (Atmel)
-  * [HC08 and HCS08](mu/target/HC08) (Motorola/Freescale/NXP)
+  * [HC08 and HCS08](mu/target/S08) (Motorola/Freescale/NXP)
   * [PIC18](mu/target/PIC18) (Microchip)
 
 
@@ -40,7 +40,9 @@ is _quite_ fast!
 
 Its implementation is no longer the point. Its sole reason for existing is to
 be a cross-compiler for _other_ Forths, and their implementations are in no
-way tied to muforth’s.
+way tied to muforth’s. In fact, muforth can be used to compile _any_ sort of
+code onto the target. I've used it very successfully as a smart assembler for
+writing AVR and S08 code.
 
 By keeping it small and simple, it is much more likely to be a useful tool
 that people can customize.
@@ -51,7 +53,7 @@ about innovative or unusual uses of muforth.
 
 # Starting points
 
-[BUILDING](BUILDING) will tell you how to build muforth. It’s stupid simple.
+[BUILDING](BUILDING) will tell you how to build muforth. It’s very simple.
 
 Look in [mu/target/](mu/target) to find a target that interests you. There is
 generally a `mu/target/<target-name>/build.mu4` that loads the cross-build
@@ -74,8 +76,9 @@ it to be a [convivial tool](https://www.nimblemachines.com/convivial-tool/).
 The heart of the system is the Forth code that muforth reads when it first
 starts: [mu/startup.mu4](mu/startup.mu4). You’ll learn a lot by reading this!
 
-[muforth.nimblemachines.com](https://muforth.nimblemachines.com/) is also,
-finally, spreading its wings.
+[muforth.nimblemachines.com](https://muforth.nimblemachines.com/) will
+eventually host the muforth documentation. At the moment, it is a collection
+of [journals, essays, and “getting started” pages](https://muforth.nimblemachines.com/all-pages/).
 
 
 # Talks
@@ -86,9 +89,9 @@ muforth, and [convivial tools](https://www.nimblemachines.com/convivial-tool/).
 Warning: I wave my arms around a lot, and the audio and video quality isn’t
 that great, but you might find it interesting, or at least amusing.
 
-It’s also hard to see my slides. If you want to “follow along”, [download my
-slides](talks/2008-mar-30-PNCA), and use `less` to view them – ideally in a
-text window that is at least 30 lines high – like so:
+It’s also hard to see my slides. If you want to “follow along”,
+[download my slides](talks/2008-mar-30-PNCA), and use `less` to view them –
+ideally in a text window that is at least 30 lines high – like so:
 
 ```
 less -30 ~/muforth/talks/2008-mar-30-PNCA
