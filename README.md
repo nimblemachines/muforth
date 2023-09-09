@@ -6,8 +6,8 @@ for use as a cross-compiler for microcontrollers and other embedded devices.
 It is written in C and its core is very portable. Because of its Forth nature,
 it is naturally extensible, scriptable, and customizable.
 
-It is very well-suited to interactive coding, debugging, and exploration, and
-is a great tool for bringing up new hardware.
+muforth is very well-suited to interactive coding, debugging, and exploration,
+and is a great tool for bringing up new hardware.
 
 It has support – in varying degrees of completeness – for a number of
 different architectures and chip families.
@@ -27,6 +27,25 @@ different architectures and chip families.
   * [AVR](mu/target/AVR) (Atmel)
   * [HC08 and HCS08](mu/target/S08) (Motorola/Freescale/NXP)
   * [PIC18](mu/target/PIC18) (Microchip)
+
+
+# Tethered vs self-hosted
+
+Unlike a "self-hosted" Forth, where the target contains the dictionary, the
+text interpreter, and all the tools necessary for assembling and compiling
+code, muforth supports a _tethered_ development model. muforth runs on the
+_host_ machine, compiling code and data that are later copied to the _target_
+machine and executed there.
+
+Because the dictionary and all the compilation tools reside on the _host_,
+only the _compiled_ code and data reside on the target. This makes it possible
+to target _very_ small devices that only have a few kilobytes of flash and a
+few hundred bytes of RAM. In contrast, a self-hosted Forth often needs 16 KiB
+(or more) of flash to be useful, and consumes RAM for the text interpreter and
+compiler.
+
+The host machine is also orders of magnitude faster than the target, so doing
+the compilation on the host is essentially instantaneous.
 
 
 # Why yet another Forth?
