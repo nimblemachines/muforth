@@ -4,7 +4,7 @@
  * Copyright (c) 2002-2023 David Frech. (Read the LICENSE for details.)
  */
 
-/* tty support for muForth, both for the console and attached targets */
+/* tty support for muforth, both for the console and serially-attached targets */
 
 /* XXX Should this file be called termios.c instead? */
 
@@ -14,20 +14,25 @@
 #include <termios.h>
 #include <unistd.h>         /* isatty */
 
-/* stack: ( fd termios - sizeof(termios) ) */
+void mu_isatty_q()    /* isatty?  ( fd - flag) */
+{
+    TOP = -isatty(TOP);
+}
+
+/* get-termios  ( fd termios - sizeof(termios) ) */
 void mu_get_termios()
 {
-    tcgetattr(ST1, (struct termios *)TOP);
+    if (tcgetattr(ST1, (struct termios *)TOP) == -1)
+        return abort_strerror();
 
     DROP(1);
     TOP = sizeof(struct termios);
 }
 
-/* stack: ( fd termios - ) */
+/* set-termios  ( fd termios) */
 void mu_set_termios()
 {
-    /* drain out, flush in, set */
-    if (tcsetattr(ST1, TCSAFLUSH, (struct termios *)TOP) == -1)
+    if (tcsetattr(ST1, TCSANOW, (struct termios *)TOP) == -1)
         return abort_strerror();
 
     DROP(2);
@@ -36,9 +41,6 @@ void mu_set_termios()
 /*
  * Support for querying the column width of terminals, and staying updated
  * (via SIGWINCH) when they change.
- *
- * In case the user has redirected stdout to a file, use stderr as the file
- * descriptor to test.
  */
 void mu_tty_width()     /* ( fd - width) */
 {
@@ -66,9 +68,7 @@ void mu_tty_width()     /* ( fd - width) */
  *
  * For targets, I want no interrupt chars, no modem signalling, no hardware
  * handshake, but I want RS232 breaks to be received and rendered as null
- * chars; also I want a 0.5s timeout, so that code that expects a char from
- * the target will "immediately" exit with an error if there isn't a
- * character waiting.
+ * chars.
  */
 
 static void set_termios_raw(struct termios *pti)
@@ -130,26 +130,15 @@ void mu_set_termios_target_raw()
     DROP(1);
 }
 
-/* set-termios-timeout  ( timeout termios) */
-void mu_set_termios_timeout()
+/* set-termios-polling  ( termios) */
+void mu_set_termios_polling()
 {
     struct termios *pti = (struct termios *) TOP;
-    int timeout = ST1;      /* requested timeout in seconds; 0 means forever */
-
-    if (timeout == 0)
-    {
-        pti->c_cc[VMIN] = 1;    /* wait forever for a character */
-        pti->c_cc[VTIME] = 0;
-    }
-    else
-    {
-        pti->c_cc[VMIN] = 0;    /* return even if no chars available */
-        pti->c_cc[VTIME] = timeout * 10;    /* VTIME is in decisecs */
-    }
-    DROP(2);
+    pti->c_cc[VMIN] = 0;    /* return even if no chars available */
+    DROP(1);
 }
 
-/* stack: ( speed termios - ) */
+/* set-termios-speed  ( speed termios - ) */
 void mu_set_termios_speed()
 {
     struct termios *pti = (struct termios *) TOP;

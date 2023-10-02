@@ -4,46 +4,45 @@
 
 ( Simple terminal that talks to serial port.)
 
-( Keymaps)
--: ( self)  emit  0 ;  256 defarray+ term-keys
-   ( nop)       ' 0    256 defarray+ term-esc-keys
--: drop ( ESC)  key term-esc-keys @execute ;  #ESC term-keys !
-: esc:  -:  \f char  term-esc-keys ! ;
+256 buffer termbuf
 
-variable fdmax
-: new-fd-set   create  here fd-reset ( sizeof)  aligned allot ;
-new-fd-set fds
-
-: te-select  ( fd0 .. fdn n)
-   fds fd-reset drop  fdmax off
-   for  fds over fd-set   fdmax @ max  fdmax !  next
-   fdmax @ 1+  fds  0  0  0  select  drop  ;
-
-( Serial input to screen, keyboard input to serial.)
-
+( If any chars have come in from the serial port, print them.)
 : serial->screen
-   fds tty-target fd-in-set? if
-      tty-target reads  tty writes  typing type
-   then ;
+   target-tty termbuf 256 read  ?if  termbuf swap type  then ;
 
-: keyboard->serial  ( - done?)
-   fds tty fd-in-set? if
-      tty reads  tty-target writes  key dup term-keys @execute ^
-   then  0 ;
+: key?  ( - char 1 | 0)
+   tty charbuf 1 read  =if  charbuf c@ swap  then ;
 
-: te-stream
-   begin  tty tty-target 2 te-select
-      serial->screen  keyboard->serial  until  tty writes  ;
+( While waiting for the user to press a key, keep streaming any serial
+  input to the screen.)
 
-: <drain  begin  tty-target 1 te-select  serial->screen  until
-   tty-target writes  ;
+: te-key  ( - char)   begin  serial->screen  key? until ;
 
-: te  ( terminal)
-   115200 bps  ( default to hi speed)
-   radix preserve  tty user-raw   tty on-exit cooked
-   te-stream ;
+
+( Handle "meta" keys.)
+( no-op; don't exit)  ' 0  96 defarray+ term-esc-keys
+: esc:  -:  \f char  32 -  term-esc-keys ! ;
 
 ( Special keys.)
+esc: q  ( quit)  -1 ;
+
+: te-process-key  ( - exit?)
+   te-key
+   dup #ESC = if  drop  te-key 32 - term-esc-keys @execute ^  then
+   dup #DEL = if  drop  #BS  then  ( send backspace instead of Del)
+   ( default: send to target)  _send  0 ;
+
+( The main loop.)
+' set-termios-polling    user-termios user-polling
+' set-termios-polling  target-termios target-polling
+
+: te  ( terminal)
+   user-polling  target-polling
+   begin  te-process-key  until
+   user-raw  target-raw ;
+
+
+.ifdef fancy-terminal-escapes
 
 ( Echo ESC [ back to serial port, followed by the rest of the chars in the
   keyboard buffer. This makes AEB-1 autobauding - which works by sending
@@ -67,19 +66,4 @@ new-fd-set fds
 
 esc: [  ( vt10x)  CSI  0 ;
 
--: drop  #BS emit  0 ;   #DEL term-keys !  ( DEL sends BS)
-
-esc: q  ( quit)  -1 ;
-
-00 .if
-
-( Test code.)
-: kb  raw  begin  key  dup <ESC> xor while  u.  repeat  cooked  ;
-: wr  ( a #)  tty-target -rot write drop  ;
-: kb-test
-   if  tty keyboard-in 1 read   tty keyboard-in 1 write  2drop  then  ;
-
-: kb    fds fd-reset drop  fds tty fd-set  raw
-   begin  te-select drop  kb-test  again  [
-
-.then
+.then  ( def fancy-terminal-escapes)

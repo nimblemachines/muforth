@@ -1,0 +1,42 @@
+( This file is part of muforth: https://muforth.nimblemachines.com/
+
+  Copyright 2002-2023 David Frech. (Read the LICENSE for details.)
+
+( Code to test the simple serial terminal code in
+  target/common/serial-terminal.mu4)
+
+variable pty-master
+: pty-send  ( b)     pty-master @ >emit ;
+: pty-recv  ( - b)   pty-master @ <key ;
+
+( Smushed pty and type together!)
+: ptype  ( a u)  for  c@+ swap  pty-send  next  drop ;
+
+: peer-process
+   pty-recv
+   dup      8 = if  " BS " ptype ^  then
+   dup     10 = if  " LF " ptype ^  then
+   dup     13 = if  " RET " ptype ^  then
+   dup    127 = if  " DEL " ptype ^  then
+   dup char a = if  " alpha " ptype ^  then
+   dup char b = if  " bravo " ptype ^  then
+   dup char c = if  " charlie " ptype ^  then
+   dup char d = if  " delta " ptype ^  then
+   ( default: echo)  pty-send ;
+
+: re-peer
+   open-pty  cr  ." Connect to "  zcount type  ."  to chat with this peer."
+   pty-master !  begin  peer-process  again ;
+
+( FUCK!! Is it a new Linux kernel? The re-peering process seems now to open
+  another, different, pty each time! Really annoying.
+
+  Ah! A race condition. Lovely. Let's wait 100ms before re-opening the pty
+  master. That seems to work. Fucking Linux!!)
+
+: peer
+   begin  catch re-peer  pty-master @ close-file
+                                         0 #100,000,000 nanosleep  again ;
+
+( Let's run it!)
+peer

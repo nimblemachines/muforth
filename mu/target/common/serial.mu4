@@ -6,19 +6,24 @@ loading Serial expect/send
 
 ( Simple target serial expect/send code.)
 
-( set-termios-target-raw sets timeout to forever!)
-: target-raw  ( fd)  ( This is tailored for target interaction)
-    dup  here get-termios  drop
-         here set-termios-target-raw
-  ( fd)  here set-termios  ( set to raw!) ;
-
 defer target-tty
+
+( Modify termios settings of target-tty device.)
+: target-termios   create  ( cfa)  ,  does>  target-tty  modify-termios ;
+
+( Set up raw mode tailored for target interaction.)
+' set-termios-target-raw      target-termios target-raw
+
+' set-termios-speed           target-termios bps  ( speed)
+' set-termios-ignore-parity   target-termios ignore-parity
+' set-termios-even-parity     target-termios even-parity
+' set-termios-odd-parity      target-termios odd-parity
 
 : lazy-target-tty  ( - fd)
    create  0 , ( fd)  token, drop ( filename)  does>
    dup @  =if nip ^ then ( already opened!)  drop
    dup cell+ addr+ ( skip fd and string count)  open-file-rw  ( a fd)
-   dup rot ( fd fd a)  !  dup target-raw  ( fd) ;
+   dup rot ( fd fd a)  !  target-raw  ( fd) ;
 
 ( serial-target and serial-target2 should be symlinks to
   /dev/tty<something> devices)
@@ -30,23 +35,6 @@ lazy-target-tty  alt-target-tty serial-target2
 : std-target   now std-target-tty is target-tty ;  std-target
 : alt-target   now alt-target-tty is target-tty ;
 
-( We want to have several easy-to-use words that read, modify, and
-  write back target-tty's termios, so let's make that easy.)
-
-: using-target-tty
-   target-tty here get-termios drop
-              here pop addr@ execute  ( execute the following word)
-   target-tty here set-termios ;
-
-: bps   ( speed)    using-target-tty  set-termios-speed          ;
-: ignore-parity     using-target-tty  set-termios-ignore-parity  ;
-: even-parity       using-target-tty  set-termios-even-parity    ;
-: odd-parity        using-target-tty  set-termios-odd-parity     ;
-
-( Set serial timeout in seconds; 0 sets no timeout.)
-: serial-timeout    using-target-tty  set-termios-timeout        ;
-
-
 ( Recv from, send to target.)
 : _send  target-tty  >emit ;
 : _recv  target-tty  <key ;
@@ -56,8 +44,6 @@ lazy-target-tty  alt-target-tty serial-target2
 
 : flush  target-tty  tty-iflush ;
 : drain  target-tty  tty-drain ;
-
-: icount  ( - chars-waiting)  target-tty  tty-icount ;
 
 ( Spying on the protocol.)
 variable spy  spy off
@@ -71,7 +57,8 @@ variable spy  spy off
 : ?spkt  ( spy packet, or "spiked")  spy @ if  cr  then ;
 
 ( Wait for target command loop to announce itself, and compare to what we
-  expect.)
+  expect. This has only ever been used to identify firmware running on a
+  serially-connected S08 device.)
 
 : await  ( a u)
    m preserve

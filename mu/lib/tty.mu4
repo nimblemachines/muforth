@@ -3,25 +3,33 @@
   Copyright 2002-2023 David Frech. (Read the LICENSE for details.)
 
 ( We need these words to make dumping memory, decompiling code, and
-  disassembling more beautiful. Eventually all console i/o should be
-  in raw mode...)
+  disassembling more beautiful. All console i/o is done in raw mode.
 
+  modify-termios is also useful for setting the termios of the target
+  serial link.)
+
+( Open the tty device. We assume that we are running interactively!)
 z" /dev/tty" open-file-rw  constant tty
 
-create cooked-termios  tty here get-termios allot
+( Make it easier to modify termios settings.)
+: modify-termios  ( xn .. x0 'cfa fd - yn .. y0)
+   push ( 'cfa)
+   r@ ( fd)  here get-termios drop
+             here swap @execute
+   pop ( fd) here set-termios ;
 
-: user-raw  ( fd)  ( This is tailored for human interaction)
-    dup  here get-termios drop   here set-termios-user-raw
-  ( fd)  here set-termios  ( set to raw!) ;
+( user-termios will create a word that runs a certain modification against
+  the user's console termios.)
 
-: cooked  ( fd)   cooked-termios  set-termios ;
+: user-termios   create  ( cfa)  ,  does>  tty  modify-termios ;
 
-defer key-timeout
--:  error" <key timed out" ;  is key-timeout
+( Set up a raw mode tailored for human interaction.)
+' set-termios-user-raw   user-termios user-raw
 
-: <key   ( fd - ch)
+: <key  ( fd - ch)
    charbuf 1 read
-   1 = if  charbuf c@ ^  then  ( read a character successfully)
-   key-timeout ;
+   if  charbuf c@ ^  then  ( read a character successfully)
+   error" <key read 0 chars" ;
 
-: key    ( - ch)   in-channel @ @ ( fd)  <key ;
+( Read from tty - not stdin!)
+: key  tty  <key ;
