@@ -1,4 +1,4 @@
--- This file is part of muforth: https://muforth.nimblemachines.com/
+-- This file is part of muforth: https://muforth.dev/
 
 -- Copyright (c) 2002-2023 David Frech. (Read the LICENSE for details.)
 
@@ -444,7 +444,7 @@ end
 
 function gen(version, s)
     out(fmt([[
-( This file is part of muforth: https://muforth.nimblemachines.com/
+( This file is part of muforth: https://muforth.dev/
 
   Copyright 2002-2023 David Frech. (Read the LICENSE for details.)
 
@@ -470,7 +470,7 @@ end
 
 function gen_clic(version, s)
     out [[
-( This file is part of muforth: https://muforth.nimblemachines.com/
+( This file is part of muforth: https://muforth.dev/
 
   Copyright 2002-2023 David Frech. (Read the LICENSE for details.)
 

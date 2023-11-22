@@ -2,6 +2,12 @@
 
 echo Processing $1
 
+# change homepage link to muforth.dev
+sed -E \
+	-f scripts/homepage.sed \
+	$1 > $1.sedded
+exit
+
 # just update copyright date
 sed -E \
 	-f scripts/copyright.sed \
@@ -17,12 +23,6 @@ exit
 # change target/HC08/ to target/S08/
 sed -E \
 	-f scripts/target-hc08.sed \
-	$1 > $1.sedded
-exit
-
-# change homepage link to https
-sed -E \
-	-f scripts/homepage.sed \
 	$1 > $1.sedded
 exit
 

@@ -1,6 +1,6 @@
 #!/bin/sh
 
-# This file is part of muforth: https://muforth.nimblemachines.com/
+# This file is part of muforth: https://muforth.dev/
 #
 # Copyright (c) 2002-2023 David Frech. (Read the LICENSE for details.)
 

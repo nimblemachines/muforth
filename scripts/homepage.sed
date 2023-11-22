@@ -1,19 +1,24 @@
 # Make a link to muforth home page in all the source code.
 
-# We are now serving content over HTTPS!
+# Changing the homepage again! This time to a new and spiffy domain:
+# muforth.dev !
 
-s/This file is part of muforth: http:/This file is part of muforth: https:/
+s#muforth\.nimblemachines\.com#muforth.dev#
 
 # skip the rest - it's only of historical interest
 b skip
+
+# We are now serving content over HTTPS!
+
+s/This file is part of muforth: http:/This file is part of muforth: https:/
 
 # The most egregious: fix the banner line in every source file
 # to say "muforth" rather than "muFORTH".
 s/This file is part of muFORTH:/This file is part of muforth:/
 
 # I think every file has good links; now we just need to keep them updated.
-s#http://sites\.nimblemachines\.com/muforth#http://muforth.nimblemachines.com/#
-s#http://pages\.nimblemachines\.com/muforth/#http://muforth.nimblemachines.com/#
+s#http://sites\.nimblemachines\.com/muforth#http://muforth.dev/#
+s#http://pages\.nimblemachines\.com/muforth/#http://muforth.dev/#
 
 # put a link into the startup banner of startup.mu4
 /\( ### httplink ###/ {

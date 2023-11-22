@@ -95,9 +95,9 @@ it to be a [convivial tool](https://www.nimblemachines.com/convivial-tool/).
 The heart of the system is the Forth code that muforth reads when it first
 starts: [mu/startup.mu4](mu/startup.mu4). You’ll learn a lot by reading this!
 
-[muforth.nimblemachines.com](https://muforth.nimblemachines.com/) will
+[muforth.dev](https://muforth.dev/) will
 eventually host the muforth documentation. At the moment, it is a collection
-of [journals, essays, and “getting started” pages](https://muforth.nimblemachines.com/all-pages/).
+of [journals, essays, and “getting started” pages](https://muforth.dev/all-pages/).
 
 
 # Talks
