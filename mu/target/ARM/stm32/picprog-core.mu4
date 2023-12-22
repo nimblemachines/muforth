@@ -90,22 +90,7 @@ ld target/ARM/v6-m/kernel-itc.mu4
   microseconds; others, a few milliseconds. Let's use one of the timers to
   do accurate timing.
 
-  TIM6 and TIM7 are basic timers. Let's use TIM6.
-
-  We are going to clock the timer at 1Mhz, and set it up for "one-shot"
-  mode. It will stop counting and set the "update" flag when the count
-  register reaches the reload value.)
-
-: ?timer
-   0 TIM6_SR !
-   1 ( CEN) TIM6_CR1 set!
-   begin  TIM6_SR @  until ;
-
-: us  ( n)  ( delay n microseconds)
-   TIM6_ARR !  ?timer ;
-
-: ms  ( n)  #1000 * us ;
-
+  TIM6 and TIM7 are basic timers. Let's use TIM6.)
 
 .ifdef timer-testing
 
@@ -114,6 +99,7 @@ ld target/ARM/v6-m/kernel-itc.mu4
 
 ( Run timer7 full bore!)
 : timer7-init
+   [ 1 5 << #] RCC_APB1ENR set!  ( enable clock to TIM7)
    0 TIM7_PSC !  ( set prescaler)
    1 ( CEN) TIM7_CR1 ! ( start it!) ;
 
@@ -132,8 +118,8 @@ ld target/ARM/v6-m/kernel-itc.mu4
    ( AF0 on PD2.)
    [ %10 2 2* << #] GPIOD_MODER set!  ( 2 bits per pin)
 
-   ( Clock to TIM3.)
-   2 RCC_APB1ENR set!
+   ( Enable clock to TIM3.)
+   [ 1 1 << #] RCC_APB1ENR set!
 
    ( Trigger on falling edge of ext trigger input.)
    c000 TIM3_SMCR !
@@ -146,13 +132,22 @@ ld target/ARM/v6-m/kernel-itc.mu4
 
 .then  ( timer-testing)
 
+( We are going to clock the timer at 1Mhz, and set it up for "one-shot"
+  mode. It will stop counting and set the "update" flag when the count
+  register reaches the reload value.)
 
 : timer-init
-   [ 3 4 << #] RCC_APB1ENR set!  ( enable clocks to TIM6 and TIM7)
-.ifdef timer-testing  timer7-init  timer3-init  .then
+   [ 1 4 << #] RCC_APB1ENR set!  ( enable clock to TIM6)
    8 ( OPM - one pulse mode) TIM6_CR1 !
    [ cpuclk #1,000,000 / 1- #] TIM6_PSC !  ( set prescaler)
-   1 TIM6_EGR ! ( generate update event) ;
+   1 TIM6_EGR ! ( generate update event)
+.ifdef timer-testing  timer7-init  timer3-init  .then ;
+
+: us  ( n)  ( delay n microseconds)
+   TIM6_ARR !  0 TIM6_SR !  1 ( CEN) TIM6_CR1 set!
+   begin  TIM6_SR @  until ;
+
+: ms  ( n)  #1000 * us ;
 
 
 -- --------------------------------------------------------------------
