@@ -34,5 +34,5 @@ setlocal comments=s:(\ ,m:\ \ ,ex:),b:--
 
 " Make keyword matching better (so w and friends work better). Since in Forth
 " anything can be a keyword, let's let Vim know that. Basically we consider
-" all printable ASCII, excluding parens, to be keyword characters.
-setlocal iskeyword=!-~,^(,^),192-255
+" all printable ASCII, excluding parens and hyphens, to be keyword characters.
+setlocal iskeyword=!-~,^-,^(,^),192-255
