@@ -11,7 +11,7 @@ hex
 ( Support for inline asm in any colon word.)
 compiler
 : asm{   __inline-asm ;  ( start assembler)
-: }      -] ;  ( exit assembler mode and restart colon compiler)
+: }      ] ;  ( exit assembler mode and restart colon compiler)
 forth
 
 ( Debug)
@@ -34,16 +34,11 @@ forth
   complains, and one that maybe just warns? Like for ldi, addi, and friends?)
 : imm   ( imm op #bits - op')
    rot swap  ( op imm #bits)  2dup ufits? if  ones and  or  ^  then
-   error" value out of range" ;
+   error" imm value out of range" ;
 
 :  i7  ( imm op - op')    7 imm ;
 :  i8  ( imm op - op')    8 imm ;
 : i12  ( imm op - op')  #12 imm ;
-
-( XXX Maybe this should be an .ifdef rather than a runtime check?)
-variable xinst  ( extended instruction in use?)
-: ?xinst  xinst @ 0= if  error" requires the extended instruction set"  then ;
-: ?noxinst  xinst @  if  error" not valid for extended instruction set" then ;
 
 
 ( Zero ops.)
@@ -63,6 +58,9 @@ assembler
   tables have to do with writing to flash?)
 
 ( Or how about just "p"? This is how we use it in the flash programming code.)
+
+( XXX I think I prefer "pm". It suggests "program memory", not just
+  "pointer".)
 
 0008 0op  p@   ( tblrd*)    ( read program memory)
 0009 0op  p@+  ( tblrd*+)   ( read program memory, post incr)
@@ -84,12 +82,17 @@ assembler
 forth
 
 ( Dealing with the terrible fact that the data memory space - RAM and the
-  i/o registers - is _banked_. The space is made up of 16 256 byte banks -
-  pages - and so requires 12 bits of address. The high 4 are held in the BSF
-  - bank select F - register.)
+  i/o registers - is *banked*. The data space is made up of a sequence of
+  256 byte banks - pages - and so requires more than 8 bits of address. The
+  high bits are held in the BSR - bank select register.
 
-( Let's define some utility words for dealing with these.)
-: >bank   ( f - bank)    0f00 and ;
+  The number of bits in the bank register varies by device. It is normally
+  4, but if bsr-has-6-bits is defined, it is 6!)
+
+.ifdef bsr-has-6-bits 6 .else 4 .then  constant #bsr-bits
+
+( Extracting the bank or 8-bit offset from a data space address.)
+: >bank   ( f - bank)    [ #bsr-bits ones 8 << #] and ;
 : >f8     ( f - offset)  00ff and ;
 
 ( "bank" instructions set this. We get a static lexical sense of what its
@@ -102,7 +105,7 @@ forth
 variable current-bank
 
 ( bank takes an address in the data memory and strips off the bank part -
-  the high 4 bits. As a convenience, bank leaves f on the stack.)
+  the high byte. As a convenience, bank leaves f on the stack.)
 
 assembler
 : bank  ( f - f)
@@ -119,38 +122,50 @@ forth
 ( check that address given matches current bank, then truncate to 8 bits.)
 : ?bank  ( f - f8)
    dup >f8  swap >bank  current-bank @ =  if ^ then
-   warn" warning: address doesn't match current bank setting" ;
-
+   warn" address doesn't match current bank setting" ;
 
 ( Check that an address is a valid stack - z - offset.)
+.ifdef xinst
 : ?zoffset  ( f - f8)
-   >f8  dup 060 u< if ^ then  ( ok)
-   error" access ram address outside of valid range" ;
+   dup 060 u< if ^ then  ( ok)
+   error" z offset out of range" ;
+.else
+: ?zoffset  ( f - f8)
+   error" z offset only available when XINST set" ;
+.then
 
-( Check that an address is a valid "access ram" address:
-  000 - 05f or f60 - fff. Outside this range is invalid.)
+( @ram is always the beginning of the access ram bank. Likewise, STATUS is
+  always in the access i/o bank.)
 
+: within-access-ram?  ( f - within?)  @ram             [ @ram 060 + #]              within ;
+: within-access-io?   ( f - within?)  [ \eq STATUS >bank dup  060 + #]  [ 100 + #]  within ;
+
+( Check that an address is a valid "access bank" address. Return offset.)
 : ?access  ( f - f8)
    dup >f8  swap
-   dup 060 u< if drop ?noxinst ^ then  ( ok if not ext instruction set)
-   f5f over u< if drop ^ then ( ok always)
-   error" access ram address outside of valid range" ;
+.ifdef xinst
+   dup within-access-ram? if error" access ram inaccessible when XINST set" then
+.else
+   dup within-access-ram? if drop ^ then  ( ok)
+.then
+   dup within-access-io? if drop ^ then  ( ok)
+   error" invalid access bank address" ;
 
-( Check that address given is _only_ an 8 bit offset.)
-: ?f   dup >bank if  error" more than 8 bits in f"  then ;
+( Check that address given is *only* an 8 bit offset.)
+: ?f8   dup >bank if  error" more than 8 bits in f"  then ;
 
 assembler
-: ,z   ( offset - bits)  ( "stack offset")  ?xinst  ?zoffset ;  ( clear "a" bit)
-:  )   ( f      - bits)  ( "access ram")            ?access ;   ( clear "a" bit)
-: b)   ( f      - bits)  ( "banked")         ?bank  0100 or ;   ( set "a" bit)
+: ,z   ( offset - bits)  ( "stack offset")  ?zoffset ;         ( clear "a" bit)
+:  )   ( f      - bits)  ( "access bank")   ?access ;          ( clear "a" bit)
+: b)   ( f      - bits)  ( "banked")        ?bank  0100 or ;   ( set "a" bit)
 ( XXX / or // for banked?)
 
 
 ( In dafop we've reversed the sense of the d bit. Now set means store to w,
   and clear means store to f, which we think should be the default.)
 
--- : !    ( f - bits)  ( "store to f")  ?f     0200 or ;  ( set "d" bit)
-: w    ( f - bits)  ( "store to w")  ?f     0200 or ;  ( set "!d" bit)
+-- : !    ( f - bits)  ( "store to f")  ?f8     0200 or ;  ( set "d" bit)
+: w    ( f - bits)  ( "store to w")  ?f8     0200 or ;  ( set "!d" bit)
 
 0200  afop mul   ( mulwf           PRODH:PRODL = w * f)
 0400 dafop dec   ( decf     DNVCZ  f/w = f - 1)
@@ -169,7 +184,7 @@ assembler
 0f00 i8op addi   ( addlw)  ( DNVCZ  w = k + w)
 
 ( NOTE: Some of these operations are 1ops. These operate on F not W! But
-  they can store the result in F _or_ W.)
+  they can store the result in F *or* W.)
 
 1000 dafop or     ( iorwf)   ( NZ     f/w = w or f)
 1400 dafop and    ( andwf)   ( NZ     f/w = w and f)
@@ -187,8 +202,8 @@ assembler
 3800 dafop rot4   ( swapf)   (        f/w = swap_nybbles[f])
 3c00 dafop incsz  ( incfsz)  (        f/w = f + 1, skip if zero)
 
-4000 dafop ror    ( rrncf)  ( NZ     rotate right not thru carry)
-4400 dafop rol    ( rlncf)  ( NZ     rotate left not thru carry)
+4000 dafop ror    ( rrncf)    ( NZ     rotate right not thru carry)
+4400 dafop rol    ( rlncf)    ( NZ     rotate left not thru carry)
 
 4800 dafop incsnz  ( infsnz)  (       f/w = inc f, skip nz)
 4c00 dafop decsnz  ( dcfsnz)  (       f/w = dec f, skip nz)
@@ -210,22 +225,24 @@ assembler
 6400 afop cmpsgt  ( cpfsgt          f - w, skip if gt, unsigned)
 6600 afop tstsz   ( tstfsz          test f, skip if 0)
 
-6800 afop set   ( setf            f = ff  no status chg)
-6a00 afop clr   ( clrf     Z      f = 0   Z = 1)
-6c00 afop neg   ( negf     DNVCZ  f = -f)
-6e00 afop stw   ( movwf           f = w   no status chg)
+6800 afop set     ( setf            f = ff  no status chg)
+6a00 afop clr     ( clrf     Z      f = 0   Z = 1)
+6c00 afop neg     ( negf     DNVCZ  f = -f)
+6e00 afop stw     ( movwf           f = w   no status chg)
 forth
 
 : bitop   constant does> @  ( f bit# op)  swap 9 << or  9 imm  op, ;
 assembler
-7000 bitop btog    (  btg             bit toggle f)
-8000 bitop bset    (  bsf             bit set f)
-9000 bitop bclr    (  bcf             bit clr f)
+7000 bitop btog   (  btg            bit toggle f)
+8000 bitop bset   (  bsf            bit set f)
+9000 bitop bclr   (  bcf            bit clr f)
 
 ( XXX bset? bclr?  what about the skip?)
-a000 bitop btstss  (  btfss           bit test, skip set)
-b000 bitop btstsc  (  btfsc           bit test, skip clr)
+( XXX somehow interface these with the control structure words)
+a000 bitop btstss  (  btfss         bit test, skip set)
+b000 bitop btstsc  (  btfsc         bit test, skip clr)
 
+( XXX need movffl)
 : movff   ( fsrc fdest)  swap  c000 i12 op,  f000 i12 op, ;
 forth
 
@@ -264,10 +281,13 @@ forth
    constant does> @  ( dest op)  over u2/ 0ff and or op,  9 u>>  f000 i12 op, ;
 
 ( For load index - FSR - registers, the high 4 bits are in the first
-  word; the low 8 bits are in the extension.)
+  word; the low 8 or 10 bits - it depends whether BSR is 4 bits or 6 - are
+  in the extension.)
 
 : ldix
-   constant does> @  ( offset op)  over  8 u>> or op,  0ff and  f000 or op, ;
+   constant does> @  ( offset op)
+   over  [ #bsr-bits 4 + #]  u>> or op,
+         [ #bsr-bits 4 + ones #] and  f000 or op, ;
 
 assembler
 ec00 ljmp call
@@ -289,15 +309,17 @@ forth
 -- Extended instructions: e800 to ebff, plus 0014 (callw)
 -- --------------------------------------------------------------------------
 
+.ifdef xinst
+
 ( If the XINST bit is set in the configuration space, a few instructions
   are added. These are useful for C compilers, but might very well be
   useful to assembler and Forth hackers too.)
 
-0014 0op _callw      ( push pc + 2; pcl = w, pch = pclath, pcu = pclatu)
-
 ( XXX should we check if imm < 0 and do sub automagically?)
-: addix  constant does> ?xinst  @  ( imm op)  6 imm  op, ;
+: addix  constant does> @  ( imm op)  6 imm  op, ;
 assembler
+0014 0op callw      ( push pc + 2; pcl = w, pch = pclath, pcu = pclatu)
+
 e800 addix addx     ( addfsr    add literal to fsr 0)
 e840 addix addy     ( addfsr    add literal to fsr 1)
 e880 addix addz     ( addfsr    add literal to fsr 2)
@@ -308,20 +330,16 @@ e940 addix suby     ( subfsr    sub literal from fsr 1)
 e980 addix subz     ( subfsr    sub literal from fsr 2)
 e9c0 addix subzret  ( subulnk   sub literal from fsr 2 and return)
 
-forth
-ea00 i8op _pushi    ( pushl     store lit at FSR2; dec FSR2
+ea00 i8op pushi     ( pushl     store lit at FSR2; dec FSR2
                                 ie, post-decrement)
-assembler
 
 ( In movsf and movss, the z offsets are added to FSR2)
-: movsf   ( ssrc fdest)  ?xinst  swap  eb00  i7 op,  f000 i12 op, ;
-: movss   ( ssrc sdest)  ?xinst  swap  eb80  i7 op,  f000  i7 op, ;
-
-: callw   ?xinst _callw ;
-: pushi   ?xinst _pushi ;
+: movsf   ( ssrc fdest)  swap  eb00  i7 op,  f000 i12 op, ;
+: movss   ( ssrc sdest)  swap  eb80  i7 op,  f000  i7 op, ;
 forth
 
-forth
+.then  ( ifdef xinst)
+
 
 comment
 =============================================================================

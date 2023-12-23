@@ -2,7 +2,59 @@
 
   Copyright 2002-2023 David Frech. (Read the LICENSE for details.)
 
-loading PIC18 memory image
+loading PIC18 memory
+
+decimal
+
+( Define the basics of the target's memory.)
+
+( Program memory addresses are 22 bits. The PC is 21 bits, but the largest
+  PIC18 parts have only 128 KiB of flash.
+
+  Flash             : 00_0000 - 1f_ffff
+  User IDs          : 20_0000 - 20_001f
+  Device info area  : 2c_0000 - 2c_00ff
+  Config words      : 30_0000 - 30_????
+  EEPROM            : 38_0000 - 38_????
+  Device config info: 3c_0000 - 3c_????
+  Revision ID       : 3f_fffc - 3f_fffd
+  Device ID         : 3f_fffe - 3f_ffff
+
+  We want images for the flash, the config words, and [maybe] the EEPROM.
+)
+
+ 2 constant cell-bytes
+22 constant addr-bits  ( XXX different for program and data spaces!)
+         -d little-endian
+
+ld target/common/memory.mu4   ( generic memory image support)
+' drop is choose-image ( see above file for an explanation)
+
+#flash make-image
+   dup make-region flash
+       make-region boot
+
+( Since on some PIC18 families the ram starts at a non-zero offset into
+  data space - specifically, at @ram - we want to make sure that the ram
+  region - from @ram to @ram #ram + - fits into the ram image, which needs to
+  be a power of 2 in size.
+
+  The easiest way to do this is to take the larger of @ram and #ram - we
+  assume they are both powers of 2! - and double it.)
+
+@ram #ram max 2* make-image  ( ensure that [@ram #ram +] is within the ram image)
+   make-region ram
+
+32 make-image
+   make-region config
+
+( NOTE: the beginning address of EEPROM is not 0.)
+#eeprom make-image
+   make-region eeprom
+
+
+
+.ifdef legacy-pic-memory
 
 ( NOTE: Cribbed from AVR)
 
@@ -189,3 +241,5 @@ forth
 : boot!    ( boot-origin)  dup 'boot  2!  ( set ptr and origin to origin) ;
 : ee!    ( eeprom-origin)  dup 'ee    2!  ( set ptr and origin to origin) ;
 : sig!      ( sig-origin)  dup 'sig   2!  ( set ptr and origin to origin) ;
+
+.then  ( ifdef legacy)
