@@ -4,33 +4,53 @@
 
 -- loading Core memory
 
+( We define three kinds of memory objects:
+
+   - address spaces [aspaces]
+   - images
+   - regions
+
+  An aspace contains one or more images; each image contains one or more
+  regions. Each region belongs to a single image; each image belongs to a
+  single aspace.
+
+  A von Neumann machine will have *one* address space that contains,
+  generally, a flash image and a ram image. Each image will, generally,
+  contain a single region; however, if there is a "boot block" region in the
+  flash, often we want to set that up as a second region in the flash image.
+
+  A Harvard machine will generally have *two* or *three* address spaces.
+  Flash and data [ram and i/o] are the common two; sometimes eeprom is its
+  own aspace, sometimes it's part of the flash aspace, and sometimes there
+  isn't any!
+
+  An aspace define two things: an address bit-width, and a function that
+  maps from an address within the space to an *image*. The dumping/disasming
+  code uses the bit-width to calculate how many digits of address to print;
+  and it uses the mapping function to figure out which image an address
+  belongs to, so it can display the contents of the image.
+
+  An image refers back to the aspace it belongs to; it also defines a size
+  in bytes and an array of those bytes. A region, similarly, refers back to
+  an image; it also defines origin and current pointer addresses. "here"
+  simply returns the current pointer value in the current region.
+
+  Simple, right? ;-)
+
 ( NOTE: Before loading this code, define the following values that
   describe the target:
 
-    cell-bytes  -- number of bytes in a cell
-    addr-bits   -- number of bits in an address
-    big-endian or little-endian  -- target's endianness
+    bytes/cell
+    big-endian or little-endian
 
-  *After* loading this code, the deferred word "choose-image" [see below]
-  must be set to code specific to the target machine and its architecture.)
+  *After* loading this code, each aspace's "choose-image" variable [see
+  below] must be set to code specific to that aspace.)
 
-( Utility words for address and image sizes.)
-: log2  ( n - exp mant)
-   0 swap  begin  dup 1 and 0= while  1 u+  u2/  repeat ;
 
-: power-of-two?  ( n)  log2 nip  1 = ;
+( Regions.)
 
-( We are separating the notion of memory *images* and *regions*. An image
-  has a size and an address; a region has an origin pointer, a current
-  pointer, and an associated image.
-
-  It is useful to have, eg, app, bootloader, signature, and vector
-  *regions* in the flash *image*.)
-
-( Regions have an origin pointer, a "current" pointer [what  here
-  returns], and an associated image. When a region is created, it stores a
-  pointer to the image's first byte in its body, before the here and origin
-  pointers.)
+( When a region is created, it stores a pointer to the image's first byte
+  in its body, before the current and origin pointers.)
 
 ( XXX This should probably be called r instead, but there is a *lot* of
   code that does "h preserve" that would have to change... I guess that
@@ -38,8 +58,9 @@
 
 variable h    ( dictionary pointer pointer; points to current *region*)
 : dp   h @ ;  ( dictionary pointer)
+
 : make-region  ( 'image)
-   create  ,  0 , 0 ,  ( image, ptr, origin)
+   create  ,  0 , 0 ,  ( 'image, ptr, origin)
    does> cell+ h ! ;  ( h points to ptr cell)
 
 ( Show current region, or, if unset, say that. Every target should set
@@ -51,6 +72,9 @@ variable h    ( dictionary pointer pointer; points to current *region*)
 -: ( tell us which region is current, if any)
    ."  (" .region ." )" ;  is .extra-prompt
 
+
+( Images.)
+
 ( Memory images should be stored in the dictionary like strings: prefixed
   by their length. When we push an image, we push the address of its first
   byte, but the previous cell countains the count, if we want to do bounds
@@ -59,10 +83,15 @@ variable h    ( dictionary pointer pointer; points to current *region*)
   Images are unnamed! They are "addressable" only as a by-product of a
   *region* that points into an image.)
 
-( Create an image and leave a pointer to it.)
-: make-image  ( #bytes - 'image)
+: power-of-two?  ( n)
+   begin  dup 1 and 0=  while  u2/  repeat  1 = ;
+
+( Create an image and leave a pointer to its first byte; this pointer is
+  consumed by each region that is created inside the image.)
+
+: make-image  ( 'aspace #bytes - 'image)
    aligned  dup power-of-two?  0= if  error" image size not a power of 2"  then
-   dup ,  here  swap allot ;
+   swap , ( 'aspace)  dup ,  here  swap allot ;
 
 : 'image  dp cell- @ ;      ( image address is stored in region)
 : #image  'image cell- @ ;  ( image size)
@@ -70,26 +99,42 @@ variable h    ( dictionary pointer pointer; points to current *region*)
 ( Wrap an address to "fit" into the current image.)
 : wrap   #image 1-  and ;
 
-( Target can be a von Neumann or Harvard architecture machine, so we let
-  the user decide how to handle choosing an image based on a target
-  address.
 
-  On a von Neumann machine we have multiple images, but we assume that they
-  exist in a single address space. Given a target address, choose-image will
-  figure out which image it resides in and set that as the current image.
+( Aspaces.)
 
-  On a Harvard machine we can have multiple addresss spaces that contain
-  the same addresses, so there is no way to choose an image based on the
-  target address. In this case, choose-image will probably do nothing, and
-  the user has to choose the image that they are interested in.)
+( Like images, aspaces are unnamed. They are "addressable" only as a
+  by-product of a *region* that points into an image, which points to an
+  aspace. The definition of an aspace contains two values: bits/addr for
+  that aspace, followed by a pointer to a choose-image word.)
 
-( XXX This should maybe be called choose-region, since the images are
-  nameless, and any region that points to a particular image will work.)
+( Create an aspace and leave a pointer to it; this pointer is consumed by
+  each image that is created inside the aspace.)
 
-defer choose-image  ( target)
+: make-aspace  ( 'choose-image bits/addr - 'aspace)
+   here  swap ,  swap , ;
+
+( Based on current region, find the aspace.)
+: 'aspace  ( - 'aspace)  'image cell- cell- @ ;
+
+( Based on current region, fetch bits/addr from aspace.)
+: bits/addr  ( - bits/addr)  'aspace @ ;
+
+( Based on current region, return a pointer to the cell that contains the
+  address of the choose-image word for that aspace.)
+
+: 'choose-image  ( - 'choose-image)  'aspace cell+ ;
+
+( What choose-image does: Given a target address, choose *any* region in
+  the current aspace whose corresponding image contains that address, and
+  make it the current region. choose-image is used to convert a target
+  address - in a given aspace - to a host address. The region that is chosen
+  is irrelevant; it is important only in indirectly specifying an image.)
+
+: choose-image  ( target)  'choose-image @execute ;
+
 : image+  ( target - host)
-   h preserve ( choose-image might change it)  dup choose-image
-   wrap 'image + ;
+   h preserve ( choose-image might change it)
+   dup choose-image  wrap  'image + ;
 
 : image-c@   image+ c@ ;
 : image-c!   image+ c! ;
@@ -98,25 +143,25 @@ defer choose-image  ( target)
   address of the correct word for du to use for that target.)
 
 .ifdef little-endian
-   cell-bytes 4 = .if  ( 32-bit target)
+   bytes/cell 4 = .if  ( 32-bit target)
       : image-h@   image+ leh@ ;
       : image-h!   image+ leh! ;
 
       : image-@    image+ lew@ ;  ' lew@
       : image-!    image+ lew! ;
-   .else cell-bytes 2 = .if  ( 8- or 16-bit target)
+   .else bytes/cell 2 = .if  ( 8- or 16-bit target)
       : image-@    image+ leh@ ;  ' leh@
       : image-!    image+ leh! ;
    .then .then
 
 .else .ifdef big-endian
-   cell-bytes 4 = .if  ( 32-bit target)
+   bytes/cell 4 = .if  ( 32-bit target)
       : image-h@   image+ beh@ ;
       : image-h!   image+ beh! ;
 
       : image-@    image+ bew@ ;  ' bew@
       : image-!    image+ bew! ;
-   .else cell-bytes 2 = .if  ( 8- or 16-bit target)
+   .else bytes/cell 2 = .if  ( 8- or 16-bit target)
       : image-@    image+ beh@ ;  ' beh@
       : image-!    image+ beh! ;
    .then .then
@@ -128,18 +173,20 @@ defer choose-image  ( target)
 ( The above mess left the address of a "cell@" word on the stack.)
 : du-target
    [ #]    is |cell@
-   addr-bits  |addr !
-   cell-bytes |cell ! ;
+   bits/addr  |addr !
+   bytes/cell |cell ! ;
 
 -: ( buf a u)  swap image+ -rot  cmove ;  ( read from image)
 : >image
    [ #]    is |read
    du-target ;
 
->image  ( default to image; this can change once we are chatting with target.)
+-- NOTE: we cannot execute >image yet - we need to have defined an aspace
+-- and at least one image and region.
+-- >image  ( default to image; this can change once we are chatting with target.)
 
 meta
-cell-bytes constant cell
+bytes/cell constant cell
 : cells  \m cell * ;
 : cell/  \m cell / ;
 : cell+  \m cell + ;
@@ -164,7 +211,7 @@ meta
 : align,    ( b)  \m cell 1- mask-align, ;
 : align       0   \m align, ;
 
-cell-bytes 4 = .if  ( only define "halfword" words for 32-bit targets)
+bytes/cell 4 = .if  ( only define "halfword" words for 32-bit targets)
 
 : haligned                 2 aligned-by ;  ( halfword aligned)
 : halign,   ( b)           1 mask-align, ;
