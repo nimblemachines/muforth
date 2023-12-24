@@ -54,14 +54,14 @@ ram  wipe
 here equ data        256 allot  ( memory read/write buffer)
 here equ semaphore  cell allot  ( semaphore + stm32 command)
 
-( XXX this needs to change; left over from AVR/8051 copy-pasta.)
-here equ cmd           1 allot  ( flash command)
-here equ addr                   ( flash addr)
-here equ addr-hi       1 allot
-here equ addr-lo       1 allot
-here equ result                 ( single byte result)
-here equ toggle        1 allot  ( flash command toggle - for AVR)
-here equ count                  ( byte count to transfer)
+( NOTE: these are both 4 bytes for alignment. addr only needs to be 3
+  bytes, and count 2. But we read and write the stm32 memory in 4-byte
+  chunks.)
+
+here equ addr          4 allot  ( flash addr)
+here equ count         4 allot  ( byte count)
+
+( XXX Do I want these for the uart code?)
 here equ out-count     2 allot  ( byte count to write)
 here equ in-count      2 allot  ( byte count to read)
 
@@ -173,14 +173,10 @@ ld target/ARM/v6-m/kernel-itc.mu4
 -- --------------------------------------------------------------------
 -- Buffering sent and received data
 -- --------------------------------------------------------------------
-( Since we are going to be reading a buffer sent to us by the host, let's
-  have nice words for that.)
-
-variable p
-: p@   p @  c@       ;  ( read next byte from buf, don't incr)
-: p*   p @  c@+  p ! ;  ( read next byte from buf, incr)
-: p&   p @  c!+  p ! ;  ( write next byte to buf, incr)
-
+( Let's define our own words for reading and writing memory.)
+variable d  ( for "data")
+: d*   d @  c@+  d ! ;  ( read next byte from buf, incr)
+: d&   d @  c!+  d ! ;  ( write next byte to buf, incr)
 
 -- --------------------------------------------------------------------
 -- Bitbanged half-duplex SPI
@@ -203,7 +199,7 @@ ld target/ARM/stm32/bitbanged-spi-half-duplex.mu4
 : t_enter_prog  1 ms ;
 : t_dly  ( nominally 1us)  1 us ;
 : t_erase  #11 ms ;  ( bulk or page erase)
-: t_prog_eeprom_config  #11 ms ;
+: t_prog_eeprom_config  #11 ms ;  ( presumably because it includes erase)
 : t_prog_flash  #75 us ;
 
 ( The string "MCHP" is the initialization bit string that must be clocked
@@ -211,6 +207,8 @@ ld target/ARM/stm32/bitbanged-spi-half-duplex.mu4
 
 : +prog
   reset\  t_enter_prog  [ token MCHP drop bew@ #] #32 >bits drop  t_enter_prog ;
+
+: -prog  reset/ ;  ( XXX is this right?)
 
 ( Combine a command and payload; send the command; delay.)
 : cmd+payload  ( payload cmd - payload')  #23 <<  + 2*  8 >bits  t_dly ;
@@ -224,12 +222,45 @@ ld target/ARM/stm32/bitbanged-spi-half-duplex.mu4
 ( Send a command; delay; recv a payload.)
 : cmd+rd  ( cmd - payload)  cmd  #24 bits>  2/ 0ffff and ;
 
-: !p   ( a)      80 cmd+wr  t_dly ;
-: p@+  ( - u)   0fe cmd+rd  t_dly ;
-: p!+  ( w)     0e0 cmd+wr  t_prog_flash ;
+( XXX Better names for these? The p suggests PIC and PC. And page erase.)
+: !p    ( a)      80 cmd+wr  t_dly ;
+: p@+   ( - u)   0fe cmd+rd  t_dly ;
+: p!+   ( w)     0e0 cmd+wr  t_prog_flash ;
+: ee!+  ( b)     0e0 cmd+wr  t_prog_eeprom_config ;
+: perase         0f0 cmd     t_erase ;  ( page from high bits of PC)
 
-: tt  timer-init  spi-init  reset/  +prog
-      3f_fffc !p  p@+ p@+ ;
+:  setup  ( - #bytes)  data d !  count @  addr @ !p ;
+: wsetup  ( - #words)  setup  1+ 2/ ;
+
+: read-flash  wsetup  for  p@+ >hilo d& d&  next ;
+: read-ee      setup  for  p@+       d&     next ;
+
+: prog-flash  wsetup  for  d* d* lohi> p!+   next ;
+: prog-ee      setup  for  d*          ee!+  next ;
+
+: erase-page   setup drop  perase ;
+
+( NOTE: deviced-id and revision are *word-sized* values.)
+: tt  ( - revision device-id)  timer-init  spi-init  reset/  +prog
+   3f_fffc !p  p@+ p@+ ;
+
+( Use this to test the *read size* of each region. Config and EEPROM space
+  return bytes; everything else, words.)
+
+: rr  ( - w w w b w b)  ( read some more values)
+         0 !p  p@+  ( flash - words)
+   20_0000 !p  p@+  ( user-id - words)
+   2c_0000 !p  p@+  ( device information area unique id and calibration - words)
+   30_0000 !p  p@+  ( config - bytes)
+   3c_0000 !p  p@+  ( device configuration info - words)
+   38_0000 !p  p@+  ( eeprom - bytes) ;
+
+( More detailed info from two read-only regions.)
+: dia  ( device information area - words)
+   2c_0000 !p  p@+ p@+ p@+ ;
+
+: dci  ( device configuration info - words)
+   3c_0000 !p  p@+ p@+ p@+ p@+ p@+ ;
 
 .then ( pic18f-q)
 
@@ -278,12 +309,9 @@ ld target/ARM/stm32/bitbanged-spi-half-duplex.mu4
 : p+             06 cmd     t_dly ;  ( increment address)
 : !p             16 cmd     t_dly ;  ( reset address to 0000)
 
-( Call this uu because I want to use this PIC as a USB device. ;-)
-: uu  timer-init  spi-init  reset/  +prog ;
-
-( Read device id and revision and few other things.)
-: rr  uu
-      0 config!  p+ p+ p+ p+  7 for  p@ p+  next ;
+: tt  timer-init  spi-init  reset/  +prog
+   ( Read device id and revision and few other things.)
+   0 config!  p+ p+ p+ p+  7 for  p@ p+  next ;
 
 .then ( pic16f145x)
 
@@ -305,7 +333,7 @@ ld target/ARM/stm32/bitbanged-spi-half-duplex.mu4
    -- Now for the uart itself.
    USART1_CR1  0 over ! ( reset and disable USART)
    %1100 ( TE+RE) ( enable tx and rx)  over set!
-   [ cpuclk #38,400 / #] USART1_BRR !
+   [ cpuclk #115,200 / #] USART1_BRR !
    1 ( UE) ( enable USART)  swap set! ;
 
 : ?uart-status  ( bit)
@@ -315,8 +343,8 @@ ld target/ARM/stm32/bitbanged-spi-half-duplex.mu4
 : uart-send  ( b)     [ 1 #7 << ( TXE bit)  #] ?uart-status  USART1_TDR ! ;
 
 : uart-send-recv
-   data p !  out-count h@ for  p* uart-send  next
-   data p !   in-count h@ for  uart-recv p&  next ;
+   data d !  out-count h@ for  d* uart-send  next
+   data d !   in-count h@ for  uart-recv d&  next ;
 
 
 -- ------------------------------------------------------------------------
@@ -338,9 +366,12 @@ compiler: :]  ( end a jump table)
 -- Core command processing loop
 -- ------------------------------------------------------------------------
 ( Command index is above the word that it executes.)
-: do-command  ( n)
-           ( 10    11        12 )
-   10 - [:  reset\  reset/  uart-send-recv  :] ;
+: do-command  ( n)  10 -  [:
+ ( 10     11     12 )
+   +prog  -prog  uart-send-recv
+ ( 13          14       15          16       17 )
+   read-flash  read-ee  prog-flash  prog-ee  erase-page
+   :] ;
 
 here ]  ( chip-init)
    clock-init  led-init  timer-init  spi-init  uart-init  flash-leds

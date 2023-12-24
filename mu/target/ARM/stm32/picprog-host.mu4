@@ -1,0 +1,74 @@
+( This file is part of muforth: https://muforth.dev/
+
+  Copyright 2002-2023 David Frech. (Read the LICENSE for details.)
+
+loading PIC18 SPI flash programming (host)
+
+( This is the host-side code to drive target/ARM/stm32/picprog-core.mu4)
+
+( We need to know where to find the data structures in the STM32 memory.
+  They are conveniently placed at the start of RAM. We are going to call
+  directly into the stlink support code to read and write the STM32 memory.
+  We can't use the "interact" versions - t.read, t.write, etc - because they
+  will be associated with the PIC target!)
+
+decimal
+
+"2000_0000  ( STM32 ram origin)
+dup constant data      256 +  ( memory read/write buffer)
+dup constant semaphore   4 +  ( semaphore + stm32 command)
+
+dup constant addr        4 +  ( flash addr)
+dup constant count       4 +  ( transfer count; could be bytes or words)
+
+( XXX Do I want these for the uart code?)
+dup constant out-count   2 +  ( byte count to write)
+dup constant in-count    2 +  ( byte count to read)
+drop
+
+hex
+
+( Remote execute command.)
+: rx-cmd  ( cmd)  constant
+   does> @  deca_f000 + pad lew!  pad semaphore 4 st.write
+   ( Keep reading semaphore until STM32 signals that it is done.)
+   begin  pad semaphore 4 st.read  pad lew@ face_d000 = until ;
+
+10 rx-cmd +prog
+11 rx-cmd -prog
+12 rx-cmd pic.uart-send-recv
+
+13 rx-cmd pic.read-flash
+14 rx-cmd pic.read-ee
+15 rx-cmd pic.prog-flash
+16 rx-cmd pic.prog-ee
+
+17 rx-cmd pic.erase-page
+
+variable spy  ( to spy on the protocol)
+: spy-write  ( buf count)
+   spy @ if  cr  for  c@+ swap  ." >" .h8_  next  drop ^  then  2drop ;
+
+: spy-read   ( buf count)
+   spy @ if  cr  for  c@+ swap  ." <" .h8_  next  drop ^  then  2drop ;
+
+
+.ifdef pic18f-q
+-- ------------------------------------------------------------------------
+-- PIC18-Q programming
+-- ------------------------------------------------------------------------
+: setup  ( a u - u)  ( put addr and count into pad; write to stm32)
+   swap pad lew!  dup pad 4 + lew!  pad addr 8 st.write ;
+
+: buf>  ( buf u)  data swap st.read ;
+: >buf  ( buf u)  data swap st.write ;
+
+: read-flash  ( buf a u)  setup  pic.read-flash  buf> ;
+: read-ee     ( buf a u)  setup  pic.read-ee     buf> ;
+
+: prog-flash  ( buf a u)  setup  >buf  pic.prog-flash ;
+: prog-ee     ( buf a u)  setup  >buf  pic.prog-ee ;
+
+: erase-page  ( a)      0 setup drop   pic.erase-page ;
+
+.then  ( pic18f-q)
