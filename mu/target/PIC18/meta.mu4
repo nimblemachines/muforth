@@ -22,12 +22,25 @@ hex
   BBSIZE=111 on Q parts - selects the *smallest* boot block. This is most
   likely what we want.)
 
+( XXX This is a hack, just so that we can get something working.)
+128 Ki 7 >> ( default boot block size on Q parts) constant #boot
 
-: clean-slate
-   wipe  ( erase all memory images)
-   0 ee!  0 'ram !  @app app!  0 boot!  #flash [ 1 Ki 2/ #] - sig! ;
+( XXX We will probably need some vector code here, like on AVR.)
 
-clean-slate
+( Initialization of memory images and regions. We need the above vector
+  code to calculate everything.)
+
+: erase-image   'image #image "ff fill ;  ( fills *current* image)
+: wipe
+   ram      @ram region!  erase-image
+   eeprom      0 region!  erase-image
+   boot        0 region!  erase-image  ( erases entire flash image)
+   flash   #boot region!  ( XXX should be *real* bbsize)
+
+   -- #vectors vectors \m allot ( "application" starts after vectors) ;
+   ;
+
+wipe  ( leaves flash as current region)
 
 
 -- ------------------------------------------------------------------------
@@ -67,7 +80,7 @@ meta
 00_0008 constant IRQHI ( High-priority / compatibility interrupt at 00_0008)
 00_0018 constant IRQLO ( Low-priority interrupt at 00_0018)
 
-: handler  ( vector-offset)  boot  org  __asm ;
+: handler  ( vector-offset)  boot  \m goto  __asm ;
 
 : label   \m here  current preserve  meta constant  __asm ;
 
@@ -76,7 +89,7 @@ meta
   jmp to point to here.)
 
 : hook    state preserve  \m label  0 \a jmp ( dummy) ;
-: hooks   h preserve  \m here  .meta. chain' execute  org  \a jmp ;
+: hooks   h preserve  \m here  .meta. chain' execute  \m goto  \a jmp ;
 
 assembler
 : ;c   __meta ;

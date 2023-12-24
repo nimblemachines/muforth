@@ -23,16 +23,38 @@ decimal
   We want images for the flash, the config words, and [maybe] the EEPROM.
 )
 
- 2 constant cell-bytes
-22 constant addr-bits  ( XXX different for program and data spaces!)
+ 2 constant bytes/cell
          -d little-endian
 
 ld target/common/memory.mu4   ( generic memory image support)
-' drop is choose-image ( see above file for an explanation)
 
-#flash make-image
-   dup make-region flash
-       make-region boot
+( Two memory aspaces: flash/id/config/eeprom, and data [ram + i/o].)
+
+22 make-aspace  ( flash/id/config/eeprom)
+   dup #flash make-image
+          dup make-region flash
+              make-region boot
+
+      dup 256 make-image  ( XXX how big is big enough?)
+              make-region user-id
+
+      dup 256 make-image  ( XXX how big is big enough?)
+              make-region config
+
+      #eeprom make-image
+              make-region eeprom
+
+( XXX Is the flash space choose-image totally chip-specific? Or can we do
+  something like this for everything:)
+
+-: ( target)  ( choose an image from an address in flash space)
+   dup "20_0000 u< if  drop flash ^  then
+   dup "30_0000 u< if  drop user-id ^  then
+       "38_0000 u< if       config ^  then
+                            eeprom ;
+
+( Install choose-image in the flash aspace.)
+flash 'choose-image !
 
 ( Since on some PIC18 families the ram starts at a non-zero offset into
   data space - specifically, at @ram - we want to make sure that the ram
@@ -42,15 +64,37 @@ ld target/common/memory.mu4   ( generic memory image support)
   The easiest way to do this is to take the larger of @ram and #ram - we
   assume they are both powers of 2! - and double it.)
 
-@ram #ram max 2* make-image  ( ensure that [@ram #ram +] is within the ram image)
-   make-region ram
+( For the data aspace we keep the default of "drop" for choose-image.)
+14 make-aspace  ( data: ram + i/o)
+   @ram #ram max 2* make-image  ( ensure that [@ram #ram +] is within the ram image)
+                    make-region ram
 
-32 make-image
-   make-region config
+comment ~~target-comparison~~
+( On 8051, wipe is per-image. This code is found in 8051/memory)
+: wipe   ( origin)
+   region! ( reset start and end pointers)
+   'image #image "ff fill  ( erase, like flash or eprom) ;
 
-( NOTE: the beginning address of EEPROM is not 0.)
-#eeprom make-image
-   make-region eeprom
+"20 ram wipe  ( skip the banked registers)
+ 0 xram wipe
+0 flash wipe
+
+( On AVR, wipe is global. This code is found in AVR/meta.)
+
+( Initialization of memory images and regions. We need the above vector
+  code to calculate everything.)
+
+: erase-image   'image #image "ff fill ;  ( fills *current* image)
+: wipe
+   ram      @ram region!  erase-image
+   eeprom      0 region!  erase-image
+   boot    @boot region!  erase-image  ( erases entire flash image)
+   flash       0 region!
+
+   #vectors vectors \m allot ( "application" starts after vectors) ;
+
+wipe  ( leaves flash as current region)
+~~target-comparison~~
 
 
 
