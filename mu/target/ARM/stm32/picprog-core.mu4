@@ -205,11 +205,6 @@ ld target/ARM/stm32/bitbanged-spi-half-duplex.mu4
 ( The string "MCHP" is the initialization bit string that must be clocked
   into the target, MSB first.)
 
-: +prog
-  reset\  t_enter_prog  [ token MCHP drop bew@ #] #32 >bits drop  t_enter_prog ;
-
-: -prog  reset/ ;  ( XXX is this right?)
-
 ( Combine a command and payload; send the command; delay.)
 : cmd+payload  ( payload cmd - payload')  #23 <<  + 2*  8 >bits  t_dly ;
 
@@ -232,13 +227,28 @@ ld target/ARM/stm32/bitbanged-spi-half-duplex.mu4
 :  setup  ( - #bytes)  data d !  count @  addr @ !p ;
 : wsetup  ( - #words)  setup  1+ 2/ ;
 
+variable bytes/page  ( aka erase size)
+( Read page size out of device config info area of chip! Save it locally
+  and put it into count so host can read it too.)
+
+: get-page-size
+   3c_0000 !p  p@+ ( words/page) 2*  dup bytes/page !  count ! ;
+
+: +prog
+   reset\  t_enter_prog  [ token MCHP drop bew@ #] #32 >bits drop  t_enter_prog
+   get-page-size ;
+
+: -prog  reset/ ;  ( XXX is this right?)
+
+( If addr is the start of a page, erase the page.)
+: erase?  addr @  bytes/page @ 1- and  0= ;
+: ?erase  erase? if perase then ;
+
 : read-flash  wsetup  for  p@+ >hilo d& d&  next ;
 : read-ee      setup  for  p@+       d&     next ;
 
-: prog-flash  wsetup  for  d* d* lohi> p!+   next ;
-: prog-ee      setup  for  d*          ee!+  next ;
-
-: erase-page   setup drop  perase ;
+: prog-flash  wsetup  ?erase  for  d* d* lohi> p!+   next ;
+: prog-ee      setup          for  d*          ee!+  next ;
 
 ( NOTE: deviced-id and revision are *word-sized* values.)
 : tt  ( - revision device-id)  timer-init  spi-init  reset/  +prog
@@ -247,13 +257,13 @@ ld target/ARM/stm32/bitbanged-spi-half-duplex.mu4
 ( Use this to test the *read size* of each region. Config and EEPROM space
   return bytes; everything else, words.)
 
-: rr  ( - w w w b w b)  ( read some more values)
+: rr  ( - w w w b b w)  ( read some more values)
          0 !p  p@+  ( flash - words)
    20_0000 !p  p@+  ( user-id - words)
-   2c_0000 !p  p@+  ( device information area unique id and calibration - words)
+   2c_0000 !p  p@+  ( device information area: unique id and calibration - words)
    30_0000 !p  p@+  ( config - bytes)
-   3c_0000 !p  p@+  ( device configuration info - words)
-   38_0000 !p  p@+  ( eeprom - bytes) ;
+   38_0000 !p  p@+  ( eeprom - bytes)
+   3c_0000 !p  p@+  ( device configuration info - words) ;
 
 ( More detailed info from two read-only regions.)
 : dia  ( device information area - words)
@@ -369,8 +379,8 @@ compiler: :]  ( end a jump table)
 : do-command  ( n)  10 -  [:
  ( 10     11     12 )
    +prog  -prog  uart-send-recv
- ( 13          14       15          16       17 )
-   read-flash  read-ee  prog-flash  prog-ee  erase-page
+ ( 13          14       15          16 )
+   read-flash  read-ee  prog-flash  prog-ee
    :] ;
 
 here ]  ( chip-init)
@@ -400,13 +410,10 @@ label startup
 
 .ifdef testing
 
-: shuffle  ( cmd addr data - data addr-lo addr-hi cmd)
-   -rot  >lohi  rot ;
-
 : index  ( offset)
-   100 0 do  dup i +   i data + c!  loop  drop ;
+   100 0 do  i over +  i data + c!  loop  drop ;
 
 : wipe
-   100 0 do  0ff i data + c!  loop ;
+   100 0 do  0ff  i data + c!  loop ;
 
 .then  ( testing (interactive)
