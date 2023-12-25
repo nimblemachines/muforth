@@ -1,0 +1,128 @@
+( This file is part of muforth: https://muforth.dev/
+
+  Copyright 2002-2023 David Frech. (Read the LICENSE for details.)
+
+loading PIC18 programming over SPI
+
+hex
+
+( We need to talk to the code running on the STM32. Let's load some
+  host-side code to do that.)
+
+( XXX we should either move this code to target/PIC18, or simply include it
+  in this file.)
+
+ld target/ARM/stm32/picprog-host.mu4
+
+( Make it easy to do different tasks in chunks without repeating all the
+  "chunking" code.)
+
+variable 'each-chunk  ( buf a len)  ( executed for each chunk)
+
+: do-chunk  ( a len - a+len)
+   2dup + push  ( increment address for the next chunk)
+   over image+ -rot  ( calculate buf address from a and image)
+   'each-chunk @execute  pop ;
+
+( Since we know we have a 256 byte buffer available on the STM32, use that
+  as our chunk size.)
+
+: chunked  ( a u)
+   100 /mod  ( r q)  swap push  for  100 do-chunk  next
+                        pop  =if  ( rem) do-chunk  drop ^  then  2drop ;
+
+( A defining word for a task that can be chunked.)
+: region-chunked  ( cfa)
+   constant  does> @ 'each-chunk !  region chunked ;
+
+
+( NOTE: The flash and user-id regions are word-wide and page-erasable. The
+  config and eeprom regions are byte-wide and auto-erase-per-byte.)
+
+
+-: ( buf a u)  cr ."   flash " over u. dup u.  prog-flash-chunk ;
+region-chunked prog-region
+
+-: ( buf a u)  cr ."   config/eeprom " over u. dup u.  prog-ee-chunk ;
+region-chunked prog-ee-region
+
+: prog-flash
+   cr  ." Writing flash (application)"  flash prog-region
+   cr  ." Writing flash (bootloader)"  boot prog-region ;
+
+: prog-user-id
+   cr ." Writing user-id"  user-id prog-region ;
+
+: prog-config
+   cr ." Writing config"  config prog-ee-region ;
+
+: prog-eeprom
+   cr ." Writing eeprom"  eeprom prog-ee-region ;
+
+: prog
+   cr  warn"
+You should commit your changes *before* programming the flash
+if you want the signature to reference the correct commits!
+"  radix preserve  hex  h preserve
+   +prog  prog-flash  prog-user-id  prog-config  prog-eeprom  -prog ;
+
+( For simplicity I'm going to verify byte-wise, even though most of the
+  flash regions are word-wide.)
+
+: verify-pad  ( buf u)
+   pad m !  over + swap do  m* i c@ xor  if i u. then  loop ;
+
+-: ( buf a u)  tuck  pad -rot read-flash-chunk  verify-pad ;
+region-chunked verify-region
+
+-: ( buf a u)  tuck  pad -rot read-ee-chunk  verify-pad ;
+region-chunked verify-ee-region
+
+: verify-flash
+   cr  ." Verifying flash (application) "  flash verify-region
+   cr  ." Verifying flash (bootloader) "  boot verify-region ;
+
+: verify-user-id
+   cr  ." Verifying user-id "  user-id verify-region ;
+
+: verify-config
+   cr  ." Verifying config "  config verify-ee-region ;
+
+: verify-eeprom
+   cr  ." Verifying eeprom "  eeprom verify-ee-region ;
+
+: verify
+   radix preserve  hex  h preserve
+   +prog  verify-flash  verify-user-id  verify-config  verify-eeprom  -prog ;
+
+
+( The following is copied-over AVR code, but something like this could be
+  useful to have.)
+
+.ifdef maybe-later
+
+: save-image
+   h preserve
+   token, create-file ( fd)
+   ( header)  dup  " muforth AVR img "  write
+   ( flash)   dup  flash   'image  #image  write
+   ( eeprom)  dup  eeprom  'image  #image  write
+   ( fuses)   dup                 fuses  8       write
+   ( lock bits)  dup              locks  8       write
+   close-file ;
+
+: read-image
+   wipe
+   flash   #flash   \m allot ( appear to have filled the flash and eeprom)
+   eeprom  #eeprom  \m allot ( ... so prog and verify will work)
+
+   token, open-file-ro ( fd)
+   ( check header)  dup  pad #16  read  #16 xor if  error" no header"  then
+      " muforth AVR img " pad #16  string= not if  error" not an AVR image"  then
+   ( read flash)   dup  flash   'image  #image  read  u.
+   ( read eeprom)  dup  eeprom  'image  #image  read  u.
+   ( read fuses)   dup                 fuses  8       read  u.
+   ( read lock bits)  dup              locks  8       read  u.
+   close-file  flash ;
+
+.then  ( maybe-later)
