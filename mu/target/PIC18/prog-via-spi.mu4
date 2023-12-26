@@ -31,69 +31,50 @@ variable 'each-chunk  ( buf a len)  ( executed for each chunk)
    100 /mod  ( r q)  swap push  for  100 do-chunk  next
                         pop  =if  ( rem) do-chunk  drop ^  then  2drop ;
 
-( A defining word for a task that can be chunked.)
-: region-chunked  ( cfa)
-   constant  does> @ 'each-chunk !  region chunked ;
-
+( A defining word for a task that can be chunked. Takes a string with an
+  action name, and a cfa that is called for each chunk.)
+: region-chunked  ( action-string each-chunk-cfa)
+   2constant does> 2@  'each-chunk !  cr count type space .region space
+   region chunked ;
 
 ( NOTE: The flash and user-id regions are word-wide and page-erasable. The
   config and eeprom regions are byte-wide and auto-erase-per-byte.)
 
-
+z" Programming" dup
 -: ( buf a u)  cr ."   flash " over u. dup u.  prog-flash-chunk ;
 region-chunked prog-region
 
+( Programming, from above)
 -: ( buf a u)  cr ."   config/eeprom " over u. dup u.  prog-ee-chunk ;
 region-chunked prog-ee-region
-
-: prog-flash
-   cr  ." Writing flash (application)"  flash prog-region
-   cr  ." Writing flash (bootloader)"  boot prog-region ;
-
-: prog-user-id
-   cr ." Writing user-id"  user-id prog-region ;
-
-: prog-config
-   cr ." Writing config"  config prog-ee-region ;
-
-: prog-eeprom
-   cr ." Writing eeprom"  eeprom prog-ee-region ;
 
 : prog
    cr  warn"
 You should commit your changes *before* programming the flash
 if you want the signature to reference the correct commits!
-"  radix preserve  hex  h preserve
-   +prog  prog-flash  prog-user-id  prog-config  prog-eeprom  -prog ;
+"  radix preserve  hex  h preserve  +prog
+    flash prog-region    user-id prog-region
+   config prog-ee-region  eeprom prog-ee-region  -prog ;
 
 ( For simplicity I'm going to verify byte-wise, even though most of the
   flash regions are word-wide.)
 
-: verify-pad  ( buf u)
-   pad m !  over + swap do  m* i c@ xor  if i u. then  loop ;
+: verify-pad  ( buf a u)
+   pad m !  push  over - ( -'image) swap  pop  ( -'image buf u)
+   over + swap do  m* i c@ xor  if i over + u. then  loop  drop ;
 
--: ( buf a u)  tuck  pad -rot read-flash-chunk  verify-pad ;
+z" Verifying" dup
+-: ( buf a u)  2dup pad -rot read-flash-chunk  verify-pad ;
 region-chunked verify-region
 
--: ( buf a u)  tuck  pad -rot read-ee-chunk  verify-pad ;
+( Verifying, from above)
+-: ( buf a u)  2dup  pad -rot read-ee-chunk  verify-pad ;
 region-chunked verify-ee-region
 
-: verify-flash
-   cr  ." Verifying flash (application) "  flash verify-region
-   cr  ." Verifying flash (bootloader) "  boot verify-region ;
-
-: verify-user-id
-   cr  ." Verifying user-id "  user-id verify-region ;
-
-: verify-config
-   cr  ." Verifying config "  config verify-ee-region ;
-
-: verify-eeprom
-   cr  ." Verifying eeprom "  eeprom verify-ee-region ;
-
 : verify
-   radix preserve  hex  h preserve
-   +prog  verify-flash  verify-user-id  verify-config  verify-eeprom  -prog ;
+   radix preserve  hex  h preserve  +prog
+    flash verify-region    user-id verify-region
+   config verify-ee-region  eeprom verify-ee-region -prog ;
 
 
 ( The following is copied-over AVR code, but something like this could be
