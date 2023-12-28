@@ -8,8 +8,21 @@ decimal
 
 ( Define the basics of the target's memory.)
 
+ 2 constant bytes/cell
+         -d little-endian
+
+ld target/common/memory.mu4   ( generic memory image support)
+
 ( Program memory addresses are 22 bits. The PC is 21 bits, but the largest
   PIC18 parts have only 128 KiB of flash.
+
+  I've have only compared two subfamilies - PIC18F1xK50 and the PIC18-Q -
+  but it seems that there are *standard* regions defined for the flash, but
+  not every chip defines all of them.
+
+  The 1xK50, for example, defines Flash, User ID, and Config space, and
+  folds the device ID and revision ID into one word at 3f_fffe. The -Q series
+  defines *all* of the following:
 
   Flash             : 00_0000 - 1f_ffff
   User IDs          : 20_0000 - 20_001f
@@ -19,14 +32,25 @@ decimal
   Device config info: 3c_0000 - 3c_????
   Revision ID       : 3f_fffc - 3f_fffd
   Device ID         : 3f_fffe - 3f_ffff
-
-  We want images for the flash, the config words, and [maybe] the EEPROM.
 )
 
- 2 constant bytes/cell
-         -d little-endian
+( Let's define constants for the origins of each of the Flash areas that
+  the chip's equates *doesn't* define.)
 
-ld target/common/memory.mu4   ( generic memory image support)
+( Define a constant only if it isn't already defined.)
+: ?constant  ( u)
+   \ .def if
+      -- cr parsed type ."  already defined; skipping"
+      drop ^  then
+   untoken constant ;
+
+"20_0000 ?constant @user-id
+"2c_0000 ?constant @device-info    ( unique ID, calibration info)
+"30_0000 ?constant @config
+"38_0000 ?constant @eeprom
+"3c_0000 ?constant @device-config  ( erase page size, number of flash pages, etc)
+"3f_fffc ?constant @revision-id
+"3f_fffe ?constant @device-id
 
 ( Two memory aspaces: flash/id/config/eeprom, and data [ram + i/o].)
 
@@ -48,9 +72,9 @@ ld target/common/memory.mu4   ( generic memory image support)
   something like this for everything:)
 
 -: ( target)  ( choose an image from an address in flash space)
-   dup "20_0000 u< if  drop flash ^  then
-   dup "30_0000 u< if  drop user-id ^  then
-       "38_0000 u< if       config ^  then
+   dup @user-id u< if  drop flash ^  then
+   dup @config  u< if  drop user-id ^  then
+       @eeprom  u< if       config ^  then
                             eeprom ;
 
 ( Install choose-image in the flash aspace.)
@@ -68,34 +92,6 @@ flash 'choose-image !
 14 make-aspace  ( data: ram + i/o)
    @ram #ram max 2* make-image  ( ensure that [@ram #ram +] is within the ram image)
                     make-region ram
-
-comment ~~target-comparison~~
-( On 8051, wipe is per-image. This code is found in 8051/memory)
-: wipe   ( origin)
-   region! ( reset start and end pointers)
-   'image #image "ff fill  ( erase, like flash or eprom) ;
-
-"20 ram wipe  ( skip the banked registers)
- 0 xram wipe
-0 flash wipe
-
-( On AVR, wipe is global. This code is found in AVR/meta.)
-
-( Initialization of memory images and regions. We need the above vector
-  code to calculate everything.)
-
-: erase-image   'image #image "ff fill ;  ( fills *current* image)
-: wipe
-   ram      @ram region!  erase-image
-   eeprom      0 region!  erase-image
-   boot    @boot region!  erase-image  ( erases entire flash image)
-   flash       0 region!
-
-   #vectors vectors \m allot ( "application" starts after vectors) ;
-
-wipe  ( leaves flash as current region)
-~~target-comparison~~
-
 
 
 .ifdef legacy-pic-memory
