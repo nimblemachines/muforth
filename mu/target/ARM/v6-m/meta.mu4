@@ -4,10 +4,6 @@
 
 loading ARM v6-M meta-compiler (main)
 
-( NOTE: While you will see .ifdef native in a few places in this file, the
-  current development "push" is toward an ITC - indirect-threaded code -
-  system.)
-
 ( Register conventions.
 
   Let's start with the ARM procedure call spec:
@@ -134,11 +130,7 @@ forth
 
 ( Compile a cfa into a target colon word.)
 meta
-.ifdef native
-: compile,   asm{{  c  }} ;
-.else
 : compile,   \m , ;  ( ITC)
-.then
 forth
 
 ( Fetch value of variable - a primitive - and complain if not yet defined.)
@@ -214,7 +206,7 @@ forth
 variable last-code   ( for ;code and does> to fix up)
 
 ( Create new target names. A name is a target word which is defined as a
-  _constant_ equal to its code field address - for both ITC and native code.)
+  _constant_ equal to its code field address)
 
 ( labels are always created in .labels.
    names are always created in .target.
@@ -289,12 +281,7 @@ forth
   create, variable, constant, etc - by changing its runtime code. It gets
   -compiled- indirectly by both ;code and does>.)
 
-.ifdef native
-( NOTE: Do the  pop @  before the  h @ preserve  else R stack mayhem ensues.)
-: (;code@)   pop @  h @ preserve  last-code @  \m goto  asm{  bl  } ;
-.else
 : (;code@)   pop @  1+ ( thumb!)  last-code @  image-! ;  ( ITC)
-.then
 
 ( <;code> is used to switch from compiling -host- code [that will later run
   on the host, and build the target word] to compiling -target- code, that
@@ -392,105 +379,6 @@ meta
    begin  lit-stack  litsp @  u< while  lit-pop  lit,  repeat ;
 
 forth
-
-
-.ifdef native
-
--- ------------------------------------------------------------------------
--- Peephole optimiser
--- ------------------------------------------------------------------------
-( Tags used:)
-1 constant $lit1  ( one instruction lit: ldr or movs #)
-2 constant $lit2  ( two instruction lit: movs+mvns or movs+lsls)
-3 constant $call  ( $ suggests price tag ;-)
-
-: tag!  ( tag)  \m here  image-h! ;
-: tag@          \m here  image-h@ ;
-: notag   -1 tag! ;  ( set to all ff's)
-
-: is-lit-tag?  ( tag - f)  $call u< ;
-
-: uncompile  ( #instrs)
-   notag
-   \m here  swap  for  -2  -1 ( 0ffff) over  image-h!  next  org ;
-
-
--- ------------------------------------------------------------------------
--- Smart jump, and tail call elimination
--- ------------------------------------------------------------------------
-
-( Smart jump: compile short unconditional branch if possible;
-  otherwise, ldr + bx.
-
-  Smart call: compile bl if possible; otherwise, ldr + blx)
-
-assembler
-: j  ( dest)
-   dup  \m here  branch-offset  bra?  if  op,  drop  ^  then
-   drop  1+ ( thumb!)  \a r0 lit,  <asm  r0 bx  asm> ;
-
-: c  ( dest)
-   dup  \m here  branch-offset  bl?  if  op32,  drop  ^  then
-   drop  1+ ( thumb!)  \a r0 lit,  <asm  r0 blx  asm> ;
-forth
-
-( If last code compiled was a call, rewrite it to a jump and return true;
-  else return false.
-
-  NOTE: 'then' should clobber tag so that  if b then ;  doesn't
-  tail-convert the call to b and neglect to put a  bx lr  at the end of the
-  word!)
-
-( An unusual word that we haven't needed until now!)
-: image-op32@  ( a - op32)
-   dup image-h@ 16 <<  swap 2 + image-h@ + ;
-
-: tail?  ( - f)
-   tag@ $call = if  notag
-      -4 \m allot  \m here  dup >branch-pc
-      swap image-op32@  bl-offset@  ( op offset)  nip
-      hoff>  +  ( dest)  \a j  -1  ^  then
-   0 ;
-
-meta-compiler
-: ^   tail? if ^ then  <asm  lr bx  asm> ;
-
-meta
-: compile,  ( target-cfa)  \a bl  ( compile call)  $call tag! ;
-
-forth
-
--- ------------------------------------------------------------------------
--- Literal loading
--- ------------------------------------------------------------------------
-
-( Try three ways to load a literal:
-  * movs k, #i8
-  * movs k, #i8; mvns k, k
-  * movs k, #i8; lsls k, k, #n
-  Failing that, use  lit,  to compile an ldr from the literal pool.)
-
-: load-literal  ( n - tag)
-   "ffff_ffff and  ( we only care about 32 bits!)
-
-   ( Try a simple movs)
-   dup 8 ufits? if  <asm  # k movs  asm>  $lit1  ^  then
-
-   ( Try movs followed by mvns)
-   dup  "ffff_ffff xor
-   dup 8 ufits? if  nip  <asm  # k movs  k k mvns  asm>  $lit2  ^  then
-   drop ( inverted)
-
-   ( Try movs followed by lsls)
-   dup push  0 ( shift)  r@
-   begin  u2/  1 u+  dup 8 ufits?  until ( n shifts shifted)
-   2dup swap <<  pop = if  <asm  # k movs  # k k lsls  asm>  drop  $lit2  ^  then
-   2drop
-
-   ( No luck. Compile an ldr from literal pool.)
-   \a k lit,  $lit1 ;
-
-.then  ( native: literals and such)
 
 
 -- ------------------------------------------------------------------------
