@@ -1,6 +1,6 @@
 # This file is part of muforth: https://muforth.dev/
 #
-# Copyright (c) 2002-2023 David Frech. (Read the LICENSE for details.)
+# Copyright (c) 2002-2024 David Frech. (Read the LICENSE for details.)
 
 #
 # It looks a bit complicated. ;-) The idea is to automagically convert from a

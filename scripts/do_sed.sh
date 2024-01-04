@@ -2,15 +2,15 @@
 
 echo Processing $1
 
-# change homepage link to muforth.dev
-sed -E \
-	-f scripts/homepage.sed \
-	$1 > $1.sedded
-exit
-
 # just update copyright date
 sed -E \
 	-f scripts/copyright.sed \
+	$1 > $1.sedded
+exit
+
+# change homepage link to muforth.dev
+sed -E \
+	-f scripts/homepage.sed \
 	$1 > $1.sedded
 exit
 
