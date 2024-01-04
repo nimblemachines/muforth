@@ -1,0 +1,80 @@
+( This file is part of muforth: https://muforth.dev/
+
+  Copyright 2002-2023 David Frech. (Read the LICENSE for details.)
+
+loading AVR fuse byte generator
+
+comment %%
+  You can define any or all of the following values. Leaving any of them
+  undefined will result in the default value from the datasheet for those
+  fuse bits. ckdiv8 is an exception: I'm changing the default to *off*.
+
+  For on/off booleans, fuse bits are 1 if *undefined* [false] and 0 if
+  *defined* [true].
+
+  For fields that define several possibilities, the default binary bit
+  pattern is given.
+
+  Symbol    Default   Comment
+  ~~~~~~    ~~~~~~~   ~~~~~~~
+  eesave    1         don't erase the EEPROM contents when chip is erased;
+                      default value means *do* erase the EEPROM
+  wdton     1         watchdog always on; default means *off*
+  bootrst   1         reset vector is in boot region; default is at 0000
+  bootsz    00        size of boot region; 0 to 3; 0 largest, 3 smallest;
+                      default to *largest*
+  ckdiv8    1         divide clock by 8; default to false (differs from datasheet!)
+  ckout     1         generate a clock on the CKOUT pin; default: don't generate
+  cksel     0010      clock select; 0 to 15; default is 8M internal RC
+  sut       10        start up timer (see datasheet)
+  bodlevel  111       brownout detect level; default to no brownout detect
+%%
+
+( Unfortunately, the AVR devices do not specify the fuse bytes in the same
+  way! So we have to know which device we are generating for.)
+
+hex
+
+( low fuse)
+.ifdef ckdiv8  0  .else  80  .then
+.ifdef ckout   0  .else  40  .then  or
+.ifdef sut     sut    .else    %10  .then  4 <<  or
+.ifdef cksel   cksel  .else  %0010  .then  or
+
+( high fuse)
+0c0  ( base bits)
+.ifdef wdton   0  .else  10  .then  or
+.ifdef eesave  0  .else  08  .then  or
+
+.def megax4 .def mega328 .or .if
+   .ifdef bootsz  bootsz  .else  %00  .then  2*
+   .ifdef bootrst  0  .else  1  .then  or or
+.else  ( 88 or 168)
+   .ifdef bodlevel  bodlevel  .else  %111  .then  or
+.then
+
+( extended fuse)
+0f8  ( base bits)
+.def megax4 .def mega328 .or .if
+   .ifdef bodlevel  bodlevel  .else  %111  .then  or
+.else  ( 88 or 168)
+   .ifdef bootsz  bootsz  .else  %00  .then  2*
+   .ifdef bootrst  0  .else  1  .then  or or
+.then
+
+( Combine the bytes, and store in fuses.)
+lohi> lohi>  dup fuses !
+
+( Print the result.)
+." Fuse bytes: "
+<#  # #  bl hold  # #  bl hold  # #  #> type space
+
+( Calculate lock bits.)
+0cf  ( base bits)
+.ifdef bootrst  %10  .else  %11  .then  4 << or
+
+( Save in locks.)
+dup locks !
+
+( Print the result.)
+."  Lock byte: "  <#  # #  #> type space
