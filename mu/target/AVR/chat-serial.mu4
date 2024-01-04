@@ -7,10 +7,6 @@ loading AVR serial (uart) chat (core)
 __meta
 hex
 
-.ndef mega164  .ndef mega324  .ndef mega644  .ndef mega1284  .and .and .and .if
-   error" This code currently only supports the mega164/324/644/1284 devices."
-.then
-
 comment register-use
 
   r0/r1              is used for writing flash (via SPM instruction)
@@ -22,12 +18,30 @@ comment register-use
 
 register-use
 
-( Let's run the UART at 38,400 b/s. Baud rate divisor = fosc/bps/16 - 1.)
+.ifdef megax4  ( megax4 device: 164, 324, 644, or 1284)
+   ( Let's use UART1 for chat, leaving UART0 for the application.)
+   aka UDR1    equ UDR
+   aka UBRR1H  equ UBRH
+   aka UBRR1L  equ UBRL
+   aka UCSR1A  equ UCSRA
+   aka UCSR1B  equ UCSRB
+.else  ( megax8 device: 88, 168, or 328)
+   ( We only have UART0, so use it for chat.)
+   aka UDR0    equ UDR
+   aka UBRR0H  equ UBRH
+   aka UBRR0L  equ UBRL
+   aka UCSR0A  equ UCSRA
+   aka UCSR0B  equ UCSRB
+.then
+
+( Let's run the UART at 38,400 bps. Other baud rates yield inaccurate divisors.
+  Baud rate divisor = f_clock/bps/16 - 1.)
+
 label serial-init
-   -- #8_000 ( fosc = 8M)  #125 /  ( 125kbps)
-   #8,000,000 ( fosc = 8M)  #38,400 /
-   #16 /  1- x ldiw  UBRR1H xh out  UBRR1L xl out
-   %0001_1000 xl ldi  UCSR1B xl out  ( enable RX and TX)
+.ifndef cksel  ( using internal 8M RC clock)  #8,000,000  .else  f_clock  .then
+   ( We can only do 38,400 accurately. Bummer.)
+   #38,400 /  #16 /  1- x ldiw  UBRH xh out  UBRL xl out
+   %0001_1000 xl ldi  UCSRB xl out  ( enable RX and TX)
    ( chip defaults to 8bits, 1stop, no parity at reset)
    ret  ;c
 
@@ -44,15 +58,15 @@ label chat-yield
 label recv-command-byte  ( For chat dispatch loop.)
 label recv-byte
    ( Wait for RXC - receive complete)
-   begin  chat-yield rcall  UCSR1A xl in  7 ( RXC) xl sbrs  again
-   UDR1 xl in  ret  ;c
+   begin  chat-yield rcall  UCSRA xl in  7 ( RXC) xl sbrs  again
+   UDR xl in  ret  ;c
 
 ( Could clobber xh.)
 label send-byte
    xl push  ( XXX maybe should be saved by yield?)
    ( Wait for UDRE - data register empty)
-   begin  chat-yield rcall  UCSR1A xl in  5 ( UDRE) xl sbrs  again
-   xl pop  UDR1 xl out  ret  ;c
+   begin  chat-yield rcall  UCSRA xl in  5 ( UDRE) xl sbrs  again
+   xl pop  UDR xl out  ret  ;c
 
 label recv-word
    recv-byte rcall  xl push
