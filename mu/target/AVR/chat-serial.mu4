@@ -34,13 +34,21 @@ register-use
    aka UCSR0B  equ UCSRB
 .then
 
-( Let's run the UART at 38,400 bps. Other baud rates yield inaccurate divisors.
-  Baud rate divisor = f_clock/bps/16 - 1.)
+( If we use U2X mode - which divides f_cpu by 8 rather than 16 - we can get
+  close enough that 115,200 bps will work with a 16M f_cpu and 57,600 bps
+  will work with an 8M f_cpu.
+
+  In U2X mode, Baud rate divisor = f_cpu/bps/8 - 1.)
 
 label serial-init
-.ifndef cksel  ( using internal 8M RC clock)  #8,000,000  .else  f_clock  .then
-   ( We can only do 38,400 accurately. Bummer.)
-   #38,400 /  #16 /  1- x ldiw  UBRH xh out  UBRL xl out
+.ifdef cksel
+   ( assume 16M clock)           #16,000,000  #115,200
+.else
+   ( using internal 8M RC clock)  #8,000,000   #57,600
+.then
+   /  4 /  1+ 2/ ( round)  1- xl ldi  UBRL xl out
+   ( UBRH resets to zero; we can just leave it alone)
+   %0000_0010 xl ldi  UCSRA xl out  ( enable U2X mode)
    %0001_1000 xl ldi  UCSRB xl out  ( enable RX and TX)
    ( chip defaults to 8bits, 1stop, no parity at reset)
    ret  ;c
