@@ -14,11 +14,11 @@ hex
 1c - ff  idle        - these command bytes are ignored
 
 10  version-addr     - get the address of the version commit
-11  set-addr         - set dptr to 16-bit address
-12  run              - set the machine SP, pop R1, PSW, and PC
-13  get-status       - get the machine SP
+11  set-addr         - set Z to memory address
+12  run              - set Y, then execute code at Z
+13  get-status       - get Y [data SP]
 
-14  read-flash       - read one byte of flash, incr Z
+14  read-flash       - set count, then streaming read of flash
 15  read-data        - read one byte of ram/data space, incr Z
 16  read-eeprom      - read one byte of xram, incr Z
 
@@ -42,8 +42,6 @@ hex
   "c.<something>" words are the high-level chat interface code.)
 
 variable cx-space  ( 0 = flash, 1 = data, 2 = eeprom)
-: flash-space     cx-space off ;
-: data-space    1 cx-space ! ;
 
 
 -- ------------------------------------------------------------------------
@@ -54,10 +52,11 @@ variable cx-space  ( 0 = flash, 1 = data, 2 = eeprom)
 : cx.version-addr            10 >cmd ;  ( then read 4 bytes of flash)
 : cx.set-addr      ( a)      11 >cmd  >w ;
 
-: cx.run                     12 >cmd ;
-: cx.get-status    ( - rp)   13 >cmd      w> ;
+: cx.run           ( sp)     12 >cmd  >w ;
+: cx.get-status    ( - sp)   13 >cmd      w> ;
 
-: cx.read          ( - b)    14  cx-space @ +  >cmd  b> ;
+: cx.read-flash    ( u)      14 >cmd  >b ;  ( then streaming read)
+: cx.read-byte     ( - b)    14 cx-space @ + >cmd  b> ;
 
 : cx.write-flash   ( w cmd - status)
                              17 >cmd  swap >w  >b  b> drop ;
@@ -75,14 +74,10 @@ variable cx-space  ( 0 = flash, 1 = data, 2 = eeprom)
 : c.resync  cx.idle  cx.idle  drain  flush ;
 
 : c.get-version  ( - n)
-   cx.version-addr  flash-space
-   cx.read  cx.read  cx.read  cx.read  0123> ;
+   cx.version-addr  4 cx.read-flash  b> b> b> b>  0123> ;
 
 ( Set memory address and m.)
-: c.setup-chunk  ( buf a u - #bytes)
-   swap cx.set-addr  swap m ! ;
-
-: set-ram-addr  ( a)  cx.set-addr  data-space ;
+: c.setup-chunk  ( buf a u - #bytes)  swap cx.set-addr  swap m ! ;
 
 -- ------------------------------------------------------------------------
 -- Chat interface
@@ -98,28 +93,17 @@ variable cx-space  ( 0 = flash, 1 = data, 2 = eeprom)
    radix preserve  hex  sep preserve  -sep   <# 4# 4# #> type
    #128 ;
 
-( The machine stack pointer - which we are here calling RP - points *below*
-  the last byte pushed. Push is: store, then decrement. This is an "empty
-  descending" stack. Most machines use a "full descending" stack.
-
-  Another way to think of it: for an empty descending stack, push is
-  post-decrement, pop is pre-increment.
-
-  For a full descending stack, push is pre-decrement, pop is
-  post-increment.
-
-  So that we don't go crazy, let's adjust RP so we can pretend it is a full
-  descending stack. When we read RP, we add 1. Before we write it back, we
-  subtract 1.)
-
-: c.run           ( rp)   1- cx.set-addr ( set RP)  cx.run ;
-: c.get-status  ( - rp)      cx.get-status 1+ ;  ( adjust RP)
+: c.run  ( sp pc)  cx.set-addr  ( set Z to PC)  cx.run ;
 
 ( Interact code handles which memory space we are reading.)
 : c.read-space   ( buf a u space)
    -- cr  ." c.read "  2 nth u.  over u.  dup u.
-   cx-space !
-   c.setup-chunk  for  cx.read m&  next ;
+   push  c.setup-chunk  pop
+   ?if  ( data or eeprom: single byte reads)
+      cx-space !  for  cx.read-byte m&  next  ^
+   then
+   ( flash space: streaming read)
+   dup cx.read-flash  for  b> m&  next ;
 
 : c.write-data   ( buf a u)
    c.setup-chunk  for  m* cx.write-data  next ;
@@ -161,7 +145,7 @@ variable cx-space  ( 0 = flash, 1 = data, 2 = eeprom)
   chat-via array, and *deprecating* their use in interact.mu4.)
 
 : chat   chat-via
-   c.hello  c.get-status  c.run  c.read-space  c.write-data  c.write-eeprom
+   c.hello  cx.get-status  c.run  c.read-space  c.write-data  c.write-eeprom
    cx.app-start  c.app-stop  c.flash-begin  c.flash-end  c.erase  c.program ;
 
 ( Testing)

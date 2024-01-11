@@ -19,22 +19,14 @@ label version-cmd
 label set-addr-cmd
    recv-word rcall  x z movw  ret  ;c
 
-( We treat the interrupt enable [I] bit specially. When running code we
-  combine the *current* state of the I bit with the rest of the status bits
-  from the stack frame. This way the user knows the state of the I bit, and
-  it doesn't accidentally get set or reset just by running a piece of code.)
+( Host will use set-addr to set Z to PC to call. run-cmd will set Y to SP
+  and then execute the code.)
 
-( Host will use set-address to set Z to new SP.)
 label run-cmd
-   SREG xh in  80 xh andi  ( get current I bit)
-   cli  z sp!-iclear  ( safely set SP)
-   xl pop ( saved SREG)  7f xl andi  xh xl or  SREG xl out
-   xl pop ( padding)
-   t popw  x popw  y popw  z popw  ( pop all 4 pointer regs)
-   ret  ;c
+   recv-word rcall  x y movw  ijmp  ;c
 
 label get-status-cmd
-   x sp@  2 x adiw ( skip ra)  send-word rjmp  ;c
+   y x movw  send-word rjmp  ;c
 
 ( This is unfortunate, but when we get here from the boot RESET handler -
   from create-tasks - h2 points to the chat user area, so that the next
@@ -61,8 +53,8 @@ label app-start
   watchdog reset.)
 
 label chat-only
-   cli  chat-user-area    th ldi
-        chat-user-area 1+ th sts  ret  ;c
+   cli  chat-user-area    h0 ldi
+        chat-user-area 1+ h0 sts  ret  ;c
 
 ( NOTE: When we stop the app, we disable interrupts, in case it is
   using them. When it gets restarted, it is up to the app to re-enable
@@ -111,23 +103,15 @@ label process
    then ( unknown... return, and get called again)
    ret  ;c
 
-label chat-entry  ( callable from other code!)
-   ( Unless host changes it, stacked PC points to caller - usually interact.)
-   z pushw  y pushw  x pushw  t pushw  ( push all 4 pointer regs)
-   SREG xl in  xh clr  ( padding)  x pushw  ( push status)
+label chat-task
+   serial-init rcall  ( initialize serial interface)
 
+( XXX what about I2C? Is this the right place for this?)
 .labels. .contains catch .if
    catch rcall  ( for I2C only)
 .then
 
    begin  process rcall  again  ;c
-
-label interact
-   begin  chat-entry rcall  again  ;c
-
-label chat-task
-   serial-init rcall  ( initialize serial interface)
-   begin  interact rcall  again  ;c
 
 RESET handler
 label system-startup

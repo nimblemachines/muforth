@@ -15,8 +15,8 @@ variable chat-vector
 
 0
 chat-cmd t.hello         ( - chunk-size)
-chat-cmd t.get-status    ( - rp)
-chat-cmd t.run           ( rp)
+chat-cmd t.get-status    ( - sp)
+chat-cmd t.run           ( sp pc)
 chat-cmd t.read-space    ( buf a u space)
 chat-cmd t.write-data    ( buf a u)
 chat-cmd t.write-eeprom  ( buf a u)
@@ -64,38 +64,14 @@ variable ram-copied  ( pointer to first un-copied byte)
    \m here  ram-copied ! ;
 
 
-( chat-entry has pushed an "exception frame" onto the stack.
+( Cached local values of target registers.)
+variable .PC
+variable .SP      ( data stack pointer)
+variable .MRP     ( machine's return stack pointer; XXX hardware stack ptr?)
+variable .SREG    ( status register)
 
-  The order, low to high: rah ral sreg pad tl th xl xh yl yh zl zh pch pcl
-                  offset:  <skip>   0   1   2  3  4  5  6  7  8  9  10  11
-
-  rah/ral is the return address to the "process" routine.
-  NOTE: PC is pushed big-endian!
-)
-
-( Local copy of RP.)
-variable trp
-
-( Let's keep a local copy of the chat frame, like on the S08.)
-12 buffer chat-frame
-: treg  ( offset - taddr)  constant  does> @  chat-frame + ;
-
-( There is a byte of padding above the SREG to word-align frame.)
- 0 treg .SREG
- 2 treg .T
- 4 treg .X
- 6 treg .Y
- 8 treg .Z
-10 treg .PC
-
-: get-regs   t.get-status dup trp !  chat-frame swap 12 t.read-data ;
-: set-regs   ( - rp)          trp @  chat-frame over 12 t.write-data ;
-
-( Registers are little-endian 16 bit values. t prefix is for "target", like
-  treg and tsp, above.)
-
-: t@   leh@ ;
-: t!   leh! ;
+: get-regs   t.get-status  .SP ! ;
+: set-regs   ( - sp pc)    .SP @  .PC @ ;
 
 ( For reading and writing PC values on the stack. Convert a normal address
   to an "ra" - return address - by shifting right one bit and swapping
@@ -106,55 +82,34 @@ variable trp
 : >ra   ( a - ra)  \m cell/  >lohi hilo> ;
 :  ra>  ( ra - a)            >lohi hilo>  \m cells ;
 
-meta
-: sp!  ( target-sp)      .Y  t! ;
-: sp@  ( - target-sp)    .Y  t@ ;
-: top!  ( target-top)    .T  t! ;
-: top@  ( - target-top)  .T  t@ ;
-
-( PC on R stack is big-endian and is a cell address, not a byte address.)
-: pc!  ( target-cfa)    >ra  .PC  t! ;
-: pc@  ( - target-cfa)       .PC  t@  ra> ;
-
-.ifdef notyet  ( Forth stack stuff, mostly)
-
-: rp0  \eq SPL  t@  1+ ;             ( bottom of target's R stack)
-: sp0  chat-frame @  -2 and  64 - ;  ( bottom of target's D stack;
-                                       room for 32 values on R)
-
-: depth  \m sp0 \m sp@ -  \m cell/ ;  ( depth of actual stack)
-: u.  u. ;
-: .  . ;
-: .s  .s ;
-
-.then  ( notyet)
-
 forth
 : 2sp  space space ;
 : 4#   # # # # ;
 : .b8  binary  <#  4#  char _ hold  4#  #> type ;
 : .h16    hex  <#  4#  #> type ;
 : .w   .h16  2sp ;
-: .r   ( addr)  t@  .w ;
-: .sr   .SREG   t@  .b8   2sp ;
+: .r   ( addr)  @  .w ;
+: .sr   .SREG   @  .b8   2sp ;
 
+defer .regs
 -- 005f reg  SREG     | I       T       H       S       V       N       Z       C
 
-: .regs
-   radix preserve
-   cr  ." ITHS_VNZC     T     X     Y     Z    SP    PC"
-       (  1000_0011  1234  3456  8738  abab  3a00  3b66 )
-   cr           .sr .T .r .X .r .Y .r .Z .r
-                                         trp @ .w
-                                              \m pc@ .w ;
+-: radix preserve
+   cr  ." ITHS_VNZC    SP    PC"
+       (  1000_0011  0123  4567 )
+   cr           .sr
+                   .SP .r
+                         .PC .r ;  is .regs
 
 defer verify-quietly
--d noverify  ( XXX for now. Verify is slow. Basically reading memory over
-               serial chat it 38,400, *without* streaming read, is slow.)
+-d noverify
+
+( XXX testing)
+: copy-ram ;  ( replace real one with a dummy no-op.)
 
 : hi
    chatting on  >chat  t.hello  /chunk !  get-regs  .regs
-   -- ram-copied off  copy-ram  ( XXX why is this off?)
+   ram-copied off  copy-ram
 .ifndef noverify
    h preserve  flash region  nip if  ( non-empty)  verify-quietly if  ( differs)
       cr warn" Target's flash image differs from host's."
@@ -165,66 +120,114 @@ defer verify-quietly
 
 : chat-via   pop  chat-vector !  hi ;
 
-: run      ( pc)  \m pc!  ( copy-ram)  set-regs  t.run ;  ( don't wait for target)
-: runwait  ( pc)  run  get-regs ;   ( wait for target)
+( XXX ARM interact doesn't set local pc variable; it just passes pc to
+  t.run)
 
-: call  ( pc)  runwait .regs ;
-: kick  ( pc)  run ;  ( when the code you're calling doesn't speak
-                        the same protocol as running code)
+: run      ( pc)  .PC !  copy-ram  set-regs  t.run ;  ( don't wait for target)
+: runwait  ( pc)  run  get-regs ;                     ( wait for target)
+: call     ( pc)  runwait .regs ;
 
 : rx  ( cfa)  ( execute target non-forth word)
    chatting @ 0= if  error" not connected to target"  then
    runwait .regs ;
 
 
-.ifdef notyet  ( more stack stuff)
+( Because the target "caches" the top of the stack in a register, and
+  because the trampoline code loads this register before execution, and
+  pushes it afterward, we can deal only with the "memory image" of the target
+  stack, rather than also worrying about what to put into the "top" register.
 
-( The semantics of moving cells to and from the target stack are a bit
-  complicated.
+  What's a bit mystifying is that, to achieve a target stack depth of N,
+  the host has to push N+1 items. The top one goes into top; and the
+  bottom-most one is the "sentinel" value that gets loaded into top when the
+  stack becomes empty.
 
-  When the target stack is empty, sp0 = sp, and the top register contains
-  garbage.
+  When pushing from the host, or when "pulling" from the target, we don't
+  move more than 8 "user" items - but we pad this value a bit, since we are
+  also using the stack to pass some execution context between host and
+  target.)
 
-  When the target stack isn't empty, the distance between sp0 and sp is
-  2*depth, but the bottom-most cell is garbage, and top is valid.)
+meta
+( Put the D stack below the task stacks and watchdog reset count.)
+: sp0   [ @ram #ram +  256 -  2 - #] ;
+: sp!   .SP ! ;
+: sp@   .SP @ ;
+: depth   \m sp0  \m sp@ -  \m cell/  1- ;
+forth
+
+( stack> *first* builds a local image of the target stack - in the RAM
+  image - and *then* copies it, in one chunk, to the target.)
 
 : stack>  ( "push" stack to target)
-   depth 0= if  "cafe \m top!  \m sp0 \m sp!  ^  then
-   \m top!
-   depth 7 min  ( more than that would be silly)
-   \m sp0 over 1+ \m cells -  dup \m sp! ( top of D stack)  swap
-   for  tuck t!  \m cell+  next  ( copy each cell as a word to D stack)
-   "cafe swap t! ( push bottom) ;
+   h preserve  ram  ( so image-related words work)
+
+   depth 0 max 12 min
+   \m sp0  over 1+  \m cells -  dup \m sp! ( top of D stack)  swap
+   for  tuck image-!  \m cell+  next  ( copy each cell as a word to D stack)
+   "cafe swap image-! ( sentinel)
+   ( Now copy stack image to target)
+   \m sp@ image+  \m sp@  \m sp0  over -  t.write-data ;
+
+( stack< *first* copies the target stack, in one chunk, to the host's RAM
+  image, and *then* pulls the values out and pushes them onto the host's stack.)
 
 : stack<  ( "pop" stack from target)
-   \m depth 0 max 8 min  ( more than that would be silly)  =if
-      1- ( depth, excluding top)  =if
-         \m sp@ over  ( n sp n)
-         for  dup t@  pop 2push  \m cell+  next  ( starting with top, push to R)
-         drop ( sp)
-         for  2pop push  next  ( pop from R to reverse order)
-         0
-      then  \m top@  swap
+   h preserve  ram  ( so image-related words work)
+
+   \m depth 0 max 12 min  =if
+      push
+      \m sp@ image+  \m sp@  r@ \m cells  t.read-data  ( read target stack)
+      pop
+      \m sp@ over  ( n sp n)
+      for  dup image-@  pop 2push  \m cell+  next ( starting with top, push to R)
+      drop ( sp)
+      for  2pop push  next  ( pop from R to reverse order)
+      0
    then  drop ;
 
-( Get target's hardware SP - ie, forth's return stack ptr - and store into
-  chat-frame.)
+0 .if  ( copied, for reference, from MSP430)
 
-: get-rp   \m rp0  \m cell+ ( skip ret addr)  chat-frame ! ;
+( Host should set PC -> continue-forth
+                  SP -> top of R stack
+                  CP -> top of D stack)
 
-: chat  +chat  >chat  avrchat.Hello  get-rp  .regs ;
-: copy-ram ;  ( XXX no-op)
-: runwait  zgo  get-rp  .regs ;
+: ?chat
+   chatting @ 0= if  error" not connected to target"  then ;
 
-( XXX Should we try to automatically connect to target?)
-: remote  ( cfa)  ( execute target forth word)
-   chatting @ 0= if  error" not connected to target"  then
-   copy-ram  \m pc!  stack>  runwait  stack< ;
+: rechat
+   get-regs  stack<
+.ifdef microscope  ( x0 .. xn ip - y0 .. yn ip loop z y x w')
+   .W !  .X !  .Y !  .Z !
+.then
+   .LOOP !  .IP !  .regs ;
 
-: rx  ( cfa)  ( execute target non-forth word)
-   chatting @ 0= if  error" not connected to target"  then
-   copy-ram  \m pc!          runwait ;
+( NOTE: For initial execution of a Forth word, xn is cfa!)
+: continue  ( x0 .. xn ip - y0 .. yn ip loop)
+   ?chat
+   stack>  run  rechat ;
 
+( These are implement'ed by the kernel code.)
+meta
+variable continue-forth
+variable trampoline
+
+: cont    ( )     ( continue forth execution)
+   .IP @  continue ;
+forth
+
+-: ( cfa)  ( execute target forth word)
+   p@ continue-forth .PC !
+   \m rp0 .SP !  ( trampoline switches stacks)
+   p@ trampoline  ( ip)  continue ;  is remote
+
+
+.then  ( END MSP430)
+
+
+( XXX AVR code should use target/common/chains, which has all the different
+  interpreter modes too.)
+
+.ifdef notyet
 
 ( Interacting with a chatty, connected target.)
 
