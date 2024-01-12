@@ -35,8 +35,11 @@ register-use
 .then
 
 ( If we use U2X mode - which divides f_cpu by 8 rather than 16 - we can get
-  close enough that 115,200 bps will work with a 16M f_cpu and 57,600 bps
-  will work with an 8M f_cpu.
+  close enough that 115,200 bps will work with a 16M f_cpu.
+
+  The 8M RC internal oscillator doesn't seem to be accurate enough to
+  manage 57,600 bps, however, so in that case we'll settle for 38,400 bps,
+  which has a divisor with very little error [0.16%].
 
   In U2X mode, Baud rate divisor = f_cpu/bps/8 - 1.)
 
@@ -44,7 +47,7 @@ label serial-init
 .ifdef cksel
    ( assume 16M clock)           #16,000,000  #115,200
 .else
-   ( using internal 8M RC clock)  #8,000,000   #57,600
+   ( using internal 8M RC clock)  #8,000,000   #38,400
 .then
    /  4 /  1+ 2/ ( round)  1- xl ldi  UBRL xl out
    ( UBRH resets to zero; we can just leave it alone)
@@ -60,7 +63,7 @@ label serial-init
 
 ( Save and restore chat registers around the call to yield.)
 label chat-yield
-   z pushw  0 pushw  yield rcall  0 popw  z popw  ret  ;c
+   z pushw  yield rcall  z popw  ret  ;c
 
 ( Could clobber xh.)
 label recv-command-byte  ( For chat dispatch loop.)
@@ -97,9 +100,12 @@ label read-data-cmd  ( read a byte from data space)
 label read-eeprom-cmd  ( read a byte from eeprom space)
    read-eeprom-byte rcall  1 z adiw  send-byte rjmp  ;c
 
+( NOTE: We have to push and pop g0 around the call to send-byte, which calls
+  yield! Otherwise g0 could be clobbered by another task.)
+
 label read-flash-cmd  ( streaming read from flash space)
    recv-byte rcall  xl g0 mov
-   begin  pmz+ xl ld  send-byte rcall  g0 dec  0= until
+   begin  pmz+ xl ld  g0 push  send-byte rcall  g0 pop  g0 dec  0= until
    ret  ;c
 
 label write-data-cmd
@@ -116,7 +122,7 @@ label write-eeprom-cmd
   return contents of SPMCSR as flash status.)
 
 label write-flash-cmd
-   recv-word rcall  x 0 movw  recv-byte rcall ( cmd)  do-spm rcall
+   recv-word rcall  x pushw  recv-byte rcall ( cmd)  0 popw  do-spm rcall
    2 z adiw  SPMCSR xl in  send-byte rjmp  ;c
 
 ( Load chat entry and command loop.)
