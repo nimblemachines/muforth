@@ -17,22 +17,9 @@ loading AVR tasks (simple)
   byte in the user area, and task switching is very fast: a single byte load!
 
   The first byte of the user area is the status flag; the second byte is
-  the "pointer" to the next task. The next two bytes are the saved sp.
-
-  TODO: Since the stacks all live in the same page, the saved sp only has
-  to be the low 8 bits! Fix this.
-
-  XXX: This could easily work with two stacks - whether running "Forth"
-  code or straight assembler code that wants the neat parameter passing that
-  a second stack provides - by adding a second stack pointer. This could also
-  be a single byte: the parameter stacks could live either in the same page
-  as the return stacks and task areas, or in the page below; but in either
-  case, since *all* the parameter stacks would fit into a page, the high byte
-  doesn't have to be stored.
-
-  XXX: The only problem is that y is a great register to use for the
-  parameter stack pointer, and we use it here as a temporary user pointer
-  while searching for a task to run...
+  the "pointer" to the next task. The third is the saved SPL, and the
+  fourth is currently unused. [It used to be SPH, until I realized that it
+  was unnecessary.]
 
   A status byte that is <0 means runnable; >=0 means stopped. Doing it this
   way makes it easy to use the status field as a counting semaphore.)
@@ -60,7 +47,7 @@ hook create-task-hook
 
 label yield
    u y movw  ( get user pointer into y)
-   w sp@  2 w stuw  ( get current sp and save it into user area)
+   SPL g0 in  2 g0 stu  ( get current SPL and save it into user area)
 
    ( We have to find a task to run. It's possible that an interrupt could
      wake a sleeping task, so we just try and try until something is ready.
@@ -72,11 +59,11 @@ label yield
       1 yl ldu  ( follow pointer to next task)
       0 g0 ldu  ( load task's status byte)
    g0 tst  0< until
-   ( Found a live one; fall through to run it.)  ;c
+   ( Found a live one; fall thru to run it.)  ;c
 
 label run-task
    y u movw  ( set user pointer from y)
-   2 w lduw  w sp!  ( restore sp from user area)
+   2 g0 ldu  SPL g0 out  ( restore SPL from user area)
    ret  ( run!)  ;c
 
 ( Enter with:
@@ -103,7 +90,7 @@ label init-task
    y x movw                ( x is our temp sp)
    -x h0 st  -x h1 st      ( push pc: big endian!)
    1 x sbiw                ( empty descending fixup)
-   2 x stuw                ( save temp sp to user area)
+   2 xl stu                ( save temp SPL to user area)
    "ff h0 ldi  0 h0 stu    ( set initial status: runnable)
    ret  ;c
 
