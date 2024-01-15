@@ -233,8 +233,8 @@ b/page 2/  constant w/page
    next ;
 
 : prog-flash
-   cr  ." Writing flash (application)"  flash  prog-region
-   cr  ." Writing flash (bootloader)"  boot  prog-region ;
+   cr  ." Writing application"  flash  prog-region
+   cr  ." Writing bootloader"  boot  prog-region ;
 
 ( NOTE: We program eeprom a byte at a time since the 8515 lacks page
   access. It's also simpler this way to determine whether to program a
@@ -253,7 +253,13 @@ b/page 2/  constant w/page
       prog-ee-byte
    next ;
 
-: prog
+( NOTE: The application part of the flash - but *not* the bootloader! - can
+  be programmed via serial chat. We have a nice word for this: prog.
+
+  Since it's nice to have both tools in our toolbox at the same time, let's
+  give the SPI version a slightly different name.)
+
+: spi-prog
    cr  warn"
 You should commit your changes *before* programming the flash
 if you want the signature to reference the correct commits!
@@ -270,21 +276,20 @@ if you want the signature to reference the correct commits!
 ( NOTE: verify-flash and verify-eeprom are _not_ standalone; they can only
   be called after prog mode is set and the SPI clock set properly.)
 
-( We don't just verify what we thought we programmed, but instead verify
-  the entire image, just in case something squirrelly happens - like
-  ghosted bytes - which I'm seeing when writing eeprom!!)
-
-: verify-flash
-   cr  ." Verifying flash "
-   flash  0 pp !  #flash ( len)
+: verify-region
+   region  swap pp !  ( len)
    #127 +  #128 /  for
       20  pp-word  8  pad  #128  avr.BulkRead
       verify-pad
    next ;
 
+: verify-flash
+   cr  ." Verifying application "  flash  verify-region
+   cr  ." Verifying bootloader "  boot  verify-region ;
+
 : verify-eeprom
    cr  ." Verifying eeprom "
-   eeprom  0 pp !  #eeprom ( len)
+   eeprom region  swap pp !  ( len)
    #127 +  #128 /  for
       0a0  pp-byte  0  pad  #128  avr.BulkRead
       verify-pad
@@ -300,7 +305,7 @@ if you want the signature to reference the correct commits!
    read-locks  locks @  2dup = if  2drop ^  then  ( ok)
    swap u.  u.  ( chip, then saved) ;
 
-: verify
+: spi-verify
    radix preserve  hex
    h preserve
    +prog  fast-clock
