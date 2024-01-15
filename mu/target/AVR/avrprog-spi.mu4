@@ -46,6 +46,9 @@ hex
 : -reset  avr.ResetHigh  #100 ms ;
 : reset  avr.Hello  +reset -reset  avr.Bye ;
 
+( Sets slow-clock! If you want fast-clock, you have to call it *after*
+  +prog.)
+
 : +prog  ( enable programming)
    avr.Hello  avr.SlowClock
    4 for  +reset  0ac 53_00 0 avr2  53 = if  pop drop ^ then
@@ -265,8 +268,16 @@ You should commit your changes *before* programming the flash
 if you want the signature to reference the correct commits!
 "  radix preserve  hex
    h preserve
-   +prog  ( slow-clock)  erase-chip  prog-fuses  -prog
+   +prog              prog-fuses  erase-chip               -prog
    +prog  fast-clock  prog-flash  prog-eeprom  prog-locks  -prog ;
+
+( In order to test that this code works with "factory fresh" chips, let's
+  restore to a default state the fuses that affect the EEPROM and the
+  clock: EESAVE unprogrammed, CKDIV8 programmed, and CKSEL=2 [to use the
+  on-chip RC oscillator.)
+
+: factory-fresh
+   +prog  read-fuses  0ff bic  862 or  write-fuses  erase-chip  -prog ;
 
 : verify-pad
    pad  #128 for  dup c@  pp*  xor  if  pp-byte -1 +a u.  then
@@ -308,9 +319,8 @@ if you want the signature to reference the correct commits!
 : spi-verify
    radix preserve  hex
    h preserve
-   +prog  fast-clock
-   verify-flash  verify-eeprom  verify-fuses  verify-locks
-   -prog ;
+   +prog              verify-fuses                               -prog
+   +prog  fast-clock  verify-flash  verify-eeprom  verify-locks  -prog ;
 
 .then  ( avr.Hello)
 
