@@ -68,7 +68,6 @@ variable ram-copied  ( pointer to first un-copied byte)
 variable .PC
 variable .SP      ( data stack pointer)
 variable .MRP     ( machine's return stack pointer; XXX hardware stack ptr?)
-variable .SREG    ( status register)
 
 : get-regs   t.get-status  .SP ! ;
 : set-regs   ( - sp pc)    .SP @  .PC @ ;
@@ -79,27 +78,26 @@ variable .SREG    ( status register)
 
   To convert back, swap bytes and shift left.)
 
+meta
 : >ra   ( a - ra)  \m cell/  >lohi hilo> ;
 :  ra>  ( ra - a)            >lohi hilo>  \m cells ;
 
 forth
 : 2sp  space space ;
 : 4#   # # # # ;
-: .b8  binary  <#  4#  char _ hold  4#  #> type ;
 : .h16    hex  <#  4#  #> type ;
 : .w   .h16  2sp ;
 : .r   ( addr)  @  .w ;
-: .sr   .SREG   @  .b8   2sp ;
 
 defer .regs
--- 005f reg  SREG     | I       T       H       S       V       N       Z       C
 
 -: radix preserve
-   cr  ." ITHS_VNZC    SP    PC"
-       (  1000_0011  0123  4567 )
-   cr           .sr
-                   .SP .r
-                         .PC .r ;  is .regs
+   cr  ."   SP    PC"
+       (  0123  4567 )
+   cr   .SP .r
+              .PC .r ;
+: base-regs  [ #]  is .regs ;  base-regs
+
 
 defer verify-quietly
 -d noverify
@@ -125,11 +123,9 @@ defer verify-quietly
 
 : run      ( pc)  .PC !  copy-ram  set-regs  t.run ;  ( don't wait for target)
 : runwait  ( pc)  run  get-regs ;                     ( wait for target)
-: call     ( pc)  runwait .regs ;
 
-: rx  ( cfa)  ( execute target non-forth word)
-   chatting @ 0= if  error" not connected to target"  then
-   runwait .regs ;
+: ?chat
+   chatting @ 0= if  error" not connected to target"  then ;
 
 
 ( Because the target "caches" the top of the stack in a register, and
