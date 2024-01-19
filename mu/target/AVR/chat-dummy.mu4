@@ -1,0 +1,73 @@
+( This file is part of muforth: https://muforth.dev/
+
+  Copyright 2002-2024 David Frech. (Read the LICENSE for details.)
+
+loading AVR chat (dummy implementation)
+
+( NOTE: All the following d.foobar commands are the dummy _implementations_
+  of the chat command interface.)
+
+( We need dummy images of all the memory spaces.)
+
+16 make-aspace  ( flash)
+#flash make-image
+   make-region dummy-flash
+
+16 make-aspace  ( data: ram + i/o)
+@ram #ram max 2* make-image  ( ensure that [@ram #ram +] is within the ram image)
+   make-region dummy-ram
+
+12 make-aspace  ( eeprom)
+#eeprom make-image
+   make-region dummy-eeprom
+
+-- ------------------------------------------------------------------------
+-- Chat implementation
+-- ------------------------------------------------------------------------
+: dx.get-version  "d0d0_dada ;
+
+variable dummy-y
+: dx.run         ( sp)    dummy-y ! ;  ( do nothing other than set Y)
+: dx.get-status  ( - sp)  dummy-y @ ;
+
+here  ]  dummy-flash  dummy-ram  dummy-eeprom  [
+: dx.setup-chunk  ( buf a u space - u buf dummy)
+   h preserve  addrs [ #] + addr@ execute  ( set dummy region)
+   -rot  image+ ;
+
+: dx.read   ( buf a u space)
+   dx.setup-chunk  swap rot  cmove ;
+
+: dx.write  ( buf a u space)
+   dx.setup-chunk       rot  cmove ;
+
+: dx.wipe
+   h preserve
+   dummy-flash   erase-image
+   dummy-ram     erase-image
+   dummy-eeprom  erase-image ;
+
+-- ------------------------------------------------------------------------
+-- Chat interface
+-- ------------------------------------------------------------------------
+
+: d.hello  ( - #chunk)
+   cr ." Chat (dummy) firmware version "  dx.get-version
+   radix preserve  hex  sep preserve  -sep   <# 4# 4# #> type
+   dx.wipe  [ @ram #ram + 256 - #] dummy-y !  128 ;
+
+: d.run  ( sp pc)  drop  dx.run ;
+
+: d.erase     ( a)
+   h preserve  dummy-flash  image+ "ff 128 fill ;
+
+: d.program        ( buf a u)   0 dx.write ;
+: d.write-data     ( buf a u)   1 dx.write ;
+: d.write-eeprom   ( buf a u)   2 dx.write ;
+
+( NOTE: We are *provisionally* removing app-start and app-stop from the
+  chat-via array, and *deprecating* their use in interact.mu4.)
+
+: chat   chat-via
+   d.hello  dx.get-status  d.run  dx.read  d.write-data  d.write-eeprom
+   nope nope nope nope  d.erase  d.program ;
