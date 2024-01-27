@@ -204,8 +204,17 @@ defer doit  ( buf target len)
 
 .then
 
-: cpuid
-   pad  0e000_ed00 4 read32  pad w@ ;
+: read4  ( a - w)  pad swap 4 read32  pad w@ ;
+
+: cpuid  ( - cpuid)  0e000_ed00 read4 ;
+
+( Read the DBGMCU_IDCODE register. It's not always in the same place! If
+  one is not defined, the value returned will be 0. In that case read the
+  second location.)
+
+: mcuid  ( - mcuid)
+   4001_5800 read4  ( F0 address)  ?if ^ then
+   e004_2000 read4  ( F3/F4 address) ;
 
 ( Say hello.)
 : .mode  ( mode#)
@@ -226,65 +235,20 @@ defer doit  ( buf target len)
    0800_0000 800  pad  ['] read32  chunked
    dup  pad 800 write  close-file ;
 
-( The interface for the interact code. Implemented by all debug transports.)
-
-( Connect to device, but don't halt it.)
-: st.connect
-   cr  ver .ver
-   cr  tell-mode
-   dup  0=  if  drop  ." => "  dfu>  tell-mode  then
-   dup  1 = if  drop  ." => "  >swd  tell-mode  then
-        2 - if  ." Tried, but didn't succeed. "  then ;
-
 : aligned32  3 + -4 and ;
 
 ( Make sure we read or write an aligned byte count.)
 : st.read   ( buf a u)  aligned32  read32 ;  ( Easy peasy!)
 : st.write  ( buf a u)  aligned32 write32 ;
 
-.ifndef stlink-ram-only
+( Connect quietly. Useful when STM32 is used in the background, eg for
+  programming AVR, 8051, PIC, etc.)
 
-.ifndef #flashbuf
-   .ifdef /page  ( chip has flash with uniform page size)
-      ld target/ARM/stm32/flash-programming.mu4
-   .else  ( chip has sectored flash)
-      ld target/ARM/stm32/flash-programming-sectored.mu4
-   .then
-.then
+: st.connect-quietly
+   get-mode
+   dup  0=  if  drop  dfu>  get-mode  then
+   dup  1 = if  drop  >swd  get-mode  then
+        2 = if  ^  then  ( debug mode)
+   error" Couldn't put ST-LINK into debug mode." ;
 
-: st.hello  ( - chunk-size)
-   st.connect
-   dbg.halt  #flashbuf ;  ( size of RAM flash buffer)
-
-: st.get-status  ( - sp pc)
-   begin  dbg.core-state  80 xor  until
-   #13 dbg.reg@  #15 dbg.reg@ ;
-
-: st.run  ( pc sp)
-   #13 dbg.reg!  #15 dbg.reg!  dbg.run ;
-
-( Write unlock keys to FLASH_KEYR.)
-: st.flash-begin
-   cdef_89ab  4567_0123  \m unlock rx ;
-
-( Re-lock flash controller registers.)
-: st.flash-end   \m lock rx ;
-
-( stm32-erase takes a flash address for uniform page devices, and a sector
-  number, for sectored devices. target/ARM/v6-m/flash.mu4 has already
-  figured this out for us.)
-
-: st.erase  ( a | sector#)  \m stm32-erase rx ;
-
-( Copy buf contents to ram buffer, then write to flash from there.)
-: st.program  ( buf a u)
-   push ( u)
-   swap @flashbuf r@  ( a buf flashbuf u)  st.write  ( copy chunk to target ram)
-   @flashbuf swap pop  ( flashbuf a u)  \m stm32-flash-chunk rx ;
-
-: jtag
-   chat-via  st.hello  st.get-status  st.run  st.read  st.write
-   st.flash-begin  st.flash-end  st.erase  st.program ;
-
-.then  ( ndef stm32-ram-only)
 .then  ( def stlink)
