@@ -6,7 +6,16 @@ loading ST-LINK debug (interact)
 
 hex
 
-( Skip the whole file if no ST-LINK was found.)
+( Load the flash programming routines into ram.)
+.ifndef #flashbuf
+   .ifdef /page  ( chip has flash with uniform page size)
+      ld target/ARM/stm32/flash-programming.mu4
+   .else  ( chip has sectored flash)
+      ld target/ARM/stm32/flash-programming-sectored.mu4
+   .then
+.then
+
+( Skip the rest of the file if no ST-LINK was found.)
 
 .ifdef stlink
 
@@ -23,17 +32,12 @@ hex
         2 = if  ^  then  ( debug mode)
    error" Couldn't put ST-LINK into debug mode." ;
 
-.ifndef #flashbuf
-   .ifdef /page  ( chip has flash with uniform page size)
-      ld target/ARM/stm32/flash-programming.mu4
-   .else  ( chip has sectored flash)
-      ld target/ARM/stm32/flash-programming-sectored.mu4
-   .then
-.then
-
+( Copy the flash programming routines to RAM when we connect.)
 : st.hello  ( - chunk-size)
-   st.connect
-   dbg.halt  #flashbuf ;  ( size of RAM flash buffer)
+   st.connect  dbg.halt
+   [ h @  ram  @flash-routines image+  swap h ! #]  ( address in ram image)
+   @flash-routines #flash-routines st.write  ( copy code to ram)
+   #flashbuf ;  ( size of RAM flash buffer)
 
 : st.get-status  ( - sp pc)
    begin  dbg.core-state  80 xor  until

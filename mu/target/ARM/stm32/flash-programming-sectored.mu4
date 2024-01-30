@@ -4,8 +4,6 @@
 
 loading STM32 flash programming code (sector flash)
 
-hex
-
 ( Stack macros.)
 
 ( NOTE: We have switched stacks! ARM won't let us push the LR onto any
@@ -57,14 +55,31 @@ forth
 
 ( Tell the disassembler about these register names.)
 -: ( reg)
-   #15 and  3 *
+   15 and  3 *
    z" w  x  y  z  fr dspip topr8 up r10r11r12rsplr pc " +  3 -trailing type ;
 
 : asm-regs   [ #] is .reg ;   asm-regs
 
+
+( Any chip with sectored flash probably has lots of RAM, so let's use a
+  4 Ki ram flash buffer.)
+
+4 Ki constant #flashbuf
+
+( Leave room for 64 cells on sp stack; room for 256 bytes of flash
+  programming code; round down to multiple of 256, then leave #flashbuf
+  bytes of space for buffer.)
+
+( Start the flash routines *after* the flashbuf.)
+
+\m sp0  64 \m cells -  256 - ( flash code)  -256 and  dup constant @flash-routines
+                                             #flashbuf -  constant @flashbuf
+hex
 __meta
 
-ram
+ram  here  ( we are going to return here after compiling the flash routines.)
+
+@flash-routines goto  ( starting address of flash routines)
 
 label unlock
    FLASH_ACR freg-base lit
@@ -146,6 +161,9 @@ label execute-assembly
 
 align  ( make sure RAM region is word-aligned)
 
+here @flash-routines -  constant #flash-routines   ( size of the code)
+goto  ( return to saved here)
+
 __host
 
 forth
@@ -167,16 +185,3 @@ forth
 : rx  ( x0 .. xn 'code rp - y0 .. yn <regs>)
    ?chat  1+ ( thumb)  \m rp0
    stack>  \m execute-assembly runwait  stack<  .rxregs ;
-
-decimal
-
-( Any chip with sectored flash probably has lots of RAM, so let's use a
-  4 Ki ram flash buffer.)
-
-4 Ki constant #flashbuf
-
-( Leave room for 64 cells on sp stack; round down to multiple of 256, then
-  leave #flashbuf bytes of space for buffer.)
-\m sp0  64 \m cells -  -256 and  #flashbuf -  constant @flashbuf
-
-__meta
