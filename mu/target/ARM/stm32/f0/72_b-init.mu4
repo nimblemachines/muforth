@@ -17,14 +17,22 @@ hex
   crystal-less clock source, even for USB applications. We will use this as
   our system clock.)
 
-: wait-for-rdy  ( regaddr)
-   begin  dup c@  2 and  until  ( wait for RDY bit)  drop ;
+ld target/ARM/stm32/clock.mu4    ( clock utility words)
+
+( Since we might be running this code from RAM, we need to assume that the
+  clock might already be set in some arbitrary way. We need to switch the
+  system clock back to the HSI; turn on the HSI48; then switch to it as the
+  system clock.)
+
+: >hsi48  3 ( SW=HSI48) sysclk! ;
+: +hsi48  1 2 2  [ RCC_CR2 2 + #]  set-until-match ;
 
 : clock-init
-   1 ( HSI48ON) [ RCC_CR2 2 + #] tuck c!  wait-for-rdy ( wait for HSI48RDY)
+   >hsi  ( switch to HSI as sysclk)
+   -pll  ( turn off PLL, in case it is running)
+   +hsi48  ( turn on HSI48)
    1 ( latency) FLASH_ACR set!  ( we need one cycle for 48 MHz clock!)
-   3 ( SW=HSI48 as sysclk)  RCC_CFGR tuck c!
-   begin  dup c@ %1111 =  until  ( SW=HSI48 and SWS=HSI48)  drop
+   >hsi48  ( switch to HSI48 as sysclk source)
 
    ( Set up CRS - clock recovery system.)
    ( XXX do we need CEN?)
