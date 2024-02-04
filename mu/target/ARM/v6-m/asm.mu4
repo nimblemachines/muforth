@@ -134,28 +134,32 @@ forth
 : i8  ( imm op - op')  8 ifits        or ;
 
 
+( NOTE: Forth words that look like instruction names are now prefixed with
+  "_" to keep them from being "accidentally" found from the assembler mode
+  [which also searches .forth.].)
+
 ( Shift-immed register - low register only!)
 : sh-imm  constant  does> @  ( i5 Rm Rd op)  00r  0r0  i5  op, ;
-0000 sh-imm lsli
-0800 sh-imm lsri
-1000 sh-imm asri
+0000 sh-imm _lsli
+0800 sh-imm _lsri
+1000 sh-imm _asri
 
 ( 3 register instructions - low registers only!)
 : 3reg  constant  does> @  ( Rm Rn Rd op)  00r  0r0  r00  op, ;
-1800 3reg addr3
-1a00 3reg subr3
+1800 3reg _addr3
+1a00 3reg _subr3
 
 ( 3 bit immediate - low registers only!)
 : 2reg-i3  constant  does> @  ( i3 Rn Rd op)  00r  0r0  i3  op, ;
-1c00 2reg-i3 addi3
-1e00 2reg-i3 subi3
+1c00 2reg-i3 _addi3
+1e00 2reg-i3 _subi3
 
 ( 8 bit immediate - low registers only!)
 : 1reg-i8  constant  does> @  ( i8 Rd op)  r000  i8  op, ;
-2000 1reg-i8 movi8
-2800 1reg-i8 cmpi8
-3000 1reg-i8 addi8
-3800 1reg-i8 subi8
+2000 1reg-i8 _movi8
+2800 1reg-i8 _cmpi8
+3000 1reg-i8 _addi8
+3800 1reg-i8 _subi8
 
 ( Data processing, low registers only!)
 : ?Rdn    ( Rm Rn Rd op - Rm Rdn op)
@@ -168,10 +172,10 @@ forth
 ( Require 3 operand form, and check Rd == Rn)
 : 2reg3   constant  does> @  ( Rm Rn Rd op)  ?Rdn  do-2reg ;
 
-4080 2reg3 lslr
-40c0 2reg3 lsrr
-4100 2reg3 asrr
-4280 2reg2 cmpr
+4080 2reg3 _lslr
+40c0 2reg3 _lsrr
+4100 2reg3 _asrr
+4280 2reg2 _cmpr
 
 assembler
 4000 2reg3 ands
@@ -192,14 +196,14 @@ forth
 
 ( 4-bit register)
 : 2anyreg  constant  does> @  ( Rm Rdn op)  0R  R0  op, ;
-4400 2anyreg addr2
-4500 2anyreg cmpr2  ( NOTE: at least one high reg!)
-4700 2anyreg bx
+4400 2anyreg _addr2
+4500 2anyreg _cmpr2  ( NOTE: at least one high reg!)
+4700 2anyreg _bx
 
 assembler
 4600 2anyreg mov   ( only non-s version of mov)
-: bx   ( Rm)  \a r0 ( Rdn)  bx ;
-: blx  ( Rm)  \a r8 ( Rdn)  bx ;
+: bx   ( Rm)  \a r0 ( Rdn)  _bx ;
+: blx  ( Rm)  \a r8 ( Rdn)  _bx ;
 forth
 
 ( Load and store instructions.)
@@ -412,9 +416,11 @@ forth
 
 : 0op32  constant  does> @  op32, ;
 
+assembler
 f3bf_8f4f 0op32 dsb  ( data synchronization barrier)
 f3bf_8f5f 0op32 dmb  ( data memory barrier)
 f3bf_8f6f 0op32 isb  ( instruction synchronization barrier)
+forth
 
 ( Place 4-bit register field in 32-bit instruction.)
 : Rd32  ( Rd op - op')  ?reg    8 << or ;
@@ -424,6 +430,7 @@ f3bf_8f6f 0op32 isb  ( instruction synchronization barrier)
   mrs  is  move special to register Rd;
   msr  is  move register Rn to special)
 
+assembler
 : mrs  ( SYSm Rd)  f3ef_8000  Rd32  or  op32, ;
 : msr  ( Rn SYSm)  f380_8800  or  Rn32  op32, ;
 
@@ -444,6 +451,7 @@ binary
 00001:001 constant PSP      ( The Process Stack pointer.)
 00010:000 constant PRIMASK  ( Register to mask out configurable exceptions.)
 00010:100 constant CONTROL  ( The CONTROL register, see following:)
+forth
 hex
 
 ( B1.4.4 The special-purpose CONTROL register
@@ -549,16 +557,16 @@ forth
                   pop cell+ @execute  ( reg) ;
 
 assembler
-adds-ish  adds  addi8  addi3  addr3
-adds-ish  subs  subi8  subi3  subr3
+adds-ish  adds  _addi8  _addi3  _addr3
+adds-ish  subs  _subi8  _subi3  _subr3
 
-lsls-ish  lsls  lsli  lslr
-lsls-ish  lsrs  lsri  lsrr
-lsls-ish  asrs  asri  asrr
+lsls-ish  lsls  _lsli  _lslr
+lsls-ish  lsrs  _lsri  _lsrr
+lsls-ish  asrs  _asri  _asrr
 
 : movs   ( Rm Rd | imm Rd)
-   over imm? if  movi8  ^  then
-          0 -rot lsli ;  ( otherwise, encode as 0 Rm Rd lsls)
+   over imm? if  _movi8  ^  then
+          0 -rot _lsli ;  ( otherwise, encode as 0 Rm Rd lsls)
 
 ( cmp has two reg/reg forms: one if both are low regs; the second if either
   is a high reg.)
@@ -568,10 +576,10 @@ forth
 assembler
 
 : cmp    ( Rn Rm | imm Rn)
-   over imm? if  cmpi8  ^  then
+   over imm? if  _cmpi8  ^  then
    2dup both-low? if  ( both low registers)
-                  cmpr   ^  then
-                  cmpr2 ;
+                 _cmpr   ^  then
+                 _cmpr2 ;
 
 ( Non s-suffix instructions.)
 ( Require 3 reg form for non-immediate version.)
@@ -582,7 +590,7 @@ assembler
       over     \a sp = if   nip  0a800 mem-i8  ^  then
       error" invalid add immediate instruction"
    then
-   ( otherwise, all regs version)  0  ?Rdn  drop  addr2 ;
+   ( otherwise, all regs version)  0  ?Rdn  drop  _addr2 ;
 
 : sub   ( n sp sp)
    2 nth imm? if  and \a sp = if  negate  add-to-sp  ^  then then
