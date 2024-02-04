@@ -62,11 +62,11 @@ assembler
 
 ( Return stack macros.)
 ( These are pushed so that r1 is the *top* of the R stack.)
-: rpush1  ( r1)       push  asm{{  1 cells # rp rp subs
-                                   0 rp +)  \f pop  str  }} ;
-: rpush2  ( r2 r1)   2push  asm{{  2 cells # rp rp subs
-                                   0 rp +)  \f pop  str
-                             1 cells rp +)  \f pop  str  }} ;
+: rpush1  ( r1)       push  asm{{  1 cells rp rp subs
+                                   0 rp  \f pop  str  }} ;
+: rpush2  ( r2 r1)   2push  asm{{  2 cells rp rp subs
+                                   0 rp  \f pop  str
+                             1 cells rp  \f pop  str  }} ;
 
 ( NOTE: The above warning about order is relevant here too!)
 ( These are popped in register index order - lower to higher.)
@@ -90,7 +90,7 @@ __meta
 
 meta: constant  new  ,  ;code  label doconst
                                implements target-do-const
-                               0 w +) w ldr  ( fetch constant into w)
+                               0 w w ldr  ( fetch constant into w)
                                ( fall thru)  ;c
 
 meta: create    new     ;code  label dovar
@@ -102,7 +102,7 @@ meta: create    new     ;code  label dovar
                                label dodoes
                                top dpush1   w top mov  ( move pfa to top)
                                lr w mov  ( lr is parent ip)
-                               1 # w w subs  ( clear thumb bit)
+                               1 w w subs  ( clear thumb bit)
                                ( fall thru)  ;c
 
 meta: :         new  ]  ;code  label docolon
@@ -121,13 +121,13 @@ definer: does>   <;code>  asm{{  dodoes bl  }}  ] ;
 code* (lit)     [r]   { w } ip ldm  ( fetch literal into w)   wpush j  ;c
 
 code execute   ( cfa)        top w mov   begin   top dpop1   dispatch  ;c
-code @execute  ( 'cfa)  0 top +) w ldr   again  ;c
+code @execute  ( 'cfa)  0 top w ldr   again  ;c
 
 code*    (branch)   [r]
-label branch        0 ip +) ip ldr  ( follow branch)   next  ;c
+label branch        0 ip ip ldr  ( follow branch)   next  ;c
 code*   (0branch)   [r]  top top tst                   top dpop1   branch 0!= until
                     ( fall thru)  ;c
-label skip          4 # ip ip adds   next  ( skip branch address)  ;c
+label skip          4 ip ip adds   next  ( skip branch address)  ;c
 code*  (?0branch)   [r]  top top tst   skip 0= until   top dpop1   branch j  ;c
 code*  (=0branch)   [r]  top top tst   skip 0= until               branch j  ;c
 
@@ -136,7 +136,7 @@ code* (for)   [r]  ( u)
    ix rpush1   top ix mov   top dpop1   next  ;c
 
 code* (next)  [r]
-   1 # ix ix subs   branch 0= until   ix rpop1   skip j  ;c
+   1 ix ix subs   branch 0= until   ix rpop1   skip j  ;c
 
 ( Do-loop frame looks like this:
 
@@ -161,7 +161,7 @@ code* (do)  [r]  ( limit start)
   backwards jump.)
 
 code* (loop)  [r]
-   1 # ix ix adds   branch 0= until
+   1 ix ix adds   branch 0= until
 label undo
    ix w rpop2  ( restore ix from R stack and pop do-loop frame)
    skip j  ;c
@@ -182,7 +182,7 @@ code* (+loop)  [r]  ( incr)
 
 ( Push current loop index. User-visible index = index + limit)
 code i   [r]  ( - index)
-   0 rp +) w ldr   ix w w adds   wpush j  ;c
+   0 rp w ldr   ix w w adds   wpush j  ;c
 
 ( Allocate buffer space _before_ defining the constant that pushes the
   buffer's address. This way we can define buffers in ram as well as in
@@ -198,9 +198,9 @@ meta: 2variable    cell 2* buffer ;
 code invert   top top mvns   next  ;c
 code negate   top top negs   next  ;c
 
-code 2*   1 # top top lsls   next  ;c   ( also: top top top add)
-code 2/   1 # top top asrs   next  ;c
-code u2/  1 # top top lsrs   next  ;c
+code 2*   1 top top lsls   next  ;c   ( also: top top top add)
+code 2/   1 top top asrs   next  ;c
+code u2/  1 top top lsrs   next  ;c
 
 code <<    ( n shamt - n')   x dpop1   top x x lsls   begin begin   x top mov  next  ;c
 code >>    ( n shamt - n')   x dpop1   top x x asrs   again  ;c
@@ -219,20 +219,20 @@ code bic   ( x t - x&~t)   x dpop1   top top mvns   again  ;c
 ( Stack ops.)
 code dup    [r]  ( t - t t)  top dpush1   next  ;c
 code drop   [r]  ( x t - x)  top dpop1    next  ;c
-code nip    [r]  ( x t - t)  cell # sp sp add   next  ;c
+code nip    [r]  ( x t - t)  cell sp sp add   next  ;c
 
-code over   [r]  ( w t - w t w)     0 sp +) w ldr   wpush j  ;c
-code swap   [r]  ( w t - t w)       0 sp +) w ldr   0 sp +) top str
-                                           begin   w top mov   next  ;c
+code over   [r]  ( w t - w t w)     0 sp w ldr   wpush j  ;c
+code swap   [r]  ( w t - t w)       0 sp w ldr   0 sp top str
+                                         begin   w top mov   next  ;c
 
-code rot    [r]  ( w x t - x t w)   0 sp +)   x ldr   cell sp +) w ldr
-                                    0 sp +) top str   cell sp +) x str   again  ;c
+code rot    [r]  ( w x t - x t w)   0 sp   x ldr   cell sp w ldr
+                                    0 sp top str   cell sp x str   again  ;c
 
-code tuck   [r]  (   w t - t w t)   0 sp +) w ldr   0 sp +) top str   w dpush1   next  ;c
+code tuck   [r]  (   w t - t w t)   0 sp w ldr   0 sp top str   w dpush1   next  ;c
 
 ( Make a copy of the nth stack item, where  0 nth  is  dup)
 code nth   [r]  ( w_n .. w_0 t - w_n .. w_0 w_t)
-   cellshift # top top lsls   sp top top add   0 top +) top ldr   next  ;c
+   cellshift top top lsls   sp top top add   0 top top ldr   next  ;c
 
 : 2dup   over over ;  [r]
 : -rot    rot  rot ;  [r]
@@ -240,34 +240,34 @@ code nth   [r]  ( w_n .. w_0 t - w_n .. w_0 w_t)
 ( Return stack ops.)
 code >r   [r]  ( w)        top rpush1   label poptop   top dpop1   next  ;c
 code r>   [r]  ( - w)         w rpop1   wpush j  ;c
-code r@   [r]  ( - w)   0 rp +) w ldr   wpush j  ;c
+code r@   [r]  ( - w)   0 rp w ldr   wpush j  ;c
 
 
 ( Memory access.)
-code  @    ( a -  w)  0 top +) top ldr    next  ;c
-code h@    ( a - uh)  0 top +) top ldrh   next  ;c  ( Unsigned!)
-code c@    ( a - ub)  0 top +) top ldrb   next  ;c  ( Unsigned!)
+code  @    ( a -  w)  0 top top ldr    next  ;c
+code h@    ( a - uh)  0 top top ldrh   next  ;c  ( Unsigned!)
+code c@    ( a - ub)  0 top top ldrb   next  ;c  ( Unsigned!)
 
 code  !    ( w a)     w dpop1   begin begin begin
-                                0 top +) w str    poptop j  ;c
-code h!    ( h a)     w dpop1   0 top +) w strh   poptop j  ;c
-code c!    ( b a)     w dpop1   0 top +) w strb   poptop j  ;c
+                                0 top w str    poptop j  ;c
+code h!    ( h a)     w dpop1   0 top w strh   poptop j  ;c
+code c!    ( b a)     w dpop1   0 top w strb   poptop j  ;c
 
 ( Generic, non-atomic read-modify-write ops: add, bit set, and bit clear.)
-code +!    ( x a)     x dpop1   0 top +) w ldr   x w w adds  again  ;c
-code set!  ( x a)     x dpop1   0 top +) w ldr   x w w orrs  again  ;c
-code clr!  ( x a)     x dpop1   0 top +) w ldr   x w w bics  again  ;c
+code +!    ( x a)     x dpop1   0 top w ldr   x w w adds  again  ;c
+code set!  ( x a)     x dpop1   0 top w ldr   x w w orrs  again  ;c
+code clr!  ( x a)     x dpop1   0 top w ldr   x w w bics  again  ;c
 
 code  @+   ( a - w a+4)            { w } top ldm   w dpush1   next  ;c
 code  !+   ( w a - a+4)  w dpop1   { w } top stm              next  ;c
 
-code c@+   ( a - w a+1)            0 top +) w ldrb   w dpush1
-                                   begin   1 # top top adds   next  ;c
-code c!+   ( w a - a+1)  w dpop1   0 top +) w strb   again  ;c
+code c@+   ( a - w a+1)            0 top w ldrb   w dpush1
+                                  begin   1 top top adds   next  ;c
+code c!+   ( w a - a+1)  w dpop1   0 top w strb   again  ;c
 
 
 ( Comparison and flag operators.)
-code 0<  ( n - f)   31 # top top asrs   next  ;c
+code 0<  ( n - f)   31 top top asrs   next  ;c
 
 ( These are a bit tricky, esp since borrow is ~carry. The idea is: get the
   inverse of the flag value we want into carry, then subtract top from
@@ -275,7 +275,7 @@ code 0<  ( n - f)   31 # top top asrs   next  ;c
   efficient but non-obvious.)
 
 code 0=  ( n - f)
-   1 # top top subs  ( ~Z -> C)
+   1 top top subs  ( ~Z -> C)
 label makeflag
    top top top sbcs   next  ;c
 
@@ -286,7 +286,7 @@ code u<  ( x t - x u< t)
   let's just use a conditional jump.)
 
 code  <  ( x t - x < t)
-   0 # w movs  ( false)
+   0 w movs  ( false)
    x dpop1   top x cmp   < if   w w mvns  ( true)   then
    w top mov   next  ;c
 
@@ -303,7 +303,7 @@ code  <  ( x t - x < t)
 ( Incrementers by small constants. Shared code means they take up very
   little space!)
 
-meta: incr   constant  ;code   0 w +) w ldr   w top top adds   next  ;c
+meta: incr   constant  ;code   0 w w ldr   w top top adds   next  ;c
    1 incr 1+   [r]
    2 incr 2+   [r]
 
@@ -314,8 +314,8 @@ cell       constant cell    [r]
 cell           incr cell+   [r]
 cell \f negate incr cell-   [r]
 
-code cells   [r]  cellshift # top top lsls   next  ;c
-code cell/   [r]  cellshift # top top asrs   next  ;c
+code cells   [r]  cellshift top top lsls   next  ;c
+code cell/   [r]  cellshift top top asrs   next  ;c
 
 
 .ifdef notyet  ( unconverted RISC-V code)
@@ -419,15 +419,15 @@ ram
 implements continue-forth  __asm
    { lr top ip rp ix } push   sp y mov
    pico-sp w lit
-   0 w +) x ldr  ( load forth sp)
-   0 w +) y str  ( save picoboot sp)
+   0 w x ldr  ( load forth sp)
+   0 w y str  ( save picoboot sp)
    x sp mov   { top ip rp ix } pop   dsb   isb   next  ;c
 
 code bug  [r]
    { top ip rp ix } push   sp x mov
    pico-sp w lit
-   0 w +) y ldr  ( restore picoboot sp)
-   0 w +) x str  ( save forth sp)
+   0 w y ldr  ( restore picoboot sp)
+   0 w x str  ( save forth sp)
    y sp mov   { pc top ip rp ix } pop  ;c
    pool,
 
