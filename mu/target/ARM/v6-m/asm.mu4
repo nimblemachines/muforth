@@ -8,6 +8,16 @@ loading ARM v6-M Thumb2 assembler
 
 hex
 
+( NOTE: These are now DEPRECATED but now are unnecessary and are ignored.
+  Please update your code by deleting them!)
+
+assembler
+: #   ;
+: +)   ;
+: r+)  ;
+forth
+
+
 ( Support for inline asm in any colon word.)
 variable saved-state  ( so we know which colon compiler to return to.)
 compiler
@@ -26,8 +36,15 @@ forth
 : op,  debug-show  \m h, ;
 : op32,  dup  #16 u>> op,  op, ;  ( compile high half then low half)
 
+( Let's define the registers first. We define them with "weird" bits in the
+  upper part so we can identify them, while they are sitting on the stack,
+  as registers. ;-)
+
+( This is how I feel about the ARM V6-M instruction set. ;-)
+a6_d0d0 8 << constant reg-signature
+
 ( Make these create/does words so it's easy to change their behaviour.)
-: reg   constant  ( regnum)  does> @ ;
+: reg   ( n)  reg-signature or  constant ;
 assembler
 #15 reg pc
 #14 reg lr
@@ -48,12 +65,20 @@ assembler
 
 forth
 
+( Test if a value on the stack is a register or not.)
+: reg?  ( n - f)  -10 and  reg-signature = ;
+
+: >reg  ( reg op - op reg-masked)  swap  0f and ;
+: ?reg  ( reg op - op reg-masked)
+   over reg? if  ( valid reg)  >reg  ^  then
+   error" expected a register" ;
+
 ( Many of these instructions only allow the use of the low registers - r0
   to r7. Make sure we're doing the right thing.)
 
-: low?  ( reg - f)  8 u< ;
-: ?low  ( reg op - op reg)
-   over low? if  swap  ^  then
+: low?  ( n - f)  8 u< ;
+: ?low  ( reg op - op reg-masked)
+   ?reg  dup low? if  ^  then
    error" only registers r0 to r7 allowed" ;
 
 ( These are named to suggest where they would put the 3-bit field if the
@@ -66,36 +91,28 @@ forth
 : r000  ( reg op - op')  ?low  8 <<  or ;
 
 ( For building opcodes with 4-bit register field, R.)
-: ?reg  ( reg op - op reg)
-   over 10 u< if  swap  ^  then
-   error" expected a register" ;
-
 : 0R  ( reg op - op')  ( R -> r0_000_rrr)
    ?reg  dup  8 and  4 <<
         swap 07 and        or  or ;
 
 : R0  ( reg op - op')  ( R -> 0r_rrr_000)
-   ?reg  0f and  3 <<  or ;
+   ?reg  3 <<  or ;
 
 ( Register lists (masks)
 : >mask  ( n - 2^n)  1 swap << ;
-: reg>mask  ( n mask - mask')  swap >mask  or ;
+: reg>mask  ( reg mask - mask')  ?reg >mask  or ;
 
 assembler
 feebfeeb constant {  ( - mark)
 : }    ( mark Rx .. Ry - mask)
    0 ( mask)   begin  over \a { xor while  reg>mask  repeat  nip
    0ffff and ;
-
-( Mark immediate values by pushing a negative number on top of them. This
-  way we can distinguish between immediate and register values, which are
-  always >= 0.)
-
-: #   ( imm - imm -1)  -1 ;
-
 forth
 
-: imm?  ( bits - is-imm)  0< ;
+( If it's not a register, it's an immediate value. Let's make it easy to
+  test for that too.)
+
+: imm?  ( bits - f)  reg? 0= ;
 
 ( Offsets.)
 : hoff  ( off op - off/2 op)  swap  2/    swap ;
@@ -185,63 +202,58 @@ assembler
 : blx  ( Rm)  \a r8 ( Rdn)  bx ;
 forth
 
-: ?index   ( allowed this)
-   u< if  error" indexing type not allowed"  then ;
+( Load and store instructions.)
+: mem-i8    ( i8    Rt op)  r000  woff i8  op, ;
 
-: sp-or-pc   ( offset Rn ix Rt op)   r000  or  nip  woff i8  op, ;
+: mem-i5    ( Rn Rt i5 op)  i5  00r 0r0      op, ;
+: mem-reg   ( Rm Rn Rt op)      00r 0r0 r00  op, ;
 
-: do-ldr-pc   ( offset Rn ix Rt 'body)
-   @  3 ?index  ( ix-pc allowed)                     0  sp-or-pc ;
-
-: do-str-sp   ( offset Rn ix Rt 'body)
-   @+ @ swap  2 ?index  ( ix-sp allowed)  800 and ( L)  sp-or-pc ;
-
-: do-str-imm  ( offset ix Rt 'body)
-   @+ cell+ swap  1 ?index  ( ix-imm allowed)
-   @+ @ push ( op-imm)  00r  or  swap pop ( scale) >>  swap  i5  op, ;
-
-: do-str-reg  ( ix Rt 'body)
-   cell+ @  ( op-reg)  00r  or  op, ;
-
-( For indexing. V6-M only has pre-indexing - no writeback - so there are
-  only two indexing operators:)
+: mem-reg?  ( i5/Rm Rn Rt - i5/Rm Rn Rt f)  2 nth reg? ;
 
 assembler
-: +)   ( offset Rn - offset ... cfa)
-   dup \a pc = if  4800  ['] do-ldr-pc  ^  then  ( ix type 3)
-   dup \a sp = if  9000  ['] do-str-sp  ^  then  ( ix type 2)
-            0  0r0       ['] do-str-imm ;        ( ix type 1)
+: str   ( Rm Rn Rt | i8 sp Rt | i5 Rn Rt)
+   mem-reg? if           5000 mem-reg ^  then
+   over \a sp = if  nip  9000 mem-i8 ^  then
+                    rot  6000 woff mem-i5 ;
 
-: r+)  ( Rm Rn - ix cfa)
-            0  0r0  r00  ['] do-str-reg ;        ( ix type 0)
+: ldr   ( Rm Rn Rt | i8 pc Rt | i8 sp Rt | i5 Rn Rt)
+   mem-reg? if           5800 mem-reg ^  then
+   over \a pc = if  nip  4800 mem-i8 ^  then
+   over \a sp = if  nip  9800 mem-i8 ^  then
+                    rot  6800 woff mem-i5 ;
+
+: strh   ( i5 Rn Rt | Rm Rn Rt)
+   mem-reg? if           5200 mem-reg ^  then
+                    rot  8000 hoff mem-i5 ;
+
+: ldrh   ( i5 Rn Rt | Rm Rn Rt)
+   mem-reg? if           5a00 mem-reg ^  then
+                    rot  8800 hoff mem-i5 ;
+
+: strb   ( i5 Rn Rt | Rm Rn Rt)
+   mem-reg? if           5400 mem-reg ^  then
+                    rot  7000      mem-i5 ;
+
+: ldrb   ( i5 Rn Rt | Rm Rn Rt)
+   mem-reg? if           5c00 mem-reg ^  then
+                    rot  7800      mem-i5 ;
+
+( Special cases!)
 forth
-
-( One Ring to rule them all?)
-: ring    ( scale op-imm op-reg ix-max)  create  , , , ,
-          ( ... cfa Rt 'body)  does>  rot execute ;
-
+: no-imm  error" immediate offset mode is not allowed" ;
 assembler
-( scale op-imm op-reg ix-max)
-    2    6000   5000    2   ring  str
-    2    6800   5800    3   ring  ldr
 
-    1    8000   5200    1   ring  strh
-    1    8800   5a00    1   ring  ldrh
+: ldrsb  ( Rm Rn Rt)
+   mem-reg? if  5600 mem-reg ^  then  no-imm ;
 
-    0    7000   5400    1   ring  strb
-    0    7800   5c00    1   ring  ldrb
+: ldrsh  ( Rm Rn Rt)
+   mem-reg? if  5e00 mem-reg ^  then  no-imm ;
 
-    0       0   5e00    0   ring  ldrsh   ( scale is ignored - ix-reg only)
-    0       0   5600    0   ring  ldrsb
 forth
-
-( add to pc/sp)
-( i8 is scaled *4)
-: load-addr  ( i8 Rt op)  r000  woff i8  op, ;
 
 ( add/sub imm to sp)
 ( i7 is scaled *4)
-: offset-sp  ( i7 op)           woff i7  op, ;
+: offset-sp  ( i7 op)  woff i7  op, ;
 : add-to-sp  ( i7)  dup 0< if  negate  b080  offset-sp  ^  then
                                        b000  offset-sp ;
 
@@ -256,7 +268,7 @@ assembler
 forth
 
 : stackop
-   create  ( op 9threg)  >mask ,  ,
+   create  ( op 9threg)  swap >reg >mask ,  ,
    does> @+ @  ( reglist 9thregmask op)
       -rot  over and  if  100 or  then  01ff and  or  op, ;
 
@@ -292,7 +304,7 @@ assembler
 0bc00 \a pc stackop pop
 forth
 
-: op-i8   constant  does> @  ( i8 op)  over imm? if nip then  i8  op, ;
+: op-i8   constant  does> @  ( i8 op)  i8  op, ;
 
 ( Breakpoint)
 assembler
@@ -502,6 +514,9 @@ forth
 
 ( Control structure words.)
 assembler
+( XXX always should really be called never: it always *branches*, thus it
+  never executes the following code!)
+
 : always  (      - src)  \m here       0 >bra    op, ;  ( uncond jump)
 : if      ( cond - src)  \m here   swap  d000 +  op, ;  ( cond jump)
 : then    ( src)         \m here   swap  \m resolve ;   ( >resolve)
@@ -520,8 +535,8 @@ forth
 ( Require 3 op form for i8 version.)
 : adds-ish
    create  ' ,  ' ,  ' ,  ( i8 i3 r3  forms)
-   does>  push  ( Rm Rn Rd | n # Rn Rd | n # Rd Rd)
-   2 nth imm? if  rot drop  2dup = if
+   does>  push  ( imm Rd Rd | imm Rn Rd | Rm Rn Rd)
+   2 nth imm? if            2dup = if
       drop  pop             @execute  ( i8)  ^  then
             pop cell+       @execute  ( i3)  ^
    then
@@ -529,9 +544,9 @@ forth
 
 : lsls-ish
    create  ' ,  ' ,  ( imm reg  forms)
-   does>  push  ( Rm Rn Rd | n # Rm Rd)
-   2 nth imm? if  rot drop  pop       @execute  ( imm)  ^  then
-                            pop cell+ @execute  ( reg) ;
+   does>  push  ( Rm Rn Rd | imm Rm Rd)
+   2 nth imm? if  pop       @execute  ( imm)  ^  then
+                  pop cell+ @execute  ( reg) ;
 
 assembler
 adds-ish  adds  addi8  addi3  addr3
@@ -541,37 +556,41 @@ lsls-ish  lsls  lsli  lslr
 lsls-ish  lsrs  lsri  lsrr
 lsls-ish  asrs  asri  asrr
 
-: movs   ( Rm Rd | n # Rd)
-   over  imm? if  nip  movi8  ^  then
-                0 -rot lsli ;  ( encode as 0 # Rm Rd lsl)
+: movs   ( Rm Rd | imm Rd)
+   over imm? if  movi8  ^  then
+          0 -rot lsli ;  ( otherwise, encode as 0 Rm Rd lsls)
 
 ( cmp has two reg/reg forms: one if both are low regs; the second if either
   is a high reg.)
 
-: cmp    ( Rn Rm | n # Rn)
-   over  imm? if  nip  cmpi8  ^  then
-   2dup low?  swap low?  and if  ( both low registers)
-                       cmpr   ^  then
-                       cmpr2 ;
+forth
+: both-low?  ( Rn Rm - f)  0 ?reg or  ?reg or  low? ;
+assembler
+
+: cmp    ( Rn Rm | imm Rn)
+   over imm? if  cmpi8  ^  then
+   2dup both-low? if  ( both low registers)
+                  cmpr   ^  then
+                  cmpr2 ;
 
 ( Non s-suffix instructions.)
 ( Require 3 reg form for non-immediate version.)
-: add   ( n # sp Rd | n # pc Rd | n # sp sp | Rm Rn Rd)
-   2 nth imm?  if  rot drop
-      dup  \a sp = if  2drop       add-to-sp  ^  then
-      over \a pc = if   nip  0a000 load-addr  ^  then
-      over \a sp = if   nip  0a800 load-addr  ^  then
-      error" invalid instruction form"
+: add   ( imm sp sp | imm pc Rd | imm sp Rd | Rm Rn Rd)
+   2 nth imm? if
+      2dup and \a sp = if  2drop       add-to-sp  ^  then
+      over     \a pc = if   nip  0a000 mem-i8  ^  then
+      over     \a sp = if   nip  0a800 mem-i8  ^  then
+      error" invalid add immediate instruction"
    then
    ( otherwise, all regs version)  0  ?Rdn  drop  addr2 ;
 
-: sub   ( n # sp sp)
-   2 nth imm?  if  drop 2drop  negate  add-to-sp  ^  then
-   error" strange sub instruction" ;
+: sub   ( n sp sp)
+   2 nth imm? if  and \a sp = if  negate  add-to-sp  ^  then then
+   error" invalid sub immediate instruction" ;
 
 forth
 
-( XXX for testing)
+
 .ifdef testing
 
 ( Generate all permutations of S, J1, and J2 bits to make sure I'm doing
