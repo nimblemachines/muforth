@@ -38,17 +38,16 @@ assembler
 : dpop3  ( r1 r2 r3) 3 regs>mask  asm{{  dsp ldm  }} ;
 
 ( Fetch and store FLASH_xxx registers.)
-\a r4 constant freg-base
+\a r4 constant fr
 
-: freg!  ( flashreg-offset src-reg)
-   asm{{  \f push  FLASH_ACR -  freg-base  \f pop  str  }} ;
+( These are useful for *all* kinds of i/o programming on an STM32. If we
+  define them here, any code loaded after this can use them.
 
-( We sometimes want to read or write byte-sized values to the flash regs.)
-: fregb@  ( flashreg-offset dest-reg)
-   asm{{  \f push  FLASH_ACR -  freg-base  \f pop  ldrb  }} ;
+  STM32 peripherals are defined on 1 KiB boundaries.)
 
-: fregb!  ( flashreg-offset src-reg)
-   asm{{  \f push  FLASH_ACR -  freg-base  \f pop  strb  }} ;
+: >iobase  ( io-reg - base)      -1 Ki       and ;
+: >io      ( io-reg - offset)   [ 1 Ki 1- #] and ;
+
 forth
 
 ( Tell the disassembler about these register names.)
@@ -80,21 +79,21 @@ ram  here  ( we are going to return here after compiling the flash routines.)
 @flash-routines goto  ( starting address of flash routines)
 
 label unlock
-   FLASH_ACR freg-base lit
-   x w dpop2   FLASH_KEYR w freg!   FLASH_KEYR x freg!
-   0 w movs    FLASH_CR   w freg!  ( clear any program/erase bits)
+   FLASH_ACR fr lit
+   x w dpop2   FLASH_KEYR >io fr w str   FLASH_KEYR >io fr x str
+   0 w movs    FLASH_CR   >io fr w str  ( clear any program/erase bits)
    lr bx  ;c
    pool,
 
 label lock
    80 ( LOCK) w movs
-   FLASH_CR 3 + w fregb!
+   FLASH_CR 3 + >io fr w strb
    lr bx  ;c
 
 label -busy
    x w rpush2
    1 ( BSY) w movs
-   begin   FLASH_SR 2 + x fregb@   x w tst   0= until
+   begin   FLASH_SR 2 + >io fr x ldrb   x w tst   0= until
    x w rpop2
    lr bx  ;c
 
@@ -102,8 +101,8 @@ label -busy
 label stm32-erase  ( sector#)
    lr rpush
    w dpop   3 w w lsls  ( shift sector# up 3 bits)
-   2 ( SER)  w w adds   FLASH_CR     w freg!  ( set SER + sector number)
-   1 ( STRT) w movs     FLASH_CR 2 + w fregb! ( set STRT bit)
+   2 ( SER)  w w adds   FLASH_CR     >io fr w str  ( set SER + sector number)
+   1 ( STRT) w movs     FLASH_CR 2 + >io fr w strb ( set STRT bit)
    -busy bl
    pc rpop  ;c
 
@@ -112,8 +111,8 @@ label stm32-erase  ( sector#)
 label stm32-flash-chunk  ( buf a u)
    lr rpush
    y x w dpop3
-   1 ( PG)    z movs   FLASH_CR    z freg!  ( set PG bit)
-   2 ( psize) z movs   FLASH_CR 1+ z fregb! ( psize=2; program by 32bit word)
+   1 ( PG)    z movs   FLASH_CR    >io fr z str  ( set PG bit)
+   2 ( psize) z movs   FLASH_CR 1+ >io fr z strb ( psize=2; program by 32bit word)
    0 z movs  ( offset)
    begin
       ( unlike paged flash, we can program by words!)
@@ -153,7 +152,7 @@ label execute-assembly
    { top w } pop   sp rp mov   w sp mov   dsb   isb   top blx
    rp sp mov
 .ifdef testing
-   { top freg-base z y x w } push
+   { top fr z y x w } push
 .then
    0 bkpt ;c
 

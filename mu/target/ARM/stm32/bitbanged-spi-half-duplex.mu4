@@ -13,16 +13,6 @@ loading STM32 Bitbanged SPI
   code generic, so it can be used for AVR and 8051 devices as well, which
   *do* use separate MOSI and MISO, and clock data on the *rising* edge.)
 
-
-.ndef lsb-first  .ndef msb-first .and .if
-   error" You need to define either lsb-first or msb-first"
-.then
-
-.ndef slow-bits  .ndef fast-bits .and .if
-   error" You need to define either slow-bits or fast-bits"
-.then
-
-
 hex
 __meta
 
@@ -84,25 +74,6 @@ __meta
 ( Older PICs used an LSB-first protocol; newer ones use MSB-first, to be
   more SPI-compatible. We define both styles.)
 
-.ifdef msb-first
-
-( NOTE: In bit@ and bit! we try to do approximately the same amount of
-  "computation" during the high and low halves of the clock.)
-
-( Read bit on PB4.)
-: bit@   ( bits - bits')
-   clk/  2*  GPIOB_IDR @  4  clk\  >>  1 and  + ;
-
-( Amusing note: The standard Forth-style pronunciation of bit! is "bit bang". ;-)
-
-( Drive bit on PB4.)
-: bit!   ( bits - bits')  ( sample hi bit - 8000_0000 - and drive PB4 with it)
-   dup  [ 1 4 << #]  GPIOB_BRR ( bit clear register)
-   rot clk/  0< if  [ GPIOB_BSRR GPIOB_BRR - #] + ( bit set register)  then  !
-   2*  clk\ ;
-
-.then  ( ifdef msb-first)
-
 .ifdef lsb-first
 
 ( NOTE: In bit@ and bit! we try to do approximately the same amount of
@@ -120,7 +91,24 @@ __meta
    rot  clk/  1 and if  [ GPIOB_BSRR GPIOB_BRR - #] + ( bit set register)  then  !
    u2/  clk\ ;
 
-.then  ( lsb-first)
+.else  ( msb-first, the default)
+
+( NOTE: In bit@ and bit! we try to do approximately the same amount of
+  "computation" during the high and low halves of the clock.)
+
+( Read bit on PB4.)
+: bit@   ( bits - bits')
+   clk/  2*  GPIOB_IDR @  4  clk\  >>  1 and  + ;
+
+( Amusing note: The standard Forth-style pronunciation of bit! is "bit bang". ;-)
+
+( Drive bit on PB4.)
+: bit!   ( bits - bits')  ( sample hi bit - 8000_0000 - and drive PB4 with it)
+   dup  [ 1 4 << #]  GPIOB_BRR ( bit clear register)
+   rot clk/  0< if  [ GPIOB_BSRR GPIOB_BRR - #] + ( bit set register)  then  !
+   2*  clk\ ;
+
+.then  ( msb-first)
 
 ( Read some bits. bits is left-justified.)
 : bits>   ( count - bits)          0  swap for  bit@  next ;
@@ -128,14 +116,11 @@ __meta
 ( Write some bits. bits and bits' are right-justified.)
 : >bits   ( bits count - bits')   pb4-out  for  bit!  next  pb4-in ;
 
-.then  ( slow-bits)
-
+.else  ( fast-bits, the default)
 
 ( Next, the high-performance versions of >bits and bits>. These are capable
   of toggling at just over 5Mhz. I had to put in some no-ops to slow them
   down a bit.)
-
-.ifdef fast-bits
 
 {
 assembler
@@ -144,64 +129,45 @@ assembler
 forth
 }
 
-.ifdef msb-first
-
+( Send bits down the wire - "to bits".)
 code >bits  ( bits count - bits')
-   w dpop1  GPIOB_MODER ( base) x lit
-   %01 4 2* << z lit  0 x ( MODER) y ldr  z y y orrs  0 x y str  ( pb4 output)
+   w dpop1  GPIOB_MODER >iobase x lit
+   %01 z movs  4 2* z z lsls
+   GPIOB_MODER >io x y ldr  z y y orrs  0 x y str  ( pb4 output)
    1 3 << y movs  ( PB3: clock)
    1 4 << z movs  ( PB4: data)
    begin
-      1 w w lsls  ( shift left; high bit -> carry)
-      18 x ( BSRR) y str  ( clock high)
-      cs if  18 x ( BSRR) z str  else  28 x ( BRR) z str  nop3  then  ( drive bit)
-      28 x ( BRR) y str  ( clock low)
-   1 top top subs  0= until
-   %11 4 2* << z lit  0 x ( MODER) y ldr  z y y bics  0 x y str  ( pb4 input)
-   w top mov  next  ;c
-
-code bits>  ( count - bits)
-   0 w movs  GPIOB_MODER ( base) x lit
-   1 3 << y movs  ( PB3: clock)
-   begin
-      18 x ( BSRR) y str  ( clock high)
-      1 w w lsls ( shift left)  nop3 ( wait for output to propagate)
-      10 x ( IDR) z ldr  #27 z z lsls  #31 z z lsrs ( bit4 -> bit0; other bits 0)
-      28 x ( BRR) y str  ( clock low)
-      z w w adds  ( add in low bit)
-   1 top top subs  0= until
-   w top mov  next  ;c  pool,
-
-.then ( msb-first)
-
 .ifdef lsb-first
-
-code >bits  ( bits count - bits')
-   w dpop1  GPIOB_MODER ( base) x lit
-   %01 4 2* << z lit  0 x ( MODER) y ldr  z y y orrs  0 x y str  ( pb4 output)
-   1 3 << y movs  ( PB3: clock)
-   1 4 << z movs  ( PB4: data)
-   begin
       1 w w lsrs  ( shift right; low bit -> carry)
-      18 x ( BSRR) y str  ( clock high)
-      cs if  18 x ( BSRR) z str  else  28 x ( BRR) z str  nop3  then  ( drive bit)
-      28 x ( BRR) y str  ( clock low)
+.else  ( msb-first, the default)
+      1 w w lsls  ( shift left; high bit -> carry)
+.then
+      GPIOB_BSRR >io x y str  ( clock high)
+      cs if  GPIOB_BSRR >io x z str  else  GPIOB_BRR >io x z str  nop3  then  ( drive bit)
+      GPIOB_BRR >io x y str  ( clock low)
    1 top top subs  0= until
-   %11 4 2* << z lit  0 x ( MODER) y ldr  z y y bics  0 x y str  ( pb4 input)
+   %11 z movs  4 2* z z lsls
+   GPIOB_MODER >io x y ldr  z y y bics  0 x y str  ( pb4 input)
    w top mov  next  ;c
 
+( Receive bits from the wire - "bits from".)
 code bits>  ( count - bits)
-   0 w movs  GPIOB_MODER ( base) x lit
+   0 w movs  GPIOB_MODER >iobase x lit
    1 3 << y movs  ( PB3: clock)
    begin
-      18 x ( BSRR) y str  ( clock high)
+      GPIOB_BSRR >io x y str  ( clock high)
+.ifdef lsb-first
       1 w w lsrs  ( shift right)  nop3 ( wait for output to propagate)
-      10 x ( IDR) z ldr  4 z z lsrs  #31 z z lsls ( bit4 -> bit31; other bits 0)
-      28 x ( BRR) y str  ( clock low)
-      z w w adds  ( add in high bit)
+      GPIOB_IDR >io x z ldr
+      4 z z lsrs  #31 z z lsls ( bit4 -> bit31; other bits 0)
+.else  ( msb-first, the default)
+      1 w w lsls ( shift left)  nop3 ( wait for output to propagate)
+      GPIOB_IDR >io x z ldr
+      #27 z z lsls  #31 z z lsrs ( bit4 -> bit0; other bits 0)
+.then
+      GPIOB_BRR >io x y str  ( clock low)
+      z w w adds  ( add in new bit)
    1 top top subs  0= until
    w top mov  next  ;c  pool,
-
-.then  ( lsb-first)
 
 .then  ( fast-bits)

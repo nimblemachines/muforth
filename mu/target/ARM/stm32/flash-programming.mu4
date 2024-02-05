@@ -38,13 +38,16 @@ assembler
 : dpop3  ( r1 r2 r3) 3 regs>mask  asm{{  dsp ldm  }} ;
 
 ( Fetch and store FLASH_xxx registers.)
-\a r4 constant freg-base
+\a r4 constant fr
 
-: freg@  ( flashreg-offset dest-reg)
-   asm{{  \f push  FLASH_ACR -  freg-base  \f pop  ldr  }} ;
+( These are useful for *all* kinds of i/o programming on an STM32. If we
+  define them here, any code loaded after this can use them.
 
-: freg!  ( flashreg-offset src-reg)
-   asm{{  \f push  FLASH_ACR -  freg-base  \f pop  str  }} ;
+  STM32 peripherals are defined on 1 KiB boundaries.)
+
+: >iobase  ( io-reg - base)      -1 Ki       and ;
+: >io      ( io-reg - offset)   [ 1 Ki 1- #] and ;
+
 forth
 
 ( Tell the disassembler about these register names.)
@@ -77,21 +80,20 @@ ram  here  ( we are going to return here after compiling the flash routines.)
 @flash-routines goto  ( starting address of flash routines)
 
 label unlock
-   FLASH_ACR freg-base lit
-   x w dpop2   FLASH_KEYR w freg!   FLASH_KEYR x freg!
-   0 w movs  FLASH_CR   w freg!  ( clear any program/erase bits)
+   FLASH_ACR >iobase fr lit
+   x w dpop2   FLASH_KEYR >io fr w str   FLASH_KEYR >io fr x str
+   0 w movs    FLASH_CR   >io fr w str  ( clear any program/erase bits)
    lr bx  ;c
    pool,
 
 label lock
-   80 ( LOCK) w movs
-   FLASH_CR w freg!
+   80 ( LOCK) w movs   FLASH_CR >io fr w str
    lr bx  ;c
 
 label -busy
    x w rpush2
    1 ( BSY) w movs
-   begin   FLASH_SR x freg@   x w tst   0= until
+   begin   FLASH_SR >io fr x ldr   x w tst   0= until
    x w rpop2
    lr bx  ;c
 
@@ -99,16 +101,16 @@ label -busy
 label stm32-erase  ( flash-page-address)
    lr rpush
    w dpop
-    2 ( PER)      x movs   FLASH_CR x freg! ( set PER)
-                           FLASH_AR w freg! ( set page erase address)
-   42 ( STRT+PER) x movs   FLASH_CR x freg! ( set STRT+PER)
+    2 ( PER)      x movs   FLASH_CR >io fr x str ( set PER)
+                           FLASH_AR >io fr w str ( set page erase address)
+   42 ( STRT+PER) x movs   FLASH_CR >io fr x str ( set STRT+PER)
    -busy bl
    pc rpop  ;c
 
 label stm32-mass-erase
    lr rpush
-    4 ( MER)      w movs   FLASH_CR w freg! ( set MER)
-   44 ( STRT+MER) w movs   FLASH_CR w freg! ( set STRT+MER)
+    4 ( MER)      w movs   FLASH_CR >io fr w str ( set MER)
+   44 ( STRT+MER) w movs   FLASH_CR >io fr w str ( set STRT+MER)
    -busy bl
    pc rpop  ;c
 
@@ -117,14 +119,15 @@ label stm32-mass-erase
 ( Option bytes, erasing and programming.)
 
 label unlock-option-bytes
-   x w dpop2   FLASH_OPTKEYR w freg!   FLASH_OPTKEYR x freg!
+   x w dpop2   FLASH_OPTKEYR >io fr w str
+               FLASH_OPTKEYR >io fr x str
    lr bx  ;c
    pool,
 
 label erase-option-bytes
    lr rpush
-   220 ( OPTWRE+OPTER) w lit   FLASH_CR w freg! ( set OPTER)
-    40 ( STRT) w w adds        FLASH_CR w freg! ( set STRT+OPTER)
+   220 ( OPTWRE+OPTER) w lit   FLASH_CR >io fr w str ( set OPTER)
+    40 ( STRT) w w adds        FLASH_CR >io fr w str ( set STRT+OPTER)
    -busy bl
    pc rpop  ;c
    pool,
@@ -149,7 +152,7 @@ label remove-read-protect  ( key)
 label stm32-flash-chunk  ( buf a u)
    lr rpush
    y x w dpop3
-   1 ( PG) z movs   FLASH_CR z freg! ( set PG bit)
+   1 ( PG) z movs   FLASH_CR >io fr z str ( set PG bit)
    0 z movs  ( offset)
    begin
       ( program by halfwords!)
@@ -189,7 +192,7 @@ label execute-assembly
    { top w } pop   sp rp mov   w sp mov   dsb   isb   top blx
    rp sp mov
 .ifdef testing
-   { top freg-base z y x w } push
+   { top fr z y x w } push
 .then
    0 bkpt ;c
 
