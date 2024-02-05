@@ -363,30 +363,75 @@ forth
 -- Support for in-line literals (literal pool, ARM-style)
 -- ------------------------------------------------------------------------
 
-( As we generate them, we push literals onto a stack. When we want to
-  create the pool, we pop each one off, compile it into memory, and fix up
-  the ldr reference address.)
+( The two workhorses are:
 
-64 array lit-stack  ( room for 32 literals)
-variable litsp      ( pointer into array)  lit-stack litsp !
-: lit-push  ( lit fixup)      litsp @  !+ !+          litsp ! ;
-: lit-pop   ( - lit fixup)    litsp @  2 cells -  dup litsp !  @+ @  swap ;
+  - lit   an assembler pseudo-instruction that does three things:
+     - adds the literal value to the lit table if it isn't present, and
+       reuses the existing value if it is
+
+     - using the *index* into the lit table, creates an ldr instruction and
+       compiles it
+
+     - pushes the address of the ldr instructions onto a stack of "refs"
+       that need to fixed up [once the table is compiled into the image and
+       we know its address]
+
+  - pool,   a meta word that does two things:
+     - compiles the literal table into the image
+
+     - for every ref on the fixup stack, updates the ldr instruction with
+       the offset to the [compiled] literal table.
+
+  The idea is that you can freely use literals, whose values will be
+  re-used if possible. IE, in a given, compiled, literal table, there will be
+  no repeated values.
+
+  For this to be as efficient as possible, it's important to try to defer
+  the use of  pool,  for as long as possible. But there is no good way to do
+  this! In particular, there are no warnings that the literal table - or
+  the stack of refs - is getting full.)
+
+( The literal table, as it is being constructed.)
+32 array+ lit-values  ( room for 32 literal values)
+variable lit-value    ( ranges from 0 to 32)
+
+: lit-exists?  ( lit - index -1 | 0)
+   push  0 ( index)
+   begin
+      dup lit-value @ u< while
+      dup lit-values @ r@ = if  ( matched)  rdrop  -1 ^  then
+   1+ repeat
+   rdrop drop 0 ;
+
+( Return the index of an existing or newly-created literal.)
+: lit-new  ( lit - index)
+   dup lit-exists? if nip ^ then
+   lit-value @ tuck  lit-values !  1 lit-value +! ;
+
+( The stack of refs to instructions needing fixing up.)
+64 array+ lit-refs    ( room for 64 literal *references*)
+variable lit-ref      ( ranges from 0 to 64)
+
+: lit-push  ( ref)                    lit-ref @ lit-refs !  1 lit-ref +! ;
+: lit-pop   ( - ref)   -1 lit-ref +!  lit-ref @ lit-refs @ ;
 
 assembler
-: lit   ( lit reg8)   swap  \m here  lit-push  "4800 r000 op, ;
+: lit   ( lit reg8)
+   \m here  lit-push  ( onto ref stack)
+   swap lit-new  ( reg8 index)  "4800 i8 r000 op,  ( <index> pc reg8 ldr) ;
 
 forth
 : h+!   ( n a)   tuck leh@ +  swap leh! ;
 
-: lit,  ( lit fixup)
-   \m here  over  >load-pc -  2 u>> ( fixup woff)
-   swap image+ h+! ( add offset into ldr instruction!)
-   \m ,  ( compile lit) ;
+: lit-fixup  ( ref lit-table)
+   over >load-pc -  \m cell/  ( calc offset from ldr to literal table start)
+   swap image+ h+! ( add offset into ldr instruction!) ;
 
 meta
 : pool,
-   \m align
-   begin  lit-stack  litsp @  u< while  lit-pop  lit,  repeat ;
+   \m align  \m here push  ( address of lit table)
+   0 lit-values  lit-value @ for  @+ swap \m ,  next  drop  lit-value off
+   begin  lit-ref @ while  lit-pop r@ lit-fixup  repeat  rdrop ;
 
 forth
 
