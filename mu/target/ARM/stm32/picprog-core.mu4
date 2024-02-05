@@ -38,10 +38,11 @@ loading PIC16/18 SPI flash programming (STM32 core)
 __meta
 decimal
 
-( The ST-LINK code will have written some flash programming routines into
-  ram. We don't need these, so let's back up over them and start fresh.)
+ram
 
-ram  wipe
+here @ram = .not .if
+   error" Something is wrong: data structures not starting at @ram."
+.then
 
 ( We want to put the data structures that the host will use to communicate
   with the STM32 at the beginning of RAM so we know where to find them.
@@ -66,6 +67,16 @@ here equ out-count     2 allot  ( byte count to write)
 here equ in-count      2 allot  ( byte count to read)
 
 hex
+
+.ifndef in-ram
+
+flash
+
+( Lay down a vector table, using end of ram as initial SP)
+0 vector-table flash-vectors
+flash-vectors  ( make it the current table)
+
+.then
 
 ( We want to write this code in Forth, so let's load the Forth kernel.)
 ld target/ARM/v6-m/kernel-itc.mu4
@@ -400,12 +411,14 @@ here ]  ( chip-init)
 label startup
 .ifdef in-ram
    cpsid  ( disable interrupts)
-   ( Ignore the sp we were passed. Set sp to top of RAM.)
-   @ram #ram + sp lit
+   ( Ignore the sp we were passed. Set rp and sp to end of RAM.)
+   @ram #ram + rp lit   rp sp mov
 .else
    Reset_exc handler
+   ( Use SP from reset vector. It should point to the end of RAM.)
+   sp rp mov
 .then
-   sp rp mov   #64 cells sp sp sub  ( RP at end of RAM; SP below)
+   #64 cells sp sp sub  ( RP at end of RAM; SP below)
    ( chip-init)  ip  lit
    deca_fbad     top lit
    next  ;c
@@ -420,7 +433,7 @@ NMI_exc handler
 default-handler
    lr bx  ;c  ( return to sender!!)
 
-.then
+.then  ( not in-ram)
 
 
 ( XXX The following is for interactive testing and needs to go away
