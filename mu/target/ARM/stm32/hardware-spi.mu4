@@ -1,0 +1,85 @@
+( This file is part of muforth: https://muforth.nimblemachines.com/
+
+  Copyright 2002-2023 David Frech. (Read the LICENSE for details.)
+
+loading STM32 basic SPI support
+
+__meta
+hex
+
+-- --------------------------------------------------------------------
+-- Full-duplex hardware SPI
+-- --------------------------------------------------------------------
+( PB3 is SCK, PB4 is MISO, and PB5 is MOSI. /RST is PB7, and for chips that
+  need it, slave select [/SS] is PB6.)
+
+: spi-init
+   -- First, enable clocks to Port B. We are using SPI1 on pins PB3, PB4, and
+   -- PB5, and using PB6 and PB7 as GPIO pins (target /SS and target /RST,
+   -- resp.)
+   ( Ports -FED_CBA- )
+        [ %0000_0100  #16 << #] RCC_AHBENR set!
+
+   -- Enable clock to SPI1 as well.
+   [ 1 #12 << #] RCC_APB2ENR set!
+
+   -- Clear port B. Clock idles low; this will also assert /RST and /SS.
+   0 GPIOB_ODR !
+
+   -- Set mode bits and alternate function for SPI1.
+   -- F072: SPI1 is AF0. F303: SPI1 is AF5.
+   -- Mode %01 is output ; mode %10 is alternate function
+   0 GPIOB_MODER !
+   [ %0101_101010 #3  2*  << #] GPIOB_MODER set!  ( 2 bits per pin)
+   [         0fff #3  4 * << #] GPIOB_AFRL clr!   ( 4 bits per pin)
+.ifdef stm32f303
+   [         0555 #3  4 * << #] GPIOB_AFRL set!   ( 4 bits per pin)
+.then
+
+   -- Set output speed to medium.
+   -- Our max toggle rate is going to be around 5Mhz.
+   0 GPIOB_OSPEEDR !
+   [ %0101_0100_01  3 2* << #] GPIOB_OSPEEDR set!  ( 2 bits per pin)
+
+   -- Let's pull up PB4 so that if the slave isn't driving it we will read
+   -- one bits.
+   [ %01  4 2* << #] GPIOB_PUPDR set!  ( 2 bits per pin)
+
+   -- Now for SPI1 itself. When setting the clock divisor we will enable it.
+   1700 SPI1_CR2 !  ( FRXTH=1, datasize 8 bits) ;
+
+: spi-clock!  ( divisor)
+   3 <<  %11_01_000_100 ( SSM=1, SSI=1, SPE=1, MSTR=1, CPOL,CPHA=00) +
+   SPI1_CR1  0 over !  ( reset and disable)
+   ! ( config and enable) ;
+
+.ifdef avr
+
+( For unprogrammed AVR chips; they are running at 1M; max SPI clock 250k.)
+( S08 code uses 230k.)
+: slow-clock  ( 187.5k)  7 ( 48M/256) spi-clock! ;
+
+( For AVR chips with DIV8 fuse unprogrammed; they are running at 8M; max SPI clock 2M.)
+( S08 code uses 1.536M.)
+: fast-clock  ( 1.5M)    4 ( 48M/32) spi-clock! ;
+
+.else
+
+( For AT89LP chips. Max SPI clock 5M.)
+: fast-clock  ( 3M)      3 ( 48M/16) spi-clock! ;
+: slow-clock  fast-clock ;  ( We never need a slow clock!)
+
+.then
+
+( Send and recv a byte via SPI. Since we are not going to send another byte
+  until we have received the first one, and because SPI is synchronous, we
+  don't need to check for TXE before writing our byte to the data register.)
+
+: >spi>  ( b1 - b2)
+   SPI1_DR c!  begin  SPI1_SR @  1 ( RXNE) and  until  SPI1_DR c@ ;
+
+( Split into hi and lo parts. hi could be more than 8 bits!)
+: >hilo  ( w - hi lo)  dup 8 u>>  swap 0ff and ;
+
+( Send and recv 1 to 4 bytes.)
+: >b>    ( bits #bytes - bits')  for  >hilo >spi>  #24 << +  next ;

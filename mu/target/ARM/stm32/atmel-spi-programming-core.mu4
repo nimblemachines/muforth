@@ -61,10 +61,12 @@ here equ cmd         1 allot  ( flash command)
 here equ addr                 ( flash addr)
 here equ addr-hi     1 allot
 here equ addr-lo     1 allot
-here equ result               ( single byte result)
-here equ toggle      1 allot  ( flash command toggle - for AVR)
+here equ result      1 allot  ( single byte result)
+
 here equ count       2 allot  ( byte count to transfer)
-                     2 allot  ( padding to word boundary)
+
+here equ toggle      1 allot  ( flash command toggle - for AVR)
+                     1 allot  ( padding to word boundary)
 
 ( This is for UART and I2C communications, in concert with the data array.)
 here equ station     1 allot  ( slave/target/station address for I2C/RS485 bus)
@@ -123,9 +125,9 @@ variable p
    -- AF0 is reset default; nothing to do
    ;
 
--- --------------------------------------------------------------------
+-- ------------------------------------------------------------------------
 -- SPI building blocks
--- --------------------------------------------------------------------
+-- ------------------------------------------------------------------------
 : bit/  ( bit)  GPIOB_BSRR ! ;
 : bit\  ( bit)  GPIOB_BRR ! ;
 
@@ -137,17 +139,15 @@ variable p
 : rst/  ( de-assert /RST)   [ 1 7 << #] bit/ ;
 : rst\  ( assert /RST)      [ 1 7 << #] bit\ ;
 
-( Default to assembler versions of the bitbanging code.)
-ld target/ARM/stm32/bitbanged-spi-full-duplex.mu4
 
-( Send and receive a full 32 bits.)
-: >s>  ( bits - bits')  #32 >bits> ;
-
-( Send 32 bits.)
-: >s   ( bits)       >s> drop ;
-
-( Receive 32 bits.)
-: s>   ( - bits)   0 >s> ;
+.ifdef bitbanged
+   ( Default to assembler - aka "fast-bits" - version of the bitbanging code.)
+   ld target/ARM/stm32/bitbanged-spi-full-duplex.mu4
+   : >b>  ( bits #bytes - bits')  3 << ( 8 *)  >bits> ;
+.else  ( now the default)
+   ( Use the STM32 SPI peripheral instead of bitbanging the GPIO pins.)
+   ld target/ARM/stm32/hardware-spi.mu4
+.then
 
 
 .ifdef avr
@@ -155,8 +155,8 @@ ld target/ARM/stm32/bitbanged-spi-full-duplex.mu4
 -- AVR programming
 -- ------------------------------------------------------------------------
 : load-cmd  ( - cmd+addr)
-   ( Load cmd and address.)
-   cmd @  0ff00_0000 bic  ( remove toggle from last byte)
+   ( Load cmd and address. Host has set result to 0.)
+   cmd @
    ( Toggle cmd.)
    toggle c@  cmd c@  over xor  dup cmd c!
    ( If cmd toggled to zero, or if toggle *is* zero, incr addr-lo.)
@@ -166,11 +166,14 @@ ld target/ARM/stm32/bitbanged-spi-full-duplex.mu4
 
 ( The three transaction types to define: single, bulk-read, bulk-write.)
 
-( Send cmd, addr-hi, addr-lo, and one dummy byte, saving all responses.)
-: single      cmd @  >s>  cmd ! ;
+( Send and receive 4 bytes.)
+: >4b>  ( bits - bits')  4 >b> ;
 
-: bulk-read   setup-bulk  for  load-cmd               >s>  #24 u>> p&  next ;
-: bulk-write  setup-bulk  for  load-cmd  p* #24 << +  >s               next ;
+( Send cmd, addr-hi, addr-lo, and one dummy byte, saving all responses.)
+: single      cmd @  >4b>  cmd ! ;
+
+: bulk-read   setup-bulk  for  load-cmd               >4b>  #24 u>> p&  next ;
+: bulk-write  setup-bulk  for  load-cmd  p* #24 << +  >4b>  drop        next ;
 
 .then  ( avr)
 
@@ -202,26 +205,26 @@ ld target/ARM/stm32/bitbanged-spi-full-duplex.mu4
 ( This version uses SPI slave select [/SS] to bracket the command packet,
   and also prefixes every command with 0aa 55.)
 
-( Start an SPI packet; send the prefix bytes.)
-: <pkt   ( - cmd+addr)   ss\  55aa #16 >bits> drop  ;
+( Start an SPI packet; send the two prefix bytes.)
+: <pkt   ss\  55aa 2 >b> drop  ;
 
 ( End a programming packet.)
 : pkt>   ss/ ;
 
 ( Send cmd, addr-hi, and addr-lo, discarding responses. Setup data buffer.)
-: setup-bulk  ( - data #words)
-   <pkt  cmd @  #24 >bits> drop  data  count h@  3 + 2 u>> ;
+: setup-bulk  ( - #bytes)
+   <pkt  cmd @  3 >b> drop  data p !  count h@ ;
 
 ( The three transaction types to define: single, bulk-read, bulk-write.)
 
 ( Send cmd, addr-hi, addr-lo, and one dummy byte, saving all responses.)
-: single       <pkt  cmd @  >s>  cmd !  pkt> ;
+: single       <pkt  cmd @  4 >b>  cmd !  pkt> ;
 
 ( For bulk commands, send cmd and address bytes, then send or recv a
-  buffer of data, in 4-byte pieces.)
+  buffer of data.)
 
-: bulk-read    setup-bulk  for            s>  swap !+   next  drop  pkt> ;
-: bulk-write   setup-bulk  for  @+ swap  >s             next  drop  pkt> ;
+: bulk-read    setup-bulk  for   0  1 >b>  #24 >> p&  next  pkt> ;
+: bulk-write   setup-bulk  for  p*  1 >b>  drop       next  pkt> ;
 
 .then  ( at89lp-ss)
 
@@ -537,15 +540,16 @@ cpuclk ( clks/s)  #1,000,000 ( us/s) /  ( => clks/us)
 ( Testing. Set things up as if for an at89lp chip.)
 : tt
    clock-init  led-init  spi-init  flash-leds
-   ss/ ;
+   fast-clock  ss/ rst/ ;
 
-: ss-bulk-setup  ( cmd addr count)  count h!  >lohi rot  cmd  c!+ c!+ c! ;
-: ss   ( cmd addr data)   shuffle  cmd c!+ c!+ c!+ c!  single  cmd 3 + c@ ;
-: rd   ( cmd addr count)  ss-bulk-setup  bulk-read ;
-: wr   ( cmd addr count)  ss-bulk-setup  bulk-write ;
+: ss   ( cmd addr)  >lohi rot  cmd  c!+ c!+ c! ;
+: bb   ( cmd addr count)  count h!  ss ;
+
+: rd   ( cmd addr count)  bb  bulk-read ;
+: wr   ( cmd addr count)  bb  bulk-write ;
 
 : +prog
-   0ac 5300 0 ss drop  cmd 2 + c@ ;
+   rst\  0ac 5300 ss single  cmd @ ;
 
 .then  ( at89lp-ss)
 

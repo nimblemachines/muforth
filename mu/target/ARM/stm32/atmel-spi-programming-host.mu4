@@ -22,11 +22,13 @@ dup constant semaphore   4 +  ( semaphore + stm32 command)
 ( This command block is pretty specific to AVR/AT89LP SPI programming.)
 dup constant cmd         1 +  ( flash command)
            ( addr )      2 +  ( flash addr: high byte, low byte)
-           ( result )         ( single byte result)
-           ( toggle )    1 +  ( flash command toggle - for AVR)
+           ( result )    1 +  ( single byte result)
+
            ( count )     2 +  ( byte count to transfer)
+
+           ( toggle )    1 +  ( flash command toggle - for AVR)
+                         1 +  ( padding to word boundary)
 dup cmd - constant #flash-cmd ( length of flash cmd buffer)
-                         2 +  ( padding to word boundary)
 
 ( This is for UART and I2C communications, in concert with the data array.
   It consists of 4 bytes: station, #send, #recv, #err. We call it
@@ -85,8 +87,8 @@ variable spy  ( to spy on the protocol)
 : setup-bulk  ( avr-cmd addr toggle buf len - buf len)
    2push ( buf len)
    pad m !
-   rot m& ( cmd)  swap >lohi m& m& ( addr)  m& ( toggle)
-   r@ >hilo m& m& ( count)
+   rot m& ( cmd)  swap >lohi m& m& ( addr)  0 m& ( zero result)
+   r@ >hilo m& m& ( count)  m& ( toggle)
    pad cmd #flash-cmd st.write  pad #flash-cmd spy-write
    2pop ;
 
@@ -120,31 +122,28 @@ variable spy  ( to spy on the protocol)
 .then  ( avr)
 
 
-.ifdef at89lp  ( at89lp51/52)
+.def at89lp     ( at89lp51/52)
+.def at89lp-ss  ( at89lp828/6440)  .or .if
 -- ------------------------------------------------------------------------
--- AT89LP programming using fixed-length payloads, no prefix, no /SS
--- ------------------------------------------------------------------------
-( TODO)
-.then  ( at89lp)
-
-
-.ifdef at89lp-ss  ( at89lp828/6440)
--- ------------------------------------------------------------------------
--- AT89LP programming using variable-length payload, command prefix, and /SS
+-- AT89LP programming
 -- ------------------------------------------------------------------------
 ( Copy cmd, addr, result placeholder, and count, into pad, and copy to STM32.)
-: setup-bulk  ( cmd addr count)
+: setup-bulk  ( len cmd addr - len)
    pad m !
-   rot m& ( cmd)  swap >lohi m& m& ( addr)  0 m& ( result)  >hilo m& m& ( count)
+   swap m& ( cmd)  >lohi m& m& ( addr)  0 m& ( result)  dup >hilo m& m& ( count)
    pad cmd #flash-cmd st.write  pad #flash-cmd spy-write ;
 
 ( Setup a single cmd, execute it, and read back the result.)
 : at89.single  ( cmd addr)
-   0  setup-bulk  spi.single
-   pad cmd 4 st.read  pad 4 spy-read ;
+   0 -rot  setup-bulk  drop
+   spi.single    pad cmd 4 st.read   pad 4 spy-read ;
 
-( TODO)
-: at89.bulk-read ;
-: at89.bulk-write ;
+: at89.bulk-read   ( buf len cmd addr)
+   setup-bulk
+   spi.bulk-read   data swap ( buf addr len)  st.read ;
 
-.then  ( at89lp-ss)
+: at89.bulk-write  ( buf len cmd addr)
+   setup-bulk      data swap ( buf addr len)  st.write
+   spi.bulk-write ;
+
+.then  ( at89lp or at89lp-ss)
