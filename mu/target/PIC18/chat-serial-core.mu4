@@ -6,8 +6,6 @@ loading PIC18 Serial chat (core)
 
 hex
 
-__meta
-
 ( Taking inspiration from the wildly successful HC08 serial chat protocol.
 
   Responds to the following commands. NOTE: these are hex values!
@@ -25,115 +23,84 @@ __meta
 17 - ff  Idle   - these command bytes are ignored
 )
 
-( Set config registers)
-.ifdef 1xk50   -- at the moment, the only option
-.ifdef noxtal  -- for testing: 32 MHz clk via PLL
-   %0011_1000  ( CONFIG1H: PLLEN, FOSC=HS 1000)  CONFIG1H config-space c!
-.else  ( 12 MHz xtal => 48 MHz clk for USB)
-   %0011_0010  ( CONFIG1H: PLLEN, FOSC=HS 0010)  CONFIG1H config-space c!
-.then
-   %0001_1110  ( CONFIG2H: WDTEN=0)              CONFIG2H config-space c!
-   %1100_0101  ( CONFIG4L: ENH_CPU=1)            CONFIG4L config-space c!
-.then
+( Some useful synonyms. I don't like TBLPTR and TABLAT. They aren't
+  mnemonic!)
+
+aka TBLPTRU  equ MEMADRU
+aka TBLPTRH  equ MEMADRH
+aka TBLPTRL  equ MEMADRL
+aka TABLAT   equ MEMDATA
+
+( We are going to FSR0 to point to data memory. Let's call it x.)
+assembler
+aka FSR0L     constant xl
+aka FSR0H     constant xh
+aka POSTINC0  constant @x+
+forth
+
+__meta
 
 boot
-xinst on
 
-4 org  ( skip reset jmp at 0, but clobber the IRQ handler slots!)
+0 ,  ( startup rjmp)
 
-label version
-   muforth-commit drop 8 evaluate  >3210  c, c, c, c,
-
-( Wait for RCIF, then read received byte into W)
-label get-byte
-   begin  PIR1 ) 5 ( RCIF) btstss  again  RCREG ) ldw  ret  ;c
-
-( Wait for TXIF, then transmit W)
-label put-byte
-   begin  PIR1 ) 4 ( TXIF) btstss  again  TXREG ) stw  ret  ;c
+( Load device-specific support.)
+.ifdef 1xk50
+   ld target/PIC18/device/chat-k.mu4
+.else
+   ld target/PIC18/device/chat-q.mu4
+.then
 
 ( Compile the first 32 bits of the current muforth Git commit. When asked
   for the version, return these four bytes, in little-endian order.)
 
 label get-version
-   version  >hilo  ldi  pl ) stw
-            >hilo  ldi  ph ) stw
-                   ldi  pu ) stw  ret  ;c
-
-( Jump indirect to p)
-( XXX use movff? it's still 2 instrs per byte)
-label run
-   pu ) ldw  PCLATU ) stw
-   ph ) ldw  PCLATH ) stw
-   pl ) ldw  PCL    ) stw  ( this jumps!) ;c
+   muforth-commit drop 8 evaluate  >3210
+   ldi  send-byte c  ldi  send-byte c  ldi  send-byte c  ldi  send-byte j  ;c
 
 label set-p
-   get-byte c  pl ) stw
-   get-byte c  ph ) stw
-   get-byte c  pu ) stw  ret  ;c
+   recv-byte c  MEMADRL ) st
+   recv-byte c  MEMADRH ) st
+   recv-byte c  MEMADRU ) st  ret  ;c
 
 label set-x
-   get-byte c  xl ) stw
-   get-byte c  xh ) stw  ret  ;c
+   recv-byte c  xl ) st
+   recv-byte c  xh ) st  ret  ;c
+
+label get-x
+   xl ) ld  send-byte c
+   xh ) ld  send-byte j  ;c
+
+( Jump indirect to p.)
+label run
+   MEMADRU ) ld  PCLATU ) st
+   MEMADRH ) ld  PCLATH ) st
+   MEMADRL ) ld  PCL    ) st  ( this jumps!) ;c
 
 label read-prog
-   p@+  memdata ) ldw  put-byte j  ;c
-
-( XXX do I want non-incrementing versions of data read and write to make
-  writing to EEPROM and flash easier? that is, writing to EEPROM and flash
-  that is orchestrated by the host.
-
-  Or do I want to add some kind of support directly into this chat code to
-  do the heavy lifting for EEPROM and flash writes? which are rather similar
-  in what they have to do: set some EEPROM flags, write two special values to
-  EECON2, then write more EEPROM flags, and wait for a while. ;-)
-
-( One advantage of having the host script the whole process is that the
-  special value writes to EECON2 won't be encoded in the chat firmware, and
-  therefore less liable to happen accidentally. Some other kind of "safety
-  interlock" would need to be put in place if the chat firmware knew more of
-  the secrets of flash and EEPROM.
-
-  Man, I'm rambling. Tired. ;-)
+   p@+  MEMDATA ) ld  send-byte j  ;c
 
 label read-data
-            x@+ ) ldw  put-byte j  ;c
+   @x+ ) ld  send-byte j  ;c
 
 label write-data
-   get-byte c  x@+ ) stw  ret  ;c
+   recv-byte c  @x+ ) st  ret  ;c
 
 ( Stack pointed to by z is empty descending, so 0 ,z is scratch)
 label process-serial
-   get-byte c  ( command)   0f1 ( -0f) addi  0 ,z stw  ( have to store it!)
+   recv-byte c  ( command)   0f1 ( -0f) addi  0 ,z st  ( have to store it!)
    0 ,z decsnz  get-version j
-   0 ,z decsnz  run j
    0 ,z decsnz  set-p j
    0 ,z decsnz  set-x j
+   0 ,z decsnz  get-x j
+   0 ,z decsnz  run j
    0 ,z decsnz  read-prog j
    0 ,z decsnz  read-data j
    0 ,z decsnz  write-data j
    ( unknown command)  ret  ;c
 
-hooks RESET
-label the-real-reset-starts-here
-   ( UART TX is on RB7; set it as an output)
-   TRISB ) 7 bclr
-
-   ( Also, RX, on pin RB5, is shared with AN11, to which - rather oddly -
-     it defaults at reset. So we reset ANS11 to claim the pin as a digital
-     input.)
-   ANSELH ) 3 bclr
-
-.ifdef noxtal
-   #32,000,000 #115,200 / #4 / 1- ldi  SPBRG ) stw
-   %0000_1000 ldi  BAUDCON ) stw  ( set BRG16 so we divide by 4)
-.else
-   #48,000,000 #115,200 / #16 / 1- ldi  SPBRG ) stw
-.then
-   %0010_0100 ldi  TXSTA ) stw  ( enable xmit, enable BRGH)
-   %1001_0000 ldi  RCSTA ) stw  ( enable serial port, enable rcvr)
-
-   RCREG ) ldw  ( make sure we're ready to receive a byte)
-
-   #ram  1-  ldz  ( stack)
+here  0 goto  dup \a rjmp  goto
+label startup
+   @ram #ram +  1-  ldz  ( empty descending *data* stack)
+   chip-init c
    begin  process-serial c  again  ;c

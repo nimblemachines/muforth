@@ -1,0 +1,80 @@
+( This file is part of muforth: https://muforth.dev/
+
+  Copyright 2002-2024 David Frech. (Read the LICENSE for details.)
+
+loading PIC18-Q chat support
+
+( Chat support for q43, q84 and similar devices.)
+
+__meta
+
+( Set up the CONFIG bytes. There are 10 for the Q43.)
+config binary
+( CONFIG1)   1000_1100 c,  ( RSTOSC=64m, EXTOSC=off)
+( CONFIG2)   1111_1111 c,  ( default)
+( CONFIG3)   0111_1101 c,  ( BOREN=SBOREN, multivector, power up timer=64ms)
+( CONFIG4)   0111_1110 c,  ( XINST on, BORV=2.45v)
+( CONFIG5)   1001_1111 c,  ( WDTE=00: watchdog disabled)
+( CONFIG6)   1111_1111 c,  ( default)
+( CONFIG7)   1111_0111 c,  ( BBEN=on, BBSIZE=111)
+( CONFIG8)   1111_1110 c,  ( WRTB=on: boot block protected)
+( CONFIG9)   ( reserved)
+( CONFIG10)  ( default)
+boot
+
+hex
+
+( Since Q series have "peripheral pin select" muxing, we have to set this
+  up. U5RX can connect to ports A and C; U5TX can connect to ports B and C.
+  Since it would be nice to have the pins next to each other, let's choose
+  two port C pins, which also happen to be on the corner of the chip:
+
+     RC4 = U5RX
+     RC5 = U5TX.
+
+  For inputs, we set the *peripheral's* PPP register to refer to a port pin:
+
+     U5RXPPS = %010_100
+
+  The high three bits are the port:
+
+     000 = port A
+     001 = port B
+     010 = port C, etc
+
+  And the low three bits are the pin on that port. The above example connects
+  U5RXPPS to RC4.
+
+  For outputs, things go the other way. There is a PPS register for every
+  port pin that you might want to use as an output - in our case, RC5PPS -
+  and it gets set to a *source index*. The source index for U5TX is hex 2C.
+  So to connect U5TX to RC5, we do the following:
+
+     RC5PPS = "2c
+
+  Except in assembler. ;-)
+
+label chip-init
+   ( We have to turn *off* the analog select pin for RX.)
+   4 ANSELC bank b) bclr
+
+   ( And turn off the tristate bit to make TX an output.)
+   5 TRISC ) bclr
+
+   ( Now let's connect the pins.)
+   %010_100 ( RC4) ldi  U5RXPPS bank b) st
+   2c ( index of U5TX) ldi  RC5PPS b) st
+
+   ( Now that we have the pins connected, set up the UART itself.)
+   30 ( TXEN RXEN MODE=0: 8-bit no parity) ldi  U5CON0 b) st
+   #64,000,000 #115,200 / 8 /  1+ 2/ ( round)  1- ldi  U5BRG b) st
+   7 ( ON) U5CON1 b) bset
+   ret  ;c
+
+( Wait for U5RXIF, then read received byte into W.)
+label recv-byte
+   begin  0 ( U5RXIF) PIR13 ) btstss  again  U5RXB bank b) ld  ret  ;c
+
+( Wait for U5TXIF, then transmit W.)
+label send-byte
+   begin  1 ( U5TXIF) PIR13 ) btstss  again  U5TXB bank b) st  ret  ;c

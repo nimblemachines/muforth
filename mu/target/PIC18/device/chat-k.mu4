@@ -1,0 +1,45 @@
+( This file is part of muforth: https://muforth.dev/
+
+  Copyright 2002-2024 David Frech. (Read the LICENSE for details.)
+
+loading PIC18-K chat support
+
+( Chat support for 1xk50 and other similar devices.)
+
+( Set config registers)
+.ifdef noxtal  -- for testing: 32 MHz clk via PLL
+   %0011_1000  ( CONFIG1H: PLLEN, FOSC=HS 1000)  CONFIG1H config-space c!
+.else  ( 12 MHz xtal => 48 MHz clk for USB)
+   %0011_0010  ( CONFIG1H: PLLEN, FOSC=HS 0010)  CONFIG1H config-space c!
+.then
+   %0001_1110  ( CONFIG2H: WDTEN=0)              CONFIG2H config-space c!
+   %1100_0101  ( CONFIG4L: ENH_CPU=1)            CONFIG4L config-space c!
+
+( Wait for RCIF, then read received byte into W)
+label recv-byte
+   begin  5 ( RCIF) PIR1 ) btstss  again  RCREG ) ld  ret  ;c
+
+( Wait for TXIF, then transmit W)
+label send-byte
+   begin  4 ( TXIF) PIR1 ) btstss  again  TXREG ) st  ret  ;c
+
+label chip-init
+   ( UART TX is on RB7; set it as an output)
+   7 TRISB ) bclr
+
+   ( Also, RX, on pin RB5, is shared with AN11, to which - rather oddly -
+     it defaults at reset. So we reset ANS11 to claim the pin as a digital
+     input.)
+   3 ANSELH ) bclr
+
+.ifdef noxtal
+   #32,000,000 #115,200 / #4 / 1- ldi  SPBRG ) st
+   %0000_1000 ldi  BAUDCON ) st  ( set BRG16 so we divide by 4)
+.else
+   #48,000,000 #115,200 / #16 / 1- ldi  SPBRG ) st
+.then
+   %0010_0100 ldi  TXSTA ) st  ( enable xmit, enable BRGH)
+   %1001_0000 ldi  RCSTA ) st  ( enable serial port, enable rcvr)
+
+   RCREG ) ld  ( make sure we're ready to receive a byte)
+   ret  ;c
