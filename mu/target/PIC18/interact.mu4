@@ -4,191 +4,165 @@
 
 loading PIC18 interaction
 
-( XXX we have to combine the elegant chat-cmd stuff pioneered with MSP430,
-  and the space-switching - >prog, >data etc - pioneered with AVR, into one
-  nice thing. How?)
-
 variable chatting
 
 variable chat-vector
-: chat-cmd   ( index - index+1)  addrs  constant
-             does> @  chat-vector @  =if  +  addr@ execute  ^  then  2drop
+: chat-cmd   ( index - index+1)  dup  addrs constant  1+
+             does> @  chat-vector @ =if  +  addr@ execute  ^  then  2drop
                 error" Not connected to a chat-capable target" ;
 
 : chat-fail   error" Chat command not implemented" ;
 
- 0 chat-cmd t.Hello
- 1 chat-cmd t.Run
- 2 chat-cmd t.ReadProg     ( buf target len)
- 3 chat-cmd t.ReadData     ( buf target len)
- 4 chat-cmd t.ReadEE       ( buf target len)
- 5 chat-cmd t.WriteData    ( buf target len)
- 6 chat-cmd t.WriteEE      ( buf target len)
- 7 chat-cmd t.Flash        ( buf target len)
- 8 chat-cmd t.Erase        (     target)
+0
+chat-cmd t.hello         ( - chunk-size)
+chat-cmd t.get-status    ( - cp)
+chat-cmd t.run           ( cp pc)
+chat-cmd t.read-space    ( buf a u space)
+chat-cmd t.write-data    ( buf a u)
+chat-cmd t.write-eeprom  ( buf a u)
+chat-cmd t.app-start
+chat-cmd t.app-stop
+chat-cmd t.flash-begin
+chat-cmd t.flash-end
+chat-cmd t.erase         ( a)
+chat-cmd t.program       ( buf a u)
+drop
+
+( Choose a memory space based on current host region.)
+: choose-space
+   h preserve
+   'aspace  flash 'aspace = if 0 ^ then  ( flash)
+                               1 ;       ( ram/data)
+
+: t.read       ( buf a u)  choose-space t.read-space ;
+: t.read-data  ( buf a u)             1 t.read-space ;
+
+: >chat
+   ['] t.read   is |read    ( read from connected target)
+   du-target  ( use the settings from the memory code) ;
+
+( Chunk size is reported by the debug interface. Always use this when
+  copying RAM contents or programming the flash!)
+
+variable /chunk  ( chunk size, as reported by debug interface)
+
+: copy-chunk  ( 'target len - 'target+len)
+   -- cr ." copy-chunk "  2dup swap u. u.
+   2dup + push  over image+ -rot t.write-data  pop ;
+
+: copy-region  ( a u)
+   -- cr ." copy-region "  2dup swap u. u.
+   /chunk @  /mod ( r q)  swap push  for   /chunk @  copy-chunk  next
+                                    pop  =if  ( rem) copy-chunk  drop ^  then  2drop ;
+
+variable ram-copied  ( pointer to first un-copied byte)
+: copy-ram
+   h preserve  ram
+   ram-copied @  dup 0= if  drop  \m origin  then
+   \m here  over -  copy-region
+   \m here  ram-copied ! ;
 
 
-: >chat-prog   ['] t.ReadProg  is |read     4 Mi addrbits ;
-: >chat-data   ['] t.ReadData  is |read     4 Ki addrbits ;
-: >chat-ee     ['] t.ReadEE    is |read  #eeprom addrbits ;
+( Cached local values of target registers.)
+variable .PC
+variable .CP   ( context pointer - commonly used as a stack pointer)
 
-: >chat  ['] leh@  is |cell@
-                    2 |cell !  ( size of cell in bytes)
+( XXX Unused currently)
+variable .MRP  ( machine's return stack pointer; XXX hardware stack ptr?)
 
-         ['] >chat-prog  is >prog
-         ['] >chat-data  is >data
-         ['] >chat-ee    is >ee
+: get-regs   t.get-status  .CP ! ;
+: set-regs   ( - cp pc)    .CP @  .PC @ ;
 
-         >prog  ( default) ;
-
-
-.ifdef residual-avr-crap
-
-( For reading and writing target cells.)
-: t@  ( addr - h)                  pad swap 2 zread  pad leh@ ;
-: t!  ( h addr)    swap  pad leh!  pad swap 2 zwrite ;
-
-( chat-entry has pushed an "exception frame" onto the stack.
-
-  The order, low to high: rah ral pad sreg tl th xl xh yl yh zl zh pch pcl
-                  offset:  <skip>   0    1  2  3  4  5  6  7  8  9  10  11
-
-  rah/ral is the return address to the "process" routine.
-  NOTE: PC is pushed big-endian!
-)
-
-variable chat-frame  ( loaded from rp0)
-: treg  ( offset - taddr)  constant  does> @  chat-frame @  + ;
-
-( There is a byte of padding below the SREG to word-align frame.)
- 1 treg .SREG
- 2 treg .T
- 4 treg .X
- 6 treg .Y
- 8 treg .Z
-10 treg .PC
-
-
-( Target has cell size of 16 bits.)
-meta
-: cell   2  ;
-: cell/  2/ ;
-: cells  2* ;
-: cell+  \m cell + ;
-
-( For reading and writing PC values on the stack. Convert a normal address
-  to an "ra" - return address - by shifting right one bit and swapping
-  bytes; ra's are stored big-endian on the stack!
-
-  To convert back, swap bytes and shift left.)
-
-forth
-: >ra   ( a - ra)  \m cell/  >lohi hilo> ;
-:  ra>  ( ra - a)            >lohi hilo>  \m cells ;
-
-meta
-: rp0  \eq SPL  t@  1+ ;             ( bottom of target's R stack)
-: sp0  chat-frame @  -2 and  64 - ;  ( bottom of target's D stack;
-                                       room for 32 values on R)
-: sp!  ( target-sp)      .Y  t! ;
-: sp@  ( - target-sp)    .Y  t@ ;
-: top!  ( target-top)    .T  t! ;
-: top@  ( - target-top)  .T  t@ ;
-
-( PC on R stack is big-endian and is a cell address, not a byte address.)
-: pc!  ( target-cfa)    >ra  .PC  t! ;
-: pc@  ( - target-cfa)       .PC  t@  ra> ;
-
-: depth  \m sp0 \m sp@ -  \m cell/ ;  ( depth of actual stack)
-: u.  u. ;
-: .  . ;
-: .s  .s ;
-
-forth
 : 2sp  space space ;
-: .b8  binary  <#  # # # #  char _ hold  # # # #  #> type ;
-: .h16    hex  <#  # # # #  #> type ;
-: .w   ( addr)  t@  .h16  2sp ;
-: .sr   .SREG   t@  .b8   2sp ;
+: 4#   # # # # ;
+: .h16    hex  <#  4#  #> type ;
+: .w   .h16  2sp ;
+: .r   ( addr)  @  .w ;
 
--- 005f reg  SREG     | I       T       H       S       V       N       Z       C
+defer .regs
 
-: .regs
-   radix preserve
-   cr  ." ITHS_VNZC     T     X     Y     Z    SP    PC"
-       (  1000_0011  1234  3456  8738  abab  3a00  3b66 )
-   cr  .sr  .T .w  .X .w  .Y .w  .Z .w
-       chat-frame @ .h16 2sp  \m pc@ .h16 2sp ;
+-: radix preserve
+   cr  ."   CP    PC"
+       (  0123  4567 )
+   cr   .CP .r
+              .PC .r ;
+: base-regs  [ #]  is .regs ;  base-regs
 
 
-( The semantics of moving cells to and from the target stack are a bit
-  complicated.
+defer verify-quietly  ( - diff)
+-d noverify  ( XXX depends on not-yet-committed code!)
 
-  When the target stack is empty, sp0 = sp, and the top register contains
-  garbage.
+: hi
+   chatting on  >chat  t.hello  /chunk !  get-regs  .regs
+   ram-copied off  copy-ram
+.ifndef noverify  verify-quietly drop  .then
+   now __chatting is __meta  __meta ;
 
-  When the target stack isn't empty, the distance between sp0 and sp is
-  2*depth, but the bottom-most cell is garbage, and top is valid.)
+: chat-via   pop  chat-vector !  hi ;
+
+( XXX ARM interact doesn't set local pc variable; it just passes pc to
+  t.run)
+
+: run      ( pc)  .PC !  copy-ram  set-regs  t.run ;  ( don't wait for target)
+: runwait  ( pc)  run  get-regs ;                     ( wait for target)
+
+: ?chat
+   chatting @ 0= if  error" not connected to target"  then ;
+
+
+( Because the target "caches" the top of the stack in a register, and
+  because the trampoline code loads this register before execution, and
+  pushes it afterward, we can deal only with the "memory image" of the target
+  stack, rather than also worrying about what to put into the "top" register.
+
+  What's a bit mystifying is that, to achieve a target stack depth of N,
+  the host has to push N+1 items. The top one goes into top; and the
+  bottom-most one is the "sentinel" value that gets loaded into top when the
+  stack becomes empty.
+
+  When pushing from the host, or when "pulling" from the target, we don't
+  move more than 8 "user" items - but we pad this value a bit, since we are
+  also using the stack to pass some execution context between host and
+  target.)
+
+meta
+( XXX Copied from AVR. How are we going to set this up on the PIC18?)
+( Put the D stack at the end of ram, for now.)
+: sp0   [ @ram #ram + #] ;
+: sp!   .CP ! ;  ( We use CP as the data stack pointer)
+: sp@   .CP @ ;
+: depth   \m sp0  \m sp@ -  \m cell/  1- ;
+forth
+
+( stack> *first* builds a local image of the target stack - in the RAM
+  image - and *then* copies it, in one chunk, to the target.)
 
 : stack>  ( "push" stack to target)
-   depth 0= if  "cafe \m top!  \m sp0 \m sp!  ^  then
-   \m top!
-   depth 7 min  ( more than that would be silly)
-   \m sp0 over 1+ \m cells -  dup \m sp! ( top of D stack)  swap
-   for  tuck t!  \m cell+  next  ( copy each cell as a word to D stack)
-   "cafe swap t! ( push bottom) ;
+   h preserve  ram  ( so image-related words work)
+
+   depth 0 max 12 min
+   \m sp0  over 1+  \m cells -  dup \m sp! ( top of D stack)  swap
+   for  tuck image-!  \m cell+  next  ( copy each cell as a word to D stack)
+   "cafe swap image-! ( sentinel)
+   ( Now copy stack image to target)
+   \m sp@ image+  \m sp@  \m sp0  over -  t.write-data ;
+
+( stack< *first* copies the target stack, in one chunk, to the host's RAM
+  image, and *then* pulls the values out and pushes them onto the host's stack.)
 
 : stack<  ( "pop" stack from target)
-   \m depth 0 max 8 min  ( more than that would be silly)  =if
-      1- ( depth, excluding top)  =if
-         \m sp@ over  ( n sp n)
-         for  dup t@  pop 2push  \m cell+  next  ( starting with top, push to R)
-         drop ( sp)
-         for  2pop push  next  ( pop from R to reverse order)
-         0
-      then  \m top@  swap
+   h preserve  ram  ( so image-related words work)
+
+   \m depth 0 max 12 min  =if
+      push
+      \m sp@ image+  \m sp@  r@ \m cells  t.read-data  ( read target stack)
+      pop
+      \m sp@ over  ( n sp n)
+      for  dup image-@  pop 2push  \m cell+  next ( starting with top, push to R)
+      drop ( sp)
+      for  2pop push  next  ( pop from R to reverse order)
+      0
    then  drop ;
-
-( Get target's hardware SP - ie, forth's return stack ptr - and store into
-  chat-frame.)
-
-: get-rp   \m rp0  \m cell+ ( skip ret addr)  chat-frame ! ;
-
-: chat  +chat  >chat  avrchat.Hello  get-rp  .regs ;
-: copy-ram ;  ( XXX no-op)
-: runwait  zgo  get-rp  .regs ;
-
-( XXX Should we try to automatically connect to target?)
-: remote  ( cfa)  ( execute target forth word)
-   chatting @ 0= if  error" not connected to target"  then
-   copy-ram  \m pc!  stack>  runwait  stack< ;
-
-: rx  ( cfa)  ( execute target non-forth word)
-   chatting @ 0= if  error" not connected to target"  then
-   copy-ram  \m pc!          runwait ;
-
-
-( Interacting with a chatty, connected target.)
-
--:  ."  (interacting with target)"  ;
--:
-      .meta. find  if  execute          ^  then  ( labels are in .meta.)
-    .target. find  if  execute  remote  ^  then  ( execute as forth word)
-   .equates. find  if  execute          ^  then
-.ifdef no-number                                 complain ;
-.else                                            number ;
-.then
-mode __target
-
-.then  ( residual-avr-crap)
-
-
-( XXX what goes here?)
-: get-regs ;
-: .regs ;
-
-: hi   chatting on  >chat  t.Hello  get-regs  .regs ;
-: chat-via   pop  chat-vector !  hi ;
 
 
 ( Set |@ and |c@ to _some_ form of target fetch. Prefer to get bytes from
@@ -203,90 +177,47 @@ mode __target
   default to host bindings if there isn't one in our array. This way we
   only have to define the "delta" between host and target behaviours.)
 
-128 array pic18-seekeys
+128 array pic-seekeys
 
 ( Default key action is to run host key code)
-host-seekeys pic18-seekeys  128 cells cmove
+host-seekeys pic-seekeys  128 cells cmove
 
-( Dump one line of memory from target program memory.)
+( Support for dumping memory)
 : 1dump  ( a)
-   hex-bytes
-   >image    >prog  dup .addr  dup .hex-cells
+   hex-bytes  ( set field width)
+   >image   dup .addr  dup .hex-bytes
    chatting @ if
       -valid
-      >chat  >prog  dup _addr  dup .hex-cells
+      >chat   dup _addr  dup .hex-bytes
       -valid
    then
-   drop ;
+   drop ( a) ;
 
 ( So we can easily look at the signature embedded into the image.)
 : 1dump-chars  ( a)
    hex-bytes
-   >target >prog
+   >target
    dup _addr  dup .chars
    dup .addr  dup .hex-bytes
-   dup _addr  dup .hex-cells
    drop ;
 
-( In the strange case that we switch to dumping data via the 'a' key, but
-  don't happen to be connected to a target, we'll get "deadbeef" to remind
-  us.)
+pic-seekeys  -1  du-mode dumping        >target  skip+  skip-  1dump        ( a - a')
+pic-seekeys  -1  du-mode dumping-chars  >target  skip+  skip-  1dump-chars  ( a - a')
+pic-seekeys  -1  du-mode disasming      >target  dis+   dis-   1dis         ( a - a')
 
-: 1dump-data  ( a)
-   hex-bytes
-   >target >data
-   dup _addr  dup .chars
-   dup .addr  dup .hex-bytes
-   dup _addr  dup .hex-cells
-   drop ;
+pic-seekeys 'seekeys !  ( switch over to our bindings)
 
-( Dumping EEPROM)
-: 1dump-ee  ( a)
-   hex-bytes
-   >image    >ee  dup .addr  dup .hex-bytes
-   chatting @ if
-      -valid
-      >chat  >ee  dup _addr  dup .hex-bytes
-      -valid
-   then
-   drop ;
-
-
-pic18-seekeys  -1
-   2dup  du-mode dumping        >target  skip+  skip-  1dump        ( a - a')
-   2dup  du-mode dumping-data   >target  skip+  skip-  1dump-data   ( a - a')
-   2dup  du-mode dumping-chars  >target  skip+  skip-  1dump-chars  ( a - a')
-   2dup  du-mode dumping-ee     >target  skip+  skip-  1dump-ee     ( a - a')
-   2dup  du-mode disasming      >target  dis+   dis-   1dis         ( a - a')
-   2drop
-
-pic18-seekeys 'seekeys !  ( switch over to our bindings)
-
-key: d  ( a - a 0)   dumping  0 ;
-key: a  ( a - a 0)   dumping-data  0 ;
-key: e  ( a - a 0)   dumping-ee  0 ;
+key: d  ( a - a 0)   dumping        0 ;
 key: C  ( a - a 0)   dumping-chars  0 ;  ( small c is "call")
-key: i  ( a - a 0)   disasming  0 ;
+key: i  ( a - a 0)   disasming      0 ;
 
 host-seekeys 'seekeys !  ( back to host bindings)
 
 
 ( Interactive)
 
-( make an alias so we can still get to it)
-: _du  du ;
-
-: du   ( a - a')   dumping     inspect ;
-: dis  ( a - a')   disasming   inspect ;
-: de   ( a - a')   dumping-ee  inspect ;
-
-: da  ( a - a')  ( dump DAta)
-   chatting @ 0= if error" no connected target - no data memory available"  then
-   dumping-data  inspect ;
-
-
 meta
-: du   du ;
-: dis  dis ;
+: du   ( a - a')   dumping    inspect ;
+: dis  ( a - a')   disasming  inspect ;
 
 forth
