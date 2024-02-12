@@ -185,14 +185,6 @@ ld target/ARM/v6-m/kernel-itc.mu4
 
 
 -- --------------------------------------------------------------------
--- Buffering sent and received data
--- --------------------------------------------------------------------
-( Let's define our own words for reading and writing memory.)
-variable d  ( for "data")
-: d*   d @  c@+  d ! ;  ( read next byte from buf, incr)
-: d&   d @  c!+  d ! ;  ( write next byte to buf, incr)
-
--- --------------------------------------------------------------------
 -- Bitbanged half-duplex SPI
 -- --------------------------------------------------------------------
 ( I'm giving up - again! - on the STM32's SPI interface. It seems to
@@ -231,14 +223,18 @@ ld target/ARM/stm32/bitbanged-spi-half-duplex.mu4
 : cmd+rd  ( cmd - payload)  cmd  #24 bits>  2/ 0ffff and ;
 
 ( XXX Better names for these? The p suggests PIC and PC. And page erase.)
+: bulk-erase ( bits)
+                  18 cmd+wr  t_erase ; ( bits: 0 eeprom, 1 flash, 2 user-id, 3 config)
 : !p    ( a)      80 cmd+wr  t_dly ;
-: p@+   ( - u)   0fe cmd+rd  t_dly ;
+: p+             0f8 cmd     t_dly ;  ( increment address)
+: p@    ( - u)   0fc cmd+rd  t_dly ;  ( read without incrementing)
+: p@+   ( - u)   0fe cmd+rd  t_dly ;  ( read and increment)
 : p!+   ( w)     0e0 cmd+wr  t_prog_flash ;
 : ee!+  ( b)     0e0 cmd+wr  t_prog_eeprom_config ;
 : perase         0f0 cmd     t_erase ;  ( page from high bits of PC)
 
-:  setup  ( - #bytes)  data d !  count @  addr @ !p ;
-: wsetup  ( - #words)  setup  1+ 2/ ;
+:  setup  ( - data #bytes)  addr @ !p  data  count @ ;
+: wsetup  ( - data #words)  setup  1+ 2/ ;
 
 variable bytes/page  ( aka erase size)
 ( Read page size out of device config info area of chip! Save it locally
@@ -257,11 +253,14 @@ variable bytes/page  ( aka erase size)
 : erase?  addr @  bytes/page @ 1- and  0= ;
 : ?erase  erase? if perase then ;
 
-: read-flash  wsetup  for  p@+ >hilo d& d&  next ;
-: read-ee      setup  for  p@+       d&     next ;
+: read-flash  wsetup  for  p@+ >hilo  rot c!+ c!+  next  drop ;
+: read-ee      setup  for  p@+       swap c!+      next  drop ;
 
-: prog-flash  wsetup  ?erase  for  d* d* lohi> p!+   next ;
-: prog-ee      setup          for  d*          ee!+  next ;
+( Only write config/ee space if bytes *differ*.)
+: ?ee!+  ( b)  p@ over xor if  ( differ)  ee!+ ^  then  drop p+ ;
+
+: prog-flash  wsetup  ?erase  for  c@+ c@+ -rot  lohi> p!+  next  drop ;
+: prog-ee      setup          for  c@+ swap          ?ee!+  next  drop ;
 
 ( NOTE: deviced-id and revision are *word-sized* values.)
 : tt  ( - revision device-id)  timer-init  spi-init  reset/  +prog
@@ -366,8 +365,8 @@ ld target/ARM/stm32/bitbanged-spi-half-duplex.mu4
 : uart-send  ( b)     [ 1 #7 << ( TXE bit)  #] ?uart-status  USART1_TDR ! ;
 
 : uart-send-recv
-   data d !  out-count h@ for  d* uart-send  next
-   data d !   in-count h@ for  uart-recv d&  next ;
+   data  out-count h@ for  c@+ swap  uart-send  next  drop
+   data   in-count h@ for  uart-recv  swap c!+  next  drop ;
 
 
 -- ------------------------------------------------------------------------
