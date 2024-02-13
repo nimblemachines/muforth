@@ -8,6 +8,113 @@ loading Core flash programming
 
 hex
 
+-- ------------------------------------------------------------------------
+-- Verifying that host and target images are the same.
+-- ------------------------------------------------------------------------
+( Let's do verify first. That way flash-image can also verify.)
+
+variable noisy-verify?  ( Whether to print differences.)
+variable image-offset   ( offset to apply to host address to get target address)
+
+( This sets up *two* pointers on the stack, ha [host address] and pad.
+  Other implementations have used *one* pointer on the stack, and m for the
+  other.)
+
+: setup-comparison  ( a u - ha pad u)
+   push  pad over r@ t.read
+   dup image+ tuck -  image-offset !
+   pad pop ;
+
+( Report differing address.)
+( NOTE: the granularity of the display of addresses can be changed by
+  looking at the bytes of diff and printing which parts have changed.)
+
+defer .differs  ( a diff)
+defer .diff-addr  ( a)
+
+( Peel off chunks of different sizes.)
+: >hilo32  ( n - hi lo32)  dup 32 u>>  swap "ffff_ffff and ;
+: >hilo16  ( n - hi lo16)  dup 16 u>>  swap      "ffff and ;
+
+( By default, just print the entire differing address.)
+-: ( a)  u. ;  is .diff-addr
+
+( Verify with 4 byte granularity.)
+-: ( a diff)  [ cell 4 / #] for  >hilo32 if  over .diff-addr  then  4 u+  next  2drop ;
+
+( Verify with 2 byte granularity.)
+-: ( a diff)   [ cell 2/ #] for  >hilo16 if  over .diff-addr  then  2 u+  next  2drop ;
+
+( Verify with 1 byte granularity.)
+-: ( a diff)           cell for  >hilo if    over .diff-addr  then  1 u+  next  2drop ;
+
+( Words to choose the granularity that you want.)
+: verify-1  [ #] is .differs ;  verify-1  ( default)
+: verify-2  [ #] is .differs ;
+: verify-4  [ #] is .differs ;
+
+( Verify a host cell at a time, for speed and simplicity.)
+: verify-cell  ( diff ha pad - diff' ha+ pad+)
+   @+ push  swap @+ push  xor
+   =if  noisy-verify? @ if
+      r@ cell- image-offset @ +  over  .differs  then then
+   or  pop pop ;
+
+: verify-chunk  ( diff a u - diff' a+u)
+   2dup + push
+   aligned setup-comparison  cell/ for  verify-cell  next  2drop
+   pop ;
+
+( Verify using the same chunk size that we used for flashing; the variable
+  /chunk - which is set by the interact code based on a value received from
+  the debug interface - tells us how big each chunk should be.)
+
+: verify-region  ( - diff)
+   noisy-verify? @ if
+      cr ." Verifying " .region space
+   then
+   0  ( diff)  region
+   /chunk @  /mod  ( r q)  swap push  for  /chunk @  verify-chunk  next
+                                    pop  =if  ( rem) verify-chunk  drop ^  then  2drop ;
+
+defer verify-regions  ( - diff)
+
+: do-verify  ( - diff)  ?chat  h preserve  verify-regions ;
+
+( Report whether region is empty, or, if non-empty, if it matched or
+  mismatched host region.)
+
+: .region-message  ( z")
+   warning-text  cr .region space  count type  normal-text ;
+
+: report  ( diff - diff)
+   region nip if  ( non-empty)
+      =if  z" DIFFERS"  else  z" MATCHES"  then  .region-message ^
+   then
+   noisy-verify? @ if  ( only mention the EMPTY regions when being verbose)
+      z" EMPTY"  .region-message
+   then ;
+
+( Here is a default version of verify-regions for targets with a single
+  flash region.)
+
+( Verify and then report.)
+-: flash verify-region  report ;  is verify-regions
+
+: verify
+   radix preserve hex  ( print mis-matched addresses in hex)
+   noisy-verify? on  do-verify drop ;
+
+( Called when we connect to the target to make sure that the host's and
+  target's flash regions are the same.)
+
+-: noisy-verify? off  do-verify ;  is verify-quietly
+
+
+-- ------------------------------------------------------------------------
+-- Erasing and programing the flash
+-- ------------------------------------------------------------------------
+
 : program-chunk  ( 'target len)
    cr ."    program "  over u.  dup u.
    over image+ -rot  ( buf 'target len)  t.program ;
@@ -46,84 +153,31 @@ hex
   interact code based on a value received from the debug interface - tells
   us how big each chunk should be.)
 
-: flash-region  ( a len)
+: flash-region
+   cr ." Programming " .region
+   region
    /chunk @  /mod  ( r q)  swap push  for  /chunk @  flash-chunk  next
                                     pop  =if  ( rem) flash-chunk  drop ^  then  2drop ;
 
-: ?align-region  ( a u - a u)
-   dup  flash-alignment 1-  and  0= if ^ then
-   flash-alignment 1- +  flash-alignment negate and  ( align)
-   cr warn" The flash region does not end on a target cell boundary." ;
+defer ?flash-check    now nope is ?flash-check  ( default is do nothing)
+defer flash-regions
+defer after-flashing  ( diff)
 
 : flash-image
-   h preserve  flash region ( a u)  ?align-region  ?flash-check
-   t.flash-begin  2dup flash-region  flash-special  t.flash-end ;
+   ?chat  h preserve  radix preserve hex  ( print messages in hex)
+   ?flash-check  t.flash-begin  flash-regions  t.flash-end
+   noisy-verify? on  verify-regions  after-flashing ;
+
+( Here is a default version of flash-regions for targets with a single
+  flash region.)
+
+-: flash flash-region ;  is flash-regions  ( very simple!)
+
+( And a default for the post-flashing, post-verify action.)
+-: drop ;                is after-flashing ( diff)
 
 
-( Verifying that host and target images are the same.)
-
-( Prepare to do a comparison or computation between data read from the
-  target into a buffer, and data in our memory image. Read a chunk from the
-  target into buf, and set m to point to the beginning of buf.
-
-  Be careful about setting m. Some chunked read implementations use it, so
-  set it *after* doing the read.)
-
-: setup-comparison  ( a u)   pad -rot t.read  pad m ! ;
-
-variable noisy-verify?  ( Whether to print differences.)
-
-( Verify a single "item" - byte, halfword, word - and return the bitwise or
-  of the byte-by-byte differences. We use flash-alignment as the number of
-  bytes to compare.)
-
-: verify-item  ( a - diff)
-   dup skip-verify? if  flash-alignment m +!  drop 0 ^  then
-   image+  flash-alignment  over + swap  0 -rot  ( 0 end start)
-   do  i c@  m* xor  or  loop ;
-
-: ?verify-show  ( a diff)
-   if  noisy-verify? @ if  dup u. ( print address that differs)  then  then
-   drop ;
-
-: verify-chunk  ( diff a u - diff' a+u)
-   -- cr ." verify "  over u.  dup u.
-   2dup + push  2dup setup-comparison  over + swap
-   do  i verify-item  ( diff diff2)  i over ?verify-show
-       or ( diff')  flash-alignment +loop
-   pop ;
-
-( Verify using the same chunk size that we used for flashing; the variable
-  /chunk - which is set by the interact code based on a value received from
-  the debug interface - tells us how big each chunk should be.)
-
-: verify-region  ( a u - diff)
-   0 -rot  ( diff)
-   /chunk @  /mod  ( r q)  swap push  for  /chunk @  verify-chunk  next
-                                    pop  =if  ( rem) verify-chunk  drop ^  then  2drop ;
-
-: ?empty-region  ( a u - a u)  =if ^ then  ( exit if non-empty)
-   noisy-verify? @ if
-      cr warn" The flash region is empty. verify will always report no change."
-   then ;
-
-: do-verify  ( noisy? - diff)
-   noisy-verify? !
-   h preserve  flash region ( a u)  ?empty-region  ?align-region  ?verify-check
-   2dup verify-region -rot  verify-special  or ;
-
-: verify-noisily  ( - diff)
-   radix preserve hex  ( print mis-matched addresses in hex)
-   -1 do-verify ;
-
-: verify  verify-noisily drop ;
-
-( Called when we connect to the target to make sure that the host's and
-  target's flash regions are the same.)
-
--: ( verify-quietly)  ( - 0 if same, non-zero if different)
-   0 do-verify ;  is verify-quietly
-
+( XXX The following code probably needs to be moved. But whither?)
 
 ( The image reading and writing code expects a von Neumann memory model - a
   single address space. Let's only load this code if the ram and flash
