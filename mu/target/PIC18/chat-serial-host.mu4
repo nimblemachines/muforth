@@ -36,8 +36,8 @@ hex
 : cx.set-x       ( a)      12 >b            >w ;  ( send 16 bit address)
 : cx.get-x       ( - a)    13 >b      w> ;
 : cx.run         ( )       14 >b ;
-: cx.read-prog   ( - b)    15 >b      b> ;
-: cx.read-data   ( - b)    16 >b      b> ;
+: cx.read-prog   ( u)      15 >b  >b ;  ( send byte-sized count, then streaming read)
+: cx.read-data   ( u)      16 >b  >b ;  ( send byte-sized count, then streaming read)
 : cx.write-data  ( b)      17 >b  >b     ;
 
 ( Send three no-ops, let them transmit, _then_ throw away any input bytes.)
@@ -48,21 +48,30 @@ hex
    #115200 bps  resync
    cr ." Chat firmware version "
    cx.version  radix preserve  hex  sep preserve  -sep   u.
-   #128 ;
+   /page ( return erase page size as chunk size) ;
 
 : c.run  ( cp pc)  cx.set-p  cx.set-x  cx.run ;
 
-: c.read-data  ( buf a u)
-   swap cx.set-x  for  cx.read-data  swap c!+  next  drop ;
+: c.read-buf  ( buf u)  for  b>  swap c!+  next  drop ;
+
+: c.read-data  ( buf a u)  swap cx.set-x  dup cx.read-data  c.read-buf ;
+: c.read-prog  ( buf a u)  swap cx.set-p  dup cx.read-prog  c.read-buf ;
 
 : c.write-data  ( buf a u)
    swap cx.set-x  for  c@+ swap  cx.write-data  next  drop ;
 
-: c.read-prog  ( buf a u)
-   swap cx.set-p  for  cx.read-prog  swap c!+  next  drop ;
-
 ( space = 0 means flash/config/eeprom; 1 means data/ram/io)
 : c.read-space  ( buf a u space)  if  c.read-data ^  then  c.read-prog ;
+
+( XXX dummy placeholders for now)
+: c.write-eeprom  ( buf a u)  2drop drop ;
+: c.erase  ( a)  drop ;
+: c.program  ( buf a u)  2drop drop ;
+
+: c.app-start ;
+: c.app-stop ;
+: c.flash-begin ;
+: c.flash-end ;
 
 comment %%
 chat-cmd t.hello         ( - chunk-size)
@@ -79,6 +88,5 @@ chat-cmd t.erase         ( a)
 chat-cmd t.program       ( buf a u)  %%
 
 : chat   chat-via
-   c.hello  cx.get-x  c.run  c.read-space  c.write-data  chat-fail ( c.write-eeprom)
-   -- c.app-start  c.app-stop  c.flash-begin  c.flash-end  c.erase  c.program ;
-   chat-fail  chat-fail  chat-fail  chat-fail  chat-fail  chat-fail ;
+   c.hello  cx.get-x  c.run  c.read-space  c.write-data  c.write-eeprom
+   c.app-start  c.app-stop  c.flash-begin  c.flash-end  c.erase  c.program ;
