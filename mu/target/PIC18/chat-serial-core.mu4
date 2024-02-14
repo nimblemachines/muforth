@@ -12,15 +12,23 @@ hex
 
 00 - 0f  Idle   - these command bytes are ignored
 
-10  GetVersion  - set p to point to the chat protocol version
-11  Run         - load PC from p
-12  SetP        - set p - the program memory address pointer
-13  SetX        - set x - the data memory address pointer
-14  ReadProg    - read a byte from program memory, incr p pointer
-15  ReadData    - read a byte from data memory, incr x pointer
-16  WriteData   - write a byte to data memory, incr x pointer
+10  get-version  - send 4 byte commit [little endian] to host
+11  set-p        - set p - the program memory address pointer
+12  set-x        - set x - the data memory address pointer
+13  get-x        - get x - get the current value of the data mem ptr
+14  run          - load PC from p
+15  read-prog-n  - read n bytes from program memory, incr p pointer
+16  read-data-n  - read n bytes from data memory, incr x pointer
+17  write-data   - write a byte to data memory, incr x pointer
 
-17 - ff  Idle   - these command bytes are ignored
+  These are Q-series commands for programming the flash, config, and
+  eeprom.
+
+18  set-nvm-addr - set NVMADR from p
+19  nvm-read     - execute an NVM read command, return data read
+1a  nvm-write    - execute an NVM write command, return status
+
+1b - ff  Idle   - these command bytes are ignored
 )
 
 ( Some useful synonyms. I don't like TBLPTR and TABLAT. They aren't
@@ -31,7 +39,7 @@ aka TBLPTRH  equ MEMADRH
 aka TBLPTRL  equ MEMADRL
 aka TABLAT   equ MEMDATA
 
-( We are going to FSR0 to point to data memory. Let's call it x.)
+( We are going to use FSR0 to point to data memory. Let's call it x.)
 assembler
 aka FSR0L     constant xl
 aka FSR0H     constant xh
@@ -80,7 +88,7 @@ label run
 ( Doing streaming reads from program memory space is critical to making
   verifying the flash fast.)
 
-label read-prog
+label read-prog-n
    recv-byte c  0 ,z st  ( count)
    begin  p@+  MEMDATA ) ld  send-byte c  0 ,z decsz  again  ret  ;c
 
@@ -88,9 +96,9 @@ label read-prog
   much faster to read multiple bytes at a time. The code is longer, though:
   single byte read is two instructions; multi-byte is seven!)
 
-label read-data
+label read-data-n
    recv-byte c  0 ,z st  ( count)
-   begin           @x+ ) ld  send-byte c  0 ,z decsz  again  ret  ;c
+   begin  @x+ ) ld  send-byte c  0 ,z decsz  again  ret  ;c
 
 label write-data
    recv-byte c  @x+ ) st  ret  ;c
@@ -98,14 +106,17 @@ label write-data
 ( Stack pointed to by z is empty descending, so 0 ,z is scratch)
 label process-serial
    recv-byte c  ( command)   0f1 ( -0f) addi  0 ,z st  ( have to store it!)
-   0 ,z decsnz  get-version j
-   0 ,z decsnz  set-p j
-   0 ,z decsnz  set-x j
-   0 ,z decsnz  get-x j
-   0 ,z decsnz  run j
-   0 ,z decsnz  read-prog j
-   0 ,z decsnz  read-data j
-   0 ,z decsnz  write-data j
+   0 ,z decsnz  ( 10)  get-version j
+   0 ,z decsnz  ( 11)  set-p j
+   0 ,z decsnz  ( 12)  set-x j
+   0 ,z decsnz  ( 13)  get-x j
+   0 ,z decsnz  ( 14)  run j
+   0 ,z decsnz  ( 15)  read-prog-n j
+   0 ,z decsnz  ( 16)  read-data-n j
+   0 ,z decsnz  ( 17)  write-data j
+   0 ,z decsnz  ( 18)  set-nvm-addr j
+   0 ,z decsnz  ( 19)  nvm-read j
+   0 ,z decsnz  ( 1a)  nvm-write j
    ( unknown command)  ret  ;c
 
 here  0 goto  dup \a rjmp  goto

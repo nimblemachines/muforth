@@ -78,3 +78,59 @@ label recv-byte
 ( Wait for U5TXIF, then transmit W.)
 label send-byte
    begin  1 ( U5TXIF) PIR13 ) btstss  again  U5TXB bank b) st  ret  ;c
+
+( Support for NVM - non-volatile memory - module.)
+
+( We need to receive a series of bytes from the host to execute an NVM
+  operation. The trouble is, every time we call recv-byte, the BSR gets
+  clobbered. Let's make a short word that gets a byte from the host and
+  then sets up the BSR for the NVM registers.)
+
+label recv-byte-nvm
+   recv-byte c  NVMCON0 bank \f drop  ret  ;c
+
+( Set NVMADR from MEMADR.)
+label set-nvm-addr
+   MEMADRU ) ld  NVMADRU bank b) st
+   MEMADRH ) ld  NVMADRH b) st
+   MEMADRL ) ld  NVMADRL b) st  ret  ;c
+
+label nvm-complete
+   begin  0 NVMCON0 b) btstsc  again  ( wait for GO to clear)
+   NVMCON1 b) ld   ( read status)
+   NVMCON1 b) clr  ( clear cmd)  ret  ;c
+
+label nvm-read
+   recv-byte-nvm c  ( cmd)  NVMCON1 b) st  ( set cmd from host)
+   0 ( GO) NVMCON0 b) bset  ( set GO bit to start the read)
+   nvm-complete c  ( wait for read to complete)
+
+   ( Send to the host the data that was read.)
+   NVMDATL      b) ld  send-byte c
+   NVMDATH bank b) ld  send-byte j  ;c
+
+label nvm-write
+   recv-byte-nvm c  ( cmd)  NVMCON1 b) st  ( set cmd from host)
+
+   ( Get a word of data from host. This is zero for page erase and page write.)
+   recv-byte-nvm c  NVMDATL b) st
+   recv-byte-nvm c  NVMDATH b) st
+
+   ( Get the first unlock byte from the host, then write it and its
+     complement to the unlock register. The two writes to NVMLOCK have to
+     happen within a certain number of cycles. Reading each byte from the
+     serial port takes too long and doesn't work!
+
+     Host can send 0 for reads.)
+
+   recv-byte-nvm c  0 ,z st
+   NVMLOCK b) st  0 ,z w com  NVMLOCK b) st
+
+   ( Start the operation and wait for completion. This bset has to happen
+     *immediately* after the second NVMLOCK write or a WRERR occurs!)
+
+   0 ( GO) NVMCON0 b) bset  ( set GO bit to start the write)
+   nvm-complete c  ( wait for write to complete)
+
+   ( Status byte is in W. Send back to host.)
+   send-byte j  ;c

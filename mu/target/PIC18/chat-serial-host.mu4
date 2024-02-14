@@ -12,36 +12,55 @@ hex
 
 00 - 0f  Idle   - these command bytes are ignored
 
-10  Version     - read 4 bytes of little-endian version
-11  SetP        - set p - the program memory address pointer
-12  SetX        - set x - the data memory address pointer
-13  GetX        - get x - the data memory address pointer
-14  Run         - load PC from p
-15  ReadProg    - read a byte from program memory, incr p pointer
-16  ReadData    - read a byte from data memory, incr x pointer
-17  WriteData   - write a byte to data memory, incr x pointer
+10  get-version  - send 4 byte commit [little endian] to host
+11  set-p        - set p - the program memory address pointer
+12  set-x        - set x - the data memory address pointer
+13  get-x        - get x - get the current value of the data mem ptr
+14  run          - load PC from p
+15  read-prog-n  - read n bytes from program memory, incr p pointer
+16  read-data-n  - read n bytes from data memory, incr x pointer
+17  write-data   - write a byte to data memory, incr x pointer
 
-18 - ff  Idle   - these command bytes are ignored
+  These are Q-series commands for programming the flash, config, and
+  eeprom.
+
+18  set-nvm-addr - set NVMADR from p
+19  nvm-read     - execute an NVM read command, return data read
+1a  nvm-write    - execute an NVM write command, return status
+
+1b - ff  Idle   - these command bytes are ignored
 )
 
 : >b  send ;
 : b>  recv ;
 
+: >cmd  ?spkt  >b ;
+
 : >w  ( w)         >hilo  >b >b ;   ( send word little-endian)
 : w>  ( - w)  b> b> lohi> ;         ( recv word little-endian)
 
 : cx.idle                   0 >b ;
-: cx.version     ( - w)    10 >b  b> b> b> b>  0123> ;
-: cx.set-p       ( a)      11 >b  >hilo >b  >w ;  ( send 24 bit address)
-: cx.set-x       ( a)      12 >b            >w ;  ( send 16 bit address)
-: cx.get-x       ( - a)    13 >b      w> ;
-: cx.run         ( )       14 >b ;
-: cx.read-prog   ( u)      15 >b  >b ;  ( send byte-sized count, then streaming read)
-: cx.read-data   ( u)      16 >b  >b ;  ( send byte-sized count, then streaming read)
-: cx.write-data  ( b)      17 >b  >b     ;
+: cx.version      ( - w)   10 >cmd  b> b> b> b>  0123> ;
+: cx.set-p        ( a)     11 >cmd  >hilo >b  >w ;  ( send 24 bit address)
+: cx.set-x        ( a)     12 >cmd            >w ;  ( send 16 bit address)
+: cx.get-x        ( - a)   13 >cmd      w> ;
+: cx.run          ( )      14 >cmd ;
+: cx.read-prog-n  ( u)     15 >cmd  >b ;  ( send byte-sized count, then streaming read)
+: cx.read-data-n  ( u)     16 >cmd  >b ;  ( send byte-sized count, then streaming read)
+: cx.write-data   ( b)     17 >cmd  >b     ;
 
-( Send three no-ops, let them transmit, _then_ throw away any input bytes.)
-: resync  cx.idle cx.idle cx.idle  drain  flush ;
+.ifndef 1xk50  ( For Q-series NVM operations.)
+: cx.set-nvm-addr  ( )     18 >cmd ;   ( sets NVMADR from MEMADR - aka p)
+: cx.nvm-read      ( cmd - data)
+                           19 >cmd  >b          w> ;
+: cx.nvm-write     ( unlock data cmd - status)
+                           1a >cmd  >b >w >b    b> ;
+.then
+
+( Longest command - nvm-write - sends 5 bytes. To resync, let's send five
+  no-ops, let them transmit, _then_ throw away any input bytes.)
+
+: resync  5 for cx.idle next  drain  flush ;
 
 ( Hook into interact code.)
 : c.hello  ( - chunk-size)
@@ -54,8 +73,8 @@ hex
 
 : c.read-buf  ( buf u)  for  b>  swap c!+  next  drop ;
 
-: c.read-data  ( buf a u)  swap cx.set-x  dup cx.read-data  c.read-buf ;
-: c.read-prog  ( buf a u)  swap cx.set-p  dup cx.read-prog  c.read-buf ;
+: c.read-data  ( buf a u)  swap cx.set-x  dup cx.read-data-n  c.read-buf ;
+: c.read-prog  ( buf a u)  swap cx.set-p  dup cx.read-prog-n  c.read-buf ;
 
 : c.write-data  ( buf a u)
    swap cx.set-x  for  c@+ swap  cx.write-data  next  drop ;
@@ -63,11 +82,37 @@ hex
 ( space = 0 means flash/config/eeprom; 1 means data/ram/io)
 : c.read-space  ( buf a u space)  if  c.read-data ^  then  c.read-prog ;
 
-( XXX dummy placeholders for now)
-: c.write-eeprom  ( buf a u)  2drop drop ;
-: c.erase  ( a)  drop ;
-: c.program  ( buf a u)  2drop drop ;
+.ifndef 1xk50  ( Q-series)
 
+: c.set-nvm-addr  ( a)  cx.set-p cx.set-nvm-addr ;
+
+: c.nvm-write  ( data cmd)
+   55 -rot cx.nvm-write  80 and ( WRERR)
+   if  error" flash write protect error"  then ;
+
+( Only write config/ee space if bytes *differ*.)
+: ?ee!+  ( b)
+   0 ( read) cx.nvm-read  over xor if  ( different)
+      4 ( write & incr) c.nvm-write ^  then
+   1 ( read & incr) cx.nvm-read  2drop ;
+
+: c.write-eeprom  ( buf a u)
+   swap c.set-nvm-addr  for  c@+ swap  ?ee!+  next  drop ;
+
+: c.erase  ( a)  c.set-nvm-addr  0 6 ( page erase) c.nvm-write ;
+
+( For full pages, u will be /page; for the last page, it will be the
+  remainder. But we want to write a full page, even for the last page - to
+  fill the rest of the buffer with ff's. So we ignore the passed u.)
+
+: c.program  ( buf a u)
+   drop c.set-nvm-addr
+   [ @ram #ram + #] /page c.write-data  ( write buf to chip's page buffer)
+   0 5 ( page write) c.nvm-write ;
+
+.then  ( Q-series)
+
+( XXX not yet implemented)
 : c.app-start ;
 : c.app-stop ;
 : c.flash-begin ;
