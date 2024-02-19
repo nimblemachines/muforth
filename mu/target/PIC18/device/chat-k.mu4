@@ -6,14 +6,36 @@ loading PIC18-K chat support
 
 ( Chat support for 1xk50 and other similar devices.)
 
-( Set config registers)
+__meta
+
+( Set up the CONFIG bytes. There are 14 for the K50 devices.)
+config binary
+( CONFIG1L)  0000_0000 c,  ( default)
+
 .ifdef noxtal  -- for testing: 32 MHz clk via PLL
-   %0011_1000  ( CONFIG1H: PLLEN, FOSC=HS 1000)  CONFIG1H config-space c!
+( CONFIG1H)  0001_1000 c,  ( PLLEN, FOSC=1000:HF internal)
 .else  ( 12 MHz xtal => 48 MHz clk for USB)
-   %0011_0010  ( CONFIG1H: PLLEN, FOSC=HS 0010)  CONFIG1H config-space c!
+( CONFIG1H)  0001_0010 c,  ( PLLEN, FOSC=0010:HS external)
 .then
-   %0001_1110  ( CONFIG2H: WDTEN=0)              CONFIG2H config-space c!
-   %1100_0101  ( CONFIG4L: ENH_CPU=1)            CONFIG4L config-space c!
+
+( CONFIG2L)  0001_0110 c,  ( BORV=10 2.7v, BOREN=11, nPWRTEN=0)
+( CONFIG2H)  0001_1110 c,  ( WDTEN=0)
+
+( CONFIG3L)          0 c,  ( unimplemented)
+( CONFIG3H)  1000_0000 c,  ( HFOFST=0)
+
+( CONFIG4L)  1100_0101 c,  ( ENH_CPU=1)
+( CONFIG4H)          0 c,  ( unimplemented)
+
+( CONFIG5L)  0000_0011 c,  ( default)
+( CONFIG5H)  1100_0000 c,  ( default)
+
+( CONFIG6L)  0000_0011 c,  ( default)
+( CONFIG6H)  1010_0000 c,  ( WRTB=0:write protect boot block)
+
+( CONFIG7L)  0000_0011 c,  ( default)
+( CONFIG7H)  0100_0000 c,  ( default)
+boot decimal
 
 ( Wait for RCIF, then read received byte into W)
 label recv-byte
@@ -33,10 +55,13 @@ label chip-init
    3 ANSELH ) bclr
 
 .ifdef noxtal
-   #32,000,000 #115,200 / #4 / 1- ldi  SPBRG ) st
+   ( Set HF internal osc to 8M.)
+   %0110_0000 ( IRCF=110, SCS=00) OSCCON ) st
+
+   32,000,000 115,200 / 4 / 1- ldi  SPBRG ) st
    %0000_1000 ldi  BAUDCON ) st  ( set BRG16 so we divide by 4)
 .else
-   #48,000,000 #115,200 / #16 / 1- ldi  SPBRG ) st
+   48,000,000 115,200 / 16 / 1- ldi  SPBRG ) st
 .then
    %0010_0100 ldi  TXSTA ) st  ( enable xmit, enable BRGH)
    %1001_0000 ldi  RCSTA ) st  ( enable serial port, enable rcvr)
