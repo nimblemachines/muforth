@@ -15,8 +15,8 @@ variable chat-vector
 
 0
 chat-cmd t.hello         ( - chunk-size)
-chat-cmd t.get-status    ( - cp)
-chat-cmd t.run           ( cp pc)
+chat-cmd t.get-status    ( - sp)
+chat-cmd t.run           ( pc sp)
 chat-cmd t.read-space    ( buf a u space)
 chat-cmd t.write-data    ( buf a u)
 chat-cmd t.write-eeprom  ( buf a u)
@@ -64,14 +64,14 @@ variable ram-copied  ( pointer to first un-copied byte)
 
 
 ( Cached local values of target registers.)
-variable .PC
-variable .CP   ( context pointer - commonly used as a stack pointer)
+variable .SP   ( data stack pointer)
 
-( XXX Unused currently)
-variable .MRP  ( machine's return stack pointer; XXX hardware stack ptr?)
+( We subtract 1 cell when writing CP, and add one cell when reading CP,
+  because there is a *scratch* cell on the stack, below TOP.)
 
-: get-regs   t.get-status  .CP ! ;
-: set-regs   ( - cp pc)    .CP @  .PC @ ;
+( XXX maybe defer these?)
+: get-regs   t.get-status  ( cp)  \m cell+  .SP ! ;
+: set-regs   ( pc - pc sp)                  .SP @  \m cell- ;
 
 : 2sp  space space ;
 : 4#   # # # # ;
@@ -81,29 +81,18 @@ variable .MRP  ( machine's return stack pointer; XXX hardware stack ptr?)
 
 defer .regs
 
--: radix preserve
-   cr  ."   CP    PC"
-       (  0123  4567 )
-   cr   .CP .r
-              .PC .r ;
-: base-regs  [ #]  is .regs ;  base-regs
-
-
 defer verify-quietly  ( - diff)
 
 : hi
-   chatting on  >chat  t.hello  /chunk !  get-regs  .regs
+   chatting on  >chat  t.hello  /chunk !
    ram-copied off  copy-ram
 .ifndef noverify  verify-quietly drop  .then
    now __chatting is __meta  __meta ;
 
 : chat-via   pop  chat-vector !  hi ;
 
-( XXX ARM interact doesn't set local pc variable; it just passes pc to
-  t.run)
-
-: run      ( pc)  .PC !  copy-ram  set-regs  t.run ;  ( don't wait for target)
-: runwait  ( pc)  run  get-regs ;                     ( wait for target)
+: run      ( pc)  copy-ram  set-regs  t.run ;  ( don't wait for target)
+: runwait  ( pc)  run  get-regs ;              ( wait for target)
 
 : ?chat
    chatting @ 0= if  error" not connected to target"  then ;
@@ -125,13 +114,20 @@ defer verify-quietly  ( - diff)
   target.)
 
 meta
-( XXX Copied from AVR. How are we going to set this up on the PIC18?)
-( Put the D stack at the end of ram, for now.)
-: sp0   [ @ram #ram + #] ;
-: sp!   .CP ! ;  ( We use CP as the data stack pointer)
-: sp@   .CP @ ;
+( Put the D stack at the end of ram, for now - leaving one cell of space
+  for the use of chat.)
+
+: sp0   [ @ram #ram +  \m cell-  #] ;
+: sp!   .SP ! ;
+: sp@   .SP @ ;
 : depth   \m sp0  \m sp@ -  \m cell/  1- ;
 forth
+
+( We'd like numbers that the target would consider negative to be negative
+  on the host stack as well. So let's sign extend stack values when they
+  come back from the target.)
+
+: t>h  ( n - n')  ( "target to host")  dup "8000 and if  "1_0000 -  then ;
 
 ( stack> *first* builds a local image of the target stack - in the RAM
   image - and *then* copies it, in one chunk, to the target.)
@@ -157,7 +153,7 @@ forth
       \m sp@ image+  \m sp@  r@ \m cells  t.read-data  ( read target stack)
       pop
       \m sp@ over  ( n sp n)
-      for  dup image-@  pop 2push  \m cell+  next ( starting with top, push to R)
+      for  dup image-@ t>h  pop 2push  \m cell+  next ( starting with top, push to R)
       drop ( sp)
       for  2pop push  next  ( pop from R to reverse order)
       0

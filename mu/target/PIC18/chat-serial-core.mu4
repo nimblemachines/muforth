@@ -12,38 +12,42 @@ hex
 
 00 - 0f  Idle   - these command bytes are ignored
 
-10  get-version  - send 4 byte commit [little endian] to host
-11  set-p        - set p - the program memory address pointer
-12  set-x        - set x - the data memory address pointer
-13  get-x        - get x - get the current value of the data mem ptr
-14  run          - load PC from p
-15  read-prog-n  - read n bytes from program memory, incr p pointer
-16  read-data-n  - read n bytes from data memory, incr x pointer
-17  write-data   - write a byte to data memory, incr x pointer
+10  get-version      - send 4 byte commit [little endian] to host
+11  set-prog-addr    - set the program [flash] memory address pointer
+12  set-data-addr    - set the data memory address pointer
+13  get-data-addr    - get the current value of the data mem ptr
+14  run              - load PC from flash-addr
+15  read-prog-n      - read n bytes from program memory, incr pointer
+16  read-data-n      - read n bytes from data memory, incr pointer
+17  write-data       - write a byte to data memory, incr pointer
 
   These are Q-series commands for programming the flash, config, and
   eeprom.
 
-18  set-nvm-addr - set NVMADR from p
-19  nvm-read     - execute an NVM read command, return data read
-1a  nvm-write    - execute an NVM write command, return status
+18  set-nvm-addr     - set NVMADR from prog-addr
+19  nvm-read         - execute an NVM read command, return data read
+1a  nvm-write        - execute an NVM write command, return status
 
 1b - ff  Idle   - these command bytes are ignored
 )
 
 ( Some useful synonyms. I don't like TBLPTR and TABLAT. They aren't
-  mnemonic!)
+  mnemonic! TBLPTR points into the program memory space. Why not PROGADR
+  and PROGDATA?)
 
-aka TBLPTRU  equ MEMADRU
-aka TBLPTRH  equ MEMADRH
-aka TBLPTRL  equ MEMADRL
-aka TABLAT   equ MEMDATA
+aka TBLPTRU  equ PROGADRU
+aka TBLPTRH  equ PROGADRH
+aka TBLPTRL  equ PROGADRL
+aka TABLAT   equ PROGDATA
 
-( We are going to use FSR0 to point to data memory. Let's call it x.)
+( We are going to use FSR0 to point to data memory. Let's call it DP - data
+  pointer.)
+
 assembler
-aka FSR0L     constant xl
-aka FSR0H     constant xh
-aka POSTINC0  constant @x+
+aka FSR0       equ DP   ( data pointer)
+aka FSR0H      equ DPH  ( data pointer, high byte)
+
+aka POSTINC0   equ @dp+  ( read a data memory location, incr pointer)
 forth
 
 __meta
@@ -66,61 +70,61 @@ label get-version
    muforth-commit drop 8 evaluate  >3210
    ldi  send-byte c  ldi  send-byte c  ldi  send-byte c  ldi  send-byte j  ;c
 
-label set-p
-   recv-byte c  MEMADRL ) st
-   recv-byte c  MEMADRH ) st
-   recv-byte c  MEMADRU ) st  ret  ;c
+label set-prog-addr
+   recv-byte c  PROGADRL ) st
+   recv-byte c  PROGADRH ) st
+   recv-byte c  PROGADRU ) st  ret  ;c
 
-label set-x
-   recv-byte c  xl ) st
-   recv-byte c  xh ) st  ret  ;c
+label set-data-addr
+   recv-byte c  DP  ) st
+   recv-byte c  DPH ) st  ret  ;c
 
-label get-x
-   xl ) ld  send-byte c
-   xh ) ld  send-byte j  ;c
+label get-data-addr
+   DP  ) ld  send-byte c
+   DPH ) ld  send-byte j  ;c
 
-( Jump indirect to p.)
+( Jump indirect to prog-addr.)
 label run
-   MEMADRU ) ld  PCLATU ) st
-   MEMADRH ) ld  PCLATH ) st
-   MEMADRL ) ld  PCL    ) st  ( this jumps!) ;c
+   PROGADRU ) ld  PCLATU ) st
+   PROGADRH ) ld  PCLATH ) st
+   PROGADRL ) ld  PCL    ) st  ( this jumps!) ;c
 
 ( Doing streaming reads from program memory space is critical to making
   verifying the flash fast.)
 
+( INDF1 points to a scratch byte at the end of ram.)
 label read-prog-n
-   recv-byte c  0 ,z st  ( count)
-   begin  p@+  MEMDATA ) ld  send-byte c  0 ,z decsz  again  ret  ;c
+   recv-byte c  INDF1 ) st  ( count)
+   begin  prog@+  PROGDATA ) ld  send-byte c  INDF1 ) decsz  again  ret  ;c
 
 ( We don't necessarily need to do streaming reads from data space, but it's
   much faster to read multiple bytes at a time. The code is longer, though:
   single byte read is two instructions; multi-byte is seven!)
 
 label read-data-n
-   recv-byte c  0 ,z st  ( count)
-   begin  @x+ ) ld  send-byte c  0 ,z decsz  again  ret  ;c
+   recv-byte c  INDF1 ) st  ( count)
+   begin  @dp+ ) ld  send-byte c  INDF1 ) decsz  again  ret  ;c
 
 label write-data
-   recv-byte c  @x+ ) st  ret  ;c
+   recv-byte c  @dp+ ) st  ret  ;c
 
-( Stack pointed to by z is empty descending, so 0 ,z is scratch)
 label process-serial
-   recv-byte c  ( command)   0f1 ( -0f) addi  0 ,z st  ( have to store it!)
-   0 ,z decsnz  ( 10)  get-version j
-   0 ,z decsnz  ( 11)  set-p j
-   0 ,z decsnz  ( 12)  set-x j
-   0 ,z decsnz  ( 13)  get-x j
-   0 ,z decsnz  ( 14)  run j
-   0 ,z decsnz  ( 15)  read-prog-n j
-   0 ,z decsnz  ( 16)  read-data-n j
-   0 ,z decsnz  ( 17)  write-data j
-   0 ,z decsnz  ( 18)  set-nvm-addr j
-   0 ,z decsnz  ( 19)  nvm-read j
-   0 ,z decsnz  ( 1a)  nvm-write j
+   @ram #ram + 1- FSR1 lda  ( point to last byte of ram, as scratch)
+   recv-byte c  ( command)   -0f addi
+   W ) decsnz  ( 10)  get-version j
+   W ) decsnz  ( 11)  set-prog-addr j
+   W ) decsnz  ( 12)  set-data-addr j
+   W ) decsnz  ( 13)  get-data-addr j
+   W ) decsnz  ( 14)  run j
+   W ) decsnz  ( 15)  read-prog-n j
+   W ) decsnz  ( 16)  read-data-n j
+   W ) decsnz  ( 17)  write-data j
+   W ) decsnz  ( 18)  set-nvm-addr j
+   W ) decsnz  ( 19)  nvm-read j
+   W ) decsnz  ( 1a)  nvm-write j
    ( unknown command)  ret  ;c
 
 here  0 goto  dup \a rjmp  goto
 label startup
-   @ram #ram +  1-  ldz  ( empty descending *data* stack)
    chip-init c
    begin  process-serial c  again  ;c
