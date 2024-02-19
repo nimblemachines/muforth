@@ -1,0 +1,259 @@
+( This file is part of muforth: https://muforth.dev/
+
+  Copyright 2002-2024 David Frech. (Read the LICENSE for details.)
+
+loading PIC18 Forth kernel
+
+hex
+
+( NOTE: This is really just a sketch to see what it *might* look like to
+  define a 16-bit Forth kernel for the PIC18. This will also let us test
+  out ideas about executing code, trampolines, etc.)
+
+meta
+: name   current preserve  .target. definitions  \m here constant ;
+: code   \m name  __asm ;
+: :      \m name  __target-colon ;
+
+( Compiling target words.)
+-: ( cfa)  \a c  ( compile a call instruction) ;  is target-compile,
+
+: '  .target. chain' execute ;
+: __host  \c [ ;
+
+target-compiler
+: ;  \a ret  __meta ;  ( super simple; no tail-call conversion yet)
+
+compiler
+: asm{   __inline-asm ;  ( start assembling a macro)
+: }      ] ;  ( exit assembler mode and restart host colon compiler)
+
+( We are going to use FSR2 to point to the data stack.
+
+  Since FSRs can only be used to implement an empty descending stack -
+  where the FSR points to the byte *below* the last byte pushed - we adjust
+  the offset here and in the disassembler so that it's easier to think about.
+  In other words, we make it *look* like a full descending stack, where
+  offset 0 points *at* the last byte pushed.
+
+  To distinguish this behavior from the machine's inherent behavior, we
+  print the stack pointer as "sp" rather than "z", and we *specify* offsets
+  in the assembler using ",sp".)
+
+assembler
+( These are the three 16-bit pointer registers - implemented as register
+  pairs - on the PIC18.)
+
+aka FSR0       equ DP   ( data pointer)
+aka FSR0H      equ DPH  ( data pointer, high byte)
+
+aka FSR1       equ AP   ( auxiliary pointer)
+aka FSR1H      equ APH  ( auxiliary pointer, high byte)
+
+aka FSR2       equ SP   ( stack pointer)
+aka FSR2H      equ SPH  ( stack pointer, high byte)
+
+aka POSTINC0   equ @dp+  ( read a data memory location, incr pointer)
+
+aka POSTDEC1   equ @ap-  ( push a byte to aux stack)
+aka PREINC1    equ @+ap  ( pop a byte from aux stack)
+
+aka POSTDEC2   equ @sp-  ( push a byte to data stack)
+aka PREINC2    equ @+sp  ( pop a byte from data stack)
+
+( Move byte and move word.)
+: mov   ( from to)  asm{  \f swap ld  st } ;
+: movw  ( from to)  asm{  \f 2dup mov  1 1 v+  mov } ;
+
+( Adjusts offset by 1 since stack is empty descending.)
+: ,sp  ( offset)  1+ \a ] ;
+
+( Push and pop of aux stack.)
+: apush  asm{  @ap- )           mov } ;
+: apop   asm{  @+ap )  \f swap  mov } ;
+
+( Push and pop of data stack.)
+: dpush  asm{  @sp- )           mov } ;
+: dpop   asm{  @+sp )  \f swap  mov } ;
+
+forth
+( Define a stack slot.)
+: slot  ( offset)  constant  does> @  \a ,sp ;
+
+assembler
+( Offsets 0 and 1 are scratch space.)
+0 slot X    ( low byte of Scratch)
+1 slot XH   ( high byte of Scratch)
+
+2 slot T    ( low byte of Top)
+3 slot TH   ( high byte of Top)
+
+4 slot S    ( low byte of Second)
+5 slot SH   ( high byte of Second)
+forth
+
+: .slot  ( offset)
+   dup 6 u< if  2* z" X XHT THS SH" +  2 type  ^  then
+   .hex  ."  ,sp" ;
+
+( Adjust the offset in the the disassembler, and if possible, print
+  mnemonic name for the stack slot.)
+
+-: ( offset)  7f and  1-  .slot ;  is .sp-off
+
+__meta
+
+( 1 byte literal; high byte is zero)
+label lit00   XH clr  ( fall thru)  ;c
+label lit      X st   ( fall thru)  ;c
+label 1push   2 SP suba  ret  ;c
+
+( 1 byte literal; high byte is ff)
+label litff   XH set  lit j  ;c
+
+__host
+
+( XXX Use these?)
+: u8?  ( u - flag)  100 u< ;  ( if unsigned value fits in 8 bits)
+: s8?  ( n - flag)  80 + u8? ;  ( if signed value fits in 8 bits)
+
+meta
+: literal
+   dup  8 >>
+   dup   0= if  ( high 8 bits all 0)  drop  asm{  ldi  lit00 c }  ^  then
+       -1 = if  ( high 8 bits all 1)        asm{  ldi  litff c }  ^  then
+   >lohi  asm{  ldi  XH st  ldi  lit c } ;
+forth
+.meta. chain' literal is target-literal
+
+__meta
+
+( Arith/logic 1ops.)
+code negate   T neg  0 ldi  TH rsbb  ret  ;c
+code invert   T com  TH com  ret  ;c
+
+code 2*   0 ( C) STATUS ) bclr          T rlc  TH rlc  ret  ;c
+code u2/  0 ( C) STATUS ) bclr  begin  TH rrc   T rrc  ret  ;c
+code 2/   TH w rlc  ( sign -> C)   again  ;c
+
+( Arith/logic 2ops.)
+code +      T ld  S add  TH ld  SH adc  ( fall thru)  ;c
+label 1pop  2 SP adda  ret  ;c
+
+code bic    ' invert c  ( fall thru)  ;c
+code and    T ld  S and  TH ld  SH and  1pop j  ;c
+code or     T ld  S or   TH ld  SH or   1pop j  ;c
+code xor    T ld  S xor  TH ld  SH xor  1pop j  ;c
+
+code -      T ld  S sub  TH ld  SH sbb  1pop j  ;c
+
+( Comparisons and tests.)
+label true   T set  TH set  ret  ;c
+label false  T clr  TH clr  ret  ;c
+
+code 0=   T ld  TH or   false 0= until  true j  ;c
+code 0<         TH tst  false 0< until  true j  ;c
+code u<  ' - c          false u< until  true j  ;c
+
+( Stack ops.)
+__host
+
+target-compiler
+: drop   asm{  2 SP adda } ;  ( make drop a macro!)
+forth
+
+__meta
+
+code dup   ( a   - a a)    TH XH mov  T ld  lit j  ;c
+code over  ( a b - a b a)  SH XH mov  S ld  lit j  ;c
+
+( Permutations are more involved!)
+code swap  ( a b - b a)     T  X mov   S  T mov   X  S mov
+                           TH XH mov  SH TH mov  XH SH mov  ret  ;c
+
+: nip   ( a b - b)      swap drop ;
+: tuck  ( a b - b a b)  swap over ;
+
+( Return stack.)
+( XXX This is experimental, and probably won't survive. I'm likelier to use
+  *another* stack - pointed to by AP - aka FSR1 - instead.)
+
+code >r
+   TOSU ) dpush  TOSH ) dpush  TOSL ) dpush  ( save ra)
+   T 3 + TOSL ) mov  TH 3 + TOSH ) mov  ( move D stack top to R stack top)
+   push
+   TOSL ) dpop  TOSH ) dpop  TOSU ) dpop  ( restore ra)
+   1pop j  ;c
+
+code r>
+   TOSU ) dpush  TOSH ) dpush  TOSL ) dpush  ( save ra)
+   pop
+   TOSL ) X 3 + mov  TOSH ) XH 3 + mov  ( move top of R stack to scratch)
+   TOSL ) dpop  TOSH ) dpop  TOSU ) dpop  ( restore ra)
+   1push j  ( make scratch new top)  ;c
+
+code r@
+   TOSU ) dpush  TOSH ) dpush  TOSL ) dpush  ( save ra)
+   pop
+   TOSL ) X 3 + mov  TOSH ) XH 3 + mov  ( move top of R stack to scratch)
+   push
+   TOSL ) dpop  TOSH ) dpop  TOSU ) dpop  ( restore ra)
+   1push j  ( make scratch new top)  ;c
+
+( These definitions are from fig-FORTH.)
+: rot   ( a b c - b c a)  >r swap  r> swap ;
+: -rot  ( a b c - c a b)  swap >r  swap r> ;
+
+( Literals test.)
+: lits  34 f00 -23 -4fa ;
+
+( R stack test.)
+: rr  1122 >r r@ r>  r@ ( lo 16 of return addr) ;
+
+
+( Once we figure out how this should work, we can put it into chat.)
+
+( XXX except for the uses of 0 ,z to hold temp values, z could be used as
+  the data ptr instead of x; then we wouldn't need to copy the ptrs back
+  and forth.)
+
+label trampoline
+   ( Host has put SP into DP. We need to move it to SP.)
+   DP ) SP ) movw
+
+   ( Since current PIC18-Q devices max out at 128 Ki of flash, we can fit
+     the PC into one stack slot by shifting it *right* one bit. While
+     setting the latches for the indirect call, we pop the PC off the stack
+     and shift it *left* one bit.)
+
+   0 ( C) STATUS ) bclr  ( clear carry)
+   T rlc  TH w rlc  PCLATH ) st  PCLATU ) clr  PCLATU ) rlc
+   T ld  2 SP adda  callw  ( execute the target word)
+
+   ( Let's push STATUS. It's helpful to see how code affects the STATUS bits.)
+   STATUS ) X mov  XH clr  1push c
+
+   ( Before returning to chat, move SP back to DP, so host can read it back.)
+   SP ) DP ) movw  ret  ;c
+
+__host
+
+variable .STATUS   | --    nTO   nPD   N     OV    Z     DC    C
+: .status  .STATUS @  binary  <# 4# char _ hold # #> type  2sp ;
+
+-: radix preserve
+   cr  ." N_VZHC    SP"
+       (  0_1111  0123  )
+   cr    .status
+                .SP .r ;
+
+: forth-regs  [ #] is .regs ;  forth-regs
+
+: rx  ( addr)  ( execute target word)
+   ?chat
+   u2/  stack>  \m trampoline runwait  stack<
+   .STATUS !  .regs ;
+
+now rx is remote
+
+__meta
