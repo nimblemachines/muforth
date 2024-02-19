@@ -8,12 +8,6 @@ loading PIC18 assembler
 
 hex
 
-( Support for inline asm in any colon word.)
-compiler
-: asm{   __inline-asm ;  ( start assembler)
-: }      ] ;  ( exit assembler mode and restart colon compiler)
-forth
-
 ( Debug)
 : _     char _ hold ;
 : ####  # # # # ;
@@ -41,9 +35,10 @@ forth
    error" imm value out of range" ;
 
 :  i7  ( imm op - op')    7 imm ;
-:  i8  ( imm op - op')    8 imm ;
 : i12  ( imm op - op')  #12 imm ;
 
+( For byte literals, don't check whether they fit. Just truncate them.)
+:  i8  ( imm op - op')  swap  0ff and  or ;
 
 ( Zero ops.)
 forth
@@ -57,26 +52,15 @@ assembler
 0006 0op  pop      ( dec STKPTR)
 0007 0op  daw      ( decimal adjust w)
 
-( XXX rather than "tbl" why not "pm" as a prefix? These operate on program
-  memory. Their use for "table" operations is incidental. And what do
-  tables have to do with writing to flash?)
+0008 0op  prog@   ( tblrd*)    ( read program memory)
+0009 0op  prog@+  ( tblrd*+)   ( read program memory, post incr)
+000a 0op  prog@-  ( tblrd*-)   ( read program memory, post decr)
+000b 0op  prog+@  ( tblrd+*)   ( read program memory, pre incr)
 
-( Or how about just "p"? This is how we use it in the flash programming code.)
-
-( XXX I think I prefer "pm". It suggests "program memory", not just
-  "pointer".)
-
-( XXX or mem? prog? progmem?)
-
-0008 0op  p@   ( tblrd*)    ( read program memory)
-0009 0op  p@+  ( tblrd*+)   ( read program memory, post incr)
-000a 0op  p@-  ( tblrd*-)   ( read program memory, post decr)
-000b 0op  p+@  ( tblrd+*)   ( read program memory, pre incr)
-
-000c 0op  p!   ( tblwt*)    ( write program memory)
-000d 0op  p!+  ( tblwt*+)   ( write program memory, post incr)
-000e 0op  p!-  ( tblwt*-)   ( write program memory, post decr)
-000f 0op  p+!  ( tblwt+*)   ( write program memory, pre incr)
+000c 0op  prog!   ( tblwt*)    ( write program memory)
+000d 0op  prog!+  ( tblwt*+)   ( write program memory, post incr)
+000e 0op  prog!-  ( tblwt*-)   ( write program memory, post decr)
+000f 0op  prog+!  ( tblwt+*)   ( write program memory, pre incr)
 
 0010 0op  iret       ( return from interrupt; restore from stack)
 0011 0op  iret.s     ( return from interrupt; restore from shadow regs)
@@ -130,38 +114,42 @@ forth
    dup >f8  swap >bank  current-bank @ =  if ^ then
    warn" address doesn't match current bank setting" ;
 
-( Check that an address is a valid stack - z - offset.)
+( Check that an address is a valid stack offset.)
 .ifdef xinst
-: ?zoffset  ( f - f8)
+: ?sp-offset  ( f - f8)
    dup 060 u< if ^ then  ( ok)
-   error" z offset out of range" ;
+   error" stack offset out of range" ;
 .else
-: ?zoffset  ( f - f8)
-   error" z offset only available when XINST set" ;
+: ?sp-offset  ( f - f8)
+   error" stack offset only available when XINST set" ;
 .then
 
 ( @ram is always the beginning of the access ram bank. Likewise, STATUS is
   always in the access i/o bank.)
 
-: within-access-ram?  ( f - within?)  @ram             [ @ram 060 + #]              within ;
-: within-access-io?   ( f - within?)  [ \eq STATUS >bank dup  060 + #]  [ 100 + #]  within ;
+: access-ram?  ( f - within?)  @ram             [ @ram 060 + #]              within ;
+: access-io?   ( f - within?)  [ \eq STATUS >bank dup  060 + #]  [ 100 + #]  within ;
 
 ( Check that an address is a valid "access bank" address. Return offset.)
 : ?access  ( f - f8)
    dup >f8  swap
 .ifdef xinst
-   dup within-access-ram? if error" access ram inaccessible when XINST set" then
+   dup access-ram? if error" access ram inaccessible when XINST set" then
 .else
-   dup within-access-ram? if drop ^ then  ( ok)
+   dup access-ram? if drop ^ then  ( ok)
 .then
-   dup within-access-io? if drop ^ then  ( ok)
+   dup access-io? if drop ^ then  ( ok)
    error" invalid access bank address" ;
 
 ( Check that address given is *only* an 8 bit offset.)
 : ?f8   dup >bank if  error" more than 8 bits in f"  then ;
 
+( Microchip uses an offset in square brackets - "[n]" - to designate a
+  value on a stack, using FSR2 as the stack pointer. This requires the
+  XINST config bit to be set.)
+
 assembler
-: ,z   ( offset - bits)  ( "stack offset")  ?zoffset ;         ( clear "a" bit)
+:  ]   ( offset - bits)  ( "stack offset")  ?sp-offset ;       ( clear "a" bit)
 :  )   ( f      - bits)  ( "access bank")   ?access ;          ( clear "a" bit)
 : b)   ( f      - bits)  ( "banked")        ?bank  0100 or ;   ( set "a" bit)
 ( XXX / or // for banked?)
@@ -173,8 +161,8 @@ assembler
 -- : !    ( f - bits)  ( "store to f")  ?f8     0200 or ;  ( set "d" bit)
 : w    ( f - bits)  ( "store to w")  ?f8     0200 or ;  ( set "!d" bit)
 
-0200  afop mul   ( mulwf           PRODH:PRODL = w * f)
-0400 dafop dec   ( decf     DNVCZ  f/w = f - 1)
+0200  afop mul   ( mulwf)  (        PRODH:PRODL = w * f)
+0400 dafop dec   ( decf)   ( DNVCZ  f/w = f - 1)
 forth
 
 : i8op  constant  does> @  ( imm op)  i8  op, ;
@@ -239,14 +227,14 @@ forth
 
 : bitop   constant does> @  ( bit# f op)  9 imm  swap 7 and 9 << or  op, ;
 assembler
-7000 bitop btog   (  btg            bit toggle f)
-8000 bitop bset   (  bsf            bit set f)
-9000 bitop bclr   (  bcf            bit clr f)
+7000 bitop btog   ( btg             bit toggle f)
+8000 bitop bset   ( bsf             bit set f)
+9000 bitop bclr   ( bcf             bit clr f)
 
 ( XXX bset? bclr?  what about the skip?)
 ( XXX somehow interface these with the control structure words)
-a000 bitop btstss  (  btfss         bit test, skip set)
-b000 bitop btstsc  (  btfsc         bit test, skip clr)
+a000 bitop btstss  ( btfss          bit test, skip set)
+b000 bitop btstsc  ( btfsc          bit test, skip clr)
 
 ( XXX need movffl)
 : movff   ( fsrc fdest)  swap  c000 i12 op,  f000 i12 op, ;
@@ -286,21 +274,27 @@ forth
 : ljmp
    constant does> @  ( dest op)  over u2/ 0ff and or op,  9 u>>  f000 i12 op, ;
 
-( For load index - FSR - registers, the high 4 bits are in the first
-  word; the low 8 or 10 bits - it depends whether BSR is 4 bits or 6 - are
-  in the extension.)
+( If reg is not a valid FSR address, we get it back as the index. This is
+  useful for addulnk and subulnk.)
 
-: ldix
-   constant does> @  ( offset op)
-   over  [ #bsr-bits 4 + #]  u>> or op,
-         [ #bsr-bits 4 + ones #] and  f000 or op, ;
+: fsr>index  ( reg - n)
+   dup \eq FSR0 = if  drop 0 ^  then
+   dup \eq FSR1 = if  drop 1 ^  then
+   dup \eq FSR2 = if  drop 2 ^  then
+   ( return reg unchanged) ;
+
+( For FSRs - file select registers - which we are going to rename "address"
+  registers - the high 4 bits are in the first word; the low 8 or 10 bits -
+  it depends whether BSR is 4 bits or 6 - are in the extension.)
 
 assembler
+: lda  ( offset reg)  ( lfsr, which we call "load address")
+   fsr>index 4 <<  ee00 or
+   over [ #bsr-bits 4 +      #] u>>  0f and  or op,
+        [ #bsr-bits 4 + ones #] and  f000 or op, ;
+
 ec00 ljmp call
 ed00 ljmp call.s  ( save W, STATUS, BSR in shadow regs.)
-ee00 ldix ldx   ( load X, aka FSR0)
-ee10 ldix ldy   ( load Y, aka FSR1)
-ee20 ldix ldz   ( load Z, aka FSR2)
 ef00 ljmp jmp
 
 ( Smart call and jump)
@@ -322,24 +316,21 @@ forth
   useful to assembler and Forth hackers too.)
 
 ( XXX should we check if imm < 0 and do sub automagically?)
-: addix  constant does> @  ( imm op)  6 imm  op, ;
+: add-a  constant does> @  ( imm reg op)  swap fsr>index 6 << or  6 imm  op, ;
+
 assembler
-0014 0op callw      ( push pc + 2; pcl = w, pch = pclath, pcu = pclatu)
+0014 0op callw       ( push pc + 2; pcl = w, pch = pclath, pcu = pclatu)
 
-e800 addix addx     ( addfsr    add literal to fsr 0)
-e840 addix addy     ( addfsr    add literal to fsr 1)
-e880 addix addz     ( addfsr    add literal to fsr 2)
-e8c0 addix addzret  ( addulnk   add literal to fsr 2 and return)
+e800 add-a adda      ( addfsr) ( add literal to fsr)
+: addulnk  3 \a adda ;         ( add literal to fsr 2 and return)
 
-e900 addix subx     ( subfsr    sub literal from fsr 0)
-e940 addix suby     ( subfsr    sub literal from fsr 1)
-e980 addix subz     ( subfsr    sub literal from fsr 2)
-e9c0 addix subzret  ( subulnk   sub literal from fsr 2 and return)
+e900 add-a suba      ( subfsr) ( sub literal from fsr)
+: subulnk  3 \a suba ;         ( sub literal from fsr 2 and return)
 
-ea00 i8op pushi     ( pushl     store lit at FSR2; dec FSR2
-                                ie, post-decrement)
+ea00 i8op pushi      ( pushl)  ( store lit at FSR2; dec FSR2
+                                 ie, post-decrement)
 
-( In movsf and movss, the z offsets are added to FSR2)
+( In movsf and movss, the s offsets are added to FSR2)
 : movsf   ( ssrc fdest)  swap  eb00  i7 op,  f000 i12 op, ;
 : movss   ( ssrc sdest)  swap  eb80  i7 op,  f000  i7 op, ;
 forth

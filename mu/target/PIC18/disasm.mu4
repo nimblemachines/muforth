@@ -27,8 +27,10 @@ compiler
 : multi  ( - src)  compile (match)  \ if        ;  ( doesn't print op)
 forth
 
-: label?  ( addr - 0 | 'link -1)  .labels.  find-constant ;
-: sfr?    ( addr - 0 | 'link -1)  .equates. find-constant ;
+: label?   ( addr - 0 | 'link -1)  .labels.         find-constant ;
+: sfr?     ( addr - 0 | 'link -1)  .equates.        find-constant ;
+: target?  ( addr - 0 | 'link -1)  .target-runtime. find-constant-chained ;
+
 
 : .name   ( 'link)  link>name type ;
 
@@ -38,7 +40,7 @@ forth
 ( Standard ways of printing different "types".)
 : .udec   radix preserve  decimal  (u.) type ;
 : .hex    radix preserve  hex       (.) type ;
-: .h12    radix preserve  hex  <#  # # #  #> type ;
+: .h12    dup 0fff and  .hex ;
 
 ( Set and print the current bank address.)
 : .bank   ( op - op)  dup [ #bsr-bits ones #] and  8 <<
@@ -47,13 +49,34 @@ forth
 ( Print a data address. Should really be .hex or .h16.)
 : .da     dup sfr? if  nip .name ^  then  .hex ;
 
-: .imm6   ( op - op)  dup  03f and  .h8 ;
-: .imm8   ( op - op)  dup  0ff and  .h8 ;
-: .nop    ( op - op)  dup 0fff and  .h12 ;
+: .imm6   ( op - op)  dup  03f and  .hex ;
+: .imm8   ( op - op)  dup  0ff and  .hex ;
+: .nop    ( op - op)  .h12 ;
 
-: .zoff   ( zoff)          07f and  .hex  ."  ,z" ;
+here  \eq FSR0 ,  \eq FSR1 ,  \eq FSR2 ,
+: >fsr  ( index)  cells [ #] + @ ;
 
-: .access-ram  .ifdef xinst  .zoff  .else  @ram +  .da  .then ;
+: ?fsr  ( da)
+   sfr? if  .name ^  then
+   error" Weird. FSR not found in equates." ;
+
+: .fsr  ( index)  >fsr ?fsr ;
+
+: .adda   ( op - op)  dup 6 u>> 3 and  .fsr space  .imm6 ;
+
+( This is a defer'd word so that we can change how the stack offset is
+  displayed. Since FSRs can only be used to implement an empty descending
+  stack - where the FSR points to the byte *below* the last byte pushed -
+  it can be helpful to adjust the offset here and in the assembler so that
+  it's easier to think about.
+
+  However, by default we simply show the offset that's encoded in the
+  instruction. The Microchip datasheet suggests showing this as "[n]".)
+
+defer .sp-off
+-: ( sp-off)  07f and  ." ["  .hex  ." ]" ;  is .sp-off  ( default)
+
+: .access-ram  .ifdef xinst  .sp-off  .else  @ram +  .da  .then ;
 : .access-io   [ \eq STATUS >bank #] +  .da ;
 
 ( Print f8 as "access bank" address.)
@@ -83,9 +106,9 @@ forth
 
 : .movff   dup .h12 space  cell* .h12 ;
 
-( Extended instructions; "s" is 7 bit offset from fsr2, aka z)
-: .movsf   dup .zoff  cell* .h12 ;
-: .movss   dup .zoff  cell* .zoff ;
+( Extended instructions; "s" is 7 bit offset from fsr2, aka sp)
+: .movsf   dup .sp-off  cell* .h12 ;
+: .movss   dup .sp-off  cell* .sp-off ;
 
 : >offset  ( op #bits - op offset)
    1- push  dup  r@ ones and  ( op unsigned-bits)
@@ -93,7 +116,10 @@ forth
 
 ( XXX .haddr might print too many digits!)
 : .dest  ( op #bits - op)
-   >offset  p @ +  dup ea !  dup label? if  nip .name ^  then  .haddr ;
+   >offset  p @ +  dup ea !
+   dup label?  if  nip .name ^  then
+   dup target? if  nip .name ^  then
+   .haddr ;
 
 : .rjmp   #11 .dest ;
 
@@ -108,7 +134,8 @@ forth
 
 : .ljmp  ( op - op)   dup 0ff and  ( low)  cell* 0fff and  8 << +  2*  .dest ;
 
-: .ldix  ( op - op)
+: .lda  ( op - op)
+   dup 4 u>> 3 and  .fsr space
    dup 0f and  ( high)  [ #bsr-bits 4 + #] <<
    cell* [ #bsr-bits 4 + ones #] and  +  .da ;
 
@@ -123,15 +150,15 @@ forth
 ..      0006 exact pop
 ..      0007 exact daw
 
-..      0008 exact p@   ( tblrd*)    ( read program memory)
-..      0009 exact p@+  ( tblrd*+)   ( read program memory, post incr)
-..      000a exact p@-  ( tblrd*-)   ( read program memory, post decr)
-..      000b exact p+@  ( tblrd+*)   ( read program memory, pre incr)
+..      0008 exact prog@   ( tblrd*)    ( read program memory)
+..      0009 exact prog@+  ( tblrd*+)   ( read program memory, post incr)
+..      000a exact prog@-  ( tblrd*-)   ( read program memory, post decr)
+..      000b exact prog+@  ( tblrd+*)   ( read program memory, pre incr)
 
-..      000c exact p!   ( tblwt*)    ( write program memory)
-..      000d exact p!+  ( tblwt*+)   ( write program memory, post incr)
-..      000e exact p!-  ( tblwt*-)   ( write program memory, post decr)
-..      000f exact p+!  ( tblwt+*)   ( write program memory, pre incr)
+..      000c exact prog!   ( tblwt*)    ( write program memory)
+..      000d exact prog!+  ( tblwt*+)   ( write program memory, post incr)
+..      000e exact prog!-  ( tblwt*-)   ( write program memory, post decr)
+..      000f exact prog+!  ( tblwt+*)   ( write program memory, pre incr)
 
 ..      0010 exact iret       ( return from interrupt; restore from stack)
 ..      0011 exact iret.s     ( return from interrupt; restore from shadow regs)
@@ -215,15 +242,11 @@ forth
 
 ..      0014 exact callw
 
-.. ffc0 e800 match addx     .imm6
-.. ffc0 e840 match addy     .imm6
-.. ffc0 e880 match addz     .imm6
-.. ffc0 e8c0 match addzret  .imm6
+.. ff00 e800 match adda     .adda
+.. ffc0 e8c0 match addulnk  .imm6
 
-.. ffc0 e900 match subx     .imm6
-.. ffc0 e940 match suby     .imm6
-.. ffc0 e980 match subz     .imm6
-.. ffc0 e9c0 match subzret  .imm6
+.. ff00 e900 match suba     .adda
+.. ffc0 e9c0 match subulnk  .imm6
 
 .. ff00 ea00 match pushi   .imm8
 
@@ -238,9 +261,7 @@ forth
 .. ff00 ec00 match call     .ljmp
 .. ff00 ed00 match call.s   .ljmp
 
-.. fff0 ee00 match ldx   .ldix
-.. fff0 ee10 match ldy   .ldix
-.. fff0 ee20 match ldz   .ldix
+.. ffc0 ee00 match lda   .lda
 
 .. ff00 ef00 match jmp   .ljmp
 
@@ -257,6 +278,9 @@ forth
 
 ( The workhorse.)
 : 1dis  ( a)
+   dup target? if
+      over _addr .nesting space  ." target " .name
+   then
    dup label? if
       over _addr .nesting space  ." label " .name
    then
