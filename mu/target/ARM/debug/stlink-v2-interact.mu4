@@ -7,7 +7,7 @@ loading ST-LINK debug (interact)
 hex
 
 ( Load the flash programming routines into ram.)
-.ifndef #flashbuf
+.ndef #flashbuf  .ndef no-flash-programming  .and .if
    .ifdef /page  ( chip has flash with uniform page size)
       ld target/ARM/stm32/flash-programming.mu4
    .else  ( chip has sectored flash)
@@ -32,19 +32,34 @@ hex
         2 = if  ^  then  ( debug mode)
    error" Couldn't put ST-LINK into debug mode." ;
 
-( Copy the flash programming routines to RAM when we connect.)
-: st.hello  ( - chunk-size)
-   st.connect  dbg.halt
-   [ h @  ram  @flash-routines image+  swap h ! #]  ( address in ram image)
-   @flash-routines #flash-routines st.write  ( copy code to ram)
-   #flashbuf ;  ( size of RAM flash buffer)
-
 : st.get-status  ( - sp pc)
    begin  dbg.core-state  80 xor  until
    #13 dbg.reg@  #15 dbg.reg@ ;
 
 : st.run  ( pc sp)
    #13 dbg.reg!  #15 dbg.reg!  dbg.run ;
+
+.ifdef no-flash-programming
+
+: st.hello  ( - bogus-chunk-size)
+   st.connect  dbg.halt
+   ( We don't have flash routines yet; return bogus chunk size)
+   1 Ki ;
+
+( No-op flash routines.)
+: st.flash-begin ;
+: st.flash-end ;
+: st.erase  ( a | sector#)  drop ;
+: st.program  ( buf a u)  drop 2drop ;
+
+.else
+
+( Copy the flash programming routines to RAM when we connect.)
+: st.hello  ( - chunk-size)
+   st.connect  dbg.halt
+   [ h @  ram  @flash-routines image+  swap h ! #]  ( address in ram image)
+   @flash-routines #flash-routines st.write  ( copy code to ram)
+   #flashbuf ;  ( size of RAM flash buffer)
 
 ( Write unlock keys to FLASH_KEYR.)
 : st.flash-begin
@@ -64,6 +79,8 @@ hex
    push ( u)
    swap @flashbuf r@  ( a buf flashbuf u)  st.write  ( copy chunk to target ram)
    @flashbuf swap pop  ( flashbuf a u)  \m stm32-flash-chunk rx ;
+
+.then  ( def no-flash-programming)
 
 : jtag
    chat-via  st.hello  st.get-status  st.run  st.read  st.write
