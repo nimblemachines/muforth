@@ -58,10 +58,14 @@ forth
 : asm-regs   [ #] is .reg ;   asm-regs
 
 
-( Any chip with sectored flash probably has lots of RAM, so let's use a
-  4 Ki ram flash buffer.)
+.ifndef #flashbuf
+   z"
 
-4 Ki constant #flashbuf
+Your chip is uses indices rather than addresses to specify the block of
+flash to erase. You need to define #flashbuf - the size of the RAM buffer
+used during flash programming. It should be no smaller than 256 bytes, and
+must be no bigger than the smallest sector or page in the flash."  abort
+.then
 
 ( Leave room for 64 cells on sp stack; room for 256 bytes of flash
   programming code; round down to multiple of 256, then leave #flashbuf
@@ -78,18 +82,27 @@ ram  here  ( we are going to return here after compiling the flash routines.)
 
 @flash-routines goto  ( starting address of flash routines)
 
-label unlock
-   FLASH_ACR fr lit
+label stm32-flash-unlock
+   FLASH_CR >iobase fr lit
    x w dpop2   FLASH_KEYR >io fr w str   FLASH_KEYR >io fr x str
    0 w movs    FLASH_CR   >io fr w str  ( clear any program/erase bits)
    lr bx  ;c
    pool,
 
-label lock
-   80 ( LOCK) w movs
-   FLASH_CR 3 + >io fr w strb
+label stm32-flash-lock
+   0          w movs   FLASH_CR     >io fr w str  ( clear any program/erase bits)
+   80 ( LOCK) w movs   FLASH_CR 3 + >io fr w strb  ( lock CR)
    lr bx  ;c
 
+( w is flash sector to erase)
+label stm32-flash-erase  ( sector#)
+   FLASH_SR >io fr w ldrh   FLASH_SR >io fr w strh  ( clear any error bits)
+   w dpop   3 w w lsls  ( shift sector# up 3 bits)
+   2 ( SER)  w w adds   FLASH_CR     >io fr w str  ( set SER + sector number)
+   1 ( STRT) w movs     FLASH_CR 2 + >io fr w strb ( set STRT bit)
+   ( fall thru)  ;c
+
+( Wait until flash command finishes.)
 label -busy
    x w rpush2
    1 ( BSY) w movs
@@ -97,31 +110,47 @@ label -busy
    x w rpop2
    lr bx  ;c
 
-( w is flash sector to erase)
-label stm32-erase  ( sector#)
-   lr rpush
-   w dpop   3 w w lsls  ( shift sector# up 3 bits)
-   2 ( SER)  w w adds   FLASH_CR     >io fr w str  ( set SER + sector number)
-   1 ( STRT) w movs     FLASH_CR 2 + >io fr w strb ( set STRT bit)
-   -busy bl
-   pc rpop  ;c
+.ifdef stm32c031
 
 ( w is byte count, x is flash address,
   y is ram buffer address, z is offset.)
-label stm32-flash-chunk  ( buf a u)
+label stm32-flash-program  ( buf a u)
    lr rpush
+   FLASH_SR >io fr w ldrh   FLASH_SR >io fr w strh  ( clear any error bits)
+   y x w dpop3
+   1 ( PG) z movs   FLASH_CR >io fr z str  ( set PG bit)
+   0 z movs  ( offset)
+   begin
+      ( unlike paged flash, we program by double-words!)
+      z y top ldr   z x top str   4 z z adds
+      z y top ldr   z x top str   4 z z adds
+      -busy bl
+      w z cmp
+   u>= until
+   pc rpop  ;c
+
+.then  ( def stm32c031)
+
+.ifdef stm32f407
+
+( w is byte count, x is flash address,
+  y is ram buffer address, z is offset.)
+label stm32-flash-program  ( buf a u)
+   lr rpush
+   FLASH_SR >io fr w ldrh   FLASH_SR >io fr w strh  ( clear any error bits)
    y x w dpop3
    1 ( PG)    z movs   FLASH_CR    >io fr z str  ( set PG bit)
    2 ( psize) z movs   FLASH_CR 1+ >io fr z strb ( psize=2; program by 32bit word)
    0 z movs  ( offset)
    begin
-      ( unlike paged flash, we can program by words!)
-      z y top ldr   z x top str
-      4 z z adds
+      ( unlike paged flash, we program by words!)
+      z y top ldr   z x top str   4 z z adds
       -busy bl
       w z cmp
    u>= until
    pc rpop  ;c
+
+.then  ( def stm32f407)
 
 .ifdef testing
 

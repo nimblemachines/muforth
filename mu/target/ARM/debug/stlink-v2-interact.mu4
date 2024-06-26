@@ -7,12 +7,11 @@ loading ST-LINK debug (interact)
 hex
 
 ( Load the flash programming routines into ram.)
-.ndef #flashbuf  .ndef no-flash-programming  .and .if
-   .ifdef /page  ( chip has flash with uniform page size)
-      ld target/ARM/stm32/flash-programming.mu4
-   .else  ( chip has sectored flash)
-      ld target/ARM/stm32/flash-programming-sectored.mu4
-   .then
+
+.equates. .contains FLASH_AR .if  ( chip uses *addresses* for erasing flash)
+   ld target/ARM/stm32/flash-programming.mu4
+.else  ( chip uses sector/page *indexes* for erasing flash)
+   ld target/ARM/stm32/flash-programming-sectored.mu4
 .then
 
 ( Skip the rest of the file if no ST-LINK was found.)
@@ -59,26 +58,28 @@ hex
    st.connect  dbg.halt
    [ h @  ram  @flash-routines image+  swap h ! #]  ( address in ram image)
    @flash-routines #flash-routines st.write  ( copy code to ram)
-   #flashbuf ;  ( size of RAM flash buffer)
+   #flashbuf ;  ( return size of RAM flash buffer as chunk-size)
 
 ( Write unlock keys to FLASH_KEYR.)
 : st.flash-begin
-   cdef_89ab  4567_0123  \m unlock rx ;
+   cdef_89ab  4567_0123  \m stm32-flash-unlock rx ;
 
 ( Re-lock flash controller registers.)
-: st.flash-end   \m lock rx ;
+: st.flash-end   \m stm32-flash-lock rx ;
 
 ( stm32-erase takes a flash address for uniform page devices, and a sector
   number, for sectored devices. target/ARM/v6-m/flash.mu4 has already
   figured this out for us.)
 
-: st.erase  ( a | sector#)  \m stm32-erase rx ;
+: st.erase  ( a | sector#)  \m stm32-flash-erase rx ;
 
 ( Copy buf contents to ram buffer, then write to flash from there.)
 : st.program  ( buf a u)
    push ( u)
-   swap @flashbuf r@  ( a buf flashbuf u)  st.write  ( copy chunk to target ram)
-   @flashbuf swap pop  ( flashbuf a u)  \m stm32-flash-chunk rx ;
+   ( copy chunk to target ram, aligning copied data by 8 for STM32C parts)
+   swap @flashbuf r@  ( a buf flashbuf u)  8 aligned-by  st.write
+   ( program chunk into flash)
+   @flashbuf swap pop  ( flashbuf a u)  \m stm32-flash-program rx ;
 
 .then  ( def no-flash-programming)
 

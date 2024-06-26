@@ -13,11 +13,37 @@ loading STM32C031x6 chip
 "2000_0000 constant @ram
      12 Ki constant #ram
 
-      2 Ki constant #bl-ram  ( ram consumed by bootloader)
+      -- 2 Ki constant #bl-ram  ( ram consumed by bootloader)
 
-( Flash programming doesn't use FLASH_AR; currently unsupported.)
--d no-flash-programming
-      1 Ki constant /page  ( erase page size)
+( Programming the C031 flash is like programming the F407, except that the
+  C031 has a uniform sector/page size of 2 KiB.)
+
+( Given a target flash address, return a sector# and true if address is on
+  a sector boundary, and return false otherwise.)
+
+( XXX should this be called map-flash-sector ?)
+: lookup-flash-sector  ( 'target - sector# -1 | 0)
+   @flash -  2 Ki /mod ( mod quot)
+   swap 0= if  -1 ^  then  drop 0  ;
+
+( We need to define #flashbuf for the chip. Should be at least 256 but no
+  more than 2 Ki, the page size. Since we don't have a lot of RAM on the
+  chip, let's keep it small.)
+
+256 constant #flashbuf
+
+.ifdef testing
+
+: test-sector  ( 'target)
+   dup lookup-flash-sector  if  swap  cr  u. ." sector " u. ^ then  drop ;
+
+( Test every 256 byte chunk of the flash to see where the sector boundaries
+  are. Make sure we get the correct values!)
+
+: test-sectors
+   @flash #flash over + swap do  i test-sector  256 +loop ;
+
+.then
 
 -- load peripheral equates etc
 ld target/ARM/stm32/c0/31_6-equates.mu4
