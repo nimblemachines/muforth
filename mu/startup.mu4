@@ -88,7 +88,7 @@ here  ] ^ [
   chain as its initial value.)
 
 token current  .forth.  (unlinked-name) show
-   <does> addr, ( ip of empty does> clause)
+   <does> heap> addr, ( ip of empty does> clause)  ( XXX HEAP)
    .forth. ,  ( initial value)
 
 ( With  current  defined we can now create the word  new  which we will use
@@ -292,7 +292,7 @@ forth
   word is common.)
 
 runtime
-: jump  ( which)  addrs pop + addr@ execute ;
+: jump  ( which)  addrs pop + addr@ >heap execute ;  ( XXX HEAP)
 forth
 
 
@@ -301,7 +301,7 @@ forth
 
 ( Resolve a forward or backward jump, from src to dest.)
 ( When using absolute branch addresses, this is easy: just store dest at src.)
-: <resolve  ( dest src)  addr! ;
+: <resolve  ( dest src)  swap heap> swap  addr! ;  ( XXX HEAP)
 : >resolve  ( src dest)  swap <resolve ;
 
 compiler
@@ -443,16 +443,15 @@ forth
   We make the variable by hand, since we are about to create the  variable
   and  constant  defining words, but we don't have them yet!)
 
-current body> >ip addr@  ( re-use current's IP pointer to empty does> body)
-
 new last-created  show
-   <does> addr, ( ip of empty does> clause)
+   <does>
+   current body> >ip addr@ addr,  ( re-use current's IP pointer to empty does> body)
    0 ,  ( initial value)
 
 ( does> fixes up the does ip of the last <does> word to point to the code
   after "does>" in the caller.)
 
-: does>  pop  last-created @  addr! ;
+: does>  pop heap>  last-created @  addr! ;  ( XXX HEAP)
 
 
 ( The underlying engine for all "create/does>" words. It allocates no data
@@ -712,7 +711,7 @@ variable fp    ( the "top" - most recently pushed - frame)
 
 : unlink   r>                 ( save return address)
            fp @ rp!  r> fp !  ( unlink frame)
-           r> execute         ( execute cleanup word)
+           r> >heap execute         ( execute cleanup word)  ( XXX HEAP)
            >r                 ( restore return address) ;
 
 create remove  ]  unlink ;    ( remove pushes IP when executed!)
@@ -731,7 +730,7 @@ variable cf   ( catch frame pointer)
    r>  addr@+  >r  ( fetch & skip following cfa)
         cf @  >r   ( push prev catch frame pointer)
    rp@  cf !       ( now point to this frame)
-   execute
+   >heap execute   ( XXX HEAP)
    r>  cf !        ( restore prev catch frame pointer)
    0 ;
 
@@ -805,7 +804,7 @@ variable unwinding
 -- Cleanup on return
 -- -----------------------------------------------------------------------
 : cleanup
-   r> ( ra)   r> ( value)  r>  ( cfa) execute   >r ( ra) ;
+   r> ( ra)   r> ( value)  r>  ( cfa) >heap execute   >r ( ra) ;  ( XXX HEAP)
 
 ( Push value and following cfa to R stack; on exit or unwind, execute cfa
   with value on the stack.)
@@ -1084,7 +1083,7 @@ variable out-channel
 : <stdin   stdin reads  ;  <stdin  ( sanity)
 
 : >stdout  stdout writes ;
-: >stderr  stderr writes ;
+: >stderr  stderr writes ;  >stderr  ( sanity)
 
 : writes-file  ( fd)
    file-channel !  file-channel writes ;
@@ -1300,8 +1299,7 @@ forth
 : evaluate  ( a u)
    start addr-preserve  end addr-preserve  ( save input source)
    first addr-preserve           ( save our place in the input)
-   over first addr!
-   over start addr!  + end addr!
+   swap heap> dup first addr!  dup start addr!  + end addr!  ( XXX HEAP)
    interpret ;
 
 variable lines-read
@@ -1440,7 +1438,7 @@ forth
 
 ( Words that do something with each word being defined.)
 ( hook into new by rewriting its second addr!)
-: being-defined  constant  does> @  [ ' new addr+ addr+ #]  addr! ;
+: being-defined  constant  does> @ heap>  [ ' new addr+ addr+ #]  addr! ;  ( XXX HEAP)
 
 ( To warn of re-defining a word.)
 -: ( a u)  2dup current @ find if  warning-text
@@ -1518,7 +1516,7 @@ being-defined -v  ( be verbose)
 
 : forall-words  ( i*x 'code 'link - j*x)
    2push
-   begin  pop addr@ =while  push  2r@ swap execute  until  pop  then
+   begin  pop addr@ =while  >heap  push  2r@ swap execute  until  pop  then  ( XXX HEAP)
    pop 2drop ;
 
 ( A word is hidden if its length byte is zero.)
@@ -1803,7 +1801,7 @@ ld lib/du-cached.mu4
    ( infinite loop, until error... )
 
 : warm
-   [ .runtime. chain' throw #] 'abort addr!
+   [ .runtime. chain' throw #] heap> 'abort addr!  ( XXX HEAP)
    decimal \ [
    -consumed +sep +case +color +radix +stack ( defaults - reset these how you like)
    info-text  banner  normal-text

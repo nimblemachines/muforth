@@ -93,7 +93,7 @@ void mu_stat_file()         /* C-string-name - mode-bits -1 | strerror 0 */
 {
     struct stat s;
     char pathbuf[PATH_MAX];
-    char *path = abs_path(pathbuf, PATH_MAX, (char *)TOP);
+    char *path = abs_path(pathbuf, PATH_MAX, (char *)UNHEAPIFY(TOP));
 
     if (path == NULL)
         return abort_zmsg("path too long");
@@ -117,7 +117,7 @@ void mu_create_file()       /* C-string-name - fd */
 {
     int fd;
     char pathbuf[PATH_MAX];
-    char *path = abs_path(pathbuf, PATH_MAX, (char *)TOP);
+    char *path = abs_path(pathbuf, PATH_MAX, (char *)UNHEAPIFY(TOP));
 
     if (path == NULL)
         return abort_zmsg("path too long");
@@ -133,7 +133,7 @@ static void mu_open_file()     /* C-string-name flags - fd */
 {
     int fd;
     char pathbuf[PATH_MAX];
-    char *path = abs_path(pathbuf, PATH_MAX, (char *)ST1);
+    char *path = abs_path(pathbuf, PATH_MAX, (char *)UNHEAPIFY(ST1));
 
     if (path == NULL)
         return abort_zmsg("path too long");
@@ -219,7 +219,7 @@ void mu_read_file()     /* fd - addr len */
     }
 
     DROP(-1);
-    ST1 = (addr) p;
+    ST1 = HEAPIFY(p);
     TOP = s.st_size;
 }
 
@@ -256,7 +256,7 @@ void write_carefully(int fd, void *buffer, size_t len)
 void mu_read()      /* fd buffer len -- #read */
 {
     int fd = ST2;
-    void *buffer = (void *) ST1;
+    void *buffer = (void *)UNHEAPIFY(ST1);
     size_t len = TOP;
 
     DROP(2);
@@ -266,7 +266,7 @@ void mu_read()      /* fd buffer len -- #read */
 void mu_write()     /* fd buffer len */
 {
     int fd = ST2;
-    void *buffer = (void *) ST1;
+    void *buffer = (void *)UNHEAPIFY(ST1);
     size_t len = TOP;
 
     DROP(3);

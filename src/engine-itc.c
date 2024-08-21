@@ -48,13 +48,13 @@ void mu_execute()
 
     rp_saved = RP;
 
-    CALL((xt)POP);          /* pop stack and execute xt */
+    CALL((xt)POP_ADDR);     /* pop stack and execute xt */
     while (RP < rp_saved)
         CALL(*IP++);        /* do NEXT */
 }
 
-#define NEST      RPUSH((addr)IP)
-#define UNNEST    (IP = (xt *)RPOP)
+#define NEST      RPUSH_ADDR(IP)
+#define UNNEST    (IP = (xt *)RPOP_ADDR)
 
 /* The most important "word" of all: */
 static void mu_do_colon()
@@ -71,17 +71,18 @@ static void mu_do_does()
     PUSH_ADDR(W + 1);   /* push the address of the word's body */
 }
 
-void mu_set_colon_code() { PUSH_ADDR(mu_do_colon); mu_addr_comma(); }
-void mu_set_does_code()  { PUSH_ADDR(mu_do_does);  mu_addr_comma(); }
+/* Compile an xt into the dictionary. */
+/* XXX HEAP hack: conv addr to host address first */
+void mu_compile_comma()     { mu_heap_from(); mu_addr_comma(); }
+
+void mu_set_colon_code()    { PUSH_ADDR(mu_do_colon); mu_compile_comma(); }
+void mu_set_does_code()     { PUSH_ADDR(mu_do_does);  mu_compile_comma(); }
 
 /* Normal exit */
 void mu_runtime_exit()      { UNNEST; }
 
 /* Push an inline literal */
 void mu_runtime_lit_()      { PUSH(*(cell *)IP); IP += sizeof(cell)/sizeof(addr); }
-
-/* Compile an xt into the dictionary. */
-void mu_compile_comma()     { mu_addr_comma(); }
 
 /* Compile the following word */
 void mu_runtime_compile()   { PUSH_ADDR(*IP++); mu_compile_comma(); }

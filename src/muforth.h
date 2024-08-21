@@ -39,6 +39,16 @@ extern xt     W;    /* on entry, points to the current Forth word */
 /* Let's allocate 8MiB of heap, regardless of addr size. */
 #define HEAP_ADDRS      ((8 * 1024 * 1024) / sizeof(addr))
 
+extern intptr_t heap;   /* pointer to start of heap space, as an integer value */
+
+/*
+ * HEAPIFY turns a host address into a heap-relative address;
+ * UNHEAPIFY goes the other way, and casts to a (cell *) because that's
+ * almost always what we want.
+ */
+#define HEAPIFY(host_addr)              ((intptr_t)(host_addr) - heap)
+#define UNHEAPIFY(heap_addr)    (cell *)((intptr_t)(heap_addr) + heap)
+
 /* data and return stacks */
 /* NOTE: Even on 32-bit platforms the R stack is 64 bits wide! This makes
  * things _much_ simpler, at the expense of a bit more storage. */
@@ -61,14 +71,17 @@ extern cell rstack[];
 
 #define DROP(n)     (SP += (n))
 #define PUSH(v)     (*--SP = (cell)(v))
-#define PUSH_ADDR(v)    PUSH((addr)(v))
 #define POP         (*SP++)
+#define PUSH_ADDR(v)    PUSH(HEAPIFY(v))
+#define POP_ADDR        UNHEAPIFY(POP)
 
 /* Return stack */
 #define RTOP        (*RP)
 #define RDROP(n)    (RP += (n))
 #define RPUSH(n)    (*--RP = (cell)(n))
 #define RPOP        (*RP++)
+#define RPUSH_ADDR(n)   RPUSH(HEAPIFY(n))
+#define RPOP_ADDR       UNHEAPIFY(RPOP)
 
 /* This is the alignment of *addrs* in the heap, *not* cell-sized things! */
 #define ADDR_ALIGN_SIZE  sizeof(addr)

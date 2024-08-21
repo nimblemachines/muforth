@@ -18,7 +18,7 @@
  * Dictionary is kept addr-aligned. Addrs are the size of a machine
  * address: 32 bits on 32-bit machines, 64 bits on 64-bit machines.
  */
-       addr *heap;  /* pointer to start of heap space */
+intptr_t heap;      /* pointer (as an integer) to start of heap space */
 static addr *hp;    /* heap pointer: points to next free addr in heap space */
 
 /*
@@ -132,11 +132,14 @@ struct inm initial_runtime[] = {
     { NULL, NULL }
 };
 
-/* @heap pushes the heap origin address */
-void mu_at_heap()    { PUSH_ADDR(heap); }
+/* Convert heap-relative address to absolute host address. */
+void mu_heap_from() { TOP = (cell)UNHEAPIFY(TOP); }
+
+/* Convert absolute host address to heap-relative address. */
+void mu_to_heap()   { TOP = HEAPIFY(TOP); }
 
 /* #heap pushes the length of the heap in bytes. */
-void mu_size_heap()  { PUSH(HEAP_ADDRS * sizeof(addr)); }
+void mu_size_heap() { PUSH(HEAP_ADDRS * sizeof(addr)); }
 
 void mu_here()          /* push current _value_ of heap pointer */
 {
@@ -203,9 +206,9 @@ void mu_minus_case()  { match = strncasecmp; }
 /* find  ( a u chain - a u 0 | xt -1) */
 void mu_find()
 {
-    char *token = (char *) ST2;
+    char *token = (char *)UNHEAPIFY(ST2);
     int length = ST1;
-    addr **plink = (addr **)TOP;
+    addr **plink = (addr **)UNHEAPIFY(TOP);
 
     struct dict_entry *pde;
 
@@ -229,7 +232,7 @@ void mu_find()
 
             /* found: drop token, push code field address and true flag */
             DROP(1);
-            ST1 = (addr)&pde->code;
+            ST1 = HEAPIFY(&pde->code);
             TOP = -1;
             return;
         }
@@ -318,8 +321,8 @@ static addr **last_chain;
 /* (unlinked-name)  ( a u chain) */
 void mu_unlinked_name_()
 {
-    addr **plink = (addr **)TOP;
-    char *name = (char *)ST2;
+    addr **plink = (addr **)UNHEAPIFY(TOP);
+    char *name = (char *)UNHEAPIFY(ST2);
     int length = ST1;
 
     /* create new name & link onto front of chain, but don't change chain */
@@ -468,13 +471,13 @@ static void init_chain(addr **plink, addr **anchor_link, struct inm *pinm)
 
 static void allocate()
 {
-    heap = (addr *)calloc(HEAP_ADDRS, sizeof(addr));
+    heap = (intptr_t)calloc(HEAP_ADDRS, sizeof(addr));
 
-    if (heap == NULL)
+    if (heap == 0)
         die("couldn't allocate memory");
 
     /* init heap pointer */
-    hp = heap;
+    hp = (addr*)heap;
 }
 
 /*

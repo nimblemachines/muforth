@@ -195,7 +195,7 @@ static void muboot_compile_token()
     mu_find();
     if (POP)
     {
-        mu_addr_comma();
+        mu_compile_comma();
         return;
     }
     mu_complain();
@@ -259,8 +259,8 @@ void muboot_load_file()    /* c-string-name */
     fd = TOP;
     mu_read_file();
 
-    start = (char *)ST1;
-    end   = (char *)ST1 + TOP;
+    start = (char *)UNHEAPIFY(ST1);
+    end   = start + TOP;
     DROP(2);
 
     /* wait to reset these until just before we evaluate the new file */

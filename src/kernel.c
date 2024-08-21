@@ -80,17 +80,17 @@ void mu_addrs()        { TOP <<= ADDR_SHIFT; }
 void mu_addr_slash()   { TOP >>= ADDR_SHIFT; }  /* signed & flooring! */
 
 /* fetch and store character (really _byte_) values */
-void mu_cfetch()  { TOP = *(uint8_t *)TOP; }
-void mu_cstore()  { *(uint8_t *)TOP = ST1; DROP(2); }
+void mu_cfetch()  { TOP = *(uint8_t *)UNHEAPIFY(TOP); }
+void mu_cstore()  { *(uint8_t *)UNHEAPIFY(TOP) = ST1; DROP(2); }
 
 /* fetch and store cell values (64 bit) */
-void mu_fetch()       { TOP =  *(cell *)TOP; }
-void mu_store()       { *(cell *)TOP  = ST1; DROP(2); }
-void mu_plus_store()  { *(cell *)TOP += ST1; DROP(2); }
+void mu_fetch()       { TOP =  *UNHEAPIFY(TOP); }
+void mu_store()       { *UNHEAPIFY(TOP)  = ST1; DROP(2); }
+void mu_plus_store()  { *UNHEAPIFY(TOP) += ST1; DROP(2); }
 
 /* fetch and store addr values (32 or 64 bit) */
-void mu_addr_fetch()  { TOP =  *(addr *)TOP; }
-void mu_addr_store()  { *(addr *)TOP  = ST1; DROP(2); }
+void mu_addr_fetch()  { TOP =  *(addr *)UNHEAPIFY(TOP); }
+void mu_addr_store()  { *(addr *)UNHEAPIFY(TOP)  = ST1; DROP(2); }
 
 /* copy nth value (counting from 0) to top - ANS calls this "pick" */
 void mu_nth()    { TOP = SP[TOP+1]; }
@@ -119,9 +119,9 @@ void mu_sp_store()  { SP = (cell *)TOP; }           /* set stack pointer */
 #endif
 
 /* So we can do return-stack magic. */
-void mu_runtime_rp_store()       { RP  = (cell *)TOP; DROP(1); }
-void mu_runtime_rp_plus_store()  { RP += TOP; DROP(1); }    /* TOP is cell count! */
 void mu_runtime_rp_fetch()       { PUSH_ADDR(RP); }
+void mu_runtime_rp_store()       { RP  = UNHEAPIFY(TOP); DROP(1); }
+void mu_runtime_rp_plus_store()  { RP += TOP; DROP(1); }    /* TOP is cell count! */
 
 /*
  * We don't need a ustar, since single-length star and ustar yield the same
@@ -188,15 +188,16 @@ void mu_string_equal()   /* a1 len1 a2 len2 -- flag */
     if (ST2 != TOP)
         ST3 = 0;            /* unequal if lengths differ */
     else
-        ST3 = (memcmp((char *)ST3, (char *)ST1, TOP) == 0) ? -1 : 0;
+        ST3 = (memcmp((char *)UNHEAPIFY(ST3),
+                      (char *)UNHEAPIFY(ST1), TOP) == 0) ? -1 : 0;
 
     DROP(3);
 }
 
 void mu_cmove()  /* src dest count */
 {
-    void *src = (void *) ST2;
-    void *dest = (void *) ST1;
+    void *src = (void *)UNHEAPIFY(ST2);
+    void *dest = (void *)UNHEAPIFY(ST1);
     size_t count = TOP;
 
     memmove(dest, src, count);  /* allows overlapping strings */
@@ -206,7 +207,7 @@ void mu_cmove()  /* src dest count */
 /* Fill count bytes at dest with bytes equal to value. */
 void mu_fill()  /* dest count value */
 {
-    void *dest = (void *) ST2;
+    void *dest = (void *)UNHEAPIFY(ST2);
     size_t count = ST1;
     int value = TOP;
 
@@ -222,7 +223,7 @@ void mu_fill()  /* dest count value */
 /* stack: z" - z" count */
 void mu_zcount()
 {
-    int len = strlen((char *)TOP);
+    int len = strlen((char *)UNHEAPIFY(TOP));
     PUSH(len);
 }
 
