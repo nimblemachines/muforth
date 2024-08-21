@@ -16,7 +16,7 @@ static void push_forth_time_from_libc_time (struct tm *ptm, char *tz)
 {
     DROP(-8);
     TOP = strlen (tz);
-    ST1 = (addr) tz;
+    ST1 = HEAPIFY(tz);
     ST2 = ptm->tm_sec;
     ST3 = ptm->tm_min;
     SP[4] = ptm->tm_hour;
