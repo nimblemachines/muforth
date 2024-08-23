@@ -17,7 +17,7 @@
 
 int main(int argc, char *argv[])
 {
-    /* division type */
+    /* Division type */
     {
         int quot = -7 / 4;
         int rem  = -7 % 4;
@@ -40,13 +40,7 @@ int main(int argc, char *argv[])
             printf("#error \"Wow. Division is broken.\"\n");
     }
 
-    if (sizeof(intptr_t) == 4)
-        printf("#define MU_ADDR_32\n");
-    else if (sizeof(intptr_t) == 8)
-        printf("#define MU_ADDR_64\n");
-    else
-        printf("#error. What kind of weird machine is this, anyway?\n");
-
+    /* Endianness */
     {
         int mem;
         uint8_t *pb = (uint8_t *)&mem;

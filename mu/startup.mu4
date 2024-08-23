@@ -88,7 +88,7 @@ here  ] ^ [
   chain as its initial value.)
 
 token current  .forth.  (unlinked-name) show
-   <does> heap> addr, ( ip of empty does> clause)  ( XXX HEAP)
+   <does> , ( ip of empty does> clause)
    .forth. ,  ( initial value)
 
 ( With  current  defined we can now create the word  new  which we will use
@@ -247,12 +247,7 @@ forth
 : 1+   1 + ;  ( these are common)
 : 1-  -1 + ;
 
-( addrs are platform-specific - either 32 or 64 bits.)
-: addr   [ 1 addrs #] ;
-: addr+  [ addr #] + ;
-: addr-  [ addr negate #] + ;
-
-( cells are always 64 bits - 8 bytes.)
+( cells are always 32 bits - 4 bytes.)
 : cell    [ 1 cells #] ;
 : cell+   [ cell #] + ;
 : cell-   [ cell negate #] + ;
@@ -265,12 +260,13 @@ forth
 : @+   ( a - n a+)   dup @  swap cell+ ;
 : !+   ( n a - a+)  tuck !       cell+ ;
 
-( Occasionally useful, but not for use by mere mortals. ;-)
-: addr@+   ( a - n a+)   dup addr@  swap addr+ ;
-
-( Double-length words.)
+( Two-cell fetch and store.)
 : 2@  @+ @  swap ;  ( cell at lower address to TOP)
 : 2!  !+ ! ;
+
+( Double fetch and store. Fetches and stores 64 bit values.)
+: d@  ( a - dcell)  2@ ( hi lo)  swap bl ( 32) <<  + ;
+: d!  ( dcell a)  push  dup bl ( 32) u>>  swap  pop 2! ;
 
 : 2dup   ( a b     - a b a b)   over over ;
 : 2swap  ( a b c d - c d a b)   rot push  rot pop ;
@@ -292,16 +288,16 @@ forth
   word is common.)
 
 runtime
-: jump  ( which)  addrs pop + addr@ >heap execute ;  ( XXX HEAP)
+: jump  ( which)  cells pop + @execute ;
 forth
 
 
 ( Mark a branch source for later fixup.)
-: mark  ( - src)  here  0 addr, ;
+: mark  ( - src)  here  0 , ;
 
 ( Resolve a forward or backward jump, from src to dest.)
 ( When using absolute branch addresses, this is easy: just store dest at src.)
-: <resolve  ( dest src)  swap heap> swap  addr! ;  ( XXX HEAP)
+: <resolve  ( dest src)  ! ;
 : >resolve  ( src dest)  swap <resolve ;
 
 compiler
@@ -378,23 +374,22 @@ forth
 
 
 ( Dictionary structure words. Link fields point to link fields. Roughly, a
-  dictionary entry is the following addr-sized things: suffix, link, code;
-  where suffix is the last 3 [32-bit] or 7 [64-bit] characters of the name,
-  followed by its byte-sized length. If length is zero, the word is
-  *hidden*.)
+  dictionary entry is the following cell-sized things: suffix, link, code;
+  where suffix is the last 3 characters of the name, followed by its
+  byte-sized length. If length is zero, the word is *hidden*.)
 
 : link>name    ( 'link - a u)  1- dup c@  ( 'len len)  tuck -  swap ;
 
 ( These words all assume we're calculating to or from a code field
   address.)
 
-: >link   ( 'code - 'link)  addr- ;
-: link>   ( 'link - 'code)  addr+ ;
+: >link   ( 'code - 'link)  cell- ;
+: link>   ( 'link - 'code)  cell+ ;
 : >name   ( 'code - a u)   >link  link>name ;
-: >ip     ( 'code - 'ip)    addr+ ;
-: ip>     ( 'ip   - 'code)  addr- ;
-: >body   ( 'code - 'body)  >ip  addr+ ;
-: body>   ( 'body - 'code)  addr-  ip> ;
+: >ip     ( 'code - 'ip)    cell+ ;
+: ip>     ( 'ip   - 'code)  cell- ;
+: >body   ( 'code - 'body)  >ip  cell+ ;
+: body>   ( 'body - 'code)  cell-  ip> ;
 
 ( Undefine a word by zeroing out the length byte of the name.)
 : undef  token  current @ find  if  >link 1-  0 swap c!  ^  then  complain ;
@@ -445,13 +440,13 @@ forth
 
 new last-created  show
    <does>
-   current body> >ip addr@ addr,  ( re-use current's IP pointer to empty does> body)
+   current body> >ip @ ,  ( re-use current's IP pointer to empty does> body)
    0 ,  ( initial value)
 
 ( does> fixes up the does ip of the last <does> word to point to the code
   after "does>" in the caller.)
 
-: does>  pop heap>  last-created @  addr! ;  ( XXX HEAP)
+: does>  pop  last-created @  ! ;
 
 
 ( The underlying engine for all "create/does>" words. It allocates no data
@@ -464,7 +459,7 @@ new last-created  show
 ( Everything is defined in terms of `create-hidden'.)
 : create-hidden
    new  <does>
-   here last-created !  0 addr, ( placeholder for does ip)
+   here  last-created !  0 , ( placeholder for does ip)
    does> ;  ( make the does ip point *somewhere*)
 
 ( We'll use this version of "create" for all host words, since they will be
@@ -582,10 +577,11 @@ forth
   field from  .forth.  - an existing chain that is created by C code in
   src/dict.c that is executed at startup.)
 
-: chain   ( anchor-link)
-          new  [ ' .forth. addr@ #] addr, ( code field)
-               [ .forth. cell- @ #]     , ( hidden "muchain" name field)
-                    =if heap> then  addr, ( anchor-link)  show ;  ( XXX HEAP)
+: chain  ( anchor-link)
+   new  [ ' .forth. #]
+   @+ swap ,  ( code field: mu_do_chain)
+   2@ , ,  ( copy hidden "muchain" name field)
+   ,  ( anchor-link)  show ;
 
 : sealed           0  chain ;  ( create an independent vocab chain)
 : chained  current @  chain ;  ( chain to the current vocab)
@@ -601,10 +597,10 @@ forth
     >chain-name type
 )
 
-( cell- skips backward over "muchain"; addr- skips backward to point to the
-  code field; from there >name gets us to the name!)
+( cell- cell- skips backward over "muchain"; the third cell- skips backward
+  to point to the code field; from there >name gets us to the name!)
 
-: >chain-name  ( 'chain - a u)  cell- addr- >name ;
+: >chain-name  ( 'chain - a u)  cell- cell- cell- >name ;
 
 
 ( Conditional compilation.)
@@ -700,9 +696,9 @@ variable fp    ( the "top" - most recently pushed - frame)
   caller, skipping the following cfa. link is called by a word that builds
   a new stack frame.)
 
-: link     r>  addr@+ swap  >r  ( fetch & skip following cfa & push to r)
-           fp @ >r  rp@ fp !    ( link this frame to previous)
-           >r                   ( restore return address) ;
+: link     r>  @+ swap  >r    ( fetch & skip following cfa & push to r)
+           fp @ >r  rp@ fp !  ( link this frame to previous)
+           >r                 ( restore return address) ;
 
 ( unlink undoes what link did. It unlinks the frame from the list rooted at
   fp, and then runs the cleanup routine, which will do whatever is
@@ -711,7 +707,7 @@ variable fp    ( the "top" - most recently pushed - frame)
 
 : unlink   r>                 ( save return address)
            fp @ rp!  r> fp !  ( unlink frame)
-           r> >heap execute         ( execute cleanup word)  ( XXX HEAP)
+           r> execute         ( execute cleanup word)
            >r                 ( restore return address) ;
 
 create remove  ]  unlink ;    ( remove pushes IP when executed!)
@@ -727,11 +723,11 @@ variable cf   ( catch frame pointer)
 
 ( These don't save or restore SP.)
 : catch
-   r>  addr@+  >r  ( fetch & skip following cfa)
-        cf @  >r   ( push prev catch frame pointer)
-   rp@  cf !       ( now point to this frame)
-   >heap execute   ( XXX HEAP)
-   r>  cf !        ( restore prev catch frame pointer)
+   r>  @+  >r     ( fetch & skip following cfa)
+   cf @  >r       ( push prev catch frame pointer)
+   rp@  cf !      ( now point to this frame)
+   execute
+   r>  cf !       ( restore prev catch frame pointer)
    0 ;
 
 ( throw returns to word after catch. It is up to this code to unwind the
@@ -739,7 +735,7 @@ variable cf   ( catch frame pointer)
 
 : throw  ( error)
    ?if
-      cf @  cell+ @  >r  ( pretend to return from catch!)
+      cf @  cell+ cell+ @  >r  ( pretend to return from catch!)
    then ;
 
 ( unwind is useful in the context of exceptions. It starts at fp and
@@ -804,17 +800,17 @@ variable unwinding
 -- Cleanup on return
 -- -----------------------------------------------------------------------
 : cleanup
-   r> ( ra)   r> ( value)  r>  ( cfa) >heap execute   >r ( ra) ;  ( XXX HEAP)
+   r> ( ra)   r> ( value)  r>  ( cfa) execute   >r ( ra) ;
 
 ( Push value and following cfa to R stack; on exit or unwind, execute cfa
   with value on the stack.)
 
 : on-exit  ( value)
    r> ( ra)
-   addr@+ swap >r  ( fetch & skip following cfa & push to r)
-   swap >r         ( push value)
-   link cleanup    ( push code to undo whatever needs undoing)
-   remove >r       ( normal return - unlink and cleanup)
+   @+ swap >r     ( fetch & skip following cfa & push to r)
+   swap >r        ( push value)
+   link cleanup   ( push code to undo whatever needs undoing)
+   remove >r      ( normal return - unlink and cleanup)
    >r ( ra) ;
 
 
@@ -824,7 +820,7 @@ variable unwinding
 ( Deallocate local variables.)
 : unroom
    r> ( ra)
-   r> ( #cells)  rp+!  ( rp+! takes cell count!)
+   r> ( #dcells)  rp+!  ( rp+! takes dcell count!)
    >r ( ra) ;
 
 ( Allocate space for local variables.)
@@ -834,7 +830,7 @@ variable unwinding
   zero locals as they are allocated, do a begin/until loop with the count
   on the data stack.)
 
-: room  ( #cells)
+: room  ( #dcells)
    r> ( ra)
 
    ( choose one! mark, zero, allocate)
@@ -842,7 +838,7 @@ variable unwinding
    -- swap dup  begin          0 >r  1-  dup 0= until  drop  ( zero)
    swap dup  negate rp+!  ( allocate)
 
-   ( #cells)  >r
+   ( #dcells)  >r
    link unroom
    remove >r  ( normal return - unlink and cleanup)
    >r ( ra) ;
@@ -1245,13 +1241,13 @@ variable sep  ( include "thousands" separators in numbers - or not.)
 
 ( Copy a string from the input stream into the dictionary and allot space
   for it, then return the address of the first character of the string.
-  Prefix count addr _precedes_ first character of string.)
+  Prefix count cell _precedes_ first character of string.)
 
 : scrabble  ( a u - z")
-   dup addr,  ( compile count addr)
+   dup ,  ( compile count cell)
    here push ( string dest address)
    dup 1+ allot  ( allot space for string, terminator, and padding)
-   0 here addr- addr!  ( store zero terminator and padding to addr boundary)
+   0 here cell- !  ( store zero terminator and padding to cell boundary)
    r@ swap cmove  ( copy string)
    pop  ( return address of string) ;
 
@@ -1259,7 +1255,7 @@ variable sep  ( include "thousands" separators in numbers - or not.)
   string, returning the address, length, and the new "return address": the
   address of the cell following the string.)
 
-: skip-string   ( 'count - a u ra)  addr@+ swap ( a u)  2dup + 1+ addr-aligned ;
+: skip-string   ( 'count - a u ra)  @+ swap ( a u)  2dup + 1+ aligned ;
 
 ( Here are the two string literal primitives mentioned above.)
 runtime
@@ -1270,7 +1266,7 @@ forth
 ( Take the address of the first character of a compiled string and return
   its address and length. We simply back up one addr and fetch the length.)
 
-: count  ( z" - a u)  dup  addr- addr@ ;
+: count  ( z" - a u)  dup  cell- @ ;
 
 ( Interpreted strings. Strings that return an address always get compiled!)
 : token,  ( - z")          token  scrabble ;  ( useful for compiling filenames)
@@ -1293,13 +1289,13 @@ forth
 
 ( File loading primitives.)
 
-( Be careful here! start, end, and first are addr-sized values in C code.
+( Be careful here! first and end are addr-sized values in C code.
   We have to use a slightly different method to preserve and restore them.)
 
 : evaluate  ( a u)
-   start addr-preserve  end addr-preserve  ( save input source)
-   first addr-preserve           ( save our place in the input)
-   swap heap> dup first addr!  dup start addr!  + end addr!  ( XXX HEAP)
+   first addr-preserve  ( save our place in the input)
+   end addr-preserve  ( save pointer to end of input)
+   over +  end addr!  first addr!
    interpret ;
 
 variable lines-read
@@ -1309,12 +1305,12 @@ variable lines-read
   started loading _and_ being-loaded is non-zero - ie, we're loading a
   file.)
 
-( being-loaded is defined in C, so use addr words to access it.)
+( being-loaded is defined in C, but is a cell, so we can use @ and ! to access it.)
 
 : check-depth  ( saved-depth)
    unwinding @ if  drop  ^  then
    depth swap -  1- ( use show-depths to see the "standard" difference!)
-   ?if  being-loaded addr@ ?if
+   ?if  being-loaded @ ?if
       cr  ."   [ "  count type  ." : +depth " . ."  ] "  then  then ;
 
 : show-depths  ( saved)   depth .  . ;
@@ -1343,7 +1339,7 @@ variable lines-read
    forth  ( ... and compile into .forth. chain)
    dup open-file-ro ( z" fd)  dup on-exit close-file
    read-file ( z" a u)
-   being-loaded addr-preserve  rot being-loaded addr!
+   being-loaded preserve  rot being-loaded !
    line preserve  1 line !
    0 on-exit add-lines-read
    depth  on-exit check-depth
@@ -1437,8 +1433,8 @@ forth
 
 
 ( Words that do something with each word being defined.)
-( hook into new by rewriting its second addr!)
-: being-defined  constant  does> @ heap>  [ ' new addr+ addr+ #]  addr! ;  ( XXX HEAP)
+( hook into new by rewriting its second cell!)
+: being-defined  constant  does> @  [ ' new cell+ cell+ #]  ! ;
 
 ( To warn of re-defining a word.)
 -: ( a u)  2dup current @ find if  warning-text
@@ -1503,7 +1499,7 @@ being-defined -v  ( be verbose)
 
 ( 'link is a link field address; ie, the address of a cell containing a
   link. Since in muforth's dictionary links point to links, simply
-  executing  addr@  will follow the link.
+  executing  @  will follow the link.
 
   One gotcha with all this: I don't see a good way for forall-words to skip
   hidden words. It is left to the word that is called to process each word
@@ -1516,12 +1512,12 @@ being-defined -v  ( be verbose)
 
 : forall-words  ( i*x 'code 'link - j*x)
    2push
-   begin  pop addr@ =while  >heap  push  2r@ swap execute  until  pop  then  ( XXX HEAP)
+   begin  pop @ =while  push  2r@ swap execute  until  pop  then
    pop 2drop ;
 
 ( A word is hidden if its length byte is zero.)
-: hidden?   ( 'link - hidden?)      1- c@  ( len)  0= ;
-: muchain?  ( 'link - muchain?)  cell- @  [ .forth. cell- @ #] = ;
+: hidden?   ( 'link - hidden?)   1- c@  ( len)  0= ;
+: muchain?  ( 'link - muchain?)  cell- cell- d@  [ .forth. cell- cell- #] d@ = ;
 
 : .name-and-count-it  ( count 'link - count+1 exit?)
    link>name  dup 2 + ?wrap  type space space  1+  0 ;
@@ -1758,7 +1754,7 @@ Type 'settings' to see a few of muforth's tweakable behaviours.
   print linenumber as well.)
 
 : .where
-   being-loaded addr@  ?if  count type
+   being-loaded @  ?if  count type
       @line ?if  ." , line "  radix preserve decimal  (u.) type  then
       ." : "
    then ;
@@ -1801,13 +1797,13 @@ ld lib/du-cached.mu4
    ( infinite loop, until error... )
 
 : warm
-   [ .runtime. chain' throw #] heap> 'abort addr!  ( XXX HEAP)
+   [ .runtime. chain' throw #]  'abort !
    decimal \ [
    -consumed +sep +case +color +radix +stack ( defaults - reset these how you like)
    info-text  banner  normal-text
-   z" (command line)" being-loaded addr!  line off
+   z" (command line)" being-loaded !  line off
    command-line  catch evaluate ?error
-   0 being-loaded addr!
+   0 being-loaded !
    begin  catch quit ?error  again ;
 
 ( Identify ourselves.)

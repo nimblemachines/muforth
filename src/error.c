@@ -12,42 +12,34 @@
 #include <errno.h>      /* XXX should this be sys/errno.h ? */
 #include <stdio.h>
 
-/* Shared with Forth code. */
-static char *being_loaded = NULL;   /* name of file currently being loaded */
-
+/* This string will always be in the Forth * heap, and so a cell-valued
+ * "pointer" will work. */
+static cell being_loaded = 0;   /* name of file currently being loaded */
 void mu_push_being_loaded()     { PUSH_ADDR(&being_loaded); }
 
 /* A bit of a crock, but only called if we haven't set up a catch frame. */
 void die(const char* zmsg)
 {
     fprintf(stderr, "%s, line %d: %.*s %s\n",
-        being_loaded ? being_loaded : "startup.mu4",
+        being_loaded ? (char *)UNHEAPIFY(being_loaded) : "startup.mu4",
         parsed_lineno, (int)parsed.length, parsed.data, zmsg);
     exit(1);
 }
 
 /* abort() is deferred via this variable */
-/* xt, being a pointer type, is an addr-sized, not cell-sized, value. */
-static xt xt_abort = NULL;
+static cell xt_abort = 0;
+void mu_push_tick_abort()   { PUSH_ADDR(&xt_abort); }
+
 
 void mu_abort()     /* zmsg */
 {
     if (xt_abort)
     {
-        /*
-         * PUSH_ADDR because the contents of xt_abort is a machine
-         * address.
-         */
-        PUSH_ADDR(xt_abort);
+        PUSH(xt_abort);
         mu_execute();
     }
     else
-        die((char *)TOP);
-}
-
-void mu_push_tick_abort()
-{
-    PUSH_ADDR(&xt_abort);
+        die((char *)UNHEAPIFY(TOP));
 }
 
 /*

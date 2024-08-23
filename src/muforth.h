@@ -10,11 +10,11 @@
 
 #include "env.h"
 
-/*
- * Heap addrs are the size of a machine pointer; stack and variable values
- * - aka cells - are 64 bits, regardless of architecture.
- */
+typedef  int32_t    cell;   /* heap cell; also the size of variables and constants! */
+typedef  int64_t   dcell;   /* stack (double) cell; both stacks are 64-bit! */
+typedef uint64_t  udcell;   /* unsigned stack cell, used for unsigned calculations */
 
+/* The addr type is used when interfacing with C pointer types. */
 typedef uintptr_t  addr;    /* intptr_t and uintptr_t are integer types that
                                 are the same size as a native pointer. Whether
                                 this type is unsigned or not will affect how
@@ -22,22 +22,19 @@ typedef uintptr_t  addr;    /* intptr_t and uintptr_t are integer types that
                                 a 64-bit stack: signed will sign-extend,
                                 unsigned will zero-extend. */
 
-typedef  int64_t    cell;    /* stack or variable value */
-typedef uint64_t   ucell;    /* unsigned cell */
-
-/* pointer types - these fit into an addr */
-typedef void (*code)(void);     /* POINTER to word's machine code */
-typedef code *xt;               /* POINTER to code field */
-
-/* Forth VM execution registers */
-extern cell  *SP;   /* parameter stack pointer */
-extern cell  *RP;   /* return stack pointer */
-extern xt    *IP;   /* instruction pointer; points to an xt */
-extern xt     W;    /* on entry, points to the current Forth word */
+/* Forth VM registers */
+extern dcell  *SP;  /* parameter stack pointer */
+extern dcell  *RP;  /* return stack pointer */
+extern cell   *IP;  /* instruction pointer; points to a cell */
+extern cell   *W;   /* on entry, points to the current Forth word */
 
 /* dictionary size */
-/* Let's allocate 8MiB of heap, regardless of addr size. */
-#define HEAP_ADDRS      ((8 * 1024 * 1024) / sizeof(addr))
+/* Let's allocate 8MiB of heap. */
+#define HEAP_CELLS      ((8 * 1024 * 1024) / sizeof(cell))
+
+/* This is the alignment of cells in the heap. */
+#define ALIGN_SIZE  sizeof(cell)
+#define ALIGNED(x)  (((intptr_t)(x) + ALIGN_SIZE - 1) & -ALIGN_SIZE)
 
 extern intptr_t heap;   /* pointer to start of heap space, as an integer value */
 
@@ -49,11 +46,37 @@ extern intptr_t heap;   /* pointer to start of heap space, as an integer value *
 #define HEAPIFY(host_addr)              ((intptr_t)(host_addr) - heap)
 #define UNHEAPIFY(heap_addr)    (cell *)((intptr_t)(heap_addr) + heap)
 
+typedef void (*code)(void);     /* machine POINTER to word's machine code */
+extern void mu_do_colon();
+
+/*
+ * The code field contains an *offset* from mu_do_colon, which is
+ * "cleverly" chosen to do two things:
+ *
+ *   (1) All code fields start with the digits "c0de", so they are easy to
+ *   recognize when dumping the host heap.
+ *
+ *   (2) The code field for colon words is made to be especially
+ *   recognizable. See the choice of "colon signatures" below.
+ */
+
+/* Take your pick! Or add your own! */
+#define COLON_SIGNATURE_1   0xc0dec001  /* "code cool" */
+#define COLON_SIGNATURE_2   0xc0dec010  /* c010 suggests "colon" */
+#define COLON_SIGNATURE_3   0xc0decccc  /* visually easy to recognize */
+#define COLON_SIGNATURE_4   0xc0dec01a  /* for fans of fizzy drinks */
+
+#define CODE_OFFSET         (mu_do_colon + (-COLON_SIGNATURE_3))
+
+#define CODE(f)     (cell)((f) - CODE_OFFSET)
+#define FUN(c)      (code)((c) + CODE_OFFSET)
+
 /* data and return stacks */
-/* NOTE: Even on 32-bit platforms the R stack is 64 bits wide! This makes
- * things _much_ simpler, at the expense of a bit more storage. */
-extern cell dstack[];
-extern cell rstack[];
+/* Both stacks are 64 bits wide! This makes things simpler, at the expense
+ * of a bit more storage.
+ */
+extern dcell dstack[];
+extern dcell rstack[];
 
 #define STACK_SIZE  4096
 #define STACK_SAFETY  32
@@ -70,7 +93,7 @@ extern cell rstack[];
 #define ST3   SP[3]
 
 #define DROP(n)     (SP += (n))
-#define PUSH(v)     (*--SP = (cell)(v))
+#define PUSH(v)     (*--SP = (dcell)(v))
 #define POP         (*SP++)
 #define PUSH_ADDR(v)    PUSH(HEAPIFY(v))
 #define POP_ADDR        UNHEAPIFY(POP)
@@ -78,18 +101,10 @@ extern cell rstack[];
 /* Return stack */
 #define RTOP        (*RP)
 #define RDROP(n)    (RP += (n))
-#define RPUSH(n)    (*--RP = (cell)(n))
+#define RPUSH(n)    (*--RP = (dcell)(n))
 #define RPOP        (*RP++)
 #define RPUSH_ADDR(n)   RPUSH(HEAPIFY(n))
 #define RPOP_ADDR       UNHEAPIFY(RPOP)
-
-/* This is the alignment of *addrs* in the heap, *not* cell-sized things! */
-#define ADDR_ALIGN_SIZE  sizeof(addr)
-#define ADDR_ALIGNED(x)  (((intptr_t)(x) + ADDR_ALIGN_SIZE - 1) & -ADDR_ALIGN_SIZE)
-
-/* This is the alignment of *cells*. */
-#define CELL_ALIGN_SIZE  sizeof(cell)
-#define CELL_ALIGNED(x)  (((intptr_t)(x) + CELL_ALIGN_SIZE - 1) & -CELL_ALIGN_SIZE)
 
 /*
  * struct string is a "normal" string: pointer to the first character, and
