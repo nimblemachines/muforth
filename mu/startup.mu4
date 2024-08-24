@@ -721,21 +721,49 @@ create remove  ]  unlink ;    ( remove pushes IP when executed!)
 
 variable cf   ( catch frame pointer)
 
-( These don't save or restore SP.)
-: catch
-   r>  @+  >r     ( fetch & skip following cfa)
-   cf @  >r       ( push prev catch frame pointer)
-   rp@  cf !      ( now point to this frame)
+( These versions of catch and throw don't save or restore SP.)
+
+( Call the word following catch, and push 0 if it returned normally.)
+: catch  ( - 0 | error)
+   r> @+ >r    ( fetch & skip following cfa)
+   cf @ >r     ( push prev catch frame pointer)
+   rp@ cf !    ( now point to this frame)
    execute
-   r>  cf !       ( restore prev catch frame pointer)
+   r> cf !     ( restore prev catch frame pointer)
    0 ;
 
-( throw returns to word after catch. It is up to this code to unwind the
-  stack!)
+( catch can only return an error value if throw is called with a non-zero -
+  error - value during the execution of the word following catch.
 
-: throw  ( error)
+  If throw is called with 0, it drops it and does nothing.
+
+  If throw is passed an error value - in this implementation this is a
+  string pointer - it returns to the return address on the stack with the
+  error code on the stack.
+
+  It's easier to describe than explain. Here is an example:
+
+    catch a b
+
+  catch calls a; if no non-zero value is throw'n during the execution of a,
+  catch pushes 0 and execution continues with b.
+
+  If something non-zero *is* throw'n, then throw "pretends" to return from
+  a, but this time b is executed with the non-zero error value on the stack,
+  instead of 0.
+
+  It is up to the code following a call to catch - b in our example - to
+  handle both the zero and non-zero cases, and to print the error and
+  unwind the stack in case of an error.)
+
+: throw  ( 0 | error)
    ?if
-      cf @  cell+ cell+ @  >r  ( pretend to return from catch!)
+      ( pretend to return from catch!)
+      rp@            ( save rp)
+      cf @  1+  rp!  ( skip catch frame ptr, and point at return address)
+      r@             ( fetch return address into word that called catch)
+      swap rp!       ( restore rp)
+      >r             ( push return address so that we return from catch!)
    then ;
 
 ( unwind is useful in the context of exceptions. It starts at fp and
@@ -1768,7 +1796,11 @@ Type 'settings' to see a few of muforth's tweakable behaviours.
    info-text  cr  .where  parsed tuck type if space then
    error-text  zcount type  normal-text ;
 
-: ?error  ( z")   ?if  .error  r>  -1 unwind  >r  then ;
+( If the top of the stack is zero, no error occurred. If non-zero, it is a
+  string describing the error; we want to print the error and then unwind
+  the stack.)
+
+: ?error  ( 0 | z")   ?if  .error  r>  -1 unwind  >r  then ;
 
 
 ( Now that all targets have been switched to the du-cached code, and
