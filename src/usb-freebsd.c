@@ -139,7 +139,7 @@ void mu_usb_request()
     USETW(req.wValue, SP[4]);
     USETW(req.wIndex, ST3);
     USETW(req.wLength, ST2);
-    ucr.ucr_data = (void *)ST1;
+    ucr.ucr_data = (void *)UNHEAPIFY(ST1);
     ucr.ucr_addr = 0;
     ucr.ucr_flags = (req.bmRequestType == UT_READ_DEVICE)
                     ? USB_SHORT_XFER_OK : 0;

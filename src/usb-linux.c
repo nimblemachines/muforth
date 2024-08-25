@@ -233,7 +233,7 @@ void mu_usb_control()
     tr.wIndex = ST3;
     tr.wLength = ST2;
     tr.timeout = 4000 /* ms timeout */;
-    tr.data = (void *)ST1;
+    tr.data = (void *)UNHEAPIFY(ST1);
     fd = TOP;
     DROP(6);
 
@@ -258,7 +258,7 @@ void mu_usb_read_pipe()
     tr.ep = ep | 0x80;
     tr.len = ST2;
     tr.timeout = 4000 /* ms timeout */;
-    tr.data = (void *)ST3;
+    tr.data = (void *)UNHEAPIFY(ST3);
     fd = TOP;
     DROP(3);
 
@@ -282,7 +282,7 @@ void mu_usb_write_pipe()
     tr.ep = ep & 0x7f;
     tr.len = ST2;
     tr.timeout = 4000 /* ms timeout */;
-    tr.data = (void *)ST3;
+    tr.data = (void *)UNHEAPIFY(ST3);
     fd = TOP;
     DROP(4);
 
@@ -404,7 +404,7 @@ void mu_hid_find_device()
  */
 void mu_hid_read()
 {
-    void *buffer = (void *) ST2;
+    void *buffer = (void *) UNHEAPIFY(ST2);
     size_t len = ST1;
     int fd = TOP;       /* dev is just a file descriptor */
 
@@ -417,7 +417,7 @@ void mu_hid_read()
  */
 void mu_hid_write()
 {
-    void *buffer = (void *) ST2;
+    void *buffer = (void *) UNHEAPIFY(ST2);
     size_t len = ST1;
     int fd = TOP;       /* dev is just a file descriptor */
 

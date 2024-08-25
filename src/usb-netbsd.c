@@ -123,7 +123,7 @@ void mu_usb_close()
  */
 void mu_usb_read()
 {
-    void *buf = (void *)ST2;
+    void *buf = (void *)UNHEAPIFY(ST2);
     size_t len = ST1;
     int fd = TOP;       /* endpoint */
     int dummy = 1;
@@ -138,7 +138,7 @@ void mu_usb_read()
  */
 void mu_usb_write()
 {
-    void *buf = (void *)ST2;
+    void *buf = (void *)UNHEAPIFY(ST2);
     size_t len = ST1;
     int fd = TOP;       /* endpoint */
 
@@ -160,7 +160,7 @@ void mu_usb_control()
     USETW(req.wValue, SP[4]);
     USETW(req.wIndex, ST3);
     USETW(req.wLength, ST2);
-    ucr.ucr_data = (void *)ST1;
+    ucr.ucr_data = (void *)UNHEAPIFY(ST1);
     ucr.ucr_addr = 0;
     ucr.ucr_flags = (req.bmRequestType == UT_READ_DEVICE)
                     ? USBD_SHORT_XFER_OK : 0;
