@@ -65,21 +65,21 @@ void mu_ushift_right()  { ST1 = BIGSHIFT ? 0 : (udcell) ST1 >> TOP; DROP(1); }
 void mu_shift_right()   { ST1 = BIGSHIFT ? SIGN(ST1) :  ST1 >> TOP; DROP(1); }
 
 /* A cell is the unit of storage in the Forth heap. Always 32 bits. */
-void mu_cells()        { TOP <<= 2; }
-void mu_cell_slash()   { TOP >>= 2; }   /* signed & flooring! */
+void mu_cells()         { TOP <<= 2; }
+void mu_cell_slash()    { TOP >>= 2; }   /* signed & flooring! */
 
-/* fetch and store character (really _byte_) values */
-void mu_cfetch()  { TOP = *(uint8_t *)UNHEAPIFY(TOP); }
-void mu_cstore()  { *(uint8_t *)UNHEAPIFY(TOP) = ST1; DROP(2); }
+/* fetch and store character (really unsigned byte) values */
+void mu_cfetch()        { TOP = *(uint8_t *)UNHEAPIFY(TOP); }
+void mu_cstore()        { *(uint8_t *)UNHEAPIFY(TOP) = ST1; DROP(2); }
 
 /* fetch and store cell values (32 bit) */
-void mu_fetch()       { TOP = *UNHEAPIFY(TOP); }
-void mu_store()       { *UNHEAPIFY(TOP)  = ST1; DROP(2); }
-void mu_plus_store()  { *UNHEAPIFY(TOP) += ST1; DROP(2); }
+void mu_fetch()         { TOP = *UNHEAPIFY(TOP); }
+void mu_store()         { *UNHEAPIFY(TOP)  = ST1; DROP(2); }
+void mu_plus_store()    { *UNHEAPIFY(TOP) += ST1; DROP(2); }
 
 /* fetch and store addr (pointer-sized) values from C land. */
-void mu_addr_fetch()  { TOP = HEAPIFY(*(addr *)UNHEAPIFY(TOP)); }
-void mu_addr_store()  { *(addr *)UNHEAPIFY(TOP) = (addr)UNHEAPIFY(ST1); DROP(2); }
+void mu_addr_fetch()    { TOP = HEAPIFY(*(addr *)UNHEAPIFY(TOP)); }
+void mu_addr_store()    { *(addr *)UNHEAPIFY(TOP) = (addr)UNHEAPIFY(ST1); DROP(2); }
 
 /* copy nth value (counting from 0) to top - ANS calls this "pick" */
 void mu_nth()    { TOP = SP[TOP+1]; }
@@ -102,7 +102,7 @@ void mu_0equal()  { TOP = -(TOP == 0); }
 void mu_depth()     { int d = SP0 - SP; PUSH(d); }
 void mu_sp_reset()  { SP = SP0; SP[0] = 0xdecafbad; }
 #ifdef WITH_SP_OPERATORS
-void mu_push_s0()   { PUSH_ADDR(SP0); }     /* address of stack bottom */
+void mu_push_s0()   { PUSH_ADDR(SP0); }         /* address of stack bottom */
 void mu_sp_fetch()  { dcell *s = SP; PUSH_ADDR(s); } /* push stack pointer */
 void mu_sp_store()  { SP = (dcell *)TOP; }           /* set stack pointer */
 #endif
