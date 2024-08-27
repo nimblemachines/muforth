@@ -80,8 +80,11 @@ void mu_set_does_code()     { PUSH(CODE(mu_do_does)); mu_compile_comma(); }
 /* Normal exit */
 void mu_runtime_exit()      { UNNEST; }
 
-/* Push an inline 32-bit literal, sign-extending it to 64 bits. */
-void mu_runtime_lit_()      { PUSH(*IP++); }
+/* Push an inline signed 32-bit literal, sign-extending it to 64 bits. */
+void mu_runtime_signed_literal_()       { PUSH(*IP++); }
+
+/* Push an inline unsigned 32-bit literal, zero-extending it to 64 bits. */
+void mu_runtime_unsigned_literal_()     { PUSH(*(ucell *)IP++); }
 
 /* Compile the following word */
 void mu_runtime_compile()   { PUSH(*IP++); mu_compile_comma(); }

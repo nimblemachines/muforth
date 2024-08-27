@@ -73,7 +73,7 @@ void mu_cfetch()        { TOP = *(uint8_t *)UNHEAPIFY(TOP); }
 void mu_cstore()        { *(uint8_t *)UNHEAPIFY(TOP) = ST1; DROP(2); }
 
 /* fetch and store cell values (32 bit) */
-void mu_fetch()         { TOP = *UNHEAPIFY(TOP); }
+void mu_fetch()         { TOP = *(ucell *)UNHEAPIFY(TOP); }     /* unsigned!! */
 void mu_store()         { *UNHEAPIFY(TOP)  = ST1; DROP(2); }
 void mu_plus_store()    { *UNHEAPIFY(TOP) += ST1; DROP(2); }
 

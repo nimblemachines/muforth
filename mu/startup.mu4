@@ -1,5 +1,5 @@
 token (  .forth.  (unlinked-name)
-   <:> ] (lit) [  token ) drop c@  ,  ]  parse 2drop ^ [  show
+   <:> ] (unsigned-literal) [  token ) drop c@  ,  ]  parse 2drop ^ [  show
 
 
 ( Phew! now we can have comments!)
@@ -152,17 +152,15 @@ new :
 : compiler  .compiler. definitions ;
 : runtime    .runtime. definitions ;
 
-( Create a literal in the word currently being defined.)
-: literal   compile (lit)  , ;
+( Create a literal in the word currently being defined. These come in both
+  signed and unsigned varieties.
 
-( End a bracketed computation and use the result to create a literal.)
-: #]        literal  ] ;
+  Later, when we have if/then defined, we will define a smart literal that
+  will choose between a signed or unsigned literal depending on the literal
+  value.)
 
-
-( !! NOTE !! Do -NOT- change this part of the file without thinking VERY
-  hard first. Make changes below the line marked `Add changes below this
-  line', otherwise it may be difficult to diagnose problems added by new
-  code.)
+: signed-literal    compile (signed-literal)  , ;
+: unsigned-literal  compile (unsigned-literal)  , ;
 
 
 ( Stack manipulations.)
@@ -171,6 +169,7 @@ new :
 
 : nip    swap drop ;           ( a b - b)
 : tuck   swap over ;           ( a b - b a b)
+
 
 ( Back up over last token parsed from the input so we can re-parse it.
 
@@ -184,6 +183,7 @@ new :
   Let's reset line to @line when we back up over the token.)
 
 : untoken   parsed drop  first addr!  @line line ! ;
+
 
 ( Let's define some words that are useful for searching specific dictionary
   chains and compiling words from them.)
@@ -207,7 +207,7 @@ compiler
 ( XXX: should this and ' do the same thing?)
 ( : [']  .forth. chain' literal ;)
 ( XXX should this search .runtime. rather than .forth. ??)
-: [']  '  literal ;
+: [']  '  unsigned-literal ;
 
 ( XXX: is this useful? Here? Maybe in a target compiler...)
 : \f   .runtime. \chain ;
@@ -216,7 +216,69 @@ forth
 
 
 ( We don't even have any constants yet! So we make the easiest one first...)
-: 0   [ dup dup xor #] ;
+: 0   [ dup dup xor  unsigned-literal ] ;
+
+
+( Control structures and \ )
+
+( Mark a branch source for later fixup.)
+: mark  ( - src)  here  0 , ;
+
+( Resolve a forward or backward jump, from src to dest.)
+( When using absolute branch addresses, this is easy: just store dest at src.)
+: <resolve  ( dest src)  ! ;
+: >resolve  ( src dest)  swap <resolve ;
+
+compiler
+: then   ( src)          here >resolve ;
+: =if    ( - src)        compile (=0branch)  mark ;
+: ?if    ( - src)        compile (?0branch)  mark ;
+: if     ( - src)        compile  (0branch)  mark ;
+: again  ( dest)         compile   (branch)  mark  <resolve ;
+: else   ( src0 - src1)  compile   (branch)  mark  swap  \c then ;
+
+: begin   ( - dest)  here ;
+: =until  ( dest)             \c =if  <resolve ;
+: ?until  ( dest)             \c ?if  <resolve ;
+: until   ( dest)              \c if  <resolve ;
+: =while  ( dest - src dest)  \c =if  swap ;
+: ?while  ( dest - src dest)  \c ?if  swap ;
+: while   ( dest - src dest)   \c if  swap ;
+: repeat  ( src dest)   \c again  \c then ;
+
+( n for .. next         goes n times; 0 if n=0 )
+
+: for     ( - src dest)  \c ?if  compile push  \c begin ;
+: next    ( dest)        compile (next)  mark  <resolve  \c then ;
+
+( do, loop, +loop)
+: do      ( - src dest)   compile (do)     mark  \c begin ;
+: loop    ( src dest)     compile (loop)   mark  <resolve  \c then ;
+: +loop   ( src dest)     compile (+loop)  mark  <resolve  \c then ;
+
+( make \ more like ANS-Forth's POSTPONE)
+( Now, the confusion happens because we need to write code _in this word_
+  that will compile the above code into _other_ words. How about that?)
+
+( Read a token out of the input stream. If the token is on the compiler
+  chain, postpone its execution until the word we're compiling executes. If
+  the token is on the runtime or forth chains, postpone its compilation
+  until the word that we're compiling executes. Got that? ;-)
+
+: \   .compiler. token'  if compile, ^ then
+       .runtime. find  huh?  compile compile  compile, ;
+
+forth
+
+
+( Smart literal.)
+: literal  dup 0< if  signed-literal ^  then  unsigned-literal ;
+
+( End a bracketed computation and use the result to create a literal.)
+: #]  literal  ] ;
+
+
+( From 0 we can create a few more useful constants!)
 : -1  [ 0 invert #] ;
 : 1   [ -1 negate #] ;
 : 2   [ 1 2* #] ;
@@ -278,6 +340,7 @@ forth
 : bic  invert and ;
 : @execute  @ execute ;
 
+
 ( jump allows jumping thru a table of addresses; you are responsible for
   making sure the index is within range! It must be used at the end of a
   word. Common usage looks like this:  jump  nope  do1  do2  do3  [
@@ -291,55 +354,6 @@ runtime
 : jump  ( which)  cells pop + @execute ;
 forth
 
-
-( Mark a branch source for later fixup.)
-: mark  ( - src)  here  0 , ;
-
-( Resolve a forward or backward jump, from src to dest.)
-( When using absolute branch addresses, this is easy: just store dest at src.)
-: <resolve  ( dest src)  ! ;
-: >resolve  ( src dest)  swap <resolve ;
-
-compiler
-: then   ( src)          here >resolve ;
-: =if    ( - src)        compile (=0branch)  mark ;
-: ?if    ( - src)        compile (?0branch)  mark ;
-: if     ( - src)        compile  (0branch)  mark ;
-: again  ( dest)         compile   (branch)  mark  <resolve ;
-: else   ( src0 - src1)  compile   (branch)  mark  swap  \c then ;
-
-: begin   ( - dest)  here ;
-: =until  ( dest)             \c =if  <resolve ;
-: ?until  ( dest)             \c ?if  <resolve ;
-: until   ( dest)              \c if  <resolve ;
-: =while  ( dest - src dest)  \c =if  swap ;
-: ?while  ( dest - src dest)  \c ?if  swap ;
-: while   ( dest - src dest)   \c if  swap ;
-: repeat  ( src dest)   \c again  \c then ;
-
-( n for .. next         goes n times; 0 if n=0 )
-
-: for     ( - src dest)  \c ?if  compile push  \c begin ;
-: next    ( dest)        compile (next)  mark  <resolve  \c then ;
-
-( do, loop, +loop)
-: do      ( - src dest)   compile (do)     mark  \c begin ;
-: loop    ( src dest)     compile (loop)   mark  <resolve  \c then ;
-: +loop   ( src dest)     compile (+loop)  mark  <resolve  \c then ;
-
-( make \ more like ANS-Forth's POSTPONE)
-( Now, the confusion happens because we need to write code _in this word_
-  that will compile the above code into _other_ words. How about that?)
-
-( Read a token out of the input stream. If the token is on the compiler
-  chain, postpone its execution until the word we're compiling executes. If
-  the token is on the runtime or forth chains, postpone its compilation
-  until the word that we're compiling executes. Got that? ;-)
-
-: \   .compiler. token'  if compile, ^ then
-       .runtime. find  huh?  compile compile  compile, ;
-
-forth
 
 ( A nice way to do full-line comments with no trailing delimiter. It throws
   away the rest of the line, scanning for a newline, but only if there was
@@ -470,10 +484,24 @@ new last-created  show
 
 : create   create-hidden show ;  ( always immediately show host create'd words)
 
-: constant  ( value)
-   create , ( compile the constant)  does> @ ;
+( Just as we had both signed and unsigned literals, we need signed and
+  unsigned constants!
 
+  First, a way to sign-extend from 32 to 64 bits.)
+
+: s>64  bl ( 32) <<  bl >> ;
+
+: constant  ( value)
+   create dup , ( compile the constant)
+   0< if  does> @ s>64 ^  then
+          does> @ ;
+
+( XXX Do we assume that these are going to both be unsigned constants?
+  Where are these used?)
+
+( Right now, 2constant can only be used with *unsigned* values.)
 : 2constant  ( v1 v2)
+   2dup or 0< if bad-values then  ( complain if either value is negative)
    create , , ( compile the constants)  does> 2@ ;
 
 ( An array with every cell set to a default value.)

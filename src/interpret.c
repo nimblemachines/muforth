@@ -165,6 +165,11 @@ void mu_huh_q()
     mu_complain();
 }
 
+void mu_bad_values()
+{
+    abort_zmsg("bad values");
+}
+
 /* The interpreter's "consume" function. */
 /* Not declared "static" because it is needed by muforth.c to fire up warm! */
 void muboot_interpret_token()

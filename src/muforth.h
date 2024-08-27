@@ -11,6 +11,8 @@
 #include "env.h"
 
 typedef  int32_t    cell;   /* heap cell; also the size of variables and constants! */
+typedef uint32_t   ucell;   /* sometimes useful - especially for @ */
+
 typedef  int64_t   dcell;   /* stack (double) cell; both stacks are 64-bit! */
 typedef uint64_t  udcell;   /* unsigned stack cell, used for unsigned calculations */
 
