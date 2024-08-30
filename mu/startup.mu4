@@ -156,7 +156,7 @@ new :
 : literal   compile (lit)  , ;
 
 ( End a bracketed computation and use the result to create a literal.)
-: #]   literal  ] ;
+: #]        literal  ] ;
 
 
 ( Stack manipulations.)
@@ -218,59 +218,6 @@ forth
 : -1  [ 0 invert #] ;
 : 1   [ -1 negate #] ;
 : 2   [ 1 2* #] ;
-
-
-( Control structures and \ )
-
-( Mark a branch source for later fixup.)
-: mark  ( - src)  here  0 , ;
-
-( Resolve a forward or backward jump, from src to dest.)
-( When using absolute branch addresses, this is easy: just store dest at src.)
-: <resolve  ( dest src)  ! ;
-: >resolve  ( src dest)  swap <resolve ;
-
-compiler
-: then   ( src)          here >resolve ;
-: =if    ( - src)        compile (=0branch)  mark ;
-: ?if    ( - src)        compile (?0branch)  mark ;
-: if     ( - src)        compile  (0branch)  mark ;
-: again  ( dest)         compile   (branch)  mark  <resolve ;
-: else   ( src0 - src1)  compile   (branch)  mark  swap  \c then ;
-
-: begin   ( - dest)  here ;
-: =until  ( dest)             \c =if  <resolve ;
-: ?until  ( dest)             \c ?if  <resolve ;
-: until   ( dest)              \c if  <resolve ;
-: =while  ( dest - src dest)  \c =if  swap ;
-: ?while  ( dest - src dest)  \c ?if  swap ;
-: while   ( dest - src dest)   \c if  swap ;
-: repeat  ( src dest)   \c again  \c then ;
-
-( n for .. next         goes n times; 0 if n=0 )
-
-: for     ( - src dest)  \c ?if  compile push  \c begin ;
-: next    ( dest)        compile (next)  mark  <resolve  \c then ;
-
-( do, loop, +loop)
-: do      ( - src dest)   compile (do)     mark  \c begin ;
-: loop    ( src dest)     compile (loop)   mark  <resolve  \c then ;
-: +loop   ( src dest)     compile (+loop)  mark  <resolve  \c then ;
-
-( make \ more like ANS-Forth's POSTPONE)
-( Now, the confusion happens because we need to write code _in this word_
-  that will compile the above code into _other_ words. How about that?)
-
-( Read a token out of the input stream. If the token is on the compiler
-  chain, postpone its execution until the word we're compiling executes. If
-  the token is on the runtime or forth chains, postpone its compilation
-  until the word that we're compiling executes. Got that? ;-)
-
-: \   .compiler. token'  if compile, ^ then
-       .runtime. find  huh?  compile compile  compile, ;
-
-forth
-
 
 ( On and off)
 : on   -1 swap ! ;
@@ -337,6 +284,58 @@ forth
 
 runtime
 : jump  ( which)  cells pop + @execute ;
+forth
+
+
+( Control structures and \ )
+
+( Mark a branch source for later fixup.)
+: mark  ( - src)  here  0 , ;
+
+( Resolve a forward or backward jump, from src to dest.)
+( When using absolute branch addresses, this is easy: just store dest at src.)
+: <resolve  ( dest src)  ! ;
+: >resolve  ( src dest)  swap <resolve ;
+
+compiler
+: then   ( src)          here >resolve ;
+: =if    ( - src)        compile (=0branch)  mark ;
+: ?if    ( - src)        compile (?0branch)  mark ;
+: if     ( - src)        compile  (0branch)  mark ;
+: again  ( dest)         compile   (branch)  mark  <resolve ;
+: else   ( src0 - src1)  compile   (branch)  mark  swap  \c then ;
+
+: begin   ( - dest)  here ;
+: =until  ( dest)             \c =if  <resolve ;
+: ?until  ( dest)             \c ?if  <resolve ;
+: until   ( dest)              \c if  <resolve ;
+: =while  ( dest - src dest)  \c =if  swap ;
+: ?while  ( dest - src dest)  \c ?if  swap ;
+: while   ( dest - src dest)   \c if  swap ;
+: repeat  ( src dest)   \c again  \c then ;
+
+( n for .. next         goes n times; 0 if n=0 )
+
+: for     ( - src dest)  \c ?if  compile push  \c begin ;
+: next    ( dest)        compile (next)  mark  <resolve  \c then ;
+
+( do, loop, +loop)
+: do      ( - src dest)   compile (do)     mark  \c begin ;
+: loop    ( src dest)     compile (loop)   mark  <resolve  \c then ;
+: +loop   ( src dest)     compile (+loop)  mark  <resolve  \c then ;
+
+( make \ more like ANS-Forth's POSTPONE)
+( Now, the confusion happens because we need to write code _in this word_
+  that will compile the above code into _other_ words. How about that?)
+
+( Read a token out of the input stream. If the token is on the compiler
+  chain, postpone its execution until the word we're compiling executes. If
+  the token is on the runtime or forth chains, postpone its compilation
+  until the word that we're compiling executes. Got that? ;-)
+
+: \   .compiler. token'  if compile, ^ then
+       .runtime. find  huh?  compile compile  compile, ;
+
 forth
 
 
@@ -576,11 +575,10 @@ forth
   field from  .forth.  - an existing chain that is created by C code in
   src/dict.c that is executed at startup.)
 
-: chain  ( anchor-link)
-   new
-   [ ' .forth. @ #] ,  ( code field: mu_do_chain)
-   [ .forth. cell- @ #] ,  ( hidden "muchain" name field)
-   ,  ( anchor-link)  show ;
+: chain   ( anchor-link)
+   new  [ ' .forth.       @ #] , ( code field: mu_do_chain)
+        [   .forth. cell- @ #] , ( hidden "muchain" name field)
+                               , ( anchor-link)  show ;
 
 : sealed           0  chain ;  ( create an independent vocab chain)
 : chained  current @  chain ;  ( chain to the current vocab)
