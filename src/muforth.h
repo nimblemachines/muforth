@@ -27,6 +27,8 @@ extern cell  *RP;   /* return stack pointer */
 extern cell  *IP;   /* instruction pointer; points to a cell */
 extern cell  *W;    /* on entry, points to the current Forth word */
 
+typedef void (*code)(void);     /* machine POINTER to word's machine code */
+
 /* dictionary size */
 /* Let's allocate 8MiB of heap. */
 #define HEAP_CELLS      ((8 * 1024 * 1024) / sizeof(cell))
@@ -35,6 +37,16 @@ extern cell  *W;    /* on entry, points to the current Forth word */
 #define ALIGN_SIZE  sizeof(cell)
 #define ALIGNED(x)  (((intptr_t)(x) + ALIGN_SIZE - 1) & -ALIGN_SIZE)
 
+/*
+ * Are pointers in the heap relative or absolute?
+ *
+ * Absolute is now the default, but it's easy to change. Just change the
+ * following line to #define from #undef and re-run make.
+ */
+#undef RELATIVE_HEAP_ADDRESSES
+
+#ifdef RELATIVE_HEAP_ADDRESSES
+
 extern intptr_t heap;   /* pointer to start of heap space, as an integer value */
 
 /*
@@ -42,10 +54,9 @@ extern intptr_t heap;   /* pointer to start of heap space, as an integer value *
  * UNHEAPIFY goes the other way, and casts to a (cell *) because that's
  * almost always what we want.
  */
-#define HEAPIFY(host_addr)              ((intptr_t)(host_addr) - heap)
-#define UNHEAPIFY(heap_addr)    (cell *)((intptr_t)(heap_addr) + heap)
+#define HEAPIFY(host_addr)              ((addr)(host_addr) - heap)
+#define UNHEAPIFY(heap_addr)    (cell *)(      (heap_addr) + heap)
 
-typedef void (*code)(void);     /* machine POINTER to word's machine code */
 extern void mu_do_colon();
 
 /*
@@ -60,15 +71,26 @@ extern void mu_do_colon();
  */
 
 /* Take your pick! Or add your own! */
-#define COLON_SIGNATURE_1   0xc0de0000c001  /* "code cool" */
-#define COLON_SIGNATURE_2   0xc0de0000c010  /* c010 suggests "colon" */
-#define COLON_SIGNATURE_3   0xc0decccccccc  /* visually easy to recognize */
-#define COLON_SIGNATURE_4   0xc0dec0cac01a  /* for fans of fizzy drinks */
+#define COLON_SIGNATURE_1   0xc0dec001  /* "code cool" */
+#define COLON_SIGNATURE_2   0xc0dec010  /* c010 suggests "colon" */
+#define COLON_SIGNATURE_3   0xc0decccc  /* visually easy to recognize */
+#define COLON_SIGNATURE_4   0xc0dec01a  /* for fans of fizzy drinks */
 
 #define CODE_OFFSET         (mu_do_colon + (-COLON_SIGNATURE_3))
 
-#define CODE(f)     (cell)((f) - CODE_OFFSET)
+#define CODE(f)           ((f) - CODE_OFFSET)
 #define FUN(c)      (code)((c) + CODE_OFFSET)
+
+#else
+
+/* We are using *absolute* addresses in the heap. */
+#define HEAPIFY(host_addr)        (addr)(host_addr)
+#define UNHEAPIFY(heap_addr)    (cell *)(heap_addr)
+
+#define CODE(f)     (addr)(f)
+#define FUN(c)      (code)(c)
+
+#endif  /* relative vs absolute heap addresses */
 
 /* data and return stacks */
 /* Both stacks are 64 bits wide! */

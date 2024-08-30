@@ -126,6 +126,9 @@ struct inm initial_runtime[] = {
     { NULL, NULL }
 };
 
+/* @heap pushes the starting address of the heap. */
+void mu_at_heap()   { PUSH_ADDR(heap); }
+
 /* #heap pushes the length of the heap in bytes. */
 void mu_size_heap() { PUSH(HEAP_CELLS * sizeof(cell)); }
 
