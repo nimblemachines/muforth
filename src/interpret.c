@@ -42,7 +42,7 @@ void mu_push_end()      { PUSH_ADDR(&end); }
 void mu_push_line()     { PUSH_ADDR(&lineno); }  /* we call it "line" in muforth */
 
 /* Push captured line number */
-void mu_at_line()   { PUSH(parsed_lineno); }
+void mu_at_line()       { PUSH(parsed_lineno); }
 
 void mu_push_parsed()
 {
@@ -163,11 +163,6 @@ void mu_huh_q()
 {
     if (POP) return;
     mu_complain();
-}
-
-void mu_bad_values()
-{
-    abort_zmsg("bad values");
 }
 
 /* The interpreter's "consume" function. */

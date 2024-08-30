@@ -10,11 +10,8 @@
 
 #include "env.h"
 
-typedef  int32_t    cell;   /* heap cell; also the size of variables and constants! */
-typedef uint32_t   ucell;   /* sometimes useful - especially for @ */
-
-typedef  int64_t   dcell;   /* stack (double) cell; both stacks are 64-bit! */
-typedef uint64_t  udcell;   /* unsigned stack cell, used for unsigned calculations */
+typedef  int64_t    cell;   /* stack or heap cell: always 64-bit */
+typedef uint64_t   ucell;   /* unsigned cell - useful for some computations */
 
 /* The addr type is used when interfacing with C pointer types. */
 typedef uintptr_t  addr;    /* intptr_t and uintptr_t are integer types that
@@ -25,10 +22,10 @@ typedef uintptr_t  addr;    /* intptr_t and uintptr_t are integer types that
                                 unsigned will zero-extend. */
 
 /* Forth VM registers */
-extern dcell  *SP;  /* parameter stack pointer */
-extern dcell  *RP;  /* return stack pointer */
-extern cell   *IP;  /* instruction pointer; points to a cell */
-extern cell   *W;   /* on entry, points to the current Forth word */
+extern cell  *SP;   /* parameter stack pointer */
+extern cell  *RP;   /* return stack pointer */
+extern cell  *IP;   /* instruction pointer; points to a cell */
+extern cell  *W;    /* on entry, points to the current Forth word */
 
 /* dictionary size */
 /* Let's allocate 8MiB of heap. */
@@ -63,10 +60,10 @@ extern void mu_do_colon();
  */
 
 /* Take your pick! Or add your own! */
-#define COLON_SIGNATURE_1   0xc0dec001  /* "code cool" */
-#define COLON_SIGNATURE_2   0xc0dec010  /* c010 suggests "colon" */
-#define COLON_SIGNATURE_3   0xc0decccc  /* visually easy to recognize */
-#define COLON_SIGNATURE_4   0xc0dec01a  /* for fans of fizzy drinks */
+#define COLON_SIGNATURE_1   0xc0de0000c001  /* "code cool" */
+#define COLON_SIGNATURE_2   0xc0de0000c010  /* c010 suggests "colon" */
+#define COLON_SIGNATURE_3   0xc0decccccccc  /* visually easy to recognize */
+#define COLON_SIGNATURE_4   0xc0dec0cac01a  /* for fans of fizzy drinks */
 
 #define CODE_OFFSET         (mu_do_colon + (-COLON_SIGNATURE_3))
 
@@ -74,11 +71,9 @@ extern void mu_do_colon();
 #define FUN(c)      (code)((c) + CODE_OFFSET)
 
 /* data and return stacks */
-/* Both stacks are 64 bits wide! This makes things simpler, at the expense
- * of a bit more storage.
- */
-extern dcell dstack[];
-extern dcell rstack[];
+/* Both stacks are 64 bits wide! */
+extern cell dstack[];
+extern cell rstack[];
 
 #define STACK_SIZE  4096
 #define STACK_SAFETY  32
@@ -95,7 +90,7 @@ extern dcell rstack[];
 #define ST3   SP[3]
 
 #define DROP(n)     (SP += (n))
-#define PUSH(v)     (*--SP = (dcell)(v))
+#define PUSH(v)     (*--SP = (cell)(v))
 #define POP         (*SP++)
 #define PUSH_ADDR(v)    PUSH(HEAPIFY(v))
 #define POP_ADDR        UNHEAPIFY(POP)
@@ -103,7 +98,7 @@ extern dcell rstack[];
 /* Return stack */
 #define RTOP        (*RP)
 #define RDROP(n)    (RP += (n))
-#define RPUSH(n)    (*--RP = (dcell)(n))
+#define RPUSH(n)    (*--RP = (cell)(n))
 #define RPOP        (*RP++)
 #define RPUSH_ADDR(n)   RPUSH(HEAPIFY(n))
 #define RPOP_ADDR       UNHEAPIFY(RPOP)

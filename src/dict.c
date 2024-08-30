@@ -15,7 +15,7 @@
  */
 
 /*
- * Dictionary is kept cell-aligned. Cells are 32 bits.
+ * Dictionary is kept cell-aligned. Cells are 64 bits.
  */
 intptr_t heap;      /* pointer (as an integer) to start of heap space */
 static cell *hp;    /* heap pointer: points to next free cell in heap space */
@@ -69,8 +69,8 @@ static cell *hp;    /* heap pointer: points to next free cell in heap space */
  * and bug-free code, but how?
  *
  * My solution is a bit weird, but it works rather well. Since I know that
- * the characters of the name will consume at least one cell (3 bytes and a
- * length byte), I define a struct that represents only the last 3
+ * the characters of the name will consume at least one cell (7 bytes and a
+ * length byte), I define a struct that represents only the last 7
  * characters of the name, the length, and the link; the previous
  * characters are "off the map" as far as C is concerned, but there is an
  * easy way to address them. (To get to the beginning of a name, take the
@@ -89,7 +89,7 @@ static cell *hp;    /* heap pointer: points to next free cell in heap space */
 
 struct dict_name
 {
-    char            suffix[SUFFIX_LEN];     /* last 3 characters of name */
+    char            suffix[SUFFIX_LEN];     /* last 7 characters of name */
     unsigned char   length;                 /* 255 max; 0 means hidden */
     cell            link;                   /* link to preceding link */
 };
@@ -387,7 +387,7 @@ void mu_show()  { *last_chain = last_name; }
 static void mu_do_chain()
 {
     /* push the address of muchain's link field by skipping over "muchain". */
-    PUSH_ADDR(W + 8/sizeof(cell));
+    PUSH_ADDR(W + 1);
 }
 
 /*
@@ -513,7 +513,7 @@ void mu_test_dict()
     PUSH_ADDR("execut"); PUSH(6); PUSH_ADDR(forth_chain); mu_find();
 
     /* Write the stack contents to stdout. */
-    fwrite(SP, sizeof(dcell), SP0 - SP, stdout);
+    fwrite(SP, sizeof(cell), SP0 - SP, stdout);
     fflush(stdout);
 }
 #endif

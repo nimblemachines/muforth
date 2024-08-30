@@ -1,5 +1,5 @@
 token (  .forth.  (unlinked-name)
-   <:> ] (unsigned-literal) [  token ) drop c@  ,  ]  parse 2drop ^ [  show
+   <:> ] (lit) [  token ) drop c@  ,  ]  parse 2drop ^ [  show
 
 
 ( Phew! now we can have comments!)
@@ -152,23 +152,19 @@ new :
 : compiler  .compiler. definitions ;
 : runtime    .runtime. definitions ;
 
-( Create a literal in the word currently being defined. These come in both
-  signed and unsigned varieties.
+( Create a literal in the word currently being defined.)
+: literal   compile (lit)  , ;
 
-  Later, when we have if/then defined, we will define a smart literal that
-  will choose between a signed or unsigned literal depending on the literal
-  value.)
-
-: signed-literal    compile (signed-literal)  , ;
-: unsigned-literal  compile (unsigned-literal)  , ;
+( End a bracketed computation and use the result to create a literal.)
+: #]   literal  ] ;
 
 
 ( Stack manipulations.)
-: rot    >r swap  r> swap ;  ( a b c - b c a)  ( fig!)
-: -rot   swap >r  swap r> ;  ( a b c - c a b)
+: rot    >r swap  r> swap ;   ( a b c - b c a)  ( fig!)
+: -rot   swap >r  swap r> ;   ( a b c - c a b)
 
-: nip    swap drop ;           ( a b - b)
-: tuck   swap over ;           ( a b - b a b)
+: nip    swap drop ;          ( a b - b)
+: tuck   swap over ;          ( a b - b a b)
 
 
 ( Back up over last token parsed from the input so we can re-parse it.
@@ -207,7 +203,7 @@ compiler
 ( XXX: should this and ' do the same thing?)
 ( : [']  .forth. chain' literal ;)
 ( XXX should this search .runtime. rather than .forth. ??)
-: [']  '  unsigned-literal ;
+: [']  '  literal ;
 
 ( XXX: is this useful? Here? Maybe in a target compiler...)
 : \f   .runtime. \chain ;
@@ -216,7 +212,12 @@ forth
 
 
 ( We don't even have any constants yet! So we make the easiest one first...)
-: 0   [ dup dup xor  unsigned-literal ] ;
+: 0   [ dup dup xor #] ;
+
+( From 0 we can create a few more useful constants!)
+: -1  [ 0 invert #] ;
+: 1   [ -1 negate #] ;
+: 2   [ 1 2* #] ;
 
 
 ( Control structures and \ )
@@ -271,18 +272,6 @@ compiler
 forth
 
 
-( Smart literal.)
-: literal  dup 0< if  signed-literal ^  then  unsigned-literal ;
-
-( End a bracketed computation and use the result to create a literal.)
-: #]  literal  ] ;
-
-
-( From 0 we can create a few more useful constants!)
-: -1  [ 0 invert #] ;
-: 1   [ -1 negate #] ;
-: 2   [ 1 2* #] ;
-
 ( On and off)
 : on   -1 swap ! ;
 : off   0 swap ! ;
@@ -309,7 +298,7 @@ forth
 : 1+   1 + ;  ( these are common)
 : 1-  -1 + ;
 
-( cells are always 32 bits - 4 bytes.)
+( cells are always 64 bits - 8 bytes.)
 : cell    [ 1 cells #] ;
 : cell+   [ cell #] + ;
 : cell-   [ cell negate #] + ;
@@ -325,10 +314,6 @@ forth
 ( Two-cell fetch and store.)
 : 2@  @+ @  swap ;  ( cell at lower address to TOP)
 : 2!  !+ ! ;
-
-( Double fetch and store. Fetches and stores 64 bit values.)
-: d@  ( a - dcell)  2@ ( hi lo)  swap bl ( 32) <<  + ;
-: d!  ( dcell a)  push  dup bl ( 32) u>>  swap  pop 2! ;
 
 : 2dup   ( a b     - a b a b)   over over ;
 : 2swap  ( a b c d - c d a b)   rot push  rot pop ;
@@ -380,7 +365,7 @@ forth
   colorForth compiles a literal.
 
   Even though we don't have color in muforth, we can make things a bit
-  cleaner by creating a new word -- #] -- that compiles a literal *before*
+  cleaner by creating a new word - #] - that compiles a literal *before*
   restarting the colon compiler.
 
   We retain the normal Forth behaviour that  ]  simply restarts the colon
@@ -484,24 +469,10 @@ new last-created  show
 
 : create   create-hidden show ;  ( always immediately show host create'd words)
 
-( Just as we had both signed and unsigned literals, we need signed and
-  unsigned constants!
-
-  First, a way to sign-extend from 32 to 64 bits.)
-
-: s>64  bl ( 32) <<  bl >> ;
-
 : constant  ( value)
-   create dup , ( compile the constant)
-   0< if  does> @ s>64 ^  then
-          does> @ ;
+   create , ( compile the constant)  does> @ ;
 
-( XXX Do we assume that these are going to both be unsigned constants?
-  Where are these used?)
-
-( Right now, 2constant can only be used with *unsigned* values.)
 : 2constant  ( v1 v2)
-   2dup or 0< if bad-values then  ( complain if either value is negative)
    create , , ( compile the constants)  does> 2@ ;
 
 ( An array with every cell set to a default value.)
@@ -606,9 +577,9 @@ forth
   src/dict.c that is executed at startup.)
 
 : chain  ( anchor-link)
-   new  [ ' .forth. #]
-   @+ swap ,  ( code field: mu_do_chain)
-   2@ , ,  ( copy hidden "muchain" name field)
+   new
+   [ ' .forth. @ #] ,  ( code field: mu_do_chain)
+   [ .forth. cell- @ #] ,  ( hidden "muchain" name field)
    ,  ( anchor-link)  show ;
 
 : sealed           0  chain ;  ( create an independent vocab chain)
@@ -625,10 +596,10 @@ forth
     >chain-name type
 )
 
-( cell- cell- skips backward over "muchain"; the third cell- skips backward
+( The first cell- skips backward over "muchain"; the second skips backward
   to point to the code field; from there >name gets us to the name!)
 
-: >chain-name  ( 'chain - a u)  cell- cell- cell- >name ;
+: >chain-name  ( 'chain - a u)  cell- cell- >name ;
 
 
 ( Conditional compilation.)
@@ -787,11 +758,9 @@ variable cf   ( catch frame pointer)
 : throw  ( 0 | error)
    ?if
       ( pretend to return from catch!)
-      rp@            ( save rp)
-      cf @  1+  rp!  ( skip catch frame ptr, and point at return address)
-      r@             ( fetch return address into word that called catch)
-      swap rp!       ( restore rp)
-      >r             ( push return address so that we return from catch!)
+      cf @     ( fetch most recently created catch frame)
+      cell+ @  ( skip catch frame ptr, fetch return address)
+      >r       ( push return address so that we return from catch!)
    then ;
 
 ( unwind is useful in the context of exceptions. It starts at fp and
@@ -876,7 +845,7 @@ variable unwinding
 ( Deallocate local variables.)
 : unroom
    r> ( ra)
-   r> ( #dcells)  rp+!  ( rp+! takes dcell count!)
+   r> ( #cells)  rp+!  ( rp+! takes cell count!)
    >r ( ra) ;
 
 ( Allocate space for local variables.)
@@ -886,7 +855,7 @@ variable unwinding
   zero locals as they are allocated, do a begin/until loop with the count
   on the data stack.)
 
-: room  ( #dcells)
+: room  ( #cells)
    r> ( ra)
 
    ( choose one! mark, zero, allocate)
@@ -894,7 +863,7 @@ variable unwinding
    -- swap dup  begin          0 >r  1-  dup 0= until  drop  ( zero)
    swap dup  negate rp+!  ( allocate)
 
-   ( #dcells)  >r
+   ( #cells)  >r
    link unroom
    remove >r  ( normal return - unlink and cleanup)
    >r ( ra) ;
@@ -1573,7 +1542,7 @@ being-defined -v  ( be verbose)
 
 ( A word is hidden if its length byte is zero.)
 : hidden?   ( 'link - hidden?)   1- c@  ( len)  0= ;
-: muchain?  ( 'link - muchain?)  cell- cell- d@  [ .forth. cell- cell- #] d@ = ;
+: muchain?  ( 'link - muchain?)  cell- @  [ .forth. cell- @ #] = ;
 
 : .name-and-count-it  ( count 'link - count+1 exit?)
    link>name  dup 2 + ?wrap  type space space  1+  0 ;

@@ -8,16 +8,16 @@
 #include "version.h"
 
 /* data stack */
-dcell dstack[STACK_SIZE];
+cell dstack[STACK_SIZE];
 
 /* return stack */
-dcell rstack[STACK_SIZE];
+cell rstack[STACK_SIZE];
 
 /* Forth VM execution registers */
-dcell  *SP;  /* parameter stack pointer */
-dcell  *RP;  /* return stack pointer */
-cell   *IP;  /* instruction pointer; points to an xt */
-cell   *W;   /* on entry, points to the current Forth word */
+cell  *SP;  /* parameter stack pointer */
+cell  *RP;  /* return stack pointer */
+cell  *IP;  /* instruction pointer; points to an xt */
+cell  *W;   /* on entry, points to the current Forth word */
 
 static void init_stacks()
 {

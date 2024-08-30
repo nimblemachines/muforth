@@ -44,7 +44,7 @@
 
 void mu_execute()
 {
-    dcell *rp_saved;
+    cell *rp_saved;
 
     rp_saved = RP;
 
@@ -71,7 +71,9 @@ static void mu_do_does()
     PUSH_ADDR(W);           /* push the address of the word's body */
 }
 
-/* Compile an xt into the dictionary. */
+/* Compile an xt into the dictionary. Even though this is simply a synonym
+ * for mu_comma(), we are keeping it as a separate word because it makes
+ * clearer what is being "comma'd" into the heap. */
 void mu_compile_comma()     { mu_comma(); }
 
 void mu_set_colon_code()    { PUSH(CODE(mu_do_colon)); mu_compile_comma(); }
@@ -80,14 +82,12 @@ void mu_set_does_code()     { PUSH(CODE(mu_do_does)); mu_compile_comma(); }
 /* Normal exit */
 void mu_runtime_exit()      { UNNEST; }
 
-/* Push an inline signed 32-bit literal, sign-extending it to 64 bits. */
-void mu_runtime_signed_literal_()       { PUSH(*IP++); }
+/* Push an inline 64-bit literal. */
+void mu_runtime_lit_()      { PUSH(*IP++); }
 
-/* Push an inline unsigned 32-bit literal, zero-extending it to 64 bits. */
-void mu_runtime_unsigned_literal_()     { PUSH(*(ucell *)IP++); }
-
-/* Compile the following word */
-void mu_runtime_compile()   { PUSH(*IP++); mu_compile_comma(); }
+/* Compile the following word by treating it as a literal value and then
+ * comma-ing it into the heap. */
+void mu_runtime_compile()   { mu_runtime_lit_(); mu_compile_comma(); }
 
 
 /*
