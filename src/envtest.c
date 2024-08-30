@@ -40,19 +40,5 @@ int main(int argc, char *argv[])
             printf("#error \"Wow. Division is broken.\"\n");
     }
 
-    /* Endianness */
-    {
-        int mem;
-        uint8_t *pb = (uint8_t *)&mem;
-        pb[0] = 0x11;
-        pb[1] = 0x22;
-        pb[2] = 0x33;
-        pb[3] = 0x44;
-        if (mem == 0x11223344)
-            printf("#define MU_BIG_ENDIAN\n");
-        if (mem == 0x44332211)
-            printf("#define MU_LITTLE_ENDIAN\n");
-    }
-
     return 0;
 }
