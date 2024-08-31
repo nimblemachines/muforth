@@ -20,7 +20,7 @@ static void convert_command_line(int argc, char *argv[])
 
     /* Concatenate the args into a string in the dictionary. */
     mu_here();
-    copied = cmd_line.data = (char *)POP;
+    copied = cmd_line.data = (char *)POP_ADDR;
 
     while (argc--)
     {

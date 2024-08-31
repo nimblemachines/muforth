@@ -15,11 +15,10 @@
  */
 
 /*
- * Dictionary is kept addr-aligned. Addrs are the size of a machine
- * address: 32 bits on 32-bit machines, 64 bits on 64-bit machines.
+ * Dictionary is kept cell-aligned. Cells are 64 bits.
  */
-       addr *heap;  /* pointer to start of heap space */
-static addr *hp;    /* heap pointer: points to next free addr in heap space */
+intptr_t heap;      /* pointer (as an integer) to start of heap space */
+static cell *hp;    /* heap pointer: points to next free cell in heap space */
 
 /*
  * A struct dict_name represents what Forth folks often call a "head" - a
@@ -59,7 +58,7 @@ static addr *hp;    /* heap pointer: points to next free addr in heap space */
  * adopts (as dforth did before it). Instead of -following- the link field,
  * the name -precedes- it, starting with padding, then the characters of
  * the name, then its length (one byte), followed directly by the link.
- * (The padding puts the link on an addr boundary.)
+ * (The padding puts the link on a cell boundary.)
  *
  * Experienced C programmers will immediately notice a problem: structs
  * (such as the one we want to use to define the structure of dictionary
@@ -70,34 +69,29 @@ static addr *hp;    /* heap pointer: points to next free addr in heap space */
  * and bug-free code, but how?
  *
  * My solution is a bit weird, but it works rather well. Since I know that
- * the characters of the name will consume at least one addr (3 or 7 bytes,
- * depending on the machine, and a length byte), I define a struct that
- * represents only the last 3 or 7 characters of the name, the length, and
- * the link; the previous characters are "off the map" as far as C is
- * concerned, but there is an easy way to address them. (To get to the
- * beginning of a name, take the address of the suffix, add the SUFFIX_LEN,
- * and subtract the length.)
+ * the characters of the name will consume at least one cell (7 bytes and a
+ * length byte), I define a struct that represents only the last 7
+ * characters of the name, the length, and the link; the previous
+ * characters are "off the map" as far as C is concerned, but there is an
+ * easy way to address them. (To get to the beginning of a name, take the
+ * address of the suffix, add the SUFFIX_LEN, and subtract the length.)
  *
  * Links still point to links; adjustments are made in a couple of places
  * to convert a pointer to a link into a pointer to a name entry (struct
  * dict_name).
  */
 
-#define FOLLOW_LINK(plink)  (addr **)(*plink)
-#define MAKE_LINK(plink)    (addr *)(plink)
-#define NULL_LINK           NULL
+#define FOLLOW_LINK(plink)  UNHEAPIFY(*plink)
+#define MAKE_LINK(plink)    HEAPIFY(plink)
+#define NULL_LINK           UNHEAPIFY(0)
 
-/*
- * Addrs can be 32 or 64 bits, depending on the machine; accordingly,
- * ADDR_ALIGN_SIZE is either 4 or 8.
- */
-#define SUFFIX_LEN  (ADDR_ALIGN_SIZE - 1)
+#define SUFFIX_LEN  (ALIGN_SIZE - 1)
 
 struct dict_name
 {
-    char            suffix[SUFFIX_LEN];     /* last 3 or 7 characters of name */
+    char            suffix[SUFFIX_LEN];     /* last 7 characters of name */
     unsigned char   length;                 /* 255 max; 0 means hidden */
-    addr            *link;                  /* link to preceding link */
+    cell            link;                   /* link to preceding link */
 };
 
 /*
@@ -107,7 +101,7 @@ struct dict_name
 struct dict_entry
 {
     struct dict_name    name;
-    code                code;
+    cell                code;   /* offset from mu_do_colon */
 };
 
 /* bogus C-style dictionary init */
@@ -132,54 +126,33 @@ struct inm initial_runtime[] = {
     { NULL, NULL }
 };
 
-/* @heap pushes the heap origin address */
-void mu_at_heap()    { PUSH_ADDR(heap); }
+/* @heap pushes the starting address of the heap. */
+void mu_at_heap()   { PUSH_ADDR(heap); }
 
 /* #heap pushes the length of the heap in bytes. */
-void mu_size_heap()  { PUSH(HEAP_ADDRS * sizeof(addr)); }
+void mu_size_heap() { PUSH(HEAP_CELLS * sizeof(cell)); }
 
-void mu_here()          /* push current _value_ of heap pointer */
-{
-    PUSH_ADDR(hp);
-}
-
-/*
- * addr, (addr comma) copies an addr-sized pointer on the top of the stack
- * into the dictionary, and advances the heap pointer by one addr. Note
- * that hp is kept addr-aligned.
- */
-
-void mu_addr_comma()
-{
-    *hp++ = POP;
-}
+/* push heap pointer, as a heap-relative address */
+void mu_here()      { PUSH_ADDR(hp); }
 
 /*
  * , (comma) copies the cell on the top of the stack into the dictionary,
- * and advances the heap pointer by one cell. Note that hp is kept
- * addr-aligned - not cell-aligned! (though this might need to change with
- * different platforms!)
+ * and advances the heap pointer by one cell. Note that hp is always kept
+ * cell-aligned.
  */
 
-void mu_comma()
-{
-    *(cell *)hp = POP;
-    hp += sizeof(cell) / sizeof(addr);
-}
+void mu_comma()     { *hp++ = POP; }
 
 /*
  * allot ( n)
  *
- * Takes a count of bytes, rounds it up to an addr boundary, and adds it to
- * the heap pointer. Again, this keeps hp always addr-aligned.
+ * Takes a count of bytes, rounds it up to a cell boundary, and adds it to
+ * the heap pointer. This keeps hp always cell-aligned.
  */
-void mu_allot()    { hp += ADDR_ALIGNED(POP) / sizeof(addr); }
+void mu_allot()     { hp += ALIGNED(POP) / sizeof(cell); }
 
 /* Align TOP to cell boundary */
-void mu_aligned()       { TOP = CELL_ALIGNED(TOP); }
-
-/* Align TOP to addr boundary */
-void mu_addr_aligned()  { TOP = ADDR_ALIGNED(TOP); }
+void mu_aligned()   { TOP = ALIGNED(TOP); }
 
 /* Type of string compare functions */
 typedef int (*match_fn_t)(const char*, const char*, size_t);
@@ -203,9 +176,9 @@ void mu_minus_case()  { match = strncasecmp; }
 /* find  ( a u chain - a u 0 | xt -1) */
 void mu_find()
 {
-    char *token = (char *) ST2;
+    char *token = (char *)UNHEAPIFY(ST2);
     int length = ST1;
-    addr **plink = (addr **)TOP;
+    cell *plink = UNHEAPIFY(TOP);
 
     struct dict_entry *pde;
 
@@ -223,13 +196,13 @@ void mu_find()
             /* for speed, don't test anything else unless lengths match */
             if (pde->name.length != length) continue;
 
-            /* lengths match - compare strings */
+            /* lengths match; compare strings */
             if ((*match)(pde->name.suffix + SUFFIX_LEN - length, token, length) != 0)
                 continue;
 
             /* found: drop token, push code field address and true flag */
             DROP(1);
-            ST1 = (addr)&pde->code;
+            ST1 = HEAPIFY(&pde->code);
             TOP = -1;
             return;
         }
@@ -243,8 +216,7 @@ void mu_find()
 /*
  * new_name creates a new dictionary (name) entry and returns it
  */
-static addr **new_name(
-    addr **plink, char *name, int length, int hidden)
+static cell *new_name(cell *plink, char *name, int length, int hidden)
 {
     struct dict_name *pnm;  /* the new name */
     int prefix_bytes;
@@ -256,9 +228,9 @@ static addr **new_name(
 
     /*
      * Calculate space for the bytes of the name that don't fit into
-     * suffix[]; align to addr boundary.
+     * suffix[]; align to cell boundary.
      */
-    prefix_bytes = ADDR_ALIGNED(length - SUFFIX_LEN);
+    prefix_bytes = ALIGNED(length - SUFFIX_LEN);
 
     /*
      * Zero name + link + code. While dict started out zeroed, use of pad
@@ -279,10 +251,11 @@ static addr **new_name(
     pnm->link = MAKE_LINK(plink);
 
     /* Allot entry */
-    hp = (addr *)(pnm + 1);
+    hp = (cell *)(pnm + 1);
 
 #ifdef BEING_DEFINED
-    fprintf(stderr, "%p %p %.*s\n", &pnm->link, plink, length, name);
+    fprintf(stderr, "%06x %06x %.*s\n",
+            MAKE_LINK(&pnm->link), MAKE_LINK(plink), length, name);
 #endif
 
     /* Return address of link field */
@@ -296,8 +269,7 @@ static addr **new_name(
  * This is only used by C code! Forth code will create unlinked names and
  * use show to link them when they are complete.
  */
-static void new_linked_name(
-    addr **plink, char *name, int length)
+static void new_linked_name(cell *plink, char *name, int length)
 {
     /* create new name & link onto front of chain */
     *plink = MAKE_LINK(new_name(FOLLOW_LINK(plink), name, length, !HIDDEN));
@@ -312,14 +284,14 @@ static void new_linked_name(
  */
 
 /* Remember the last name and the last chain for "show". */
-static addr *last_name;
-static addr **last_chain;
+static cell last_name;
+static cell *last_chain;
 
 /* (unlinked-name)  ( a u chain) */
 void mu_unlinked_name_()
 {
-    addr **plink = (addr **)TOP;
-    char *name = (char *)ST2;
+    cell *plink = UNHEAPIFY(TOP);
+    char *name = (char *)UNHEAPIFY(ST2);
     int length = ST1;
 
     /* create new name & link onto front of chain, but don't change chain */
@@ -418,7 +390,7 @@ void mu_show()  { *last_chain = last_name; }
 static void mu_do_chain()
 {
     /* push the address of muchain's link field by skipping over "muchain". */
-    PUSH_ADDR(W + sizeof(cell)/sizeof(addr));
+    PUSH_ADDR(W + 1);
 }
 
 /*
@@ -434,47 +406,47 @@ static void mu_do_chain()
  * name's link field. We use this address to set C variables that can be
  * used by the initial C-based interpreter.
  *
- * plink points to the chain that this chain is _named_ in. It will always
+ * plink points to the chain that this chain is *named* in. It will always
  * be the .forth. chain.
  */
-static addr **new_chain(
-    addr **plink, char *name)
+static cell *new_chain(cell *plink, char *name)
 {
     new_linked_name(plink, name, strlen(name));
-    *hp++ = (addr)mu_do_chain;  /* set code pointer */
-    return new_name(NULL, "muchain", 7, HIDDEN);
+    *hp++ = CODE(mu_do_chain);  /* set code pointer */
+    return new_name(NULL_LINK, "muchain", 7, HIDDEN);
 }
 
 /*
  * All the words defined by this function are CODE words. Their bodies are
- * defined in C; this routine compiles into the dict entry a code pointer
+ * defined in C. This routine compiles into the dict entry a code pointer
  * that points to the C function.
  */
-static void init_chain(addr **plink, addr **anchor_link, struct inm *pinm)
+static void init_chain(cell *plink, cell *anchor_link, struct inm *pinm)
 {
     /*
      * Set the beginning, "anchor", link for the chain. For sealed chains,
-     * this will be NULL. For chains anchored to other chains, this will be
-     * address of the link field of the chain being anchored to.
+     * this will be the NULL_LINK. For chains anchored to other chains,
+     * this will be address of the link field of the chain being anchored
+     * to.
      */
     *plink = MAKE_LINK(anchor_link);
 
     for (; pinm->name != NULL; pinm++)
     {
         new_linked_name(plink, pinm->name, strlen(pinm->name));
-        *hp++ = (addr)pinm->code;   /* set code pointer */
+        *hp++ = CODE(pinm->code);   /* set code pointer */
     }
 }
 
 static void allocate()
 {
-    heap = (addr *)calloc(HEAP_ADDRS, sizeof(addr));
+    heap = (intptr_t)calloc(HEAP_CELLS, sizeof(cell));
 
-    if (heap == NULL)
+    if (heap == 0)
         die("couldn't allocate memory");
 
     /* init heap pointer */
-    hp = heap;
+    hp = (cell *)heap;
 }
 
 /*
@@ -486,29 +458,18 @@ static void allocate()
  *
  * init_dict() sets everything up.
  */
-static addr **forth_chain;
-static addr **compiler_chain;
-static addr **runtime_chain;
+static cell *forth_chain;
+static cell *compiler_chain;
+static cell *runtime_chain;
 
-void muboot_push_forth_chain()
-{
-    PUSH_ADDR(forth_chain);
-}
-
-void muboot_push_compiler_chain()
-{
-    PUSH_ADDR(compiler_chain);
-}
-
-void muboot_push_runtime_chain()
-{
-    PUSH_ADDR(runtime_chain);
-}
+void muboot_push_forth_chain()      { PUSH_ADDR(forth_chain); }
+void muboot_push_compiler_chain()   { PUSH_ADDR(compiler_chain); }
+void muboot_push_runtime_chain()    { PUSH_ADDR(runtime_chain); }
 
 void init_dict()
 {
     /* we need this to "bootstrap" the .forth. chain */
-    addr *forth_bootstrap = NULL_LINK;
+    cell forth_bootstrap = 0;
 
     allocate();
 
@@ -541,10 +502,21 @@ void init_dict()
 #ifdef DEBUG_DICT
 void mu_dump()
 {
-    fprintf(stderr, "heap origin %p\n", heap);
-
     /* Write the dict contents to stdout. */
-    fwrite(heap, sizeof(addr), hp - heap, stdout);
+    fwrite(UNHEAPIFY(0), sizeof(cell), hp - (cell *)heap, stdout);
+    fflush(stdout);
+}
+void mu_test_dict()
+    mu_dump();
+
+    /* Try some searches. */
+    PUSH_ADDR(".forth."); PUSH(7); PUSH_ADDR(forth_chain); mu_find(); mu_drop(); mu_execute();
+    PUSH_ADDR("["); PUSH(1); PUSH_ADDR(compiler_chain); mu_find();
+    PUSH_ADDR("push"); PUSH(4); PUSH_ADDR(runtime_chain); mu_find();
+    PUSH_ADDR("execut"); PUSH(6); PUSH_ADDR(forth_chain); mu_find();
+
+    /* Write the stack contents to stdout. */
+    fwrite(SP, sizeof(cell), SP0 - SP, stdout);
     fflush(stdout);
 }
 #endif

@@ -91,7 +91,7 @@ void mu_usb_find_device()
         return abort_zmsg("QueryInterface failed");
 
     /* Return deviceInterface as a handle for further operations on device. */
-    ST1 = (addr)deviceInterface;
+    ST1 = HEAPIFY(deviceInterface);
     TOP = -1;
 }
 
@@ -100,7 +100,7 @@ void mu_usb_find_device()
  */
 void mu_usb_close_device()
 {
-    IOUSBDeviceInterface **deviceInterface = (IOUSBDeviceInterface **)TOP;
+    IOUSBDeviceInterface **deviceInterface = (IOUSBDeviceInterface **)UNHEAPIFY(TOP);
 
     /* We're done with the device. */
     (*deviceInterface)->Release(deviceInterface);
@@ -114,14 +114,14 @@ void mu_usb_device_request()
 {
     IOUSBDevRequest tr;
     IOReturn ior;
-    IOUSBDeviceInterface **dev = (IOUSBDeviceInterface **)TOP;
+    IOUSBDeviceInterface **dev = (IOUSBDeviceInterface **)UNHEAPIFY(TOP);
 
     tr.bmRequestType = SP[6];
     tr.bRequest = SP[5];
     tr.wValue = SP[4];
     tr.wIndex = ST3;
     tr.wLength = ST2;
-    tr.pData = (void *)ST1;
+    tr.pData = (void *)UNHEAPIFY(ST1);
     DROP(7);
     ior = (*dev)->DeviceRequest(dev, &tr);
     if (ior != kIOReturnSuccess)
@@ -197,7 +197,7 @@ void mu_usb_find_device()
      * Return intfInterface as a handle for further operations on the USB
      * interface.
      */
-    ST1 = (addr)intfInterface;
+    ST1 = HEAPIFY(intfInterface);
     TOP = -1;
 }
 
@@ -206,7 +206,7 @@ void mu_usb_find_device()
  */
 void mu_usb_close()
 {
-    IOUSBInterfaceInterface190 **intfInterface = (IOUSBInterfaceInterface190 **)TOP;
+    IOUSBInterfaceInterface190 **intfInterface = (IOUSBInterfaceInterface190 **)UNHEAPIFY(TOP);
     IOReturn ior;
 
     /* We're done with the interface. Close it and then release it. */
@@ -225,14 +225,14 @@ void mu_usb_control()
 {
     IOUSBDevRequestTO tr;
     IOReturn ior;
-    IOUSBInterfaceInterface190 **intf = (IOUSBInterfaceInterface190 **)TOP;
+    IOUSBInterfaceInterface190 **intf = (IOUSBInterfaceInterface190 **)UNHEAPIFY(TOP);
 
     tr.bmRequestType = SP[6];
     tr.bRequest = SP[5];
     tr.wValue = SP[4];
     tr.wIndex = ST3;
     tr.wLength = ST2;
-    tr.pData = (void *)ST1;
+    tr.pData = (void *)UNHEAPIFY(ST1);
     tr.noDataTimeout = 1000;
     tr.completionTimeout = 4000;
     DROP(6);
@@ -252,7 +252,7 @@ void mu_usb_control()
  */
 void mu_usb_get_pipe_properties()
 {
-    IOUSBInterfaceInterface190 **intf = (IOUSBInterfaceInterface190 **)TOP;
+    IOUSBInterfaceInterface190 **intf = (IOUSBInterfaceInterface190 **)UNHEAPIFY(TOP);
     IOReturn ior;
     UInt16 max_packet_size;
     UInt8 direction;
@@ -279,13 +279,13 @@ void mu_usb_get_pipe_properties()
  */
 void mu_usb_read_pipe()
 {
-    IOUSBInterfaceInterface190 **intf = (IOUSBInterfaceInterface190 **)TOP;
+    IOUSBInterfaceInterface190 **intf = (IOUSBInterfaceInterface190 **)UNHEAPIFY(TOP);
     IOReturn ior;
     UInt32 size = ST2;
     UInt8 pipe = ST1;
 
     /* data timeout of 100ms; completion timeout of 400ms */
-    ior = (*intf)->ReadPipeTO(intf, pipe, (void *)ST3, &size, 100, 400);
+    ior = (*intf)->ReadPipeTO(intf, pipe, (void *)UNHEAPIFY(ST3), &size, 100, 400);
     if (ior != kIOReturnSuccess)
         return abort_zmsg("ReadPipe failed");
 
@@ -298,12 +298,12 @@ void mu_usb_read_pipe()
  */
 void mu_usb_write_pipe()
 {
-    IOUSBInterfaceInterface190 **intf = (IOUSBInterfaceInterface190 **)TOP;
+    IOUSBInterfaceInterface190 **intf = (IOUSBInterfaceInterface190 **)UNHEAPIFY(TOP);
     IOReturn ior;
     UInt8 pipe = ST1;
 
     /* data timeout of 100ms; completion timeout of 400ms */
-    ior = (*intf)->WritePipeTO(intf, pipe, (void *)ST3, ST2, 100, 400);
+    ior = (*intf)->WritePipeTO(intf, pipe, (void *)UNHEAPIFY(ST3), ST2, 100, 400);
     if (ior != kIOReturnSuccess)
         return abort_zmsg("WritePipe failed");
 
@@ -380,7 +380,7 @@ void mu_hid_find_device()
     if (ior != kIOReturnSuccess)
         return abort_zmsg("IOHIDDeviceOpen failed");
 
-    ST1 = (addr)dev;
+    ST1 = HEAPIFY(dev);
     TOP = -1;       /* Success! */
 }
 
@@ -394,7 +394,7 @@ void mu_hid_read()
 
     ior = IOHIDDeviceGetReport(
             (IOHIDDeviceRef)TOP, kIOHIDReportTypeInput,
-            (CFIndex)0, (uint8_t *)ST2, &size);
+            (CFIndex)0, (uint8_t *)UNHEAPIFY(ST2), &size);
 
     if (ior != kIOReturnSuccess)
         return abort_zmsg("GetReport failed");
@@ -412,7 +412,7 @@ void mu_hid_write()
 
     ior = IOHIDDeviceSetReport(
             (IOHIDDeviceRef)TOP, kIOHIDReportTypeOutput,
-            (CFIndex)0, (const uint8_t *)ST2, (CFIndex)ST1);
+            (CFIndex)0, (const uint8_t *)UNHEAPIFY(ST2), (CFIndex)ST1);
 
     if (ior != kIOReturnSuccess)
         return abort_zmsg("SetReport failed");

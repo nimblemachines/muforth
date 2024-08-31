@@ -16,8 +16,8 @@ cell rstack[STACK_SIZE];
 /* Forth VM execution registers */
 cell  *SP;  /* parameter stack pointer */
 cell  *RP;  /* return stack pointer */
-xt    *IP;  /* instruction pointer; points to an xt */
-xt     W;   /* on entry, points to the current Forth word */
+cell  *IP;  /* instruction pointer; points to an xt */
+cell  *W;   /* on entry, points to the current Forth word */
 
 static void init_stacks()
 {

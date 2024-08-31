@@ -8,27 +8,27 @@
 
 #include "muforth.h"
 
-void mu_nope() {}    /* very useful NO-OP */
-void mu_zzz()  {}    /* a convenient GDB breakpoint */
+void mu_nope()  {}    /* very useful NO-OP */
+void mu_zzz()   {}    /* a convenient GDB breakpoint */
 
 void mu_plus()  { ST1 += TOP; DROP(1); }
 void mu_and()   { ST1 &= TOP; DROP(1); }
 void mu_or()    { ST1 |= TOP; DROP(1); }
 void mu_xor()   { ST1 ^= TOP; DROP(1); }
 
-void mu_negate()  { TOP = -TOP; }
-void mu_invert()  { TOP = ~TOP; }
+void mu_negate()    { TOP = -TOP; }
+void mu_invert()    { TOP = ~TOP; }
 
-void mu_2star()                  { TOP <<= 1; }
-void mu_2slash()                 { TOP >>= 1; }
-void mu_u2slash()  { TOP = (ucell) TOP >>  1; }
+void mu_2star()                   { TOP <<= 1; }
+void mu_2slash()                  { TOP >>= 1; }
+void mu_u2slash()   { TOP = (ucell) TOP >>  1; }
 
 /*
  * Representation of truth values
  *
  * In C, booleans are represent by integers. Zero means false, and anything
- * non-zero means true. But the value returned by a C comparison operator --
- * "<" for example -- is always 0 or 1.
+ * non-zero means true. But the value returned by a C comparison operator -
+ * "<" for example - is always 0 or 1.
  *
  * Forth works similarly, and in its earliest days, comparison words like
  * "<" or "0=" returned 0 for false and 1 for true. But starting in 1983 or
@@ -46,11 +46,11 @@ void mu_u2slash()  { TOP = (ucell) TOP >>  1; }
  * Let's give very specific semantics to left and right shifts, rather than
  * leaving their semantics to the whims of C's underspecified nature.
  *
- * Shift amounts strictly less than (sizeof(cell) * 8) will be shifted "normally"
- * via C's << or >> operator.
+ * Shift amounts strictly less than (sizeof(cell) * 8) will be shifted
+ * "normally" via C's << or >> operator.
  *
- * Shift amounts greater than or equal to (sizeof(cell) * 8) -- let's call
- * these "big" shifts -- will instead result in all ones or all zeros,
+ * Shift amounts greater than or equal to (sizeof(cell) * 8) - let's call
+ * these "big" shifts - will instead result in all ones or all zeros,
  * depending on the type of shift, and the value shifted. In particular:
  *
  *  - Big left shifts and big unsigned right shifts of any value result in all zeros.
@@ -64,64 +64,50 @@ void mu_shift_left()    { ST1 = BIGSHIFT ? 0 :         ST1 << TOP; DROP(1); }
 void mu_ushift_right()  { ST1 = BIGSHIFT ? 0 : (ucell) ST1 >> TOP; DROP(1); }
 void mu_shift_right()   { ST1 = BIGSHIFT ? SIGN(ST1) : ST1 >> TOP; DROP(1); }
 
-#ifdef MU_ADDR_32
-    #define ADDR_SHIFT 2
-#else
-    #define ADDR_SHIFT 3
-#endif
+/* A cell is the unit of storage in the Forth heap. A cell is 64 bits. */
+void mu_cells()         { TOP <<= 3; }
+void mu_cell_slash()    { TOP >>= 3; }   /* signed & flooring! */
 
-/* A cell is the unit of user-visible storage. Always 64 bits. */
-void mu_cells()        { TOP <<= 3; }
-void mu_cell_slash()   { TOP >>= 3; }   /* signed & flooring! */
+/* fetch and store character (really unsigned byte) values */
+void mu_cfetch()        { TOP = *(uint8_t *)UNHEAPIFY(TOP); }
+void mu_cstore()        { *(uint8_t *)UNHEAPIFY(TOP) = ST1; DROP(2); }
 
-/* An addr is the size of a machine address. It is the fundamental building
- * block of the dictionary. */
-void mu_addrs()        { TOP <<= ADDR_SHIFT; }
-void mu_addr_slash()   { TOP >>= ADDR_SHIFT; }  /* signed & flooring! */
-
-/* fetch and store character (really _byte_) values */
-void mu_cfetch()  { TOP = *(uint8_t *)TOP; }
-void mu_cstore()  { *(uint8_t *)TOP = ST1; DROP(2); }
-
-/* fetch and store cell values (64 bit) */
-void mu_fetch()       { TOP =  *(cell *)TOP; }
-void mu_store()       { *(cell *)TOP  = ST1; DROP(2); }
-void mu_plus_store()  { *(cell *)TOP += ST1; DROP(2); }
-
-/* fetch and store addr values (32 or 64 bit) */
-void mu_addr_fetch()  { TOP =  *(addr *)TOP; }
-void mu_addr_store()  { *(addr *)TOP  = ST1; DROP(2); }
+/* fetch and store cell values */
+void mu_fetch()         { TOP = *UNHEAPIFY(TOP); }
+void mu_store()         { *UNHEAPIFY(TOP)  = ST1; DROP(2); }
+void mu_plus_store()    { *UNHEAPIFY(TOP) += ST1; DROP(2); }
 
 /* copy nth value (counting from 0) to top - ANS calls this "pick" */
-void mu_nth()    { TOP = SP[TOP+1]; }
+void mu_nth()       { TOP = SP[TOP+1]; }
 
 /* t means TOP, s means SECOND */
-void mu_dup()    { cell t = TOP; PUSH(t); }             /* a   -> a   a */
-void mu_over()   { cell s = ST1; PUSH(s); }             /* a b -> a b a */
-void mu_swap()   { cell t = TOP; TOP = ST1; ST1 = t; }  /* a b ->   b a */
+void mu_dup()       { cell t = TOP; PUSH(t); }              /* a   -> a   a */
+void mu_over()      { cell s = ST1; PUSH(s); }              /* a b -> a b a */
+void mu_swap()      { cell t = TOP; TOP = ST1; ST1 = t; }   /* a b ->   b a */
 
-void mu_drop()   { DROP(1); }
-void mu_2drop()  { DROP(2); }
-void mu_drops()  { DROP(TOP+1); }
+void mu_drop()      { DROP(1); }
+void mu_2drop()     { DROP(2); }
+void mu_drops()     { DROP(TOP+1); }
 
-void mu_uless()  { ST1 = -(ST1 < (ucell) TOP); DROP(1); }
-void mu_less()   { ST1 = -(ST1 <         TOP); DROP(1); }
+void mu_uless()     { ST1 = -(ST1 < (ucell) TOP); DROP(1); }
+void mu_less()      { ST1 = -(ST1 <         TOP); DROP(1); }
 
-void mu_0less()   { TOP = -(TOP <  0); }
-void mu_0equal()  { TOP = -(TOP == 0); }
+void mu_0less()     { TOP = -(TOP <  0); }
+void mu_0equal()    { TOP = -(TOP == 0); }
 
-void mu_depth()     { cell d = SP0 - SP; PUSH(d); }
+void mu_depth()     { int d = SP0 - SP; PUSH(d); }
 void mu_sp_reset()  { SP = SP0; SP[0] = 0xdecafbad; }
+
 #ifdef WITH_SP_OPERATORS
-void mu_push_s0()   { PUSH_ADDR(SP0); }     /* address of stack bottom */
-void mu_sp_fetch()  { cell *s = SP; PUSH_ADDR(s); } /* push stack pointer */
-void mu_sp_store()  { SP = (cell *)TOP; }           /* set stack pointer */
+void mu_push_s0()   { PUSH_ADDR(SP0); }         /* address of stack bottom */
+void mu_sp_fetch()  { cell *s = SP; PUSH_ADDR(s); }     /* push stack pointer */
+void mu_sp_store()  { SP = (cell *)TOP; }               /* set stack pointer */
 #endif
 
 /* So we can do return-stack magic. */
-void mu_runtime_rp_store()       { RP  = (cell *)TOP; DROP(1); }
-void mu_runtime_rp_plus_store()  { RP += TOP; DROP(1); }    /* TOP is cell count! */
 void mu_runtime_rp_fetch()       { PUSH_ADDR(RP); }
+void mu_runtime_rp_store()       { RP  = UNHEAPIFY(TOP); DROP(1); }
+void mu_runtime_rp_plus_store()  { RP += TOP; DROP(1); }    /* TOP is cell count! */
 
 /*
  * We don't need a ustar, since single-length star and ustar yield the same
@@ -129,7 +115,7 @@ void mu_runtime_rp_fetch()       { PUSH_ADDR(RP); }
  */
 void mu_star()    { ST1 *= TOP; DROP(1); }
 
-void mu_uslash_mod()  /* u1 u2 -- um uq */
+void mu_uslash_mod()  /* u1 u2 - um uq */
 {
     ucell uquot = (ucell)ST1 / TOP;
     ucell umod  = (ucell)ST1 % TOP;
@@ -161,7 +147,7 @@ void mu_uslash_mod()  /* u1 u2 -- um uq */
  * and q,r are the symmetric quotient and remainder.
  *
  */
-void mu_slash_mod()  /* n1 n2 -- m q */
+void mu_slash_mod()  /* n1 n2 - m q */
 {
     cell quot = ST1 / TOP;
     cell mod  = ST1 % TOP;
@@ -183,20 +169,21 @@ void mu_slash_mod()  /* n1 n2 -- m q */
     TOP = quot;
 }
 
-void mu_string_equal()   /* a1 len1 a2 len2 -- flag */
+void mu_string_equal()   /* a1 len1 a2 len2 - flag */
 {
     if (ST2 != TOP)
         ST3 = 0;            /* unequal if lengths differ */
     else
-        ST3 = (memcmp((char *)ST3, (char *)ST1, TOP) == 0) ? -1 : 0;
+        ST3 = (memcmp((char *)UNHEAPIFY(ST3),
+                      (char *)UNHEAPIFY(ST1), TOP) == 0) ? -1 : 0;
 
     DROP(3);
 }
 
 void mu_cmove()  /* src dest count */
 {
-    void *src = (void *) ST2;
-    void *dest = (void *) ST1;
+    void *src = (void *)UNHEAPIFY(ST2);
+    void *dest = (void *)UNHEAPIFY(ST1);
     size_t count = TOP;
 
     memmove(dest, src, count);  /* allows overlapping strings */
@@ -206,7 +193,7 @@ void mu_cmove()  /* src dest count */
 /* Fill count bytes at dest with bytes equal to value. */
 void mu_fill()  /* dest count value */
 {
-    void *dest = (void *) ST2;
+    void *dest = (void *)UNHEAPIFY(ST2);
     size_t count = ST1;
     int value = TOP;
 
@@ -222,13 +209,16 @@ void mu_fill()  /* dest count value */
 /* stack: z" - z" count */
 void mu_zcount()
 {
-    int len = strlen((char *)TOP);
+    int len = strlen((char *)UNHEAPIFY(TOP));
     PUSH(len);
 }
 
 #ifdef THIS_IS_SILLY
 /*
- * I thought I wanted to be able to sort string, but I have more
+ * XXX If this is ever used, string addresses on the stack need to be
+ * UNHEAPIFY'd.
+ *
+ * I thought I wanted to be able to sort strings, but I have more
  * interesting ideas about what muforth is good for. ;-)
  *
  * Like C and unlike Forth, mu_string_compare returns an integer representing

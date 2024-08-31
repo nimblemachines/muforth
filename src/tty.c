@@ -22,7 +22,7 @@ void mu_isatty_q()    /* isatty?  ( fd - flag) */
 /* get-termios  ( fd termios - sizeof(termios) ) */
 void mu_get_termios()
 {
-    if (tcgetattr(ST1, (struct termios *)TOP) == -1)
+    if (tcgetattr(ST1, (struct termios *)UNHEAPIFY(TOP)) == -1)
         return abort_strerror();
 
     DROP(1);
@@ -32,7 +32,7 @@ void mu_get_termios()
 /* set-termios  ( fd termios) */
 void mu_set_termios()
 {
-    if (tcsetattr(ST1, TCSANOW, (struct termios *)TOP) == -1)
+    if (tcsetattr(ST1, TCSANOW, (struct termios *)UNHEAPIFY(TOP)) == -1)
         return abort_strerror();
 
     DROP(2);
@@ -92,7 +92,7 @@ static void set_termios_raw(struct termios *pti)
 
 void mu_set_termios_user_raw()
 {
-    struct termios *pti = (struct termios *) TOP;
+    struct termios *pti = (struct termios *) UNHEAPIFY(TOP);
     set_termios_raw(pti);
     pti->c_oflag |= (OPOST);    /* set opost, so newlines become CR/LF */
     pti->c_lflag |= (ISIG);     /* accept special chars and gen signals */
@@ -121,7 +121,7 @@ void mu_raw_termios()
 
 void mu_set_termios_target_raw()
 {
-    struct termios *pti = (struct termios *) TOP;
+    struct termios *pti = (struct termios *) UNHEAPIFY(TOP);
     set_termios_raw(pti);
     pti->c_cflag &= ~(CRTSCTS);     /* no handshaking */
     pti->c_cflag |= (CLOCAL);       /* no modem signalling */
@@ -133,7 +133,7 @@ void mu_set_termios_target_raw()
 /* set-termios-polling  ( termios) */
 void mu_set_termios_polling()
 {
-    struct termios *pti = (struct termios *) TOP;
+    struct termios *pti = (struct termios *) UNHEAPIFY(TOP);
     pti->c_cc[VMIN] = 0;    /* return even if no chars available */
     DROP(1);
 }
@@ -141,7 +141,7 @@ void mu_set_termios_polling()
 /* set-termios-speed  ( speed termios - ) */
 void mu_set_termios_speed()
 {
-    struct termios *pti = (struct termios *) TOP;
+    struct termios *pti = (struct termios *) UNHEAPIFY(TOP);
 
 #define BPS(x)  case x: ST1 = B ## x; break
 
@@ -173,14 +173,14 @@ void mu_set_termios_speed()
  */
 void mu_set_termios_ignore_parity()
 {
-    struct termios *pti = (struct termios *) TOP;
+    struct termios *pti = (struct termios *) UNHEAPIFY(TOP);
     pti->c_iflag |= (IGNPAR);       /* ignore parity errors */
     DROP(1);
 }
 
 void mu_set_termios_even_parity()
 {
-    struct termios *pti = (struct termios *) TOP;
+    struct termios *pti = (struct termios *) UNHEAPIFY(TOP);
     pti->c_cflag |= (PARENB);       /* enable parity */
     pti->c_cflag &= ~(PARODD);      /* even parity */
     DROP(1);
@@ -188,7 +188,7 @@ void mu_set_termios_even_parity()
 
 void mu_set_termios_odd_parity()
 {
-    struct termios *pti = (struct termios *) TOP;
+    struct termios *pti = (struct termios *) UNHEAPIFY(TOP);
     pti->c_cflag |= (PARENB | PARODD);  /* enable parity - odd */
     DROP(1);
 }

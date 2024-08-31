@@ -21,13 +21,11 @@
 static code state = &muboot_interpret_token;
 
 /*
- * These three variables are read and written from Forth; each C type needs
- * to fit exactly into an addr, and we read, write, and preserve using
- * addr@ addr! and addr-preserve.
+ * These are read by executing mu_source_fetch(), and written by executing
+ * mu_source_store().
  */
-static char *start;     /* input source text */
-static char *end;
-static char *first;     /* goes from start to end */
+static char *first;     /* goes from start to end of input source text */
+static char *end;       /* end of input */
 
 /* We read and write this from Forth using @ and !; it has to be a cell. */
 static cell lineno;     /* line number - incremented for each newline */
@@ -37,14 +35,22 @@ struct string parsed;           /* for errors */
 static struct string skipped;   /* whitespace skipped before token */
 static struct string trailing;  /* whitespace skipped after token */
 
-/* Push addresses of the four crucial interpreter source variables. */
-void mu_push_start()    { PUSH_ADDR(&start); }
-void mu_push_end()      { PUSH_ADDR(&end); }
-void mu_push_line()     { PUSH_ADDR(&lineno); }  /* we call it "line" in muforth */
-void mu_push_first()    { PUSH_ADDR(&first); }
+/*
+ * By defining source@ and source! we make it unnecessary to read or write
+ * C pointer variables from Forth!
+ */
+
+/* source@  ( - end first) */
+void mu_source_fetch()  { PUSH_ADDR(end); PUSH_ADDR(first) ; }
+
+/* source!  ( end first) */
+void mu_source_store()  { first = (char *)POP_ADDR; end = (char *)POP_ADDR; }
+
+/* Push address of lineno, which we call "line" in Forth. */
+void mu_push_line()     { PUSH_ADDR(&lineno); }
 
 /* Push captured line number */
-void mu_at_line()   { PUSH(parsed_lineno); }
+void mu_at_line()       { PUSH(parsed_lineno); }
 
 void mu_push_parsed()
 {
@@ -132,14 +138,14 @@ static void scan(int delim)
     capture_token(last, 0);
 }
 
-void mu_token()  /* -- start len */
+void mu_token()  /* -- first len */
 {
     skip();             /* skip leading whitespace */
     scan(' ');          /* scan for trailing whitespace and capture token */
     mu_push_parsed();   /* push parsed token */
 }
 
-void mu_parse()  /* delim -- start len */
+void mu_parse()  /* delim -- first len */
 {
     /* The first character of unseen input is the first character of token. */
     scan(POP);          /* scan for trailing delimiter and capture token */
@@ -195,7 +201,7 @@ static void muboot_compile_token()
     mu_find();
     if (POP)
     {
-        mu_addr_comma();
+        mu_compile_comma();
         return;
     }
     mu_complain();
@@ -249,7 +255,7 @@ static void muboot_interpret()
 
 /*
  * This will also be re-implemented in Forth, but with nice nesting of
- * various context variables: radix, first, start/end, etc.
+ * various context variables: radix, first, end, etc.
  */
 void muboot_load_file()    /* c-string-name */
 {
@@ -259,13 +265,10 @@ void muboot_load_file()    /* c-string-name */
     fd = TOP;
     mu_read_file();
 
-    start = (char *)ST1;
-    end   = (char *)ST1 + TOP;
-    DROP(2);
-
-    /* wait to reset these until just before we evaluate the new file */
+    first = (char *)UNHEAPIFY(ST1);
+    end   = first + TOP;
     lineno = 1;
-    first = start;
+    DROP(2);
 
     muboot_interpret();
 
