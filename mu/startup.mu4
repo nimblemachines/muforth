@@ -178,7 +178,8 @@ new :
   Happily, @line captures the value of line at the *beginning* of a token.
   Let's reset line to @line when we back up over the token.)
 
-: untoken   parsed drop  first addr!  @line line ! ;
+: untoken   source@ drop ( end)  parsed drop ( new-first) source!
+            @line line ! ;
 
 
 ( Let's define some words that are useful for searching specific dictionary
@@ -472,7 +473,7 @@ new last-created  show
    create , ( compile the constant)  does> @ ;
 
 : 2constant  ( v1 v2)
-   create , , ( compile the constants)  does> 2@ ;
+   create , , ( compile the constants)  does> 2@  ( - v1 v2) ;
 
 ( An array with every cell set to a default value.)
 : defarray   ( default cells)  create  for dup , next  drop ;
@@ -799,25 +800,6 @@ variable unwinding
    remove >r     ( normal return - unlink and cleanup)
    >r ( ra) ;
 
-( Sometimes we need to save and restore values from C code - the
-  interpreter is the main example of this - and since the C values are
-  pointer-sized - ie addrs - we can't use @ and ! to save and restore the
-  value, so we need special copies of restore and preserve for this!)
-
-( Restore saved value of an addr-sized variable.)
-: addr-restore
-   r> ( ra)   r> r>  ( value addr) addr!   >r ( ra) ;
-
-( Preserve the value of an addr-sized variable for the duration of the
-  execution of the calling word.)
-
-: addr-preserve  ( addr)  ( address of addr-sized variable)
-   r> ( ra)
-   over ( addr) >r  swap addr@  ( value)  >r
-   link addr-restore  ( push cleanup)
-   remove >r     ( normal return - unlink and cleanup)
-   >r ( ra) ;
-
 
 -- -----------------------------------------------------------------------
 -- Cleanup on return
@@ -833,6 +815,21 @@ variable unwinding
    @+ swap >r     ( fetch & skip following cfa & push to r)
    swap >r        ( push value)
    link cleanup   ( push code to undo whatever needs undoing)
+   remove >r      ( normal return - unlink and cleanup)
+   >r ( ra) ;
+
+( There are times when we need to do something with more than one value.)
+: cleanup2
+   r> ( ra)   r> r>  ( v1 v2)  r>  ( cfa) execute   >r ( ra) ;
+
+( Push v1, v2, and following cfa to R stack; on exit or unwind, execute cfa
+  with v1 and v2 on the stack.)
+
+: on-exit2  ( v1 v2)
+   r> ( ra)
+   @+ swap >r     ( fetch & skip following cfa & push to r)
+   -rot >r >r     ( push v2, then push v1)
+   link cleanup2  ( push code to undo whatever needs undoing)
    remove >r      ( normal return - unlink and cleanup)
    >r ( ra) ;
 
@@ -1312,13 +1309,9 @@ forth
 
 ( File loading primitives.)
 
-( Be careful here! first and end are addr-sized values in C code.
-  We have to use a slightly different method to preserve and restore them.)
-
 : evaluate  ( a u)
-   first addr-preserve  ( save our place in the input)
-   end addr-preserve  ( save pointer to end of input)
-   over +  end addr!  first addr!
+   source@ on-exit2 source!   ( preserve and restore source pointers)
+   over + swap  source!       ( set source to a u)
    interpret ;
 
 variable lines-read

@@ -21,9 +21,8 @@
 static code state = &muboot_interpret_token;
 
 /*
- * These two variables are read and written from Forth; each C type needs
- * to fit exactly into an addr, and we read, write, and preserve using
- * addr@ addr! and addr-preserve.
+ * These are read by executing mu_source_fetch(), and written by executing
+ * mu_source_store().
  */
 static char *first;     /* goes from start to end of input source text */
 static char *end;       /* end of input */
@@ -36,10 +35,19 @@ struct string parsed;           /* for errors */
 static struct string skipped;   /* whitespace skipped before token */
 static struct string trailing;  /* whitespace skipped after token */
 
-/* Push addresses of the four crucial interpreter source variables. */
-void mu_push_first()    { PUSH_ADDR(&first); }
-void mu_push_end()      { PUSH_ADDR(&end); }
-void mu_push_line()     { PUSH_ADDR(&lineno); }  /* we call it "line" in muforth */
+/*
+ * By defining source@ and source! we make it unnecessary to read or write
+ * C pointer variables from Forth!
+ */
+
+/* source@  ( - end first) */
+void mu_source_fetch()  { PUSH_ADDR(end); PUSH_ADDR(first) ; }
+
+/* source!  ( end first) */
+void mu_source_store()  { first = (char *)POP_ADDR; end = (char *)POP_ADDR; }
+
+/* Push address of lineno, which we call "line" in Forth. */
+void mu_push_line()     { PUSH_ADDR(&lineno); }
 
 /* Push captured line number */
 void mu_at_line()       { PUSH(parsed_lineno); }

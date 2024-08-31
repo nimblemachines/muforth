@@ -77,10 +77,6 @@ void mu_fetch()         { TOP = *UNHEAPIFY(TOP); }
 void mu_store()         { *UNHEAPIFY(TOP)  = ST1; DROP(2); }
 void mu_plus_store()    { *UNHEAPIFY(TOP) += ST1; DROP(2); }
 
-/* fetch and store addr (pointer-sized) values from C land. */
-void mu_addr_fetch()    { TOP = HEAPIFY(*(addr *)UNHEAPIFY(TOP)); }
-void mu_addr_store()    { *(addr *)UNHEAPIFY(TOP) = (addr)UNHEAPIFY(ST1); DROP(2); }
-
 /* copy nth value (counting from 0) to top - ANS calls this "pick" */
 void mu_nth()       { TOP = SP[TOP+1]; }
 
