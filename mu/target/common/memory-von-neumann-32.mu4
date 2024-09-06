@@ -1,0 +1,41 @@
+( This file is part of muforth: https://muforth.dev/
+
+  Copyright 2002-2024 David Frech. (Read the LICENSE for details.)
+
+( Generic von Neumann device with a 32-bit address space.)
+
+( Define the basics of the target's memory.)
+4 constant bytes/cell
+-d target-comma-aligns  ( assume true for 32-bit targets)
+
+ld target/common/memory.mu4   ( generic memory image support)
+
+( Define a single 32-bit address space.)
+32 make-aspace
+
+( Define the flash and ram images, and in each image create a single region.)
+( Allocate 2 MiB for flash, and 512 Ki for ram.)
+
+dup   2 Mi make-image  make-region flash
+    512 Ki make-image  make-region ram
+
+( We need to be able to map from an address in our aspace to one of the
+  regions that it contains.)
+
+( If address within ram region, choose ram; otherwise, flash.)
+
+-: ( target)  ( find a region based on target addr)
+   @ram [ @ram #ram + #] within  if  ram ^  then  flash ;
+
+( Install this chooser into our aspace. We need to have set a region for
+  this to work. It doesn't matter which one; they share the aspace.)
+
+ram 'choose-image !
+
+( Initialization.)
+: erase-image   'image #image "ff fill ;  ( fills *current* image)
+: wipe
+   flash  @flash region!  erase-image
+   ram    @ram   region!  erase-image ;
+
+wipe  ( leaves us in ram!)

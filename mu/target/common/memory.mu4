@@ -174,19 +174,14 @@ variable h    ( dictionary pointer pointer; points to current *region*)
 .then .then
 
 ( The above mess left the address of a "cell@" word on the stack.)
-: du-target
+: du-target  ( 'read)
+           is |read
    [ #]    is |cell@
    bits/addr  |addr !
    bytes/cell |cell ! ;
 
--: ( buf a u)  swap image+ -rot  cmove ;  ( read from image)
-: >image
-   [ #]    is |read
-   du-target ;
-
--- NOTE: we cannot execute >image yet - we need to have defined an aspace
--- and at least one image and region.
--- >image  ( default to image; this can change once we are chatting with target.)
+( Useful for each target's >image.)
+: read-host-image  ( buf a u)  swap image+ -rot  cmove ;
 
 meta
 bytes/cell constant cell
@@ -198,30 +193,43 @@ bytes/cell constant cell
 : here    ( - a)  dp       @ ;
 : origin  ( - a)  dp cell+ @ ;  ( "region drop" also works)
 
+( In muforth's past, "goto" was called "org". I never liked the name. "Org"
+  started life as an assembler "directive" in the 1960s or 1970s. It wasn't
+  clear what it meant back then, and it is no clearer now.)
+
 : goto   ( a)    dp ! ;   ( set region pointer to a)
 : allot  ( n)    dp +! ;
 
-: c,    ( ch)   \m here image-c!       1 \m allot ;
-: ,     ( w)    ( \m align)   \m here image-!  \m cell \m allot ;
+: c,    ( ch)              \m here image-c!       1 \m allot ;
 
 forth
 ( Align an offset to an arbitrary power-of-2 alignment.)
 : aligned-by  ( offset alignment - offset')  push  r@ 1- +  pop negate and ;
-: mask-align,  ( b mask)  \m here  negate and  for  dup \m c,  next  drop ;
 
 meta
-: aligned         \m cell    aligned-by ;  ( cell aligned)
-: align,    ( b)  \m cell 1- mask-align, ;
+: mask-align,  ( b mask)  \m here  negate and  for  dup \m c,  next  drop ;
+
+: aligned         \m cell     aligned-by ;  ( target cell aligned)
+: align,    ( b)  \m cell 1-  \m mask-align, ;
 : align       0   \m align, ;
 
 bytes/cell 4 = .if  ( only define "halfword" words for 32-bit targets)
 
 : haligned                 2 aligned-by ;  ( halfword aligned)
-: halign,   ( b)           1 mask-align, ;
+: halign,   ( b)           1 \m mask-align, ;
 : halign      0   \m halign, ;
-: h,    ( h)    ( \m halign)  \m here image-h!       2 \m allot ;
+
+( h, always aligns!)
+: h,    ( h)    \m halign  \m here image-h!       2 \m allot ;
 
 .then
+
+.ifdef target-comma-aligns
+: ,     ( w)    \m align   \m here image-!  \m cell \m allot ;
+.else
+: ,     ( w)               \m here image-!  \m cell \m allot ;
+.then
+
 
 forth
 ( Return the start address and number of bytes in current region.)
