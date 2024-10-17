@@ -1,35 +1,35 @@
 ( This file is part of muforth: https://muforth.dev/
-
-  Copyright 2002-2024 David Frech. (Read the LICENSE for details.)
+|
+| Copyright 2002-2024 David Frech. (Read the LICENSE for details.)
 
 loading RISC-V Forth kernel
 
 ( Yes, you guessed it: The guts of Forth for RISC-V!
-
-  Because this is a true RISC architecture, doing threaded code doesn't
-  seem to make a lot of sense. If you include NEXT inline in each code word -
-  the speediest approach - you really need post-increment addressing.
-  Otherwise NEXT can take up a lot of space!
-
-  On RISC-V, NEXT for ITC - indirect-threaded code - is four instructions,
-  and NEXT for DTC - direct-threaded code - is three.
-
-  However! There are several advantages to doing ITC. One is that the
-  system is dead simple, and it's easy to write "user-level" code that mucks
-  about with the internals of words, since everything has a uniform
-  structure.
-
-  It's also cache-efficient, mostly separating data - pointers and
-  variables - from code. In a native Forth these often end up next to each
-  other in memory, making the caches' jobs more difficult. Since Forth is
-  so simple, it's very likely that the entire native code implemenation will
-  fit into the I-cache, making it potentially very fast. We'll see about
-  this!
-
-  Because this is a jump-and-link architecture that lets us specify the
-  link register, we can do some tricks. This feature initially led me to
-  think that a native Forth was the "best fit" for RISC-V. However, I still
-  want to try ITC and see how well - or poorly - it works.)
+|
+| Because this is a true RISC architecture, doing threaded code doesn't
+| seem to make a lot of sense. If you include NEXT inline in each code word -
+| the speediest approach - you really need post-increment addressing.
+| Otherwise NEXT can take up a lot of space!
+|
+| On RISC-V, NEXT for ITC - indirect-threaded code - is four instructions,
+| and NEXT for DTC - direct-threaded code - is three.
+|
+| However! There are several advantages to doing ITC. One is that the
+| system is dead simple, and it's easy to write "user-level" code that mucks
+| about with the internals of words, since everything has a uniform
+| structure.
+|
+| It's also cache-efficient, mostly separating data - pointers and
+| variables - from code. In a native Forth these often end up next to each
+| other in memory, making the caches' jobs more difficult. Since Forth is
+| so simple, it's very likely that the entire native code implemenation will
+| fit into the I-cache, making it potentially very fast. We'll see about
+| this!
+|
+| Because this is a jump-and-link architecture that lets us specify the
+| link register, we can do some tricks. This feature initially led me to
+| think that a native Forth was the "best fit" for RISC-V. However, I still
+| want to try ITC and see how well - or poorly - it works.)
 
 
 -- ------------------------------------------------------------------------
@@ -99,7 +99,7 @@ code* (unnest)  [r]   ip rpop1   begin   next,  ;c
 codes nope      [r]
 
 ( For ITC kernels, define one of two possible ways to compile NEXT for the
-  rest of the kernel.)
+| rest of the kernel.)
 
 .ifdef shared-next
 meta: next   asm{  shared-next j  } ;  ( Compile a jump to a previous inline NEXT.)
@@ -133,15 +133,15 @@ code* (next)  [r]
    -1 ix ix addi  branch ix 0= until  ix rpop1   skip j  ;c
 
 ( Do-loop frame looks like this:
-
-  +------------------+
-  |   saved ix reg   |
-  +------------------+
-  |      limit       |<--- rp
-  +------------------+
-
-  Current index is in ix register; current "user-visible" index is
-  calculated as index + limit.)
+|
+| +------------------+
+| |   saved ix reg   |
+| +------------------+
+| |      limit       |<--- rp
+| +------------------+
+|
+| Current index is in ix register; current "user-visible" index is
+| calculated as index + limit.)
 
 code* (do)  [r]  ( limit start)
    top w mv     ( w = start)
@@ -151,8 +151,8 @@ code* (do)  [r]  ( limit start)
    next  ;c
 
 ( Increment index. If it overflows to zero, restore ix register, pop
-  stack frame, skip backwards jump, and continue. If non-zero, simply take
-  the backwards jump.)
+| stack frame, skip backwards jump, and continue. If non-zero, simply take
+| the backwards jump.)
 
 code* (loop)  [r]
    1 ix ix addi   branch ix 0= until
@@ -162,8 +162,8 @@ label undo
    skip j  ;c
 
 ( Add incr to index. If the sign of index has changed, we've crossed the
-  threshold, so restore index, pop frame, and skip jump. Otherwise, take
-  the backwards jump.)
+| threshold, so restore index, pop frame, and skip jump. Otherwise, take
+| the backwards jump.)
 
 code* (+loop)  [r]  ( incr)
    ix x mv  ( save ix *before* adding incr)
@@ -175,8 +175,8 @@ code i   [r]  ( - index)
    0 rp w lw   ix w w add   wpush j  ;c
 
 ( Allocate buffer space _before_ defining the constant that pushes the
-  buffer's address. This way we can define buffers in ram as well as in
-  flash!)
+| buffer's address. This way we can define buffers in ram as well as in
+| flash!)
 
 meta: buffer   ( #bytes)
    h @ push  ram  align here  swap aligned allot  pop h !  constant ;
@@ -270,8 +270,8 @@ code -bits  ( bits a)   ( turn off bits in a word in memory)
 .then
 
 ( The slt/u/i instructions set a register to 1 if the comparison is true,
-  and to 0 otherwise. We want to use -1 as a true flag, so we always negate
-  the result of the test.)
+| and to 0 otherwise. We want to use -1 as a true flag, so we always negate
+| the result of the test.)
 
 code 0=               top top seqz   label makeflag   top top neg   next  ;c
 code 0<               top top sltz   makeflag j  ;c
@@ -290,7 +290,7 @@ code u<    x pop1   x top top sltu   makeflag j  ;c
  2 constant 2    [r]
 
 ( Incrementers by small constants. Shared code means they take up very
-  little space!)
+| little space!)
 
 meta: incr   constant  ;code   0 w w lw   w top top add   next  ;c
    1 incr 1+   [r]
@@ -303,16 +303,16 @@ cell        incr cell+   [r]
 cell negate incr cell-   [r]
 
 ( Double numbers. Useful, among other things, for computing with RISC-V's
-  64-bit timers and counters.)
+| 64-bit timers and counters.)
 
 ( Double-length math register use.
-
-  Enter with d1 and d2 on the stack. Registers are first loaded as follows:
-
-    top = d2hi
-    w   = d2lo
-    x   = d1hi
-    y   = d1lo
+|
+| Enter with d1 and d2 on the stack. Registers are first loaded as follows:
+|
+|   top = d2hi
+|   w   = d2lo
+|   x   = d1hi
+|   y   = d1lo
 )
 
 code d+   ( d1 d2 - d1+d2)
@@ -334,17 +334,17 @@ code dnegate   ( d - -d)
    0 sp w sw   top top neg   top y top sub  ( -borrow)   next  ;c
 
 ( I've wracked my brain and I can't come up with a way to do 64-bit
-  compares without using a branch. Here is the basic idea:
-
-  Compare the high-order words. If they are _equal_, return as the result
-  the _unsigned_ comparison of the low-order words.
-
-  Otherwise, ignore the low-order words and:
-     For ud< return the _unsigned_ comparison of the high-order words
-     For  d< return the _signed_ comparison of the high-order words
+| compares without using a branch. Here is the basic idea:
+|
+| Compare the high-order words. If they are _equal_, return as the result
+| the _unsigned_ comparison of the low-order words.
+|
+| Otherwise, ignore the low-order words and:
+|    For ud< return the _unsigned_ comparison of the high-order words
+|    For  d< return the _signed_ comparison of the high-order words
 )
 ( Compare high-order words; if equal, compare low-order, pop stack, push
-  flag, and run NEXT. If not equal, pop stack and return to caller.)
+| flag, and run NEXT. If not equal, pop stack and return to caller.)
 
 label dless-common
    cell sp x lw  ( d1hi)   x top = if  ( high-order words equal: compare low)
@@ -361,11 +361,11 @@ code ud<  ( d1 d2 - f)
    dless-common w jal   x top top sltu   makeflag j  ;c
 
 ( Host words to make it easier to deal with double numbers on the target.
-
-  >d   converts a host-side 64-bit number into two 32-bit target numbers
-  d>   goes the other way: target -> host
-  d.   prints a target double number as a signed 64-bit number
-  ud.  prints a target double number as an unsigned 64-bit number
+|
+| >d   converts a host-side 64-bit number into two 32-bit target numbers
+| d>   goes the other way: target -> host
+| d.   prints a target double number as a signed 64-bit number
+| ud.  prints a target double number as an unsigned 64-bit number
 )
 
 meta: >d   ( host - tdlo tdhi)   dup "ffff_ffff and  ( lo)  swap 32 u>> ;
@@ -407,7 +407,7 @@ code /mod   ( x t - x-mod-t x/t)
 .ifdef unfinished-do-not-use
 
 ( Does an unsigned division of x:y by t, resulting in an unsigned double
-  quotient, and an unsigned remainder.)
+| quotient, and an unsigned remainder.)
 code ud/mod   ( y x t - urem uquot-lo uquot-hi)
    0 sp x lw   cell sp y lw   top z mv
    x z top divu   x z w remu   ( top = qhi, w = rhi)
@@ -415,7 +415,7 @@ code ud/mod   ( y x t - urem uquot-lo uquot-hi)
    y z x divu   y z w remu   0 sp x sw ( qlo)  cell sp w sw ( urem)  next  ;c
 
 ( XXX on RISC-V, div and rem only take single-length dividend. We have to
-  make our own double-len divide...)
+| make our own double-len divide...)
 ( XXX can we use /mod to make fm/mod?)
 code fm/mod   ( y x t - x:y-mod-t x:y/t)
    0 sp x lw   cell sp y lw   x top w div   x top y rem
@@ -431,8 +431,8 @@ code fm/mod   ( y x t - x:y-mod-t x:y/t)
 
 
 ( Have both mcycle64@ and minstret64@ jump to the shared code so that when
-  we are comparing cycles to instruction counts we are sure to be comparing
-  apples and apples.)
+| we are comparing cycles to instruction counts we are sure to be comparing
+| apples and apples.)
 
 label xypush
    top x push2   y top mv   next  ;c
@@ -451,27 +451,27 @@ code minstret64@  ( - minstret-lo minstret-hi)
    xypush j  ;c
 
 ( Running full bore it takes ~5 minutes for mcycle to overflow, so for the
-  following experiments we can stick with the low 32 bits of the counters.)
+| following experiments we can stick with the low 32 bits of the counters.)
 
 code mcycle32@    ( - mcycle-lo)       mcycle w csrr   wpush j  ;c
 code minstret32@  ( - minstret-lo)   minstret w csrr   wpush j  ;c
 
 ( Now for big fun. Let's read each counter four times, in quick succession,
-  leaving the values on the stack.)
+| leaving the values on the stack.)
 
 : 4c   mcycle32@  mcycle32@  mcycle32@  mcycle32@ ;
 : 4i   minstret32@  minstret32@  minstret32@  minstret32@ ;
 
 ( With four timer or counter values on the stack, calculate the
-  differences, so we can see how many cycles or instructions "elapsed"
-  between each pair of reads.)
+| differences, so we can see how many cycles or instructions "elapsed"
+| between each pair of reads.)
 
 : 4diff   ( a b c d - b-a c-b d-c)
    over - >r  ( d-c)  over - >r  ( c-b)  swap -  r>  r> ;
 
 ( For fun, and to see totally different timing behaviour, we can do the
-  same thing with full 64-bit reads of the counters. Read each one four
-  times in quick succession.)
+| same thing with full 64-bit reads of the counters. Read each one four
+| times in quick succession.)
 
 : 4cc   mcycle64@  mcycle64@  mcycle64@  mcycle64@ ;
 : 4ii   minstret64@  minstret64@  minstret64@  minstret64@ ;
@@ -485,8 +485,8 @@ ram
 ( For debugging and interactive execution.)
 
 ( The host can push things onto host stack; they get copied to target
-  stack, registers popped, words execute, re-push, copy back to host...
-  Much easier than stuffing things into register slots on stack frame!)
+| stack, registers popped, words execute, re-push, copy back to host...
+| Much easier than stuffing things into register slots on stack frame!)
 
 .ifdef hifive-compat
 
@@ -515,8 +515,8 @@ __host
 forth
 
 ( Show some indication of whether a word is still executing. If IP is
-  anything other than two cells past trampoline, we've hit "bug" somewhere
-  other than the trampoline. Show this by annotating IP with a "*".)
+| anything other than two cells past trampoline, we've hit "bug" somewhere
+| other than the trampoline. Show this by annotating IP with a "*".)
 
 : executing?   ( ip - f)   [ \m trampoline @  2 \m cells + #]  - ;
 
@@ -534,11 +534,11 @@ __meta
 
 
 comment ~~examples~~
-variable inc
-: lala  do  i bug drop  inc @ +loop ;
-
-( to demonstrate scripting target execution from the host)
-meta: grog  ( start n)  0 do  \t 1+ remote  loop ;
-( try: 44 10 grog)
-
-~~examples~~
+| variable inc
+| : lala  do  i bug drop  inc @ +loop ;
+|
+| ( to demonstrate scripting target execution from the host)
+| meta: grog  ( start n)  0 do  \t 1+ remote  loop ;
+| ( try: 44 10 grog)
+|
+| ~~examples~~

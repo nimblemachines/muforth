@@ -1,6 +1,6 @@
 ( This file is part of muforth: https://muforth.dev/
-
-  Copyright 2002-2024 David Frech. (Read the LICENSE for details.)
+|
+| Copyright 2002-2024 David Frech. (Read the LICENSE for details.)
 
 loading S08 Forth kernel (threaded)
 
@@ -131,7 +131,7 @@ code +
    ' drop j  ;c
 
 ( XXX Can't do nifty hack of "negate +" as efficiently in threaded land, so
-  let's define "-" as well as "+".)
+| let's define "-" as well as "+".)
 
 code -
    tsx
@@ -170,7 +170,7 @@ code d+
 
 ( Flags and tests.)
 ( XXX if makeflag always pushed one byte, the other words could .a pul one
-  of their bytes.. and u< and < could do 3 # ais instead of 2.)
+| of their bytes.. and u< and < could do 3 # ais instead of 2.)
 
 code 0=
    tsx
@@ -212,15 +212,15 @@ code u2/
 ( do, loop, +loop)
 
 ( do/loop stack frame on R:
-
-     |       |       |
-     +-------+-------+
-  4  |  ixh  |  ixl  |  5   index == start-limit to 0
-     +-------+-------+
-  2  |  lih  |  lil  |  3   limit
-     +-------+-------+
-  0  |     empty     |  1
-     +-------+-------+  <---- RP
+|
+|    |       |       |
+|    +-------+-------+
+| 4  |  ixh  |  ixl  |  5   index == start-limit to 0
+|    +-------+-------+
+| 2  |  lih  |  lil  |  3   limit
+|    +-------+-------+
+| 0  |     empty     |  1
+|    +-------+-------+  <---- RP
 )
 
 ( XXX Another word that would benefit from little-endian data stack!)
@@ -323,14 +323,14 @@ prime-pump resolve>>
    2 ,s decz? until  3 # ais  rts  ;c
 
 ( What about using the chip? The above routines clock in at about 760~!
-  Ouch. How fast can we go using the chip's 8x8 multiply?
-
-  Unfortunately it uses the X register, so we can't do this on the X stack.
-  We have to move everything to S or zram, do the multiply, and then move
-  back. Even so, can it be worse that the - arguably simple and elegant -
-  loop above?
-
-  Stack layout:)
+| Ouch. How fast can we go using the chip's 8x8 multiply?
+|
+| Unfortunately it uses the X register, so we can't do this on the X stack.
+| We have to move everything to S or zram, do the multiply, and then move
+| back. Even so, can it be worse that the - arguably simple and elegant -
+| loop above?
+|
+| Stack layout:)
 
 macro s_sl   8 ,s  ;m -- sl
 macro s_sh   7 ,s  ;m -- sh
@@ -359,10 +359,10 @@ code um*4  ( umer umcand - uprodlo uprodhi)
    4 # ais  rts  ;c
 
 ( Another version using mov ,x+ to move values between X stack and zram
-  scratch space. For every ",s" in the above code we save a byte and a
-  cycle by switching to zram - direct - accesses.
-
-  Scratch space layout - low to high memory, unlike stack picture above:)
+| scratch space. For every ",s" in the above code we save a byte and a
+| cycle by switching to zram - direct - accesses.
+|
+| Scratch space layout - low to high memory, unlike stack picture above:)
 
 1 zvar x_p3   -- prod3 - msb
 1 zvar x_p2   -- prod2
@@ -412,41 +412,41 @@ code *
 ( Now, to tackle _divide_.)
 
 ( First, the bit-by-bit shift-and-subtract method.
-
-  This is essentially the reverse of the multipy's add-and-shift - as you
-  would expect. However, with multiply we get lucky: for every one bit in
-  the multiplier, we add the multiplicand into an accumulator, and then
-  immediately shift both the accumulator and the multiplier together, one
-  bit to the right. Our add produces 17-bits but we immediately shift the
-  generated carry in at the left, so we don't have to save it.
-
-  With divide we don't get so lucky. We first shift _left_, creating a
-  17-bit value - including the carry bit. We then test to see if
-  subtracting the divisor causes underflow; if it does _not_, we actually
-  do the subtract, put a 1 into the space that shifting created [in the
-  lowest bit of the quotient] and then shift left again. The trouble is
-  that we do the shift from low to high, generating a carry - which we have
-  to save somewhere - and then do the compare, again starting with the less
-  significant byte. So we con't optimise the way we can with multiply, and
-  the code is clumsier than I would like.)
+|
+| This is essentially the reverse of the multipy's add-and-shift - as you
+| would expect. However, with multiply we get lucky: for every one bit in
+| the multiplier, we add the multiplicand into an accumulator, and then
+| immediately shift both the accumulator and the multiplier together, one
+| bit to the right. Our add produces 17-bits but we immediately shift the
+| generated carry in at the left, so we don't have to save it.
+|
+| With divide we don't get so lucky. We first shift _left_, creating a
+| 17-bit value - including the carry bit. We then test to see if
+| subtracting the divisor causes underflow; if it does _not_, we actually
+| do the subtract, put a 1 into the space that shifting created [in the
+| lowest bit of the quotient] and then shift left again. The trouble is
+| that we do the shift from low to high, generating a carry - which we have
+| to save somewhere - and then do the compare, again starting with the less
+| significant byte. So we con't optimise the way we can with multiply, and
+| the code is clumsier than I would like.)
 
 ( NOTE 1: Unlike the published fig-FORTH code for u/, which calculates the
-  division of a 31-bit unsigned dividend by a 16-bit unsigned divisor, I
-  want to do a full 32-bit division. Leaving off that high-order bit allows
-  an optimisation: they only have to subtract from 16 bits instead of 17,
-  so things can be simpler.)
+| division of a 31-bit unsigned dividend by a 16-bit unsigned divisor, I
+| want to do a full 32-bit division. Leaving off that high-order bit allows
+| an optimisation: they only have to subtract from 16 bits instead of 17,
+| so things can be simpler.)
 
 ( NOTE 2: the order of the results is _opposite_ that of fig-FORTH and
-  FORTH-83! I think I understand why they want to have the quotient on
-  top - it's "more significant" - but in the shift-and-subtract method the
-  quotient naturally ends up in the _lower_ half of the result.
-
-  In the 6502 assembler source for fig-FORTH's u/ the high and low halves
-  of the dividend are swapped before entering the loop. This is how they
-  end up with quot and rem in the right order at the end.)
+| FORTH-83! I think I understand why they want to have the quotient on
+| top - it's "more significant" - but in the shift-and-subtract method the
+| quotient naturally ends up in the _lower_ half of the result.
+|
+| In the 6502 assembler source for fig-FORTH's u/ the high and low halves
+| of the dividend are swapped before entering the loop. This is how they
+| end up with quot and rem in the right order at the end.)
 
 ( Dividend is in sh:sl:s3:s2
-  Divisor  is in th:tl)
+| Divisor  is in th:tl)
 
 code um/mod  ( ud u - uquot urem)
    16 # lda  .a psh ( loop count)

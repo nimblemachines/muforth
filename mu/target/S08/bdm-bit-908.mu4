@@ -1,6 +1,6 @@
 ( This file is part of muforth: https://muforth.dev/
-
-  Copyright 2002-2024 David Frech. (Read the LICENSE for details.)
+|
+| Copyright 2002-2024 David Frech. (Read the LICENSE for details.)
 
 loading S08 BDM support (bit routines for 908)
 
@@ -9,32 +9,32 @@ __meta
 ( Support for Freescale's Background Debug Mode - or BDM.)
 
 ( These are bit send and receive commands for a 908 processor running at
-  18.432M - bus speed of 4.608M - and talking to S08 targets running at 4M
-  and 8M.)
+| 18.432M - bus speed of 4.608M - and talking to S08 targets running at 4M
+| and 8M.)
 
 ( I originially wrote this code "flattened" out but I want to run it from
-  the small RAM in a 908, and it won't fit. I don't see why I can't make
-  the bit transmit and receive code _routines_ rather than macros. What
-  matters is the timing _within_ a bit, not as much between bits. As long
-  as no more than 512 cycles elapse between falling edges, the interface
-  will not time out.)
+| the small RAM in a 908, and it won't fit. I don't see why I can't make
+| the bit transmit and receive code _routines_ rather than macros. What
+| matters is the timing _within_ a bit, not as much between bits. As long
+| as no more than 512 cycles elapse between falling edges, the interface
+| will not time out.)
 
 ( Using the internal osc on the 908QB8, running at 3.2MHz, I wasn't able to
-  run fast enough to talk to a 9S08QG8, running at 8MHz. I dug out a 25MHz
-  crystal, which will give me a 6.25MHz bus speed, which should be plenty
-  fast enough.
-
-  Of course, now I have to rewrite my bit rx and tx routines. ;-)
+| run fast enough to talk to a 9S08QG8, running at 8MHz. I dug out a 25MHz
+| crystal, which will give me a 6.25MHz bus speed, which should be plenty
+| fast enough.
+|
+| Of course, now I have to rewrite my bit rx and tx routines. ;-)
 
 ( Another update. I've decided to try using an 18.432MHz crystal on the
-  908QB. This way I get a nice even divisor for a 57600 bps serial clock,
-  and it seems to be fast enough to talk to an S08 part running at either
-  4MHz or 8MHz.)
+| 908QB. This way I get a nice even divisor for a 57600 bps serial clock,
+| and it seems to be fast enough to talk to an S08 part running at either
+| 4MHz or 8MHz.)
 
 ( Now we're reading BKGD on PB7 thru an HCT244 gate. We drive BKGD _low_ by
-  driving 0 on PB3, and drive it _high_ by driving PB0 low and PB1 high.
-  The BKGD_foo defines are for PortB data direction bits - we never change
-  the values driven.)
+| driving 0 on PB3, and drive it _high_ by driving PB0 low and PB1 high.
+| The BKGD_foo defines are for PortB data direction bits - we never change
+| the values driven.)
 
 ( We sample BKGD on PB7.)
 02 equ PortBinit  ( PB3 low, PB1 high, PB0 low)
@@ -147,7 +147,7 @@ label SyncPulse
       SyncWait bsr
       TSC3 7 bset? if  ( rising edge triggered)
          ( If both falling and rising triggered, calculate difference;
-           otherwise return 0.)
+         | otherwise return 0.)
          ( On 908 have to read capture H bytes first)
          TCH3H ) lda   .a psh
          TCH3L ) lda   1 ,x sub   1 ,x sta
@@ -163,127 +163,127 @@ label SyncPulse
    rts  ;c
 
 comment
-==========================================================================
-
-Everything down here is an archive of things tried, and is for comic and
-historic use _only_.
-
-comment *6.25M*
-( BDM code for host running at 6.25M, and target at 8M.)
-( These are currently UNUSED; from when I was using a 25M crystal.)
-
-( Send one bit via BDM.)
-macro tx1  ( tx bit in A)
-  BKGD_L # DirB ) mov   ( drive start bit)
-  DirB ) sta            ( drive data bit)
-  nsa                   ( pause)
-  BKGD_H # DirB ) mov   ( drive stop bit)
-  ;m
-
-( Recv one bit via BDM.)
-macro rx1  ( recvd bit in A7)
-  BKGD_L # DirB ) mov   ( drive start bit)
-  DirB ) clr            ( undrive PortB)
-  nop                   ( wait for target to drive its bit)
-  PortB ) lda           ( sample bit)
-  ;m
-
-*6.25M*
-
-comment *3.2M*
-Mostly of historic interest, but archived here anyway.
-
-( Compressing three transitions into one byte:
-   Hxx  10
-   xHx  08
-   xxH  04
-   Lxx  80
-   xLx  40
-   xxL  20
-                    L  H
-   tx1 = LHH = 8c = 1000_1100
-   tx0 = LLH = c4 = 1100_0100  )
-
-( Send one bit via BDM.)
-label tx1  ( tx bit in A)
-  savex  DirB # ldx
-  0 ,x sta   .a lsl   0 ,x sta  .a lsl  0 ,x sta
-  restx  rts  ;c
-
-( Recv one bit via BDM.)
-label rx1  ( recvd bit in A1)
-  savex  DirB # ldx
-  80 # lda ( BKGD_L)   0 ,x sta   .a lsl   0 ,x sta   PortA ) lda
-  restx  rts  ;c
-
-( Send one byte via BDM.)
-label tx8  ( tx byte in A)
-   ( loop 8; generate bits MSB first)
-   0 ,x sta   8 # lda   1 ,x sta
-   begin  0 ,x rol  CS if  8c # lda  else  0c4 # lda  then
-      tx1 bsr   1 ,x decz?  until
-   rts  ;c
-
-( Recv one byte via BDM.)
-label rx8  ( recvd byte in A)
-  ( loop 8; recv bits MSB first; bit is 02)
-  8 # lda   1 ,x sta   0 ,x clr
-  begin   rx1 bsr   .a ror  .a ror  ( PortA.1 -> C)  0 ,x rol
-          1 ,x decz?  until
-  0 ,x lda  ( byte into A)
-  rts  ;c
-*3.2M*
-
-0 .if
-label InitBdm
-  BKGD_H # PortB ) mov   -- BKGD_L 0, BKGD_H 1
-  DirB ) clr
-  rts  ;c
-
--- macro savex   xSaved ) stx  ;m
--- macro restx   xSaved ) ldx  ;m
-macro savex   .x psh  ;m
-macro restx   .x pul  ;m
-
-( Archive this here.)
-
-( Send one bit via BDM.)
-macro tx1
-   .a pul   0 ,x sta   .a lsl   0 ,x sta  .a lsl  0 ,x sta  ;m
-
-( Recv one bit via BDM.)
-macro rx1
-   80 # lda ( BKGD_L)   0 ,x sta   .a lsl   0 ,x sta   PortA ) lda   .a psh  ;m
-
-macro savex   xSaved ) stx  ;m
-macro restx   xSaved ) ldx  ;m
-
-label tx8
-   ( loop 8; generate bits LSB first; then we'll pop them MSB first)
-   8 # lda   0 ,x sta
-   begin  2 ,x ror  CS if  8c # lda  else  0c4 # lda  then
-          .a psh  0 ,x decz?  until
-   savex  ( XXX if I moved this above the pushes, it could psh onto stack...)
-   DirB # ldx
-   tx1  tx1  tx1  tx1
-   tx1  tx1  tx1  tx1
-   restx   2 # aix  ( pop xmitted byte)
-   rts  ;c
-
-label rx8
-   savex
-   DirB # ldx
-   rx1  rx1  rx1  rx1
-   rx1  rx1  rx1  rx1
-   restx
-   ( loop 8; pop bits LSB first; bit is 02)
-   8 # lda   1 ,x sta   0 ,x clr
-   begin   .a pul  .a ror  .a ror  ( PortA.2 -> C)  0 ,x ror
-           1 ,x decz?  until
-   -2 # aix  ( promote scratch - recvd char - to TOP)
-   rts  ;c
-
-.then
-
-==========================================================================
+  ==========================================================================
+|
+| Everything down here is an archive of things tried, and is for comic and
+| historic use _only_.
+|
+| comment *6.25M*
+| ( BDM code for host running at 6.25M, and target at 8M.)
+| ( These are currently UNUSED; from when I was using a 25M crystal.)
+|
+| ( Send one bit via BDM.)
+| macro tx1  ( tx bit in A)
+|   BKGD_L # DirB ) mov   ( drive start bit)
+|   DirB ) sta            ( drive data bit)
+|   nsa                   ( pause)
+|   BKGD_H # DirB ) mov   ( drive stop bit)
+|   ;m
+|
+| ( Recv one bit via BDM.)
+| macro rx1  ( recvd bit in A7)
+|   BKGD_L # DirB ) mov   ( drive start bit)
+|   DirB ) clr            ( undrive PortB)
+|   nop                   ( wait for target to drive its bit)
+|   PortB ) lda           ( sample bit)
+|   ;m
+|
+| *6.25M*
+|
+| comment *3.2M*
+| Mostly of historic interest, but archived here anyway.
+|
+| ( Compressing three transitions into one byte:
+|    Hxx  10
+|    xHx  08
+|    xxH  04
+|    Lxx  80
+|    xLx  40
+|    xxL  20
+|                     L  H
+|    tx1 = LHH = 8c = 1000_1100
+|    tx0 = LLH = c4 = 1100_0100  )
+|
+| ( Send one bit via BDM.)
+| label tx1  ( tx bit in A)
+|   savex  DirB # ldx
+|   0 ,x sta   .a lsl   0 ,x sta  .a lsl  0 ,x sta
+|   restx  rts  ;c
+|
+| ( Recv one bit via BDM.)
+| label rx1  ( recvd bit in A1)
+|   savex  DirB # ldx
+|   80 # lda ( BKGD_L)   0 ,x sta   .a lsl   0 ,x sta   PortA ) lda
+|   restx  rts  ;c
+|
+| ( Send one byte via BDM.)
+| label tx8  ( tx byte in A)
+|    ( loop 8; generate bits MSB first)
+|    0 ,x sta   8 # lda   1 ,x sta
+|    begin  0 ,x rol  CS if  8c # lda  else  0c4 # lda  then
+|       tx1 bsr   1 ,x decz?  until
+|    rts  ;c
+|
+| ( Recv one byte via BDM.)
+| label rx8  ( recvd byte in A)
+|   ( loop 8; recv bits MSB first; bit is 02)
+|   8 # lda   1 ,x sta   0 ,x clr
+|   begin   rx1 bsr   .a ror  .a ror  ( PortA.1 -> C)  0 ,x rol
+|           1 ,x decz?  until
+|   0 ,x lda  ( byte into A)
+|   rts  ;c
+| *3.2M*
+|
+| 0 .if
+| label InitBdm
+|   BKGD_H # PortB ) mov   -- BKGD_L 0, BKGD_H 1
+|   DirB ) clr
+|   rts  ;c
+|
+| -- macro savex   xSaved ) stx  ;m
+| -- macro restx   xSaved ) ldx  ;m
+| macro savex   .x psh  ;m
+| macro restx   .x pul  ;m
+|
+| ( Archive this here.)
+|
+| ( Send one bit via BDM.)
+| macro tx1
+|    .a pul   0 ,x sta   .a lsl   0 ,x sta  .a lsl  0 ,x sta  ;m
+|
+| ( Recv one bit via BDM.)
+| macro rx1
+|    80 # lda ( BKGD_L)   0 ,x sta   .a lsl   0 ,x sta   PortA ) lda   .a psh  ;m
+|
+| macro savex   xSaved ) stx  ;m
+| macro restx   xSaved ) ldx  ;m
+|
+| label tx8
+|    ( loop 8; generate bits LSB first; then we'll pop them MSB first)
+|    8 # lda   0 ,x sta
+|    begin  2 ,x ror  CS if  8c # lda  else  0c4 # lda  then
+|           .a psh  0 ,x decz?  until
+|    savex  ( XXX if I moved this above the pushes, it could psh onto stack...)
+|    DirB # ldx
+|    tx1  tx1  tx1  tx1
+|    tx1  tx1  tx1  tx1
+|    restx   2 # aix  ( pop xmitted byte)
+|    rts  ;c
+|
+| label rx8
+|    savex
+|    DirB # ldx
+|    rx1  rx1  rx1  rx1
+|    rx1  rx1  rx1  rx1
+|    restx
+|    ( loop 8; pop bits LSB first; bit is 02)
+|    8 # lda   1 ,x sta   0 ,x clr
+|    begin   .a pul  .a ror  .a ror  ( PortA.2 -> C)  0 ,x ror
+|            1 ,x decz?  until
+|    -2 # aix  ( promote scratch - recvd char - to TOP)
+|    rts  ;c
+|
+| .then
+|
+| ==========================================================================
 

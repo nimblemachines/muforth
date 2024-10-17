@@ -1,115 +1,115 @@
 ( This file is part of muforth: https://muforth.dev/
-
-  Copyright 2002-2024 David Frech. (Read the LICENSE for details.)
+|
+| Copyright 2002-2024 David Frech. (Read the LICENSE for details.)
 
 ( Target/meta compiler for v25.  headaches galore!!
-  re-worked for dforth, 4-sep-1998)
+| re-worked for dforth, 4-sep-1998)
 
 loading Meta compiler
 
 comment %%
-15-sep-1998.  Changed to use the capitalization convention already in effect
-  in the code I wrote for the Pygmy cross-compiler.  Maybe this way I can do
-  a lot less work converting the old stuff.  Of course it means changing the
-  assembler and -also- switching the kernel back.  Ugh.
-
-24-sep-1998.  Changed to simpler dictionary.
-
-18-aug-1999. Changed to a more complicated dictionary. :-| I've been caught
-  by the `which word to compile' bug, and needed to make searching work better
-  in the presence of the meta-compiler.
-
-  I want the host's forth to remain completely `pure' during
-  meta-compilation. No words can show up there that don't have to do with
-  normal host forth things, like finding words or making new words or even
-  making new defining words. Actually it's not quite that strict. What we
-  want is for the pieces to be defined in forth, but the top-level word -
-  like the new `:' for target compilation - to be in meta, so we don't get
-  it by accident.
-
-  All the `meta' words go into a new vocab - called `meta-forth' - that
-  concerns itself with issues of meta-ness. The `:' that defines new target
-  words is here, as is the colon word - `::' - that defines new
-  meta-defining words. The ' in meta-forth will search target and not
-  [host's] forth.
-
-  The meta -interpreter- will -never- look in forth. So we have to have an
-  escape mechanism if we want to compute `a b +' while running the
-  meta-interpreter. `{' solves this problem; `[' does the same thing inside
-  the meta-compiler.
-
-  In the meta compiler is the word `::', used to compile new meta-compiler
-  words. It also compiles from the host's forth; actually, it first searches
-  the host's -compiler- vocab, so that things like if..then will work, then
-  searches meta and lastly searches forth. The main thing is that when, after
-  having loaded the target compiler, we're typing at the `command line', we
-  don't -ever- want to accidentally execute a host forth word.
-
-  The assembler, on the other hand, searches the assembler and then the host
-  vocab - but -not- the meta vocab! Unless I find that this doesn't make
-  sense.
-
-  Target words are defined so that when executed they call `remote'.
-
-  ARGH! After scratching my head for a long time wondering why the meta-
-  interpret loop seemed to hang I realized something: the sentinels were
-  missing! The easiest way to make this work again is to put, in dforth.m4,
-  sentinels for every chain. Which I did.
-
-19-aug-1999. Wrong again. Searching only meta in `target' interpretation
-  mode makes finding information really tedious, and involves a lot of repli-
-  cation, and creates more confusion than it eliminates. The good idea here
-  was creating a `meta' vocabulary with words useful in a `target' or `meta'
-  interpretation - NOT compilation - mode. The bad idea was not also searching
-  the regular host `forth' as well. It might be nice to be able to drop back
-  into a `pure' host forth - and this is still possible. But it's too arduous
-  to search only meta. Back to work.
-
-  In general, once we've started the meta-compiler we'll be compiling new
-  tools into `meta' - this means that assembler constants and stuff like that
-  should be defined in meta, and the assembler loop should search meta as
-  well.
-
-  I think I'm still wrong. I think the right idea is to factor the existing
-  forth into -three- vocabularies: forth, definer, compiler. forth is every-
-  thing simple, like `@ ! +'. definer is `variable create : constant' &c.
-  compiler is `if then begin while for' &c. We want to be careful not to mix
-  up our host definers and target definers, just as we've (already) separated
-  the host and target compiler vocabs.
-
-  There are now perhaps four modes we can be in:  host interpret, host
-  compile, target - meta - interpret, target compile.
-
-  Host interpret: definer execute; forth execute; number
-  Host compile:   compiler execute; definer compile; forth compile; literal
-
-  Meta interpret: target execute; meta-definer execute; forth execute; number
-  Meta-definer compile:
-                 compiler execute; meta-definer compile; forth compile; literal
-  Target compile: meta-compiler execute; target compile; target-literal
-
-  Yargh. Actually one of the main sources of confusion is being able to access
-  in the assembler constants that are defined only on the host, but are used
-  only for target compilation/assembly. These right now go into forth. But is
-  that the right place? If we're using a `pure' meta method, then these all
-  need to go only into `meta' and then accessing them from the assembler, which
-  doesn't search meta, becomes clumsy.
-
-  I think the thing to do is catalog the information that is needed for dif-
-  ferent tasks. There are four tasks: loading code from disk, assembling
-  code words, colon compiling, and interacting with the target. These have
-  rather different requirements.
-
-  Ok, ok. It turns out that my original way was the best: slowly replace the
-  `definer' words in the forth vocab with meta-definers, add a special meta-
-  compiler vocab - called `meta' - and compile the compiler-like words into
-  that. If we get confused at run time it's still possible to run a forth-
-  only interpreter - we -will- get meta-definer words but no target words.
-
-  Now I think I understand all this stuff. Phew.
-
-27-apr-2000. Dramatical changes. Hopefully things are even simpler.
-%%
+| 15-sep-1998.  Changed to use the capitalization convention already in effect
+|   in the code I wrote for the Pygmy cross-compiler.  Maybe this way I can do
+|   a lot less work converting the old stuff.  Of course it means changing the
+|   assembler and -also- switching the kernel back.  Ugh.
+|
+| 24-sep-1998.  Changed to simpler dictionary.
+|
+| 18-aug-1999. Changed to a more complicated dictionary. :-| I've been caught
+|   by the `which word to compile' bug, and needed to make searching work better
+|   in the presence of the meta-compiler.
+|
+|   I want the host's forth to remain completely `pure' during
+|   meta-compilation. No words can show up there that don't have to do with
+|   normal host forth things, like finding words or making new words or even
+|   making new defining words. Actually it's not quite that strict. What we
+|   want is for the pieces to be defined in forth, but the top-level word -
+|   like the new `:' for target compilation - to be in meta, so we don't get
+|   it by accident.
+|
+|   All the `meta' words go into a new vocab - called `meta-forth' - that
+|   concerns itself with issues of meta-ness. The `:' that defines new target
+|   words is here, as is the colon word - `::' - that defines new
+|   meta-defining words. The ' in meta-forth will search target and not
+|   [host's] forth.
+|
+|   The meta -interpreter- will -never- look in forth. So we have to have an
+|   escape mechanism if we want to compute `a b +' while running the
+|   meta-interpreter. `{' solves this problem; `[' does the same thing inside
+|   the meta-compiler.
+|
+|   In the meta compiler is the word `::', used to compile new meta-compiler
+|   words. It also compiles from the host's forth; actually, it first searches
+|   the host's -compiler- vocab, so that things like if..then will work, then
+|   searches meta and lastly searches forth. The main thing is that when, after
+|   having loaded the target compiler, we're typing at the `command line', we
+|   don't -ever- want to accidentally execute a host forth word.
+|
+|   The assembler, on the other hand, searches the assembler and then the host
+|   vocab - but -not- the meta vocab! Unless I find that this doesn't make
+|   sense.
+|
+|   Target words are defined so that when executed they call `remote'.
+|
+|   ARGH! After scratching my head for a long time wondering why the meta-
+|   interpret loop seemed to hang I realized something: the sentinels were
+|   missing! The easiest way to make this work again is to put, in dforth.m4,
+|   sentinels for every chain. Which I did.
+|
+| 19-aug-1999. Wrong again. Searching only meta in `target' interpretation
+|   mode makes finding information really tedious, and involves a lot of repli-
+|   cation, and creates more confusion than it eliminates. The good idea here
+|   was creating a `meta' vocabulary with words useful in a `target' or `meta'
+|   interpretation - NOT compilation - mode. The bad idea was not also searching
+|   the regular host `forth' as well. It might be nice to be able to drop back
+|   into a `pure' host forth - and this is still possible. But it's too arduous
+|   to search only meta. Back to work.
+|
+|   In general, once we've started the meta-compiler we'll be compiling new
+|   tools into `meta' - this means that assembler constants and stuff like that
+|   should be defined in meta, and the assembler loop should search meta as
+|   well.
+|
+|   I think I'm still wrong. I think the right idea is to factor the existing
+|   forth into -three- vocabularies: forth, definer, compiler. forth is every-
+|   thing simple, like `@ ! +'. definer is `variable create : constant' &c.
+|   compiler is `if then begin while for' &c. We want to be careful not to mix
+|   up our host definers and target definers, just as we've (already) separated
+|   the host and target compiler vocabs.
+|
+|   There are now perhaps four modes we can be in:  host interpret, host
+|   compile, target - meta - interpret, target compile.
+|
+|   Host interpret: definer execute; forth execute; number
+|   Host compile:   compiler execute; definer compile; forth compile; literal
+|
+|   Meta interpret: target execute; meta-definer execute; forth execute; number
+|   Meta-definer compile:
+|                  compiler execute; meta-definer compile; forth compile; literal
+|   Target compile: meta-compiler execute; target compile; target-literal
+|
+|   Yargh. Actually one of the main sources of confusion is being able to access
+|   in the assembler constants that are defined only on the host, but are used
+|   only for target compilation/assembly. These right now go into forth. But is
+|   that the right place? If we're using a `pure' meta method, then these all
+|   need to go only into `meta' and then accessing them from the assembler, which
+|   doesn't search meta, becomes clumsy.
+|
+|   I think the thing to do is catalog the information that is needed for dif-
+|   ferent tasks. There are four tasks: loading code from disk, assembling
+|   code words, colon compiling, and interacting with the target. These have
+|   rather different requirements.
+|
+|   Ok, ok. It turns out that my original way was the best: slowly replace the
+|   `definer' words in the forth vocab with meta-definers, add a special meta-
+|   compiler vocab - called `meta' - and compile the compiler-like words into
+|   that. If we get confused at run time it's still possible to run a forth-
+|   only interpreter - we -will- get meta-definer words but no target words.
+|
+|   Now I think I understand all this stuff. Phew.
+|
+| 27-apr-2000. Dramatical changes. Hopefully things are even simpler.
+| %%
 
 forth definitions  decimal
 
@@ -130,7 +130,7 @@ vocab target   ( the target words)
 
 compiler definitions
 comment %%
-: \f   ( compile from forth)     forth   \chain  ;  %%
+| : \f   ( compile from forth)     forth   \chain  ;  %%
 : \o   ( compile from outside)   outside \chain  ;
 : \i   ( compile from inside)    inside  \chain  ;
 : \t   ( compile from target)    target  \chain  ;
@@ -153,8 +153,8 @@ outside definitions
 0 [if] : |    \o '  \o >DATA  ;  [then]
 
 ( We might as well make `remote execution' do something useful while we're
-  compiling, so, instead of complaining, it fetches the first cell of the
-  parameter field.)
+| compiling, so, instead of complaining, it fetches the first cell of the
+| parameter field.)
 
 ( outside)  '  >DATA   ( XXX only works if ' searches current not forth!)
 forth chain' remote !  ( remote is called with target pfa on the stack)
@@ -182,7 +182,7 @@ inside definitions
 
 forth definitions
 ( If a number has radix punctuation - currently only dot . - convert to
-  scaled integer and split into hi and lo words.)
+| scaled integer and split into hi and lo words.)
 
 : >target-scaled  ( sc - sclo schi)
    [ #f 16 - ] literal  push  1 r@ << 2/ +  pop >>  ( round down to 16 bit fraction)
@@ -196,7 +196,7 @@ forth definitions
 
 
 ( All the different search-execute-compile routines for different modes,
-  and their associated prompts.)
+| and their associated prompts.)
 
 -:  ."  (assembling)"  ;
 -:  assembler -"find if  outside -"find if  target -"find  if
@@ -225,13 +225,13 @@ mode definer-compile
 outside definitions
 ( Dictionary name entries.)
 ( NAME creates a head that needs show to make it findable. There is a
-  subtle issue here: If one of these target names is executed, it will
-  compile, into the target image, a reference to itself. Under normal
-  circumstances this will never happen, since the meta-compile and
-  meta-interpret loops -never- execute target words directly, instead
-  executing remotely or compiling depending on the current mode. This
-  means, though, that we can define helper words in the target - like `BPS'
-  in the kernel - that compile target words.)
+| subtle issue here: If one of these target names is executed, it will
+| compile, into the target image, a reference to itself. Under normal
+| circumstances this will never happen, since the meta-compile and
+| meta-interpret loops -never- execute target words directly, instead
+| executing remotely or compiling depending on the current mode. This
+| means, though, that we can define helper words in the target - like `BPS'
+| in the kernel - that compile target words.)
 
 : NAME
    target definitions  name  outside definitions
@@ -262,7 +262,7 @@ inside definitions
 ( .. FIRST .. BEGIN .. THEN <test> UNTIL .. ; FIRST jumps to THEN)
 
 ( Since REPEAT is just AGAIN THEN, think about this:
-  BEGIN .. WHILE .. UNTIL .. THEN   A loop with two exits!)
+| BEGIN .. WHILE .. UNTIL .. THEN   A loop with two exits!)
 
 ( n FOR .. NEXT        goes n times; 64k if n=0 )
 ( n ?FOR .. NEXT THEN  goes n times; 0 if n=0 )
@@ -302,13 +302,13 @@ forth definitions
 : <;code>   \o SHOW   lit >patch compile,   |here ,  ;
 
 ( This <does> is tricky.  Since code and words are separate, we cannot
-  simply insert a `call do_does' into the sequence of addresses.  Instead
-  we assemble the `call do_does' into code space followed by the ip to
-  start executing.)
+| simply insert a `call do_does' into the sequence of addresses.  Instead
+| we assemble the `call do_does' into code space followed by the ip to
+| start executing.)
 
 ( 15-apr-2000. This way of doing DOES> - a CALL dodoes followed by new ip -
-  takes 41 + 2w cycles on the V25. A MOV #new_ip, AX; JMP dodoes takes only
-  20 cycles, and only one byte more. Let's do it.)
+| takes 41 + 2w cycles on the V25. A MOV #new_ip, AX; JMP dodoes takes only
+| 20 cycles, and only one byte more. Let's do it.)
 0 [if]
 : <does>   ( offset)
    <;code>  <asm  ) CALL,  asm>  \o HERE  |, ( ip)  target-]  ;
@@ -324,12 +324,12 @@ outside definitions
 : :I      inside definitions   :  outside definitions  ;
 
 ( Note: The subtle difference here is that the :D compiler searches only
-  `definer' and `outside'. `\f' can be used to escape to Forth. This is
-  intended for creating defining words, like the meta VARIABLE and : and
-  such. :O is an alias for the host compiler, except that, like :D, the
-  word is defined in the outside vocab. There are a few obscure cases in
-  the V25 kernel when this is helpful - like to imitate the behavior of
-  SERIAL while compiling.)
+| `definer' and `outside'. `\f' can be used to escape to Forth. This is
+| intended for creating defining words, like the meta VARIABLE and : and
+| such. :O is an alias for the host compiler, except that, like :D, the
+| word is defined in the outside vocab. There are a few obscure cases in
+| the V25 kernel when this is helpful - like to imitate the behavior of
+| SERIAL while compiling.)
 
 compiler definitions
 : ;O   \ ;  ( outside definitions)  \i [  ;
@@ -345,7 +345,7 @@ definer definitions
 : (    \f (  ;  ( comments are useful!)
 
 ( This is a little bit subtle. We want access to `forth' words, which we
-  want to COMPILE, and to `compiler' words, which we want to EXECUTE.)
+| want to COMPILE, and to `compiler' words, which we want to EXECUTE.)
 : \   compiler token' if  execute  ^  then  forth find  huh?  , ;
 
 
@@ -377,7 +377,7 @@ assembler definitions
 : NEXT,    <asm  AX LODS,  w AX XCHG,  -2 [w] JMP,  asm>  ;
 
 ( Now that I'm using a stack-based assembler I can do this the way I wanted
-  to but was thwarted by Frank's assembler.)
+| to but was thwarted by Frank's assembler.)
 
 ( 28-apr-2000. Moved here from the kernel so we don't have to change gears.)
 : FLOOR,  ( r | d mem)  ( macro)   ( q = AX; r = DX)
@@ -388,13 +388,13 @@ assembler definitions
    ( adjust)  AX DEC,  BX DX ADD,  THEN,  THEN,  asm>  ;
 
 ( IDIV is symmetric.  To fix it [to make it _FLOOR_] we have to
-  adjust the quotient and remainder when BOTH rem not= 0 AND
-  the divisor and dividend are different signs.  [This is NOT the
-  same as quot < 0, because the quot could be truncated to zero
-  by symmetric division when the actual quotient is < 0!]
-  The adjustment is q' = q - 1; r' = r + divisor.  This
-  preserves the invariant  a / b => [r,q] s.t.  a = qb + r;
-  a = q'b + r' = [q - 1]b + [r + b] = qb - b + r + b = qb + r !!)
+| adjust the quotient and remainder when BOTH rem not= 0 AND
+| the divisor and dividend are different signs.  [This is NOT the
+| same as quot < 0, because the quot could be truncated to zero
+| by symmetric division when the actual quotient is < 0!]
+| The adjustment is q' = q - 1; r' = r + divisor.  This
+| preserves the invariant  a / b => [r,q] s.t.  a = qb + r;
+| a = q'b + r' = [q - 1]b + [r + b] = qb - b + r + b = qb + r !!)
 
 
 ( Assembler needs some arithmetic and a few other useful things.)

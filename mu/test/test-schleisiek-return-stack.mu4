@@ -1,52 +1,52 @@
 ( This file is part of muforth: https://muforth.dev/
-
-  Copyright 2002-2024 David Frech. (Read the LICENSE for details.)
+|
+| Copyright 2002-2024 David Frech. (Read the LICENSE for details.)
 
 
 ( Trying out, after all these years, the techniques that Klaus Schleisiek
-  presented in 1984 [at FORML] and that I read about in 1993.
-
-  The basic idea is that, in addition to return address pointers
-  [saved IPs], there are stack frames on the return stack. These can be for
-  any purpose, but we're interested here the following: trap frames, local
-  variable storage, and "fluid" rebinding of variables - aka dynamic
-  scoping.)
+| presented in 1984 [at FORML] and that I read about in 1993.
+|
+| The basic idea is that, in addition to return address pointers
+| [saved IPs], there are stack frames on the return stack. These can be for
+| any purpose, but we're interested here the following: trap frames, local
+| variable storage, and "fluid" rebinding of variables - aka dynamic
+| scoping.)
 
 ( Here is a picture of the return stack, with high memory towards the top of
-  the page, and low memory further down:
-
-  ^   |                    |
-  |   +--------------------+
-  |   |  prev return addr  |
-  |   +--------------------+
-  |   |        ...         |   several cells could be here; depends on the
-  |   +--------------------+   type of frame
-  |   |        ...         |
-  |   +--------------------+
-  |   |   cfa of cleanup   |
-  |   +--------------------+
-  +---+     prev frame     |<--- fp
-      +--------------------+
-      |    ip of remove    |<--- rp      remove just calls unlink
-      +--------------------+                                          )
+| the page, and low memory further down:
+|
+| ^   |                    |
+| |   +--------------------+
+| |   |  prev return addr  |
+| |   +--------------------+
+| |   |        ...         |   several cells could be here; depends on the
+| |   +--------------------+   type of frame
+| |   |        ...         |
+| |   +--------------------+
+| |   |   cfa of cleanup   |
+| |   +--------------------+
+| +---+     prev frame     |<--- fp
+|     +--------------------+
+|     |    ip of remove    |<--- rp      remove just calls unlink
+|     +--------------------+                                          )
 
 variable fp    ( the "top" - most recently pushed - frame)
                ( fp points to a frame ptr, which pts to a frame ptr...)
 
 ( link creates a new frame. It fetches the cfa of the following word and
-  pushes it onto the return stack. This is the cleanup routine. Then it
-  links this frame into the list rooted at fp, and then returns to its
-  caller, skipping the following cfa. link is called by a word that builds
-  a new stack frame.)
+| pushes it onto the return stack. This is the cleanup routine. Then it
+| links this frame into the list rooted at fp, and then returns to its
+| caller, skipping the following cfa. link is called by a word that builds
+| a new stack frame.)
 
 : link     r> dup @  >r         ( fetch following cfa & push to r)
            fp @ >r  rp@ fp !    ( link this frame to previous)
            cell+ >r             ( skip fetched cfa) ;
 
 ( unlink undoes what link did. It unlinks the frame from the list rooted at
-  fp, and then runs the cleanup routine, which will do whatever is
-  necessary to de-allocate the frame and undo any state changes made by the
-  word that called link.)
+| fp, and then runs the cleanup routine, which will do whatever is
+| necessary to de-allocate the frame and undo any state changes made by the
+| word that called link.)
 
 : unlink   r>  ( save return address)
            fp @ rp!  r> fp !    ( unlink frame)
@@ -54,7 +54,7 @@ variable fp    ( the "top" - most recently pushed - frame)
            >r  ( restore return address) ;
 
 ( unwind is useful in the context of exceptions. It starts at fp and
-  unlinks each frame in turn until fp points to a frame with a zero link.)
+| unlinks each frame in turn until fp points to a frame with a zero link.)
 
 : unwind   r>  ( save return address)
            -- begin  fp @ @  while  unlink  repeat
@@ -75,7 +75,7 @@ create remove  -]  unlink ;   ( remove pushes IP when executed!)
    r> ( ra)   r> r>  ( value addr) !   >r ( ra) ;
 
 ( Preserve the value of a variable for the duration of the execution of the
-  calling word.)
+| calling word.)
 
 : preserve  ( addr)  ( address of variable)
    r> ( ra)
@@ -96,10 +96,10 @@ create remove  -]  unlink ;   ( remove pushes IP when executed!)
 
 ( Allocate space for local variables.)
 ( NOTE: do -not- try to use a for loop to push cells! It doesn't work! The
-  return stack is being used to store the loop index, but you're busy
-  pushing stuff there! All hell breaks loose! If you absolutely want to
-  zero locals as they are allocated, do a begin/until loop with the count
-  on the data stack.)
+| return stack is being used to store the loop index, but you're busy
+| pushing stuff there! All hell breaks loose! If you absolutely want to
+| zero locals as they are allocated, do a begin/until loop with the count
+| on the data stack.)
 
 : room  ( #cells)
    r> ( ra)
@@ -119,36 +119,36 @@ create remove  -]  unlink ;   ( remove pushes IP when executed!)
 -- -----------------------------------------------------------------------
 
 ( Here is a picture of the return stack, with high memory towards the top of
-  the page, and low memory further down:
-
-  ^   |                    |
-  |   +--------------------+
-  |   |  prev return addr  |    ... trap <trap-type> <handler>  ...
-  |   +--------------------+         |
-  |   | ip of call to trap |---------+
-  |   +--------------------+
-  |   |     saved sp       |
-  |   +--------------------+
-  |   |  trap type <pfa>   |
-  |   +--------------------+
-  |   |    cfa of nope     |   cleanup operation is to do nothing
-  |   +--------------------+
-  +---+     prev frame     |<--- fp
-      +--------------------+
-      |    ip of untrap    |<--- rp
-      +--------------------+                                          )
+| the page, and low memory further down:
+|
+| ^   |                    |
+| |   +--------------------+
+| |   |  prev return addr  |    ... trap <trap-type> <handler>  ...
+| |   +--------------------+         |
+| |   | ip of call to trap |---------+
+| |   +--------------------+
+| |   |     saved sp       |
+| |   +--------------------+
+| |   |  trap type <pfa>   |
+| |   +--------------------+
+| |   |    cfa of nope     |   cleanup operation is to do nothing
+| |   +--------------------+
+| +---+     prev frame     |<--- fp
+|     +--------------------+
+|     |    ip of untrap    |<--- rp
+|     +--------------------+                                          )
 
 ( pop trap type, sp, and ip)
 ( Like remove, untrap pushes its IP when executed.)
 create untrap  -]  unlink  shunt shunt shunt ;
 
 ( trap: creates a new trap type, uniquely defined because the value it
-  compiles is its own dictionary address. At runtime it "raises" this trap
-  type, and unwinds the stack to find a matching handler, printing an error
-  message if nothing matched. If it finds a handler, it calls it, but
-  leaves the IP on the return stack that points to the code that -set- the
-  trap, so the whole thing is re-executed until it exits successfully - ie,
-  returns normally without trapping.)
+| compiles is its own dictionary address. At runtime it "raises" this trap
+| type, and unwinds the stack to find a matching handler, printing an error
+| message if nothing matched. If it finds a handler, it calls it, but
+| leaves the IP on the return stack that points to the code that -set- the
+| trap, so the whole thing is re-executed until it exits successfully - ie,
+| returns normally without trapping.)
 
 : trap:  create  does>
          begin  fp @  0= if error" trapped" then
@@ -173,7 +173,7 @@ create untrap  -]  unlink  shunt shunt shunt ;
 : undo  r>  fp @  cell- rp!  >r ;
 
 ( Let's talk to the user while these stack frames are set up, so we can
-  dump and debug them.)
+| dump and debug them.)
 
 trap: undefined-token
 trap: overflow

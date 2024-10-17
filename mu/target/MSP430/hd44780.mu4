@@ -1,173 +1,173 @@
 ( This file is part of muforth: https://muforth.dev/
-
-  Copyright 2002-2024 David Frech. (Read the LICENSE for details.)
+|
+| Copyright 2002-2024 David Frech. (Read the LICENSE for details.)
 
 loading Hitachi HD44780 LCD
 
 ( This is totally minimal, just a way to get a few characters onto the
-  display.)
+| display.)
 
 __meta
 hex
 
 ( For now, and for simplicity of wiring it up, let's assume we're
-  connecting in 4-bit mode, which means d4 to d7 are connected, and d0 to
-  d3 are left unconnected.
-
-  E strobes control lines - RS and R/nW - on its rising edge, and data -
-  read or write - on its falling edge. The datasheet says that at 5v the
-  interface can run with a 500ns cycle time, but at 3v, it slows to 1000ns.
-  Let's assume the slower cycle time.
-
-  For future reference, here is the command set:
-
-  RS  R/nW   D7  D6  D5  D4   D3  D2  D1  D0   Operation
-  ==  ====   ===============================   =========
-   1    0    <data>                            Write data
-   1    1    <data>                            Read data
-   0    0    <command>                         Write command
-   0    1    BF  A6  A5  A4   A3  A2  A1  A0   Read address and busy flag
-
-  Here are the commands, broken out into binary.
-
-  D7  D6  D5  D4   D3  D2  D1  D0
-  ===============================
-   0   0   0   0    0   0   0   1    Display clear and return home
-   0   0   0   0    0   0   1   *    Return home
-   0   0   0   0    0   1  ID   S    Entry mode set
-   0   0   0   0    1   D   C   B    Display on/off control
-   0   0   0   1   SC   RL  *   *    Cursor or display shift
-   0   0   1  DL    N   F   *   *    Function set
-   0   1  C5  C4   C3  C2  C1  C0    Set character generator address
-   1  A6  A5  A4   A3  A2  A1  A0    Set display memory address
-
-  Legend:
-
-     * = don't care bit
-
-    ID = increment/decrement; 1 = increment
-     S = shift; 1 = shift
-
-     D = display;  1 = on
-     C = cursor;   1 = on
-     B = blinking; 1 = on
-
-    SC = shift or cursor; 1 = shift display, 0 = move cursor
-    RL = right/left; 1 = right
-
-    DL = data length; 1 = 8 bits, 0 = 4 bits
-     N = lines; 1 = 2 lines, 0 = 1 line
-     F = font; 1 = 5x11, 0 = 5x8
-
-  For status read, BF = 1 means chip is busy with last command.
-
-  Curiously, though, when reading or writing data, the internal address is
-  updated _after_ BF returns to 0. So it's necessary to continue to poll
-  until the address changes, before reading or writing another character.
-  Weird.
-
-  Display memory addresses are a bit odd too. There is a maximum of 40
-  characters per line - 28 hex. The following addresses are in hex:
-
-   First line: 00 to 27
-  Second line: 40 to 67
-
-  According to the 44780U datasheet, if the power-up reset occurs
-  successfully, the following commands are executed internally:
-
-  1. Display clear
-
-  2. Function set:
-      DL = 1; 8-bit interface
-       N = 0; 1 line display
-       F = 0; 5x8 character font
-
-  3. Display on/off control
-      D = 0; display off
-      C = 0; cursor off
-      B = 0; blink off
-
-  4. Entry mode set
-     ID = 1; increment by 1
-      S = 0; no shift
+| connecting in 4-bit mode, which means d4 to d7 are connected, and d0 to
+| d3 are left unconnected.
+|
+| E strobes control lines - RS and R/nW - on its rising edge, and data -
+| read or write - on its falling edge. The datasheet says that at 5v the
+| interface can run with a 500ns cycle time, but at 3v, it slows to 1000ns.
+| Let's assume the slower cycle time.
+|
+| For future reference, here is the command set:
+|
+| RS  R/nW   D7  D6  D5  D4   D3  D2  D1  D0   Operation
+| ==  ====   ===============================   =========
+|  1    0    <data>                            Write data
+|  1    1    <data>                            Read data
+|  0    0    <command>                         Write command
+|  0    1    BF  A6  A5  A4   A3  A2  A1  A0   Read address and busy flag
+|
+| Here are the commands, broken out into binary.
+|
+| D7  D6  D5  D4   D3  D2  D1  D0
+| ===============================
+|  0   0   0   0    0   0   0   1    Display clear and return home
+|  0   0   0   0    0   0   1   *    Return home
+|  0   0   0   0    0   1  ID   S    Entry mode set
+|  0   0   0   0    1   D   C   B    Display on/off control
+|  0   0   0   1   SC   RL  *   *    Cursor or display shift
+|  0   0   1  DL    N   F   *   *    Function set
+|  0   1  C5  C4   C3  C2  C1  C0    Set character generator address
+|  1  A6  A5  A4   A3  A2  A1  A0    Set display memory address
+|
+| Legend:
+|
+|    * = don't care bit
+|
+|   ID = increment/decrement; 1 = increment
+|    S = shift; 1 = shift
+|
+|    D = display;  1 = on
+|    C = cursor;   1 = on
+|    B = blinking; 1 = on
+|
+|   SC = shift or cursor; 1 = shift display, 0 = move cursor
+|   RL = right/left; 1 = right
+|
+|   DL = data length; 1 = 8 bits, 0 = 4 bits
+|    N = lines; 1 = 2 lines, 0 = 1 line
+|    F = font; 1 = 5x11, 0 = 5x8
+|
+| For status read, BF = 1 means chip is busy with last command.
+|
+| Curiously, though, when reading or writing data, the internal address is
+| updated _after_ BF returns to 0. So it's necessary to continue to poll
+| until the address changes, before reading or writing another character.
+| Weird.
+|
+| Display memory addresses are a bit odd too. There is a maximum of 40
+| characters per line - 28 hex. The following addresses are in hex:
+|
+|  First line: 00 to 27
+| Second line: 40 to 67
+|
+| According to the 44780U datasheet, if the power-up reset occurs
+| successfully, the following commands are executed internally:
+|
+| 1. Display clear
+|
+| 2. Function set:
+|     DL = 1; 8-bit interface
+|      N = 0; 1 line display
+|      F = 0; 5x8 character font
+|
+| 3. Display on/off control
+|     D = 0; display off
+|     C = 0; cursor off
+|     B = 0; blink off
+|
+| 4. Entry mode set
+|    ID = 1; increment by 1
+|     S = 0; no shift
 )
 
 
 ( Interface connections. We're using the 4-bit interface, so with E, RS,
-  and R/nW we need 7 pins total. Let's use Port 2. Here is how to connect
-  it to the LCD:
-
-  Port  Pin      LCD  Pin*
-  ====  ===      ===  ===
-  P2.7   18       D7   14
-  P2.6   19       D6   13
-  P2.5   13       D5   12
-  P2.4   12       D4   11
-
-  P2.3   11        E    6
-  P2.2   10     R/nW    5
-  P2.1    9       RS    4
-  P2.0    8       --   --
-
-                  Vo    3    contrast; tying to Gnd often works
-                  5v    2    since we are not reading from LCD, this is ok
-                 Gnd    1
-
-  *LCD pin numbers assume 14-pin, 2x7 connector. I'm not sure how the
-  single-row inline connectors are pinned out.)
+| and R/nW we need 7 pins total. Let's use Port 2. Here is how to connect
+| it to the LCD:
+|
+| Port  Pin      LCD  Pin*
+| ====  ===      ===  ===
+| P2.7   18       D7   14
+| P2.6   19       D6   13
+| P2.5   13       D5   12
+| P2.4   12       D4   11
+|
+| P2.3   11        E    6
+| P2.2   10     R/nW    5
+| P2.1    9       RS    4
+| P2.0    8       --   --
+|
+|                 Vo    3    contrast; tying to Gnd often works
+|                 5v    2    since we are not reading from LCD, this is ok
+|                Gnd    1
+|
+| *LCD pin numbers assume 14-pin, 2x7 connector. I'm not sure how the
+| single-row inline connectors are pinned out.)
 
 ( For connecting to an HC595, rather than to a G2553.
-  NOTE: Using the signal names from the TI HC595 datasheet.
-
-  2553  Pin      595  Pin    LCD  Pin*   Tied
-  ====  ===      ===  ===    ===  ====   ====
-  SIMO   15     SER   14                        serial data in
-   CLK    7   SRCLK   11                        shift register clock
-   CLK    7    RCLK   12                        storage register clock
-
-              nSRCLR   10                High
-                 nOE   13                 Low
-
-                  QG    6     D7   14
-                  QF    5     D6   13
-                  QE    4     D5   12
-                  QD    3     D4   11
-
-                  QC    2     RS    4
-                            R/nW    5     Low
-  P1.0    2                    E    6
-
-                              Vo    3    contrast; tying to Gnd often works
-                              5v    2    since we are not reading from LCD, this is ok
-                             Gnd    1
-
-  *LCD pin numbers assume 14-pin, 2x7 connector. I'm not sure how the
-  single-row inline connectors are pinned out.)
+| NOTE: Using the signal names from the TI HC595 datasheet.
+|
+| 2553  Pin      595  Pin    LCD  Pin*   Tied
+| ====  ===      ===  ===    ===  ====   ====
+| SIMO   15     SER   14                        serial data in
+|  CLK    7   SRCLK   11                        shift register clock
+|  CLK    7    RCLK   12                        storage register clock
+|
+|             nSRCLR   10                High
+|                nOE   13                 Low
+|
+|                 QG    6     D7   14
+|                 QF    5     D6   13
+|                 QE    4     D5   12
+|                 QD    3     D4   11
+|
+|                 QC    2     RS    4
+|                           R/nW    5     Low
+| P1.0    2                    E    6
+|
+|                             Vo    3    contrast; tying to Gnd often works
+|                             5v    2    since we are not reading from LCD, this is ok
+|                            Gnd    1
+|
+| *LCD pin numbers assume 14-pin, 2x7 connector. I'm not sure how the
+| single-row inline connectors are pinned out.)
 
 ( Interface timing.
-
-( Let's try using delays so we don't have to read from the LCD. This way we
-  can tie R/nW low, and not worry about 3v versus 5v issues.
-
-  Running at 16M, an instruction cycle is 62.5ns. In a simple loop, it
-  takes 3 cycles to decrement a register and jump if not zero. So let's
-  divide our desired delays by 187.5ns to get the loop count.
-
-  Ok, let's turn that on its head. We want to calculate a loop count from a
-  delay time, in ns. We can do 16,000,000/3 loops per second, or
-  16,000,000/3,000,000,000 loops per ns. Instead of dividing, let's
-  multiply! To get from ns to loops, multiply by 16/3,000.
-
-  Except we really want to add another cycle unless our delay time is an
-  exact multiple of 187.5... and we arrive at our final formula:
-
-    loops = [[ns * 16] + 2999]/3000
-
-  Phew.)
+|
+| ( Let's try using delays so we don't have to read from the LCD. This way we
+| can tie R/nW low, and not worry about 3v versus 5v issues.
+|
+| Running at 16M, an instruction cycle is 62.5ns. In a simple loop, it
+| takes 3 cycles to decrement a register and jump if not zero. So let's
+| divide our desired delays by 187.5ns to get the loop count.
+|
+| Ok, let's turn that on its head. We want to calculate a loop count from a
+| delay time, in ns. We can do 16,000,000/3 loops per second, or
+| 16,000,000/3,000,000,000 loops per ns. Instead of dividing, let's
+| multiply! To get from ns to loops, multiply by 16/3,000.
+|
+| Except we really want to add another cycle unless our delay time is an
+| exact multiple of 187.5... and we arrive at our final formula:
+|
+|   loops = [[ns * 16] + 2999]/3000
+|
+| Phew.)
 
 ( Delay 100us after every normal command. The HD44780U datasheet says it
-  takes about 37us after each command, but my old LCD - an Hitachi LM-018L
-  from 1997 - could be much slower.)
+| takes about 37us after each command, but my old LCD - an Hitachi LM-018L
+| from 1997 - could be much slower.)
 
 meta: delay   ( ns)  #16 *  #2,999 + ( round up)  #3,000 /  constant
    ;code  w ) w mov  begin  1 # w sub  0= until  next  ;c
@@ -175,7 +175,7 @@ meta: delay   ( ns)  #16 *  #2,999 + ( round up)  #3,000 /  constant
   #100,000 ( ns)  delay 100us
 
 ( Delay 5ms after a long command - Home or Clear. Again, the datasheet
-  specifies a much shorter time - 1.5ms - but let's be conservative.)
+| specifies a much shorter time - 1.5ms - but let's be conservative.)
 
 #5,000,000 ( ns)  delay 5ms
 
@@ -193,8 +193,8 @@ code port-init
    81 # UCB0CTL1 & bisb
 
    ( Clock phase=0, polarity=1; clock idles high, shifts data out on
-     falling edge; shifts data in on rising edge.
-     MSB first, 8-bit mode, Master mode, 3 pin SPI, synchronous)
+   | falling edge; shifts data in on rising edge.
+   | MSB first, 8-bit mode, Master mode, 3 pin SPI, synchronous)
    %0110_1001 # UCB0CTL0 & movb
 
    ( Let's use a modest shift rate of 1M - SMCLK/16)
@@ -231,7 +231,7 @@ code spi!
    next  ;c
 
 ( Do one interface bus cycle. High nybble is D7-D4 or D3-D0; bit 3 is RS;
-  bits 2 to 0 are ignored.)
+| bits 2 to 0 are ignored.)
 
 : wr4  ( data)   spi!  H  E/  H  E\ ;
 
@@ -302,7 +302,7 @@ variable 'preprocess
 : 2lines   %0010_1000 cmd  ( 4 bit interface; 2 lines; 5x8 font) ;
 
 ( Useful two line display using 5x8 character boxes. Characters with
-  descenders look very ugly.)
+| descenders look very ugly.)
 
 : ugly
    2lines  ['] nope 'preprocess !
@@ -329,9 +329,9 @@ code in?  ( char a u - f)  ( if char in string, return true)
 : ?descender  ( char - char')  dup  " gjpqy" in?  if  +descender  then ;
 
 ( Set a one line mode with room for descenders, and set up emit to choose
-  the descender versions of g j p q and y.
-
-  Cf ugly, above.)
+| the descender versions of g j p q and y.
+|
+| Cf ugly, above.)
 
 : fancy
   1line  ['] ?descender 'preprocess !
@@ -340,11 +340,11 @@ code in?  ( char a u - f)  ( if char in string, return true)
 ( Examples.)
 
 ( text consumes an LCD position from the stack, creates a new named target
-  word, consumes the next token as a delimiter character, and then parses
-  the following string into the body of the newly-created target word. When
-  executed, the new word jumps to the LCD location and prints itself.
-
-  See examples at the end of the file.)
+| word, consumes the next token as a delimiter character, and then parses
+| the following string into the body of the newly-created target word. When
+| executed, the new word jumps to the LCD location and prints itself.
+|
+| See examples at the end of the file.)
 
 meta: text
    create  ( at)  c,  \f char parse  cstring,

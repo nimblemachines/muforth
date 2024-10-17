@@ -1,14 +1,14 @@
 ( This file is part of muforth: https://muforth.dev/
-
-  Copyright 2002-2024 David Frech. (Read the LICENSE for details.)
+|
+| Copyright 2002-2024 David Frech. (Read the LICENSE for details.)
 
 loading RISC-V RV32 assembler (I subset)
 
 ( Since the RISC-V instruction set is modular, I want to make the assembler
-  - and disassembler - modular as well.
-
-  This file only defines the RV32I subset - the 32-bit wide encoding of the
-  32-bit integer instructions.)
+| - and disassembler - modular as well.
+|
+| This file only defines the RV32I subset - the 32-bit wide encoding of the
+| 32-bit integer instructions.)
 
 ( Support for inline asm in any colon word.)
 variable saved-state  ( so we know which colon compiler to return to.)
@@ -18,11 +18,11 @@ compiler
 forth
 
 ( Let's define the registers first. There are 32 general-purpose
-  registers. We define them with "weird" bits in the upper part so we can
-  identify them, while they are sitting on the stack, as registers. ;-)
+| registers. We define them with "weird" bits in the upper part so we can
+| identify them, while they are sitting on the stack, as registers. ;-)
 
 ( I was hoping these "weird bits" would spell "five dude", not "five
-  doodoo". ;-)
+| doodoo". ;-)
 
 "5_d00d 8 << constant reg-signature
 
@@ -36,8 +36,8 @@ assembler
        x24 x25 x26 x27 x28 x29 x30 x31
 
 ( Also define the C - or "Unix" - ABI names.
-  https://github.com/riscv-non-isa/riscv-elf-psabi-doc/blob/master/riscv-cc.adoc
-
+| https://github.com/riscv-non-isa/riscv-elf-psabi-doc/blob/master/riscv-cc.adoc
+|
 | Name      | ABI Mnemonic | Meaning                | Preserved across calls?
 | x0        | zero         | Zero                   | -- [Immutable]
 | x1        | ra           | Return address         | No
@@ -59,7 +59,7 @@ assembler
 forth
 
 ( Even though .regname is *used* in the disassembler, let's define it here
-  since we are thinking about register names and ABI conventions.)
+| since we are thinking about register names and ABI conventions.)
 
 defer .regname
 : .udec  radix preserve  decimal  (u.) type ;
@@ -118,24 +118,24 @@ defer .regname
 : op,  ( op)  \m , ;  ( for now, instructions are 32 bits wide)
 
 ( There is some subtlety involved in the way that RISC-V immediate values
-  work. Many instructions contain a 12-bit *signed* offset. A few
-  instructions allow loading a 20-bit immediate into the highest 20 bits of a
-  register.
-
-  But because the low 12 are *signed*, one has to be careful when splitting
-  a 32-bit immediate value into a high 20-bit part and a low 12-bit part
-
-  If the low part is negative - if bit 11 is set - hex 1000 needs to be
-  added to the high part to compensate! When the negative low part is
-  sign-extended, that is equivalent to adding ffff_f000 to the whole value -
-  and this is precisely -1000. Tricky!
-
-  An easy way to adjust the high part is essentially to "round up" by
-  adding "800 and then throwing away the low 12 bits. If bit 11 was set,
-  adding "800 carries into bit 12, and we add the "1000 that we need. If bit
-  11 was clear, adding "800 and truncating does nothing.
-
-  This adjustment is folded into the calculation of U-imm, below.)
+| work. Many instructions contain a 12-bit *signed* offset. A few
+| instructions allow loading a 20-bit immediate into the highest 20 bits of a
+| register.
+|
+| But because the low 12 are *signed*, one has to be careful when splitting
+| a 32-bit immediate value into a high 20-bit part and a low 12-bit part
+|
+| If the low part is negative - if bit 11 is set - hex 1000 needs to be
+| added to the high part to compensate! When the negative low part is
+| sign-extended, that is equivalent to adding ffff_f000 to the whole value -
+| and this is precisely -1000. Tricky!
+|
+| An easy way to adjust the high part is essentially to "round up" by
+| adding "800 and then throwing away the low 12 bits. If bit 11 was set,
+| adding "800 carries into bit 12, and we add the "1000 that we need. If bit
+| 11 was clear, adding "800 and truncating does nothing.
+|
+| This adjustment is folded into the calculation of U-imm, below.)
 
 ( The "easy" immediates.)
 : I-imm   ( imm op - op')  swap            "fff and  >rs2 ;
@@ -171,7 +171,7 @@ defer .regname
    does> @  ( off base src op)  rs2  rs1  S-imm  op, ;
 
 ( NOTE: This is *not* a create/does word! We need to handle lui and auipc
-  differently, so U-type is a normal colon word.)
+| differently, so U-type is a normal colon word.)
 
 : U-type  ( imm rd op)  rd  U-imm  op, ;
 
@@ -190,9 +190,9 @@ defer .regname
    does> @  ( pred succ op)  -rot  swap 4 << or  >rs2  op, ;
 
 ( Since the encodings use fields with oddball widths - 5 bits, 7 bits, 3
-  bits - we won't be able to easily use either octal or hex.
-
-  So, binary it is!)
+| bits - we won't be able to easily use either octal or hex.
+|
+| So, binary it is!)
 
 assembler binary
 ( load)
@@ -228,7 +228,7 @@ assembler binary
 .ifdef A-ext
 ( amo)
 ( XXX aq and rl bits are both zero. Need some kind of postfix way to set
-  them? Or do something like _fence?)
+| them? Or do something like _fence?)
 01_011_11  010  0000000  R-type amoadd.w
 01_011_11  010  0000100  R-type amoswap.w
 forth
@@ -342,13 +342,13 @@ assembler
 forth
 
 ( Control structures.
-
-  RISC-V is a "compare-and-branch" architecture. There are no condition
-  code bits anywhere. Thus we have to rethink somewhat how we define the
-  looping and conditional branching operators in the assembler.)
+|
+| RISC-V is a "compare-and-branch" architecture. There are no condition
+| code bits anywhere. Thus we have to rethink somewhat how we define the
+| looping and conditional branching operators in the assembler.)
 
 ( SB-cond words compose and return an instruction with an _empty_ offset.
-  The op is compiled by if and fixed up later by resolve.)
+| The op is compiled by if and fixed up later by resolve.)
 
 : SB-cond  ( opcode f3)  >funct3  constant
    does> @  ( rs1 rs2 op - op')  rs2  rs1 ;

@@ -1,43 +1,43 @@
 ( This file is part of muforth: https://muforth.dev/
-
-  Copyright 2002-2024 David Frech. (Read the LICENSE for details.)
+|
+| Copyright 2002-2024 David Frech. (Read the LICENSE for details.)
 
 ( ARM assembler!)
 
 loading ARM assembler
 
 ( daf 2006-apr-01. Totally reworked! Keeping lots of tagged data on the
-  stack as we build the insn is totally for the birds. I want something
-  lean and simple. For the most part - it has some scary corners - the ARM
-  insn set is regular and simple. So this assembler should be too!)
+| stack as we build the insn is totally for the birds. I want something
+| lean and simple. For the most part - it has some scary corners - the ARM
+| insn set is regular and simple. So this assembler should be too!)
 
 ( This is an assembler for the ARM7 series of processors. Right now it has
-  pretty complete coverage for ARM7 and ARM7DI - the core in the Sharp
-  LH77790 on ARM's AEB-1 board. A few things are missing from this file and
-  from the disassembler for full coverage of the TDMI extensions.)
+| pretty complete coverage for ARM7 and ARM7DI - the core in the Sharp
+| LH77790 on ARM's AEB-1 board. A few things are missing from this file and
+| from the disassembler for full coverage of the TDMI extensions.)
 
 ( 2002-mar-29. Converting to my new Forth, muForth.)
 
 ( 2001-feb-02. Another change of heart. Things should be like Forth.
-  Instructions read left to right, and two instructions - MRC/MCR and
-  MRS/MSR - have been renamed, to MVC and MVS resp.)
+| Instructions read left to right, and two instructions - MRC/MCR and
+| MRS/MSR - have been renamed, to MVC and MVS resp.)
 
 ( 13-apr-1999. Change of heart. Decided that, with some instructions re-
-  quiring millions of operands, the order should be EXACTLY THE SAME,
-  left-to-right, as in the ARM assembler. Otherwise everyone will go
-  insane. This means that MRC, MCR and MRS, MSR make [some] sense again.)
+| quiring millions of operands, the order should be EXACTLY THE SAME,
+| left-to-right, as in the ARM assembler. Otherwise everyone will go
+| insane. This means that MRC, MCR and MRS, MSR make [some] sense again.)
 
 ( 6-apr-1999. Merged a bunch of stuff from the v25/8086 assembler.)
 
 ( 15-sep-1998.  -from a86-
-  Target words, when executed [we only ever want to do this in the assember]
-  push the first word of their body.  This is generally the ram address of
-  their contents -- useful for USER and regular variables, and tasks.)
+| Target words, when executed [we only ever want to do this in the assember]
+| push the first word of their body.  This is generally the ram address of
+| their contents -- useful for USER and regular variables, and tasks.)
 
 hex
 
 ( XXX this is a kludge - fix when I've added -; or something equivalent to
-  startup. I don't want to compile ^ which is what this currently does do.)
+| startup. I don't want to compile ^ which is what this currently does do.)
 compiler
 : -;   \c ;  ;
 forth
@@ -57,13 +57,13 @@ forth
 
 
 ( XXX: Outstanding question: should cond's and S bit be post-fix [in which
-  case they dig up the compiled insn and alter it], or prefix, in which
-  case they have to modify a variable, rather than something on the stack,
-  since in the case of B/BL what is on the stack is an address that has to
-  be modified into an offset, and not some random bits that can be munged.
-  Same is true of register values on the stack.
-
-  I think I'm going for conditions and S being postfix.)
+| case they dig up the compiled insn and alter it], or prefix, in which
+| case they have to modify a variable, rather than something on the stack,
+| since in the case of B/BL what is on the stack is an address that has to
+| be modified into an offset, and not some random bits that can be munged.
+| Same is true of register values on the stack.
+|
+| I think I'm going for conditions and S being postfix.)
 
 ( Conditions, S-bit.)
 : op   ( address of compiled op)  \m here \m cell- ;
@@ -74,9 +74,9 @@ forth
 : >cond   #28 << ;
 
 ( We only clear the top three bits; the lowest bit is positive/negative
-  logic. By setting it - with "ne" below - and then xoring in a condition,
-  we can negate the logic of the condition. "if" and "while" in the control
-  structure code do precisely this.)
+| logic. By setting it - with "ne" below - and then xoring in a condition,
+| we can negate the logic of the condition. "if" and "while" in the control
+| structure code do precisely this.)
 
 : icond   >cond constant   does> @  [ 0e >cond #] op0 op^ ;
 
@@ -110,7 +110,7 @@ forth
 
 variable pair  ( which of an insn pair to compile)
 ( XXX: init word to capture all the state that needs setting/resetting for
-  each insn?)
+| each insn?)
 
 ( Compile the insn!)
 : op,  [ always >cond #] or  \m ,   pair off ;
@@ -119,7 +119,7 @@ variable pair  ( which of an insn pair to compile)
 forth
 
 ( Create words to insert reg nums into op in the right place, depending on
-  the register function.)
+| the register function.)
 
 : |reg   constant  ( sh)  does> @  ( r op sh)  rot  0f and  swap <<  or ;
   0 |reg Rm   ( 2nd operand register; multiplicand)
@@ -146,13 +146,13 @@ forth
 
 
 ( Immediate. The word `#' converts its operand, as much as possible, into
-  bits that can be OR'ed into an instruction. The complication is that
-  sometimes we can use the inverted value, and sometimes not.
-
-  There are three pairs of operands that are related by inversion of their
-  immediate operand: and/bic, adc/sbc, and mov/mvn. If we can only make an
-  immediate literal by inversion, we call +pair to signal this fact, so the
-  paired insn can choose the 2nd of the pair.)
+| bits that can be OR'ed into an instruction. The complication is that
+| sometimes we can use the inverted value, and sometimes not.
+|
+| There are three pairs of operands that are related by inversion of their
+| immediate operand: and/bic, adc/sbc, and mov/mvn. If we can only make an
+| immediate literal by inversion, we call +pair to signal this fact, so the
+| paired insn can choose the 2nd of the pair.)
 
 : +pair  pair on ;
 
@@ -174,25 +174,25 @@ assembler
 forth
 
 ( Shift type. Type shift_t. As with the immediate types above, we try to
-  convert the operand into bits of an instruction.  Bit 4 is set on a
-  register-specified shift.
-
-  Actual opcodes available for shifting are  LSL, LSR, ASR, ROR, with
-  a few special cases:
-                  LSR #0 encodes LSR #32.
-                  ASR #0 encodes ASR #32.
-                  ROR #0 encodes RRX.
-  So only LSL #0 means what it says.
-
-  Thus: LSR #0, ASR #0, and ROR #0, if specified in the application code,
-  -should- be converted to LSL #0. This is what ARM's assembler does. We're
-  not going to bother, as it creates unnecessary hassle and disallows our
-  clever representation of RRX as 0 ror. So be careful!
-
-  Since registers and shift counts can't be confused - unless someone wants
-  an incredibly huge shift like 10000004 - we're dropping the `#' after the
-  number. Less typing this way. Actually putting in the `#' is harmless and
-  still works.)
+| convert the operand into bits of an instruction.  Bit 4 is set on a
+| register-specified shift.
+|
+| Actual opcodes available for shifting are  LSL, LSR, ASR, ROR, with
+| a few special cases:
+|                 LSR #0 encodes LSR #32.
+|                 ASR #0 encodes ASR #32.
+|                 ROR #0 encodes RRX.
+| So only LSL #0 means what it says.
+|
+| Thus: LSR #0, ASR #0, and ROR #0, if specified in the application code,
+| -should- be converted to LSL #0. This is what ARM's assembler does. We're
+| not going to bother, as it creates unnecessary hassle and disallows our
+| clever representation of RRX as 0 ror. So be careful!
+|
+| Since registers and shift counts can't be confused - unless someone wants
+| an incredibly huge shift like 10000004 - we're dropping the `#' after the
+| number. Less typing this way. Actually putting in the `#' is harmless and
+| still works.)
 
 : regshift  ( Rm Rs - op)
    5 <<  constant  ( shiftop)
@@ -220,34 +220,34 @@ assembler
 forth
 
 ( NOTES. Data processing instructions are next, and they're kinda gnarly.
-  There are several complications. We have to deal with shifts. We have to
-  deal with setting the flags or not. We have to deal with complicated
-  encoding: the PSR xfer insns MRS, MSR are encoded as TEQ, TST, CMP, CMN
-  with the S flag CLEAR. And note that TEQ TST CMP CMN ignore Rd, and that
-  MOV MVN ignore Rn.)
+| There are several complications. We have to deal with shifts. We have to
+| deal with setting the flags or not. We have to deal with complicated
+| encoding: the PSR xfer insns MRS, MSR are encoded as TEQ, TST, CMP, CMN
+| with the S flag CLEAR. And note that TEQ TST CMP CMN ignore Rd, and that
+| MOV MVN ignore Rn.)
 
 ( Basics:  data processing insn formats.
-  <op2>  Rd          MOV, MVN
-  <op2>  Rn          CMP, CMN, TEQ, TST
-  <op2>  Rn  Rd      AND, EOR, SUB, RSB, ADD, ADC, SBC, RSC, ORR, BIC
-
-  <op2> is:     n #
-                Rm
-                Rm  n <shift>
-                Rm  Rs <shift>
-                Rm  RRX
-
-  <shift> is ASR, ASL, LSL, LSR, ROR.
-  ARM doesn't define ROL!!  While <n> # ROL could be synthesized from
-  <32-n> # ROR, when shifting by a register it doesn't work that way.
-  Do we also just leave it out?  The writer can always say
-
-  Rn Rm 32 17 - # ROR Rd add.
-
-There are three kinds of data processing instructions:
-  -1- true 2ops like ADD SUB ADC SBC etc.
-  -2- tests like TEQ TST - they ignore Rd and always set the S bit
-  -3- MOV MVN - ignore Rn, the first operand.)
+| <op2>  Rd          MOV, MVN
+| <op2>  Rn          CMP, CMN, TEQ, TST
+| <op2>  Rn  Rd      AND, EOR, SUB, RSB, ADD, ADC, SBC, RSC, ORR, BIC
+|
+| <op2> is:     n #
+|               Rm
+|               Rm  n <shift>
+|               Rm  Rs <shift>
+|               Rm  RRX
+|
+| <shift> is ASR, ASL, LSL, LSR, ROR.
+| ARM doesn't define ROL!!  While <n> # ROL could be synthesized from
+| <32-n> # ROR, when shifting by a register it doesn't work that way.
+| Do we also just leave it out?  The writer can always say
+|
+| Rn Rm 32 17 - # ROR Rd add.
+|
+| There are three kinds of data processing instructions:
+| -1- true 2ops like ADD SUB ADC SBC etc.
+| -2- tests like TEQ TST - they ignore Rd and always set the S bit
+| -3- MOV MVN - ignore Rn, the first operand.)
 
 ( Opcode pairs. Ugh.)
 
@@ -257,15 +257,15 @@ There are three kinds of data processing instructions:
    0f and  aop ;
 
 ( Out of luck, a bare register number is in Rm position, where it's needed
-  - but we don't get a chance to and with 0f, so there is some room for
-  error here.)
+| - but we don't get a chance to and with 0f, so there is some room for
+| error here.)
 
 : Operand2
    ( # op | Rm op | shift op)  or ;
 
 ( Out of luck or good design - on the part of ARM - setting the Operand2
-  shift to 0 encodes Rm LSL #0, which is what we want when nothing is
-  specified.)
+| shift to 0 encodes Rm LSL #0, which is what we want when nothing is
+| specified.)
 
 ( a b pair => 1_bbbb_aaaa)
 : pairop  ( a b - pairop)   4 <<  or  100 or  ;
@@ -310,16 +310,16 @@ forth
 
 
 ( Okay, now that we've got conditions and branches sorted, let's create
-  some control structure words! Remember that all conditions are
-  -postfix-.)
+| some control structure words! Remember that all conditions are
+| -postfix-.)
 
 ( "again" and "then" will generate b - branch - instructions with condition
-  0e - always. "if" and "while" will set the condition to 01 [ne], which
-  will negate the sense of the [postfix] condition later applied to the if
-  or while.)
+| 0e - always. "if" and "while" will set the condition to 01 [ne], which
+| will negate the sense of the [postfix] condition later applied to the if
+| or while.)
 
 ( Create an unconditional - always - branch with empty offset, and leave
-  a pointer to it on stack)
+| a pointer to it on stack)
 
 : >mark-asm  ( - src)  \m here  [ 2 cells #] +  b ;
 
@@ -344,21 +344,21 @@ forth
 
 
 comment load-address
-
-  Before we head into ldr & str let's define adr, which loads a pc-relative
-  address into a register. It does this by generating an add or subtract to
-  or from the pc. Since immediate constants (which we are using here as
-  address offsets) are unsigned, we have to subtract if the address is less
-  than the PC.
-
-  adr takes an address and a register; if it can turn the address into a
-  pc-relative offset that fits into the immediate field of an ALU
-  instruction, it generates one of the two instructions:
-
-  <offset> # pc <reg> add   ( if address was >= pc+8)
-  <offset> # pc <reg> sub   ( if address was <  pc+8)
-
-load-address
+|
+|   Before we head into ldr & str let's define adr, which loads a pc-relative
+|   address into a register. It does this by generating an add or subtract to
+|   or from the pc. Since immediate constants (which we are using here as
+|   address offsets) are unsigned, we have to subtract if the address is less
+|   than the PC.
+|
+|   adr takes an address and a register; if it can turn the address into a
+|   pc-relative offset that fits into the immediate field of an ALU
+|   instruction, it generates one of the two instructions:
+|
+|   <offset> # pc <reg> add   ( if address was >= pc+8)
+|   <offset> # pc <reg> sub   ( if address was <  pc+8)
+|
+| load-address
 
 assembler
 : adr  ( a reg)  swap  \m here |pc-  ( offset)
@@ -368,32 +368,32 @@ forth
 
 
 comment %%
-  Load, Store. LDR, STR. More than a little bit icky. The instruction formats
-  are somewhat, though not terribly, different from ARM's. Be careful: the
-  `I' bit has the reverse encoding here than for the data processing and move
-  status instructions. Here it is 1 if offset is a register, 0 if immediate.
-
-  Instruction formats:
-  <indexed> Rd {user} ldr{b}/str{b} {<cond>}
-               `user' sets user mode in post-indexed mode
-  Indexed operators:
-  <addr>   pc)    calculates pc-relative address, pre-indexed
-  <off> Rn  +)    pre-indexed, increment, fixed 12-bit offset
-  <off> Rn   )+   post-indexed, increment, fixed 12-bit offset
-
-  <off> Rn  -)    pre-indexed, decrement, fixed 12-bit offset
-  <off> Rn   )-   post-indexed, decrement, fixed 12-bit offset
-
-  XXX; should these be "i" instead or "r" - index rather than register?
-  <idx> Rn  r+)   pre-indexed, increment, indexed register offset
-  <idx> Rn  r)+   post-indexed, increment, indexed register offset
-
-  <idx> Rn  r-)   pre-indexed, decrement, indexed register offset
-  <idx> Rn   r)-   post-indexed, decrement, indexed register offset %%
+|   Load, Store. LDR, STR. More than a little bit icky. The instruction formats
+|   are somewhat, though not terribly, different from ARM's. Be careful: the
+|   `I' bit has the reverse encoding here than for the data processing and move
+|   status instructions. Here it is 1 if offset is a register, 0 if immediate.
+|
+|   Instruction formats:
+|   <indexed> Rd {user} ldr{b}/str{b} {<cond>}
+|                `user' sets user mode in post-indexed mode
+|   Indexed operators:
+|   <addr>   pc)    calculates pc-relative address, pre-indexed
+|   <off> Rn  +)    pre-indexed, increment, fixed 12-bit offset
+|   <off> Rn   )+   post-indexed, increment, fixed 12-bit offset
+|
+|   <off> Rn  -)    pre-indexed, decrement, fixed 12-bit offset
+|   <off> Rn   )-   post-indexed, decrement, fixed 12-bit offset
+|
+|   XXX; should these be "i" instead or "r" - index rather than register?
+|   <idx> Rn  r+)   pre-indexed, increment, indexed register offset
+|   <idx> Rn  r)+   post-indexed, increment, indexed register offset
+|
+|   <idx> Rn  r-)   pre-indexed, decrement, indexed register offset
+|   <idx> Rn   r)-   post-indexed, decrement, indexed register offset %%
 
 ( offset1 can override the setting of U that in]dex sets.)
 ( If passed a negative offset it toggles the U - up - bit before checking
-  that the offset fits in 12 bits.)
+| that the offset fits in 12 bits.)
 
 : offset1  ( n op - op')
    over 0<  if  swap negate swap  U xor  then
@@ -404,10 +404,10 @@ comment %%
 : regindex   constant does> @  ( idx op - op)   Rn or  dup 10 and if oops then ;
 
 ( Since post-indexing _always_ writes back to the base reg, the W bit is
-  redundant if Pre is clear [ie, Post is true]. So ARM have attached wholly
-  different semantics to W in this case: it means, when in Supervisor mode,
-  do a User mode transfer instead. Remember: this is usable _only_ when the
-  Pre bit is clear.)
+| redundant if Pre is clear [ie, Post is true]. So ARM have attached wholly
+| different semantics to W in this case: it means, when in Supervisor mode,
+| do a User mode transfer instead. Remember: this is usable _only_ when the
+| Pre bit is clear.)
 
 : 2mi  ( ldr/str)  constant does> @  ( index/offset Rd op)  Rd or op, ;
 
@@ -431,7 +431,7 @@ I ( Post) U or  regindex r)+
 I               regindex r)-
 
 ( This fixes only one way to do this. It might be nice to be able to use
-  indexed offsets too.)
+| indexed offsets too.)
 
 : pc)  ( addr - index)  \m here |pc-  \a pc  ( n R15)   \a +)  ;
 
@@ -447,12 +447,12 @@ forth
 ( ?? comment on register list syntax)
 
 ( Types of transfers. P bit means Pre: add offset before xfer.
-                      U bit means Up:  add offset to base.
-  STM defaults to P,-U.  LDM defaults to -P,U.  This is a `full descending'
-  stack.  The other types are created by twiddling bits.
-
-  The actions of the IA/IB/DA/DB types do not depend on the operation -
-  they map directly to UP bits: D=-U, I=U, A=-P, B=P.)
+|                     U bit means Up:  add offset to base.
+| STM defaults to P,-U.  LDM defaults to -P,U.  This is a `full descending'
+| stack.  The other types are created by twiddling bits.
+|
+| The actions of the IA/IB/DA/DB types do not depend on the operation -
+| they map directly to UP bits: D=-U, I=U, A=-P, B=P.)
 
 : >PU  #23 << ;
 : PUstack  >PU constant  does> @  op^ ;
@@ -500,10 +500,10 @@ assembler
 forth
 
 ( Single data swap. SWP. Easy. Format:
-
-  Rm Rn Rd swp
-
-  Rn holds the address. Rm is the source. Rd is the dest. Rm may equal Rd.)
+|
+| Rm Rn Rd swp
+|
+| Rn holds the address. Rm is the source. Rd is the dest. Rm may equal Rd.)
 : 4mi   constant does> @    Rd  Rn  Rm  op, ;
 
 assembler
@@ -512,11 +512,11 @@ assembler
 forth
 
 ( MUL, MLA. Multiply and Multiply-accumulate. Careful with this: the
-  multiplies swap Rn and Rd in their encodings.
-
-    MUL/MLA:   Rd  Rn  Rs  9  Rm
-UMULL/SMULL:   Rhi Rlo Rs  9  Rm
-      arith:   Rn  Rd  Rs  X  Rm)
+| multiplies swap Rn and Rd in their encodings.
+|
+|   MUL/MLA:   Rd  Rn  Rs  9  Rm
+| UMULL/SMULL:   Rhi Rlo Rs  9  Rm
+|     arith:   Rn  Rd  Rs  X  Rm)
 
 : _mul  ( Rm Rs Rn Rd op)
    Rn ( Rd!)  Rd ( Rn!)  Rs  Rm  op,  ;

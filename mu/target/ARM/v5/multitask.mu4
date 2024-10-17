@@ -1,6 +1,6 @@
 ( This file is part of muforth: https://muforth.dev/
-
-  Copyright 2002-2024 David Frech. (Read the LICENSE for details.)
+|
+| Copyright 2002-2024 David Frech. (Read the LICENSE for details.)
 
 
 ( Needed to put this somehere. It's unfinished, untested code.)
@@ -11,45 +11,45 @@
 ( Multitask!)
 
 ( 15-sep-1998.  This is new.  I figured this all out when I couldn't sleep.
-  There is a new [to me] and beautiful way to do multitasking that is in
-  between my old way and the elusive polyFORTH brochure's "one machine
-  instruction per task" way.  My new way is the middle way, and is intimately
-  related to indirect threaded code; the major difference is that it is -not-
-  the `canonical Chuck' way to do ITC.  The `word' pointer -- in this case
-  it points to a -task- -- points -at- rather than -after- the code pointer.
-  It just works out more nicely this way.
-
-  There is a necessary adjustment, however.  In this new way what determines
-  whether a task is awake or asleep is its code pointer.  If it points to
-  `robin' the task is asleep, and `robin' will cycle to the next task [and
-  take only two instructions!].  If the task is awake, its code points to
-  `restore', which sets up the user pointer `u' and pops the task's context
-  and executes `next', as usual.  The adjustment is this:  where do we store
-  the sleep/wakeup count information, which used to be also the awake/asleep
-  flag?  The answer is, `where it matters'.  In the case of an i/o queue,
-  the `right place' for this information is in the queue, -not- in the task
-  that reads from or writes to it.
-
-  In this new world order the tasks or interrupt service routines that used
-  to simply increment or decrement a counter have a little bit more work to
-  do to wake or lull a task.  But it's not too bad, and the task loop is
-  purer, more flexible, and one instruction quicker per task!
-
-  Generally, when a task is using a resource that resource points to the task.
-  This has two purposes:  when this pointer is zero, the resource is -free-.
-  When non-zero, it points to the task that should be woken when the resource
-  is `ready'.  The task points back at some part of the resource, thru the
-  `depend' pointer.  Thus if a task is waiting on serial input from a queue,
-  the queue -resource- would point to the task; the task's `depend' would
-  point to the count of characters available to be read from the queue.  When
-  a character comes in from the serial port, the service routine puts the
-  character in the queue and increments the count.  It then checks if the
-  `depend' pointer has become non-zero, or >0, or whatever the criterion is.
-  If so, it wakes the task by changing its `status' code pointer.
-
-  Alternatively the ISR could increment the counter pointed to by the task's
-  `depend' pointer.  ISR.owner->task.depend->counter.  These details are a
-  bit fuzzy still.)
+| There is a new [to me] and beautiful way to do multitasking that is in
+| between my old way and the elusive polyFORTH brochure's "one machine
+| instruction per task" way.  My new way is the middle way, and is intimately
+| related to indirect threaded code; the major difference is that it is -not-
+| the `canonical Chuck' way to do ITC.  The `word' pointer -- in this case
+| it points to a -task- -- points -at- rather than -after- the code pointer.
+| It just works out more nicely this way.
+|
+| There is a necessary adjustment, however.  In this new way what determines
+| whether a task is awake or asleep is its code pointer.  If it points to
+| `robin' the task is asleep, and `robin' will cycle to the next task [and
+| take only two instructions!].  If the task is awake, its code points to
+| `restore', which sets up the user pointer `u' and pops the task's context
+| and executes `next', as usual.  The adjustment is this:  where do we store
+| the sleep/wakeup count information, which used to be also the awake/asleep
+| flag?  The answer is, `where it matters'.  In the case of an i/o queue,
+| the `right place' for this information is in the queue, -not- in the task
+| that reads from or writes to it.
+|
+| In this new world order the tasks or interrupt service routines that used
+| to simply increment or decrement a counter have a little bit more work to
+| do to wake or lull a task.  But it's not too bad, and the task loop is
+| purer, more flexible, and one instruction quicker per task!
+|
+| Generally, when a task is using a resource that resource points to the task.
+| This has two purposes:  when this pointer is zero, the resource is -free-.
+| When non-zero, it points to the task that should be woken when the resource
+| is `ready'.  The task points back at some part of the resource, thru the
+| `depend' pointer.  Thus if a task is waiting on serial input from a queue,
+| the queue -resource- would point to the task; the task's `depend' would
+| point to the count of characters available to be read from the queue.  When
+| a character comes in from the serial port, the service routine puts the
+| character in the queue and increments the count.  It then checks if the
+| `depend' pointer has become non-zero, or >0, or whatever the criterion is.
+| If so, it wakes the task by changing its `status' code pointer.
+|
+| Alternatively the ISR could increment the counter pointed to by the task's
+| `depend' pointer.  ISR.owner->task.depend->counter.  These details are a
+| bit fuzzy still.)
 
 meta: +user  ( size)
    create  #user \f @ ,  #user \f +!
@@ -70,20 +70,20 @@ forth
 }
 
 ( 15-sep-1998.  This is now different; see above.  The idea still applies;
-  only the location of the counters has changed.  Well, that and that the
-  counters now run `the right way'.
-
-  If a task has an associated IRQ, use STATUS as a sema-
-  phore -- use AWAIT to sleep and <task> #] dec, [in IRQ
-  routine] to awaken.  Incrementing and decrementing STATUS is
-  an atomic action.  In this case only  ACTIVATE ever sets STATUS.
-  This will happen before the interrupt is enabled so it's OK.
-
-  In other cases it doesn't matter; however, incrementing and
-  decrementing STATUS makes a useful auto-wakeup semaphore.)
+| only the location of the counters has changed.  Well, that and that the
+| counters now run `the right way'.
+|
+| If a task has an associated IRQ, use STATUS as a sema-
+| phore -- use AWAIT to sleep and <task> #] dec, [in IRQ
+| routine] to awaken.  Incrementing and decrementing STATUS is
+| an atomic action.  In this case only  ACTIVATE ever sets STATUS.
+| This will happen before the interrupt is enabled so it's OK.
+|
+| In other cases it doesn't matter; however, incrementing and
+| decrementing STATUS makes a useful auto-wakeup semaphore.)
 
 ( On what other architecture can you write a multitasker loop in 6
-  instructions?)
+| instructions?)
 
 code pause
    { top ct rp lr } ! sp stm                   ( save context on stack)

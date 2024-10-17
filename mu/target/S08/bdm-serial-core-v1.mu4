@@ -1,29 +1,29 @@
 ( This file is part of muforth: https://muforth.dev/
-
-  Copyright 2002-2024 David Frech. (Read the LICENSE for details.)
+|
+| Copyright 2002-2024 David Frech. (Read the LICENSE for details.)
 
 loading S08 BDM-over-serial v1 (core)
 
 ( Support for Freescale's S08 Background Debug Mode - or BDM.)
 
 ( I've split out the bit routines into two other files - one for the 908,
-  and one for the S08. Look at bdm-bit-908.mu4 and bdm-bit-S08.mu4.)
+| and one for the S08. Look at bdm-bit-908.mu4 and bdm-bit-S08.mu4.)
 
 ( It turns out that because the 9S08QG8, when mostly blank, is hard to get
-  into Active BDM mode. On POR - power on reset - it starts running random
-  code and either gets a COP - watchdog - reset, or an illegal instruction,
-  or illegal address. So it resets and starts all over again. Trying to get
-  into Active BDM via the BKGD pin is basically impossible. There is a
-  forum posting about this here:
-
-  http://forums.freescale.com/freescale/board/message?message.uid=11435#U11435
-
-  So, given that, we have to hold BKGD/MS low during POR in order to force
-  the chip into Active BDM mode. A side-effect of this is that it selects
-  the bus clock - rather than the "alternate" BDM clock - ICSLCLK - so the
-  BDM will be running at 4MHz instead of 8. This makes life simpler in some
-  ways, but it turns out that it's pretty easy to meet the timing specs for
-  both 4M and 8M BDM with a "host" running at less than 6M.)
+| into Active BDM mode. On POR - power on reset - it starts running random
+| code and either gets a COP - watchdog - reset, or an illegal instruction,
+| or illegal address. So it resets and starts all over again. Trying to get
+| into Active BDM via the BKGD pin is basically impossible. There is a
+| forum posting about this here:
+|
+| http://forums.freescale.com/freescale/board/message?message.uid=11435#U11435
+|
+| So, given that, we have to hold BKGD/MS low during POR in order to force
+| the chip into Active BDM mode. A side-effect of this is that it selects
+| the bus clock - rather than the "alternate" BDM clock - ICSLCLK - so the
+| BDM will be running at 4MHz instead of 8. This makes life simpler in some
+| ways, but it turns out that it's pretty easy to meet the timing specs for
+| both 4M and 8M BDM with a "host" running at less than 6M.)
 
 code SciRxBuf
    begin  SCS1 ( status 1) 5 ( recvr full)  bset? until
@@ -67,10 +67,10 @@ code BdmMisc
    ( Idle)  ( do nothing at all!)  rts  ;c
 
 ( BdmChat uses the following stack frame:
-  0,s to 3,s   read and write buffer
-  4,s          write count
-  5,s          read count
-  6,s          current count)
+| 0,s to 3,s   read and write buffer
+| 4,s          write count
+| 5,s          read count
+| 6,s          current count)
 
 jmp-bdm-chat resolve>>  ( jump at start of Flash points here)
 
@@ -119,94 +119,94 @@ label BdmLoop
    BdmLoop again  ;c
 
 comment dispatch-ideas
-
-How about the following commands:
-0 Bye - escape back to byteloader
-1 Write 1 byte from SCI -> buffer
-2 ditto, 2 bytes
-3 ditto, 3
-4 ditto, 4
-5 write to BDM, read nothing
-6 ditto, read 1, write to SCI
-7 ditto, read 2, write to SCI
-8 send sync pulse, return two byte count
-9+ Sync/No-op
-
-Ten commands!
-
-Read Status: 01 E4 05
-Read A: 01 68 06
-Read HX: 01 6C 07
-WriteHX: 03 4C hi lo 05
-
-We can always re-sync by writing 00 00 00 00.
-
-Wanting to keep same "almost stateless" design as the byteloader. So, we
-have the following commands:
-
-Set write count
-Set read count
-Set byte (0..3)
-Read byte (0..1)
-Execute
-Bye  ( escape back to byteloader)
-
-So, for example, to execute the Read Status command, we do the following:
-SetWriteCount(1)
-SetReadCount(0)
-SetByte0(0e4)
-Execute
-
-And to Read HX we do this:
-SetWriteCount(1)
-SetReadCount(2)
-SetByte0(6c)
-Execute
-GetByte0 -> H
-GetByte1 -> X
-
-To Write a Byte (in background mode):
-SetWriteCount(4)
-SetReadCount(0)
-SetByte0(0c0)
-SetByte1(hi)
-SetByte2(lo)
-SetByte3(data)
-Execute
-
-Seems a bit inefficient, though - right?
-
-How about a hybrid approach? We keep as much state as possible.. We'll
-still need Set0..2 and Get0..1. But if the commands are mapped to the
-actual BDM commands, and the "logic" is on the 908, that might be better.
-The above examples would then look more like this:
-
-ReadStatus
-Get0
-
-ReadHX
-Get0 -> H
-Get1 -> X
-
-Set0(a_hi)
-Set1(a_lo)
-Set2(data)
-WriteByte
-
-That seems better... and common commands (running in Active mode) would
-look like this:
-
-ReadA
-Get0
-
-Set0
-WriteA
-
-All this is crazy - we just implement things the "normal" way - with the
-exception that we number the commands from zero, for easier dispatching,
-and we make command 0 be "Sync", which is a no-op. This is so we can easily
-resync the protocol. By sending three 0 chars we fulfil any commands need
-for bytes and if we exceed it, we loop at Sync.
-
-comment dispatch-ideas
+|
+| How about the following commands:
+| 0 Bye - escape back to byteloader
+| 1 Write 1 byte from SCI -> buffer
+| 2 ditto, 2 bytes
+| 3 ditto, 3
+| 4 ditto, 4
+| 5 write to BDM, read nothing
+| 6 ditto, read 1, write to SCI
+| 7 ditto, read 2, write to SCI
+| 8 send sync pulse, return two byte count
+| 9+ Sync/No-op
+|
+| Ten commands!
+|
+| Read Status: 01 E4 05
+| Read A: 01 68 06
+| Read HX: 01 6C 07
+| WriteHX: 03 4C hi lo 05
+|
+| We can always re-sync by writing 00 00 00 00.
+|
+| Wanting to keep same "almost stateless" design as the byteloader. So, we
+| have the following commands:
+|
+| Set write count
+| Set read count
+| Set byte (0..3)
+| Read byte (0..1)
+| Execute
+| Bye  ( escape back to byteloader)
+|
+| So, for example, to execute the Read Status command, we do the following:
+| SetWriteCount(1)
+| SetReadCount(0)
+| SetByte0(0e4)
+| Execute
+|
+| And to Read HX we do this:
+| SetWriteCount(1)
+| SetReadCount(2)
+| SetByte0(6c)
+| Execute
+| GetByte0 -> H
+| GetByte1 -> X
+|
+| To Write a Byte (in background mode):
+| SetWriteCount(4)
+| SetReadCount(0)
+| SetByte0(0c0)
+| SetByte1(hi)
+| SetByte2(lo)
+| SetByte3(data)
+| Execute
+|
+| Seems a bit inefficient, though - right?
+|
+| How about a hybrid approach? We keep as much state as possible.. We'll
+| still need Set0..2 and Get0..1. But if the commands are mapped to the
+| actual BDM commands, and the "logic" is on the 908, that might be better.
+| The above examples would then look more like this:
+|
+| ReadStatus
+| Get0
+|
+| ReadHX
+| Get0 -> H
+| Get1 -> X
+|
+| Set0(a_hi)
+| Set1(a_lo)
+| Set2(data)
+| WriteByte
+|
+| That seems better... and common commands (running in Active mode) would
+| look like this:
+|
+| ReadA
+| Get0
+|
+| Set0
+| WriteA
+|
+| All this is crazy - we just implement things the "normal" way - with the
+| exception that we number the commands from zero, for easier dispatching,
+| and we make command 0 be "Sync", which is a no-op. This is so we can easily
+| resync the protocol. By sending three 0 chars we fulfil any commands need
+| for bytes and if we exceed it, we loop at Sync.
+|
+| comment dispatch-ideas
 
