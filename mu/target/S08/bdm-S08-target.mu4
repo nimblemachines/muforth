@@ -1,12 +1,12 @@
-( This file is part of muforth: https://muforth.dev/
+| This file is part of muforth: https://muforth.dev/
 |
 | Copyright 2002-2024 David Frech. (Read the LICENSE for details.)
 
 loading S08 BDM target (host)
 
-( This file contains the host-side code to talk to a BDM transport layer --
+| This file contains the host-side code to talk to a BDM transport layer --
 | either over serial or USB -- and expects to talk to an S08 target. There
-| will eventually also be a ColdFire V1 version of this file.)
+| will eventually also be a ColdFire V1 version of this file.
 
 hex
 
@@ -38,7 +38,7 @@ hex
 : b.WriteNext            50 Send2  Expect0 ; ( inc HX, write byte)
 : b.WriteNextS           51 Send2  Expect1 ; ( inc HX, write byte, read status)
 
-comment Commands
+| comment Commands
 | d = delay 16 BDM cycles
 | r = read one byte
 | w = write one byte
@@ -80,24 +80,24 @@ comment Commands
 
 ( BDM versions of interact operations)
 
-( Since WriteNext and ReadNext _pre-increment_, let's subtract one when we
-| set the address, and add one when we read it.)
+| Since WriteNext and ReadNext _pre-increment_, let's subtract one when we
+| set the address, and add one when we read it.
 : b.SetAddr           -1 +a  b.WriteHX ;
 : b.GetAddr  b.ReadHX  1 +a ;  ( XXX UNUSED)
 
 : b.setup-chunk  ( 'target len buffer - len)
    m !  swap b.SetAddr ;
 
-( It's a bummer to have to have this ifdef here, but otherwise splitting up
+| It's a bummer to have to have this ifdef here, but otherwise splitting up
 | the serial and USB code for doing fast chunked reads and writes gets way
 | too complicated. We need to have, eg, b.SetAddr defined for both
 | versions, but it gets defined in *this* file, so we define the serial and
-| USB words separately *before* loading this file. Ugh.)
+| USB words separately *before* loading this file. Ugh.
 
 .ifdef usb-target
 
-( Currently we can only read or write 16 bytes at a time. Our chunk might
-| be bigger, so we have to break it up.)
+| Currently we can only read or write 16 bytes at a time. Our chunk might
+| be bigger, so we have to break it up.
 
 : read-usb-buffer  ( len)
    -- cr ." rd-usb-buf "  m @ u.  dup u.
@@ -132,8 +132,8 @@ comment Commands
 : b.Ready  begin  b.ReadStatus  40 and until ;
 
 ( Order of regs in memory: H CC A X PC)
-( NOTE: Since we no longer wait for target in b.RunWait - it doesn't exist
-| - let's wait for the target here, before reading the regs.)
+| NOTE: Since we no longer wait for target in b.RunWait - it doesn't exist
+| - let's wait for the target here, before reading the regs.
 
 : b.GetRegs  ( buf - sp)  m !  b.Ready
    b.ReadHX >lohi ( X H) m&  b.ReadCC m&  b.ReadA m& ( X) m&
@@ -145,8 +145,8 @@ comment Commands
 
 .ifdef bdm-flash-no-ram
 
-( Let's do this over BDM again, instead of running a ram routine. Warning:
-| doing it this way is *really* slow!)
+| Let's do this over BDM again, instead of running a ram routine. Warning:
+| doing it this way is *really* slow!
 
 variable bdm-flash-command
 : b.flash-byte  ( byte)
@@ -181,19 +181,19 @@ variable bdm-flash-command
 : ResetSP
    @ram #ram +  b.WriteSP ;
 
-( Bollocks! Even this is different between variants. The JS/JM/SH uses two bits
+| Bollocks! Even this is different between variants. The JS/JM/SH uses two bits
 | to select which kind of watchdog; setting both to zero is required to
 | disable it. It looks like it's safe to write both bits 7 and 6 to zero to
 | disable the dog on the parts I've looked at...
 |
 | It looks like newer parts are using this more sophisticated watchdog.
 | Rather than just write to a memory location, you have to write 55 then
-| AA.)
+| AA.
 
 : NoWatchdog
    \eq SOPT1 b.ReadByte  3f and  \eq SOPT1 b.WriteByte ;
 
-( I've decided we shouldn't do this. It's too complicated. Not only do
+| I've decided we shouldn't do this. It's too complicated. Not only do
 | different parts use different clocks - ICG, ICS, MCG - but even the parts
 | that have ICS put the registers in different places! So ICSTRM is _not_
 | always at 003a.
@@ -211,28 +211,28 @@ variable bdm-flash-command
 |
 | Another approach is to have the device file set TRIM to ICSTRM, ICGTRM,
 | MCGTRM. I still need to know what each part's POR bus clock speed and BDM
-| clock are... put these into the device file!)
+| clock are... put these into the device file!
 
-( Trim internal oscillator to factory setting; on QG parts this is 31.25k,
+| Trim internal oscillator to factory setting; on QG parts this is 31.25k,
 | which results in 16M FLL frequency; this is divided by two to give a
 | default BDM freq of 8M, and divided by two again - because of reset BDIV
-| setting - to give a reset bus clock of 4M.)
+| setting - to give a reset bus clock of 4M.
 
 : TrimOsc ( trim)   \eq TRIM b.WriteByte ;
 
-( Set FCDIV to correspond to bus clock at power-on-reset. As an added
+| Set FCDIV to correspond to bus clock at power-on-reset. As an added
 | bonus, we don't subtract one from the divisor, so it's one bigger than it
 | needs to be; this gives us a bit of cushion in case the factory trim has
 | the clock running fast. In the case of QG parts - 4M bus clock out of POR
-| - this puts the Flash clock at 190k instead of 200k.)
+| - this puts the Flash clock at 190k instead of 200k.
 
 : SetFCDIV  ( khz)
    \eq FCDIV b.ReadByte  80 and if  drop ^  then  ( already set)
    khz>fcdiv ( divide freq by 200k, rounding up)  \eq FCDIV b.WriteByte ;
 
-( If trim - either the factory [8Mhz] trim, or our 9.216Mhz trim - found in
+| If trim - either the factory [8Mhz] trim, or our 9.216Mhz trim - found in
 | flash, trim oscillator and also set FCDIV. If not found, print a message
-| and leave everything alone.)
+| and leave everything alone.
 
 : SetupClock
 .ifdef try-our-trim
@@ -249,11 +249,11 @@ variable bdm-flash-command
 Both trims in flash are 0ff; didn't set TRIM or FCDIV. You have to do this by hand.
 "  ;
 
-( Get target into a known, safe state. Chat code will have done this for
-| itself at reset, so this is only necessary for BDM targets.)
+| Get target into a known, safe state. Chat code will have done this for
+| itself at reset, so this is only necessary for BDM targets.
 
-( Since we are flashing - even via BDM - by executing code from RAM, we
-| have to initialise the chip first.)
+| Since we are flashing - even via BDM - by executing code from RAM, we
+| have to initialise the chip first.
 
 : b.Hi
    SetupClock ( trim & fcdiv)  NoWatchdog  ResetSP

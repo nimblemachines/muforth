@@ -1,4 +1,4 @@
-( This file is part of muforth: https://muforth.dev/
+| This file is part of muforth: https://muforth.dev/
 |
 | Copyright 2002-2024 David Frech. (Read the LICENSE for details.)
 
@@ -25,8 +25,8 @@ hex
 
 ( Immediate fields)
 
-( XXX add code like with two jump lengths here? So we have a version that
-| complains, and one that maybe just warns? Like for ldi, addi, and friends?)
+| XXX add code like with two jump lengths here? So we have a version that
+| complains, and one that maybe just warns? Like for ldi, addi, and friends?
 
 ( XXX compare to other code - AVR? ARM?. This seems clunky.)
 
@@ -71,13 +71,13 @@ assembler
 00ff 0op  reset
 forth
 
-( Dealing with the terrible fact that the data memory space - RAM and the
+| Dealing with the terrible fact that the data memory space - RAM and the
 | i/o registers - is *banked*. The data space is made up of a sequence of
 | 256 byte banks - pages - and so requires more than 8 bits of address. The
 | high bits are held in the BSR - bank select register.
 |
 | The number of bits in the bank register varies by device. It is defined
-| in the chip's equates file.)
+| in the chip's equates file.
 
 ( XXX Need better names than "f" and ">f8".)
 
@@ -85,25 +85,25 @@ forth
 : >bank   ( f - bank)    [ #bsr-bits ones 8 << #] and ;
 : >f8     ( f - offset)  00ff and ;
 
-( "bank" instructions set this. We get a static lexical sense of what its
+| "bank" instructions set this. We get a static lexical sense of what its
 | value might be when an instruction is executed. It's not perfect, but we
 | can warn the user in the case of mismatches.
 |
 | current-bank is set to the base address of the bank, not its index
-| number.)
+| number.
 
 variable current-bank
 
-( bank takes an address in the data memory and strips off the bank part -
-| the high byte. As a convenience, bank leaves f on the stack.)
+| bank takes an address in the data memory and strips off the bank part -
+| the high byte. As a convenience, bank leaves f on the stack.
 
 assembler
 : bank  ( f - f)
    dup  >bank  dup current-bank !  8 u>>  0100 or  op, ;  ( movlb)
 forth
 
-( afop is a 2op with just an "a" bit, no "d" bit;
-| dafop is a 2op with both an "a" bit and a "d" bit.)
+| afop is a 2op with just an "a" bit, no "d" bit;
+| dafop is a 2op with both an "a" bit and a "d" bit.
 
 : ~d  ( op - op')  ( toggle d bit)  0200 xor ;
 : afop    constant does> @  ( af op)     9 imm      op, ;
@@ -124,8 +124,8 @@ forth
    error" stack offset only available when XINST set" ;
 .then
 
-( @ram is always the beginning of the access ram bank. Likewise, STATUS is
-| always in the access i/o bank.)
+| @ram is always the beginning of the access ram bank. Likewise, STATUS is
+| always in the access i/o bank.
 
 : access-ram?  ( f - within?)  @ram             [ @ram 060 + #]              within ;
 : access-io?   ( f - within?)  [ \eq STATUS >bank dup  060 + #]  [ 100 + #]  within ;
@@ -144,9 +144,9 @@ forth
 ( Check that address given is *only* an 8 bit offset.)
 : ?f8   dup >bank if  error" more than 8 bits in f"  then ;
 
-( Microchip uses an offset in square brackets - "[n]" - to designate a
+| Microchip uses an offset in square brackets - "[n]" - to designate a
 | value on a stack, using FSR2 as the stack pointer. This requires the
-| XINST config bit to be set.)
+| XINST config bit to be set.
 
 assembler
 :  ]   ( offset - bits)  ( "stack offset")  ?sp-offset ;       ( clear "a" bit)
@@ -155,8 +155,8 @@ assembler
 ( XXX / or // for banked?)
 
 
-( In dafop we've reversed the sense of the d bit. Now set means store to w,
-| and clear means store to f, which we think should be the default.)
+| In dafop we've reversed the sense of the d bit. Now set means store to w,
+| and clear means store to f, which we think should be the default.
 
 -- : !    ( f - bits)  ( "store to f")  ?f8     0200 or ;  ( set "d" bit)
 : w    ( f - bits)  ( "store to w")  ?f8     0200 or ;  ( set "!d" bit)
@@ -177,8 +177,8 @@ assembler
 0e00 i8op ldi    ( movlw)  (        w = k)
 0f00 i8op addi   ( addlw)  ( DNVCZ  w = k + w)
 
-( NOTE: Some of these operations are 1ops. These operate on F not W! But
-| they can store the result in F *or* W.)
+| NOTE: Some of these operations are 1ops. These operate on F not W! But
+| they can store the result in F *or* W.
 
 1000 dafop or     ( iorwf)   ( NZ     f/w = w or f)
 1400 dafop and    ( andwf)   ( NZ     f/w = w and f)
@@ -249,8 +249,8 @@ forth
    if  or op,  pop cell+ push ( skip error routine)
    then  ( return to error routine) ;
 
-( These versions compile the code, but if it doesn't fit they call the
-| following error routine.)
+| These versions compile the code, but if it doesn't fit they call the
+| following error routine.
 
 d000 rel11 _rjmp
 d800 rel11 _rcall
@@ -260,22 +260,22 @@ assembler
 : rcall  _rcall  too-far ;  ( ditto)
 forth
 
-( d000 - d7ff rjmp
-| d800 - dfff rcall - see below for smart versions of these)
+| d000 - d7ff rjmp
+| d800 - dfff rcall - see below for smart versions of these
 
 ( e000 - e7ff: Conditional branches - see below)
 
 ( e800 - ebff: unimplemented/extended instructions - See below)
 
-( For long jump/call, the embedded constant is the _word_ address of the
+| For long jump/call, the embedded constant is the _word_ address of the
 | destination; the low 8 bits are in the first word; the high 12 bits are
-| in the extension word.)
+| in the extension word.
 
 : ljmp
    constant does> @  ( dest op)  over u2/ 0ff and or op,  9 u>>  f000 i12 op, ;
 
-( If reg is not a valid FSR address, we get it back as the index. This is
-| useful for addulnk and subulnk.)
+| If reg is not a valid FSR address, we get it back as the index. This is
+| useful for addulnk and subulnk.
 
 : fsr>index  ( reg - n)
    dup \eq FSR0 = if  drop 0 ^  then
@@ -283,9 +283,9 @@ forth
    dup \eq FSR2 = if  drop 2 ^  then
    ( return reg unchanged) ;
 
-( For FSRs - file select registers - which we are going to rename "address"
+| For FSRs - file select registers - which we are going to rename "address"
 | registers - the high 4 bits are in the first word; the low 8 or 10 bits -
-| it depends whether BSR is 4 bits or 6 - are in the extension.)
+| it depends whether BSR is 4 bits or 6 - are in the extension.
 
 assembler
 : lda  ( offset reg)  ( lfsr, which we call "load address")
@@ -302,8 +302,8 @@ ef00 ljmp jmp
 : c   ( dest)  _rcall  \a call ;  ( call call if too far for rcall)
 forth
 
-( f000 - ffff is a nop, and is used as an extension word for two-word
-| instructions.)
+| f000 - ffff is a nop, and is used as an extension word for two-word
+| instructions.
 
 -- --------------------------------------------------------------------------
 -- Extended instructions: e800 to ebff, plus 0014 (callw)
@@ -311,9 +311,9 @@ forth
 
 .ifdef xinst
 
-( If the XINST bit is set in the configuration space, a few instructions
+| If the XINST bit is set in the configuration space, a few instructions
 | are added. These are useful for C compilers, but might very well be
-| useful to assembler and Forth hackers too.)
+| useful to assembler and Forth hackers too.
 
 ( XXX should we check if imm < 0 and do sub automagically?)
 : add-a  constant does> @  ( imm reg op)  swap fsr>index 6 << or  6 imm  op, ;
@@ -338,8 +338,8 @@ forth
 .then  ( ifdef xinst)
 
 
-comment
-  =============================================================================
+| comment
+| =============================================================================
 | Digression on the PIC18's condition code idiosyncrasies, and an explanation
 | of how carry and borrow work.
 |
@@ -410,7 +410,7 @@ comment
 | LS by swapping the arguments to the compare or subtract.
 | =============================================================================
 
-( Conditional jump:
+| Conditional jump:
 |
 |    1110 0ccs dddd dddd      c=cond, s=sense, d=dest offset
 |
@@ -419,7 +419,7 @@ comment
 |    1101 0ddd dddd dddd      d=dest offset
 |
 | Offset is a signed _word_ offset from the following instruction.
-)
+
 
 : cond?  ( op - f)  f800 and e000 = ;  ( true if a cond jump)
 : cond   constant ;

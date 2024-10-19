@@ -1,4 +1,4 @@
-( This file is part of muforth: https://muforth.dev/
+| This file is part of muforth: https://muforth.dev/
 |
 | Copyright 2002-2024 David Frech. (Read the LICENSE for details.)
 
@@ -8,18 +8,18 @@ __meta
 
 hex
 
-( Support for programming PIC18 parts over ICSP, using my JS16 as a
-| USB-based programmer.)
+| Support for programming PIC18 parts over ICSP, using my JS16 as a
+| USB-based programmer.
 
 .ifndef S08JS
    error" This code will currently only work on an S08JS device."
 .then
 
-( Because we want to be independent of the USB byteloader code, we have to
+| Because we want to be independent of the USB byteloader code, we have to
 | re-implement a lot of that code: the command dispatch table, and the
 | basic handling of SETUP, IN, and OUT tokens. But code to enumerate the
 | device, and the device descriptors, are *not* repeated here. We only
-| implement the "vendor specific" requests required to do BDM.)
+| implement the "vendor specific" requests required to do BDM.
 
 10 constant buflen0  ( buffer length, and hence max packet size, for endpoint 0)
 
@@ -34,8 +34,8 @@ __host
 
 __meta
 
-( Buffer descriptor control byte to match _any_ SETUP transaction, or an IN
-| or OUT transaction with a DATA1 packet.)
+| Buffer descriptor control byte to match _any_ SETUP transaction, or an IN
+| or OUT transaction with a DATA1 packet.
 0c8 equ match-data1
 
 ( USB buffer descriptors)
@@ -64,13 +64,13 @@ forward-jmp pic18-loop
 
 ( Port pins.)
 
-( PIC18     JS16
+| PIC18     JS16
 | ======================
 | PGC    -- PTA3, pin 11
 | PGD    -- PTA2, pin 10
 | /MCLR  -- PTA4, pin 12
 | PGM    -- PTA1, pin 9
-)
+
 
 label init-pins
    .a clr  PTAD ) sta   ( set pins low)
@@ -79,7 +79,7 @@ label init-pins
 
 ( The building blocks.)
 
-comment %% delay-times
+| comment %% delay-times
 |
 |   In HX is a _negated_ 16-bit delay count. We negate the count and
 |   count _up_ to make it easier to know when to increment the high half.
@@ -108,8 +108,8 @@ label 1ms
 label 100us
    #-264 # ldhx  delay j  ;c
 
-( Now for some spiffy macros that let us define the bit send and receive
-| words so that they look like timing diagrams!)
+| Now for some spiffy macros that let us define the bit send and receive
+| words so that they look like timing diagrams!
 
 macro D/  PTAD 2 bset   ;m
 macro D\  PTAD 2 bclr   ;m
@@ -189,9 +189,9 @@ label finish-twi-write
    stop-bit c
    ( fall thru)
 
-( Prepare to return status - a zero-length IN transaction. Also be ready to
+| Prepare to return status - a zero-length IN transaction. Also be ready to
 | accept another SETUP even if it would mean abandoning the current
-| transfer. This is what the USB spec says we have to do.)
+| transfer. This is what the USB spec says we have to do.
 
 label finish-control-write
    ( Setup IN status stage)
@@ -219,8 +219,8 @@ label bulk-write
    wLength ) lda  0!=  finish-twi-write  until
    expect-setup-token j  ( wait for OUT or new SETUP)  ;c
 
-( Don't start talking to the slave at all for 0-length reads. It would just
-| break things.)
+| Don't start talking to the slave at all for 0-length reads. It would just
+| break things.
 
 label bulk-read
    wLength ) lda  0!=  prepare-fixed-in  until
@@ -233,8 +233,8 @@ label bulk-read
 label read-acks
    wLength ) lda  prepare-fixed-in j  ;c
 
-( Ping slave. Just send START bit, slave address+write, and STOP bit, and
-| return the value of the ACK bit.)
+| Ping slave. Just send START bit, slave address+write, and STOP bit, and
+| return the value of the ACK bit.
 
 label ping-slave
    slave+write c  ( returns ACK in A)  stop-bit c
@@ -267,13 +267,13 @@ label setup-or-out-token
    out-control ) lda  3c # and  34 # cmpne?  setup-token  until
 
    ( OUT token)
-   ( If last OUT was zero-length, it was a status transaction for a
-   | control read, so get ready for a new SETUP.)
+   | If last OUT was zero-length, it was a status transaction for a
+   | control read, so get ready for a new SETUP.
    out-count ) lda  0= if  expect-setup-token j  then
 
-   ( Otherwise, we've got a bulk write data payload. Write bytes to slave
+   | Otherwise, we've got a bulk write data payload. Write bytes to slave
    | via TWI. Put ACK bit into in-buffer, just in case the host wants to
-   | read it back - though it'll only see the ACK bits of the last OUT.)
+   | read it back - though it'll only see the ACK bits of the last OUT.
 
    .h clr  .x clr  ( bufptr)
    .a psh  ( repeat out-count times)
@@ -284,21 +284,21 @@ label setup-or-out-token
        in-buffer ,x sta  .x inc  total-count ) dec  ( affects Z)
    0 ,s decz? until  .a pul
 
-   ( If total-count zero, we've received all the data; send STOP bit and
-   | queue up status IN token.)
+   | If total-count zero, we've received all the data; send STOP bit and
+   | queue up status IN token.
    0= if  finish-twi-write j  then
 
    ( total-count non-zero; expect more data.)
    ( toggle DATA0/1)  out-control # ldhx  toggle-control c
    expect-out-token j  ;c
 
-( An IN token is either part of a data stage of a control read, or it is
+| An IN token is either part of a data stage of a control read, or it is
 | the status stage of a control write. Status IN's are always zero bytes
 | long; sometimes the last IN of the data stage is also zero bytes long -
 | see copy-to-in for details.
 |
 | The upshot is that if the last packet wasn't full we should expect no
-| more IN transactions.)
+| more IN transactions.
 
 label in-token
    ( If last IN was a full packet, ready some more data.)
@@ -309,11 +309,11 @@ label nak-in-expect-setup
    nak-in c  ( further IN's will return NAK)
    expect-setup-token j  ;c
 
-( XXX To convert process-usb into an interrupt handler, jumps to
+| XXX To convert process-usb into an interrupt handler, jumps to
 | setup-or-out-token, in-token, and nak-in-expect-setup should really be
 | _calls_; we should handle all the flags that are set all at once, rather
 | than only one per call. Also, interrupt flags - like TOKDNEF and STALLF -
-| should be cleared after being handled.)
+| should be cleared after being handled.
 
 label process-usb
    INTSTAT 3 bset? if ( TOKDNEF)

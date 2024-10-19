@@ -1,14 +1,14 @@
-( This file is part of muforth: https://muforth.dev/
+| This file is part of muforth: https://muforth.dev/
 |
 | Copyright 2002-2024 David Frech. (Read the LICENSE for details.)
 
 loading ARM v6-M meta-compiler (main)
 
-( NOTE: While you will see .ifdef native in a few places in this file, the
+| NOTE: While you will see .ifdef native in a few places in this file, the
 | current development "push" is toward an ITC - indirect-threaded code -
-| system.)
+| system.
 
-( Register conventions.
+| Register conventions.
 |
 | Let's start with the ARM procedure call spec:
 |
@@ -46,7 +46,7 @@ loading ARM v6-M meta-compiler (main)
 | r13   sp    sp   hardware stack pointer; Forth's data stack pointer
 | r14   lr    lr   hardware link register; mostly unused by Forth
 | r15   pc    pc   hardware program counter
-)
+
 
 -- ------------------------------------------------------------------------
 -- Macros defining register conventions
@@ -70,8 +70,8 @@ assembler
 
 forth
 
-( Tell the disassembler about these register names. It already knows about
-| the ABI names.)
+| Tell the disassembler about these register names. It already knows about
+| the ABI names.
 
 -: ( reg)
    15 and  3 *
@@ -124,8 +124,8 @@ variable (unnest)
 
 forth
 
-( Look up a forward-reference variable, and execute it to push its value or
-| address.)
+| Look up a forward-reference variable, and execute it to push its value or
+| address.
 
 : lookup
    .meta. chain' execute ;
@@ -163,7 +163,7 @@ forth
 variable @vectors
 : +vectors  @vectors @ + ;
 
-( Capture address of vector table and allot space for it in flash or ram.
+| Capture address of vector table and allot space for it in flash or ram.
 |
 | According to the v6-M and v7-M architecture reference manuals, the vector
 | table *origin* should be 32-word aligned, or aligned to a 128 byte boundary.
@@ -173,7 +173,7 @@ variable @vectors
 | neatness, and so it's easy to read using "du".
 |
 | You should supply a reset SP value or 0 to vector-table. If you use 0,
-| the top of ram will be used as the reset SP.)
+| the top of ram will be used as the reset SP.
 
 : vector-table  ( reset-sp)
    ( Calculate the reset SP value.)
@@ -210,14 +210,14 @@ forth
 
 variable last-code   ( for ;code and does> to fix up)
 
-( Create new target names. A name is a target word which is defined as a
-| _constant_ equal to its code field address - for both ITC and native code.)
+| Create new target names. A name is a target word which is defined as a
+| _constant_ equal to its code field address - for both ITC and native code.
 
-( labels are always created in .labels.
+| labels are always created in .labels.
 |  names are always created in .target.
 |
 | Target words annotated with [r] will be moved from .target. to
-| .target-runtime.)
+| .target-runtime.
 
 meta
 : [r]   ( mark as "runtime"; move last .target. word into .target-runtime.)
@@ -240,22 +240,22 @@ meta
 
 .ifdef notyet  ( hooks)
 
-( For forward references. Use hook to define the hook. This creates a label
+| For forward references. Use hook to define the hook. This creates a label
 | and compiles a long jump. Then resolve using hooks, which patches the jmp
 | to point to here.
 |
 | NOTE: the label points at the code *immediately after* the hook, not the
 | hook itself. This makes fixup easier, but can be confusing if you want to
-| disassemble the code for a particular hook!)
+| disassemble the code for a particular hook!
 
 forth
 : hook!   ( to from)  \m cell-  image-! ;
 meta
 
-( NOTE: We can't use  asm{  0  }  when creating the hook code because
+| NOTE: We can't use  asm{  0  }  when creating the hook code because
 | that will get converted to a constant generator form! We need to compile
 | a version with space in the following word for the absolute or relative
-| address that will get patched by "hooks".)
+| address that will get patched by "hooks".
 
 .ifdef hooks-are-relative
 
@@ -280,11 +280,11 @@ forth
 -- Support for ;code
 -- ------------------------------------------------------------------------
 
-( This word, which is followed inline by a target code address, replaces
+| This word, which is followed inline by a target code address, replaces
 | with the inline target address the code field of the last word compiled .
 | It re-defines the behaviour of a previously defined word - defined by
 | create, variable, constant, etc - by changing its runtime code. It gets
-| -compiled- indirectly by both ;code and does>.)
+| -compiled- indirectly by both ;code and does>.
 
 .ifdef native
 ( NOTE: Do the  pop @  before the  h @ preserve  else R stack mayhem ensues.)
@@ -293,7 +293,7 @@ forth
 : (;code@)   pop @  1+ ( thumb!)  last-code @  image-! ;  ( ITC)
 .then
 
-( <;code> is used to switch from compiling -host- code [that will later run
+| <;code> is used to switch from compiling -host- code [that will later run
 | on the host, and build the target word] to compiling -target- code, that
 | will run when words defined by this defining word later execute. In order
 | to connect the two worlds, and to be able to patch up code fields to
@@ -302,7 +302,7 @@ forth
 | "here".
 |
 | <;code> runs at the compile time of a defining word, but it leaves it up
-| to its caller - ;code or does> - to change the interpreter mode.)
+| to its caller - ;code or does> - to change the interpreter mode.
 
 : <;code>   compile (;code@)  \m here  ,  show ;
 
@@ -340,12 +340,12 @@ target-compiler
 : while   ( dest - src dest)  \tc  if  swap ;
 : repeat  ( src dest -)   \tc again  \tc then ;
 
-( NOTE: We only implement the "smart" for that loops 0 times when passed a
+| NOTE: We only implement the "smart" for that loops 0 times when passed a
 | zero. No more "special case" loops of the form:
 |   ?for  blah blah  next  then
 | Now, for compiles ?if followed by the for runtime; next compiles the next
 | runtime, resolves the backwards branch for next, and, lastly, resolves
-| the forward branch from the ?if.)
+| the forward branch from the ?if.
 
 ( n for .. next         goes n times; 0 if n=0 )
 
@@ -363,7 +363,7 @@ forth
 -- Support for in-line literals (literal pool, ARM-style)
 -- ------------------------------------------------------------------------
 
-( The two workhorses are:
+| The two workhorses are:
 |
 | - lit   an assembler pseudo-instruction that does three things:
 |    - adds the literal value to the lit table if it isn't present, and
@@ -389,7 +389,7 @@ forth
 | For this to be as efficient as possible, it's important to try to defer
 | the use of  pool,  for as long as possible. But there is no good way to do
 | this! In particular, there are no warnings that the literal table - or
-| the stack of refs - is getting full.)
+| the stack of refs - is getting full.
 
 ( The literal table, as it is being constructed.)
 32 array+ lit-values  ( room for 32 literal values)
@@ -461,10 +461,10 @@ forth
 -- Smart jump, and tail call elimination
 -- ------------------------------------------------------------------------
 
-( Smart jump: compile short unconditional branch if possible;
+| Smart jump: compile short unconditional branch if possible;
 | otherwise, ldr + bx.
 |
-| Smart call: compile bl if possible; otherwise, ldr + blx)
+| Smart call: compile bl if possible; otherwise, ldr + blx
 
 assembler
 : j  ( dest)
@@ -476,12 +476,12 @@ assembler
    drop  1+ ( thumb!)  \a r0 lit,  <asm  r0 blx  asm> ;
 forth
 
-( If last code compiled was a call, rewrite it to a jump and return true;
+| If last code compiled was a call, rewrite it to a jump and return true;
 | else return false.
 |
 | NOTE: 'then' should clobber tag so that  if b then ;  doesn't
 | tail-convert the call to b and neglect to put a  bx lr  at the end of the
-| word!)
+| word!
 
 ( An unusual word that we haven't needed until now!)
 : image-op32@  ( a - op32)
@@ -506,11 +506,11 @@ forth
 -- Literal loading
 -- ------------------------------------------------------------------------
 
-( Try three ways to load a literal:
+| Try three ways to load a literal:
 | * movs k, #i8
 | * movs k, #i8; mvns k, k
 | * movs k, #i8; lsls k, k, #n
-| Failing that, use  lit,  to compile an ldr from the literal pool.)
+| Failing that, use  lit,  to compile an ldr from the literal pool.
 
 : load-literal  ( n - tag)
    "ffff_ffff and  ( we only care about 32 bits!)
@@ -539,14 +539,14 @@ forth
 -- Special versions of host colon compiler
 -- ------------------------------------------------------------------------
 
-( Define useful colon compilers:
+| Define useful colon compilers:
 |     meta:  for defining new target defining words!
 |  definer:  for defining meta-compiler-specific compiling words
 |
 | We will define another colon compiler - the actual target colon - in the
-| kernel, using our meta-defining words!)
+| kernel, using our meta-defining words!
 
-( We need meta: so we can define defining words in the middle of target
+| We need meta: so we can define defining words in the middle of target
 | code - eg, the kernel. It gives us an easy way to fire up a specific
 | colon compiler - the one specifically *tuned* for making target defining
 | words.
@@ -599,14 +599,14 @@ forth
 -- ------------------------------------------------------------------------
 
 meta
-( ' get target word's constant value: its cfa
-| We search runtime words too, so we can du or dis them.)
+| ' get target word's constant value: its cfa
+| We search runtime words too, so we can du or dis them.
 
 : '   .target-runtime. chain' execute ;
 : >body   \m cell+ ;
 : >value  \m >body  image-@ ;
 
-( A useful shortcut for getting the address of a target word's value while
+| A useful shortcut for getting the address of a target word's value while
 | assembling. This is a *hack*, and should probably be replaced by some
 | other technique, but it works and it's easy to read and write.
 |
@@ -617,7 +617,7 @@ meta
 |
 |   * define 'b and 'v, which combine ' and >body or ' and >value.
 |
-| This is an ugly problem with no pretty solutions.)
+| This is an ugly problem with no pretty solutions.
 
 assembler
 : >v  ( "value")   \m '  \m >value ;

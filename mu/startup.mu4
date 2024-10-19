@@ -1,14 +1,12 @@
-token (  .forth.  (unlinked-name)
-   <:> ] (lit) [  token ) drop c@  ,  ]  parse 2drop ^ [  show
 
+token |  .forth.  (unlinked-name)  <:>  ] (lit) [  trailing
+   drop c@  ,  ] parse 2drop ^ [  show
 
-( Phew! now we can have comments!)
-
-( This file is part of muforth: https://muforth.dev/
+| This file is part of muforth: https://muforth.dev/
 |
 | Copyright 2002-2024 David Frech. (Read the LICENSE for details.)
 
-( This file is muforth/mu/startup.mu4. It contains high-level Forth code
+| This file is muforth/mu/startup.mu4. It contains high-level Forth code
 | necessary to the useful execution of muforth. This file is loaded and
 | interpreted every time muforth starts up.
 |
@@ -67,41 +65,60 @@ token (  .forth.  (unlinked-name)
 | Hopefully the reader will find this an interesting exercise in
 | bootstrapping, which was precisely my intention.
 |
-| So, here goes; now we start extending the language, bit by bit.)
+| So, here goes; now we start extending the language, bit by bit.
 
 
-( The bit of inscrutable poetry at the beginning of this file creates the
-| word  (  which uses  parse  to look for a closing  )  ( character, and
-| throws away the parsed text.)
+| The bit of inscrutable poetry at the beginning of this file creates the
+| word  |  which uses  parse  to look for a newline character, and throws
+| away the parsed text. I think that  |  is the *the* best choice for
+| a "treat the rest of the line as a comment" character, because it creates
+| a running vertical bar along the left side of the comment text that
+| nicely sets it off from the code nearby.
+|
+| Sometimes, however, we want to embed comments *within* the code. The
+| Forth convention for this has always been to use  (  to start a comment,
+| and  )  to end it. The  (  has to be followed by a space, in order to be
+| tokenized properly; the  )  needs no whitespace around it.
+|
+| Let's define  (  as well. Like  |  it looks forward in the input for
+| a following  )  and throws away the parsed text. The
+|
+|   token ) drop c@
+|
+| parses the  )  as token, drops its length, and fetches its first
+| character. This way we can pass the ASCII value of  )  to  parse .
 
-( We want to create the  current  variable, but we have no defining words
+token (  .forth.  (unlinked-name)
+   <:> ] (lit) [  token ) drop c@  ,  ]  parse 2drop ^ [  show
+
+| We want to create the  current  variable, but we have no defining words
 | to help us. We need to create a create/does word completely by hand. We
-| do it in two phases.)
+| do it in two phases.
 
-( First, create an empty does> clause, and leave on the stack the IP
-| pointing to the ^/EXIT/UNNEST.)
+| First, create an empty does> clause, and leave on the stack the IP
+| pointing to the ^/EXIT/UNNEST.
 
 here  ] ^ [
 
-( Next, create in the  .forth.  chain a <does> word named current, point it
+| Next, create in the  .forth.  chain a <does> word named current, point it
 | to the empty does> clause above, and copy in the address of the  .forth.
-| chain as its initial value.)
+| chain as its initial value.
 
 token current  .forth.  (unlinked-name) show
    <does> , ( ip of empty does> clause)
    .forth. ,  ( initial value)
 
-( With  current  defined we can now create the word  new  which we will use
+| With  current  defined we can now create the word  new  which we will use
 | from now on to create new names in the dictionary. Instead of using
-| .forth.  as above, we create new names in the chain pointed to by  current .)
+| .forth.  as above, we create new names in the chain pointed to by  current .
 
-( But before we define  new  let's create another  (  word, this time in the
+| But before we define  new  let's create another  (  word, this time in the
 | .compiler.  chain, so we can comment the following code. It's a little
 | complicated, since they have the same name. So we will first find the forth
 | (  and then compile it by hand.)
 
 token (  .compiler.  (unlinked-name)
-   <:>  token ( .forth. find huh?  compile,  ] ^ [  show  ( call the forth ( )
+   <:>  token ( .forth. find huh?  compile,  ] ^ [  show  | call the forth  (
 
 token new  .forth.  (unlinked-name)  ( new is defined in the .forth. chain)
    <:> ]
@@ -110,19 +127,19 @@ token new  .forth.  (unlinked-name)  ( new is defined in the .forth. chain)
       current @  (unlinked-name)   ( link new word to current chain, not .forth.)
    ^ [  show
 
-( Finally, we can create the word  :  which we will use to make colon
+| Finally, we can create the word  :  which we will use to make colon
 | definitions. It creates a new word, compiles the code field for colon
-| words, and then uses  ]  to switch to compiling state.)
+| words, and then uses  ]  to switch to compiling state.
 
 new :
    <:> ]
       new <:>  ]
    ^ [  show
 
-( We don't have  ;  so let's define it. It lives in the compiler chain, and
+| We don't have  ;  so let's define it. It lives in the compiler chain, and
 | when executed, it compiles  ^  and then executes  [  to switch back to
 | interpret state from compiling state. Since  [  lives in the .compiler.
-| chain, we have to search for it in a complicated way.)
+| chain, we have to search for it in a complicated way.
 
 .compiler. current !  ( make .compiler. the current chain)
 
@@ -131,22 +148,22 @@ new :
 
 .forth. current !  ( switch back to .forth.)
 
-( By convention, names of dictionary chains start and end with dots. When a
+| By convention, names of dictionary chains start and end with dots. When a
 | dictionary chain word is executed, it pushes the address of its link
 | pointer - which in turns points to the last word defined on the chain.
 |
 | To make it the current chain, we store this pointer into current. Let's
-| create a meaningful name for that.)
+| create a meaningful name for that.
 
 : definitions  current ! ;
 
-( If we want to make a chain the "current" one that receives all new
+| If we want to make a chain the "current" one that receives all new
 | definitions, we execute the chain, and then execute "definitions". But
 | that's a lot to type, and we do this a lot, so in general when I create a
 | new chain - with the dots in its name - I also create a word *without* the
 | dots, that simply calls the chain word and then calls definitions.
 |
-| Let's do that for our three existing chains.)
+| Let's do that for our three existing chains.
 
 : forth        .forth. definitions ;
 : compiler  .compiler. definitions ;
@@ -167,7 +184,7 @@ new :
 : tuck   swap over ;          ( a b - b a b)
 
 
-( Back up over last token parsed from the input so we can re-parse it.
+| Back up over last token parsed from the input so we can re-parse it.
 |
 | NOTE: We have to be careful about line numbers. If the token was followed
 | immediately by a newline, line will have been incremented. When backing
@@ -176,21 +193,21 @@ new :
 | refer to the correct line!
 |
 | Happily, @line captures the value of line at the *beginning* of a token.
-| Let's reset line to @line when we back up over the token.)
+| Let's reset line to @line when we back up over the token.
 
 : untoken   source@ drop ( end)  parsed drop ( new-first) source!
             @line line ! ;
 
 
-( Let's define some words that are useful for searching specific dictionary
-| chains and compiling words from them.)
+| Let's define some words that are useful for searching specific dictionary
+| chains and compiling words from them.
 
 ( Roll tokenizing and searching into one.)
 : token'   token  rot  find ;   ( chain - a u F | body T)
 
-( Compiling from specific chains. Note that `\' is an elaboration of the
+| Compiling from specific chains. Note that `\' is an elaboration of the
 | basic scheme of `\chain'. These words will be handy in the assembler
-| and target compiler.)
+| and target compiler.
 
 ( Tick)
 : chain'  token'  huh? ;
@@ -233,8 +250,8 @@ compiler
 : ctrl   \f ctrl literal ;
 forth
 
-( Before I figured out the trick above, which yields the correct answer for
-| ctrl ?, I defined ctrl thus:)
+| Before I figured out the trick above, which yields the correct answer for
+| ctrl ?, I defined ctrl thus:
 ( : ctrl   char  [ bl 1- #]  and ;  ( 31 and)
 
 
@@ -274,14 +291,14 @@ forth
 : @execute  @ execute ;
 
 
-( jump allows jumping thru a table of addresses; you are responsible for
+| jump allows jumping thru a table of addresses; you are responsible for
 | making sure the index is within range! It must be used at the end of a
 | word. Common usage looks like this:  jump  nope  do1  do2  do3  [
 |
 | That example assumes the top of stack has a number from 0 to 3.
 |
 | Since no UNNEST needs to be compiled, use of [ rather than ; to end the
-| word is common.)
+| word is common.
 
 runtime
 : jump  ( which)  cells pop + @execute ;
@@ -326,10 +343,10 @@ compiler
 : +loop   ( src dest)     compile (+loop)  mark  <resolve  \c then ;
 
 ( make \ more like ANS-Forth's POSTPONE)
-( Now, the confusion happens because we need to write code _in this word_
-| that will compile the above code into _other_ words. How about that?)
+| Now, the confusion happens because we need to write code _in this word_
+| that will compile the above code into _other_ words. How about that?
 
-( Read a token out of the input stream. If the token is on the compiler
+| Read a token out of the input stream. If the token is on the compiler
 | chain, postpone its execution until the word we're compiling executes. If
 | the token is on the runtime or forth chains, postpone its compilation
 | until the word that we're compiling executes. Got that? ;-)
@@ -340,22 +357,28 @@ compiler
 forth
 
 
-( A nice way to do full-line comments with no trailing delimiter. It throws
-| away the rest of the line, scanning for a newline, but only if there was
-| a space after the -- . Without this test, -- followed directly by a
-| newline will throw away the _following_ line, which is a bit mystifying.
-| ;-)
+| Our definition of  |  at the beginning of this file cheated a bit, so now
+| that we have if/then we can define it properly.
+|
+| The word  |  is a nice way to do full-line comments with no trailing
+| delimiter. It throws away the rest of the line, scanning for a newline,
+| but only if there was a space after the  | . Without this test,
+|  |  followed directly by a newline will throw away the *following* line,
+| which is a bit mystifying. ;-)
 
-: --  trailing if  c@  bl = if  ctrl J parse  2drop  then  then ;
+: |   trailing if  c@  bl = if  ctrl J parse  2drop  then  then ;
+
+: --     | ;  | legacy comment word; the previous name for |
 compiler
-: --  \f -- ;
+: |   \f | ;
+: --  \f | ;  | legacy comment word; the previous name for |
 forth
 
 
-( Defining words are next. Right now we only `know' how to make `colon'
-| definitions. We need some structural help first.)
+| Defining words are next. Right now we only `know' how to make `colon'
+| definitions. We need some structural help first.
 
-( I wanted to gain a little of the clarity that Chuck Moore's colorForth
+| I wanted to gain a little of the clarity that Chuck Moore's colorForth
 | gains by getting rid of "[ <calculate something here> ] literal". He
 | replaces the whole construct with colored words that are executed or
 | compiled depending on their color, but with a little added twist: when
@@ -369,18 +392,18 @@ forth
 | restarting the colon compiler.
 |
 | We retain the normal Forth behaviour that  ]  simply restarts the colon
-| compiler, doing no other work.)
+| compiler, doing no other work.
 
 
-( Dictionary structure words. Link fields point to link fields. Roughly, a
+| Dictionary structure words. Link fields point to link fields. Roughly, a
 | dictionary entry is the following cell-sized things: suffix, link, code;
 | where suffix is the last 3 characters of the name, followed by its
-| byte-sized length. If length is zero, the word is *hidden*.)
+| byte-sized length. If length is zero, the word is *hidden*.
 
 : link>name    ( 'link - a u)  1- dup c@  ( 'len len)  tuck -  swap ;
 
-( These words all assume we're calculating to or from a code field
-| address.)
+| These words all assume we're calculating to or from a code field
+| address.
 
 : >link   ( 'code - 'link)  cell- ;
 : link>   ( 'link - 'code)  cell+ ;
@@ -396,11 +419,11 @@ forth
 
 ( create and does>. Everything old is new again. ;-)
 
-( 2010-nov-30. After many iterations, I have finally arrived at fig-forth's
+| 2010-nov-30. After many iterations, I have finally arrived at fig-forth's
 | implementation of create/does>. The only difference is the names of the
-| words.)
+| words.
 
-( In fig, there are several kinds of words:
+| In fig, there are several kinds of words:
 |   * CODE words, whose code field points to machine code
 |   * COLON words, whose code field points to docolon, and whose bodies
 |     contain a list of execution tokens
@@ -428,32 +451,32 @@ forth
 | If you want a threaded-code implementation using only pure pointers, you
 | need two pointers in each "child" word defined with create/does: one to
 | point to C [dodoes] and one to point to Forth [the body of the parent
-| defining word].)
+| defining word].
 
 
-( last-created contains the address of the ip address slot of the last
+| last-created contains the address of the ip address slot of the last
 | <does> word defined.
 |
 | We make the variable by hand, since we are about to create the  variable
-| and  constant  defining words, but we don't have them yet!)
+| and  constant  defining words, but we don't have them yet!
 
 new last-created  show
    <does>
    current body> >ip @ ,  ( re-use current's IP pointer to empty does> body)
    0 ,  ( initial value)
 
-( does> fixes up the does ip of the last <does> word to point to the code
-| after "does>" in the caller.)
+| does> fixes up the does ip of the last <does> word to point to the code
+| after "does>" in the caller.
 
 : does>  pop  last-created @  ! ;
 
 
-( The underlying engine for all "create/does>" words. It allocates no data
+| The underlying engine for all "create/does>" words. It allocates no data
 | space in the word. This version does not consume a token from the input
 | stream, instead expecting one on the stack. This is particularly useful
 | if we are meta-compiling another Forth and want to compile heads into the
 | image, since we have to process the token - the name of the new word -
-| twice.)
+| twice.
 
 ( Everything is defined in terms of `create-hidden'.)
 : create-hidden
@@ -461,11 +484,11 @@ new last-created  show
    here  last-created !  0 , ( placeholder for does ip)
    does> ;  ( make the does ip point *somewhere*)
 
-( We'll use this version of "create" for all host words, since they will be
+| We'll use this version of "create" for all host words, since they will be
 | *data* words. But for the target compiler we are going to have a *target*
 | colon compiler, which will have the same hide/show problem that we have on
 | the host. So we need to be able to create hidden target words, and we will
-| use create-hidden for this.)
+| use create-hidden for this.
 
 : create   create-hidden show ;  ( always immediately show host create'd words)
 
@@ -490,9 +513,9 @@ new last-created  show
 : 2variable   variable  0 , ;
 
 
-( To bracket comments in a flexible way. If you've bracketed some text
+| To bracket comments in a flexible way. If you've bracketed some text
 | using comment, changing "comment" to "uncomment" will interpret the
-| bracketed text - the delimiter becomes a noop.)
+| bracketed text - the delimiter becomes a noop.
 
 : comment
    token  ( the comment end token to match)
@@ -501,12 +524,12 @@ new last-created  show
 : uncomment  new <:> \ ^ ;  ( create a noop word)
 
 
-( How about a really cool word that makes self-parsing comment words? In
+| How about a really cool word that makes self-parsing comment words? In
 | other words, like using "comment" - defined above - but instead of having
 | to say "comment **foobar** <commented text> **foobar**", you define
-| **foobar** to skip tokens until it comes to a matching **foobar**!!)
+| **foobar** to skip tokens until it comes to a matching **foobar**!!
 
-comment no-self-comments
+| comment no-self-comments
 | : make-comment  create  does> drop  untoken comment ;
 |
 | ( Here is one to get you started - good for block comments. It's 75
@@ -516,7 +539,7 @@ comment no-self-comments
 | ===========================================================================
 | no-self-comments
 
-( I guess we can have deferred words, even though they are, in some ways,
+| I guess we can have deferred words, even though they are, in some ways,
 | inelegant. The alternative - creating a variable and a colon word that
 | calls through that variable, for _every_ deferred word - is also in some
 | ways inelegant - and clumsy.
@@ -537,7 +560,7 @@ comment no-self-comments
 | globals. But that's what the fuss is.
 |
 | That and that "vectoring" them isn't strictly postfix. And it requires
-| architecture-specific code!)
+| architecture-specific code!
 
 variable undeferred  ' nope undeferred !
 variable last-deferred-executed
@@ -557,7 +580,7 @@ forth
 
 ( Defining new dictionary chains.)
 
-( These used to be in an array but are now independent of each other. They
+| These used to be in an array but are now independent of each other. They
 | are structures, created in the body of a does word, that look just like a
 | name entry in the dictionary - a name-suffix followed by a link field.
 |
@@ -574,7 +597,7 @@ forth
 |
 | We create new chains by reusing the code field and the "muchain" name
 | field from  .forth.  - an existing chain that is created by C code in
-| src/dict.c that is executed at startup.)
+| src/dict.c that is executed at startup.
 
 : chain   ( anchor-link)
    new  [ ' .forth.       @ #] , ( code field: mu_do_chain)
@@ -584,19 +607,19 @@ forth
 : sealed           0  chain ;  ( create an independent vocab chain)
 : chained  current @  chain ;  ( chain to the current vocab)
 
-( It's also possible to chain to an -arbitrary- vocab by simply doing this:
+| It's also possible to chain to an -arbitrary- vocab by simply doing this:
 |
-| .arbitrary. chain .new-is-chained-to-arbitrary. )
+| .arbitrary. chain .new-is-chained-to-arbitrary.
 
-( When executed, a chain pushes the address of the link field following the
+| When executed, a chain pushes the address of the link field following the
 | fake "muchain" name. To print out the name of a chain, execute it - or
 | fetch current to get the current chain - and then execute
 |
 |   >chain-name type
-)
 
-( The first cell- skips backward over "muchain"; the second skips backward
-| to point to the code field; from there >name gets us to the name!)
+
+| The first cell- skips backward over "muchain"; the second skips backward
+| to point to the code field; from there >name gets us to the name!
 
 : >chain-name  ( 'chain - a u)  cell- cell- >name ;
 
@@ -606,10 +629,10 @@ forth
 sealed .conditional.
 : conditional   .conditional. definitions ;
 
-( eat consumes tokens until it either consumes all the input - in which
+| eat consumes tokens until it either consumes all the input - in which
 | case the while loop will exit - or an execute'd word returns _true_ to
 | exit the containing loop. ?toss processes each token. If it exists in
-| .conditional. , it executes it; otherwise, it throws it away.)
+| .conditional. , it executes it; otherwise, it throws it away.
 
 : ?toss   .conditional. find  if  execute ^  then  2drop  0 ;
 : eat   0 ( nesting)  begin  token  =while  ?toss  until  drop ( nesting) ^
@@ -656,16 +679,16 @@ forth
 -- Schleisiek-style return stack words.
 -- -----------------------------------------------------------------------
 
-( Trying out, after all these years, the techniques that Klaus Schleisiek
+| Trying out, after all these years, the techniques that Klaus Schleisiek
 | presented in 1984 [at FORML] and that I read about in 1993.
 |
 | The basic idea is that, in addition to return address pointers [saved
 | IPs], there are stack frames on the return stack. These can be for any
 | purpose, but we're interested here the following: local variable storage,
 | "fluid" rebinding of variables - aka dynamic scoping, and
-| cleanup-on-return - eg, to close a file that we opened.)
+| cleanup-on-return - eg, to close a file that we opened.
 
-( Here is a picture of the return stack, with high memory towards the top of
+| Here is a picture of the return stack, with high memory towards the top of
 | the page, and low memory further down:
 |
 | ^   |                    |
@@ -681,27 +704,27 @@ forth
 | +---+     prev frame     |<--- fp
 |     +--------------------+
 |     |    ip of remove    |<--- rp      remove calls unlink
-|     +--------------------+                                          )
+|     +--------------------+
 
 runtime
 
 variable fp    ( the "top" - most recently pushed - frame)
                ( fp points to a frame ptr, which pts to a frame ptr...)
 
-( link creates a new frame. It fetches the cfa of the following word and
+| link creates a new frame. It fetches the cfa of the following word and
 | pushes it onto the return stack. This is the cleanup routine. Then it
 | links this frame into the list rooted at fp, and then returns to its
 | caller, skipping the following cfa. link is called by a word that builds
-| a new stack frame.)
+| a new stack frame.
 
 : link     r>  @+ swap  >r    ( fetch & skip following cfa & push to r)
            fp @ >r  rp@ fp !  ( link this frame to previous)
            >r                 ( restore return address) ;
 
-( unlink undoes what link did. It unlinks the frame from the list rooted at
+| unlink undoes what link did. It unlinks the frame from the list rooted at
 | fp, and then runs the cleanup routine, which will do whatever is
 | necessary to de-allocate the frame and undo any state changes made by the
-| word that called link.)
+| word that called link.
 
 : unlink   r>                 ( save return address)
            fp @ rp!  r> fp !  ( unlink frame)
@@ -730,7 +753,7 @@ variable cf   ( catch frame pointer)
    r> cf !     ( restore prev catch frame pointer)
    0 ;
 
-( catch can only return an error value if throw is called with a non-zero -
+| catch can only return an error value if throw is called with a non-zero -
 | error - value during the execution of the word following catch.
 |
 | If throw is called with 0, it drops it and does nothing.
@@ -752,7 +775,7 @@ variable cf   ( catch frame pointer)
 |
 | It is up to the code following a call to catch - b in our example - to
 | handle both the zero and non-zero cases, and to print the error and
-| unwind the stack in case of an error.)
+| unwind the stack in case of an error.
 
 : throw  ( 0 | error)
    ?if
@@ -762,13 +785,13 @@ variable cf   ( catch frame pointer)
       >r       ( push return address so that we return from catch!)
    then ;
 
-( unwind is useful in the context of exceptions. It starts at fp and
+| unwind is useful in the context of exceptions. It starts at fp and
 | unlinks each frame in turn until fp is zero or points to a frame above
-| the current catch frame.)
+| the current catch frame.
 
-( XXX Right now we are using unwinding as an on/off toggle, but in the
+| XXX Right now we are using unwinding as an on/off toggle, but in the
 | future we could have different bits that could be tested by the various
-| cleanup routines.)
+| cleanup routines.
 
 variable unwinding
 : unwind  ( unwind-flags)
@@ -790,8 +813,8 @@ variable unwinding
 : restore
    r> ( ra)   r> r>  ( value addr) !   >r ( ra) ;
 
-( Preserve the value of a variable for the duration of the execution of the
-| calling word.)
+| Preserve the value of a variable for the duration of the execution of the
+| calling word.
 
 : preserve  ( addr)  ( address of variable)
    r> ( ra)
@@ -807,8 +830,8 @@ variable unwinding
 : cleanup
    r> ( ra)   r> ( value)  r>  ( cfa) execute   >r ( ra) ;
 
-( Push value and following cfa to R stack; on exit or unwind, execute cfa
-| with value on the stack.)
+| Push value and following cfa to R stack; on exit or unwind, execute cfa
+| with value on the stack.
 
 : on-exit  ( value)
    r> ( ra)
@@ -822,8 +845,8 @@ variable unwinding
 : cleanup2
    r> ( ra)   r> r>  ( v1 v2)  r>  ( cfa) execute   >r ( ra) ;
 
-( Push v1, v2, and following cfa to R stack; on exit or unwind, execute cfa
-| with v1 and v2 on the stack.)
+| Push v1, v2, and following cfa to R stack; on exit or unwind, execute cfa
+| with v1 and v2 on the stack.
 
 : on-exit2  ( v1 v2)
    r> ( ra)
@@ -844,11 +867,11 @@ variable unwinding
    >r ( ra) ;
 
 ( Allocate space for local variables.)
-( NOTE: do -not- try to use a for loop to push cells! It doesn't work! The
+| NOTE: do -not- try to use a for loop to push cells! It doesn't work! The
 | return stack is being used to store the loop index, but you're busy
 | pushing stuff there! All hell breaks loose! If you absolutely want to
 | zero locals as they are allocated, do a begin/until loop with the count
-| on the data stack.)
+| on the data stack.
 
 : room  ( #cells)
    r> ( ra)
@@ -884,15 +907,15 @@ decimal
 
 ( Punctuation in numbers: sign, radix, decimal point, separators.)
 
-( NOTE WELL: This code - the number parsing code - has been a thorn in my
+| NOTE WELL: This code - the number parsing code - has been a thorn in my
 | side for ever. You'll see, as you read the following code and comments,
 | that over the years I have made changes, but it has never been as simple
-| or as elegant as I would like. It needs a really good whacking.)
+| or as elegant as I would like. It needs a really good whacking.
 
-( 2006-mar-26. Ok, so this *totally* sucks. The presence of these bits of
+| 2006-mar-26. Ok, so this *totally* sucks. The presence of these bits of
 | punctuation can mask a word not being found in the dictionary. A bare /,
 | for instance, with no digits to keep it company, is happily parsed as a
-| number. The number? 0. Urgh.)
+| number. The number? 0. Urgh.
 
 : punct  ( a u ch - a' u' matched)
    over if ( still chars to process)  swap push  over c@  xor if
@@ -902,9 +925,9 @@ decimal
 
 : ?sign  ( a u - a' u' neg)  char - punct  if  -1 ^  then  0 ;
 
-( I wanted to add Michael Pruemm's '0' as a hex specifier, but it's not as
+| I wanted to add Michael Pruemm's '0' as a hex specifier, but it's not as
 | simple as adding it to this list. It will match a bare 0, which won't be
-| matched as a number.)
+| matched as a number.
 
 : ?radix  ( a u - a' u')
 (   char 0 punct  if  hex ^  then )
@@ -914,9 +937,9 @@ decimal
    char # punct  if  decimal ^  then
    char % punct  if  binary ^  then ;
 
-( . resets dpl; others leave it unchanged; this means that embedding . in a
+| . resets dpl; others leave it unchanged; this means that embedding . in a
 | number causes dpl to be set to the count of digits _after_ the _last_ .
-| in the number.)
+| in the number.
 
 : dot?  ( a u - a' u' matched)
    char . punct  if  dpl off  -1 ^  then
@@ -943,7 +966,7 @@ decimal
 : *digit  ( accum a digit - accum*base+digit a)
    rot  radix @ * +  swap  dpl @ 0< 1+  dpl +! ;
 
-( 2002-mar-23. I still don't like how number parsing works. On the one
+| 2002-mar-23. I still don't like how number parsing works. On the one
 | hand, we know ahead of time exactly how many characters we have [in the
 | token we are trying to convert]; on the other, the way the prefix [sign
 | and radix] and embedded [. , - : /] characters work, we can't simply put
@@ -952,12 +975,12 @@ decimal
 | words _both_ checking if there are any characters left to process. This
 | seems clumsy.
 |
-| And that "dpl!" in ?dot bugs me, too.)
+| And that "dpl!" in ?dot bugs me, too.
 
 ( ANS compatible! - or at least it was when it converting with double numbers.)
-( If >number finds a non-digit, it pops the return stack - which contains
+| If >number finds a non-digit, it pops the return stack - which contains
 | the for loop counter - and returns this value, which is number of
-| characters left in the token.)
+| characters left in the token.
 
 : >number  ( accum a u - accum' a' u')  ( a' is first unconvertible char)
    for  @digit?  0= if  drop pop ^  then  *digit  1+  next  0 ;
@@ -965,7 +988,7 @@ decimal
 : digits   ( accum a u - accum' a' u' #converted)
    dup push ( chars left)  >number  pop over - ;
 
-( XXX 2009-sep-01. The following doesn't make sense, and it's a lie as
+| XXX 2009-sep-01. The following doesn't make sense, and it's a lie as
 | well, since 'number,' doesn't exist any more:
 |
 | Now some help for the colon compiler. Note that the colon compiler now
@@ -974,7 +997,7 @@ decimal
 | this so that constants don't screw up fixed-point arithmetic conversion.
 | Without this code, if you were to use a fixed-point number, 3.1415 eg, dpl
 | would be set to 4. Then `0' pushes 0 on the stack but doesn't affect dpl,
-| so Forth tries to convert it, and BOOM.)
+| so Forth tries to convert it, and BOOM.
 
 : ?bad-number  ( sign accum a u good - sign accum a u | a u 0)
    if ^ then  2push 2drop 2pop  0  shunt ;
@@ -989,22 +1012,22 @@ decimal
 : number   number? huh? ;
 
 
-( Ok, folks, now that we have number parsing code we can redefine the
+| Ok, folks, now that we have number parsing code we can redefine the
 | interpreter and compiler, which up till this point have simply complained
-| if they saw something not in the dictionary.)
+| if they saw something not in the dictionary.
 
-( First we need to re-define  [  and  ] . We will define these as
+| First we need to re-define  [  and  ] . We will define these as
 | interpreter "modes", which consist of a word to display a prompt string
 | and a token consumer function. Since we don't currently have a way to
-| compile strings,we will use  nope  until we re-define the prompts later.)
+| compile strings, we will use  nope  until we re-define the prompts later.
 
 variable state  ( interpret or compile -- or whatever!)
 : mode   create  ( prompt token-consumer)  ,  ,  does>  state ! ;
 
 
-( Redefine the forth "consumer" to try to convert numbers after failing to
+| Redefine the forth "consumer" to try to convert numbers after failing to
 | find a token in the .forth. chain. Since we don't yet have a way to
-| create nameless colon definitions, do it by hand!)
+| create nameless colon definitions, do it by hand!
 
 ' nope  ( null prompt for interpret mode)
 
@@ -1040,8 +1063,8 @@ defer ?stack
 :  :   new <:>  ] ;
 
 
-( Fire up the state-aware interpreter! The new  :  will use the redefined  ]
-| which affects the state variable.)
+| Fire up the state-aware interpreter! The new  :  will use the redefined  ]
+| which affects the state variable.
 
 .compiler. chain' [ execute  ( set interpret state)  interpret
 
@@ -1081,8 +1104,8 @@ forth
 : reset-tty-width  ( channel)
    dup @ ( fd) tty-width  swap >width ! ;
 
-( Call when we receive a SIGWINCH - a notification that the "window size"
-| of a terminal has changed.)
+| Call when we receive a SIGWINCH - a notification that the "window size"
+| of a terminal has changed.
 
 : handle-sigwinch
    stdout reset-tty-width  stderr reset-tty-width ;
@@ -1140,7 +1163,7 @@ ctrl ?  constant #DEL  -- 127
    out-channel @  dup >col @ rot +  swap >width @  u< not  if cr then ;
 
 
-( Go forth and multiply ... and divide.
+| Go forth and multiply ... and divide.
 |
 | As of r438 - 2006-mar-26 - there are no double-length numbers!
 |
@@ -1153,7 +1176,7 @@ ctrl ?  constant #DEL  -- 127
 | and its results; the others are signed.
 |
 | */ and */mod no longer calculate a double-length intermediate product,
-| so beware!)
+| so beware!
 
 :  /      ( n1 n2 - quot)    /mod  nip ;
 : u/      ( u1 u2 - uquot)  u/mod  nip ;
@@ -1175,13 +1198,13 @@ ctrl ?  constant #DEL  -- 127
 
 : spaces  ( n)  0 max  for  space  next ;
 
-( pad is where we convert numbers to ASCII. A number is 1 cell - could be
+| pad is where we convert numbers to ASCII. A number is 1 cell - could be
 | 64 bits! - and in binary would take 64 characters to represent, plus a
 | character for the sign. pad returns the address of the _end_ of the
-| buffer, since conversion occurs right-to-left.)
+| buffer, since conversion occurs right-to-left.
 
-( Since we're putting "thousands" separations in here as well, I thought I
-| might increase the size to an over-generous 128 bytes.)
+| Since we're putting "thousands" separations in here as well, I thought I
+| might increase the size to an over-generous 128 bytes.
 
 : pad   here 128 + ;  ( 64 digits + sign + alignment)
 
@@ -1194,8 +1217,8 @@ variable hld
 
 : #     ( u - u')   /digit  >digit  hold  ;
 
-( For base-10 numbers, insert a "," every three digits; for other
-| bases, insert a "_" every four digits.)
+| For base-10 numbers, insert a "," every three digits; for other
+| bases, insert a "_" every four digits.
 
 : ?sep  radix @ 10 = if  held 4 mod  3 = if  char , hold  then  ^  then
                          held 5 mod  4 = if  char _ hold  then ;
@@ -1237,7 +1260,7 @@ variable sep  ( include "thousands" separators in numbers - or not.)
 
 ( String primitives.)
 
-( 2010-feb-27. In converting to a single dictionary space I was forced to
+| 2010-feb-27. In converting to a single dictionary space I was forced to
 | "revert" to having strings compiled inline. Now we have to jump over
 | their bodies again.
 |
@@ -1255,13 +1278,13 @@ variable sep  ( include "thousands" separators in numbers - or not.)
 | There are two string literal primitives. Both jump over the body of the
 | string, but differ in what they leave on the stack.
 |
-|   (z")  ( leaves only the address of the first character of the string;
-|   (")   ( leaves both the address and count.)
+|   (z")  leaves only the address of the first character of the string;
+|   (")   leaves both the address and count.
 
 
-( Copy a string from the input stream into the dictionary and allot space
+| Copy a string from the input stream into the dictionary and allot space
 | for it, then return the address of the first character of the string.
-| Prefix count cell _precedes_ first character of string.)
+| Prefix count cell _precedes_ first character of string.
 
 : scrabble  ( a u - z")
    dup ,  ( compile count cell)
@@ -1271,9 +1294,9 @@ variable sep  ( include "thousands" separators in numbers - or not.)
    r@ swap cmove  ( copy string)
    pop  ( return address of string) ;
 
-( Given the address of the count cell of a compiled string, skip over the
+| Given the address of the count cell of a compiled string, skip over the
 | string, returning the address, length, and the new "return address": the
-| address of the cell following the string.)
+| address of the cell following the string.
 
 : skip-string   ( 'count - a u ra)  @+ swap ( a u)  2dup + 1+ aligned ;
 
@@ -1283,8 +1306,8 @@ runtime
 : (z")   ( - a)    pop  skip-string  nip  push ;
 forth
 
-( Take the address of the first character of a compiled string and return
-| its address and length. We simply back up one addr and fetch the length.)
+| Take the address of the first character of a compiled string and return
+| its address and length. We simply back up one addr and fetch the length.
 
 : count  ( z" - a u)  dup  cell- @ ;
 
@@ -1293,9 +1316,9 @@ forth
 : z"      ( - z")   char " parse  scrabble ;
 :  "      ( - a c)  \f z"  count ;  ( ANS)
 
-( ." doesn't need to compile the following string because it is immediately
+| ." doesn't need to compile the following string because it is immediately
 | printed out and then forgotten, so we can read it directly out of the
-| input stream without copying.)
+| input stream without copying.
 
 : ."   char " parse  type ;
 
@@ -1317,9 +1340,9 @@ forth
 variable lines-read
 : add-lines-read  ( dummy)   drop  line @ 1-  lines-read +! ;
 
-( check-depth only prints anything if depth has changed since the file
+| check-depth only prints anything if depth has changed since the file
 | started loading _and_ being-loaded is non-zero - ie, we're loading a
-| file.)
+| file.
 
 ( being-loaded is defined in C, but is a cell, so we can use @ and ! to access it.)
 
@@ -1331,7 +1354,7 @@ variable lines-read
 
 : show-depths  ( saved)   depth .  . ;
 
-( raw-load-file reads and interprets a file containing muforth code.
+| raw-load-file reads and interprets a file containing muforth code.
 |
 | Before reading anything, it resets the radix to decimal, resets the
 | interpreter mode to the host forth interpreter, and sets the .forth. vocab
@@ -1347,7 +1370,7 @@ variable lines-read
 | chain, any changes made to them by the loaded file will remain after the
 | file is loaded. This is useful for loading a set of development tools that
 | need to change into a metacompiler state, and perhaps switch to hex. See
-| target/S08/build.mu4 for an example.)
+| target/S08/build.mu4 for an example.
 
 : raw-load-file  ( z")
    decimal
@@ -1362,9 +1385,9 @@ variable lines-read
    -- depth  on-exit show-depths
    evaluate ;
 
-( Save radix, state, and current, then call raw-load-file to actually load
+| Save radix, state, and current, then call raw-load-file to actually load
 | and interpret the file. Unlike raw-load-file, above, load-file preserves
-| the radix, mode, and current chain.)
+| the radix, mode, and current chain.
 
 : load-file  ( z")
    radix preserve  state preserve  current preserve
@@ -1377,18 +1400,18 @@ variable lines-read
 : ld!  token, raw-load-file ;
 
 
-( Now that we can load files, let's load the endianness code. We'll need it
+| Now that we can load files, let's load the endianness code. We'll need it
 | for ANSI terminal colors, which are coming up next, but we also need it
-| for *every* target compiler, so we may as well load it here!)
+| for *every* target compiler, so we may as well load it here!
 
 ld lib/endian.mu4
 
 
-( Colorized text, and sensible handling of stdout vs stderr.
+| Colorized text, and sensible handling of stdout vs stderr.
 |
 | In general, unless we are printing something "special" - a banner,
 | prompt, warning, error, or the stack state - we want to print to stdout and
-| use the normal text color.)
+| use the normal text color.
 
 variable colorize?
 : +color  colorize? on ;
@@ -1396,24 +1419,24 @@ variable colorize?
 
 ld lib/ansi-terminal-colors.mu4
 
-( Initially I'm going to set this up with foreground colors only, but it
+| Initially I'm going to set this up with foreground colors only, but it
 | would be nicer to be able to specify *both* foreground and background
 | colors for each kind of text.
 |
 | I'm also going to use rgb colors. I might later try to find some suitable
-| colors within the 6x6x6 color cube from the 256-color palette.)
+| colors within the 6x6x6 color cube from the 256-color palette.
 
 : colorized  ( rgb)  constant  does> @  ( rgb)
    >stderr  colorize? @ if  0 fg rot (ansi-rgb-color) type ^ then  drop ;
 
-( I'm thinking we need the following *kinds* of text:
+| I'm thinking we need the following *kinds* of text:
 | - normal      text the user types, or that running code generates
 | - info        sign-on banner, loading messages, etc
 | - status      stack display and prompts
 | - delimiter   clarify bracketing, like the double parens in loading
 | - warning
 | - error
-)
+
 
 ( Experimental)
 ( Can we do bold separately from setting a color?)
@@ -1469,13 +1492,13 @@ being-defined -redef
 being-defined -v  ( be verbose)
 -- -v
 
-( You can only do one of these at a time! Is there an easy way to hook
-| the hook?)
+| You can only do one of these at a time! Is there an easy way to hook
+| the hook?
 
 
-( Now that we have strings, let's make a more useful definition of
+| Now that we have strings, let's make a more useful definition of
 | undeferred, so that defer'ed words that never get set to anything will
-| complain when used.)
+| complain when used.
 
 -:  last-deferred-executed @  body> >name type
     error" called undefined deferred word" ;  undeferred !
@@ -1485,19 +1508,19 @@ being-defined -v  ( be verbose)
 
 ( Word listing. Putting this in as soon as possible. Needs `space'.)
 
-( Cross-referencing with the Forth 2012 draft standard, forall-words is
+| Cross-referencing with the Forth 2012 draft standard, forall-words is
 | looking rather like the standard word TRAVERSE-WORDLIST, from the TOOLS
 | extension, which has the following stack effect:
 |
 | ( i*x xt wid - j*x )
 
-( wid represents a wordlist. xt is an "execution token". TRAVERSE-WORDLIST
+| wid represents a wordlist. xt is an "execution token". TRAVERSE-WORDLIST
 | executes xt with wid on the stack, and continues until the wordlist is
 | exhausted, or until xt returns false.
 |
 | The invoked xt has the stack effect ( k*x nt - l*x flag)
 
-( nt is a "name token"; flag is true if traversal should continue, and
+| nt is a "name token"; flag is true if traversal should continue, and
 | false if it should terminate.
 |
 | During the execution of TRAVERSE-WORDLIST there is nothing on the stack -
@@ -1513,7 +1536,7 @@ being-defined -v  ( be verbose)
 |
 |   ( k*x 'link - l*x exit?)
 
-( 'link is a link field address; ie, the address of a cell containing a
+| 'link is a link field address; ie, the address of a cell containing a
 | link. Since in muforth's dictionary links point to links, simply
 | executing  @  will follow the link.
 |
@@ -1524,7 +1547,7 @@ being-defined -v  ( be verbose)
 | In fact, .name-and-count-local *needs* to see hidden entries, since it
 | stops processing when it hits a muchain, and muchains are by definition
 | hidden. If the iterator skipped hidden entries it wouldn't know when to
-| stop!)
+| stop!
 
 : forall-words  ( i*x 'code 'link - j*x)
    2push
@@ -1538,8 +1561,8 @@ being-defined -v  ( be verbose)
 : .name-and-count-it  ( count 'link - count+1 exit?)
    link>name  dup 2 + ?wrap  type space space  1+  0 ;
 
-( Push thru muchains and count everything except hidden words - which also
-| means we don't count the muchains.)
+| Push thru muchains and count everything except hidden words - which also
+| means we don't count the muchains.
 
 : .name-and-count-thru-muchains  ( count 'link - count' exit?)
    dup  hidden? if  drop  0  ^  then
@@ -1575,19 +1598,19 @@ being-defined -v  ( be verbose)
    depth  1-  0 swap do  i nth .  -1 +loop ;
 
 
-( IEC standard binary prefixes:
-| http://physics.nist.gov/cuu/Units/binary.html)
+| IEC standard binary prefixes:
+| http://physics.nist.gov/cuu/Units/binary.html
 
 : Ki   10 << ;  ( "Kibi", or "kilobinary": 2^10.)
 : Mi   Ki Ki ;  ( "Mebi", or "megabinary": 2^20.)
 : Gi   Mi Ki ;  ( "Gibi", or "gigabinary": 2^30.)
 : Ti   Gi Ki ;  ( "Tebi", or "terabinary": 2^40.)
 
-( I've left out the SI prefixes:
-| http://physics.nist.gov/cuu/Units/prefixes.html)
+| I've left out the SI prefixes:
+| http://physics.nist.gov/cuu/Units/prefixes.html
 
-( I'm not sure how useful they are for muforth, and I want to prevent the
-| possible confusion of using "M" thinking it means 2^20 rather than 10^6.)
+| I'm not sure how useful they are for muforth, and I want to prevent the
+| possible confusion of using "M" thinking it means 2^20 rather than 10^6.
 
 
 
@@ -1605,17 +1628,17 @@ defer ?show-radix
 : -radix  now nope  is ?show-radix ;
 
 
-( Toggle-able "stack status" display, showing the top four items on the
+| Toggle-able "stack status" display, showing the top four items on the
 | stack every time ?show-stack is executed.
 |
 | This can be executed after a chunk of text is interpreted: the command
 | line, a file that is loaded, etc. With the proper definition I won't need
-| to turn it on and off.)
+| to turn it on and off.
 
 defer ?show-stack
 
-( XXX Should decimal show as signed and everything else as unsigned?
-|     Should that be another setting?)
+| XXX Should decimal show as signed and everything else as unsigned?
+|     Should that be another setting?
 -: depth ?if
       sep preserve  -sep
       status-text
@@ -1666,16 +1689,16 @@ defer load-stats  ( show space consumed, or simply close double parens)
 
 : -consumed  [ #] is load-stats ;  -consumed
 
-( Print some descriptive text and, at end of file, optionally show the
+| Print some descriptive text and, at end of file, optionally show the
 | amount of dictionary space consumed by loading. Consumes and prints the
-| rest of the command line.)
+| rest of the command line.
 
 : loading
    delimiter-text  cr ." (( "  info-text  #LF parse type  space  normal-text
    here  on-exit load-stats  interpret ;
 
-( Define words for use with the conditional compilation words.  No matter
-| what chain we are compiling into, define the word in .forth.)
+| Define words for use with the conditional compilation words.  No matter
+| what chain we are compiling into, define the word in .forth.
 
 : -d   current preserve  forth  -1 constant ;
 : -f   ( load file)  ld! ;  ( don't preserve settings!)
@@ -1766,8 +1789,8 @@ Copyright (c) 2002-2024 David Frech (read the LICENSE for details)
 Type 'settings' to see a few of muforth's tweakable behaviours.
 " ;
 
-( If being-loaded is non-zero, print filename; if @line is *also* non-zero,
-| print linenumber as well.)
+| If being-loaded is non-zero, print filename; if @line is *also* non-zero,
+| print linenumber as well.
 
 : .where
    being-loaded @  ?if  count type
@@ -1775,27 +1798,27 @@ Type 'settings' to see a few of muforth's tweakable behaviours.
       ." : "
    then ;
 
-( The error string could have come from C code, in which case it will *not*
+| The error string could have come from C code, in which case it will *not*
 | have a preceding count. We need to use zcount rather than count to
-| compute its length.)
+| compute its length.
 
 ( XXX which kind of text used for location? info doesn't seem right.)
 : .error  ( z")
    info-text  cr  .where  parsed tuck type if space then
    error-text  zcount type  normal-text ;
 
-( If the top of the stack is zero, no error occurred. If non-zero, it is a
+| If the top of the stack is zero, no error occurred. If non-zero, it is a
 | string describing the error; we want to print the error and then unwind
-| the stack.)
+| the stack.
 
 : ?error  ( 0 | z")   ?if  .error  r>  -1 unwind  >r  then ;
 
 
-( Now that all targets have been switched to the du-cached code, and
+| Now that all targets have been switched to the du-cached code, and
 | du-cached has been fixed to work even without termios support, let's
 | always load it. It makes a few of the target build files simpler - they can
 | assume   m  m*  m&  and  .h8_  eg - and it's obviously necessary to use any
-| of the target compilers comfortably.)
+| of the target compilers comfortably.
 
 ld lib/du-cached.mu4
 

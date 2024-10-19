@@ -1,17 +1,17 @@
-( This file is part of muforth: https://muforth.dev/
+| This file is part of muforth: https://muforth.dev/
 |
 | Copyright 2002-2024 David Frech. (Read the LICENSE for details.)
 
 loading STM32 Bitbanged SPI (full-duplex)
 
-( This is currently for programming Atmel AVR and 8051 [AT89LP] processors,
+| This is currently for programming Atmel AVR and 8051 [AT89LP] processors,
 | which use both MOSI and MISO for data. They also use a CPOL=0, CPHA=0
 | style: clock idles low, and data is clocked in on the *rising* [first] edge
 | of the clock.
 |
 | This is in contrast to the half-duplex, CPOL=0, CPHA=1 style used to
 | program Microchip PIC processors. That code is in
-| target/ARM/stm32/bitbanged-spi-half-duplex.mu4)
+| target/ARM/stm32/bitbanged-spi-half-duplex.mu4
 
 hex
 __meta
@@ -19,8 +19,8 @@ __meta
 -- --------------------------------------------------------------------
 -- Bitbanged full-duplex SPI
 -- --------------------------------------------------------------------
-( PB3 is SCK, PB4 is MISO, and PB5 is MOSI. /RST is PB7, and for chips that
-| need it, slave select [/SS] is PB6.)
+| PB3 is SCK, PB4 is MISO, and PB5 is MOSI. /RST is PB7, and for chips that
+| need it, slave select [/SS] is PB6.
 
 : spi-init
    -- First, enable clocks to Port B.
@@ -44,9 +44,9 @@ __meta
    [ %01  4 2* << #] GPIOB_PUPDR set!  ( 2 bits per pin) ;
 
 
-( First, let's define the "reference" implementation, in Forth. This will
+| First, let's define the "reference" implementation, in Forth. This will
 | be somewhat slow. I haven't measured, but I think it toggles SCK at
-| around 250kHz.)
+| around 250kHz.
 
 .ifdef slow-bits
 
@@ -54,29 +54,29 @@ __meta
 : clk/   [ 1 3 << #] bit/ ;
 : clk\   [ 1 3 << #] bit\ ;
 
-( NOTE: In <bit< we try to do approximately the same amount of
-| "computation" during the high and low halves of the clock.)
+| NOTE: In <bit< we try to do approximately the same amount of
+| "computation" during the high and low halves of the clock.
 
 ( Drive PB5 with the MSB; shift left; read PB4 and make it the new LSB.)
 : <bit<   ( bits - bits')
    [ 1 5 << #] ( PB5)  over 0< if  GPIOB_BSRR ( set)  else  GPIOB_BRR ( clear)  then !
    2*  clk/  GPIOB_IDR @  4 >>  1 and  +  clk\ ;
 
-( Write and read some bits.
+| Write and read some bits.
 |
 | Since the STM32 is little-endian, reverse the byte order before and after
-| shifting, so we can use little-endian values everywhere else in our code.)
+| shifting, so we can use little-endian values everywhere else in our code.
 
 code >endian<  ( w - w')  ( switch endianness of a word)  top top rev  next  ;c
 : >bits>   ( bits count - bits')  swap >endian< swap  for  <bit<  next  >endian< ;
 
 .else  ( fast-bits, the default)
 
-( Next, the high-performance version of >bits>. This is capable of toggling
+| Next, the high-performance version of >bits>. This is capable of toggling
 | at just over 5Mhz. I had to put in some no-ops to slow it down a bit.
 |
 | Since we are writing in assembler, we can fold the >endian< calls into
-| the code.)
+| the code.
 
 {
 assembler
@@ -85,13 +85,13 @@ assembler
 forth
 }
 
-( Let's assume that a branch takes 3 cycles. Then our formula is
+| Let's assume that a branch takes 3 cycles. Then our formula is
 |
 |    Cycles per delay = 3 + 4 * [half-bit-delay - 1]
 |
 | The first 3 is the case when we execute the loop once: mov, dec, fall
 | through branch = 1 + 1 + 1. We execute the decrement and backward branch
-| half-bit-delay - 1 times.)
+| half-bit-delay - 1 times.
 
 variable half-bit-delay  ( 1 for 1.5M shift clock; #21 for 250K)
 : fast-clock    1 half-bit-delay ! ;
