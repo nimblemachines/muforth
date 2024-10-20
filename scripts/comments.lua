@@ -38,11 +38,11 @@ function conv_dashdash()
             -- Line with no vertical bar.
             -- If "--" inside parens, it's probably a stack comment;
             -- rewrite "--" as "-".
-            -- Otherwise, rewrite all "--" as "|", making sure to
-            -- rewrite "^: -- " as ": |  " to keep alignment!
+            -- Otherwise, rewrite all "--" as "|", being careful to also
+            -- match "--" at the start of the line.
             l = l:gsub("(%([^)]-)%s%-%-%s([^(]-%))", "%1 - %2")
-                 :gsub("^: %-%- ", ": |  ", 1)
                  :gsub("(%s)%-%-(%s)", "%1|%2")
+                 :gsub("^%-%-%s", "| ")
         end
         return l
     end
