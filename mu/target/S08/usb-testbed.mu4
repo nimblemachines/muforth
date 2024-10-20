@@ -56,7 +56,7 @@ label config-descriptor
    00 c, ( iConfiguration - string index = none)
    80 c, ( bmAttributes)
  #100 2/ c, ( bMaxPower, in 2mA increments = 100mA - one "unit load")
- -- #200 2/ c, ( bMaxPower, in 2mA increments = 200mA - two "unit loads")
+ | #200 2/ c, ( bMaxPower, in 2mA increments = 200mA - two "unit loads")
 
 label interface-descriptor
    09 c, ( bLength)
@@ -377,7 +377,7 @@ label nak-in-expect-setup
 label finish-config
 
 .ifdef usb-debug-via-serial
-   -- Configure SCI for 115200 bps
+   | Configure SCI for 115200 bps
 
    SCIBDH ) clr        ( baud rate divisor, high)
    #13 # SCIBDL ) mov  ( baud rate divisor, low)
@@ -394,15 +394,15 @@ label finish-config
    in-buffer >bufaddr # lda  in-bufaddr ) sta
    out-buffer >bufaddr # lda  out-bufaddr ) sta
 
-   01 # CTL ) mov          -- enable USB module
-   45 # USBCTL0 ) mov      -- turn on pullup, vreg, and PHY
+   01 # CTL ) mov          | enable USB module
+   45 # USBCTL0 ) mov      | turn on pullup, vreg, and PHY
    begin  INTSTAT 0 bset?  until  ( wait for USBRSTF)
    ( fall thru)
 
 label after-usb-reset
    ADDR ) clr
-   0ff # INTSTAT ) mov     -- clear all flags
-   0d # EPCTL0 ) mov       -- enable ep0 as control endpt
+   0ff # INTSTAT ) mov     | clear all flags
+   0d # EPCTL0 ) mov       | enable ep0 as control endpt
    rts  ;c
 
 .then
@@ -471,51 +471,51 @@ Vreset handler
    @ram #ram + # ldhx
    txs
 
-   -- Turn off watchdog
-   -- Can't use bit ops! SOPT1 not in z-page.
-   -- Clear bits 6 & 7. These have different meanings on different chips,
-   -- but at least for the JS and QG clearing both bits will shut off the
-   -- watchdog.
+   | Turn off watchdog
+   | Can't use bit ops! SOPT1 not in z-page.
+   | Clear bits 6 & 7. These have different meanings on different chips,
+   | but at least for the JS and QG clearing both bits will shut off the
+   | watchdog.
    SOPT1 ) lda  3f # and  SOPT1 ) sta
 
    | Set up the xtal oscillator and PLL. For USB we need a 48M clock - 24M
    | bus clock. Getting there takes a few steps...
 
-   -- FEI ==> FBE
-   -- Start xtal osc - we've got a 4M xtal on the board.
-   -- Datasheet and appnotes have you set BDIV to /1 here, but since we're
-   -- running off untrimmed internal osc still, that's a bad idea. We leave
-   -- that until the end.
+   | FEI ==> FBE
+   | Start xtal osc - we've got a 4M xtal on the board.
+   | Datasheet and appnotes have you set BDIV to /1 here, but since we're
+   | running off untrimmed internal osc still, that's a bad idea. We leave
+   | that until the end.
    %01_11_0110 # MCGC2 ) mov  ( keep BDIV at /2, start ext osc)
-   -- wait for osc to start (OSCINIT)
+   | wait for osc to start (OSCINIT)
    begin  MCGSC 1  bset? until
-   -- switch to ext clock (FBE): CLKS=01 (ext), RDIV=001 (/2), IREFS=0
-   -- NOTE: We've set RDIV for PLL (4M/2 == 2M), but we're still running
-   -- the FLL, so this will temporarily run it out of spec... DS says this
-   -- is ok, as long as we switch quickly!
-   -- %10_111_000 # MCGC1 ) mov  -- from when I thought I needed to keep
-                                 -- RDIV set for FLL
+   | switch to ext clock (FBE): CLKS=01 (ext), RDIV=001 (/2), IREFS=0
+   | NOTE: We've set RDIV for PLL (4M/2 == 2M), but we're still running
+   | the FLL, so this will temporarily run it out of spec... DS says this
+   | is ok, as long as we switch quickly!
+   | %10_111_000 # MCGC1 ) mov  | from when I thought I needed to keep
+                                | RDIV set for FLL
    %10_001_000 # MCGC1 ) mov
 
-   -- Wait until we've switched clocks
+   | Wait until we've switched clocks
    begin  MCGSC ) lda  %0001_1100 # and  ( mask IREFST and CLKST)
           %0000_1000 # cmp  0= until  ( IREFST=0, CLKST=10)
 
-   -- FBE ==> PBE
-   -- We're spinning up the PLL. We're set up to divide our 4M xtal by two
-   -- (RDIV) to get 2M (PLL freq); let's multiply that by 24 (VDIV) to get
-   -- 48M, which is our target clock.
-   %0100_0110 # MCGC3 ) mov    -- PLLS=1, VDIV=0110 (*24)
+   | FBE ==> PBE
+   | We're spinning up the PLL. We're set up to divide our 4M xtal by two
+   | (RDIV) to get 2M (PLL freq); let's multiply that by 24 (VDIV) to get
+   | 48M, which is our target clock.
+   %0100_0110 # MCGC3 ) mov    | PLLS=1, VDIV=0110 (*24)
 
-   begin  MCGSC 5 bset?  until   -- loop until PLLST set
-   begin  MCGSC 6 bset?  until   -- loop until LOCK set
+   begin  MCGSC 5 bset?  until   | loop until PLLST set
+   begin  MCGSC 6 bset?  until   | loop until LOCK set
 
-   -- PBE ==> PEE
-   MCGC1 7 bclr  -- set CLKS to 00 (PLL)
+   | PBE ==> PEE
+   MCGC1 7 bclr  | set CLKS to 00 (PLL)
    begin  MCGSC 2 bset?  until
-   begin  MCGSC 3 bset?  until   -- loop until CLKST=11
+   begin  MCGSC 3 bset?  until   | loop until CLKST=11
 
-   -- Lastly, set BDIV to /1
+   | Lastly, set BDIV to /1
    MCGC2 6 bclr
 
    #24000 khz>fcdiv  # lda   FCDIV ) sta

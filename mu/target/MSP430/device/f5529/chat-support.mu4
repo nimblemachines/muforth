@@ -28,80 +28,80 @@ label device-init
    | voltage. At reset it is at its lowest of three settings; we need the
    | highest one.
 
-   a5 # PMMCTL0 1+ & movb     -- unlock PMM registers
-   PMMIFG & clr               -- Clear all interrupt flags.
-   303 # SVSMHCTL & add       -- Increase the high-side reset voltage and reset release voltage
-   003 # SVSMLCTL & add       -- Increase the low-side reset release voltage
+   a5 # PMMCTL0 1+ & movb     | unlock PMM registers
+   PMMIFG & clr               | Clear all interrupt flags.
+   303 # SVSMHCTL & add       | Increase the high-side reset voltage and reset release voltage
+   003 # SVSMLCTL & add       | Increase the low-side reset release voltage
 
-   -- Wait for new low-side settings to stabilize
+   | Wait for new low-side settings to stabilize
    begin  1 # ( SVSMLDLYIFG) PMMIFG & bit  0!= until
 
-   3 # PMMCTL0 & addb         -- Increase core voltage
+   3 # PMMCTL0 & addb         | Increase core voltage
 
-   -- Wait until low-side monitor says we've reached the core voltage.
+   | Wait until low-side monitor says we've reached the core voltage.
    begin  4 # ( SVMLVLRIFG) PMMIFG & bit  0!= until
 
-   300 # SVSMLCTL & add       -- Increase the low-side reset voltage
-   PMMIFG & clr               -- Clear all interrupt flags.
-   0 # PMMCTL0 1+ & movb      -- lock PMM registers
+   300 # SVSMLCTL & add       | Increase the low-side reset voltage
+   PMMIFG & clr               | Clear all interrupt flags.
+   0 # PMMCTL0 1+ & movb      | lock PMM registers
 
    | Now that we have the core voltage set up, let's crank up the
    | oscillators.
 
-   -- First, we have to start up the external xtal oscillator, XT2.
-   -- On F5529, P5SEL.2, when set, connects XT2 to the pins.
+   | First, we have to start up the external xtal oscillator, XT2.
+   | On F5529, P5SEL.2, when set, connects XT2 to the pins.
    %0000_0100 # P5SEL & bisb
 
-   -- Turn on XT2 and wait for it to start.
-   1100 # UCSCTL6 & bic    -- turn off XT2OFF and XT2BYPASS bits
+   | Turn on XT2 and wait for it to start.
+   1100 # UCSCTL6 & bic    | turn off XT2OFF and XT2BYPASS bits
    begin
-      -- Clear fault flag
+      | Clear fault flag
       8 ( XT2OFFG) # UCSCTL7 & bicb
 
-      -- Loop until XT2 fault flag remains clear
+      | Loop until XT2 fault flag remains clear
       8 ( XT2OFFG) # UCSCTL7 & bitb
    0= until
 
-   -- Next, switch SMCLK and MCLK to XT2 while we set up the DCO and FLL.
+   | Next, switch SMCLK and MCLK to XT2 while we set up the DCO and FLL.
    255 ( SELA=2, SELM=5, SELS=5) # UCSCTL4 & mov
 
-   -- We are going to run the DCO at 48M, but use its output divided by 2.
-   -- DCO =   D * N * FLLREF = 2 * 96 * 250k = 48M
-   -- DCOCLKDIV = N * FLLREF =     96 * 250k = 24M
-   -- FLLD=1 (/2), FLLN=5f (*96)
+   | We are going to run the DCO at 48M, but use its output divided by 2.
+   | DCO =   D * N * FLLREF = 2 * 96 * 250k = 48M
+   | DCOCLKDIV = N * FLLREF =     96 * 250k = 24M
+   | FLLD=1 (/2), FLLN=5f (*96)
    105f # UCSCTL2 & mov
 
-   -- Select XT2 as FLLREFCLK and divide it to 250 kHz (4M/16)
+   | Select XT2 as FLLREFCLK and divide it to 250 kHz (4M/16)
    55 ( SELREF=5, FLLREFDIV=5) # UCSCTL3 & movb
 
-   -- Set range suitable for DCO freq of 48M: range 7.
+   | Set range suitable for DCO freq of 48M: range 7.
    70 # UCSCTL1 & movb
 
-   -- Wait for everything to be ok.
+   | Wait for everything to be ok.
    begin
-      -- Clear fault flag
+      | Clear fault flag
       1 ( DCOFFG) # UCSCTL7 & bicb
 
-      -- Loop until DCO fault flag remains clear
+      | Loop until DCO fault flag remains clear
       1 ( DCOFFG) # UCSCTL7 & bitb
    0= until
 
-   -- Finally, switch SMCLK and MCLK from XT2 to DCOCLKDIV.
+   | Finally, switch SMCLK and MCLK from XT2 to DCOCLKDIV.
    244 ( SELA=2, SELM=4, SELS=4) # UCSCTL4 & mov
 
-   -- Hopefully that all worked!
+   | Hopefully that all worked!
 
    ( Flash the leds on the Launchpad)
-   -- leds on
+   | leds on
    1 # P1DIR & bisb  ( led1 attached to p1.0)
    1 # P1OUT & bisb
    80 # P4DIR & bisb  ( led2 attached to p4.7)
    80 # P4OUT & bisb
 
-   -- delay a bit
+   | delay a bit
    0 # push  begin  1 # sp ) sub  0= until  2 # sp add
 
-   -- leds off
+   | leds off
    1 # P1OUT & bicb
    80 # P4OUT & bicb
 
@@ -109,31 +109,31 @@ label device-init
 .then  ( not in-ram)
 
 label uart-init
-   -- Configure UART for 115,200 bps, 8 bits, no parity
-   81 # UCA1CTL1 & bisb    -- enable SMCLK
-                           -- hold UART in reset while configuring
-   UCA1CTL0 & clrb         -- reset to defaults: 8 bits, no parity, 1 stop
+   | Configure UART for 115,200 bps, 8 bits, no parity
+   81 # UCA1CTL1 & bisb    | enable SMCLK
+                           | hold UART in reset while configuring
+   UCA1CTL0 & clrb         | reset to defaults: 8 bits, no parity, 1 stop
 
    | Baud rate divisor and modulation bits. Register values are *decimal*.
    |
    | Calculation is as follows:
    |
-   | clock 2* bps /  1+ 2/  16 /mod  -- yields UCBFx UCBRx
+   | clock 2* bps /  1+ 2/  16 /mod  | yields UCBFx UCBRx
    |
    | Eg: 16,000,000  2* 115200 /  1+ 2/  16 /mod . . 8 11  Ok
 
 .ifdef bsl-ram-chat  #8,000,000  .else  #24,000,000  .then
 
 .ifndef slow-chat  ( compute values for 115,200 bps)
-   2*  #115,200 /  1+ 2/  #16 /mod   -- UCBFx UCBRx
+   2*  #115,200 /  1+ 2/  #16 /mod   | UCBFx UCBRx
 .else              ( compute for 9600 bps)
-   2*     #9600 /  1+ 2/  #16 /mod   -- UCBFx UCBRx
+   2*     #9600 /  1+ 2/  #16 /mod   | UCBFx UCBRx
 .then
 
    ( UCBRx from above) # UCA1BR0 & mov
    ( UCBFx from above) 4 << 1 + ( UCOS16=1) # UCA1MCTL & movb
 
-   01 # UCA1CTL1 & bicb    -- bring UART out of reset
+   01 # UCA1CTL1 & bicb    | bring UART out of reset
 
    | Connect P4.4 to UART TXD, P4.5 to UART RXD. P4 uses port mapping
    | registers, so there is only one SEL register. Setting a P4SEL bit to 1
