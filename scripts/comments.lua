@@ -50,20 +50,57 @@ end
 
 -- This function only pays attention to lines that are wholly commented out
 -- by a "|" at the beginning of the line.
+
+-- Because I sometimes used square brackets [ ] in place of parens
+-- (because otherwise the closing paren would end the comment), let's
+-- rewrite square-bracket-enclosed text as paren-enclosed!
+
+-- Since the opening and closing bracket may be on different
+-- lines, we have to match them separately.
+
+-- --------------------------------------------------------------------------
+-- WARNING: This command is very fragile! I had to spend a lot of time
+-- reading through the changes it made and adding lots of exceptions to the
+-- matches (see below in l_rewrite() and r_rewrite()).
+
+-- I don't recomment running this subcommand without looking CAREFULLY at
+-- the resulting changes.
+-- --------------------------------------------------------------------------
+
 function conv_brackets()
+    local function l_rewrite(b)
+        if b:match "ctrl%s*%[" or
+            b:match "ESC%s*%[" or
+            b:match "%s%[%s" or
+            b:match "%['" or
+            b:match "%[\\" or
+            b:match "\"%[%s" or
+            b:match "_%[" or
+            false then
+            return nil              -- don't rewrite
+        end
+        b = b:gsub("%[", "(", 1)
+        return b
+    end
+    local function r_rewrite(b)
+        if b:match "['#]%]" or
+            b:match "\\%]" or
+            b:match "%s%]%s" or
+            b:match "%s%]$" or
+            b:match "%-%]" or
+            b:match "%s_]%]" or
+            false then
+            return nil              -- don't rewrite
+        end
+        b = b:gsub("%]", ")", 1)
+        return b
+    end
     return function(l)
         if l:match "^%s*| " then
-            -- Because I sometimes used square brackets [ ] in place of parens
-            -- (because otherwise the closing paren would end the comment), let's
-            -- rewrite square-bracket-enclosed text as paren-enclosed!
-
-            -- Since the opening and closing bracket may be on different
-            -- lines, we have to match them separately.
-
-            l = l:gsub("([%s%p])%[(%S)", "%1(%2")   -- space or punct before [ non-space after
-                 :gsub("^%[(%S)", "(%1")            -- [ at start of line, non-space after
-                 :gsub("(%S)%]([%s%p])", "%1)%2")   -- non-space before ] space or punct after
-                 :gsub("(%S)%]$", "%1)")            -- non-space before ] at end of line
+            -- in block comment
+            l = l:gsub(".-%[.", l_rewrite)
+                 :gsub(".-%].", r_rewrite)
+                 :gsub(".-%]$", r_rewrite)
         end
         return l
     end
@@ -73,10 +110,16 @@ end
 -- "restart" the comment, which is no longer necessary.
 function conv_parens()
     return function(l)
-        if l:match "%s*| " then
+        if l:match "^%s*| " then
             -- in block comment
             l = l:gsub("%)(%s+)%(%s", ")%1")
         end
+        -- Here's an idea: If a line ends with  ( <text)
+        --                 rewrite is as        | <text
+        -- This will "fix" both end-of-line comments *and* comments that
+        -- introduce a new section of code. In fact, I should maybe even
+        -- have the following special case: ^( <text>)\n\n| should be
+        -- re-written as ^| <text>\n|\n|
         return l
     end
 end
@@ -209,16 +252,9 @@ end
 
 -- Read file line-by-line and call transform function.
 function process(fn)
-    local fail
-
     for l in io.lines() do          -- read stdin line by line
-        l, fail = fn(l)
-        if fail then
-            print(fail)
-            os.exit(1)
-        else
-            print(l)
-        end
+        l = fn(l)
+        print(l)
     end
 end
 
