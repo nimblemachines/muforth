@@ -108,6 +108,9 @@ end
 
 -- If we find something like ") (", elide the (. It is only there to
 -- "restart" the comment, which is no longer necessary.
+
+-- WARNING: In its current form, this conversion makes too many unwanted
+-- changes. It probably shouldn't be used!
 function conv_parens()
     return function(l)
         if l:match "^%s*| " then
