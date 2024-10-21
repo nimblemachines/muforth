@@ -28,21 +28,13 @@ setlocal textwidth=75
 " That option interacts with how comments work; read the Vim manual for the
 " (complicated!) details!
 "
-" set comment strings
-" s = start comment
-" m = middle
-" e = end
-" If no s m or e, define a single-line comment leader.
-" b = string must be followed by whitespace
-" r = right justify s or e to match m
-" x = when entering end string on a line with only m string, replace m with e
-" Using "|" as m makes a nice left-hand vertical bar.
-" I can't seem to control the alignment of e using offsets. Not sure how
-" they are supposed to work. Read the code? I think this has been broken since
-" 8.0 or even before!
-" As an experiment, I also tried these variations:
-"   sr:(\|,m:\|,ex:),s:g(,m:g\|,ex:g),s:+(,m:+\|,ex:+)
-setlocal comments=b:--,s:(,m:\|,ex:)
+" Set comment strings.
+" Using "|" as a "whole-line" comment char creates a nice left-hand vertical
+" bar, visually setting off the comments from the code.
+" Using "--" as before is also possible.
+" These are the only comments that Vim knows about. Use them and not
+" parentheses for block comments! Everything will work much better. ;-)
+setlocal comments=b:--,b:\|
 
 " In Forth anything can be a keyword; let's let Vim know that. @ means all
 " alphanumeric (including international characters); then we add all the
