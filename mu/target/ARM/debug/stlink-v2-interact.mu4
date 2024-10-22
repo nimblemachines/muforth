@@ -31,9 +31,24 @@ hex
         2 = if  ^  then  ( debug mode)
    error" Couldn't put ST-LINK into debug mode." ;
 
-: st.get-status  ( - sp pc)
-   begin  dbg.core-state  80 xor  until
-   #13 dbg.reg@  #15 dbg.reg@ ;
+| Instead of sitting in an endless loop waiting (and sometimes causing
+| ST-LINK to hang and require that the board be power cycled, which is
+| annoying), let's test the target's state a finite number of times,
+| delaying after each test. We stop either when the target executes
+| a breakpoint and halts, or when the retry count reaches a maximum.
+|
+| We return the retry count with the sp and pc.
+
+: ms   #1,000,000 * ( ns)  0 swap  nanosleep ;
+
+| st.get-status retries 1000 times, pausing 1ms between tries, waiting for
+| the target to execute a bkpt instruction and halt.
+
+: st.get-status  ( - #retries sp pc)
+   0  | #retries
+   begin  dbg.core-state 1 and 0= while  1 ms  1+ dup #1000 = until
+   ( timed out)  dbg.halt ( force halt)  then
+   ( success)  #13 dbg.reg@  #15 dbg.reg@ ;
 
 : st.run  ( pc sp)
    #13 dbg.reg!  #15 dbg.reg!  dbg.run ;
@@ -71,14 +86,15 @@ hex
 | number, for sectored devices. target/ARM/v6-m/flash.mu4 has already
 | figured this out for us.
 
-: st.erase  ( a | sector#)  \m stm32-flash-erase rx ;
+: st.erase  ( a | sector#)  \m stm32-flash-page-erase rx ;
 
 ( Copy buf contents to ram buffer, then write to flash from there.)
 : st.program  ( buf a u)
    push ( u)
-   ( copy chunk to target ram, aligning copied data by 8 for STM32C parts)
+   | Copy chunk to target ram, aligning length of copied data by 8 for
+   | STM32C parts (which programs the flash in 8 byte chunks).
    swap @flashbuf r@  ( a buf flashbuf u)  8 aligned-by  st.write
-   ( program chunk into flash)
+   | Program chunk into flash.
    @flashbuf swap pop  ( flashbuf a u)  \m stm32-flash-program rx ;
 
 .then  ( def no-flash-programming)
