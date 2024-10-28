@@ -203,10 +203,10 @@ fi
 
 # Now, put all our variables into an "architecture-specific" make file.
 cat <<EOT > arch.mk
-ARCH_C=     ${cflags}
-ARCH_LD=    ${ldflags}
-ARCHOBJS=   ${archobjs}
-MU_DIR=     ${top}/mu
+ARCH_C=         ${cflags}
+ARCH_LD=        ${ldflags}
+ARCHOBJS=       ${archobjs}
+MUFORTH_ROOT=   ${top}
 EOT
 
 # Touch local.mk, which we'll need regardless of which kind of Make the
