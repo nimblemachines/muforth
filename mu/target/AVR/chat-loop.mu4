@@ -48,10 +48,10 @@ label app-start
    chat-only rcall  ( fall thru)  ;c
 
 label watchdog-on
-   8 ( WDE) h0 ldi  ( fall thru)  ;c
+   8 ( WDE)  0 ( 2K = 16ms timeout) + h0 ldi  ( fall thru)  ;c
 
 label change-watchdog
-   wdr  18 ( WDCE + WDE) h1 ldi  WDTCSR h1 out  WDTCSR h0 out  ret  ;c
+   18 ( WDCE + WDE) h1 ldi  wdr  WDTCSR h1 out  WDTCSR h0 out  ret  ;c
 
 | NOTE: When we stop the app, we disable interrupts, in case it is
 | using them. When it gets restarted, it is up to the app to re-enable
@@ -134,14 +134,14 @@ label system-startup
    | watchdog reset count byte!
 
    @ram #ram + #256 - 2 - x ldiw ( beginning last page of the ram, minus two)
-   SPH xh out  SPL xl out  2 x adiw
+   x sp!  2 x adiw
 
    ( Set every byte of the stack page to 55 hex.)
    55 h0 ldi  begin  x+ h0 st  xl tst  0= until
 
    ( Create the tasks, starting with the chat task.)
-   chat-user-area y ldiw
-   chat-task 2/ h0 ldiw ( starting pc)
+   chat-user-area y ldiw  ( loads both yh and yl; subsequently only yl needs loading)
+   chat-task >ra h0 ldiw  ( starting pc, in ra form)
    create-task rcall  ( leaves h2 pointing to chat-user-area)
 
    | If the app RESET vector is non-empty, call it to create the app tasks.
@@ -153,7 +153,7 @@ label system-startup
    | Close the circle. h2 has pointer to last task created. Put it into the
    | chat-task's next pointer, and leave y pointing to the chat-user-area.
 
-   chat-user-area y ldiw  1 h2 stu
+   chat-user-area yl ldi  1 h2 stu
 
    ( Read the reset flags; save them in g1; and zero them.)
    MCUSR g1 in  g0 clr  MCUSR g0 out  ( clear all reset flags)
