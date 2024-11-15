@@ -60,32 +60,32 @@ label timer0-overflow-handler
    ( Restore SREG and X and exit handler)
    xl pop  SREG xl out  x popw  reti  ;c
 
-( XXX Inline heart-init into heart-task?)
-label heart-init
+| Consume one wakeup and call yield.
+label nap
+   u y movw  cli  0 g0 ldu ( status)  g0 inc  0 g0 stu  sei  yield jmp  ;c
+
+label heart-task
+   | Initialize everything.
    heart-led sbi  ( LED off)
    heart-led DDRB PORTB - + ( convert PORTx to DDRx) sbi  ( set pin as output)
    01 xl ldi  TIMSK0 xl out  ( enable TOVR0)
               TCCR0B xl out  ( set timer0 clock to CPU/1)
    00 xl ldi  TCCR0A xl out  ( set up timer0 - normal mode)
    ( leave xl set to 00!)
+
    heart-index xl sts  ( xl is sawtooth)
    polarity clr  ( xh is polarity)
-   ret  ;c
 
-label heart-task
-   heart-init rcall
-
-   ( Enable watchdog.)
+   | Enable watchdog.
    18 ( WDCE + WDE) h0 ldi
    8 ( WDE) 3 ( 16K = 0.125s timeout) + h1 ldi
    wdr  WDTCSR h0 out  WDTCSR h1 out
 
+   | The heart of the task. ;-)
    begin
-      sei  x pushw  wdr  yield call  ( long call to boot region)  x popw
+      x pushw  wdr  nap rcall  x popw
       sawtooth inc  0= if  ( sawtooth rolled over)
          polarity com  ( complement)
       then
       sawtooth g0 mov  polarity g0 eor  heart-output g0 sts  ( new output trigger point)
-      ( Consume one of our wakeups.)
-      u y movw  cli  0 g0 ldu ( status)  g0 inc  0 g0 stu
    again  ;c

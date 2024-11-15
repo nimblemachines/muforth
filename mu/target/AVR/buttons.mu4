@@ -20,37 +20,31 @@ loading AVR debounced buttons example
 __meta
 hex
 
-( The following check exists because Port A only exists on megax4 devices.)
-.equates. .contains PINA .if
-
 ( Count of times each button has been pushed.)
 1 var #button0
 1 var #button1
 
-label button-init
-   g0 clr  #button0 g0 sts  ( clear button counts)
-           #button1 g0 sts
-   ret  ;c
-
-label nap  ( delay for one tick)
-   h1 push ( save pin samples)
-   u y movw  cli  0 g0 ldu  g0 inc  0 g0 stu  sei  yield call
-   h1 pop  ret  ;c
-
 label button-incr
    x@ g0 ld  g0 inc  x@ g0 st  ( incr button push count)  ret  ;c
 
+( The following check exists because Port A only exists on megax4 devices.)
+.equates. .contains PINA .if
+
+| Wait for one wakeup, then make room in h1 for another pin sample.
+label make-room
+   h1 push  nap rcall  h1 pop  h1 lsl  ret  ;c
+
 label sample-button0
-   nap rcall  h1 lsl  0 PINA sbic  1 h1 ori  ( sample button input)  ret  ;c
+   make-room rcall  0 PINA sbic  1 h1 ori  ( sample button input)  ret  ;c
 
 label sample-button1
-   nap rcall  h1 lsl  1 PINA sbic  1 h1 ori  ( sample button input)  ret  ;c
+   make-room rcall  1 PINA sbic  1 h1 ori  ( sample button input)  ret  ;c
 
 | The wake frequency for the button tasks is set in the timer interrupt;
 | see target/AVR/heart.mu4.
 
 label button0-task
-   button-init rcall
+   g0 clr  #button0 g0 sts  ( clear button count)
    0 PORTA sbi  ( enable pullup on PA0)
    1 DDRB sbi  ( PB1 output)
    begin
@@ -64,6 +58,7 @@ label button0-task
    again  ;c
 
 label button1-task
+   g0 clr  #button1 g0 sts  ( clear button count)
    1 PORTA sbi  ( enable pullup on PA1)
    2 DDRB sbi  ( PB2 output)
    begin
@@ -81,11 +76,12 @@ label button1-task
 | Fake it. We don't have a PORTA. Have the button tasks simply go back to
 | sleep after the timer wakes them.
 
-label nap  ( delay for one tick)
-   u y movw  cli  0 g0 ldu  g0 inc  0 g0 stu  sei  yield jmp  ;c
-
 label button0-task
+   g0 clr  #button0 g0 sts  ( clear button count)
+   begin  nap rcall  #button0 x ldiw  button-incr rcall  again  ;c
+
 label button1-task
-   begin  nap rcall  again  ;c
+   g0 clr  #button1 g0 sts  ( clear button count)
+   begin  nap rcall  #button1 x ldiw  button-incr rcall  again  ;c
 
 .then  ( PINA exists)
