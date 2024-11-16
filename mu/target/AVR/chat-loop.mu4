@@ -32,6 +32,13 @@ label set-addr-cmd
 label get-addr-cmd
    z x movw  send-word rjmp  ;c
 
+| If the app RESET vector is non-empty, call it.
+label app-call
+   0 ( app RESET vector) z ldiw
+   pmz+ g0 ld  pmz g1 ld  g1 g0 and  g0 com  0= not if  ( valid vector)
+      0 jmp
+   then  ret  ;c
+
 | Make the chat task the only one in the task loop by pointing its next
 | pointer to itself.
 
@@ -44,7 +51,7 @@ label chat-only
 | will clear the ram and then call into the app to create and start the app
 | tasks.
 
-label app-start
+label app-start-cmd
    chat-only rcall  ( fall thru)  ;c
 
 label watchdog-on
@@ -60,7 +67,11 @@ label change-watchdog
 | To stop the app, we make the chat task the only one in the task loop and
 | then disable the watchdog.
 
-label app-stop
+label app-stop-cmd
+   | If the app RESET vector is non-empty, call it to stop the app. Because
+   | h2 is zero, the app code will do its "stop" behavior rather than its
+   | "start" behavior (creating tasks).
+   h2 clr  app-call rcall
    cli  chat-only rcall  ( fall thru)  ;c
 
 label watchdog-off
@@ -85,8 +96,8 @@ label command-table
    ( 18) write-data-cmd    rjmp
    ( 19) write-eeprom-cmd  rjmp
 
-   ( 1a) app-start         rjmp
-   ( 1b) app-stop          rjmp
+   ( 1a) app-start-cmd     rjmp
+   ( 1b) app-stop-cmd      rjmp
    ;c
 
 label process
@@ -145,10 +156,9 @@ label system-startup
    create-task rcall  ( leaves h2 pointing to chat-user-area)
 
    | If the app RESET vector is non-empty, call it to create the app tasks.
-   0 ( app RESET vector) z ldiw
-   pmz+ g0 ld  pmz g1 ld  g1 g0 and  g0 com  0= not if  ( valid vector)
-      0 call
-   then
+   | Because h2 is non-zero, the app code will do its "start" behavior
+   | (creating tasks) rather than its "stop" behavior.
+   app-call rcall
 
    | Close the circle. h2 has pointer to last task created. Put it into the
    | chat-task's next pointer, and leave y pointing to the chat-user-area.
