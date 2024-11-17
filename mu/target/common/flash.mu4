@@ -23,46 +23,33 @@ variable image-offset   ( offset to apply to host address to get target address)
    dup image+ tuck -  image-offset !
    pad pop ;
 
+variable #grain   | granularity of verify comparisons
+defer    grain@+  | fetch a grain and increment
+
+( Words to choose the granularity that you want.)
+: verify-1  1 #grain !  [']   c@+ is grain@+ ;  verify-1  ( default)
+: verify-2  2 #grain !  ['] leh@+ is grain@+ ;
+: verify-4  4 #grain !  ['] lew@+ is grain@+ ;
+
 defer .diff-addr  ( a)
 
 ( By default, just print the entire differing address.)
 -: ( a)  u. ;  is .diff-addr
 
-| If there was a difference in the last "piece" (byte, halfword, word) that
+| If there was a difference in the last "grain" (byte, halfword, word) that
 | we compared, print the address. Combine the most recent difference (xor)
 | with the running difference (diff), and return the new running difference
 | (diff').
 
-: ?differs  ( diff xor ha - diff')
+: ?differs  ( diff xor ha+ - diff')
    over if  noisy-verify? @ if
-      dup image-offset @ +  .diff-addr  then then  drop  or ;
-
-| XXX Once I get this working, I should create a single common copy that
-| uses two deferred words (or a pair of cfa's): size, and fetcher.
-|
-| Generic loop looks like this:
-| size @ / for  fetcher push  swap fetcher push  xor  r@ size @ - ?differs  pop pop  next
-
-| Verify a byte at a time.
--:       for    c@+ push  swap   c@+ push  xor  r@ 1-  ?differs  pop pop  next ;
-
-| Verify 2 bytes at a time.
--:    2/ for  leh@+ push  swap leh@+ push  xor  r@ 2 - ?differs  pop pop  next ;
-
-| Verify 4 bytes at a time.
--: 2/ 2/ for  lew@+ push  swap lew@+ push  xor  r@ 4 - ?differs  pop pop  next ;
-
-defer verify-loop  ( diff ha pad u - diff' ha+ pad+)  | by bytes, halfword, word
-
-( Words to choose the granularity that you want.)
-: verify-4  [ #] is verify-loop ;
-: verify-2  [ #] is verify-loop ;
-: verify-1  [ #] is verify-loop ;  verify-1  ( default)
+      #grain @ - image-offset @ +  dup .diff-addr  then then  drop  or ;
 
 : verify-chunk  ( diff a u - diff' a+u)
    2dup + push
-   setup-comparison  verify-loop  2drop
-   pop ;
+   setup-comparison
+   #grain @ / for  grain@+ push  swap grain@+ push  xor  r@ ?differs  pop pop  next
+   2drop pop ;
 
 | Verify using the same chunk size that we used for flashing; the variable
 | /chunk - which is set by the interact code based on a value received from
