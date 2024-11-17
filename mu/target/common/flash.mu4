@@ -23,44 +23,45 @@ variable image-offset   ( offset to apply to host address to get target address)
    dup image+ tuck -  image-offset !
    pad pop ;
 
-( Report differing address.)
-| NOTE: the granularity of the display of addresses can be changed by
-| looking at the bytes of diff and printing which parts have changed.
-
-defer .differs  ( a diff)
 defer .diff-addr  ( a)
-
-( Peel off chunks of different sizes.)
-: >hilo32  ( n - hi lo32)  dup 32 u>>  swap "ffff_ffff and ;
-: >hilo16  ( n - hi lo16)  dup 16 u>>  swap      "ffff and ;
 
 ( By default, just print the entire differing address.)
 -: ( a)  u. ;  is .diff-addr
 
-( Verify with 4 byte granularity.)
--: ( a diff)  [ cell 4 / #] for  >hilo32 if  over .diff-addr  then  4 u+  next  2drop ;
+| If there was a difference in the last "piece" (byte, halfword, word) that
+| we compared, print the address. Combine the most recent difference (xor)
+| with the running difference (diff), and return the new running difference
+| (diff').
 
-( Verify with 2 byte granularity.)
--: ( a diff)   [ cell 2/ #] for  >hilo16 if  over .diff-addr  then  2 u+  next  2drop ;
+: ?differs  ( diff xor ha - diff')
+   over if  noisy-verify? @ if
+      dup image-offset @ +  .diff-addr  then then  drop  or ;
 
-( Verify with 1 byte granularity.)
--: ( a diff)           cell for  >hilo if    over .diff-addr  then  1 u+  next  2drop ;
+| XXX Once I get this working, I should create a single common copy that
+| uses two deferred words (or a pair of cfa's): size, and fetcher.
+|
+| Generic loop looks like this:
+| size @ / for  fetcher push  swap fetcher push  xor  r@ size @ - ?differs  pop pop  next
+
+| Verify a byte at a time.
+-:       for    c@+ push  swap   c@+ push  xor  r@ 1-  ?differs  pop pop  next ;
+
+| Verify 2 bytes at a time.
+-:    2/ for  leh@+ push  swap leh@+ push  xor  r@ 2 - ?differs  pop pop  next ;
+
+| Verify 4 bytes at a time.
+-: 2/ 2/ for  lew@+ push  swap lew@+ push  xor  r@ 4 - ?differs  pop pop  next ;
+
+defer verify-loop  ( diff ha pad u - diff' ha+ pad+)  | by bytes, halfword, word
 
 ( Words to choose the granularity that you want.)
-: verify-1  [ #] is .differs ;  verify-1  ( default)
-: verify-2  [ #] is .differs ;
-: verify-4  [ #] is .differs ;
-
-( Verify a host cell at a time, for speed and simplicity.)
-: verify-cell  ( diff ha pad - diff' ha+ pad+)
-   @+ push  swap @+ push  xor
-   =if  noisy-verify? @ if
-      r@ cell- image-offset @ +  over  .differs  then then
-   or  pop pop ;
+: verify-4  [ #] is verify-loop ;
+: verify-2  [ #] is verify-loop ;
+: verify-1  [ #] is verify-loop ;  verify-1  ( default)
 
 : verify-chunk  ( diff a u - diff' a+u)
    2dup + push
-   aligned setup-comparison  cell/ for  verify-cell  next  2drop
+   setup-comparison  verify-loop  2drop
    pop ;
 
 | Verify using the same chunk size that we used for flashing; the variable
