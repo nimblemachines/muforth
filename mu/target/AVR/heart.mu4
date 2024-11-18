@@ -4,10 +4,18 @@
 
 loading AVR heartbeat (software PWM)
 
+assembler
+| Helpful macro for waking tasks.
+: wake    ( 'user)  asm{  \f dup  xl lds  xl dec  xl sts  } ;
+
+| If a task is defined, wake it; otherwise, do nothing.
+: ?wake   .equates. token' if  execute  \a wake  ^  then  2drop ( token) ;
+forth
+
 __meta
 hex
 
-( Output to modulate - probably connected to an LED.)
+| Output to modulate - probably connected to an LED.
 0 PORTB ( bit port) 2constant heart-led
 
 | We want the heartbeat to be a triangle wave. The simplest way to achieve
@@ -18,45 +26,44 @@ hex
 | 00 00 00 ... 00 00 00 00 ff ff ff ... ff ff ff ff     Polarity
 | 00 01 02 ... fc fd fe ff ff fe fd ... 03 02 01 00     Output
 
-( These two values are modified by timer overflow interrupt.)
-1 var heart-index     ( how far we are into our 256-point pwm cycle)
-                      ( heart task's status byte)
+1 var heart-index       | how far we are into our 256-point pwm cycle
+1 var heart-sawtooth    | current sawtooth value
+1 var heart-polarity    | current polarity value - 00 or ff
+1 var heart-output      | current output pwm = sawtooth xor polarity
 
-| sawtooth, polarity, and heart-output are modified by the heartbeat task,
-| which is woken up every time the interrupt's increment of heart-index
-| overflows.
+| heart-index is incremented by the timer overflow interrupt.
+|
+| heart-sawtooth, heart-polarity, and heart-output are re-computed by the
+| timer task every time it is woken by the timer interrupt.
 
-assembler
-\a xl constant sawtooth  ( xl reg = current sawtooth pwm value)
-\a xh constant polarity  ( xh reg = current polarity value - 00 or ff)
-forth
-1 var heart-output    ( current output pwm = sawtooth xor polarity)
-
-( At 8M clock, timer overflows at 31.25k, or every 32us.)
+| At 16M clock, timer overflows at 62.5k, or every 16us.
+| At 8M clock, timer overflows at 31.25k, or every 32us.
+|
+| To keep things running at the same rate in both cases, we increment
+| heart-index by 2 when running at 8M.
 
 TIMER0_OVF handler  ( Timer/Counter0 Overflow)
 label timer0-overflow-handler
    x pushw  SREG xl in  xl push  ( push X and SREG)
-   heart-index xl lds  xl xh mov  xl inc  xl xh eor  heart-index xl sts
-   ( xh has bits that have toggled)
+   heart-index xl lds  xl xh mov  xl inc
+.ifndef cksel  ( using internal 8M RC clock)  xl inc  .then
+   xl xh eor  heart-index xl sts  ( xh has bits that have toggled)
 
-   | XXX if we want to wake a task when heart-index overflows, test xl here
-   | and wake the task if zero.
-
-   7 xh sbrs  never  ( always jump to then)
-      ( Wake the heart task every 128 ticks - every 4.096 ms.)
-      heart-user-area xl lds  xl dec  heart-user-area xl sts
+   xl tst  0= if
+      ( Wake the heart task every 256 ticks - every 4.096 ms.)
+      ?wake heart-user-area
+   then
+   4 xh sbrs  never  ( jump to then unless bit 4 set)
+      ( Wake button tasks every 16 ticks - every 256 us.)
+      ?wake button0-user-area
+      ?wake button1-user-area
    then
 
-   3 xh sbrs  never  ( always jump to then)
-      ( Wake button tasks every 8 ticks - every 256 us.)
-      button0-user-area xl lds  xl dec  button0-user-area xl sts
-      button1-user-area xl lds  xl dec  button1-user-area xl sts
-   then
-
-   heart-output xh lds  xh xl cp ( index - output)
+   | If heart-index u< heart-output, light the LED.
+   heart-index xl lds  heart-output xh lds  xh xl cp ( index - output)
    u< if  heart-led cbi  ( LED on)   else
           heart-led sbi  ( LED off)  then
+
    ( Restore SREG and X and exit handler)
    xl pop  SREG xl out  x popw  reti  ;c
 
@@ -73,8 +80,11 @@ label heart-task
    00 xl ldi  TCCR0A xl out  ( set up timer0 - normal mode)
    ( leave xl set to 00!)
 
-   heart-index xl sts  ( xl is sawtooth)
-   polarity clr  ( xh is polarity)
+   | Zero everything.
+   heart-index xl sts
+   heart-sawtooth xl sts
+   heart-polarity xl sts
+   heart-output xl sts
 
    | Enable watchdog.
    18 ( WDCE + WDE) h0 ldi
@@ -83,9 +93,11 @@ label heart-task
 
    | The heart of the task. ;-)
    begin
-      x pushw  wdr  nap rcall  x popw
-      sawtooth inc  0= if  ( sawtooth rolled over)
-         polarity com  ( complement)
+      wdr  nap rcall
+      heart-polarity xh lds
+      heart-sawtooth xl lds  xl inc  heart-sawtooth xl sts
+      0= if  ( sawtooth rolled over)
+         xh com  heart-polarity xh sts  ( complement polarity)
       then
-      sawtooth g0 mov  polarity g0 eor  heart-output g0 sts  ( new output trigger point)
+      xh xl eor  heart-output xl sts  ( new output trigger point)
    again  ;c
