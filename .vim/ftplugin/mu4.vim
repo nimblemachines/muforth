@@ -34,7 +34,7 @@ setlocal textwidth=75
 " Using "--" as before is also possible.
 " These are the only comments that Vim knows about. Use them and not
 " parentheses for block comments! Everything will work much better. ;-)
-setlocal comments=b:--,b:\|
+setlocal comments=b:--,b:\|,b:sig\|
 
 " In Forth anything can be a keyword; let's let Vim know that. @ means all
 " alphanumeric (including international characters); then we add all the
