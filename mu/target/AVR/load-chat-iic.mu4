@@ -7,26 +7,22 @@
 
 ( Define your device before loading this file!)
 
+| We know that the I2C chat code is a bit more than 512 bytes long. Let's
+| request a boot space of 1 Ki bytes. The AVR memory code will calculate
+| a proper bootsz based on the chip and our requested size.
+
+1 Ki constant #boot-desired
+
 ld! target/AVR/build.mu4
 
 ( Set up fuses and lock bits, using the automatic generator.)
 -d eesave  -d bootrst
 
-| For a breadboarded chip, leave the default clock setting; for an Arduino
-| with an external resonator/crystal, uncomment the following two lines:
-
-|           0 constant cksel  ( see the datasheet for the options for CKSEL)
-| #16,000,000 constant f_clock
-
+| For a discussion of clock settings, see the fuses generator below.
 ld target/AVR/fuses.mu4  ( generate the fuse and lock bytes!)
 
-flash
-( Signature shold be the first thing in the flash.)
-," I2C chat example, tasking, with heartbeat LED, watchdog, and two debounced buttons."
-build-info
-
-( Tasks and user areas.)
-@ram #ram +  2 cells - ( user)  dup equ chat-user-area     #32 cells - ( stack)
+| Task definitions.
+@ram #ram +  2 cells - ( user)  dup equ chat-user-area     #16 cells - ( stack)
              2 cells - ( user)  dup equ heart-user-area      8 cells -
              2 cells - ( user)  dup equ button0-user-area    8 cells -
              2 cells - ( user)  dup equ button1-user-area    8 cells -
@@ -38,21 +34,40 @@ ld target/AVR/simple-tasker.mu4  ( this *must* directly follow reset vector!)
 ld target/AVR/chat-iic-core.mu4
 
 flash
+| Signature should immediately follow the vector table, which is
+| automatically allocated.
+sig(
+   sig| I2C chat example with heartbeat LED, watchdog, and two debounced buttons.
+   build-info
+)sig
+
 ( Our application is the timer interrupt, heartbeat task, and button tasks.)
+0 PORTB ( bit port) 2constant heart-led
 ld target/AVR/heart.mu4
 ld target/AVR/buttons.mu4
 
+( Load the trampoline and example code.)
+ld target/AVR/register-trampoline.mu4
+ld target/AVR/register-examples.mu4
+
+label app-stop
+   | For this demo, there is nothing to do.
+   ret  ;c
+
 RESET handler
-label create-app-tasks
-   ( We enter with h2 pointing to chat task.)
-   button1-user-area y ldiw
-   button1-task 2/ h0 ldiw ( pc)
+label app-entry-point
+   h2 tst  app-stop 0= not until
+
+label app-start
+   ( We enter with h2 pointing to chat task, and yh pointing to chat stack page.)
+   button1-user-area yl ldi
+   button1-task >ra h0 ldiw ( pc, in ra form)
    create-task-hook call
 
-   button0-user-area y ldiw
-   button0-task 2/ h0 ldiw ( pc)
+   button0-user-area yl ldi
+   button0-task >ra h0 ldiw ( pc)
    create-task-hook call
 
-   heart-user-area y ldiw
-   heart-task 2/ h0 ldiw ( pc)
+   heart-user-area yl ldi
+   heart-task >ra h0 ldiw ( pc)
    create-task-hook jmp  ( return with h2 pointing to heart)  ;c
