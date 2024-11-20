@@ -7,58 +7,38 @@ loading AVR register context trampoline
 __meta
 hex
 
-label register-return  ( to chat)
+| Return to chat after pushing registers.
+label register-return  ( - w x z h1:sreg)
+   w dpushw  x dpushw  z dpushw
    SREG h0 in  ( get SREG)  h0 dpushw  ( pushes h1 too: could be useful)
-   z dpushw  x dpushw  w dpushw  y z movw  ret  ;c
+   y z movw  ( dp -> mem ptr)  ret  ;c
 
-label register-trampoline  ( ra h1:sreg z x w - h1':sreg' z' x' w')
+label register-trampoline  ( w x z ra)
    ( push continuation, big endian!)
    register-return >ra h0 ldiw  h0 pushw
 
-   z y movw  w dpopw  x dpopw  z dpopw  ( pop register context)
-   h0 dpopw  ( pop stacked SREG into h0, padding into h1)
-   SREG h2 in  80 h2 andi  ( get *current* I bit)
-   7f h0 andi  h2 h0 or  ( combine them)
-   SREG h0 out  ( set SREG)
+   z y movw  ( mem ptr -> dp)
    g0 dpopw  ( PC in ra form)
    g0 pushw  ( push onto machine's return stack; this is the code to call)
+   z dpopw  x dpopw  w dpopw  ( pop register context)
    ret ( pop pushed ra and execute! it will return to register-return)  ;c
 
 __host
 
-( Cached local values of target registers.)
-variable .H1
-variable .W
-variable .X
-variable .Z
-variable .SREG    ( status register)
-
-( Handy shorthands to access the register variables.)
-: h1!  .H1 ! ;  : h1@  .H1 @ ;
-
-: w@  .W @ ;  : w!  .W ! ;
-: x@  .X @ ;  : x!  .X ! ;
-: z@  .Z @ ;  : z!  .Z ! ;
-
-: .b8   binary  <#  4#  char _ hold  4#  #> type ;
-: .sr   .SREG @  .b8  2sp ;
+: .sreg  .b8  2sp ;
 
 -- 005f reg  SREG     | I       T       H       S       V       N       Z       C
--: radix preserve
-   cr  ." ITHS_VNZC  H1     W     X     Z    SP    PC"
-       (  0000_1111  3a  0123  4567  89ab  0123  4567 )
-   cr           .sr
-          .H1 @ .h8 2sp
-                        .W .r .X .r .Z .r
-                                         .CP .r
-                                               .PC .r ;
-: explore-regs  [ #] is .regs ;  explore-regs
+: .rxregs  ( h1:sreg)
+   radix preserve  >hilo  ( h1 sreg)
+   cr  ." ITHS_VNZC  H1    DP"
+       (  0000_1111  3a  0123)
+   cr     .sreg  .h8 2sp  .DP @ .w ;
 
-: rx  ( addr)  ( execute target non-forth word)
+| rx is short for "remote execution"
+: rx  ( w x z addr - w' x' z')  ( execute target non-forth word)
    ?chat
-   \m >ra  .SREG @ h1@ lohi>  z@  x@  w@
-   stack>  \l register-trampoline runwait  stack<
-   w!  x!  z!  >hilo .SREG ! h1!  .regs ;
+   \m >ra  stack>  \l register-trampoline runwait  stack<
+   .rxregs ;
 
 
 .ifdef testing
