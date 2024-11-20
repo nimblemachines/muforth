@@ -27,12 +27,12 @@ hex
 | 00 00 00 ... 00 00 00 00 ff ff ff ... ff ff ff ff     Polarity
 | 00 01 02 ... fc fd fe ff ff fe fd ... 03 02 01 00     Output
 
-1 var heart-index       | how far we are into our 256-point pwm cycle
+1 var heart-beat        | how far we are into our 256-point pwm cycle
 1 var heart-sawtooth    | current sawtooth value
 1 var heart-polarity    | current polarity value - 00 or ff
 1 var heart-output      | current output pwm = sawtooth xor polarity
 
-| heart-index is incremented by the timer overflow interrupt.
+| heart-beat is incremented by the timer overflow interrupt.
 |
 | heart-sawtooth, heart-polarity, and heart-output are re-computed by the
 | timer task every time it is woken by the timer interrupt.
@@ -41,14 +41,14 @@ hex
 | At 8M clock, timer overflows at 31.25k, or every 32us.
 |
 | To keep things running at the same rate in both cases, we increment
-| heart-index by 2 when running at 8M.
+| heart-beat by 2 when running at 8M.
 
-TIMER0_OVF handler  ( Timer/Counter0 Overflow)
+TIMER0_OVF handler
 label timer0-overflow-handler
    x pushw  SREG xl in  xl push  ( push X and SREG)
-   heart-index xl lds  xl xh mov  xl inc
+   heart-beat xl lds  xl xh mov  xl inc
 .ifndef cksel  ( using internal 8M RC clock)  xl inc  .then
-   xl xh eor  heart-index xl sts  ( xh has bits that have toggled)
+   xl xh eor  heart-beat xl sts  ( xh has bits that have toggled)
 
    xl tst  0= if
       ( Wake the heart task every 256 ticks - every 4.096 ms.)
@@ -60,8 +60,8 @@ label timer0-overflow-handler
       ?wake button1-user-area
    then
 
-   | If heart-index u< heart-output, light the LED.
-   heart-index xl lds  heart-output xh lds  xh xl cp ( index - output)
+   | If heart-beat u< heart-output, light the LED.
+   heart-beat xl lds  heart-output xh lds  xh xl cp ( beat - output)
    u< if  heart-led cbi  ( LED on)   else
           heart-led sbi  ( LED off)  then
 
@@ -76,13 +76,14 @@ label heart-task
    | Initialize everything.
    heart-led sbi  ( LED off)
    heart-led DDRB PORTB - + ( convert PORTx to DDRx) sbi  ( set pin as output)
+
    01 xl ldi  TIMSK0 xl out  ( enable TOVR0)
               TCCR0B xl out  ( set timer0 clock to CPU/1)
    00 xl ldi  TCCR0A xl out  ( set up timer0 - normal mode)
    ( leave xl set to 00!)
 
    | Zero everything.
-   heart-index xl sts
+   heart-beat xl sts
    heart-sawtooth xl sts
    heart-polarity xl sts
    heart-output xl sts
