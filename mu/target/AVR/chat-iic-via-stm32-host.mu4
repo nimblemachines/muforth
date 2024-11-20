@@ -28,9 +28,9 @@ hex
 | 1c - ff  idle        - these command bytes are ignored
 |
 | 10  version-addr     - get the address of the version commit
-| 11  set-addr         - set dptr to 16-bit address
-| 12  run              - set the machine SP, pop R1, PSW, and PC
-| 13  get-status       - get the machine SP
+| 11  set-addr         - set memory address
+| 12  get-addr         - get memory address
+| 13  run              - push mem addr as ra; set mem addr; execute
 |
 | 14  read-flash       - read one byte of flash, incr Z
 | 15  read-data        - read one byte of ram/data space, incr Z
@@ -122,8 +122,8 @@ variable cmd  ( byte counts and station address)
    10 ix.cmd  <pkt  14 >b  4 pkt>  b> b> b> b> 0123> ;
 
 : ix.set-addr     ( a)     <pkt  11 >b  >w  0 pkt> ;
-: ix.run          ( )            12 ix.cmd ;
-: ix.get-status   ( - rp)  <pkt  13 >b      2 pkt>  w> ;
+: ix.get-addr     ( - a)   <pkt  12 >b      2 pkt>  w> ;
+: ix.run          ( dp)    <pkt  13 >b  >w  0 pkt> ;
 
 : ix.app-start   1a ix.cmd ;
 : ix.app-stop    1b ix.cmd ;
@@ -165,22 +165,37 @@ variable cmd  ( byte counts and station address)
    radix preserve  hex  sep preserve  -sep   <# 4# 4# #> type
    #128 ;
 
-| The machine stack pointer - which we are here calling RP - points *below*
-| the last byte pushed. Push is: store, then decrement. This is an "empty
-| descending" stack. Most machines use a "full descending" stack.
+| NOTE: To execute code on the target, we pass two values to chat: a PC in
+| return address (ra) form, and data stack pointer (DP). Generally, the PC
+| will point to a trampoline that will marshal and unmarshal argument
+| values, one of which will be a pointer to *another* piece of code to
+| execute. After *that* code executes, it returns to the trampoline, which
+| (possibly) pushes values onto the data stack, and then returns to chat.
 |
-| Another way to think of it: for an empty descending stack, push is
-| post-decrement, pop is pre-increment.
+| It sounds complicated, but moving the trampoline *out* of chat and into
+| the user's code makes the chat code simpler and shorter, and
+| - importantly - makes the process of executing target code much more
+| flexible, since the calling conventions, stack pointer choices, etc, are
+| no longer baked into the chat code. Instead, each type of code can have
+| a trampoline perfectly suited to it.
 |
-| For a full descending stack, push is pre-decrement, pop is
-| post-increment.
+| As a concrete example, when calling threaded Forth code, the data stack
+| pointer (DP) is usually the *machine* stack pointer (MP), and the return
+| stack pointer (RP) is a generic pointer register.
 |
-| So that we don't go crazy, let's adjust RP so we can pretend it is a full
-| descending stack. When we read RP, we add 1. Before we write it back, we
-| subtract 1.
+| When calling assembler or non-threaded Forth code, these are reversed!
+|
+| Having separate trampolines for each keeps these details out of the chat
+| code.
 
-: i.run          ( rp)    1- ix.set-addr  ix.run ;
-: i.get-status   ( - rp)     ix.get-status 1+ ;
+: i.run  ( pc dp)
+   swap \m >ra ix.set-addr  ( set mem addr to PC in ra form)
+   ix.run  ( set mem addr to DP and execute code) ;
+
+| Get the current value of the mem address pointer; this is our data stack
+| pointer (DP).
+
+: i.get-status  ( - dp)  ix.get-addr ;
 
 ( Interact code handles which memory space we are reading.)
 : i.read-space     ( buf a u space)  14 +  ix.read-buf ;
@@ -188,10 +203,10 @@ variable cmd  ( byte counts and station address)
 : i.write-eeprom   ( buf a u)        19    ix.write-buf ;
 
 | For app-stop we send the app-stop command, then the get-status command -
-| to make sure it's done executing - and throw away the rp.
+| to make sure it's done executing - and throw away the dp.
 
 : i.app-stop
-   ix.app-stop  ix.get-status drop ;
+   ix.app-stop  i.get-status drop ;
 
 ( Before flashing, make sure to stop the app.)
 : i.flash-begin   i.app-stop ;

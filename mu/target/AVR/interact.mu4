@@ -15,8 +15,8 @@ variable chat-vector
 
 0
 chat-cmd t.hello         ( - chunk-size)
-chat-cmd t.get-status    ( - cp)
-chat-cmd t.run           ( cp pc)
+chat-cmd t.get-status    ( - dp)
+chat-cmd t.run           ( pc dp)
 chat-cmd t.read-space    ( buf a u space)
 chat-cmd t.write-data    ( buf a u)
 chat-cmd t.write-eeprom  ( buf a u)
@@ -55,6 +55,12 @@ variable /chunk  ( chunk size, as reported by debug interface)
    /chunk @  /mod ( r q)  swap push  for   /chunk @  copy-chunk  next
                                     pop  =if  ( rem) copy-chunk  drop ^  then  2drop ;
 
+| XXX wondering if there is any need for this. On von Neumann targets
+| - like ARM, RISC-V, MSP430, and S08 - it's useful to copy over the
+| RAM-resident code, both at chat connect time (via hi) and before
+| executing code on the target.
+|
+| On Harvard targets like AVR, how useful is this?
 variable ram-copied  ( pointer to first un-copied byte)
 : copy-ram
    h preserve  ram
@@ -63,15 +69,7 @@ variable ram-copied  ( pointer to first un-copied byte)
    \m here  ram-copied ! ;
 
 
-( Cached local values of target registers.)
-variable .PC
-variable .CP   ( context pointer - commonly used as a stack pointer)
-
-( XXX Unused currently)
-variable .MRP  ( machine's return stack pointer; XXX hardware stack ptr?)
-
-: get-regs   t.get-status  .CP ! ;
-: set-regs   ( - cp pc)    .CP @  .PC @ ;
+variable .DP   ( data stack pointer)
 
 | For reading and writing PC values on the stack. Convert a normal address
 | to an "ra" - return address - by shifting right one bit and swapping
@@ -82,43 +80,30 @@ variable .MRP  ( machine's return stack pointer; XXX hardware stack ptr?)
 meta
 : >ra   ( a - ra)  \m cell/  >lohi hilo> ;
 :  ra>  ( ra - a)            >lohi hilo>  \m cells ;
-
 forth
+
+| Useful utility words for printing out register contents after executing
+| code remotely. See mu/target/AVR/register-trampoline.mu4 for an example
+| of a simple trampoline for executing assembler routines.
+
 : 2sp  space space ;
 : 4#   # # # # ;
-: .h16    hex  <#  4#  #> type ;
-: .w   .h16  2sp ;
-: .r   ( addr)  @  .w ;
-
-defer .regs
-
--: radix preserve
-   cr  ."   CP    PC"
-       (  0123  4567 )
-   cr   .CP .r
-              .PC .r ;
-: base-regs  [ #]  is .regs ;  base-regs
-
+: .h16   hex     <#  4#                   #> type ;
+: .b8    binary  <#  4#  char _ hold  4#  #> type ;
+: .w    .h16  2sp ;
 
 defer verify-quietly  ( - diff)
 
-( XXX testing)
-: copy-ram ;  ( replace real one with a dummy no-op.)
-
 : hi
-   chatting on  >chat  t.hello  /chunk !  get-regs  .regs
-   ram-copied off  copy-ram
+   chatting on  >chat  t.hello  /chunk !
 .ifndef noverify  verify-quietly drop  .then
    | now __chatting is __meta  __meta ;  ( XXX why not do this?)
    ;
 
 : chat-via   pop  chat-vector !  hi ;
 
-| XXX ARM interact doesn't set local pc variable; it just passes pc to
-| t.run
-
-: run      ( pc)  .PC !  copy-ram  set-regs  t.run ;  ( don't wait for target)
-: runwait  ( pc)  run  get-regs ;                     ( wait for target)
+: run      ( pc)                     .DP @  t.run ;   ( don't wait for target)
+: runwait  ( pc)  run  t.get-status  .DP ! ;                ( wait for target)
 
 : ?chat
    chatting @ 0= if  error" not connected to target"  then ;
@@ -140,10 +125,11 @@ defer verify-quietly  ( - diff)
 | target.
 
 meta
-( Put the D stack below the task stacks and watchdog reset count.)
+: sp!   .DP ! ;  ( We use DP as the data stack pointer)
+: sp@   .DP @ ;
+
+| Put the D stack below the task stacks and watchdog reset count.
 : sp0   [ @ram #ram +  256 -  2 - #] ;
-: sp!   .CP ! ;  ( We use CP as the data stack pointer)
-: sp@   .CP @ ;
 : depth   \m sp0  \m sp@ -  \m cell/  1- ;
 forth
 
@@ -176,64 +162,6 @@ forth
       for  2pop push  next  ( pop from R to reverse order)
       0
    then  drop ;
-
-0 .if  ( copied, for reference, from MSP430)
-
-| Host should set PC -> continue-forth
-|                 SP -> top of R stack
-|                 CP -> top of D stack
-
-: ?chat
-   chatting @ 0= if  error" not connected to target"  then ;
-
-: rechat
-   get-regs  stack<
-.ifdef microscope  ( x0 .. xn ip - y0 .. yn ip loop z y x w')
-   .W !  .X !  .Y !  .Z !
-.then
-   .LOOP !  .IP !  .regs ;
-
-( NOTE: For initial execution of a Forth word, xn is cfa!)
-: continue  ( x0 .. xn ip - y0 .. yn ip loop)
-   ?chat
-   stack>  run  rechat ;
-
-( These are implement'ed by the kernel code.)
-meta
-variable continue-forth
-variable trampoline
-
-: cont    ( )     ( continue forth execution)
-   .IP @  continue ;
-forth
-
--: ( cfa)  ( execute target forth word)
-   p@ continue-forth .PC !
-   \m rp0 .SP !  ( trampoline switches stacks)
-   p@ trampoline  ( ip)  continue ;  is remote
-
-
-.then  ( END MSP430)
-
-
-| XXX AVR code should use target/common/chains, which has all the different
-| interpreter modes too.
-
-.ifdef notyet
-
-( Interacting with a chatty, connected target.)
-
--:  ."  (interacting with target)"  ;
--:
-      .meta. find  if  execute          ^  then  ( labels are in .meta.)
-    .target. find  if  execute  remote  ^  then  ( execute as forth word)
-   .equates. find  if  execute          ^  then
-.ifdef no-number                                 complain ;
-.else                                            number ;
-.then
-mode __target
-
-.then  ( notyet)
 
 
 | Set |@ and |c@ to _some_ form of target fetch. Prefer to get bytes from

@@ -52,7 +52,7 @@ variable cx-space  ( 0 = flash, 1 = data, 2 = eeprom)
 : cx.version-addr            10 >cmd ;  ( then read 4 bytes of flash)
 : cx.set-addr      ( a)      11 >cmd  >w ;
 : cx.get-addr      ( - a)    12 >cmd      w> ;
-: cx.run           ( cp)     13 >cmd  >w ;
+: cx.run           ( dp)     13 >cmd  >w ;
 
 : cx.read-flash    ( u)      14 >cmd  >b ;  ( then streaming read)
 : cx.read-byte     ( - b)    14 cx-space @ + >cmd  b> ;
@@ -92,19 +92,37 @@ variable cx-space  ( 0 = flash, 1 = data, 2 = eeprom)
    radix preserve  hex  sep preserve  -sep   <# 4# 4# #> type
    #128 ;
 
-| NOTE: In order to execute code we pass two values to the chat code: a PC
-| in return address form (ra), and a second value that could be used as a
-| context pointer or stack pointer, but the interpretation of it is up to the
-| called code.
+| NOTE: To execute code on the target, we pass two values to chat: a PC in
+| return address (ra) form, and data stack pointer (DP). Generally, the PC
+| will point to a trampoline that will marshal and unmarshal argument
+| values, one of which will be a pointer to *another* piece of code to
+| execute. After *that* code executes, it returns to the trampoline, which
+| (possibly) pushes values onto the data stack, and then returns to chat.
+|
+| It sounds complicated, but moving the trampoline *out* of chat and into
+| the user's code makes the chat code simpler and shorter, and
+| - importantly - makes the process of executing target code much more
+| flexible, since the calling conventions, stack pointer choices, etc, are
+| no longer baked into the chat code. Instead, each type of code can have
+| a trampoline perfectly suited to it.
+|
+| As a concrete example, when calling threaded Forth code, the data stack
+| pointer (DP) is usually the *machine* stack pointer (MP), and the return
+| stack pointer (RP) is a generic pointer register.
+|
+| When calling assembler or non-threaded Forth code, these are reversed!
+|
+| Having separate trampolines for each keeps these details out of the chat
+| code.
 
-: c.run  ( cp pc)
-   \m >ra cx.set-addr  ( set mem addr to PC in ra form)
-   cx.run  ( set mem addr to CP and execute code) ;
+: c.run  ( pc dp)
+   swap \m >ra cx.set-addr  ( set mem addr to PC in ra form)
+   cx.run  ( set mem addr to DP and execute code) ;
 
-| Get the current value of the mem address pointer; this is our context
-| pointer or stack pointer.
+| Get the current value of the mem address pointer; this is our data stack
+| pointer (DP).
 
-: c.get-status  ( - cp)  cx.get-addr ;
+: c.get-status  ( - dp)  cx.get-addr ;
 
 ( Interact code handles which memory space we are reading.)
 : c.read-space   ( buf a u space)
