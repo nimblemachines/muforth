@@ -24,6 +24,7 @@ hex
 
 forth
 
+| XXX These are ugly.
 05 constant mBlankCheck
 20 constant mByteProgram
 25 constant mBurstProgram
@@ -38,11 +39,11 @@ forth
 
 : program-chunk  ( 'target len)
    cr ." program "  2dup swap u. u.
-   over image+  mByteProgram  t.FlashChunk  check-flash-status ;
+   over image+ -rot  mByteProgram  t.flash  check-flash-status ;
 
 : erase-page  ( 'target)
    cr ." erase " dup u.
-   1  over image+  mPageErase  t.FlashChunk  check-flash-status ;
+   1  over image+ -rot  mPageErase  t.flash  check-flash-status ;
 
 : erase?  ( 'target - erase?)   [ /page 1- #] and  0= ;
 
@@ -78,7 +79,7 @@ forth
 
 : ?clobbering-loader  ( a u - a u)
    2dup +  @boot  swap u< not  if ^ then  ( not touching bootloader - Ok)
-   pc@  [ @ram #ram + #] u<  if ^ then  ( running in RAM - Ok)
+   in-ram? @ if ^ then  ( running in RAM - Ok)
    error" You need to be running a RAM-based version of the chat code in
 order to re-flash it. Consult a local guru. ;-)" ;
 
@@ -89,8 +90,8 @@ order to re-flash it. Consult a local guru. ;-)" ;
 | Be careful about setting m. Some chunked read implementations use it, so
 | set it *after* doing the read.
 
-: setup-comparison  ( 'target len buf - 'target len)
-   push  2dup  r@ t.ReadChunk  ( 'target len)  pop m ! ;
+: setup-comparison  ( buf a u - a u)
+   push  2dup r@ t.read  pop  rot m ! ;
 
 | On the S08, erasing the vectors means erasing the TRIM bytes, the secure
 | bits, and the bootloader. So be careful about re-programming things, esp
@@ -101,7 +102,7 @@ order to re-flash it. Consult a local guru. ;-)" ;
 
 : save-trims  ( save them from the wrecking ball)
    | cr ." save-trims"
-   0ffac 4 pad  setup-comparison
+   pad 0ffac 4  setup-comparison
    for  dup image-c@ m* and  over image-c!  1+  next  drop ;
 
 ( Flash vectors, security bytes, & trims)
@@ -120,7 +121,7 @@ order to re-flash it. Consult a local guru. ;-)" ;
 : verify-chunk  ( 'target len - 'target+len)
    | cr ." verify "  over u.  dup u.
    2dup + push
-   ( 'target len) pad  setup-comparison
+   ( 'target len) pad -rot  setup-comparison
    for  dup image-c@ m* xor  if  dup u.  then  1+  next  drop
    pop ;
 

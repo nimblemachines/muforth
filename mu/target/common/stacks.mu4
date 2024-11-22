@@ -1,0 +1,63 @@
+| This file is part of muforth: https://muforth.dev/
+|
+| Copyright 2002-2024 David Frech. (Read the LICENSE for details.)
+
+| Copying stacks between host and target.
+|
+| This is just one part of the interact code that needs to be standardized.
+| Ideally, every target would use *exactly* the same interact code
+| - perhaps excepting its dumping and disasming code.
+|
+| But this is a move in the right direction. This is a tricky piece of
+| code, and there were several not-quite-identical versions floating
+| around, none of which was very readable.
+|
+| I tried to make it as simple and readable as possible, and because it
+| uses \m constants for things that vary between targets, it shoulde work
+| everywhere!
+|
+| Users of this code should define two values before loading this file:
+|
+|   stack-sentinel   | the *value* to be used; or leave undefined
+|   stack-bottom     | address of bottom of truly *empty* data stack;
+|                    | sentinel, if any, lies *between* stack-bottom
+|                    | and dp0
+|
+| If you don't want a stack sentinel, just leave it undefined; no space
+| will be allocated for it on the stack.
+
+.ifdef stack-sentinel  \m cell  .else  0  .then  constant #sentinel
+
+meta
+stack-bottom  #sentinel -
+constant dp0      | below sentinel!
+variable dp       | data stack pointer
+
+| Shorthands
+: dp!   \m dp ! ;
+: dp@   \m dp @ ;
+
+: depth  \m dp0  \m dp@ -  \m cell/ ;
+forth
+
+| stack> *first* builds a local image of the target stack - in the RAM
+| image - and *then* copies it, in one chunk, to the target.
+
+: image-pop  ( cell a - a+)  tuck image-!  \m cell+ ; 
+: stack>  ( "push" stack to target)
+   depth 0 max 12 min
+   \m dp0  over \m cells -  dup \m dp! ( top of D stack)  swap
+   for  image-pop  next  ( copy each cell as a word to D stack)
+.ifdef stack-sentinel  stack-sentinel swap image-!  .else  drop  .then
+   | Write stack image to target, *including* sentinel, if any) 
+   \m dp@ image+  \m dp@  stack-bottom  over -  t.write ;
+
+| stack< *first* copies the target stack, in one chunk, to the host's RAM
+| image, and *then* pulls the values out and pushes them onto the host's stack.
+
+: image-push  ( a - cell a-)  \m cell- dup  image-@ swap ;
+: stack<  ( "pop" stack from target)
+   \m depth 0 max 12 min  =if
+   | Read stack image from target, *excluding* sentinel, if any.
+   \m dp@  over \m cells  over image+ -rot  t.read
+   \m dp0 swap  for  image-push  next  drop  ^  then  drop ;

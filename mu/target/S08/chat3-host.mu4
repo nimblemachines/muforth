@@ -22,21 +22,21 @@ decimal
 
 ( chat protocol v3)
 
-: c.Idle              00 send  ;  ( command 0 is ignored by the chat target)
-: c.Version    ?spkt  01 send  ;  ( point to chat firmware version commit)
-: c.Run        ?spkt  02 send  ;  ( don't walk! and don't wait for the target. ;-)
-: c.GetSP      ?spkt  03 send        recv recv hilo> ;
-: c.SetHX      ?spkt  04 send  >lohi send send ;
-: c.ReadNext   ?spkt  05 send  recv ;
-: c.WriteNext  ?spkt  06 send  send ;
-: c.Stream     ?spkt  07 send  send ;  ( "stream" N bytes from memory)
-: c.FlashNext  ?spkt  08 send  send recv ;  ( flash one byte, get flash status)
+: cx.Idle              00 send  ;  ( command 0 is ignored by the chat target)
+: cx.Version    ?spkt  01 send  ;  ( point to chat firmware version commit)
+: cx.Run        ?spkt  02 send  ;  ( don't walk! and don't wait for the target. ;-)
+: cx.GetSP      ?spkt  03 send        recv recv hilo> ;
+: cx.SetHX      ?spkt  04 send  >lohi send send ;
+: cx.ReadNext   ?spkt  05 send  recv ;
+: cx.WriteNext  ?spkt  06 send  send ;
+: cx.Stream     ?spkt  07 send  send ;  ( "stream" N bytes from memory)
+: cx.FlashNext  ?spkt  08 send  send recv ;  ( flash one byte, get flash status)
 
 | Resynchronise the protocol - just to make sure. We send two dummy bytes,
 | in case we were doing a SetHX. We wait for them to transmit. Then we
 | throw away any unread input. This puts us back into a known state.
 
-: resync  ?spkt  c.Idle  c.Idle  drain  flush ;
+: resync  ?spkt  cx.Idle  cx.Idle  drain  flush ;
 
 | We resync right before reading from a new memory address, and when
 | getting or setting the SP. We don't do these all the time, but when we
@@ -45,11 +45,11 @@ decimal
 | to stay out of whack for very long. Doing a "du" or ".regs" usually
 | resets things.
 
-: c.SetAddr   resync  c.SetHX ;
-: GetSP       resync  c.GetSP ;
+: c.SetAddr   resync  cx.SetHX ;
+: GetSP       resync  cx.GetSP ;
 
-: chat-c@  c.SetAddr  c.ReadNext ;
-: chat-c!  c.SetAddr  c.WriteNext ;
+: chat-c@  c.SetAddr  cx.ReadNext ;
+: chat-c!  c.SetAddr  cx.WriteNext ;
 
 .ifndef m&
 
@@ -71,14 +71,13 @@ variable m  ( memory pointer)
 | This can read from and write to arbitrary buffers on the host side, not
 | just pieces of the image.
 
-: c.setup-chunk  ( 'target len buffer - len)
-   m !  swap c.SetAddr ;
+: c.setup-chunk  ( buf a u - u)   swap c.SetAddr  swap m ! ;
 
 .ifdef S08
 
 ( Use streaming read.)
-: c.ReadChunk    ( 'target len buffer)
-   c.setup-chunk  =if  dup c.Stream  for  recv m&  next  ^  then  drop ;
+: c.ReadChunk    ( buf a u)
+   c.setup-chunk  ?if  dup cx.Stream  for  recv m&  next  then ;
 
 .ifdef usb-debug-via-serial
 
@@ -87,10 +86,10 @@ variable m  ( memory pointer)
 .else
 
 : flash-chunk-until-error  ( len - status)
-   for  m* c.FlashNext  dup "c0 xor if  rdrop ^  then  drop  next
+   for  m* cx.FlashNext  dup "c0 xor if  rdrop ^  then  drop  next
    "c0 ;
 
-: c.FlashChunk   ( 'target len buffer cmd - status)
+: c.FlashChunk   ( buf a u cmd - status)
    "30 \eq FSTAT chat-c!  ( clear flash errors)
    \m flash-command chat-c!  c.setup-chunk
    flash-chunk-until-error
@@ -100,27 +99,25 @@ variable m  ( memory pointer)
 
 .else  ( 908 version without streaming read)
 
-: c.ReadChunk    ( 'target len buffer)
-   c.setup-chunk  for  c.ReadNext m&  next ;
+: c.ReadChunk    ( buf a u)
+   c.setup-chunk  for  cx.ReadNext m&  next ;
 
 .then
 
-: c.WriteChunk   ( 'target len buffer)
-   c.setup-chunk  for  m* c.WriteNext  next ;
+: c.WriteChunk   ( buf a u)
+   c.setup-chunk  for  m* cx.WriteNext  next ;
 
-: c.GetRegs  ( buf - sp)
-   GetSP  dup push  6 rot  c.ReadChunk  pop ;
+: GetRegs  ( buf - sp)
+   GetSP  dup push  6 c.ReadChunk  pop ;
 
-: c.SetRegs  ( buf)
-   GetSP            6 rot  c.WriteChunk ;
+: SetRegs  ( buf)
+   GetSP            6 c.WriteChunk ;
 
-( Quick kludge to run code without loading the whole HC08 environment.)
-: c.SetPC  ( pc)
-   GetSP  4 +  c.SetAddr  >lohi  c.WriteNext  c.WriteNext ;
+ld target/S08/deprecated-chat-frame.mu4
 
-.ifdef t.Hello  ( only if we've loaded the interact code)
+.ifdef t.hello  ( only if we've loaded the interact code)
 
-: c.Hello
+: c.Hello  ( - in-ram?)
 .ifdef chat-slow  ( using a xtal that only allows 38400)
     38400 bps
 .else
@@ -128,21 +125,24 @@ variable m  ( memory pointer)
 .then
    resync  ( exit BDM loop, if running; resync chat protocol)
 
-   c.Version  4 c.Stream  recv recv recv recv  3210>
+   cx.Version  4 cx.Stream  recv recv recv recv  3210>
    cr ." Chat firmware version "
    radix preserve  hex  sep preserve  -sep  <#  4#  4#  #> type
+   get-regs pc@ [ @ram #ram + #] u<  dup if  ."  (running in RAM)"  then
    ( Copy flash routine to RAM.)  copy-flash-routine ;
+
+: c.Status  ( - dp)           get-regs  hx@ ;
+: c.Run     ( pc dp)  hx! pc! set-regs  cx.Run ;
 
 .ifdef S08
 
 : chat
-   chat-via  c.Hello  c.GetRegs  c.SetRegs  c.Run
-             c.ReadChunk  c.WriteChunk  c.FlashChunk ;
+   chat-via  c.Hello  c.Status  c.Run  c.ReadChunk  c.WriteChunk  c.FlashChunk ;
+
 .else
 
 : chat
-   chat-via  c.Hello  c.GetRegs  c.SetRegs  c.Run
-             c.ReadChunk  c.WriteChunk  complain ;
+   chat-via  c.Hello  c.Status  c.Run  c.ReadChunk  c.WriteChunk  complain ;
 .then
 
 .then

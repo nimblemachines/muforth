@@ -19,65 +19,23 @@ variable chat-vector
 
 0  ( initial command index)
 
-chat-cmd t.Hello
-chat-cmd t.GetRegs      ( frame - sp)
-chat-cmd t.SetRegs      ( frame)
-chat-cmd t.Run          ( )
-chat-cmd t.ReadChunk    ( target len buf)  ( XXX order??)
-chat-cmd t.WriteChunk   ( target len buf)
-chat-cmd t.FlashChunk   ( target len buf fcmd - status)
+chat-cmd t.hello   ( - in-ram?)
+chat-cmd t.status  ( - dp)
+chat-cmd t.run     ( pc dp)
+chat-cmd t.read    ( buf a u)
+chat-cmd t.write   ( buf a u)
+chat-cmd t.flash   ( buf a u fcmd - status)
 
 drop ( index)
 
 : >image   ['] read-host-image  ( read from memory image)      du-target ;
-
--:  ( buf addr len)  rot t.ReadChunk ;
-: >chat    [ #]                 ( read from connected target)  du-target ;
-
-| We keep a local copy of the target's registers in the same order as they
-| appear in an exception frame.
-|
-| The order, low to high: H CC A X PCH PCL
-
-6 buffer chat-frame  ( local copy of SWI stack frame)
-variable chat-sp     ( current value of target's SP)
-
-: get-regs   chat-frame t.GetRegs  chat-sp ! ;
-: set-regs   chat-frame t.SetRegs ;
-
-( These index into our local chat-frame, _not_ into target memory!)
-: reg  ( offset)  constant  does> @  chat-frame + ;  ( self-index)
-00 reg .H
-01 reg .CC
-02 reg .A
-03 reg .X
-04 reg .PC
-04 reg .PCH
-05 reg .PCL
-
-( These are handy.)
-: pc!  .PC beh! ;
-: pc@  .PC beh@ ;
-
-: hx!   >lohi  .H c!  .X c! ;
-: hx@          .H c@  .X c@  hilo> ;
-
-: 4#  # # # # ;
-: .bits8  binary  <#  4#  4#  #> type ;
-: .h16       hex  <#  4#  #> type ;
-
-: .b  ( a)  c@    .h8_ ;
-: .w  ( a)  beh@  .h16  space ;
-
-: .regs
-   radix preserve
-   cr  ." V--HINZC  A  H  X   SP   PC"
-   cr  .CC c@ .bits8 space  .A .b  .H .b  .X .b  chat-sp @ .h16 space  .PC .w ;
+: >chat    ['] t.read           ( read from connected target)  du-target ;
 
 : copy-chunk  ( 'target len - 'target+len)
    | cr ." copy-chunk "  2dup swap u. u.
-   2dup + push  over image+  t.WriteChunk  pop ;
+   2dup + push  over image+ -rot  t.write  pop ;
 
+| XXX Assuming 256. Huh.
 : copy-region  ( a len)
    | cr ." copy-region "  2dup swap u. u.
    256 /mod ( r q)  swap push  for   256 copy-chunk  next
@@ -91,58 +49,29 @@ variable ram-copied  ( pointer to first un-copied byte)
    \m here  over -  copy-region
    \m here  ram-copied ! ;
 
-( t.Hello will copy the flash code to RAM.)
-: hi   ram-copied off  chatting on  >chat  t.Hello  get-regs  .regs
+variable in-ram?  | true if chat running in RAM
+
+( t.hello will copy the flash code to RAM.)
+: hi   ram-copied off  chatting on  >chat  t.hello  in-ram? !
        now __chatting is __meta  __meta ;
 
 : chat-via   pop  chat-vector !  hi ;
 
 
-: run      ( pc)  pc!  copy-ram  set-regs  t.Run ;  ( don't wait for target)
-: runwait  ( pc)  run  get-regs ;                   ( wait for target)
+"cafe constant stack-sentinel
+@ram #ram +  #24 \m cells -  constant stack-bottom
 
-: call     ( pc)  runwait .regs ;
+ld target/common/stacks.mu4
+
+: run      ( pc)      copy-ram  \m dp@ t.run ;  ( don't wait for target)
+: runwait  ( pc)  run  t.status \m dp! ;              ( wait for target)
 
 : 'reset   ( - pc)  \eq Vreset image-@ ;
-: reset    'reset  call ;  ( MSP430 version has a delay between run and get-regs)
-: go       'reset  run ;
+: reset    'reset  runwait ;  | for switching to in-ram chat
+: go       'reset  run ;      | for switching to another chat version
 
-
-| NOTE: top cell of target stack is *scratch* - so allocate it but don't
-| copy it back and forth.
-
-2 constant #scratch  ( number of "scratch" bytes on top of target stack)
-
-meta
-: sp0   [ @ram #ram +  #48 - #] ;
-: sp!   #scratch -  hx! ;
-: sp@               hx@  #scratch + ;
-: depth  \m sp0  \m sp@ -  \m cell/ ;
-forth
-
-| stack> *first* builds a local image of the target stack - in the RAM
-| image - and *then* copies it, in one chunk, to the target.
-
-: stack>  ( "push" stack to target)
-   depth 0 max 8 min  ( more than that would be silly)
-   \m sp0  over  \m cells -  dup \m sp! ( top of D stack)  image+  m !
-   for  >lohi m& m&  next  ( copy each cell as a word to D stack)
-   ( Now copy stack image to target)
-   \m sp@  dup image+  m @ over - swap  t.WriteChunk ;
-
-| stack< *first* copies the target stack, in one chunk, to the host's RAM
-| image, and *then* pulls the values out and pushes them onto the host's stack.
-
-: stack<  ( "pop" stack from target)
-   \m depth 0 max 8 min  ( more than that would be silly)  =if
-   \m sp@ ( target)  over \m cells  ( len)  over image+  t.ReadChunk
-   dup  ( depth)  \m sp@ image+  m ! ( do this after ReadChunk)
-   for  m* m* hilo>  pop 2push  next  ( starting with top, push to R)
-   for  2pop push  next  ( pop from R to reverse order)  ^  then  drop ;
-
-: cont   stack>  runwait  stack<  .regs ;
--: ( cfa)  ( execute target word on stack)  pc!  cont ;  is remote
-
+| Useful for later code.
+: 4#  # # # # ;
 
 | Set |@ and |c@ to _some_ form of target fetch. Prefer to get bytes from
 | target if we're connected. This word is useful so we can set an initial
