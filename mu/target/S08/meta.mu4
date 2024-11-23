@@ -24,6 +24,26 @@ meta
 forth
 : macro   \m macro ;
 
+| What if we want to run some words on the target in a scripted way? Why
+| not make it easy to do this?
+|
+| __scripting is a host colon compiler that mixes host and target words in
+| a "reasonable" way. Let's see if we can make it work. ;-)
+
+-:  ."  (compiling a target script)" ;
+-:
+      .definer. find  if  execute                   ^  then  ( does>, ;code, special ;)
+       .target. find  if  compile,  compile remote  ^  then  ( compile, but execute on target)
+      .equates. find  if  execute  literal          ^  then  ( equates become host literals)
+      .runtime. find  if  compile,                  ^  then  ( compile host forth and runtime words)
+                                                              target-number literal ;
+mode __scripting
+
+meta
+( Create a script that allows mixing of target and host words.)
+: script:   current preserve  meta  :  __scripting ;
+forth
+
 
 | ------------------------------------------------------------------------
 | Stack layout
@@ -101,20 +121,20 @@ forth
 | ------------------------------------------------------------------------
 | Literal loading.
 | ------------------------------------------------------------------------
---
+|
 | The low half is put into A, the high half into xh - 0,x, on the data
 | stack.
---
+|
 | If high half and low half are equal and non-zero,
 |    half # lda  xh sta  ( 3 bytes)
 | Otherwise:
---
+|
 | High half:
 | If hi =  0, xh clr          ( 1 byte)
 | If hi =  1, xh clr  xh inc  ( 2 bytes)
 | If hi = -1, xh clr  xh dec  ( 2 bytes)
 | Otherwise, #hi lda  xh sta  ( 3 bytes)
---
+|
 | Low half:
 | If lo =  0, .a clr  ( 1 byte)
 | Otherwise, #lo lda  ( 2 bytes)
@@ -214,7 +234,8 @@ forth
 | to its code field address.
 
 meta
-: label   \m here  current preserve    meta constant  __asm ;
+| : label   \m here  current preserve    meta constant  __asm ;
+: label   \m here  current preserve  .labels. definitions constant  __asm ;
 : name    \m here  current preserve  target constant ;
 : code    \m name  __asm ;
 : :       \m name  __target-colon ;
@@ -241,6 +262,9 @@ assembler
 target-compiler
 : [   __meta ;
 : ;   \tc ^  \tc [ ;  ( return to meta)
+
+definer
+: ;   \ ;  __meta ;  ( do normal host ; but then return to __meta)
 
 compiler
 : ;m   \ ;  __meta ;  ( exit macro compilation and return to __meta)
@@ -279,11 +303,12 @@ meta
    ?var  ( sanity check allocation size)
    h preserve  xram  negate \m allot  \m here equ  ?zpage ;
 
-forth
 
 ( Utility macros.)
+assembler
 : pshhx  asm{  .x psh  .h psh         } ;
 : pulhx  asm{          .h pul  .x pul } ;
+forth
 
 
 | Calculation of FCDIV - flash clock divider (sic)
@@ -321,12 +346,6 @@ variable vector-offset  ( 0 if vectors not relocated)
 meta
 : handler  ( vector-offset)
    reloc-vector  \m here swap  image-!  __asm ;
-
-( Create a script that allows mixing of target and host words.)
-: script:   current preserve  meta  :  __scripting ;
-
-definer
-: ;   \ ;  __meta ;  ( do normal host ; but then return to __meta)
 
 forth
 
