@@ -2,7 +2,7 @@
 |
 | Copyright 2002-2024 David Frech. (Read the LICENSE for details.)
 
-loading S08 target device support:
+loading S08 connected target:
 
 hex
 
@@ -13,36 +13,15 @@ hex
 .else
 
 15a2 c0de usb-find-device  .if  ( JS/JM interactive target)
-   constant usb-target  .else
+   constant usb-target  .then
 f0ff 0001 usb-find-device  .if  ( JS/JM interactive target - new vid/pid)
-   constant usb-target  .else
+   constant usb-target  .then
 f0ff 0002 usb-find-device  .if  ( JS/JM interactive target - USB MIDI)
-   constant usb-target  .else
+   constant usb-target  .then
 f0ff 0003 usb-find-device  .if  ( JS/JM interactive target - USB CDC-ACM)
-   constant usb-target  .else
+   constant usb-target  .then
 f0ff bed0 usb-find-device  .if  ( JS/JM testbed target)
-   constant usb-target  .then .then .then .then .then
-
-.ifdef usb-target
-   ." Found "
-   variable device-id
-    0c0 00 1806 0 2 device-id  usb-target  usb-control  drop  device-id @
-   dup 1600 = .if  ." JM32/60"  .else
-   dup 1e00 = .if  ." JM8/16"   .else
-   dup 2400 = .if  ." JS8/16"   .else
-                   ." unknown"  .then .then .then  drop
-   ."  interactive USB target."
-
-.else  ." No supported USB devices found; assuming serial target."
-   -d serial-target
-   .ifndef tty
-      ld lib/tty.mu4
-   .then
-   .ifndef target-tty
-      ld target/common/serial.mu4
-   .then
-
-.then .then
+   constant usb-target  .then
 
 | comment chip-ids
 |
@@ -54,3 +33,36 @@ f0ff bed0 usb-find-device  .if  ( JS/JM testbed target)
 | 024 JS8/16
 |
 | end chip-ids
+
+| For "clarity" just print the larger size of the device.
+: .device  ( id)
+   dup 009 = if  drop ." GQ8" ^ then
+   dup 016 = if  drop ." JM60" ^ then
+   dup 01c = if  drop ." QE8" ^ then
+   dup 01e = if  drop ." JM16" ^ then
+   dup 01f = if  drop ." QE32" ^ then
+   dup 024 = if  drop ." JS16" ^ then
+   drop  ." unknown" ;
+
+.ifdef usb-target
+   0c0 00 1806 0 2 pad  usb-target  usb-control  drop
+   | High nybble of device-id is "reserved" and might not be zero.
+   variable device-id
+   pad beh@  0fff and  dup device-id !
+   ." Found "  .device  ."  interactive USB target."
+
+.else  ." No supported USB devices found; assuming serial target."
+   -d serial-target
+   .ifndef tty
+      ld lib/tty.mu4
+   .then
+   .ifndef target-tty
+      | XXX this should set speed!
+      ld target/common/serial.mu4
+   .then
+   ld target/S08/chat-host-transport.mu4
+   variable device-id
+   cx.device-id  dup device-id !
+   ." Found "  .device  ."  serial target."
+
+.then .then space

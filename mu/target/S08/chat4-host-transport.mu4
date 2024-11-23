@@ -1,0 +1,70 @@
+| This file is part of muforth: https://muforth.dev/
+|
+| Copyright 2002-2024 David Frech. (Read the LICENSE for details.)
+
+loading S08 Chat v4 (host transport)
+
+| Chat version 4
+|
+| This has only minor changes from v3, but making a new version still
+| makes. I want to clean things up, drop 908 support, and experiment with
+| a "trampoline-style" way of calling code. I'm also thinking of adding
+| a simple tasker, like in the AVR target. And in general I like starting
+| the commands at 10 (hex), so I'm going to do that too. ;-)
+
+hex
+
+| Commands:
+| 00 - 0f and
+| 18 - ff      - ignored by chat; force other command loops to return to chat;
+|                can be used as an "idle" command
+|
+| 10 version   - set HX to point to version string
+|
+| 11 run       - push HX (PC), do set-addr, return to pushed PC
+| 12 set-addr  - recv two bytes, write them into H & X registers
+| 13 status    - send HX then PC to host
+|
+| 14 read-n    - recv count, read and send bytes from memory @HX, incrementing
+| 15 write-1   - recv byte, write to memory @HX, increment HX
+| 16 flash-1   - recv byte, write to flash @HX, increment HX, return FSTAT
+|                (calls a routine in ram that host downloads to device)
+
+: >b  send ;
+: b>  recv ;
+
+: >w  >lohi >b >b ;        ( send word, in big-endian order)
+: w>        b> b> hilo> ;  ( recv word, in big-endian order)
+
+: >cmd  ?spkt >b ;
+
+: cx.idle       00 >b  ;  ( command 0 is ignored by the chat target)
+: cx.version    10 >cmd  ;  ( point to chat firmware version commit)
+: cx.run        11 >cmd  >w ;  ( don't walk! and don't wait for the target. ;-)
+: cx.set-addr   12 >cmd  >w ;
+: cx.status     13 >cmd     w> w> ;
+: cx.read-n     14 >cmd  >b ;  ( then "stream" N bytes from memory)
+: cx.write-1    15 >cmd  >b ;
+: cx.flash-1    16 >cmd  >b b> ;  ( flash one byte, get flash status)
+
+| Resynchronise the protocol - just to make sure. We send two dummy bytes,
+| in case we were doing a run or set-addr command. We wait for them to
+| transmit. Then we throw away any unread input. This puts us back into
+| a known state.
+
+: resync  ?spkt  cx.idle  cx.idle  drain  flush ;
+
+| Before loading anything chip-specific or the interact code, we'd like to
+| be able to query the chip for its device id. We read two bytes from
+| address 1806 (the SDIDH and SDIDL registers).
+
+: cx.device-id
+.ifdef chat-slow  ( using a xtal that only allows 38400)
+    #38400 bps
+.else
+   #115200 bps
+.then
+   resync
+
+   | High nybble of device-id is "reserved" and might not be zero.
+   1806 ( chip id) cx.set-addr  2 cx.read-n w>  0fff and ;

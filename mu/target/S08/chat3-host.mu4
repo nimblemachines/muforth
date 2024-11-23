@@ -2,41 +2,12 @@
 |
 | Copyright 2002-2024 David Frech. (Read the LICENSE for details.)
 
-| I couldn't take it any more - the 908 ROM monitor was driving me crazy.
-| It's slow, and there is still an odd bug with the PC - the "image" of it on
-| the stack frame - not getting properly initialised... but only when the
-| target is first connected!
-|
-| I decided to try out some simple ideas. Instead of the Nibble Machines
-| loader, we have this! Rather than a Bootloader, it's a Byteloader?
-
 loading S08 Chat v3 (host)
 
-decimal
+| Using the chat3 transport (cx.Something) words, define everything we need
+| in order to connect to interact.
 
-| Mostly reorganised, eliminating HXtoSP - and therefore SetSP. Implementation
-| on the target uses subroutines, rather than being one big loop. Since I keep
-| changing this, I thought from now on I'd include a protocol version command -
-| which will always be command #1!! It returns 32 bits of the muforth commit, in
-| big-endian order.
-
-( chat protocol v3)
-
-: cx.Idle              00 send  ;  ( command 0 is ignored by the chat target)
-: cx.Version    ?spkt  01 send  ;  ( point to chat firmware version commit)
-: cx.Run        ?spkt  02 send  ;  ( don't walk! and don't wait for the target. ;-)
-: cx.GetSP      ?spkt  03 send        recv recv hilo> ;
-: cx.SetHX      ?spkt  04 send  >lohi send send ;
-: cx.ReadNext   ?spkt  05 send  recv ;
-: cx.WriteNext  ?spkt  06 send  send ;
-: cx.Stream     ?spkt  07 send  send ;  ( "stream" N bytes from memory)
-: cx.FlashNext  ?spkt  08 send  send recv ;  ( flash one byte, get flash status)
-
-| Resynchronise the protocol - just to make sure. We send two dummy bytes,
-| in case we were doing a SetHX. We wait for them to transmit. Then we
-| throw away any unread input. This puts us back into a known state.
-
-: resync  ?spkt  cx.Idle  cx.Idle  drain  flush ;
+hex
 
 | We resync right before reading from a new memory address, and when
 | getting or setting the SP. We don't do these all the time, but when we
@@ -67,7 +38,6 @@ variable m  ( memory pointer)
 
 .then  ( ifndef m&)
 
-
 | This can read from and write to arbitrary buffers on the host side, not
 | just pieces of the image.
 
@@ -86,11 +56,11 @@ variable m  ( memory pointer)
 .else
 
 : flash-chunk-until-error  ( len - status)
-   for  m* cx.FlashNext  dup "c0 xor if  rdrop ^  then  drop  next
-   "c0 ;
+   for  m* cx.FlashNext  dup 0c0 xor if  rdrop ^  then  drop  next
+   0c0 ;
 
 : c.FlashChunk   ( buf a u cmd - status)
-   "30 \eq FSTAT chat-c!  ( clear flash errors)
+   30 \eq FSTAT chat-c!  ( clear flash errors)
    \m flash-command chat-c!  c.setup-chunk
    flash-chunk-until-error
    00 \m flash-command chat-c! ;
@@ -115,20 +85,14 @@ variable m  ( memory pointer)
 
 ld target/S08/deprecated-chat-frame.mu4
 
-.ifdef t.hello  ( only if we've loaded the interact code)
-
 : c.Hello  ( - in-ram?)
-.ifdef chat-slow  ( using a xtal that only allows 38400)
-    38400 bps
-.else
-   115200 bps
-.then
    resync  ( exit BDM loop, if running; resync chat protocol)
 
    cx.Version  4 cx.Stream  recv recv recv recv  3210>
    cr ." Chat firmware version "
    radix preserve  hex  sep preserve  -sep  <#  4#  4#  #> type
    get-regs pc@ [ @ram #ram + #] u<  dup if  ."  (running in RAM)"  then
+   cr ." Connected device is "  cx.device-id .device
    ( Copy flash routine to RAM.)  copy-flash-routine ;
 
 : c.Status  ( - dp)           get-regs  hx@ ;
@@ -143,6 +107,5 @@ ld target/S08/deprecated-chat-frame.mu4
 
 : chat
    chat-via  c.Hello  c.Status  c.Run  c.ReadChunk  c.WriteChunk  complain ;
-.then
 
-.then
+.then  ( S08)
