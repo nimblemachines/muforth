@@ -1,0 +1,177 @@
+| This file is part of muforth: https://muforth.dev/
+|
+| Copyright 2002-2024 David Frech. (Read the LICENSE for details.)
+
+loading S08 Chat (protocols)
+
+| If nothing is mentioned on the command line, default to chat3.
+.ndef chat2-host  .ndef chat4-host  .and .if  -d chat3-host  .then
+
+hex
+
+| We would like to be able to talk to chat2, chat3, and chat4 devices, all
+| with substantially the same code. Using the chat4 protocol as a model, we
+| are going to create a compatibility layer between that and each protocol.
+| The higher-level host chat code can then consume a *single* (basically
+| chat4) protocol.
+
+: >b  send ;
+: b>  recv ;
+
+: >w  >lohi >b >b ;        ( send word, in big-endian order)
+: w>        b> b> hilo> ;  ( recv word, in big-endian order)
+
+: >cmd  ?spkt >b ;
+
+| Resynchronise the protocol. We send two dummy bytes, in case the target
+| is expecting a word-sized value, wait for them to transmit, and then
+| throw away any unread input. This puts us back into a known state.
+
+: resync  ?spkt  0 >w  drain  flush ;
+
+| NOTE: to help stay synchronized with the target, cx.addr always runs
+| resync first.
+
+
+.ifdef chat2-host
+
+| Chat protocol v2
+|
+| 1  Run        - does an RTI - pops stack frame and runs
+| 2  SetHX      - reads two bytes from SCI, writes them into H & X registers
+| 3  GetHX      - writes H then X register to SCI
+| 4  HXtoSP     - sets SP from HX - deprecated, but I'm leaving it in
+| 5  SPtoHX     - sets HX from SP
+| 6  ReadNext   - reads a byte from memory @ HX, writes it to SCI, inc HX
+| 7  WriteNext  - reads a byte from SCI, writes into memory @ HX, inc HX
+|
+| ~~ The following are S08-only commands ~~
+|
+| 8  ReadN      - reads a length from SCI, reads that many bytes from
+|                 memory, and writes them to SCI (S08 only!)
+| 9  FlashNext  - reads a byte from SCI, writes to flash @ HX, inc HX
+|               - calls a routine at @ram that host downloads to device
+| 10  FlashStatus - returns FSTAT
+|                - need this as a way to "ping" the device for the
+|                - completion of long operations, such as erase
+
+: x.run        ( )            01 >cmd  ;  ( don't wait for target!)
+: cx.addr      ( a)   resync  02 >cmd  >w ;
+|                             03 UNUSED
+|                             04 UNUSED
+: x.sp-to-hx   ( )            05 >cmd  ;
+|                             06 UNUSED
+: cx.write-1   ( b)           07 >cmd  >b ;
+: cx.read-n    ( n)           08 >cmd  >b ;  ( "stream" N bytes from memory)
+: cx.flash-1   ( b - status)  09 >cmd  >b    ( flash one byte)
+                              0a >cmd  b> ;  ( read flash status)
+
+: cx.version   0fffc cx.addr ;  | Send vectors as version.
+
+| Entry into chat has pushed a stack frame with this format:
+| H CC A X PCH PCL
+
+: cx.status  ( - dp pc)
+   x.sp-to-hx
+   6 cx.read-n  b> ( H)  w> drop  b> ( X)  hilo>  w> ;
+
+: cx.run  ( pc dp)
+   x.sp-to-hx
+   >lohi  cx.write-1 ( H)  0 cx.write-1  0 cx.write-1  cx.write-1 ( X)
+   >lohi  cx.write-1  cx.write-1 ( pc)
+   x.run ;
+
+.then  ( chat2)
+
+
+.ifdef chat3-host
+
+| Chat protocol v3
+|
+| 1  Version    - sets HX to point to version string:
+|               - 4 bytes of muforth commit, big-endian
+| 2  Run        - does an RTI - pops stack frame and runs
+| 3  GetSP      - sets HX from SP, then returns HX
+| 4  SetHX      - reads two bytes from SCI, writes them into H & X registers
+| 5  ReadNext   - reads a byte from memory @ HX, writes it to SCI, incrs HX
+| 6  WriteNext  - reads a byte from SCI, writes into memory @ HX, incrs HX
+|
+| ~~ The following are S08-only commands ~~
+|
+| 7  ReadN      - reads a count from SCI, reads that many bytes from
+|                 memory, and writes them to SCI
+| 8  FlashNext  - reads a byte from SCI, writes to flash @ HX, incrs HX
+|               - calls a routine in ram that host downloads to device
+|               - returns FSTAT
+
+: cx.version   ( )            01 >cmd  ;  ( point to chat firmware version commit)
+: x.run        ( )            02 >cmd  ;  ( don't walk! and don't wait for the target. ;-)
+: x.sp-to-hx   ( )            03 >cmd     w> drop ;
+: cx.addr      ( a)   resync  04 >cmd  >w ;
+|                             05 UNUSED
+: cx.write-1   ( b)           06 >cmd  >b ;
+: cx.read-n    ( n)           07 >cmd  >b ;  ( "stream" N bytes from memory)
+: cx.flash-1   ( b - status)  08 >cmd  >b b> ;  ( flash one byte, get flash status)
+
+| Entry into chat has pushed a stack frame with this format:
+| H CC A X PCH PCL
+
+: cx.status  ( - dp pc)
+   x.sp-to-hx
+   6 cx.read-n  b> ( H)  w> drop  b> ( X)  hilo>  w> ;
+
+: cx.run  ( pc dp)
+   x.sp-to-hx
+   >lohi  cx.write-1 ( H)  0 cx.write-1  0 cx.write-1  cx.write-1 ( X)
+   >lohi  cx.write-1  cx.write-1 ( pc)
+   x.run ;
+
+.then  ( chat3)
+
+
+.ifdef chat4-host
+
+| Commands:
+| 00 - 0f and
+| 18 - ff      - ignored by chat; force other command loops to return to chat;
+|                can be used as an "idle" command
+|
+| 10 version   - set HX to point to version string
+|
+| 11 run       - push HX (PC), do set-addr, return to pushed PC
+| 12 set-addr  - recv two bytes, write them into H & X registers
+| 13 status    - send HX then PC to host
+|
+| 14 read-n    - recv count, read and send bytes from memory @HX, incrementing
+| 15 write-1   - recv byte, write to memory @HX, increment HX
+| 16 flash-1   - recv byte, write to flash @HX, increment HX, return FSTAT
+|                (calls a routine in ram that host downloads to device)
+
+: cx.version   ( )            10 >cmd  ;  ( point to chat firmware version commit)
+: x.run        ( dp)          11 >cmd  >w ;  ( don't walk! and don't wait for the target. ;-)
+: cx.addr      ( a)   resync  12 >cmd  >w ;
+: cx.status    ( - dp pc)     13 >cmd     w> w> ;
+: cx.read-n    ( n)           14 >cmd  >b ;  ( then "stream" N bytes from memory)
+: cx.write-1   ( b)           15 >cmd  >b ;
+: cx.flash-1   ( b - status)  16 >cmd  >b b> ;  ( flash one byte, get flash status)
+
+: cx.run     ( pc dp)  swap cx.addr  x.run ;
+
+.then  ( chat4)
+
+
+| Before loading anything chip-specific or the interact code, we'd like to
+| be able to query the chip for its device id. We read two bytes from
+| address 1806 (the SDIDH and SDIDL registers).
+
+: cx.device-id
+.ifdef chat-slow  ( using a xtal that only allows 38400)
+    #38400 bps
+.else
+   #115200 bps
+.then
+   resync
+
+   | High nybble of device-id is "reserved" and might not be zero.
+   1806 ( chip id) cx.addr  2 cx.read-n w>  0fff and ;
+.then

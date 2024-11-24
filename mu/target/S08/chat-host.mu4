@@ -2,15 +2,45 @@
 |
 | Copyright 2002-2024 David Frech. (Read the LICENSE for details.)
 
-( Load the chat2, chat3, or chat4 host-side code.)
-
-| This code interfaces between the transport (low-level) code and the
+| This code interfaces between the protocol (low-level) code and the
 | interact code.
 
-.ifdef chat2-host
-   ld target/S08/chat2-host.mu4
-.else .ifdef chat4-host
-   ld target/S08/chat4-host.mu4     | still slightly experimental
-.else
-   ld target/S08/chat3-host.mu4     | chat3 is the default.
-.then
+loading S08 Chat (host)
+
+hex
+
+: c.setup-chunk  ( buf a u - u)  swap cx.addr  swap m ! ;
+
+| For chunked read and write, if chunk count is 0, don't do anything.
+: c.read   ( buf a u)
+   c.setup-chunk  ?if  dup cx.read-n  for  b> m&  next  then ;
+
+: c.write  ( buf a u)
+   c.setup-chunk  ?if  for  m* cx.write-1  next  then ;
+
+: flash-chunk-until-error  ( len - status)
+   for  m* cx.flash-1  dup 0c0 xor if  rdrop ^  then  drop  next
+   0c0 ;
+
+| Helper for c.flash. Set an address, and write a byte there.
+: chat-c!  ( b a)  cx.addr cx.write-1 ;
+
+: c.flash   ( buf a u cmd - status)
+   30 \eq FSTAT chat-c!  ( clear flash errors)
+   \m flash-command chat-c!
+   c.setup-chunk  flash-chunk-until-error
+   00 \m flash-command chat-c! ;
+
+: c.hello  ( - in-ram?)
+   resync  ( exit BDM loop, if running; resync chat protocol)
+   cx.version  4 cx.read-n  b> b> b> b>  3210>
+   cr ." Chat firmware version "
+   radix preserve  hex  sep preserve  -sep  <#  4#  4#  #> type
+   cx.status nip ( pc) [ @ram #ram + #] u<  dup if  ."  (running in RAM)"  then
+   cr ." Connected device is "  cx.device-id .device
+   ( Copy flash routine to RAM.)  copy-flash-routine ;
+
+: c.status  ( - dp)  cx.status drop ;
+
+: chat
+   chat-via  c.hello  c.status  cx.run  c.read  c.write  c.flash ;
