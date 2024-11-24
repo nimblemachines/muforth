@@ -19,7 +19,7 @@ variable chat-vector
 
 0  ( initial command index)
 
-chat-cmd t.hello   ( - in-ram?)
+chat-cmd t.hello   ( - in-ram? #chunk)
 chat-cmd t.status  ( - dp)
 chat-cmd t.run     ( pc dp)
 chat-cmd t.read    ( buf a u)
@@ -35,11 +35,14 @@ drop ( index)
    | cr ." copy-chunk "  2dup swap u. u.
    2dup + push  over image+ -rot  t.write  pop ;
 
-| XXX Assuming 256. Huh.
+variable /chunk  ( chunk size, as reported by debug interface)
+256 /chunk !  | Prevents mystifying divide-by-zero errors when not chatting
+
 : copy-region  ( a len)
    | cr ." copy-region "  2dup swap u. u.
-   256 /mod ( r q)  swap push  for   256 copy-chunk  next
-                        pop  =if  ( rem) copy-chunk  drop ^  then  2drop ;
+   /chunk @ /mod ( r q)  swap push
+   for  /chunk @ copy-chunk  next  pop
+     =if  ( rem) copy-chunk  drop ^  then  2drop ;
 
 variable ram-copied  ( pointer to first un-copied byte)
 
@@ -51,8 +54,11 @@ variable ram-copied  ( pointer to first un-copied byte)
 
 variable in-ram?  | true if chat running in RAM
 
-( t.hello will copy the flash code to RAM.)
-: hi   ram-copied off  chatting on  >chat  t.hello  in-ram? !
+defer verify-quietly  ( - diff)
+
+( t.hello will copy the flash code to RAM and set ram-copied.)
+: hi   chatting on  >chat  t.hello  /chunk !  in-ram? !
+.ifndef noverify  verify-quietly drop  .then
        now __chatting is __meta  __meta ;
 
 : chat-via   pop  chat-vector !  hi ;

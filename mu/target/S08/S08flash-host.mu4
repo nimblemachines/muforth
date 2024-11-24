@@ -37,48 +37,29 @@ forth
    ." FSTAT=" dup u.
    30 and if error" flash access or protection violation" then ;
 
-: program-chunk  ( 'target len)
-   cr ." program "  2dup swap u. u.
-   over image+ -rot  mByteProgram  t.flash  check-flash-status ;
+| Fake "interact-level" code to do the flashing in a way that's compatible
+| with the common flash code.
 
-: erase-page  ( 'target)
-   cr ." erase " dup u.
-   1  over image+ -rot  mPageErase  t.flash  check-flash-status ;
+: t.flash-begin ;
+: t.flash-end ;
 
-: erase?  ( 'target - erase?)   [ /page 1- #] and  0= ;
+: t.program  ( buf a u)
+   mByteProgram  t.flash  check-flash-status ;
 
-( Before we program the _first_ row of a page, we erase the page.)
-: program-row  ( 'target len - 'target+len)
-   2dup + push  over erase? if  over erase-page  then  program-chunk  pop ;
+: t.erase    ( a)
+   1  over image+ -rot
+   mPageErase  t.flash  check-flash-status ;
 
-| Do the programming in chunks smaller than a whole page. Some target
-| programming code - eg via BDM - pushes the bytes to be programmed onto
-| the target stack, which may be quite small. Let's do it in 64 byte chunks.
+ld target/common/flash.mu4
 
-: flash-region  ( a len)
-   40 /mod  ( r q)  swap push  for   40 program-row  next
-                       pop  =if  ( rem) program-row  drop ^  then  2drop ;
-
-( Where is the bootloader code?)
-| NOTE: this is currently the same as what last-page? calculates, but only
-| because the bootloader currently fits into the last page. If that
-| changes, last-page will stay the same but this constant will change. Best
-| to keep them separate.
-
-@flash #flash +  1 Ki 2/ -  constant @boot
-
-| Which page of the Flash are the vectors on? NOTE: this is currently the
-| same as @boot, but only because the bootloader currently fits into the
-| last page. If that changes, @vector-page will stay the same but @boot will
-| change. Best to keep them separate.
-
+| The last page of the flash contains the vectors.
 @flash #flash +  1 Ki 2/ -  constant @vector-page
 
 | Check to see if we're going to clobber the bootloader and complain if
 | we're not executing from RAM.
 
-: ?clobbering-loader  ( a u - a u)
-   2dup +  @boot  swap u< not  if ^ then  ( not touching bootloader - Ok)
+: ?clobbering-loader
+   @vector-page  \m here  u< not  if ^ then  ( not touching bootloader - Ok)
    in-ram? @ if ^ then  ( running in RAM - Ok)
    error" You need to be running a RAM-based version of the chat code in
 order to re-flash it. Consult a local guru. ;-)" ;
@@ -105,47 +86,21 @@ order to re-flash it. Consult a local guru. ;-)" ;
    pad 0ffac 4  setup-comparison
    for  dup image-c@ m* and  over image-c!  1+  next  drop ;
 
-( Flash vectors, security bytes, & trims)
-: flash-vectors
-   cr ." flashing vectors, security bytes, and trims"
-   0ffac 14  ( 0ffac - 0ffcf)  program-chunk  ( trims and security bytes)
-   0ffc0 40  ( 0ffc0 - 0ffff)  program-chunk  ( vectors) ;
+-: save-trims  ( before erasing anything!)
+     flash  flash-region
+    commit  flash-region
+      boot  ?clobbering-loader
+            flash-region
+     trims  flash-region
+   vectors  flash-region ;  is flash-regions
 
-: flash-image
-   h preserve  flash
-   save-trims ( before erasing anything!)
-   region ( a u)  ?clobbering-loader  flash-region
-   @vector-page  \m here  u< if  flash-vectors  then ;
+-: verify-1  save-trims
+     flash  verify-region  report
+    commit  verify-region  report  drop   | we expect commit to differ!
+      boot  verify-region  report  or
+     trims  verify-region  report  or
+   vectors  verify-region  report  or ;  is verify-regions
 
-( Fast verify! Using chunked reads.)
-: verify-chunk  ( 'target len - 'target+len)
-   | cr ." verify "  over u.  dup u.
-   2dup + push
-   ( 'target len) pad -rot  setup-comparison
-   for  dup image-c@ m* xor  if  dup u.  then  1+  next  drop
-   pop ;
-
-| Verify in chunks of 256 bytes. While the USB chat can now read really big
-| chunks at a time - like 4 KiB - the serial chat uses a one byte count,
-| and so is limited to 256 at a time.
-
-: verify-region
-   100 /mod  ( r q)  swap push  for  100 verify-chunk  next
-                        pop  =if  ( rem) verify-chunk  drop ^  then  2drop ;
-
-: ?empty-region ( a u - a u)  =if ^ then
-   cr warn" The flash region is empty. verify will always report no change." ;
-
-.ifndef chat2
-: ?skip-commit  ( a u - a u)  over @boot =  if  4 -4 v+  then ;
-.else
-: ?skip-commit ;
-.then
-
-: verify
-   h preserve  flash
-   region ( a len)  ?empty-region  ?skip-commit  verify-region  ( program image)
-   @vector-page  \m here  u< if
-      save-trims
-      0ffac 54  ( 0ffac - 0ffff)  verify-region  ( trims, security bytes, vectors)
-   then ;
+-: 0= if  ( everything verified)
+      cr  ." Everything looks good!"
+   then ;  is after-flashing ( diff)

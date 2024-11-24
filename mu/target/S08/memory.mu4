@@ -9,19 +9,36 @@ loading S08 memory image
 
 ld target/common/memory-von-neumann-16.mu4
 
-( We need two more ram regions:)
-ram 'image ( get image from ram region)
+| For the S08 we need more than the default flash and ram regions, so let's
+| start by getting a pointer to the memory image. It doesn't matter if we
+| use ram or flash; there is only *one* image.
+ram 'image
 
+| Our additional zero-page regions:
 dup make-region xram
-    make-region zram
+dup make-region zram
 
-( Initialization.)
-: erase-image   'image #image "ff fill ;  ( fills *current* image)
+| Since the boot page is made up of several pieces, let's make each piece
+| its own region. wipe, below, will set reasonable origins for these.
+
+dup make-region commit     | Git commit of chat version
+dup make-region boot       | the bulk of the boot/chat code
+dup make-region trims      | trims and security bytes
+dup make-region vectors    | up to 64 bytes of vectors
+drop
+
 : wipe
-   flash  @flash region!  erase-image  ( erases entire image)
-   zram   @ram   region!
-   xram   "100   region!
-   ram    "100   region! ;
+     flash  @flash  region!  [ "1_0000 1 Ki 2/ - #]
+    commit     dup  region!  | beginning of last page of flash
+      boot     4 +  region!  | skip commit
+     trims   "ffac  region!
+   vectors   "ffc0  region!
+      zram    @ram  region!
+      xram    "100  region!
+       ram    "100  region!
+
+        0 image+ @flash  00 fill  ( zero RAM region)
+   @flash image+ #flash "ff fill  ( erase flash to ff) ;
 
 ( Erase image memory and default to ram region.)
 wipe

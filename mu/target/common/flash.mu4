@@ -60,12 +60,13 @@ defer .diff-addr  ( a)
       cr ." Verifying " .region space
    then
    0  ( diff)  region
-   /chunk @  /mod  ( r q)  swap push  for  /chunk @  verify-chunk  next
-                                    pop  =if  ( rem) verify-chunk  drop ^  then  2drop ;
+   /chunk @  /mod  ( r q)  swap push
+   for  /chunk @  verify-chunk  next  pop
+      =if  ( rem) verify-chunk  drop ^  then  2drop ;
 
 defer verify-regions  ( - diff)
 
-: do-verify  ( - diff)  ?chat  h preserve  verify-regions ;
+: do-verify  ( - diff)  h preserve  verify-regions ;
 
 | Report whether region is empty, or, if non-empty, if it matched or
 | mismatched host region.
@@ -137,20 +138,42 @@ defer verify-regions  ( - diff)
 
 | Do the programming in chunks; the variable /chunk - which is set by the
 | interact code based on a value received from the debug interface - tells
-| us how big each chunk should be.
+| us how big each *verify* chunk should be, but we can't use it directly
+| for flashing: if it's bigger than the erase size, we will miss some
+| sector/page boundaries, and we won't properly erase the chip.
+|
+| On some targets, the chunk size has been carefully chosen to be equal to
+| or smaller than the erase size. But we are going to err on the side of
+| caution here.
+|
+| At the time of flashing, we calculate the flash chunk size. First, we
+| need to know the *erase size*. For devices with uniform page sizes, the
+| erase size is the page size. For devices with sectors, the erase size is
+| the size of the *smallest* sector.
+|
+| The flash chunk size is the smaller of the erase size and the chunk size
+| returned to us by the debug interface.
+
+variable /flash-chunk   | bytes per flash chunk
+
+: calculate-flash-chunk-size
+.ifdef /page /page  .else  /smallest-sector  .then
+   /chunk @  min  ?if ^ then
+   error" Flash chunk size of zero. Something is fishy. Perhaps you are not chatting?" ;
 
 : flash-region
    cr ." Programming " .region
-   region
-   /chunk @  /mod  ( r q)  swap push  for  /chunk @  flash-chunk  next
-                                    pop  =if  ( rem) flash-chunk  drop ^  then  2drop ;
+   /flash-chunk @  /mod  ( r q)  swap push
+   for  /flash-chunk @  flash-chunk  next  pop
+            =if  ( rem) flash-chunk  drop ^  then  2drop ;
 
 defer ?flash-check    now nope is ?flash-check  ( default is do nothing)
 defer flash-regions
 defer after-flashing  ( diff)
 
 : flash-image
-   ?chat  h preserve  radix preserve hex  ( print messages in hex)
+   calculate-flash-chunk-size /flash-chunk !
+   h preserve  radix preserve hex  ( print messages in hex)
    ?flash-check  t.flash-begin  flash-regions  t.flash-end
    noisy-verify? on  verify-regions  after-flashing ;
 
