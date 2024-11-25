@@ -12,22 +12,15 @@ and is a great tool for bringing up new hardware.
 It has support – in varying degrees of completeness – for a number of
 different architectures and chip families.
 
-##  Under active development
-
   * [8051](mu/target/8051)
   * [ARMv6-m](mu/target/ARM/v6-m) (aka Cortex-M0/M0+)
-  * [ARMv7-m](mu/target/ARM/v7-m) (aka Cortex-M3/M4)
+  * [ARMv7-m](mu/target/ARM/v7-m) (aka Cortex-M3/M4/M7)
+  * [AVR](mu/target/AVR) (Atmel/Microchip)
+  * [HC08 and HCS08](mu/target/S08) (Motorola/Freescale/NXP)
   * [MSP430](mu/target/MSP430) (TI)
+  * [PIC18](mu/target/PIC18) (Microchip)
   * [RISC-V](mu/target/RISC-V) (initially, the SiFive FE310 and GigaDevice
     GD32VF103)
-
-## Dormant, or less actively developed
-
-  * [ARMv5](mu/target/ARM/v5) (originally targeting an ARM AEB-1 board running an ARM7DI processor)
-  * [AVR](mu/target/AVR) (Atmel)
-  * [HC08 and HCS08](mu/target/S08) (Motorola/Freescale/NXP)
-  * [PIC18](mu/target/PIC18) (Microchip)
-
 
 # Tethered vs self-hosted
 
@@ -46,7 +39,6 @@ compiler.
 
 The host machine is also orders of magnitude faster than the target, so doing
 the compilation on the host is essentially instantaneous.
-
 
 # Why yet another Forth?
 
@@ -69,7 +61,6 @@ that people can customize.
 It’s [BSD licensed](LICENSE), so do what you want with it! I’d love to hear
 about innovative or unusual uses of muforth.
 
-
 # Starting points
 
 [BUILDING](BUILDING) will tell you how to build muforth. It’s very simple.
@@ -78,7 +69,6 @@ Look in [mu/target/](mu/target) to find a target that interests you. There is
 generally a `mu/target/<target-name>/build.mu4` that loads the cross-build
 environment. Use it as an “index” to find the assembler, disassembler,
 meta-compiler, kernel, and other key pieces of code.
-
 
 # Documentation
 
