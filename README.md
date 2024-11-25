@@ -101,9 +101,9 @@ of [journals, essays, and “getting started” pages](https://muforth.dev/all-p
 
 # News
 
-You can follow [@muforth.dev](https://bsky.app/profile/muforth.dev) for
-updates about the project and related things (eg, interesting development
-boards) that I'm thinking about.
+Follow [@muforth.dev](https://bsky.app/profile/muforth.dev) for updates about
+the project and related things (eg, interesting development boards) that I'm
+thinking about.
 
 # Talks
 
