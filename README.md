@@ -99,6 +99,11 @@ starts: [mu/startup.mu4](mu/startup.mu4). You’ll learn a lot by reading this!
 eventually host the muforth documentation. At the moment, it is a collection
 of [journals, essays, and “getting started” pages](https://muforth.dev/all-pages/).
 
+# News
+
+You can follow [@muforth.dev](https://bsky.app/profile/muforth.dev) for
+updates about the project and related things (eg, interesting development
+boards) that I'm thinking about.
 
 # Talks
 
