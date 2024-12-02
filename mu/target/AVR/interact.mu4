@@ -15,7 +15,7 @@ variable chat-vector
 
 0
 chat-cmd t.hello         ( - chunk-size)
-chat-cmd t.get-status    ( - dp)
+chat-cmd t.status        ( - dp)
 chat-cmd t.run           ( pc dp)
 chat-cmd t.read-space    ( buf a u space)
 chat-cmd t.write-data    ( buf a u)
@@ -45,6 +45,7 @@ drop
 | copying RAM contents or programming the flash!
 
 variable /chunk  ( chunk size, as reported by debug interface)
+256 /chunk !  | Prevents mystifying divide-by-zero errors when not chatting
 
 : copy-chunk  ( 'target len - 'target+len)
    | cr ." copy-chunk "  2dup swap u. u.
@@ -61,15 +62,14 @@ variable /chunk  ( chunk size, as reported by debug interface)
 | executing code on the target.
 |
 | On Harvard targets like AVR, how useful is this?
+
 variable ram-copied  ( pointer to first un-copied byte)
+
 : copy-ram
    h preserve  ram
    ram-copied @  dup 0= if  drop  \m origin  then
    \m here  over -  copy-region
    \m here  ram-copied ! ;
-
-
-variable .DP   ( data stack pointer)
 
 | For reading and writing PC values on the stack. Convert a normal address
 | to an "ra" - return address - by shifting right one bit and swapping
@@ -102,66 +102,18 @@ defer verify-quietly  ( - diff)
 
 : chat-via   pop  chat-vector !  hi ;
 
-: run      ( pc)                     .DP @  t.run ;   ( don't wait for target)
-: runwait  ( pc)  run  t.get-status  .DP ! ;                ( wait for target)
-
-: ?chat
-   chatting @ 0= if  error" not connected to target"  then ;
-
-
-| Because the target "caches" the top of the stack in a register, and
-| because the trampoline code loads this register before execution, and
-| pushes it afterward, we can deal only with the "memory image" of the target
-| stack, rather than also worrying about what to put into the "top" register.
-|
-| What's a bit mystifying is that, to achieve a target stack depth of N,
-| the host has to push N+1 items. The top one goes into top; and the
-| bottom-most one is the "sentinel" value that gets loaded into top when the
-| stack becomes empty.
-|
-| When pushing from the host, or when "pulling" from the target, we don't
-| move more than 8 "user" items - but we pad this value a bit, since we are
-| also using the stack to pass some execution context between host and
-| target.
-
-meta
-: sp!   .DP ! ;  ( We use DP as the data stack pointer)
-: sp@   .DP @ ;
-
+"cafe constant stack-sentinel
 | Put the D stack below the task stacks and watchdog reset count.
-: sp0   [ @ram #ram +  256 -  2 - #] ;
-: depth   \m sp0  \m sp@ -  \m cell/  1- ;
-forth
+@ram #ram +  256 -  2 -  constant dp0
 
-| stack> *first* builds a local image of the target stack - in the RAM
-| image - and *then* copies it, in one chunk, to the target.
+| Define synonyms for reading and writing target stacks.
+: stack-write  t.write-data ;
+: stack-read   t.read-data ;
 
-: stack>  ( "push" stack to target)
-   h preserve  ram  ( so image-related words work)
+ld target/common/stacks.mu4
 
-   depth 0 max 12 min
-   \m sp0  over 1+  \m cells -  dup \m sp! ( top of D stack)  swap
-   for  tuck image-!  \m cell+  next  ( copy each cell as a word to D stack)
-   "cafe swap image-! ( sentinel)
-   ( Now copy stack image to target)
-   \m sp@ image+  \m sp@  \m sp0  over -  t.write-data ;
-
-| stack< *first* copies the target stack, in one chunk, to the host's RAM
-| image, and *then* pulls the values out and pushes them onto the host's stack.
-
-: stack<  ( "pop" stack from target)
-   h preserve  ram  ( so image-related words work)
-
-   \m depth 0 max 12 min  =if
-      push
-      \m sp@ image+  \m sp@  r@ \m cells  t.read-data  ( read target stack)
-      pop
-      \m sp@ over  ( n sp n)
-      for  dup image-@  pop 2push  \m cell+  next ( starting with top, push to R)
-      drop ( sp)
-      for  2pop push  next  ( pop from R to reverse order)
-      0
-   then  drop ;
+: run      ( pc)                dp@ t.run ;  ( don't wait for target)
+: runwait  ( pc)  run  t.status dp! ;              ( wait for target)
 
 
 | Set |@ and |c@ to _some_ form of target fetch. Prefer to get bytes from
