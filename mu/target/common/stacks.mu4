@@ -5,52 +5,129 @@
 | Copying stacks between host and target.
 |
 | This is just one part of the interact code that needs to be standardized.
-| Ideally, every target would use *exactly* the same interact code
-| - perhaps excepting its dumping and disasming code.
+| Ideally, every target would use *exactly* the same interact code (perhaps
+| excepting its dumping and disasming code).
 |
-| But this is a move in the right direction. This is a tricky piece of
-| code, and there were several not-quite-identical versions floating
-| around, none of which was very readable.
+| But this is a move in the right direction. This is a (slightly) tricky
+| piece of code, and there were several not-quite-identical versions
+| floating around, none of which was very readable.
 |
-| I tried to make it as simple and readable as possible, and because it
-| uses \m constants for things that vary between targets, it shoulde work
-| everywhere!
+| This file defines three words:
+|
+|   depth    return the depth, in target cells, of the target's data stack
+|   stack>   copy some or all of the host's stack to the target
+|   stack<   copy some or all of the target's stack to the host
+|
+| stack> *first* builds a local image of the target stack - in the RAM
+| image - and *then* copies it, in one chunk, to the target.
+|
+| stack< *first* copies the target stack, in one chunk, to the host's RAM
+| image, and *then* pulls the values out and pushes them onto the host's
+| stack.
+|
+| In both directions, copying is limited to a small number of items to
+| prevent crashing the target or the host.
+|
+| I tried to make the code as simple and readable as possible, and because
+| it uses \m words for anything related to target cells, it should work
+| unmodified for all targets.
 |
 | Users of this code should define two values before loading this file:
 |
 |   stack-sentinel   | the *value* to be used; or leave undefined
-|   stack-bottom     | address of bottom of truly *empty* data stack;
-|                    | sentinel, if any, lies *between* stack-bottom
-|                    | and dp0
+|   dp0              | address of bottom of data stack memory
 |
-| If you don't want a stack sentinel, just leave it undefined; no space
-| will be allocated for it on the stack.
+| If you don't want a stack sentinel - read on to find out what this is and
+| why it's (sometimes) necessary - just leave it undefined; no space will
+| be allocated for it on the stack.
+|
+| Users must also define two words for reading and writing the target's
+| stack (these are simply synonyms for the words for reading and writing
+| the target's RAM):
+|
+|   stack-read   ( buf a u)
+|   stack-write  ( buf a u)
+|
+| This code *should* be trivially simple, but there is a twist: some
+| targets require a *stack sentinel*, and this sentinel must be ignored by
+| depth, added to the stack image by stack>, and skipped by stack<.
+|
+| What is a stack sentinel, and why do some targets require one?
+|
+| A simple and common optimization for Forth systems is to cache the top of
+| the data stack in a register, commonly called "t" or "top". This makes
+| both unary and binary operations much more efficient. With top in
+| a register, an increment, complement, or negate operation (for example)
+| can change the value in the register without touching memory. For
+| a binary operation - an add, for example - the second operand is popped,
+| top and second are added, and the result is put into the top register.
+|
+| In contrast, without top in a register, a unary operation requires a pop
+| and a push, and a binary operation requires two pops and two pushes. It's
+| easy to see that this is going to be slower and require more code.
+|
+| For the host to execute a piece of code on a target that caches the top
+| of the stack in a register, the following steps must occur:
+|
+|   - the host creates a memory image of its stack and copies it to the target
+|   - the target pops the top of the in-memory stack into its "top" register
+|   - the target executes the code
+|   - the target pushes top back to the in-memory stack
+|   - the host copies the memory image of the target stack back to itself,
+|     and pushes the results on its own stack
+|
+| If the stack that is copied to the target is empty, when the target pops
+| the top of the stack into its "top" register to begin code execution it
+| will underflow the stack and read garbage. If instead the stack always
+| has a sentinel as its bottom-most value, a target started with an "empty"
+| stack (consisting only of a sentinel value) will begin code execution
+| with the sentinel value in its "top" register, and the stack will not
+| have underflowed.
+|
+| When the host calculates the depth of the target stack, and when it
+| copies the stack image back to itself, it has to make sure to skip the
+| sentinel; but when creating a stack image for the target, the host makes
+| sure to push a "fresh" sentinel and copy it to the target. This way if
+| the target ends up underflowing the stack or otherwise pushing
+| a "garbage" value onto it, the next time that code gets executed - using
+| the above multi-step process - that garbage value is replaced by
+| a recognizable sentinel.
+|
+| It's not complicated, but it *is* a bit subtle, and it takes some
+| thinking about to get a solid mental picture of what's going on.
+|
+| To make the following code easier to read - whether or not a sentinel
+| value is involved - we use the following constants:
+|
+|   dp-sentinel      | data stack bottom, *including* sentinel, if any
+|   dp-empty         | data stack bottom, *excluding* sentinel, if any
+|
+| If no sentinel value is defined for a target, the two values will be
+| *equal*; if there *is* a sentinel, dp-empty will point one target cell
+| *lower* in memory (the stack is growing *down*).
 
-.ifdef stack-sentinel  \m cell  .else  0  .then  constant #sentinel
+dp0 dup constant dp-sentinel  .ifdef stack-sentinel  \m cell-  .then
+        constant dp-empty
+
+variable dp          | target data stack pointer; points to *top* of stack
+: dp!   dp ! ;       | XXX Are these useful, ugly, and/or pointless?
+: dp@   dp @ ;
 
 meta
-stack-bottom  #sentinel -
-constant dp0      | below sentinel!
-variable dp       | data stack pointer
-
-| Shorthands
-: dp!   \m dp ! ;
-: dp@   \m dp @ ;
-
-: depth  \m dp0  \m dp@ -  \m cell/ ;
+: depth  dp-empty  dp@ -  \m cell/ ;
 forth
 
 | stack> *first* builds a local image of the target stack - in the RAM
 | image - and *then* copies it, in one chunk, to the target.
 
-: image-pop  ( cell a - a+)  tuck image-!  \m cell+ ; 
+: image-pop  ( cell a - a+)  tuck image-!  \m cell+ ;
 : stack>  ( "push" stack to target)
    depth 0 max 12 min
-   \m dp0  over \m cells -  dup \m dp! ( top of D stack)  swap
+   dp-empty  over \m cells -  dup dp! ( top of D stack)  swap
    for  image-pop  next  ( copy each cell as a word to D stack)
 .ifdef stack-sentinel  stack-sentinel swap image-!  .else  drop  .then
-   | Write stack image to target, *including* sentinel, if any) 
-   \m dp@ image+  \m dp@  stack-bottom  over -  t.write ;
+   | Write stack image to target, *including* sentinel, if any)
+   dp@ image+  dp@  dp-sentinel  over -  ( buf a u)  stack-write ;
 
 | stack< *first* copies the target stack, in one chunk, to the host's RAM
 | image, and *then* pulls the values out and pushes them onto the host's stack.
@@ -59,5 +136,5 @@ forth
 : stack<  ( "pop" stack from target)
    \m depth 0 max 12 min  =if
    | Read stack image from target, *excluding* sentinel, if any.
-   \m dp@  over \m cells  over image+ -rot  t.read
-   \m dp0 swap  for  image-push  next  drop  ^  then  drop ;
+   dp@  over \m cells  over image+ -rot  ( buf a u)  stack-read
+   dp-empty  swap for  image-push  next  drop  ^  then  drop ;
