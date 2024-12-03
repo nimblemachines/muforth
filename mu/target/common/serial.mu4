@@ -2,11 +2,14 @@
 |
 | Copyright 2002-2024 David Frech. (Read the LICENSE for details.)
 
-loading Serial expect/send
+| loading Serial expect/send
 
 ( Simple target serial expect/send code.)
 
-defer target-tty
+z" serial-target"  r/w open-file?  .if  constant target-tty  .else  drop
+z" serial-target2" r/w open-file?  .if  constant target-tty  .else  drop  .then .then
+
+.ifdef target-tty
 
 ( Modify termios settings of target-tty device.)
 : target-termios   create  ( cfa)  ,  does> @  target-tty  modify-termios ;
@@ -19,22 +22,6 @@ defer target-tty
 ' set-termios-even-parity     target-termios even-parity
 ' set-termios-odd-parity      target-termios odd-parity
 
-: lazy-target-tty  ( - fd)
-   create  0 , ( fd)  token, drop ( filename)  does>
-   dup @  =if nip ^ then ( already opened!)  drop
-   dup cell+ cell+ ( skip fd and string count)  open-file-rw  ( a fd)
-   dup rot ( fd fd a)  !  target-raw  ( fd) ;
-
-| serial-target and serial-target2 should be symlinks to
-| /dev/tty<something> devices
-
-lazy-target-tty  std-target-tty serial-target
-lazy-target-tty  alt-target-tty serial-target2
-
-( Abbrevs)
-: std-target   now std-target-tty is target-tty ;  std-target
-: alt-target   now alt-target-tty is target-tty ;
-
 ( Recv from, send to target.)
 : _send  target-tty  >emit ;
 : _recv  target-tty  <key ;
@@ -44,6 +31,9 @@ lazy-target-tty  alt-target-tty serial-target2
 
 : flush  target-tty  tty-iflush ;
 : drain  target-tty  tty-drain ;
+
+| Clear the decks.
+target-raw  flush  drain
 
 ( Spying on the protocol.)
 variable spy  spy off
@@ -63,3 +53,5 @@ variable spy  spy off
 : await  ( a u)
    m preserve
    swap m !  for  m* recv  xor if  error" Wrong firmware"  then  next ;
+
+.then  ( ifdef target-tty)

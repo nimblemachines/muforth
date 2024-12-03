@@ -42,11 +42,15 @@ void mu_abort()     /* zmsg */
         die((char *)UNHEAPIFY(TOP));
 }
 
+void mu_q_abort()   /* ?abort  ( -1 | zerror 0) */
+{
+    if (POP == 0) mu_abort();
+}
+
 /*
  * abort_zmsg() pushes a pointer to a zero-terminated string, and then
  * calls abort.
  */
-
 void abort_zmsg(const char *zmsg)
 {
     PUSH_ADDR(zmsg);

@@ -261,7 +261,9 @@ void muboot_load_file()    /* c-string-name */
 {
     int fd;
 
-    mu_open_file_ro();
+    mu_r_slash_o();     /* open file readonly */
+    mu_open_file_q();
+    mu_q_abort();
     fd = TOP;
     mu_read_file();
 

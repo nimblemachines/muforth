@@ -129,53 +129,36 @@ void mu_create_file()       /* C-string-name - fd */
     TOP = fd;
 }
 
-static void mu_open_file()     /* C-string-name flags - fd */
+static void error_zmsg(char *err_string)
+{
+    ST1 = HEAPIFY(err_string);
+    TOP = 0;
+}
+
+/* Return true and file descriptor if successful, false and error string
+ * otherwise. */
+void mu_open_file_q()     /* open-file?  ( C-string-name flags - fd -1 | zerror 0) */
 {
     int fd;
     char pathbuf[PATH_MAX];
     char *path = abs_path(pathbuf, PATH_MAX, (char *)UNHEAPIFY(ST1));
 
     if (path == NULL)
-        return abort_zmsg("path too long");
+        return error_zmsg("path too long");
 
     fd = open(path, TOP);
     if (fd == -1)
-        return abort_strerror();
+        return error_zmsg(strerror(errno));
 
-    DROP(1);
-    TOP = fd;
+    ST1 = fd;
+    TOP = -1;
 }
 
-void mu_open_file_ro()
-{
-    PUSH(O_RDONLY);
-    mu_open_file();
-}
-
-void mu_open_file_wo()
-{
-    PUSH(O_WRONLY);
-    mu_open_file();
-}
-
-void mu_open_file_rw()
-{
-    PUSH(O_RDWR);
-    mu_open_file();
-}
-
-/* For reading and writing pipes. */
-void mu_open_file_wo_nonblocking()
-{
-    PUSH(O_WRONLY | O_NONBLOCK);
-    mu_open_file();
-}
-
-void mu_open_file_ro_nonblocking()
-{
-    PUSH(O_RDONLY | O_NONBLOCK);
-    mu_open_file();
-}
+/* file flags for open-file? */
+void mu_r_slash_o() { PUSH(O_RDONLY); }
+void mu_w_slash_o() { PUSH(O_WRONLY); }
+void mu_r_slash_w() { PUSH(O_RDWR); }
+void mu_nonblock()  { PUSH(O_NONBLOCK); }
 
 void mu_close_file()
 {
