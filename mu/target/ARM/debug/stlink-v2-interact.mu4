@@ -4,7 +4,7 @@
 
 loading ST-LINK debug (interact)
 
-hex
+decimal
 
 ( Load the flash programming routines into ram.)
 ld target/ARM/stm32/flash-programming.mu4
@@ -31,19 +31,25 @@ ld target/ARM/stm32/flash-programming.mu4
 |
 | We return the retry count with the sp and pc.
 
-: ms   #1,000,000 * ( ns)  0 swap  nanosleep ;
+: ms   1,000,000 * ( ns)  0 swap  nanosleep ;
 
-| st.get-status retries 1000 times, pausing 1ms between tries, waiting for
-| the target to execute a bkpt instruction and halt.
+| st.status retries 1000 times, pausing 1ms between tries, waiting for the
+| target to execute a bkpt instruction and halt.
+|
+| XXX Read the standard ARM debug registers to determine the core state
+| instead of using a "special" ST-LINK command?
 
-: st.get-status  ( - #retries sp pc)
+| We pass DP (data stack pointer) in register 13: the MP (machine stack
+| pointer).
+
+: st.status  ( - #retries dp)
    0  | #retries
-   begin  dbg.core-state 1 and 0= while  1 ms  1+ dup #1000 = until
+   begin  dbg.core-state 1 and 0= while  1 ms  1+ dup 1000 = until
    ( timed out)  dbg.halt ( force halt)  then
-   ( success)  #13 dbg.reg@  #15 dbg.reg@ ;
+   ( success)  13 dbg.reg@ ;
 
-: st.run  ( pc sp)
-   #13 dbg.reg!  #15 dbg.reg!  dbg.run ;
+: st.run  ( pc dp)
+   13 dbg.reg!  15 dbg.reg!  dbg.run ;
 
 .ifdef no-flash-programming
 
@@ -69,7 +75,7 @@ ld target/ARM/stm32/flash-programming.mu4
 
 ( Write unlock keys to FLASH_KEYR.)
 : st.flash-begin
-   cdef_89ab  4567_0123  \m stm32-flash-unlock rx ;
+   "cdef_89ab  "4567_0123  \m stm32-flash-unlock rx ;
 
 ( Re-lock flash controller registers.)
 : st.flash-end   \m stm32-flash-lock rx ;
@@ -93,7 +99,7 @@ ld target/ARM/stm32/flash-programming.mu4
 
 ( The interface for the interact code. Implemented by all debug transports.)
 : jtag
-   chat-via  st.hello  st.get-status  st.run  st.read  st.write
+   chat-via  st.hello  st.status  st.run  st.read  st.write
    st.flash-begin  st.flash-end  st.erase  st.program ;
 
 .then  ( def stlink)

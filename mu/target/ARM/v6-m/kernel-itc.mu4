@@ -407,65 +407,112 @@ ram
 | stack, registers popped, words execute, re-push, copy back to host...
 | Much easier than stuffing things into register slots on stack frame!
 
+| On the Raspberry Pi Pico, before executing any Forth code, we need to
+| save any ARM ABI callee-saved registers. All of the Forth VM regs are
+| callee-saved, by design. So we push these when we save the lr, and
+| restore them when returning to PICOBOOT.
+
 .ifdef picoboot.exec
 
-| Before executing any Forth code, we need to save any ARM ABI callee-saved
-| registers. All of the Forth VM regs are callee-saved, by design. So we
-| push these when we save the lr, and restore them when returning to
-| PICOBOOT.
-
-implements continue-forth  __asm
+label continue-forth  __asm
+   | Save PICOBOOT's registers, including SP. Load our DP into w, then into SP.
    { lr top ip rp ix } push   sp y mov
-   pico-sp w lit
-   0 w x ldr  ( load forth sp)
-   0 w y str  ( save picoboot sp)
-   x sp mov   { top ip rp ix } pop   dsb   isb   next  ;c
+   pico-dp x lit
+   0 x w ldr  ( load DP)
+   0 x y str  ( save picoboot sp)
+   w sp mov  ( DP -> SP)
 
-code bug  [r]
-   { top ip rp ix } push   sp x mov
-   pico-sp w lit
-   0 w y ldr  ( restore picoboot sp)
-   0 w x str  ( save forth sp)
-   y sp mov   { pc top ip rp ix } pop  ;c
-   pool,
-
-.else
-
-implements continue-forth  __asm
-   cpsid  ( disable interrupts)
+   | Pop Forth VM registers and start executing.
+   | We don't disable interrupts. If we do, the Pico hangs.
    { top ip rp ix } pop   dsb   isb   next  ;c
 
 code bug  [r]
+   | Push Forth VM registers.
+   { top ip rp ix } push
+
+   | Save our DP and reload PICOBOOT's registers, then return to PICOBOOT.
+   sp w mov
+   pico-dp x lit
+   0 x y ldr  ( restore picoboot sp)
+   0 x w str  ( save DP)
+   y sp mov   { pc top ip rp ix } pop  ;c
+   pool,
+
+.else  ( not a Pico)
+
+label continue-forth  __asm
+   cpsid  ( disable interrupts)
+   | Pop Forth VM registers and start executing.
+   { top ip rp ix } pop   dsb   isb   next  ;c
+
+code bug  [r]
+   | Push Forth VM registers and halt.
    { top ip rp ix } push   0 bkpt  ;c
 
 .then
 
 align
-implements trampoline  ( x0 .. xn - y0 .. ym)
+label trampoline  ( x0 .. xn - y0 .. ym)
    ]  execute  begin  bug  again  [
 
 __host
 
 h !  ( restore region)
 
-forth
+| Define local copies of target registers. Before executing code on the
+| target, we "push" these values to the target, and after executing code,
+| we "pull" the new values. We used the local, cached values when printing
+| the registers with .regs .
+
+( Name these so they don't conflict with assembler names.)
+variable trp    ( target RP)
+variable tip    ( target IP)
+variable tix    ( target loop index counter)
 
 | Show some indication of whether a word is still executing. If IP is
 | anything other than two cells past trampoline, we've hit "bug" somewhere
 | other than the trampoline. Show this by annotating IP with a "*".
 
-: executing?   ( ip - f)   [ \m trampoline @  2 \m cells + #]  - ;
+: executing?   ( ip - f)   [ \l trampoline  2 \m cells + #]  - ;
 
 : .ip
    tip @  dup .h32  executing? if  ." * "  ^  then  ( done)  2sp ;
 
+: .dp   dp@ .h32__ ;
 
--: ( forth version of .regs)
-   cr  ."       IX        SP        RP        IP"
+: .forth-regs
+   cr  ."       IX        DP        RP        IP"
        (  00000000  00000000  00000000  00000000 )
-   cr      tix .tr   tsp .tr   trp .tr       .ip ;
-   is .regs
+   cr      tix .tr       .dp   trp .tr       .ip ;
 
+| Target always starts by executing the code at continue-forth, with DP
+| pointing to the data stack, which contains both the data to be consumed,
+| and the "Forth VM" context.
+|
+| When first executing a word, the host sets things up like this:
+|    IP = trampoline
+|    RP = bottom of R stack ie, empty R stack
+|
+| When instead continuing execution - perhaps inside a loop that contains a
+| call to bug - the host sets things up like this:
+|    IP = saved IP
+|    RP = saved RP
+
+( NOTE: For initial execution of a Forth word, xn is cfa!)
+: continue  ( x0 .. xn ip rp ix - y0 .. yn ip rp ix)
+   stack>  \l continue-forth runwait  stack<
+   tix !  trp !  tip !  .forth-regs ;
+
+meta
+: cont    ( )     ( continue forth execution)
+   tip @  trp @  tix @  ( ip rp ix)  continue ;
+forth
+
+( Set rp to rp0, ix to 0, and ip to trampoline.)
+-: ( cfa)  ( execute target forth word)
+   \l trampoline  rp0  0  ( ip rp ix)  continue ;  is remote
+
+forth
 
 __meta
 
