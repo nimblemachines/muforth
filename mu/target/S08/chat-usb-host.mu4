@@ -35,35 +35,26 @@ hex
    usb-target  usb-control drop ;
 
 ( Commands)
-: u.ReadChunk   ( target-addr length buffer)  2push
+: u.ReadChunk   ( buf a u)  rot 2push
            0c0 00 rot 0 2pop  usb ;
 
-: u.WriteChunk  ( target-addr length buffer)  2push
+: u.WriteChunk  ( buf a u)  rot 2push
             40 01 rot 0 2pop  usb ;
 
-: u.FlashWrite  ( target-addr length buffer cmd)  -rot 2push 2push
+: u.FlashWrite  ( buf a u cmd)  push rot pop  -rot 2push 2push
             40 01 2pop 2pop   usb ;
 
-: u.Run     40 02 0 0 0 0     usb ;
+: ux.Run    40 02 0 0 0 0     usb ;
 
-: u.ReadSp  ( buf)  push
-           0c0 03 0 0 2 pop   usb ;
+| Useful for finishing ReadSp and GetVersionAddr.
+: u.read-word  ( bmReq bReq - w)
+            0 0  2 pad  usb  pad beh@ ;
 
-: u.GetVersionAddr  ( buf)  push
-           0c0 04 0 0 2 pop   usb ;
+: u.ReadSp  ( - sp)
+           0c0 03  u.read-word ;
 
-: usb-sp  ( - sp)  pad u.ReadSp  pad beh@ ;
-
-: u.GetRegs  ( buf - sp)
-   usb-sp  dup push  6 rot  u.ReadChunk  pop ;
-
-: u.SetRegs  ( buf)
-   usb-sp            6 rot  u.WriteChunk ;
-
-( Order of regs in memory: H CC A X PC)
-( XXX this is a huge kludge)
-: u.SetPC  ( pc)
-   usb-sp  4 +  swap  pad beh!  2 pad  u.WriteChunk ;
+: u.GetVersionAddr  ( - a)
+           0c0 04  u.read-word ;
 
 | If we are using the S08 to talk to some other target - perhaps
 | programming a PIC or AVR - don't load anything other than what we need to
@@ -80,24 +71,35 @@ hex
    u.FlashWrite
    \eq FSTAT usb-c@  ( return status) ;
 
-: u.Hello
-   pad  u.GetVersionAddr  pad beh@ ( big-endian!)
+( Order of regs in memory: H CC A X PC)
+
+: ux.Status  ( - dp pc)
+   u.ReadSp  pad swap 6 u.ReadChunk
+   pad c@ ( H)  pad 3 + c@ ( X)  hilo>
+   pad 4 + beh@ ;
+
+: u.Hello   ( in-ram? chunk-size)
+   u.GetVersionAddr
    ?if
-      4 pad  u.ReadChunk ( read version commit)   pad bew@ ( big-endian!)
+      pad swap 4  u.ReadChunk ( read version commit)   pad bew@ ( big-endian!)
       cr ." Chat firmware version "
       radix preserve  hex  sep preserve  -sep  <#  4#  4#  #> type
    then
-   ( Copy flash routine to RAM.)  copy-flash-routine ;
+   ux.Status nip ( pc) [ @ram #ram + #] u<  dup if  ."  (running in RAM)"  then
+   ( Copy flash routine to RAM.)  copy-flash-routine  #256 ;
 
-.ifdef t.Hello  ( only if we've loaded the interact code)
+: u.Status  ( - dp)   ux.Status drop ;
+
+: u.Run     ( pc dp)
+   u.ReadSp  ( uses pad)  -rot
+   >lohi pad c! ( H)  pad 3 + c!+ ( X)  beh! ( PC)
+   pad swap 6 u.WriteChunk  ux.Run ;
 
 .ifdef usb-debug-via-serial
 : chat-usb  ( to distinguish between the usb and serial versions)
 .else
 : chat
 .then
-   chat-via  u.Hello  u.GetRegs  u.SetRegs  u.Run
-             u.ReadChunk  u.WriteChunk  u.FlashChunk ;
-.then
+   chat-via  u.Hello  u.Status  u.Run  u.ReadChunk  u.WriteChunk  u.FlashChunk ;
 
 .then  ( ndef via-s08)
