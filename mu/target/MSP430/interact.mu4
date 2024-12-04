@@ -16,8 +16,8 @@ variable chat-vector
 0  ( initial command index)
 
 chat-cmd t.Hello
-chat-cmd t.GetStatus    ( - sp pc sr cp)
-chat-cmd t.Run          ( pc sr cp)
+chat-cmd t.Status       ( - dp)
+chat-cmd t.Run          ( pc dp)
 chat-cmd t.ReadChunk    ( buf a u)
 chat-cmd t.WriteChunk   ( buf a u)
 chat-cmd t.ErasePage    (     a   - fail?)
@@ -45,48 +45,12 @@ variable ram-copied  ( pointer to first un-copied byte)
    \m here  over -  copy-chunked
    \m here  ram-copied ! ;
 
-
-( Cached local values of target registers.)
-variable .CP     | context pointer
-variable .SR     | status register
-variable .SP
-variable .PC
-
-variable .IP
-variable .LOOP
-.ifdef microscope
-variable .W
-variable .X
-variable .Y
-variable .Z
-.then
-
-: get-regs   t.GetStatus  .CP !  .SR !  .PC !  .SP ! ;
-: set-regs                .PC @  .SR @  .CP @ ;
-
-: 2sp  space space ;
-: 4#  # # # # ;
-: .b9  binary  <#  4#  4#  #  #> type ;
-: .h16    hex  <#  4#  #> type ;
-: .h16__  .h16  2sp ;
-: .r   ( offset)  @  .h16__ ;
-: .sr         .SR @  .b9   2sp ;
-
-defer .regs
-
--: ( chat v2/v3 version of .regs)
-   radix preserve
-
-   cr  ." V----INZC    CP    SP    PC"
-       (  000100011  0000  0000  0000 )
-   cr           .sr
-                   .CP .r
-                         .SP .r
-                               .PC .r ;  is .regs
+variable in-ram?  | true if chat running in RAM
 
 defer verify-quietly
 
-: hi  chatting on  >chat  t.Hello  get-regs  .regs
+: hi  chatting on  >chat  t.Hello
+   dup in-ram? !  if  ."  (running in RAM)"  then
    ram-copied off  copy-ram
 .ifndef noverify
    h preserve  flash region  nip if  ( non-empty)  verify-quietly if  ( differs)
@@ -97,139 +61,30 @@ defer verify-quietly
 
 : chat-via   pop  chat-vector !  hi ;
 
+"cafe constant stack-sentinel
 
-: run      ( pc)  .PC !  copy-ram  set-regs  t.Run ;  ( don't wait for target)
-: runwait  ( pc)  run  get-regs ;                     ( wait for target)
+@ram #ram +
+| If at least 2 Ki of ram, leave room for ram vector table.
+#ram 2 Ki u< .not .if  #vectors  16 aligned-by  -  .then
+
+                         constant rp0     | R stack starts below vectors, if any
+      rp0 24 \m cells -  constant dp0     | D stack starts 24 cells below R stack
+
+: stack-write  t.WriteChunk ;
+: stack-read   t.ReadChunk ;
+
+ld target/common/stacks.mu4
+
+: run      ( pc)       copy-ram  dp@  t.Run ;  ( don't wait for target)
+: runwait  ( pc)  run  t.Status  dp!  ;              ( wait for target)
 
 ( when the code you're calling doesn't speak the same protocol as running code)
 : go   \eq Vreset image-@  run ;
 
-: reset    go  0 #100,000,000 nanosleep ( 100ms)  get-regs .regs ;
+| : reset    go  0 100,000,000 nanosleep ( 100ms)  get-regs .regs ;
 
-( For running random bits of code.)
-: call  ( pc)  runwait .regs ;
-
-
-.ifndef chat-v1
-
-| Because the target "caches" the top of the stack in a register, and
-| because the trampoline code loads this register before execution, and
-| pushes it afterward, we can deal only with the "memory image" of the target
-| stack, rather than also worrying about what to put into the "top" register.
-|
-| What's a bit mystifying is that, to achieve a target stack depth of N,
-| the host has to push N+1 items. The top one goes into top; and the
-| bottom-most one is the "sentinel" value that gets loaded into top when the
-| stack becomes empty.
-|
-| When pushing from the host, or when "pulling" from the target, we don't
-| move more than 8 "user" items - but we pad this value a bit, since we are
-| also using the stack to pass some execution context between host and
-| target.
-
-| If there is space - ram is at least 2 KiB - leave room for vectors at the
-| end of ram, for debugging interrupt-driven code.
-
-meta
-#ram 2 Ki u< .if
-: rp0   [ @ram #ram +              2 \m cells - #] ; ( room for SR and PC *only*)
-.else
-: rp0   [ @ram #ram +  #vectors -  2 \m cells - #] ; ( room for SR and PC and vectors)
-.then
-
-: sp0   [ \m rp0  #48 - #] ;
-: sp!   .CP ! ;  ( the trampoline code loads SP from CP)
-: sp@   .CP @ ;  ( the trampoline code stores SP into CP)
-: depth   \m sp0  \m sp@ -  \m cell/  1- ;
-forth
-
-| When we begin the remote execution of a target Forth word, we have to
-| push to the target, in addition to the values found on the host stack,
-| the IP address of the trampoline, and the cfa to execute. If the code
-| executed hits bug, and we continue execution using cont, we will push the
-| host stack and the IP address of the trampoline, but no cfa.
-|
-| In general then, in order to ensure that we can pass up to 8 "user" data
-| values to target code, we need to copy a max of 10 values - plus the cafe
-| sentinel value that is copied no matter what.
-|
-| stack> *first* builds a local image of the target stack - in the RAM
-| image - and *then* copies it, in one chunk, to the target.
-
-: stack>  ( "push" stack to target)
-   depth 0 max #10 min
-   \m sp0  over 1+  \m cells -  dup \m sp! ( top of D stack)  swap
-   for  tuck image-!  \m cell+  next  ( copy each cell as a word to D stack)
-   "cafe swap image-! ( sentinel)
-   ( Now copy stack image to target)
-   \m sp@ image+  \m sp@  \m sp0  over -  t.WriteChunk ;
-
-| XXX add a way to automagically sign-extend or zero-extend values coming
-| from the target stack?
-
-| Since stack< "pops" data stack, plus ip, loop, and if we've defined
-| microscope, w, x, y, and z, let's raise our max so we can copy up to 8
-| "user" values, plus execution context.
-
-meta
-8 ( user)  2 ( ip and loop) +
-.ifdef microscope
-4 ( scratch regs w x y z) +
-.then
-constant max-pop
-forth
-
-| stack< *first* copies the target stack, in one chunk, to the host's RAM
-| image, and *then* pulls the values out and pushes them onto the host's stack.
-
-: stack<  ( "pop" stack from target)
-   \m depth 0 max \m max-pop min  =if
-      push
-      \m sp@ image+  \m sp@  r@ \m cells  t.ReadChunk  ( read target stack)
-      pop
-      \m sp@ over  ( n sp n)
-      for  dup image-@  pop 2push  \m cell+  next ( starting with top, push to R)
-      drop ( sp)
-      for  2pop push  next  ( pop from R to reverse order)
-      0
-   then  drop ;
-
-| Host should set PC -> continue-forth
-|                 SP -> top of R stack
-|                 CP -> top of D stack
-
-: ?chat
-   chatting @ 0= if  error" not connected to target"  then ;
-
-: rechat
-   get-regs  stack<
-.ifdef microscope  ( x0 .. xn ip - y0 .. yn ip loop z y x w')
-   .W !  .X !  .Y !  .Z !
-.then
-   .LOOP !  .IP !  .regs ;
-
-( NOTE: For initial execution of a Forth word, xn is cfa!)
-: continue  ( x0 .. xn ip - y0 .. yn ip loop)
-   ?chat
-   stack>  run  rechat ;
-
-( These are implement'ed by the kernel code.)
-meta
-variable continue-forth
-variable trampoline
-
-: cont    ( )     ( continue forth execution)
-   .IP @  continue ;
-forth
-
--: ( cfa)  ( execute target forth word)
-   p@ continue-forth .PC !
-   \m rp0 .SP !  ( trampoline switches stacks)
-   p@ trampoline  ( ip)  continue ;  is remote
-
-
-.then
-
+| Useful for later code.
+: 4#  # # # # ;
 
 | Set |@ and |c@ to _some_ form of target fetch. Prefer to get bytes from
 | target if we're connected. This word is useful so we can set an initial

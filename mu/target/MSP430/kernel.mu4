@@ -33,11 +33,7 @@ assembler
  6 reg top    ( cached top of data stack)
 
 .ifndef loop-on-stack
- 7 reg loop   ( current for/next/do/loop index)
-.then
-
-.ifdef microscope
-11 reg w'     ( copy of w' - except when executing code words)
+ 7 reg ix     ( current for/next/do/loop index)
 .then
 
 12 reg w      ( w - "working" register: holds cfa during next; scratch)
@@ -49,7 +45,7 @@ forth
 ( Tell the disassembler about these register names.)
 -: ( reg)
    2* 2*
-   z" pc  sp  sr  r3  ip  rp  top loopr8  r9  r10 w'  w   x   y   z   "  +
+   z" pc  sp  sr  r3  ip  rp  top ix  r8  r9  r10 r11 w   x   y   z   "  +
    (  0000111122223333444455556666777788889999aaaabbbbccccddddeeeeffff)
    4 -trailing type ;  is .regname
 
@@ -89,17 +85,14 @@ label dodoes    nest  ip pop  ( fall thru to dovar/docreate)  ;c
 ( Note the structural similarities!)
 meta: create     new      ;code   label wpush
                                   implements target-do-var
-.ifdef microscope                 w w' mov  ( make a copy)  .then
                                   top push  w   top mov  next  ;c
 meta: constant   new  ,   ;code
                                   label doconst
                                   implements target-do-const
-.ifdef microscope                 w w' mov  ( make a copy)  .then
                                   top push  w ) top mov  next  ;c
 meta: :          new  ]   ;code
                                   label docolon
                                   implements target-do-colon
-.ifdef microscope                 w w' mov  ( make a copy)  .then
                                   nest      w    ip mov  next  ;c
 
 definer: does>   <;code>  asm{  dodoes # call  }  ] ;
@@ -132,53 +125,53 @@ code @execute  ( 'cfa)   top ) w mov  again  ;c
 
 .ifndef loop-on-stack
 
-( Fast version, using loop register)
+( Fast version, using ix register)
 code* (for)   [r]  ( u)
-   loop rpush  top loop mov  top pop  next  ;c
+   ix rpush  top ix mov  top pop  next  ;c
 
 code* (next)  [r]
-   1 # loop sub  branch 0= until  loop rpop  skip j  ;c
+   1 # ix sub  branch 0= until  ix rpop  skip j  ;c
 
 
 | Do-loop frame looks like this:
 |
 | +------------------+
-| |  saved loop reg  |
+| |   saved ix reg   |
 | +------------------+
 | |      limit       |<--- rp
 | +------------------+
 |
-|  Current index is in loop register; current "user-visible" index is
+|  Current index is in ix register; current "user-visible" index is
 |  calculated as index + limit.
 
 code* (do)   [r]  ( limit start)
    4 # rp sub  ( make room on R stack - all in one go)
-     loop 2 rp +) mov  ( save loop reg on R)
+     ix 2 rp +) mov  ( save ix reg on R)
    x pop  x rp  ) mov  ( save limit to R)
-   x top sub  top loop mov  ( index = start - limit)
+   x top sub  top ix mov  ( index = start - limit)
    top pop  next  ;c
 
-| Increment index. If it overflows to zero, restore loop register, pop
+| Increment index. If it overflows to zero, restore ix register, pop
 | stack frame, skip backwards jump, and continue. If non-zero, simply take
 | the backwards jump.
 
 code* (loop)  [r]
-   1 # loop add  branch 0= until
+   1 # ix add  branch 0= until
 label undo
-   2 # rp add  loop rpop  skip j  ;c
+   2 # rp add  ix rpop  skip j  ;c
 
 | Add incr to index. If the sign of index has changed, we've crossed the
 | threshold, so restore index, pop frame, and skip jump. Otherwise, take
 | the backwards jump.
 
 code* (+loop)  [r]  ( incr)
-   loop x mov  ( save index value)
-   top loop add   top pop   loop x xor  undo 0>= until
+   ix x mov  ( save index value)
+   top ix add   top pop   ix x xor  undo 0>= until
    branch j  ;c
 
 ( Push current loop index. User-visible index = index + limit)
 code i   [r]  ( - index)
-  loop w mov  rp ) w add  wpush jmp  ;c
+  ix w mov  rp ) w add  wpush jmp  ;c
 
 .else  ( keeping for/next and do/loop index on R stack, not in a register)
 
@@ -316,9 +309,7 @@ code -           x pop  top x sub  x top mov  next  ;c
 | Incrementers by small constants. Shared code means they take up very
 | little space!
 
-meta: incr   constant  ;code
-.ifdef microscope             w w' mov  ( make a copy)  .then
-                              w ) top add  next  ;c
+meta: incr   constant  ;code  w ) top add  next  ;c
  1 incr 1+  [r]
  2 incr 2+  [r]
 
@@ -334,104 +325,104 @@ meta: incr   constant  ;code
 
 { h @ } ram
 
-.ifdef in-ram
+here  ( save so we can restore later)
+dp0 #24 cells -  #64 - ( room for code below)  goto
 
-| We are testing the new chat code, and running it from RAM. So make room
-| for it!
-
-here "180 +  region!
-
-.then
-
-( For debugging and interactive execution.)
-| Host should have set PC -> continue-forth
-|                      SP -> top of R stack
-|                      CP -> top of D stack
+| Host should set PC -> continue-forth
+|                 RP -> top of R stack
+|                 DP -> top of D stack
 
 | The host can push things onto host stack; they get copied to target
 | stack, registers popped, words execute, re-push, copy back to host...
 | Much easier than stuffing things into register slots on stack frame!
 
-| The chat firmware pushes, at the very top of RAM, the chat entry point
-| address.
+label continue-forth
+   cp sp mov  ( D stack -> SP)
+.ifdef loop-on-stack
+   w pop  ( throw away)
+.else
+   ix pop
+.then
+   rp pop  ip pop  top pop  ( restore Forth VM context)
+   next  ;c
 
 code bug  [r]
-   top push  ( so all of D stack is in memory)
-   ip push  ( capture Forth VM context)
+   top push
+   sr push  ip push  rp push  ( capture Forth VM context)
 .ifdef loop-on-stack
    rp ) push
 .else
-   loop push
+   ix push
 .then
-.ifdef microscope
-   z push  y push  x push  w' push
-.then
-   sp cp mov  rp sp mov  ( D stack -> CP, R stack -> SP)
+   sp cp mov  ( D stack -> CP)
+   rp sp mov  ( R stack -> SP)
    ( jump through chat-entry at the start of flash)
-.ifdef bsl-ram-chat
-   @ram #ram 3 4 */ +  4 + ( skip commit)  & call  ( fall thru)  ;c
-.else
-   @boot 4 + ( skip commit)  & call  ( fall thru)  ;c
+.ifdef bsl-ram-chat   @ram #ram 3 4 */ +
+.else   @boot
 .then
+4 + ( skip commit)  & br  ;c
 
-implements continue-forth
-   sp rp mov  cp sp mov  ( R stack -> RP, D stack -> SP)
-   ip pop  ( restore Forth VM context)
-   top pop  ( host pushed depth+1 data items onto D stack)
-   next  ;c
-
-implements trampoline  ( x0 .. xn cfa - y0 .. ym)
+label trampoline  ( x0 .. xn cfa - y0 .. ym)
    ( make a fake colon word: no docolon, just a body)
    ]  execute  begin  bug  again  [
+
+label trampoline-end
+goto  ( back to saved)
 
 __host
 
 forth
 
+( Cached local values of target registers.)
+variable trp
+variable tip
+variable tix
+
+: 2sp  space space ;
+: .b9  binary  <#  4#  4#  #  #> type ;
+: .h16    hex  <#  4#  #> type ;
+: .r     .h16  2sp ;
+: .sr    .b9  2sp ;
+
 ( If IP != trampoline + 4, a word is still executing.)
-: executing?   .IP @  [ \m trampoline @ 4 + #]  - ;
+: executing?   tip @  [ \l trampoline 4 + #]  - ;
 
 : .ip
-   .IP @ .h16
+   tip @ .h16
    executing? if  ." * "  ^  then  ( done)  2sp ;
 
-: .loop
-   0dead  ( use 0dead unless we are executing)
-   executing? if  drop  .LOOP @  then  .h16__ ;
+: .dp
+   dp@  4 \m cells +  .r ;  ( skip SR IX RP IP)
+   | dp@ .r ;
 
-.ifdef microscope
-
-: .sp
-   \m sp@  6 \m cells  +  .h16__ ;  ( SP skips W, X, Y, Z, IP and Loop)
-
--: ( forth version of .regs)
+: .forth-regs  ( status)
    radix preserve
 
-   cr  ." V----INZC     W     X     Y     Z    IP  Loop    SP    RP    PC"
-       (  000100011  0000  0000  0000  0000  0000  0000  0000  0000  0000)
-   cr           .sr .W .r .X .r .Y .r .Z .r   .ip
-                                                  .loop   .sp
-                                                             .SP .r
-                                                                   .PC .r ;
-   is .regs
+   cr  ." V----INZC    IP    IX    DP    RP"
+       (  000100011  0000  0000  0000  0000)
+   cr           .sr   .ip  tix @ .r
+                                 .dp  trp @ .r ;
 
-.else
+| Host should set PC -> continue-forth
+|                 SP -> top of R stack
+|                 CP -> top of D stack
 
-: .sp
-   \m sp@  2 \m cells  +  .h16__ ;  ( SP skips IP and Loop)
+defer ?copy-trampoline
+-: \l continue-forth  dup image+ swap  \l trampoline-end over -  t.WriteChunk
+   ['] nope is ?copy-trampoline ;  is ?copy-trampoline
 
--: ( forth version of .regs)
-   radix preserve
+( NOTE: For initial execution of a Forth word, xn is cfa!)
+: continue  ( x0 .. xn ip rp ix - y0 .. yn status ip rp ix)
+   ?copy-trampoline
+   stack>  \l continue-forth runwait  stack<
+   tix !  trp !  tip !  .forth-regs ;
 
-   cr  ." V----INZC    IP  Loop    SP    RP    PC"
-       (  000100011  0000  0000  0000  0000  0000)
-   cr           .sr   .ip
-                          .loop   .sp
-                                     .SP .r
-                                           .PC .r ;
-   is .regs
+: cont    ( )     ( continue forth execution)
+   tip @  trp @  tix @  continue ;
+forth
 
-.then
+-: ( cfa)  ( execute target forth word)
+   \l trampoline  rp0  0  ( ip rp ix)  continue ;  is remote
 
 __meta
 

@@ -36,8 +36,8 @@ hex
 
 : c.VersionAddr      ( )      40 >b     ;
 : c.SetAddr          ( a)     41 >b  >w ;
-: c.GetStatus        ( - sp pc sr cp)
-                              42 >b  w> w> w> w> ;
+: c.GetStatus        ( - sp sr cp)
+                              42 >b  w>  w> drop ( pc)  w> w> ;
 : c.Run              ( pc sr cp)
                               43 >b  rot >w  swap >w  >w ;
 : c.ReadWords        ( n)     44 >b  >b ;  ( then read streamed bytes)
@@ -52,11 +52,6 @@ hex
 : resync  c.Idle  c.Idle  drain  flush ;
 
 : get-version  ( - n)   c.VersionAddr  2 c.ReadWords w> w> ( lo hi)  10 << + ;
-
-: c.Hello
-   #115200 bps  resync
-   cr ." Chat firmware version "  get-version
-   radix preserve  hex  sep preserve  -sep   <# 4# 4# #> type ;
 
 : c.setup-chunk  ( buf a u - #words)
    swap c.SetAddr  swap m !  1+ 2/ ( words) ;
@@ -102,9 +97,26 @@ hex
 
 .then
 
-: get-status  resync  c.GetStatus ;
+| chat4 rewrites SP with the memory pointer when we execute c.Run, so we
+| have to pass SP back and forth.
+variable chat-sp
 
-: set-sp-and-run   ( pc sr sp)  .SP @ c.SetAddr  c.Run ;
+| Likewise, we don't really care about the status register, but chat passes
+| it back and forth.
+variable chat-sr
+
+| Capture initial PC to determine if chat is running in ram or flash.
+variable chat-pc
+
+: get-status      ( - dp)  resync  c.GetStatus  -rot  chat-sr !  chat-sp ! ;
+: set-sp-and-run  ( pc dp)  chat-sp @ c.SetAddr  chat-sr @ swap  c.Run ;
+
+: c.Hello  ( - in-ram?)
+   #115200 bps  resync
+   cr ." Chat firmware version "  get-version
+   radix preserve  hex  sep preserve  -sep   <# 4# 4# #> type
+   get-status drop  ( set up chat-sp and chat-sr for later)
+   chat-sp @  4 +  c.SetAddr  1 c.ReadWords w>  ( initial pc)  @boot u< ;
 
 | NOTE: We don't define RunWait separately. Since we will always be reading
 | the registers back after Run, that first read command will block until
