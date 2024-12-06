@@ -16,12 +16,27 @@ ld target/ARM/stm32/flash-programming.mu4
 | what it's doing.
 
 : st.connect
-   cr  ver .ver
+   cr  get-ver .ver
    cr  tell-mode
    dup  0=  if  drop  ." => "  dfu>  tell-mode  then
    dup  1 = if  drop  ." => "  >swd  tell-mode  then
         2 = if  ^  then  ( debug mode)
    error" Couldn't put ST-LINK into debug mode." ;
+
+| DCRSR  Debug Core Register Selector Register
+| DCRDR  Debug Core Register Data Register
+
+: core.reg@   DCRSR dap!  DCRDR dap@ ;
+: core.reg!   swap DCRDR dap!  [ 1 16 << #] ( write reg) +  DCRSR dap! ;
+
+| Add debug key to command bits and store into DHCSR.
+: dhcsr!   ( value)  "a05f_0000 +  DHCSR dap! ;
+
+: core.run    [ C_DEBUGEN C_MASKINTS +          #]  dhcsr! ;
+: core.halt   [ C_DEBUGEN C_MASKINTS + C_HALT + #]  dhcsr! ;
+: core.step   [ C_DEBUGEN C_MASKINTS + C_STEP + #]  dhcsr! ;
+
+: halted?  ( - f)   DHCSR dap@  S_HALT and ;
 
 | Instead of sitting in an endless loop waiting (and sometimes causing
 | ST-LINK to hang and require that the board be power cycled, which is
@@ -36,25 +51,21 @@ ld target/ARM/stm32/flash-programming.mu4
 | st.status retries 1000 times, pausing 1ms between tries, waiting for the
 | target to execute a bkpt instruction and halt.
 |
-| XXX Read the standard ARM debug registers to determine the core state
-| instead of using a "special" ST-LINK command?
-
 | We pass DP (data stack pointer) in register 13: the MP (machine stack
 | pointer).
 
 : st.status  ( - #retries dp)
    0  | #retries
-   begin  dbg.core-state 1 and 0= while  1 ms  1+ dup 1000 = until
-   ( timed out)  dbg.halt ( force halt)  then
-   ( success)  13 dbg.reg@ ;
+   begin  halted? 0= while  1 ms  1+ dup 1000 = until
+   ( timed out)  core.halt ( force halt)  then
+   ( success)  13 core.reg@ ;
 
-: st.run  ( pc dp)
-   13 dbg.reg!  15 dbg.reg!  dbg.run ;
+: st.run  ( pc dp)  13 core.reg!  15 core.reg!  core.run ;
 
 .ifdef no-flash-programming
 
 : st.hello  ( - bogus-chunk-size)
-   st.connect  dbg.halt
+   st.connect  core.halt
    ( We don't have flash routines yet; return bogus chunk size)
    1 Ki ;
 
@@ -68,7 +79,7 @@ ld target/ARM/stm32/flash-programming.mu4
 
 ( Copy the flash programming routines to RAM when we connect.)
 : st.hello  ( - chunk-size)
-   st.connect  dbg.halt
+   st.connect  core.halt
    [ h @  ram  @flash-routines image+  swap h ! #]  ( address in ram image)
    @flash-routines #flash-routines st.write  ( copy code to ram)
    #flashbuf ;  ( return size of RAM flash buffer as chunk-size)

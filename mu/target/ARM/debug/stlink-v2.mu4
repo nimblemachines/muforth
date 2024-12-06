@@ -55,76 +55,23 @@ hex
 
 .then  ( def usb-read-pipe)
 
-
-| A simple buffer for chatty communication protocols. Words for putting
-| values into a buffer and taking them out again.
-
-variable cp  ( chat pointer)
-10 buffer chatbuf
-: !chat  chatbuf  cp ! ;
-: #chat  cp @  chatbuf - ;
-: +cp    1 cp +! ;
-
-| XXX Note: this is different from how I named these in
-| target/S08/bdm-usb-host.m4. Change those as well?
-
-: >b  ( byte)    cp @  c!  +cp ;
-: b>  ( - byte)  cp @  c@  +cp ;
-
-( Little-endian 16-bit values. In the ARM world these are "halfwords".)
-: >h  ( hword)    >hilo  >b >b ;
-: h>  ( - hword)          b> b>  lohi> ;
-
-( Little-endian 32-bit values. In the ARM world these are "words".)
-: >w  ( word)    >3210  >b >b >b >b ;
-: w>  ( - word)          b> b> b> b>  0123> ;
-
-( 16-bit halfword and 32-bit word fetch and store. Little endian.)
-: h@  ( addr - h)  leh@ ;
-: h!  ( h addr)    leh! ;
-: w@  ( addr - w)  lew@ ;
-: w!  ( w addr)    lew! ;
-
-: Send1    !chat  >b ;
-: Send2    Send1  >b ;
-: Send3    Send2  >b ;
-
-: ?expected  ( #expected #read)
-   2dup  -  if  swap  ." expected "  u.  ." got "  u.  ^  then  2drop ;
-
-: _expect-check  ( #expect)
-   chatbuf over ( expect)  uread  !chat  ?expected ;
-
-: _expect  ( #expect - #read)
-   chatbuf swap  uread  !chat ;
-
-: expect  _expect-check ;
-
-: Expect1   1 expect  b> ;
-: Expect2   2 expect  b> b> ;
-
-| Commonly expected values. * means to expect it, then fetch it from
-| returned buffer.
-
-: b*       2 expect  b> ;  ( only interested in low byte)
-: h*       2 expect  h> ;
-: w*       4 expect  w> ;
-
 ( Debug)
 variable stlink-spy
 : .cmd   stlink-spy @ if
    radix preserve  hex
-   cr  chatbuf  8 for  c@+ swap u.  next  drop  then ;
+   cr  pad  8 for  c@+ swap u.  next  drop  then ;
 
 | For sending commands, we want to zero out the buffer - 16 bytes' worth -
 | and then always send 16 bytes.
 
-: <cmd   chatbuf 10 erase  !chat ;
-: cmd>   .cmd  chatbuf 10 uwrite ;
+: <cmd  ( - pad)  pad #16 erase  pad ;
+: cmd>      .cmd  pad #16 uwrite ;
 
-: cmd1  ( b0)        <cmd  >b        cmd> ;
-: cmd2  ( b1 b0)     <cmd  >b >b     cmd> ;
-: cmd3  ( b2 b1 b0)  <cmd  >b >b >b  cmd> ;
+: ?expected  ( #expected #got)
+   2dup  -  if  swap  ." expected "  u.  ." got "  u.  ^  then  2drop ;
+
+: expect  ( #expected - pad)
+   pad over uread  ( #expected #got)  ?expected  pad ;
 
 : .jtag-version  ( bits)
    radix preserve  decimal  6 u>>  3f and  ."  JTAG v" u. ;
@@ -136,88 +83,57 @@ variable stlink-spy
        374b =  if        ." ST-LINK/V2-1"  .jtag-version  ^  then
    then  drop  ." Weird. Is this an ST-LINK/V2?" ;
 
-: ver             0f1 cmd1  6 expect  b> b>  hilo>  ( big-endian!)   h> h> ;
-: <dbg      <cmd  0f2 >b  >b ;  ( finish command with cmd>)
-: dfu>         07 0f3 cmd2 ;  ( exit dfu mode)
-: get-mode        0f5 cmd1  2 expect  b> ;
+: cmd1  (       b0)  <cmd          c!  cmd> ;
+: cmd2  (    b1 b0)  <cmd      c!+ c!  cmd> ;
+: cmd3  ( b2 b1 b0)  <cmd  c!+ c!+ c!  cmd> ;
 
-( For simple two-byte debug commands.)
-: dbg  ( subcmd)  <dbg  cmd> ;
+: get-ver  ( - ver vid pid)
+               0f1 cmd1  6 expect  beh@+  ( big-endian!)  leh@+ leh@ ;
+: get-mode     0f5 cmd1  2 expect  c@ ;
 
-( Weird exception: only debug command that requires _three_ command bytes.)
-: >swd    0a3 20 0f2 cmd3 ;
-: swd>        21     dbg ;
+| Exit DFU mode and enter mass storage mode.
+: dfu>      07 0f3 cmd2 ;
 
-: check   b*  80 - if  error" fault returned. Executing 'jtag' again might help."  then ;
-: dbg.core-state
-           01 dbg  b* ;
-: dbg.halt     02 dbg  check ;
-: dbg.reg@     ( reg# - value)  05 <dbg  >b ( reg#)      cmd>  w* ;
-: dbg.reg!     ( value reg#)    06 <dbg  >b ( reg#)  >w  cmd>  check ;
-: dbg.run      09 dbg  check ;
-: dbg.step     0a dbg  check ;
-: dbg.idcode   22 dbg  w* ;  ( returns IDCODE of SW-DP)
+| Some commands return a status byte.
+: ?status  ( a)
+   c@  80 - if  error" fault returned. Executing 'jtag' again might help."  then ;
 
-( Read and check count against expected.)
-: uread-check  ( buf len)  tuck  uread  ?expected ;
+| All debug commands are prefixed with 0f2.
+| NOTE: If we use the v1 API we cannot use dap@ and dap!
 
-( Memory accesses.)
-: mem  ( a u subcmd - u)   <dbg  swap >w  dup >h  cmd> ;
+| >swd    0a3 20 0f2 cmd3 ;                     | debug, API V1 enter, swd enter
+: >swd    0a3 30 0f2 cmd3  2 expect  ?status ;  | debug, API V2 enter, swd enter
 
-| XXX do we even need this? I'm interested in putting instructions into
-| memory, pushing values onto the stack, and read and writing registers. Do
-| I care about byte-granular memory accesses?
+| Exit SWD debug mode and enter mass storage mode.
+: swd>        21 0f2 cmd2 ;
 
-| XXX Write a memory test to see how these actually work, and what happens
-| with unaligned accesses, etc.
+| For debug commands requiring more than two bytes.
+: <dbg  ( subcmd - a)  0f2 <cmd  c!+ c!+ ;
 
-: write8   ( buf a u)   0d mem  uwrite ;
+| Read or write a single word.
+: dap!  ( w a)     35 <dbg  lew!+ lew!  cmd>  2 expect      ?status ;
+: dap@  ( a - w)   36 <dbg        lew!  cmd>  8 expect  dup ?status  4 +  lew@ ;
+
+| For reading and writing multiple words.
+: mem  ( a u subcmd - u)
+   push tuck swap pop  ( u u a subcmd)  <dbg  lew!+ ( a)  leh! ( u)  cmd> ;
 
 ( XXX aligned to 32-bit address boundaries, and byte counts?)
-: read32   ( buf a u)   07 mem  uread-check ;
+: read32   ( buf a u)   07 mem  tuck  uread  ?expected ;
 : write32  ( buf a u)   08 mem  uwrite ;
 
-variable 'target
-variable 'host
-defer doit  ( buf target len)
-: .doit   cr ." chunk "  rot u.  swap u. u. ;
-
-( XXX should we call doit with anything other than len?)
-: chunk  ( len)
-   cr  ." chunk "  'host @ u.  'target @ u.  dup u.
-   push  'host @  'target @  r@  doit  r@ 'host +!  pop 'target +! ;
-
-( XXX order of params?)
-: chunked  ( target len buffer 'code)  is doit  'host !  swap 'target !
-   40 /mod  ( r q)  swap push  for  40  chunk  next
-                      pop  =if  ( rem)  chunk  ^  then  drop ;
-
-( XXX write code to read/write by chunks)
-: readregs  ( buf)
-   04 dbg  ( read all regs)
-   dup 40 uread-check   40 +  14 uread-check ;
-
-
-( Read and write "debug" registers. What is this?)
-.ifdef stlink-debug-regs
-
-( XXX these don't work yet! ReadPipe errors out.)
-: writedebug  ( w a)    35 <dbg  >w >w  cmd>  check ;
-: readdebug   ( a - w)  36 <dbg  >w     cmd>  8 expect  h>  check ;
-
-.then
-
-: read4  ( a - w)  pad swap 4 read32  pad w@ ;
-
-: cpuid  ( - cpuid)  0e000_ed00 read4 ;
+: cpuid  ( - cpuid)  0e000_ed00 dap@ ;
 
 | Read the DBGMCU_IDCODE register. It's not always in the same place! If
-| one is not defined, the value returned will be 0. In that case read the
-| second location.
+| one is not defined, the value returned will be 0. In that case try
+| another location!
 
 : mcuid  ( - mcuid)
-   4001_5800 read4  ( F0 address)  ?if ^ then
-   e004_2000 read4  ( F3/F4 address) ;
+   4001_5800 dap@  ( C0/F0/G0 address)  ?if ^ then
+   e004_2000 dap@  ( F1/F3/F4/G4 address)  ?if ^ then
+
+   | H5 Refman rm0481 says debugger should use e00e_4000; cpu should use 4402_4000.
+   e00e_4000 dap@  ( H5 address) ;
 
 ( Say hello.)
 : .mode  ( mode#)
@@ -229,18 +145,11 @@ defer doit  ( buf target len)
 : tell-mode  ( - mode)
    get-mode  dup  .mode  ."  mode " ;
 
-: .core-state
-   dbg.core-state  80 = if  ." running" ^  then  ." halted" ;
+| Make sure we read or write an aligned byte count. But we assume that buf
+| is 4-byte-aligned!
+| : aligned32  4 aligned-by ;    | requires memory code, which may not have been loaded yet.
+: aligned32  3 +  -4 and ;
 
-( Quick flash memory test.)
-: read-2k
-   z" muforth-f0.img"  create-file  ( fd)
-   0800_0000 800  pad  ['] read32  chunked
-   dup  pad 800 write  close-file ;
-
-: aligned32  3 + -4 and ;
-
-( Make sure we read or write an aligned byte count.)
 : st.read   ( buf a u)  aligned32  read32 ;  ( Easy peasy!)
 : st.write  ( buf a u)  aligned32 write32 ;
 
