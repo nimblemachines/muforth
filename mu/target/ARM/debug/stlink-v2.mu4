@@ -73,16 +73,6 @@ variable stlink-spy
 : expect  ( #expected - pad)
    pad over uread  ( #expected #got)  ?expected  pad ;
 
-: .jtag-version  ( bits)
-   radix preserve  decimal  6 u>>  3f and  ."  JTAG v" u. ;
-
-( Check vid and pid but don't print them out.)
-: .ver  ( bits vid pid - jtag-version)
-   swap  0483 = ( ST Micro)  if
-   dup 3748 =  if  drop  ." ST-LINK/V2"    .jtag-version  ^  then
-       374b =  if        ." ST-LINK/V2-1"  .jtag-version  ^  then
-   then  drop  ." Weird. Is this an ST-LINK/V2?" ;
-
 : cmd1  (       b0)  <cmd          c!  cmd> ;
 : cmd2  (    b1 b0)  <cmd      c!+ c!  cmd> ;
 : cmd3  ( b2 b1 b0)  <cmd  c!+ c!+ c!  cmd> ;
@@ -110,6 +100,9 @@ variable stlink-spy
 | For debug commands requiring more than two bytes.
 : <dbg  ( subcmd - a)  0f2 <cmd  c!+ c!+ ;
 
+| XXX Naming these after the core's DAP - debug access port. But should
+| they simply be called mem@ and mem! ?
+
 | Read or write a single word.
 : dap!  ( w a)     35 <dbg  lew!+ lew!  cmd>  2 expect      ?status ;
 : dap@  ( a - w)   36 <dbg        lew!  cmd>  8 expect  dup ?status  4 +  lew@ ;
@@ -132,18 +125,8 @@ variable stlink-spy
    4001_5800 dap@  ( C0/F0/G0 address)  ?if ^ then
    e004_2000 dap@  ( F1/F3/F4/G4 address)  ?if ^ then
 
-   | H5 Refman rm0481 says debugger should use e00e_4000; cpu should use 4402_4000.
+   | H5 Refman (rm0481) says debugger should use e00e_4000; cpu should use 4402_4000.
    e00e_4000 dap@  ( H5 address) ;
-
-( Say hello.)
-: .mode  ( mode#)
-   dup 0=  if  drop  ." DFU"  ^  then
-   dup 1 = if  drop  ." Mass"  ^  then
-   dup 2 = if  drop  ." Debug"  ^  then
-               drop  ." Unknown" ;
-
-: tell-mode  ( - mode)
-   get-mode  dup  .mode  ."  mode " ;
 
 | Make sure we read or write an aligned byte count. But we assume that buf
 | is 4-byte-aligned!
@@ -153,19 +136,13 @@ variable stlink-spy
 : st.read   ( buf a u)  aligned32  read32 ;  ( Easy peasy!)
 : st.write  ( buf a u)  aligned32 write32 ;
 
-| Connect quietly. Useful when STM32 is used in the background, eg for
-| programming AVR, 8051, PIC, etc.
+| Let's connect and put the ST-LINK into Debug mode. This way subsequent
+| code doesn't have to worry about it.
 
-: st.connect-quietly
-   get-mode
-   dup  0=  if  drop  dfu>  get-mode  then
-   dup  1 = if  drop  >swd  get-mode  then
-        2 = if  ^  then  ( debug mode)
-   error" Couldn't put ST-LINK into debug mode." ;
-
-| Let's connect and put it into Debug mode. This way subsequent code
-| doesn't have to worry about it.
-
-st.connect-quietly
+." ("  get-mode
+dup  0=  .if  drop  ." DFU => "           dfu>  get-mode  .then
+dup  1 = .if  drop  ." Mass storage => "  >swd  get-mode  .then
+     2 = .if        ." SWD debug) "  .else
+error" Couldn't put ST-LINK into debug mode."  .then
 
 .then  ( def stlink)

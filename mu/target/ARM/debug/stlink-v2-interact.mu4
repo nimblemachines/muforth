@@ -12,17 +12,6 @@ ld target/ARM/stm32/flash-programming.mu4
 ( Skip the rest of the file if no ST-LINK was found.)
 .ifdef stlink
 
-| Connect to device, but don't halt it. This is a verbose connect that says
-| what it's doing.
-
-: st.connect
-   cr  get-ver .ver
-   cr  tell-mode
-   dup  0=  if  drop  ." => "  dfu>  tell-mode  then
-   dup  1 = if  drop  ." => "  >swd  tell-mode  then
-        2 = if  ^  then  ( debug mode)
-   error" Couldn't put ST-LINK into debug mode." ;
-
 | DCRSR  Debug Core Register Selector Register
 | DCRDR  Debug Core Register Data Register
 
@@ -32,9 +21,9 @@ ld target/ARM/stm32/flash-programming.mu4
 | Add debug key to command bits and store into DHCSR.
 : dhcsr!   ( value)  "a05f_0000 +  DHCSR dap! ;
 
-: core.run    [ C_DEBUGEN C_MASKINTS +          #]  dhcsr! ;
-: core.halt   [ C_DEBUGEN C_MASKINTS + C_HALT + #]  dhcsr! ;
-: core.step   [ C_DEBUGEN C_MASKINTS + C_STEP + #]  dhcsr! ;
+: core.run    [ C_DEBUGEN          #]  dhcsr! ;
+: core.halt   [ C_DEBUGEN C_HALT + #]  dhcsr! ;
+: core.step   [ C_DEBUGEN C_STEP + #]  dhcsr! ;
 
 : halted?  ( - f)   DHCSR dap@  S_HALT and ;
 
@@ -62,10 +51,20 @@ ld target/ARM/stm32/flash-programming.mu4
 
 : st.run  ( pc dp)  13 core.reg!  15 core.reg!  core.run ;
 
+: .jtag-version  ( bits)
+   radix preserve  decimal  6 u>>  "3f and  ."  JTAG v" u. ;
+
+( Check vid and pid but don't print them out.)
+: .ver
+   cr  get-ver  ( bits vid pid)  swap  "0483 = ( ST Micro)  if
+   dup "3748 =  if  drop  ." ST-LINK/V2"    .jtag-version  ^  then
+       "374b =  if        ." ST-LINK/V2-1"  .jtag-version  ^  then
+   then  drop  ." Weird. Is this an ST-LINK/V2?" ;
+
 .ifdef no-flash-programming
 
 : st.hello  ( - bogus-chunk-size)
-   st.connect  core.halt
+   .ver  core.halt
    ( We don't have flash routines yet; return bogus chunk size)
    1 Ki ;
 
@@ -79,7 +78,7 @@ ld target/ARM/stm32/flash-programming.mu4
 
 ( Copy the flash programming routines to RAM when we connect.)
 : st.hello  ( - chunk-size)
-   st.connect  core.halt
+   .ver  core.halt
    [ h @  ram  @flash-routines image+  swap h ! #]  ( address in ram image)
    @flash-routines #flash-routines st.write  ( copy code to ram)
    #flashbuf ;  ( return size of RAM flash buffer as chunk-size)
@@ -101,7 +100,7 @@ ld target/ARM/stm32/flash-programming.mu4
 : st.program  ( buf a u)
    push ( u)
    | Copy chunk to target ram, aligning length of copied data by 8 for
-   | STM32C parts (which programs the flash in 8 byte chunks).
+   | STM32C parts (which program the flash in 8 byte chunks).
    swap @flashbuf r@  ( a buf flashbuf u)  8 aligned-by  st.write
    | Program chunk into flash.
    @flashbuf swap pop  ( flashbuf a u)  \m stm32-flash-program rx ;
@@ -112,5 +111,12 @@ ld target/ARM/stm32/flash-programming.mu4
 : jtag
    chat-via  st.hello  st.status  st.run  st.read  st.write
    st.flash-begin  st.flash-end  st.erase  st.program ;
+
+| jtag is a funny name - especially since we are using SWD (serial wire
+| debug) and *not* JTAG on these ARM targets. I'm going to leave jtag as-is
+| but also create two synonyms that folks might prefer using:
+
+: st  ( short for "ST-LINK" and/or STM32)  jtag ;
+: swd  ( single wire debug)  jtag ;
 
 .then  ( def stlink)
