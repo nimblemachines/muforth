@@ -1,6 +1,6 @@
 -- This file is part of muforth: https://muforth.dev/
 
--- Copyright (c) 2002-2024 David Frech. (Read the LICENSE for details.)
+-- Copyright (c) 2002-2025 David Frech. (Read the LICENSE for details.)
 
 -- Common equates for Atmel atmega parts.
 
