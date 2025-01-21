@@ -1,0 +1,119 @@
+| This file is part of muforth: https://muforth.dev/
+|
+| Copyright 2002-2025 David Frech. (Read the LICENSE for details.)
+
+loading STM32H503xB chip
+
+( So downstream code knows what kind of chip we are.)
+-d stm32h503
+
+| The memory map on the H5 family is pretty complicated. There are two
+| reasons for this:
+|
+| (1) Since this device supports ARM TrustZone, there are both secure and
+| non-secure addresses for the memory and (many) peripherals;
+|
+| (2) There are two buses - Code and System - connected to the core, and
+| the RAM can be accessed via both.
+|
+| Because of this, there are *four* origins for the RAM:
+|
+| 0a00_0000  code bus, non-secure
+| 0e00_0000  code bus, secure
+| 2000_0000  system bus, ARM ram region, non-secure
+| 3000_0000  system bus, ARM ram region, secure
+|
+| To make things even *more* exciting, there are *two* (happily,
+| contiguous) SRAMs:
+|
+|        offset    size    ECC?
+| SRAM1  0_0000   16 KiB   yes
+| SRAM2  0_4000   16 KiB   yes
+|
+| The flash memory is similarly complicated. In addition to also having
+| secure and non-secure origin addresses, there are several flash regions:
+| user, system, OTP, OB_KEY.
+|
+| The user flash is divided into two 64 KiB banks; each bank consists of
+| 8 sectors of 8 KiB.
+|
+|                    Non-secure              Secure
+| User bank 1: 0800_0000 - 0800_ffff  0c00_0000 - 0c00_ffff
+| User bank 2: 0801_0000 - 0801_ffff  0c01_0000 - 0c01_ffff
+|
+| The system flash consists of two 32 KiB banks, each consisting of 4 8 KiB
+| sectors.
+|
+|                     Non-secure              Secure
+| System bank 1: 0bf8_0000 - 0bf8_7fff  0ff8_0000 - 0ff8_7fff
+| System bank 2: 0bf8_8000 - 0bf8_ffff  0ff8_8000 - 0ff8_ffff
+|
+| Rule of thumb for converting a non-secure address (these tend to be the
+| ones that you are already familiar with) to a secure address:
+|
+| * in the Code region, add 0400_0000
+| * in the System region (ie, RAM and peripherals), add 1000_0000
+|
+| To limit the complexity that we have to tame upfront, I'm going to ignore
+| the secure addresses and assume that we can start out running the chip in
+| non-secure mode. If, at some future date, it makes sense to explore the
+| (rather complicated) security features, I'll add the other addresses
+| then.
+
+"0800_0000 constant @flash
+    128 Ki constant #flash
+
+"2000_0000 constant @ram         | the RAM, addressed via the system bus
+"0a00_0000 constant @code-ram    | the RAM, addressed via the code bus
+
+| Sizes of the constituent RAMs:
+16 Ki constant #ram1
+16 Ki constant #ram2
+
+| To get from the RAM/SRAM1 origin (on the code or system bus) to the beginning
+| of SRAM2:
+
+: >ram2  #ram1 + ;
+
+#ram2 >ram2 constant #ram        | size of all the RAM, in aggregate
+
+      16 Ki constant #bl-ram  ( ram consumed by bootloader)
+
+| Programming the H503 flash is like programming the F407, except that the
+| H503 has a uniform sector size of 8 KiB, *and* it has two banks - each of
+| 64 KiB. Sectors 8 to 15 are in the second bank. We shift the bank
+| number by 25 bits so that it works correctly with the flash programming
+| routines. ;-)
+
+| Given a target flash address, return a sector number (and shifted bank
+| bit) and true if address is on a sector boundary, and return false
+| otherwise.
+
+( XXX should this be called map-flash-sector ?)
+: lookup-flash-sector  ( 'target - sector+bank -1 | 0)
+   @flash -  8 Ki /mod ( mod quot)
+   swap 0= if  8 /mod ( sector bank)  25 << +  -1 ^  then  drop 0  ;
+
+| We need to define #flashbuf for the chip. Should be at least 256 but no
+| more than the smallest sector. Since we have lots of RAM on the chip,
+| let's make it pretty big.
+
+1 Ki constant #flashbuf
+
+.ifdef testing
+
+: test-sector  ( 'target)
+   dup lookup-flash-sector  if  swap  cr  u. ." sector " u. ^ then  drop ;
+
+| Test every 256 byte chunk of the flash to see where the sector boundaries
+| are. Make sure we get the correct values!
+
+: test-sectors
+   @flash #flash over + swap do  i test-sector  256 +loop ;
+
+.then
+
+| load peripheral equates etc
+ld target/ARM/stm32/h5/03_x-equates.mu4
+
+ld! target/ARM/processor/cortex-m33.mu4
