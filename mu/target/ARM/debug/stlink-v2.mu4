@@ -8,9 +8,11 @@ hex
 
 0483 3748 usb-find-device  .if   ." ST-LINK/V2 "    constant stlink  .else
 0483 374b usb-find-device  .if   ." ST-LINK/V2-1 "  constant stlink  -d stlink-v2-1  .else
+0483 3752 usb-find-device  .if   ." ST-LINK/V2-1 "  constant stlink  -d stlink-v2-1  .else
+0483 3754 usb-find-device  .if   ." ST-LINK/V3 "    constant stlink  -d stlink-v2-1  .else
 
    warn" No ST-LINK devices found. "
-.then .then
+.then .then .then .then
 
 
 .ifdef stlink
@@ -78,8 +80,11 @@ variable stlink-spy
 : cmd3  ( b2 b1 b0)  <cmd  c!+ c!+ c!  cmd> ;
 
 : get-ver  ( - ver vid pid)
-               0f1 cmd1  6 expect  beh@+  ( big-endian!)  leh@+ leh@ ;
-: get-mode     0f5 cmd1  2 expect  c@ ;
+               0f1 cmd1    6 expect  beh@+  ( big-endian!)  leh@+ leh@ ;
+: get-mode     0f5 cmd1    2 expect  c@ ;
+
+: get-ver-v3  ( - jtag-ver)
+               0fb cmd1  #12 expect  2 + c@ ;
 
 | Exit DFU mode and enter mass storage mode.
 : dfu>      07 0f3 cmd2 ;
@@ -100,16 +105,31 @@ variable stlink-spy
 | For debug commands requiring more than two bytes.
 : <dbg  ( subcmd - a)  0f2 <cmd  c!+ c!+ ;
 
+variable mem-ap   | access port to use
+
+| Include an access port id into the command.
+: >ap  ( a)  mem-ap @  swap c! ;
+
 | XXX Naming these after the core's DAP - debug access port. But should
 | they simply be called mem@ and mem! ?
 
 | Read or write a single word.
-: dap!  ( w a)     35 <dbg  lew!+ lew!  cmd>  2 expect      ?status ;
-: dap@  ( a - w)   36 <dbg        lew!  cmd>  8 expect  dup ?status  4 +  lew@ ;
+: dap!        ( w a)           35 <dbg  lew!+ lew!+  >ap  cmd>  2 expect  ?status ;
+: dap@-probe  ( a - 'status)   36 <dbg        lew!+  >ap  cmd>  8 expect ;
+
+: dap@        ( a - w)   dap@-probe  dup 4 + lew@  swap ?status ;
+
+: ap-open                      4b <dbg               >ap  cmd>  2 expect  ?status ;
+
+| NOTE: On H5, reading the CPUID word fails unless we use AP 1. Let's read
+| it to figure out which AP to use for all subsequent memory accesses.
+: choose-ap
+   0e000_ed00 dap@-probe c@  80 = if ^ then  ( ok)
+   1 mem-ap !  ap-open ;
 
 | For reading and writing multiple words.
 : mem  ( a u subcmd - u)
-   push tuck swap pop  ( u u a subcmd)  <dbg  lew!+ ( a)  leh! ( u)  cmd> ;
+   push  tuck swap  pop  ( u u a subcmd)  <dbg  lew!+ ( a)  leh!+ ( u)  >ap  cmd> ;
 
 ( XXX aligned to 32-bit address boundaries, and byte counts?)
 : read32   ( buf a u)   07 mem  tuck  uread  ?expected ;
@@ -126,7 +146,9 @@ variable stlink-spy
    e004_2000 dap@  ( F1/F3/F4/G4 address)  ?if ^ then
 
    | H5 Refman (rm0481) says debugger should use e00e_4000; cpu should use 4402_4000.
-   e00e_4000 dap@  ( H5 address) ;
+   | Both addresses *work* when using AP0; both return a fault (but also
+   | the right answer!!) when using AP1.
+   e00e_4000 dap@ ( H5 address) ;
 
 | Make sure we read or write an aligned byte count. But we assume that buf
 | is 4-byte-aligned!
@@ -138,11 +160,18 @@ variable stlink-spy
 
 | Let's connect and put the ST-LINK into Debug mode. This way subsequent
 | code doesn't have to worry about it.
+|
+| If we succeeded in putting the ST-LINK into Debug mode, we also read the
+| mcuid, create a constant, then choose an AP to use for the rest of the
+| session. We have to read the mcuid *before* choosing an AP, sadly!
 
 ." ("  get-mode
 dup  0=  .if  drop  ." DFU => "           dfu>  get-mode  .then
 dup  1 = .if  drop  ." Mass storage => "  >swd  get-mode  .then
-     2 = .if        ." SWD debug) "  .else
+     2 = .if        ." SWD debug) "
+
+mcuid  "fff and  constant connected-mcuid  choose-ap  .else
+
 error" Couldn't put ST-LINK into debug mode."  .then
 
 .then  ( def stlink)

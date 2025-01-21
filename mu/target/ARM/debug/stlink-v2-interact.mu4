@@ -6,8 +6,10 @@ loading ST-LINK debug (interact)
 
 decimal
 
-( Load the flash programming routines into ram.)
-ld target/ARM/stm32/flash-programming.mu4
+.ifndef no-flash-programming
+   ( Load the flash programming routines into ram.)
+   ld target/ARM/stm32/flash-programming.mu4
+.then
 
 ( Skip the rest of the file if no ST-LINK was found.)
 .ifdef stlink
@@ -51,15 +53,21 @@ ld target/ARM/stm32/flash-programming.mu4
 
 : st.run  ( pc dp)  13 core.reg!  15 core.reg!  core.run ;
 
+: >jtag-ver  ( bits)
+   dup "3000 = if  ( ST-LINK/V3, jtag=0, swim=0)  drop  get-ver-v3 ^  then
+   6 u>>  "3f and  ( jtag version) ;
+
 : .jtag-version  ( bits)
-   radix preserve  decimal  6 u>>  "3f and  ."  JTAG v" u. ;
+   >jtag-ver  radix preserve  decimal  ."  JTAG v" u. ;
 
 ( Check vid and pid but don't print them out.)
 : .ver
    cr  get-ver  ( bits vid pid)  swap  "0483 = ( ST Micro)  if
    dup "3748 =  if  drop  ." ST-LINK/V2"    .jtag-version  ^  then
-       "374b =  if        ." ST-LINK/V2-1"  .jtag-version  ^  then
-   then  drop  ." Weird. Is this an ST-LINK/V2?" ;
+   dup "374b =  if  drop  ." ST-LINK/V2-1"  .jtag-version  ^  then
+   dup "3752 =  if  drop  ." ST-LINK/V2-1"  .jtag-version  ^  then
+   dup "3754 =  if  drop  ." ST-LINK/V3"    .jtag-version  ^  then
+   drop  then  drop  ." Weird. Is this an ST-LINK/V2 or V3?" ;
 
 .ifdef no-flash-programming
 
@@ -99,9 +107,9 @@ ld target/ARM/stm32/flash-programming.mu4
 ( Copy buf contents to ram buffer, then write to flash from there.)
 : st.program  ( buf a u)
    push ( u)
-   | Copy chunk to target ram, aligning length of copied data by 8 for
-   | STM32C parts (which program the flash in 8 byte chunks).
-   swap @flashbuf r@  ( a buf flashbuf u)  8 aligned-by  st.write
+   | Copy chunk to target ram, aligning length of copied data by 16 for
+   | STM32H5 parts (which program the flash in 16 byte - 128 bit - chunks).
+   swap @flashbuf r@  ( a buf flashbuf u)  16 aligned-by  st.write
    | Program chunk into flash.
    @flashbuf swap pop  ( flashbuf a u)  \m stm32-flash-program rx ;
 
