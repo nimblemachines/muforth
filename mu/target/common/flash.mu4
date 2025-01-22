@@ -110,7 +110,7 @@ defer verify-regions  ( - diff)
    cr ."    program "  over u.  dup u.
    over image+ -rot  ( buf 'target len)  t.program ;
 
-.ifdef /page  ( for devices with uniform page size)
+.ifdef /page  ( devices that erase based on a page *address*)
 
 : erase-page  ( 'target)
    cr ."    erase   "  dup u.
@@ -122,44 +122,74 @@ defer verify-regions  ( - diff)
 : flash-chunk  ( 'target len - 'target+len)
    2dup + push  over erase? if  over erase-page  then  program-chunk  pop ;
 
-.else  ( non-uniform flash; uses sectors rather than pages)
+.else  ( devices that erase based on a page *index*)
 
-: erase-sector  ( sector#)
-   cr ."    erase sector "  dup u.
+: erase-page  ( page#)
+   cr ."    erase page "  dup u.
    t.erase ;
 
-| Given a flash address, return true if on a sector boundary; also return
-| sector# to erase; else return false.
+| Given a flash address, return true if on a page boundary; also return
+| page# to erase; else return false. Some chip familiies have non-uniform
+| pages; this lookup is family-specific.
 
-: erase?  ( 'target - sector# -1 | 0)
-   lookup-flash-sector ;
+: erase?  ( 'target - page# -1 | 0)
+   lookup-flash-page ;
 
-( Before we program the _first_ byte of a sector we erase the sector.)
+( Before we program the _first_ byte of a page we erase the page.)
 : flash-chunk  ( 'target len - 'target+len)
-   2dup + push  over erase? if  erase-sector  then  program-chunk  pop ;
+   2dup + push  over erase? if  erase-page  then  program-chunk  pop ;
 
 .then
 
 | We do the flash programming in chunks; the variable /chunk - which is set
 | by the interact code based on a value received from the debug interface
 | - tells us how big each chunk should be, but we have to be careful before
-| using it for flashing: if the chunk is bigger than the erase size, we
-| will miss some sector/page boundaries, and we won't properly erase the
-| chip.
+| using it for flashing: if the chunk is bigger than the smallest erase
+| size, or does not divide the erase size evenly, we will miss some page
+| boundaries, and we won't properly erase the chip.
 |
-| What is the erase size? For devices with uniform page sizes, the erase
-| size is the page size. For devices with sectors, the erase size is the
-| size of the *smallest* sector.
+| Most chips supported by muforth have a uniform page size and erase pages
+| based on the address of the first byte of the page. These chips define
+| /page to be the bytes per flash page, and this is the "smallest" erase
+| size, because it's the *only* erase size!
+|
+| A number of STM32 chips use a page *index* rather than an *address* to
+| specify which page to erase. To my knowledge, the first STM32 family to
+| do this was the F4; in addition to using an index, the pages were
+| different sizes! (Because they were much bigger than the usual STM32 page
+| size (often 1 or 2 KiB) and because of their non-uniform sizes, ST called
+| them *sectors* rather than *pages*).
+|
+| In muforth, the F4 chips do *not* define /page; instead, they define
+| a function that takes a candidate address (a multiple of the chunk size)
+| and tests it to see if it is the first byte of a (non-uniform) page
+| (again, ST called these sectors). If it is, it returns true and the page
+| index.
+|
+| Newer ST families - G0, G4, C0, and H5 (among others, but these are the
+| ones that I have researched) use a page *index* for erasure, but the
+| pages are, once again, of uniform size (often 2 or 8 KiB).
+|
+|
+| If /page is defined, we can use it as the "smallest" erase size. If it
+| isn't defined, do we require every chip family to define a smallest erase
+| size?
+|
+| Of the chips supported by muforth, the only ones that do not define
+| /page are made by ST, and since the smallest page size used by any of the
+| "erase by index" families is 2 KiB, we can use that as the smallest erase
+| size if /page is not defined.
 |
 | On every target, the chunk size *must be* carefully chosen to be equal to
-| or smaller than the erase size. Before flashing anything we check to make
-| sure!
+| or smaller than the smallest erase size, and to divide it evenly. Before
+| flashing anything we check to make sure!
 
 : ?chunk-size
-.ifdef /page /page  .else  /smallest-sector  .then  | erase size
-   /chunk @  u< if  error"
-Chunk size is larger than flash erase size. Please fix the debug/chat code
-to return a suitable chunk size!"  then ;
+.ifdef /page /page  .else  2 Ki ( see above)  .then   | smallest erase size
+   /chunk @ /mod ( r q)
+   0= if  drop  error" Chunk size is larger than erase size."  ^  then
+   if  error" Chunk size does not evenly divide erase size."  ^  then
+   ( chunk size is ok) ;
 
 : flash-region
    cr ." Programming " .region

@@ -38,20 +38,13 @@ assembler
 
 forth
 
-.equates. .contains FLASH_AR .if
-| ---------------------------------------------------------------------------
-| Device with uniformly-sized flash pages; page erase by *address* (F0 & F3)
-| ---------------------------------------------------------------------------
-
 | How much space do we want to use for the flashbuf? It can't be bigger
 | than /page, and we don't want to use too much of the RAM, since I don't
 | think the flash buf size is the limiting factor for programming speed.
 |
-| Let's use 256 if flash size is less than 32 KiB, and 1 KiB otherwise - or
-| /page if it is smaller.
+| Let's use 256 for everything, even chips with lots of RAM.
 
-#flash 32 Ki u< .if  256  .else  1 Ki  .then  /page min
-constant #flashbuf
+256 constant #flashbuf
 
 | Leave room for 64 cells on sp stack; room for 256 bytes of flash
 | programming code; round down to multiple of 256, then leave #flashbuf
@@ -61,12 +54,35 @@ constant #flashbuf
 
 dp0  64 \m cells -  256 - ( flash code)  -256 and  dup constant @flash-routines
                                           #flashbuf -  constant @flashbuf
+
+| For testing the address-to-page-index mapping code, on families that use
+| page indices, rather than addresses, for erasure.
+
+.def testing  .def lookup-flash-page  .and .if
+
+: test-page  ( 'target)
+   dup lookup-flash-page  if  swap  cr  u. ." page " u. ^ then  drop ;
+
+| Test every 256 byte chunk of the flash to see where the page boundaries
+| are. Make sure we get the correct values!
+
+: test-pages
+   @flash #flash over + swap do  i test-page  256 +loop ;
+
+.then  ( testing and lookup-flash-page)
+
 hex
 __meta
 
 ram  here  ( we are going to return here after compiling the flash routines.)
 
 @flash-routines goto  ( starting address of flash routines)
+
+.equates. .contains FLASH_AR .if
+
+| ---------------------------------------------------------------------------
+| Device with uniformly-sized flash pages; page erase by *address* (F0 & F3)
+| ---------------------------------------------------------------------------
 
 label stm32-flash-unlock
    FLASH_CR >iobase r4 lit  ( set up flash register base address)
@@ -155,33 +171,12 @@ label remove-read-protect  ( key)
 .then  ( bogus)
 
 .else
+
 | ---------------------------------------------------------------------------
-| Device with non-uniform flash *sectors* (F4), or pages erased by *index* (C0)
+| Page erase by *index* (C0, G0, G4, F4, H5)
+|
+| All but F4 have a uniform page size.
 | ---------------------------------------------------------------------------
-
-.ifndef #flashbuf
-   z"
-
-Your chip is uses indices rather than addresses to specify the block of
-flash to erase. You need to define #flashbuf - the size of the RAM buffer
-used during flash programming. It should be no smaller than 256 bytes, and
-must be no bigger than the smallest sector or page in the flash."  abort
-.then
-
-| Leave room for 64 cells on sp stack; room for 256 bytes of flash
-| programming code; round down to multiple of 256, then leave #flashbuf
-| bytes of space for buffer.
-
-( Start the flash routines *after* the flashbuf.)
-
-dp0  64 \m cells -  256 - ( flash code)  -256 and  dup constant @flash-routines
-                                          #flashbuf -  constant @flashbuf
-hex
-__meta
-
-ram  here  ( we are going to return here after compiling the flash routines.)
-
-@flash-routines goto  ( starting address of flash routines)
 
 .equates. .contains FLASH_NSCR .if
 
@@ -200,11 +195,8 @@ label stm32-flash-lock
    1 ( LOCK) w movs   FLASH_NSCR >fr w str  ( lock CR)
    lr bx  ;c
 
-| XXX If we put BKSEL bit in bit 25 of the parameter, then when shift it up
+| If we put BKSEL bit in bit 25 of the parameter, then when we shift it up
 | 6 bits it will end up in bit 31.
-|
-| We can also use half-word writes to NSCR, which will leave BKSEL alone.
-| But then who sets it and when?
 
 label stm32-flash-page-erase  ( bksel+sector#)
    { w } pop   6 w w lsls  ( shift bksel+sector# up 6 bits)
@@ -243,7 +235,7 @@ label stm32-flash-program  ( buf a u)
    u>= until
    { pc } pop  ;c
 
-.else    | C0, G0, or F4
+.else    | C0, G0, G4, or F4
 
 label stm32-flash-unlock
    FLASH_CR >iobase r4 lit  ( set up flash register base address)
@@ -258,13 +250,9 @@ label stm32-flash-lock
    80 ( LOCK) w movs   FLASH_CR 3 + >fr w strb  ( lock CR)
    lr bx  ;c
 
-| Some F4 devices have non-uniformly-sized erase regions; ST calls these
-| "sectors". Devices like the C0 series have uniformly-sized erase regions
-| (pages), but instead of being identified by *address* they are identified
-| by an *index*.
-label stm32-flash-page-erase  ( sector#/page#)
+label stm32-flash-page-erase  ( page#)
    { w } pop   3 w w lsls  ( shift sector# up 3 bits)
-   2 ( SER)  w w adds   FLASH_CR     >fr w str  ( set SER + sector number)
+   2 ( PER)  w w adds   FLASH_CR     >fr w str  ( set PER + page number)
    1 ( STRT) w movs     FLASH_CR 2 + >fr w strb ( set STRT bit)
    ( fall thru)  ;c
 
@@ -276,7 +264,12 @@ label -busy
 .then
    lr bx  ;c
 
-.ifdef stm32c031
+| STM32C0 has a 64-bit programming buffer, so we program it two 32-bit
+| words at a time.
+|
+| G0, G4 is 64-bits at a time + ECC.
+
+.def stm32c0  .def stm32g0  .def stm32g4  .or .or .if
 
 | w is byte count, x is flash address,
 | y is ram buffer address, z is offset.
@@ -286,7 +279,7 @@ label stm32-flash-program  ( buf a u)
    { lr } push
    0 z movs  ( offset)   w cnt mov  ( save)
    begin
-      ( unlike paged flash, we program by double-words!)
+      ( We program by double-words!)
       z y w ldr   z x w str   4 z z adds
       z y w ldr   z x w str   4 z z adds
       -busy bl  ( clobbers w)
@@ -294,9 +287,13 @@ label stm32-flash-program  ( buf a u)
    u>= until
    { pc } pop  ;c
 
-.then  ( def stm32c031)
+.then  ( def stm32c0 or stm32g0 or stm32g4)
 
-.ifdef stm32f407
+| F4 can be programmed by byte, halfword, word, or double-word, but
+| double-word programming requires an external high voltage power supply,
+| so we program it by word.
+
+.ifdef stm32f4
 
 | w is byte count, x is flash address,
 | y is ram buffer address, z is offset.
@@ -307,16 +304,19 @@ label stm32-flash-program  ( buf a u)
    { lr } push
    0 z movs  ( offset)   w cnt mov  ( save)
    begin
-      ( unlike paged flash, we program by words!)
+      ( 32-bit word at a time.)
       z y w ldr   z x w str   4 z z adds
       -busy bl  ( clobbers w)
       cnt z cmp
    u>= until
    { pc } pop  ;c
 
-.then  ( def stm32f407)
+.then  ( def stm32f4)
+
+.then  ( equates contains FLASH_NSCR)
 
 .then  ( sector, or indexed page)
+
 | ---------------------------------------------------------------------------
 | End of differentiated flash routines; back to shared code.
 | ---------------------------------------------------------------------------
