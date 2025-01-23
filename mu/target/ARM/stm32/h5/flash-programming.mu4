@@ -1,0 +1,63 @@
+| This file is part of muforth: https://muforth.dev/
+|
+| Copyright 2002-2025 David Frech. (Read the LICENSE for details.)
+
+loading STM32H5 flash programming
+
+hex
+__meta
+
+| H5 or other chip with secure and non-secure peripherals and addresses.
+
+label stm32-flash-unlock
+   FLASH_NSCR >iobase r4 lit  ( set up flash register base address)
+   { x w } pop   FLASH_NSKEYR >fr w str
+                 FLASH_NSKEYR >fr x str
+   0 w movs      FLASH_NSCR   >fr w str  ( clear any program/erase bits, and BKSEL)
+   FLASH_NSSR >fr w ldr   FLASH_NSCCR >fr w str  ( clear any error bits)
+   lr bx  ;c
+   pool,
+
+label stm32-flash-lock
+   1 ( LOCK) w movs   FLASH_NSCR >fr w str  ( lock CR)
+   lr bx  ;c
+
+| If we put BKSEL bit in bit 25 of the parameter, then when we shift it up
+| 6 bits it will end up in bit 31.
+
+label stm32-flash-page-erase  ( bksel+sector#)
+   { w } pop   6 w w lsls  ( shift bksel+sector# up 6 bits)
+    4 ( SER)  w w adds   FLASH_NSCR >fr w str  ( set SER + sector# + BKSEL)
+   20 ( STRT) w w adds   FLASH_NSCR >fr w str  ( set STRT bit)
+   ( fall thru)  ;c
+
+( Wait until flash command finishes. Clobbers w.)
+label -busy
+   begin   FLASH_NSSR >fr w ldr   1 w w lsrs ( BSY -> Carry)   cc until
+.ifdef testing
+   w w w adds  | so we can see the result in testing mode
+.then
+   lr bx  ;c
+
+| The H5 has a 128-bit programming buffer, so we want to program the flash
+| four 32-bit words at a time! Also, BKSEL is irrelevant when programming;
+| it is only involved in sector erase (SER) and bank erase (BER)
+| operations.
+
+| w is byte count, x is flash address,
+| y is ram buffer address, z is offset.
+label stm32-flash-program  ( buf a u)
+   2 ( PG) w movs   FLASH_NSCR >fr w str  ( set PG bit; clears BKSEL bit)
+   { y x w } pop
+   { lr } push
+   0 z movs  ( offset)   w cnt mov  ( save)
+   begin
+      ( We program four 32-bit words at a time!)
+      z y w ldr   z x w str   4 z z adds
+      z y w ldr   z x w str   4 z z adds
+      z y w ldr   z x w str   4 z z adds
+      z y w ldr   z x w str   4 z z adds
+      -busy bl  ( clobbers w)
+      cnt z cmp
+   u>= until
+   { pc } pop  ;c
