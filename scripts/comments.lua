@@ -253,6 +253,21 @@ function conv_block()
     end
 end
 
+-- There are a few lines like this - eg, when making a table of values in a
+-- block comment - that should *not* be extended to 75 chars. Maybe check
+-- the length and only replace it if it is > 60 or something like that?
+
+-- Maybe edit all the tables to use ~~~~~~~~~~ rather than ----------- or
+-- ============= to separate heading from data?
+
+function consistent_hrule_comment_length()
+    return function(l)
+        l = l:gsub("^| "..("%-"):rep(65).."%-*$", [[
+| -------------------------------------------------------------------------]])
+        return l
+    end
+end
+
 -- Read file line-by-line and call transform function.
 function process(fn)
     for l in io.lines() do          -- read stdin line by line
@@ -266,7 +281,8 @@ lookup = {
     brackets = conv_brackets,
     parens = conv_parens,
     block = conv_block,
+    hrule = consistent_hrule_comment_length,
 }
 
--- First argument should be dashdash, brackets, or block
+-- First argument should be one of the lookup keys
 process(lookup[arg[1]]())
