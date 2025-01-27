@@ -1,0 +1,40 @@
+| This file is part of muforth: https://muforth.dev/
+|
+| Copyright 2002-2025 David Frech. (Read the LICENSE for details.)
+
+loading STM32 example startup code
+
+| Create a flash image containing a vector table, the ITC Forth kernel, and
+| some basic startup code.
+
+__meta
+hex
+
+{ h @ } flash  ( save region and set to flash)
+
+( Lay down a vector table, using end of ram as initial SP.)
+0 vector-table flash-vectors
+flash-vectors  ( make it the current vector table)
+
+{ h ! }  ( restore region pointer)
+
+ld target/ARM/v6-m/kernel-itc.mu4
+chip-path z" init.mu4" concat load-file   | load chip-specific init code
+
+here ]  ( chip-init)
+   clock-init  led-init  flash-leds  begin again  [
+
+Reset_exc handler
+   | Startup code!
+   | Since we have a Forth kernel, let's write the startup code in Forth!
+   sp rp mov   #64 cells sp sp sub  ( RP at end of RAM; SP below)
+   ( chip-init)  ip  lit
+   "decafbad     top lit
+   next  ;c
+   pool,
+
+HardFault_exc handler
+   here b  ;c  ( hang)
+
+default-handler
+   lr bx  ;c  ( return to sender!!)
