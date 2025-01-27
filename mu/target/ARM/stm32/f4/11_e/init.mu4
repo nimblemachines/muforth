@@ -1,0 +1,92 @@
+| This file is part of muforth: https://muforth.dev/
+|
+| Copyright 2002-2025 David Frech. (Read the LICENSE for details.)
+
+loading STM32F411xE basic init
+
+| Notes about the board.
+|
+| Unlike the F303 Discovery, the F411 has an external 8 Mhz crystal (8Mhz)
+| attached, instead of getting an 8Mhz signal from the MCO of the ST-LINK. 
+|
+| LEDs:
+| Pin Port Color
+| ~~~ ~~~~ ~~~~~~
+| LD3 PD13 orange                    north
+| LD4 PD12 green              west
+| LD5 PD14 red                                east
+| LD6 PD15 blue                      south
+|
+| User button connected to PA0. Weak (220k) pull-down. Shorts to Vdd when pressed.
+
+__meta
+hex
+
+ld target/ARM/stm32/clock.mu4    ( clock utility words)
+
+| Since we might be running this code from RAM, we need to assume that the
+| clock might already be set up with the PLL running. Since we can't change
+| any PLL settings while the PLL is running, we need to switch the system
+| clock back to the HSE; turn off, reconfigure, and turn on the PLL; and
+| then switch the system clock back to the PLL.
+|
+| NOTE: This example assumes that you are using an STM32F411E Discovery
+| board. On that platform, an external 8Hz crystal (X2) is attached to the
+| F411.
+|
+| The F411E has *two* PLLs: main and I2S. We will configure the main PLL,
+| but leave the second one unconfigured.
+|
+| There are two outputs on the main PLL: one for the system clock, and one
+| for USB and SDIO. Here are the formulas (pll_in = 8M if we are using the
+| HSE and the external crystal):
+|
+|   pll_out_sys      = pll_in / M * N / P
+|   pll_out_usb_sdio = pll_in / M * N / Q
+|
+| The reference manual says that pll_in/M should 2Mhz for the lowest
+| jitter. So M = 4.
+|
+| VCO freq must be between 100M and 432M. How about N = 192, so VCO is
+| 384M.
+|
+| If we want sysclk to be 48M, P = 384/48 = 8.
+| If we want sysclk to be 96M, P = 384/96 = 4.
+| We want the usb/sdio clock to be 48M, so Q = 384/48 = 8.
+|
+| We want to turn on HSE, use it to drive the PLL to 48 or 96 Mhz, and when
+| the PLL stabilizes, switch to it as the system clock source.
+
+: clock-init
+   +hse  ( turn on HSE crystal osc; wait until it starts)
+   >hse  ( switch to HSE as sysclk)
+   7 FLASH_ACR clr!  ( reset flash latency settings)
+   -pll  ( turn off PLL)
+
+| XXX FLASH_ACR also contains bits to enable the prefetch, instruction
+| cache, and data cache. At the moment we are leaving them all *disabled*.
+
+.ifdef cpuclk-48m  ( for compatibility with F051 and F072)
+   0843_3004 RCC_PLLCFGR !  ( Q=8; PLLSRC=HSE; P=8; N=192; M=4)
+   0048_0001 RCC_CFGR !     ( MCO1=HSE; PPRE1=/1; SW=HSE)
+   1 ( latency) FLASH_ACR set!  ( we need one cycle for 48 MHz clock!)
+.else    | 96 Mhz cpu clock
+   0841_3004 RCC_PLLCFGR !  ( Q=8; PLLSRC=HSE; P=4; N=192; M=4)
+   0048_1001 RCC_CFGR !     ( MCO1=HSE; PPRE1=/2; SW=HSE)
+   3 ( latency) FLASH_ACR set!  ( we need three cycles for 96 MHz clock!)
+.then
+
+   +pll  ( turn PLL back on)
+   >pll  ( switch to PLL as sysclk source) ;
+
+: led-init
+   | Turn on clock to Port D
+   ( Ports H__E_DCBA )
+        [ %0000_1000 #] RCC_AHB1ENR set!
+   | Make PD12 to PD15 outputs
+   5500_0000 GPIOD_MODER set! ;
+
+: wait   for next ;
+: flash-leds
+   | GPIOD_BSRR 0000_f000 over !  3_0000 wait  f000_0000 swap ! ;
+   f000 dup GPIOD_BSRR !  3_0000 wait  [ GPIOD_BSRR 2 + #] h! ;
