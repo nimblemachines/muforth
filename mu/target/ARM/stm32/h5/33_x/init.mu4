@@ -23,13 +23,20 @@ hex
 
 ld target/ARM/stm32/h5/clock.mu4    ( clock utility words)
 
-| XXX This example works, but we would like to run the chip faster - maybe
-| @ 96M. So we need to configure pll1 and use it as the system clock.
+| Let's run the chip @ 96M. We need to set up PLL1 for this. The P output
+| is the chip clock and the AHB/APB bus clock; the Q output is for some
+| other peripherals and should be 48M.
 
 : clock-init
    +hse  ( turn on HSE oscillator)
-   1 ( latency) FLASH_ACR c!  ( we need one cycle for 48 MHz clock!)
-   >hse  ( switch to 24M HSE as sysclk) ;
+   | VCO = 24 / M * N = 384
+   | P = 384 / 4 = 96
+   | Q = 384 / 8 = 48
+   0003_0c23 RCC_PLL1CFGR !   | PEN; QEN; M=12; VCO med range; 1-2M; src=HSE
+   0007_06bf RCC_PLL1DIVR !   | R=/1; Q=/8; P=/4; N=192
+   1 +pll  ( turn on PLL1)
+   124 FLASH_ACR !            | prefetch on; WRHIGHFREQ=2; LATENCY=4
+   >pll1 ;
 
 : led-on   [ 1 5 << #] GPIOA_BSRR ! ;     | drive PA5 high
 : led-off  [ 1 5 << #] GPIOA_BRR ! ;      | drive PA5 low
@@ -47,4 +54,4 @@ ld target/ARM/stm32/h5/clock.mu4    ( clock utility words)
 : wait   for next ;
 
 : flash-leds
-   led-on  1_8000 wait  led-off ;
+   led-on  3_0000 wait  led-off ;
