@@ -1,0 +1,61 @@
+| This file is part of muforth: https://muforth.dev/
+|
+| Copyright 2002-2025 David Frech. (Read the LICENSE for details.)
+
+loading STM32C071xB basic init
+
+__meta
+hex
+
+( NOTES about the Nucleo-C071RB board.)
+
+| User button on PC13, which shorts the pin to ground when pressed. The
+| pullup and pulldown resistors have *not* been populated, so the pin is
+| floating; it should be pulled up internally.
+|
+| There are two user LEDs:
+|
+| Port Led  Color  Drive
+| -----------------------------
+| PA5  LD1  green  High is on
+| PC9  LD2  blue   Low is on
+|
+| Both LSE (32.768 kHz) and HSE (48 Mhz) crystals have been fitted, and the
+| default state of the solder bridges connects both crystals to the chip.
+
+ld target/ARM/stm32/c0/clock.mu4    ( clock utility words)
+
+| NOTE: The example code, flashed at the factory, set FLASH_ACR to 0004_0701.
+| This code will set it to 0004_0601 (the register resets to 0004_0600).
+
+: clock-init
+   +hse  ( turn on HSE oscillator)
+   0100 RCC_CR h!  ( HSIDIV=/1, HSION=1, HSIKERDIV=/1, SYSDIV=/1)
+   1 ( latency) FLASH_ACR set!  ( we need one cycle for 48 MHz clock!)
+   >hse  ( switch to 48M HSE as sysclk) ;
+
+| Annoying that we have to make separate words for these, since not only
+| are the LEDs on different ports, but LD1 is driven by a transistor (high
+| level lights it), and LD2 is pulled low to light it.
+
+: led1-on   [ 1 5 << #] GPIOA_BSRR ! ;    | drive PA5 high
+: led1-off  [ 1 5 << #] GPIOA_BRR ! ;     | drive PA5 low
+
+: led2-on   [ 1 9 << #] GPIOC_BRR ! ;     | drive PC9 low
+: led2-off  [ 1 9 << #] GPIOC_BSRR ! ;    | drive PC9 high
+
+| On C0 family parts, MODER registers reset to all ones (analog mode),
+| unlike older families.
+: led-init
+   | Turn on clock to Ports A and C
+   ( Ports --FE_DCBA )
+        [ %0000_0101 #] RCC_IOPENR !
+   led1-off  led2-off
+   | Make PA5 and PC9 outputs.
+   GPIOA_MODER dup  @  [ %11 5 2* << #] bic  [ %01 5 2* << #] or  swap !
+   GPIOC_MODER dup  @  [ %11 9 2* << #] bic  [ %01 9 2* << #] or  swap ! ;
+
+: wait   for next ;
+
+: flash-leds
+   led1-on led2-on  2_0000 wait  led1-off led2-off ;

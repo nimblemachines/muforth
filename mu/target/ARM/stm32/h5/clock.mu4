@@ -1,0 +1,42 @@
+| This file is part of muforth: https://muforth.dev/
+|
+| Copyright 2002-2025 David Frech. (Read the LICENSE for details.)
+
+( Some utility words related to setting up the clock[s] on the STM32.)
+
+loading STM32H5 clock setting
+
+hex
+__meta
+
+| Set a byte register to a value (set), then loop, reading the same
+| register, until the register anded with a mask matches the match value.
+
+: set-until-match  ( set mask match reg)
+   >r  rot r@ c!  ( set reg to "set" value)
+   begin  over r@ c@ and  over =  until  r>  drop drop drop ;
+
+| On H5 family, 3 bits are used to specify the clock source.
+| NOTE: Because it writes all 8 bits of the low byte of RCC_CFGR1, sysclk!
+| *resets* STOPWUCK and STOPKERWUCK.
+
+: sysclk!  ( clksrc)  3f  over 9 *  RCC_CFGR1  set-until-match ;
+
+: >hsi   0 ( SW=HSI)  sysclk! ;
+: >csi   1 ( SW=CSI)  sysclk! ;
+: >hse   2 ( SW=HSE)  sysclk! ;
+: >pll1  3 ( SW=PLL1) sysclk! ;
+
+: hse-start   ( hsebits)  2 2  [ RCC_CR 2 + #]  set-until-match ;
+: +hse         1 ( HSEON)           hse-start ;
+: +hse-bypass  5 ( HSEON + HSEBYP)  hse-start ;
+
+| There are *three* PLLs on the H5!
+: change-pll  ( set mask match)  [ RCC_CR 3 + #]  set-until-match ;
+
+| On bits are: 1 (pll1), 4 (pll2), "10 (pll3)
+: pll>bit  ( pll - on-bit)  1- 2*  1 swap << ;
+
+| pll index is 1, 2, or 3.
+: +pll  ( pll)  pll>bit  dup     2*  dup  change-pll ;
+: -pll  ( pll)  pll>bit  0  swap 2*  0    change-pll ;

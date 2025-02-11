@@ -1,0 +1,51 @@
+| This file is part of muforth: https://muforth.dev/
+|
+| Copyright 2002-2025 David Frech. (Read the LICENSE for details.)
+
+loading STM32C031x6 basic init
+
+__meta
+hex
+
+( NOTES about the Nucleo-C031C6 board.)
+
+| User button on PC13, pulled high externally; shorts to ground when pressed.
+|
+| There is only one user LED:
+|
+| Port Led  Color  Drive
+| -----------------------------
+| PA5  LD4  green  High is on
+|
+| Both LSE (32.768 kHz) and HSE (48 Mhz) crystals have been fitted, and the
+| default state of the solder bridges connects both crystals to the chip.
+
+ld target/ARM/stm32/c0/clock.mu4    ( clock utility words)
+
+| NOTE: The example code, flashed at the factory, set FLASH_ACR to 0004_0701.
+| This code will set it to 0004_0601 (the register resets to 0004_0600).
+
+: clock-init
+   +hse  ( turn on HSE oscillator)
+   0100 RCC_CR h!  ( HSIDIV=/1, HSION=1, HSIKERDIV=/1, SYSDIV=/1)
+   1 ( latency) FLASH_ACR set!  ( we need one cycle for 48 MHz clock!)
+   >hse  ( switch to 48M HSE as sysclk) ;
+
+: led-on   [ 1 5 << #] GPIOA_BSRR ! ;     | drive PA5 high
+: led-off  [ 1 5 << #] GPIOA_BRR ! ;      | drive PA5 low
+
+| On C0 family parts, MODER registers reset to all ones (analog mode),
+| unlike older families.
+
+: led-init
+   | Turn on clock to Port A
+   ( Ports --FE_DCBA )
+        [ %0000_0001 #] RCC_IOPENR !
+   led-off
+   | Make PA5 an output.
+   GPIOA_MODER dup  @  [ %11 5 2* << #] bic  [ %01 5 2* << #] or  swap ! ;
+
+: wait   for next ;
+
+: flash-leds
+   led-on  2_0000 wait  led-off ;

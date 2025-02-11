@@ -1,0 +1,105 @@
+| This file is part of muforth: https://muforth.dev/
+|
+| Copyright 2002-2025 David Frech. (Read the LICENSE for details.)
+
+loading STM32F407xG basic init
+
+| Notes about the board.
+|
+| Unlike the F303 Discovery, the F407 has an external 8 Mhz crystal (8Mhz)
+| attached; however, the 8Mhz signal from the MCO of the ST-LINK is *also*
+| connected (to PH0/OSC_IN). This is unlike the (newer) F411E Discovery,
+| which has the crystal connected, but *not* the MCO. 
+|
+| I have no idea why ST did this; what it means is that we should use the
+| HSE bypass setting (as if no crystal was attached).
+|
+| LEDs:
+| Pin Port Color
+| ~~~ ~~~~ ~~~~~~
+| LD3 PD13 orange                    north
+| LD4 PD12 green              west
+| LD5 PD14 red                                east
+| LD6 PD15 blue                      south
+|
+| User button connected to PA0. Weak (220k) pull-down. Shorts to Vdd when pressed.
+
+__meta
+hex
+
+ld target/ARM/stm32/clock.mu4    ( clock utility words)
+
+| Since we might be running this code from RAM, we need to assume that the
+| clock might already be set up with the PLL running. Since we can't change
+| any PLL settings while the PLL is running, we need to switch the system
+| clock back to the HSE; turn off, reconfigure, and turn on the PLL; and
+| then switch the system clock back to the PLL.
+|
+| NOTE: This example assumes that you are using an STM32F4 Discovery
+| board with an F407 chip. On that platform, *both* the MCO and an external
+| 8Hz crystal (X2) are attached to the F407.
+|
+| The F407 has *two* PLLs: main and I2S. We will configure the main PLL,
+| but leave the second one unconfigured.
+|
+| There are two outputs on the main PLL: one for the system clock, and one
+| for USB and SDIO. Here are the formulas (pll_in = 8M if we are using the
+| HSE and the external crystal):
+|
+|   pll_out_sys      = pll_in / M * N / P
+|   pll_out_usb_sdio = pll_in / M * N / Q
+|
+| The reference manual says that pll_in/M should be 2Mhz for the lowest
+| jitter. So M = 4.
+|
+| VCO freq must be between 100M and 432M.
+|
+| If we want sysclk to be 48M,  N = 192, P = 384/48 = 8, Q = 384/48 = 8.
+| If we want sysclk to be 168M, N = 168, P = 336/168 = 2, Q = 336/48 = 7.
+|
+| We want to turn on HSE, use it to drive the PLL to 48 or 168 Mhz, and when
+| the PLL stabilizes, switch to it as the system clock source.
+
+: clock-init
+   +hse-bypass  ( turn on HSE osc, bypassing crystal; wait until it starts)
+   >hse  ( switch to HSE as sysclk)
+   7 FLASH_ACR clr!  ( reset flash latency settings)
+   -pll  ( turn off PLL)
+
+| XXX FLASH_ACR also contains bits to enable the prefetch, instruction
+| cache, and data cache. At the moment we are leaving them all at their
+| reset values, which is probably a mistake.
+
+| While AHB can run at full cpu speed (168M), APB2 has a max speed of 84M,
+| and APB1, 42M.
+|
+| When running the cpu at 48M, we can't run APB1 at full speed; we run it
+| @ 24M (/2) instead.
+
+.ifdef cpuclk-48m  ( for compatibility with F051 and F072)
+   | 48 Mhz cpu clock; VCO @ 384M
+   | APB2 @ 48M (/1); APB1 @ 24M (/2)
+   0843_3004 RCC_PLLCFGR !  ( Q=8; PLLSRC=HSE; P=8; N=192; M=4)
+   0048_1001 RCC_CFGR !     ( MCO1=HSE; RTCPRE=/8; PPRE2=/1; PPRE1=/2; SW=HSE)
+   1 ( latency) FLASH_ACR set!  ( we need one cycle for 48 MHz clock!)
+.else
+   | 168 Mhz cpu clock; VCO @ 336M; we assume Vdd between 2.7 and 3.6V
+   | APB2 @ 84M (/2); APB1 @ 42M (/4)
+   0740_2a04 RCC_PLLCFGR !  ( Q=7; PLLSRC=HSE; P=2; N=168; M=4)
+   0048_9401 RCC_CFGR !     ( MCO1=HSE; RTCPRE=/8; PPRE2=/2; PPRE1=/4; SW=HSE)
+   5 ( latency) FLASH_ACR set!  ( we need five cycles for 168 MHz clock!)
+.then
+
+   +pll  ( turn PLL back on)
+   >pll  ( switch to PLL as sysclk source) ;
+
+: led-init
+   | Turn on clock to Port D
+   ( Ports H__E_DCBA )
+        [ %0000_1000 #] RCC_AHB1ENR set!
+   | Make PD12 to PD15 outputs
+   5500_0000 GPIOD_MODER set! ;
+
+: wait   for next ;
+: flash-leds
+   f000 dup GPIOD_BSRR !  3_0000 wait  [ GPIOD_BSRR 2 + #] h! ;

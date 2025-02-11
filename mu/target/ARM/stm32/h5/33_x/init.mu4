@@ -1,0 +1,50 @@
+| This file is part of muforth: https://muforth.dev/
+|
+| Copyright 2002-2025 David Frech. (Read the LICENSE for details.)
+
+loading STM32H533xE basic init
+
+__meta
+hex
+
+( NOTES about the Nucleo-H533RE board.)
+
+| User button on PC13, which pulls the pin high when pressed; the pin is
+| pulled low via an external resistor; no internal pulldown is necessary.
+|
+| There is only one user LED:
+|
+| Port Led  Color  Drive
+| -----------------------------
+| PA5  LD2  green  High is on
+|
+| Both LSE (32.768 kHz) and HSE (24 Mhz) crystals have been fitted, and the
+| default state of the solder bridges connects both crystals to the chip.
+
+ld target/ARM/stm32/h5/clock.mu4    ( clock utility words)
+
+| XXX This example works, but we would like to run the chip faster - maybe
+| @ 96M. So we need to configure pll1 and use it as the system clock.
+
+: clock-init
+   +hse  ( turn on HSE oscillator)
+   1 ( latency) FLASH_ACR c!  ( we need one cycle for 48 MHz clock!)
+   >hse  ( switch to 24M HSE as sysclk) ;
+
+: led-on   [ 1 5 << #] GPIOA_BSRR ! ;     | drive PA5 high
+: led-off  [ 1 5 << #] GPIOA_BRR ! ;      | drive PA5 low
+
+| On H5 family parts, MODER registers reset to all ones (analog mode),
+| unlike older families.
+: led-init
+   | Turn on clock to Port A
+   ( Ports I_HGFE_DCBA )
+        [ %0_0000_0001 #] RCC_AHB2ENR set!
+   led-off
+   | Make PA5 an output.
+   GPIOA_MODER dup  @  [ %11 5 2* << #] bic  [ %01 5 2* << #] or  swap ! ;
+
+: wait   for next ;
+
+: flash-leds
+   led-on  1_8000 wait  led-off ;
