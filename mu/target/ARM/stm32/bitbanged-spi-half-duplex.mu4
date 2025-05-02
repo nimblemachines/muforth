@@ -48,8 +48,18 @@ __meta
    | one bits.
    [ %01  4 2* << #] GPIOB_PUPDR set!  ( 2 bits per pin) ;
 
-: bit/  ( bit)  GPIOB_BSRR ! ;
-: bit\  ( bit)  GPIOB_BRR ! ;
+| Oddly enough, the F4 family chips lack a GPIOx_BRR register! Since the
+| BSRR can be used to set and reset bits (hence the name), let's use that
+| one register universally. We'll be doing halfword writes to the low half
+| to *set* bits, and to the high half to *reset* them.
+|
+| Let's make equates to make this clearer.
+
+GPIOB_BSRR      equ GPIOB_SET
+GPIOB_BSRR 2 +  equ GPIOB_CLR
+
+: bit/  ( bit)  GPIOB_SET h! ;
+: bit\  ( bit)  GPIOB_CLR h! ;
 
 ( Reset - aka /MCLR on the PIC - on PB5.)
 : reset/  ( de-assert reset)   [ 1 5 << #] bit/ ;
@@ -87,8 +97,8 @@ __meta
 
 ( Drive bit on PB4.)
 : bit!   ( bits - bits')  ( sample low bit and drive PB4 with it)
-   dup  [ 1 4 << #]  GPIOB_BRR ( bit clear register)
-   rot  clk/  1 and if  [ GPIOB_BSRR GPIOB_BRR - #] + ( bit set register)  then  !
+   dup  [ 1 4 << #]
+   rot  clk/  1 and if  GPIOB_SET  else  GPIOB_CLR  then  h!
    u2/  clk\ ;
 
 .else  ( msb-first, the default)
@@ -104,8 +114,8 @@ __meta
 
 ( Drive bit on PB4.)
 : bit!   ( bits - bits')  ( sample hi bit - 8000_0000 - and drive PB4 with it)
-   dup  [ 1 4 << #]  GPIOB_BRR ( bit clear register)
-   rot clk/  0< if  [ GPIOB_BSRR GPIOB_BRR - #] + ( bit set register)  then  !
+   dup  [ 1 4 << #]
+   rot clk/  0< if  GPIOB_SET  else  GPIOB_CLR  then  h!
    2*  clk\ ;
 
 .then  ( msb-first)
@@ -133,7 +143,7 @@ forth
 code >bits  ( bits count - bits')
    w dpop1  GPIOB_MODER >iobase x lit
    %01 z movs  4 2* z z lsls
-   GPIOB_MODER >io x y ldr  z y y orrs  0 x y str  ( pb4 output)
+   GPIOB_MODER >io x y ldr  z y y orrs  GPIOB_MODER >io x y str  ( pb4 output)
    1 3 << y movs  ( PB3: clock)
    1 4 << z movs  ( PB4: data)
    begin
@@ -142,12 +152,13 @@ code >bits  ( bits count - bits')
 .else  ( msb-first, the default)
       1 w w lsls  ( shift left; high bit -> carry)
 .then
-      GPIOB_BSRR >io x y str  ( clock high)
-      cs if  GPIOB_BSRR >io x z str  else  GPIOB_BRR >io x z str  nop3  then  ( drive bit)
-      GPIOB_BRR >io x y str  ( clock low)
+      GPIOB_SET >io x y strh  ( clock high)
+      cs if  GPIOB_SET >io x z strh  else  GPIOB_CLR >io x z strh  nop-branch  then  ( drive bit)
+      nop3  ( lengthen setup time)
+      GPIOB_CLR >io x y strh  ( clock low)
    1 top top subs  0= until
    %11 z movs  4 2* z z lsls
-   GPIOB_MODER >io x y ldr  z y y bics  0 x y str  ( pb4 input)
+   GPIOB_MODER >io x y ldr  z y y bics  GPIOB_MODER >io x y str  ( pb4 input)
    w top mov  next  ;c
 
 ( Receive bits from the wire - "bits from".)
@@ -155,7 +166,7 @@ code bits>  ( count - bits)
    0 w movs  GPIOB_MODER >iobase x lit
    1 3 << y movs  ( PB3: clock)
    begin
-      GPIOB_BSRR >io x y str  ( clock high)
+      GPIOB_SET >io x y strh  ( clock high)
 .ifdef lsb-first
       1 w w lsrs  ( shift right)  nop3 ( wait for output to propagate)
       GPIOB_IDR >io x z ldr
@@ -165,7 +176,7 @@ code bits>  ( count - bits)
       GPIOB_IDR >io x z ldr
       #27 z z lsls  #31 z z lsrs ( bit4 -> bit0; other bits 0)
 .then
-      GPIOB_BRR >io x y str  ( clock low)
+      GPIOB_CLR >io x y strh  ( clock low)
       z w w adds  ( add in new bit)
    1 top top subs  0= until
    w top mov  next  ;c  pool,
