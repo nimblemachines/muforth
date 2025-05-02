@@ -1,0 +1,90 @@
+| This file is part of muforth: https://muforth.dev/
+|
+| Copyright 2002-2025 David Frech. (Read the LICENSE for details.)
+
+loading STM32H503xB basic init
+
+__meta
+hex
+
+( NOTES about the Nucleo-H503RB board.)
+
+| User button on PC13, which pulls the pin high when pressed; the pin is
+| pulled low via an external resistor; no internal pulldown is necessary.
+|
+| There is only one user LED:
+|
+| Port Led  Color  Drive
+| -----------------------------
+| PA5  LD2  green  High is on
+|
+| Both LSE (32.768 kHz) and HSE (24 Mhz) crystals have been fitted, and the
+| default state of the solder bridges connects both crystals to the chip.
+
+| For the "programming pod" connections - for programming Atmel/Microchip
+| AVR and 8051, and Microchip PIC - see the following table:
+|
+| Port   CN7   CN10   Arduino
+| ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+| PB3           31     D3
+| PB4           27     D5
+| PB5           29     D4
+| PB6            3    D15
+| PB7            5    D14
+|
+| 3v3    16
+| Gnd    20
+
+ld target/ARM/stm32/h5/clock.mu4    ( clock utility words)
+
+| Let's run the chip @ 96M. We need to set up PLL1 for this. The P output
+| is the chip clock and the AHB/APB bus clock; the Q output is for some
+| other peripherals and should be 48M.
+
+: clock-init
+   +hse  ( turn on HSE oscillator)
+
+.ifdef in-ram
+   >hse  1 -pll
+.then
+
+   0003_0c23 RCC_PLL1CFGR !   | PEN; QEN; M=12; VCO med range; 1-2M; src=HSE
+
+.ifdef cpuclk-48m  ( for compatibility with F051 and F072)
+   | Run cpuclk at 48M.
+   | VCO = 24 / M * N = 384
+   | P = 384 / 8 = 48
+   | Q = 384 / 8 = 48
+   0007_0ebf RCC_PLL1DIVR !   | R=/1; Q=/8; P=/8; N=192
+   112 FLASH_ACR !            | prefetch on; WRHIGHFREQ=1; LATENCY=2
+.else
+   | Run cpuclk at 96M.
+   | VCO = 24 / M * N = 384
+   | P = 384 / 4 = 96
+   | Q = 384 / 8 = 48
+   0007_06bf RCC_PLL1DIVR !   | R=/1; Q=/8; P=/4; N=192
+   124 FLASH_ACR !            | prefetch on; WRHIGHFREQ=2; LATENCY=4
+.then
+
+   1 +pll  ( turn on PLL1)
+   >pll1 ;
+
+ld target/ARM/stm32/h5/gpio.mu4
+
+: led-on   [ 1 5 << #] GPIOA_BSRR ! ;     | drive PA5 high
+: led-off  [ 1 5 << #] GPIOA_BRR ! ;      | drive PA5 low
+
+| On H5 family parts, MODER registers reset to all ones (analog mode),
+| unlike older families.
+: led-init
+   | Turn on clock to Port A
+   ( Ports I_HGFE_DCBA )
+          %0_0000_0001 enable-gpio
+   led-off
+   | Make PA5 an output.
+   GPIOA_MODER dup  @  [ %11 5 2* << #] bic  [ %01 5 2* << #] or  swap ! ;
+
+: wait   for next ;
+
+: flash-leds
+   led-on  3_0000 wait  led-off ;
