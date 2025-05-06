@@ -2,7 +2,7 @@
 |
 | Copyright 2002-2025 David Frech. (Read the LICENSE for details.)
 
-loading PIC16/18 SPI flash programming (STM32 core)
+loading PIC16/18 SPI flash programming (via STM32-based "pod")
 
 | It might seem rather odd that this is here, but I'm interested in using
 | an STM32 Discovery board as a "programming pod" for Microchip PIC16 and
@@ -94,13 +94,25 @@ chip-path z" init.mu4" concat load-file
 | The PIC programming process requires several delays. Some are a few
 | microseconds; others, a few milliseconds. Let's use one of the timers to
 | do accurate timing.
-|
-| TIM6 and TIM7 are basic timers. Let's use TIM6.
 
 .ifdef timer-testing
 
-| Run TIM7 in an endless loop at full speed so we can test that TIM6 is doing
-| the right thing. TIMx_ARR resets to 0ffff, so we can leave it alone.
+| The original timer code was written and tested on an F303, which has
+| TIM3, TIM6, and TIM7.
+|
+| It turns out that this is not universally true; many chips lack one or
+| both of TIM6 and TIM7.
+|
+| I'm going to leave the testing code alone and also define a more
+| "universal" version that uses TIM3 - the only timer that seems to exist
+| on all families and chips!
+|
+| Now on to the code.
+|
+| TIM6 and TIM7 are basic timers. Let's use TIM6 for the delay timer and
+| also run TIM7 in an endless loop at full speed so we can test that TIM6
+| is doing the right thing. TIMx_ARR resets to 0ffff, so we can leave it
+| alone.
 
 ( Run timer7 full bore!)
 : timer7-init
@@ -135,8 +147,6 @@ chip-path z" init.mu4" concat load-file
 : ttest  ( n)
    TIM7_CNT @  swap us  TIM7_CNT @  swap -  0ffff and ;
 
-.then  ( timer-testing)
-
 | We are going to clock the timer at 1Mhz, and set it up for "one-shot"
 | mode. It will stop counting and set the "update" flag when the count
 | register reaches the reload value.
@@ -146,11 +156,31 @@ chip-path z" init.mu4" concat load-file
    8 ( OPM - one pulse mode) TIM6_CR1 !
    [ cpuclk #1,000,000 / 1- #] TIM6_PSC !  ( set prescaler)
    1 TIM6_EGR ! ( generate update event)
-.ifdef timer-testing  timer7-init  timer3-init  .then ;
+   timer7-init  timer3-init ;
+
+.then  ( timer-testing)
+
+| The universal version follows.
+|
+| We are going to clock the timer at 1Mhz, and set it up for "one-shot"
+| mode. It will stop counting and set the "update" flag when the count
+| register reaches the reload value.
+
+: timer-init
+   [ 1 1 << #]  ( enable clock to TIM3)
+   | The clock enable register has different names for different chip
+   | families!
+.ifequ RCC_APB1ENR   RCC_APB1ENR    .then    | F051, F072, F303
+.ifequ RCC_APB1LENR  RCC_APB1LENR   .then    | H503/H533
+.ifequ RCC_APBENR1   RCC_APBENR1    .then    | C0x1
+   set!
+   8 ( OPM - one pulse mode) TIM3_CR1 !
+   [ cpuclk #1,000,000 / 1- #] TIM3_PSC !  ( set prescaler)
+   1 TIM3_EGR ! ( generate update event) ;
 
 : us  ( n)  ( delay n microseconds)
-   TIM6_ARR !  0 TIM6_SR !  1 ( CEN) TIM6_CR1 set!
-   begin  TIM6_SR @  until ;
+   TIM3_ARR !  0 TIM3_SR !  1 ( CEN) TIM3_CR1 set!
+   begin  TIM3_SR @  until ;
 
 : ms  ( n)  #1000 * us ;
 
@@ -328,11 +358,17 @@ ld target/ARM/stm32/bitbanged-spi-half-duplex.mu4
 
 .then ( pic16f145x)
 
+.ifdef with-uart
+
+| I'm making this conditional because the code needs to modified to be made
+| more generic. Probably each family or chip needs to implement a version
+| of uart-init.
 
 | -------------------------------------------------------------------------
 | Serial communication - UART
 | -------------------------------------------------------------------------
 : uart-init
+   | >>> BEGIN chip-specific bits
    | First, enable clocks to Port A. We are using uart1 on pins PA9 and PA10.
    [ 1 #16 1 ( A) + << #] RCC_AHBENR set!
 
@@ -342,6 +378,7 @@ ld target/ARM/stm32/bitbanged-spi-half-duplex.mu4
    | Set mode bits (%10) and alternate function (AF1) for uart.
    [ %1010 #9       2*  << #] GPIOA_MODER set!  ( 2 bits per pin)
    [    11 #9  8 -  4 * << #] GPIOA_AFRH set!   ( 4 bits per pin)
+   | >>> END chip-specific bits
 
    | Now for the uart itself.
    USART1_CR1  0 over ! ( reset and disable USART)
@@ -358,6 +395,14 @@ ld target/ARM/stm32/bitbanged-spi-half-duplex.mu4
 : uart-send-recv
    data  out-count h@ for  c@+ swap  uart-send  next  drop
    data   in-count h@ for  uart-recv  swap c!+  next  drop ;
+
+.else
+
+| Dummy routines so the init code and command jump table compile.
+: uart-init ;
+: uart-send-recv ;
+
+.then    | def with-uart
 
 
 | -------------------------------------------------------------------------
