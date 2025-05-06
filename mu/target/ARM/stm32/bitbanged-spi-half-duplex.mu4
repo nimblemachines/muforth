@@ -132,10 +132,46 @@ GPIOB_BSRR 2 +  equ GPIOB_CLR
 | of toggling at just over 5Mhz. I had to put in some no-ops to slow them
 | down a bit.
 
+| Macros for timing.
+|
+| The processor doing the bitbanging must be run at 48M; however, even at
+| that speed, the code is almost too fast for a PIC18. I think the problem
+| is less the *frequency* than the setup times (for writes) and access
+| times (for reads) being long enough.
+|
+| I originally wrote and tested the bitbanging code on F0 and F3 devices:
+| the F051, F072, and F303, in particular (because there are Discovery
+| boards available for all three.)
+|
+| I assumed that an unconditional forward branch would take three cycles.
+|
+| However, I got erroneous results with a C071 and an H533. The C071 is an
+| expected result: this is a Cortex-M0+ device with 2-cycle branches. The
+| H533 is a Cortex-M33; what is the story there? The processor reference
+| manual doesn't have cycle counts for the instructions, but I'm assuming
+| that it manages to do the forward branch in 2 cycles.
+|
+| I have modified the macros accordingly! And while I was at it,
+| I specifically made a no-op (nop-branch) that takes the same time as
+| a branch (because it is one!) in order to balance the arms of the
+| conditional which decides whether to write a one or a zero bit.
+
+| nop3        delays for three cycles
+| nop-branch  delays for the same time as a branch, for balance
+|
+| Cortex-M0+ and Cortex-M33 both have 2-cycle branches, so be careful when
+| trying to create a 3-cycle no-op.
+
 {
 assembler
-( Macro to assemble a three-cycle no-op.)
-: nop3  ( for Cortex-M0)  \m here 2 + \a again ;  ( jump to following instruction)
+
+: nop-branch   \m here 2 + \a again ;  ( jump to following instruction)
+: nop3
+   \a nop-branch     | 2 or 3 cycles, depending on processor
+.def stm32c0  .def stm32h5  .or .if  ( processors with 2-cycle branches)
+   \a nop            | add another cycle, to make it 3
+.then ;
+
 forth
 }
 
