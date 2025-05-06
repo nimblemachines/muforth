@@ -461,6 +461,7 @@ static void allocate()
 static cell *forth_chain;
 static cell *compiler_chain;
 static cell *runtime_chain;
+static cell *lex_chain;
 
 void muboot_push_forth_chain()      { PUSH_ADDR(forth_chain); }
 void muboot_push_compiler_chain()   { PUSH_ADDR(compiler_chain); }
@@ -474,28 +475,34 @@ void init_dict()
     allocate();
 
     /*
-     * First, create in our "bootstrap" forth chain .forth. , .compiler. ,
-     * and .runtime. chains that look and smell like the ones that will
-     * later be created as create/does words. These have a body that looks
-     * like a normal word, but the name is always "muchain" and its length
-     * byte is 0.
+     * First, create in our "bootstrap" forth chain .lex. , .forth. ,
+     * .compiler. , and .runtime. chains that look and smell like the
+     * ones that will later be created as create/does words. These have
+     * a body that looks like a normal word, but the name is always
+     * "muchain" and its length byte is 0.
      */
+
+    /*
+     * NOTE: This *must* be the first word defined in forth_bootstrap in
+     * order for forth_bootstrap to be anchored to .lex. !
+     */
+    lex_chain      = new_chain(&forth_bootstrap, ".lex.");
+
+    /* Anchor forth_bootstrap to .lex. */
+    *(cell *)forth_bootstrap = MAKE_LINK(lex_chain);
+
     forth_chain    = new_chain(&forth_bootstrap, ".forth.");
     compiler_chain = new_chain(&forth_bootstrap, ".compiler.");
     runtime_chain  = new_chain(&forth_bootstrap, ".runtime.");
 
-    /* Populate the .forth. chain with words defined in C. */
+    /* Anchor .forth. to .lex. (via forth_bootstrap), then populate with
+     * words defined in C. */
     init_chain(forth_chain, FOLLOW_LINK(&forth_bootstrap), initial_forth);
 
-    /* Populate the .compiler. chain with words defined in C. */
-    init_chain(compiler_chain, NULL_LINK, initial_compiler);
+    /* Anchor .compiler. to .lex., then populate with words defined in C. */
+    init_chain(compiler_chain, lex_chain, initial_compiler);
 
-    /*
-     * And we do the same with the .runtime. chain - with a wrinkle. Unlike
-     * .forth. and .compiler. which are "sealed" chains, .runtime. is
-     * anchored to the .forth. chain, so searches of .runtime. continue in
-     * the .forth. chain.
-     */
+    /* Anchor .runtime. to .forth., then populate with words defined in C. */
     init_chain(runtime_chain, forth_chain, initial_runtime);
 }
 

@@ -1,5 +1,5 @@
 
-token |  .forth.  (unlinked-name)  <:>  ] (lit) [  trailing
+token |  .lex.  (unlinked-name)  <:>  ] (lit) [  trailing
    drop c@  ,  ] parse 2drop ^ [  show
 
 | This file is part of muforth: https://muforth.dev/
@@ -88,7 +88,7 @@ token |  .forth.  (unlinked-name)  <:>  ] (lit) [  trailing
 | parses the  )  as token, drops its length, and fetches its first
 | character. This way we can pass the ASCII value of  )  to  parse .
 
-token (  .forth.  (unlinked-name)
+token (  .lex.  (unlinked-name)
    <:> ] (lit) [  token ) drop c@  ,  ]  parse 2drop ^ [  show
 
 | We want to create the  current  variable, but we have no defining words
@@ -111,14 +111,6 @@ token current  .forth.  (unlinked-name) show
 | With  current  defined we can now create the word  new  which we will use
 | from now on to create new names in the dictionary. Instead of using
 | .forth.  as above, we create new names in the chain pointed to by  current .
-
-| But before we define  new  let's create another  (  word, this time in the
-| .compiler.  chain, so we can comment the following code. It's a little
-| complicated, since they have the same name. So we will first find the forth
-| (  and then compile it by hand.)
-
-token (  .compiler.  (unlinked-name)
-   <:>  token ( .forth. find huh?  compile,  ] ^ [  show  | call the forth  (
 
 token new  .forth.  (unlinked-name)  ( new is defined in the .forth. chain)
    <:> ]
@@ -168,6 +160,7 @@ new :
 : forth        .forth. definitions ;
 : compiler  .compiler. definitions ;
 : runtime    .runtime. definitions ;
+: lex            .lex. definitions ;
 
 ( Create a literal in the word currently being defined.)
 : literal   compile (lit)  , ;
@@ -226,6 +219,7 @@ compiler
 ( XXX: is this useful? Here? Maybe in a target compiler...)
 : \f   .runtime. \chain ;
 : \c  .compiler. \chain ;  ( until we have \ ; we need this for "if")
+: \lex     .lex. \chain ;
 forth
 
 
@@ -366,12 +360,9 @@ forth
 |  |  followed directly by a newline will throw away the *following* line,
 | which is a bit mystifying. ;-)
 
+lex
 : |   trailing if  c@  bl = if  ctrl J parse  2drop  then  then ;
-
-: --     | ;  | legacy comment word; the previous name for |
-compiler
-: |   \f | ;
-: --  \f | ;  | legacy comment word; the previous name for |
+: --  \lex | ;  | legacy comment word; the previous name for |
 forth
 
 
@@ -414,7 +405,7 @@ forth
 : body>   ( 'body - 'code)  cell-  ip> ;
 
 ( Undefine a word by zeroing out the length byte of the name.)
-: undef  token  current @ find  if  >link 1-  0 swap c!  ^  then  complain ;
+: undef  current @ chain'  >link 1-  0 swap c! ;
 
 
 ( create and does>. Everything old is new again. ;-)
@@ -637,6 +628,10 @@ forth
 sealed .conditional.
 : conditional   .conditional. definitions ;
 
+compiler
+: \cond   .conditional. \chain ;    | compile a word from .conditional.
+forth
+
 | eat consumes tokens until it either consumes all the input - in which
 | case the while loop will exit - or an execute'd word returns _true_ to
 | exit the containing loop. ?toss processes each token. If it exists in
@@ -645,18 +640,23 @@ sealed .conditional.
 : ?toss   .conditional. find  if  execute ^  then  2drop  0 ;
 : eat   0 ( nesting)  begin  token  =while  ?toss  until  drop ( nesting) ^
                                     then  2drop ( token)  drop ( nesting) ;
-compiler
+lex
 : .if     0= if  eat  then ;
 : .else   eat ;
 : .then   ;
 
+( Boolean logic on conditional tests.)
+: .and  and ;
+: .or   or ;
+: .not  0= ;
+
 ( Consume a token, search a chain, and return only the "found or not" flag.)
 : .contains  ( chain - found)  token' nip  =if ^ then  nip ;
-: .def  .forth. \ .contains ;
-: .ndef   \ .def  0= ;
+: .def     .forth. \lex .contains ;
+: .ndef    \lex .def   \lex .not ;
 
-: .ifdef   \ .def   \ .if ;
-: .ifndef  \ .ndef  \ .if ;
+: .ifdef   \lex .def   \lex .if ;
+: .ifndef  \lex .ndef  \lex .if ;
 
 conditional
 ( nesting - nesting exitflag)
@@ -664,23 +664,9 @@ conditional
 : .else         dup 0= ;  ( .else doesn't nest, exits if nesting at 0)
 : .then     1-  dup 0< ;  ( .then unnests, exits if nesting -was- at 0)
 
-: .ifdef    1+       0 ;  ( these are like .if)
-: .ifndef   1+       0 ;
-
+: .ifdef    \cond .if ;  ( these nest like .if)
+: .ifndef   \cond .if ;
 forth
-: .if     \ .if ;
-: .else   \ .else ;
-: .then   ;
-
-: .def     \ .def ;
-: .ndef    \ .ndef ;
-: .ifdef   \ .ifdef ;
-: .ifndef  \ .ifndef ;
-: .contains  \ .contains ;
-
-: .and  and ;
-: .or   or ;
-: .not  0= ;
 
 
 | -------------------------------------------------------------------------
