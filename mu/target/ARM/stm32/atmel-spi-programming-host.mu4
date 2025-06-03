@@ -15,26 +15,29 @@ loading Atmel SPI flash programming (host)
 
 decimal
 
+| Because the following constants refer to memory locations inside the
+| connected STM32, let's prefix them to make them clear and unambiguous.
+
 "2000_0000  ( STM32 ram origin)
-dup constant data      256 +  ( memory read/write buffer)
-dup constant semaphore   4 +  ( semaphore + stm32 command)
+dup constant stm32.data      256 +  ( memory read/write buffer)
+dup constant stm32.semaphore   4 +  ( semaphore + stm32 command)
 
 ( This command block is pretty specific to AVR/AT89LP SPI programming.)
-dup constant cmd         1 +  ( flash command)
-           ( addr )      2 +  ( flash addr: high byte, low byte)
-           ( result )    1 +  ( single byte result)
+dup constant stm32.cmd         1 +  ( flash command)
+                 ( addr )      2 +  ( flash addr: high byte, low byte)
+                 ( result )    1 +  ( single byte result)
 
-           ( count )     2 +  ( byte count to transfer)
+                 ( count )     2 +  ( byte count to transfer)
 
-           ( toggle )    1 +  ( flash command toggle - for AVR)
-                         1 +  ( padding to word boundary)
-dup cmd - constant #flash-cmd ( length of flash cmd buffer)
+                 ( toggle )    1 +  ( flash command toggle - for AVR)
+                               1 +  ( padding to word boundary)
+dup stm32.cmd - constant #flash-cmd ( length of flash cmd buffer)
 
 | This is for UART and I2C communications, in concert with the data array.
 | It consists of 4 bytes: station, #send, #recv, #err. We call it
 | "serial-cmd" since it's metadata for the serial comm words.
 
-constant serial-cmd
+constant stm32.serial-cmd
 
 hex
 
@@ -78,14 +81,14 @@ variable spy  ( to spy on the protocol)
 : setup-single  ( avr-cmd addr data)
    pad m !
    rot m& ( cmd)  swap >lohi m& m& ( addr)  m& ( data)
-   pad cmd 4 st.write  pad 4 spy-write ;
+   pad stm32.cmd 4 st.write  pad 4 spy-write ;
 
 : setup-bulk  ( avr-cmd addr toggle buf len - buf len)
    2push ( buf len)
    pad m !
    rot m& ( cmd)  swap >lohi m& m& ( addr)  0 m& ( zero result)
    r@ >hilo m& m& ( count)  m& ( toggle)
-   pad cmd #flash-cmd st.write  pad #flash-cmd spy-write
+   pad stm32.cmd #flash-cmd st.write  pad #flash-cmd spy-write
    2pop ;
 
 ( The existing AVR code needs the following commands defined:)
@@ -100,7 +103,7 @@ variable spy  ( to spy on the protocol)
 
 : avr.Read    ( avr-cmd addr data)  ( leaves result in pad)
    setup-single  spi.single
-   pad cmd 4 st.read  pad 4 spy-read ;
+   pad stm32.cmd 4 st.read  pad 4 spy-read ;
 
 : avr.Write   ( avr-cmd addr data)
    setup-single  spi.single ;
@@ -108,11 +111,11 @@ variable spy  ( to spy on the protocol)
 : avr.BulkRead   ( avr-cmd addr toggle buf len)
    setup-bulk ( buf len)
    spi.bulk-read
-   data swap ( buf addr len)  st.read ;
+   stm32.data swap ( buf addr len)  st.read ;
 
 : avr.BulkWrite  ( avr-cmd addr toggle buf len)
    setup-bulk ( buf len)
-   data swap ( buf addr len)  st.write
+   stm32.data swap ( buf addr len)  st.write
    spi.bulk-write ;
 
 .then  ( avr)
@@ -127,19 +130,19 @@ variable spy  ( to spy on the protocol)
 : setup-bulk  ( len cmd addr - len)
    pad m !
    swap m& ( cmd)  >lohi m& m& ( addr)  0 m& ( result)  dup >hilo m& m& ( count)
-   pad cmd #flash-cmd st.write  pad #flash-cmd spy-write ;
+   pad stm32.cmd #flash-cmd st.write  pad #flash-cmd spy-write ;
 
 ( Setup a single cmd, execute it, and read back the result.)
 : at89.single  ( cmd addr)
    0 -rot  setup-bulk  drop
-   spi.single    pad cmd 4 st.read   pad 4 spy-read ;
+   spi.single    pad stm32.cmd 4 st.read   pad 4 spy-read ;
 
 : at89.bulk-read   ( buf len cmd addr)
    setup-bulk
-   spi.bulk-read   data swap ( buf addr len)  st.read ;
+   spi.bulk-read   stm32.data swap ( buf addr len)  st.read ;
 
 : at89.bulk-write  ( buf len cmd addr)
-   setup-bulk      data swap ( buf addr len)  st.write
+   setup-bulk      stm32.data swap ( buf addr len)  st.write
    spi.bulk-write ;
 
 .then  ( at89lp or at89lp-ss)
