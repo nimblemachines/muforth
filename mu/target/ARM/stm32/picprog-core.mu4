@@ -320,15 +320,19 @@ ld target/ARM/stm32/bitbanged-spi-half-duplex.mu4
 
 : t_enter_prog  1 ms ;
 : t_dly  ( nominally 1us)  1 us ;
-: t_erase  #11 ms ;  ( bulk or page erase)
-: t_prog_eeprom_config  #11 ms ;
-: t_prog_flash  #75 us ;
+: t_erase_bulk  5 ms ;
+: t_erase_page  #2500 us ;    ( Microchip calls this "row" erase)
+: t_prog_config  5 ms ;       ( time to erase and program a single config word)
+: t_prog_flash  #2500 us ;    ( time to program 32 words (1 row/page)
+
+: -prog  reset/  t_enter_prog ;
 
 | The string "MCHP" is the initialization bit string that must be clocked
 | into the target, LSB first. Everything else is LSB first as well, unlike
 | the PIC18F-Q.
 
 : +prog
+   -prog
    reset\  t_enter_prog  [ token MCHP drop bew@ #] #33 >bits drop  t_enter_prog ;
 
 | On the 16F145x, commands are 6 bits and the payload is 16 bits: 14 bits
@@ -346,13 +350,54 @@ ld target/ARM/stm32/bitbanged-spi-half-duplex.mu4
 ( Send a command; delay; recv a payload.)
 : cmd+rd  ( cmd - payload)  cmd  #16 bits>  #17 u>>  03fff and ;
 
+| A few notes on these programming commands.
+|
+| config! loads a word into the configuration latch and sets the address to
+| 8000. Config words are programmed singly; prog (followed by a delay of
+| t_prog_config) will erase and program a *single* configuration word.
+|
+| The address to program is set by executing p+ the requisite number of times.
+|
+| In order to program the flash, first the address needs to be set to 0000
+| with p-reset. p+ can be used to increment to the desired address.
+|
+| p! loads a word into a program memory latch; there are 32 such latches.
+| It's important to start loading them when the address is on a row (page)
+| boundary. It's also important *not* to increment the address after
+| loading the last latch; the row to program (or erase) is taken from the
+| high bits of the address.
+|
+| When programming flash (less than 8000) addresses, prog (followed by
+| a delay of t_prog_flash) will program into the flash the values loaded
+| into the latches.
+|
+| An unanswered question: if programming fewer than 32 latches, do the
+| contents default to 3fff (the "words" are 14 bits)? Or are the "leftover"
+| values used, in which case *all* latches should be loaded, even at the
+| end of the last row? Experiment to test this?
+|
+| When incrementing addresses, they wrap within a 32 Ki range: 7fff wraps
+| to 0000; ffff wraps to 8000.
+|
+| The behavior of bulk erase depends on the current address. If less than
+| 8000, program memory and config words are erased; user id words are left
+| alone. If 8000 or above, all three are erased.
+|
+| If row erase is executed with the address 8000 or above, the user id
+| locations are erased.
+
 : config!  ( w)  00 cmd+wr  t_dly ;  ( load configuration latch; set addr to 8000)
-: prog!    ( w)  02 cmd+wr  t_dly ;  ( load program memory latch)
+: p!       ( w)  02 cmd+wr  t_dly ;  ( load program memory latch)
 : p@     ( - w)  04 cmd+rd  t_dly ;  ( read program/config memory)
 : p+             06 cmd     t_dly ;  ( increment address)
-: !p             16 cmd     t_dly ;  ( reset address to 0000)
+: p-reset        16 cmd     t_dly ;  ( reset address to 0000)
 
-: tt  timer-init  spi-init  reset/  +prog
+| prog must be followed by the correct delay - for flash or config.
+: prog           08 cmd ;            ( begin internally timed programming)
+: bulk-erase     09 cmd     t_erase_bulk ;
+: row-erase      11 cmd     t_erase_row ;
+
+: tt  timer-init  spi-init  +prog
    ( Read device id and revision and few other things.)
    0 config!  p+ p+ p+ p+  7 for  p@ p+  next ;
 
