@@ -55,13 +55,38 @@ forth
 dp0  64 \m cells -  256 - ( flash code)  -256 and  dup constant @flash-routines
                                           #flashbuf -  constant @flashbuf
 
+.ifndef /page  ( devices that erase based on a page *index*)
+
+| Replace the standard flash erasure code - which expects uniformly-sized
+| pages specified by *address* - with code that works for STM32 chips that
+| use page *indexes* rather than addresses for erasure, and which might
+| have pages of non-uniform size (eg, the F4 family).
+
+| Print *both* the target address *and* the index of the page being erased.
+: erase-page  ( index 'target)
+   cr ."    erase   "  u.  ." (page " dup (u.) type ." )"
+   t.erase ;
+
+| Before programming the *first* byte of a page, we erase the page.
+|
+| Given a target flash address, return page index and true if we should
+| erase this address, and false otherwise. Every target that uses page
+| indexes for erasure has to define this word:
+
+| erase?  ( 'target - index -1 | 0)
+
+: ?erase  ( 'target)  dup erase? if  swap erase-page ^  then  drop ;
+
+-: ( 'target len - 'target+len)
+   2dup + push  over ?erase  program-chunk  pop ;  is erase-program-chunk
+
 | For testing the address-to-page-index mapping code, on families that use
 | page indices, rather than addresses, for erasure.
 
-.def testing  .ndef /page  .and .if
+.ifdef testing
 
 : test-page  ( 'target)
-   dup erase? if  swap  cr  u. ." page " u. ^ then  drop ;
+   dup erase? if  swap  cr  u. ." page " u. ^  then  drop ;
 
 | Test every 256 byte chunk of the flash to see where the page boundaries
 | are. Make sure we get the correct values!
@@ -69,7 +94,8 @@ dp0  64 \m cells -  256 - ( flash code)  -256 and  dup constant @flash-routines
 : test-pages
    @flash #flash over + swap do  i test-page  256 +loop ;
 
-.then  ( testing and erase?)
+.then  ( def testing)
+.then  ( ndef /page)
 
 hex
 __meta

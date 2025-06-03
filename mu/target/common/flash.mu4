@@ -110,39 +110,24 @@ defer verify-regions  ( - diff)
    cr ."    program "  over u.  dup u.
    over image+ -rot  ( buf 'target len)  t.program ;
 
+defer erase-program-chunk  ( 'target len - 'target+len)
+
 .ifdef /page  ( devices that erase based on a page *address*)
 
 : erase-page  ( 'target)
    cr ."    erase   "  dup u.
    t.erase ;
 
-| Given a target flash address, return true if we should erase this
-| address, and false otherwise.
-
+| Before programming the *first* byte of a page, we erase the page.
 : erase?  ( 'target - erase?)  [ /page 1- #] and  0= ;
 
-( Before we program the _first_ byte of a page, we erase the page.)
-: flash-chunk  ( 'target len - 'target+len)
-   2dup + push  over erase? if  over erase-page  then  program-chunk  pop ;
+: ?erase  ( 'target)
+   dup erase? if  erase-page ^  then  drop ;
 
-.else  ( devices that erase based on a page *index*)
+-: ( 'target len - 'target+len)
+   2dup + push  over ?erase  program-chunk  pop ;  is erase-program-chunk
 
-| Print *both* the target address *and* the index of the page being erased.
-: erase-page  ( index 'target)
-   cr ."    erase   "  u.  ." (page " dup (u.) type ." )"
-   t.erase ;
-
-| Given a target flash address, return page index and true if we should
-| erase this address, and false otherwise. Every target that uses page
-| indexes for erasure has to define this word:
-
-| erase?  ( 'target - index -1 | 0)
-
-( Before we program the _first_ byte of a page we erase the page.)
-: flash-chunk  ( 'target len - 'target+len)
-   2dup + push  over erase? if  2 nth erase-page  then  program-chunk  pop ;
-
-.then
+.then  ( def /page)
 
 | We do the flash programming in chunks; the variable /chunk - which is set
 | by the interact code based on a value received from the debug interface
@@ -196,8 +181,8 @@ defer verify-regions  ( - diff)
 : flash-region
    cr ." Programming " .region
    region  /chunk @  /mod  ( r q)  swap push
-   for  /chunk @  flash-chunk  next  pop
-      =if  ( rem) flash-chunk  drop ^  then  2drop ;
+   for  /chunk @  erase-program-chunk  next  pop
+      =if  ( rem) erase-program-chunk  drop ^  then  2drop ;
 
 defer ?flash-check    now nope is ?flash-check  ( default is do nothing)
 defer flash-regions
@@ -206,7 +191,7 @@ defer after-flashing  ( diff)
 : flash-image
    h preserve  radix preserve hex  ( print messages in hex)
    ?chunk-size  ?flash-check  t.flash-begin  flash-regions  t.flash-end
-   noisy-verify? on  verify-regions  after-flashing ;
+   noisy-verify? on  verify-regions after-flashing ;
 
 | Here is a default version of flash-regions for targets with a single
 | flash region.
@@ -214,7 +199,7 @@ defer after-flashing  ( diff)
 -: flash flash-region ;  is flash-regions  ( very simple!)
 
 ( And a default for the post-flashing, post-verify action.)
--: drop ;                is after-flashing ( diff)
+-: drop ;                is after-flashing  ( diff)
 
 
 ( XXX The following code probably needs to be moved. But whither?)
