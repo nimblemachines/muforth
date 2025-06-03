@@ -254,25 +254,25 @@ ld target/ARM/stm32/bitbanged-spi-half-duplex.mu4
 : ee!+  ( b)     0e0 cmd+wr  t_prog_eeprom_config ;
 : perase         0f0 cmd     t_erase ;  ( page from high bits of PC)
 
-:  setup  ( - data #bytes)  addr @ !p  data  count @ ;
+: set-addr  addr @ !p ;
+
+:  setup  ( - data #bytes)  set-addr  data  count @ ;
 : wsetup  ( - data #words)  setup  1+ 2/ ;
 
-variable bytes/page  ( aka erase size)
-| Read page size out of device config info area of chip! Save it locally
-| and put it into count so host can read it too.
+| Read page size out of device config info area of chip! Save it in count
+| so host can read it too.
 
 : get-page-size
-   3c_0000 !p  p@+ ( words/page) 2*  dup bytes/page !  count ! ;
+   3c_0000 !p  p@+ ( words/page) 2*  count ! ;
 
+| Exit programming mode.
+: -prog  reset/  t_enter_prog ;
+
+| Enter programming mode.
 : +prog
+   -prog  ( first exit any previous session)
    reset\  t_enter_prog  [ token MCHP drop bew@ #] #32 >bits drop  t_enter_prog
    get-page-size ;
-
-: -prog  reset/ ;  ( XXX is this right?)
-
-( If addr is the start of a page, erase the page.)
-: erase?  addr @  bytes/page @ 1- and  0= ;
-: ?erase  erase? if perase then ;
 
 : read-flash  wsetup  for  p@+ >hilo  rot c!+ c!+  next  drop ;
 : read-ee      setup  for  p@+       swap c!+      next  drop ;
@@ -280,11 +280,13 @@ variable bytes/page  ( aka erase size)
 ( Only write config/ee space if bytes *differ*.)
 : ?ee!+  ( b)  p@ over xor if  ( differ)  ee!+ ^  then  drop p+ ;
 
-: prog-flash  wsetup  ?erase  for  c@+ c@+ -rot  lohi> p!+  next  drop ;
-: prog-ee      setup          for  c@+ swap          ?ee!+  next  drop ;
+: erase-page  set-addr perase ;
 
-( NOTE: deviced-id and revision are *word-sized* values.)
-: tt  ( - revision device-id)  timer-init  spi-init  reset/  +prog
+: prog-flash  wsetup  for  c@+ c@+ -rot  lohi> p!+  next  drop ;
+: prog-ee      setup  for  c@+ swap          ?ee!+  next  drop ;
+
+( NOTE: device-id and revision are *word-sized* values.)
+: tt  ( - revision device-id)  timer-init  spi-init  +prog
    3f_fffc !p  p@+ p@+ ;
 
 | Use this to test the *read size* of each region. Config and EEPROM space
@@ -472,8 +474,9 @@ compiler: :]  ( end a jump table)
 : do-command  ( n)  10 -  [:
  ( 10     11     12 )
    +prog  -prog  uart-send-recv
- ( 13          14       15          16 )
-   read-flash  read-ee  prog-flash  prog-ee
+
+ ( 13          14       15          16          17)
+   read-flash  read-ee  erase-page  prog-flash  prog-ee
    :] ;
 
 here ]  ( chip-init)

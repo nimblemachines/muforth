@@ -48,19 +48,66 @@ variable picprog-spy  ( to spy on the protocol)
 | -------------------------------------------------------------------------
 | PIC18-Q programming
 | -------------------------------------------------------------------------
-: setup  ( a u - u)  ( put addr and count into pad; write to stm32)
-   swap stm32.addr dap!  dup stm32.count dap! ;
 
-: data>  ( buf u)  stm32.data swap st.read ;
-: >data  ( buf u)  stm32.data swap st.write ;
+| We are going to use the generic flash programming code, which calls into
+| the interact code, to do the programming. We need to do some "plumbing"
+| to connect the SPI progamming code to the interact code. We do this in
+| the usual way: using chat-via.
 
-: +prog  10 rx-cmd ;
+| Command table for programming pod
+|
+| 10  +prog             put target chip into programming mode
+| 11  -prog             exit programming mode
+| 12  uart-read-write   for debug; currently unused
+| 13  read-flash
+| 14  read-eeprom
+| 15  erase-page
+| 16  prog-flash
+| 17  prog-eeprom
+
+: +prog  ( - erase-page-size)
+         10 rx-cmd  stm32.count dap@ ;
+
 : -prog  11 rx-cmd ;
 
-: read-flash-chunk  ( buf a u)  setup  13 rx-cmd  data> ;
-: read-ee-chunk     ( buf a u)  setup  14 rx-cmd  data> ;
+: setup  ( a u - 'data u)  ( write addr and count to stm32)
+   swap stm32.addr dap!  dup stm32.count dap!  stm32.data swap ;
 
-: prog-flash-chunk  ( buf a u)  setup  >data  15 rx-cmd ;
-: prog-ee-chunk     ( buf a u)  setup  >data  16 rx-cmd ;
+: sx.read-flash    ( buf a u)  setup            13 rx-cmd  st.read ;
+: sx.read-eeprom   ( buf a u)  setup            14 rx-cmd  st.read ;
 
+: s.erase          ( a)  stm32.addr dap!        15 rx-cmd ;
+
+: s.program        ( buf a u)  setup  st.write  16 rx-cmd ;
+: s.write-eeprom   ( buf a u)  setup  st.write  17 rx-cmd ;
+
+| s.read-space needs to be careful - both about data vs flash, and about
+| the read size of the flash regions. For data reads, since there is no way
+| to read ram or i/o over SPI, simply return a buffer full of 0dd; for
+| flash reads, check the address and call the appropriate read routine.
+
+: s.read-space  ( buf a u space)
+   if  ( data, ie ram or i/o)  nip  0dd fill ^  then
+   over @config @device-config within if
+      ( config or eeprom)  sx.read-eeprom ^  then
+      ( all other flash)   sx.read-flash ;
+
+| XXX When do we call -prog??? When are we done talking to the chip???
+: s.hello       ( - chunk-size)  +prog  #256 ;
+
+| By returning an impossible value (it's more than 16 bits) we can identify
+| to the generic flashing code that we are not running in serial chat but
+| instead using the SPI programming interface.
+
+: s.get-status  ( - dp)  dead_c0de ;
+
+| s.write-data will get called to copy ram at connect time; we want to
+| ignore this data rather than signal an error.
+
+: s.write-data    ( buf a u)  2drop drop ;
+
+| NOTE: This is the PIC18 chat-via, not STM32!
+: spi   chat-via
+   s.hello  s.get-status  chat-fail  s.read-space  s.write-data  s.write-eeprom
+   nope  nope  nope  nope  s.erase  s.program ;
 .then  ( pic18f-q)
