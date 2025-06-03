@@ -2,7 +2,7 @@
 |
 | Copyright 2002-2025 David Frech. (Read the LICENSE for details.)
 
-loading Atmel SPI flash programming (STM32 core)
+loading Atmel SPI flash programming (via STM32-based "pod")
 
 | It might seem rather odd that this is here, but I'm interested in using
 | an STM32 Discovery board as a "programming pod" for Atmel 8051 and AVR
@@ -106,16 +106,32 @@ variable p
 | the chip to be clocked in order to program it, or even to change the fuses
 | to select an internal clock!
 |
-| Let's output an 8M clock on PA8 - our only option - for this or any other
-| use.
+| Let's output an 8M (12M in case of C0 family) clock on PA8 - our only
+| option - for this or any other use.
 
 : 8m-clock-output
-   5 [ RCC_CFGR 3 + #] c!  ( select 8M HSI clock, /1 as MCO)
-   [ 1 #17 << #] RCC_AHBENR set!  ( Ensure clocks are enabled to Port A.)
+.ifdef stm32c0
+   23 [ RCC_CFGR 3 + #] c!             | select HSI48/4 (12M) as MCO
+.then
+.def stm32f0  .def stm32f3  .or .if
+   5 [ RCC_CFGR 3 + #] c!              | select HSI/1 (8M) as MCO
+.then
+.ifdef stm32f4
+   4 [ RCC_CFGR 3 + #] c!              | select HSI/2 (8M) as MCO1
+.then
+.ifdef stm32h5
+   [ 4 2 << #] [ RCC_CFGR1 2 + #] c!   | select HSI/4 (8M) as MCO1
+.then
+   1 enable-gpio  ( Ensure clocks are enabled to Port A.)
    | Set mode bits (%10) and alternate function (AF0) for PA8.
-   [ %10 #8 2* << #] GPIOA_MODER set!  ( 2 bits per pin)
+   | Be careful: on C0 and H5, MODER defaults to all ones.
+   GPIOA_MODER dup @
+      [ %11 #8 2* << #] bic  ( 2 bits per pin)
+      [ %10 #8 2* << #] or   ( 2 bits per pin)
+   swap !
    | AF0 is reset default; nothing to do
    ;
+
 
 | -------------------------------------------------------------------------
 | SPI building blocks
@@ -232,6 +248,10 @@ GPIOB_BSRR 2 +  equ GPIOB_CLR
 .then  ( at89lp-ss)
 
 
+| XXX I haven't used this for anything, and the existing code will only
+| work for F0 and F3 families. I'm going to leave this behind an ifdef.
+
+.ifdef with-uart
 | -------------------------------------------------------------------------
 | Serial communication - UART
 | -------------------------------------------------------------------------
@@ -266,27 +286,67 @@ GPIOB_BSRR 2 +  equ GPIOB_CLR
    data p !  #send c@ for  p* uart-send  next
    data p !  #recv c@ for  uart-recv p&  next ;
 
+.else
+
+| To satisfy init and command table code.
+: uart-init ;
+: uart-send-recv ;
+
+.then    ( def with-uart)
+
+
+.ifdef with-i2c
+| NOTE: If I want to support I2C on *all* the chip families that I have
+| board support for, I need to use I2C1; I2C2 exists on all the chips
+| except for C031!
 
 | -------------------------------------------------------------------------
 | Serial communication - I2C
 | -------------------------------------------------------------------------
 : i2c-init
-   | We are using I2C2, with SCL on PB10, SDA on PB11. spi-init has turned
-   | on the PortB clock.
+   | We are using I2C1. I2C2 doesn't exist on C031. We *would* be using PB8
+   | and PB9 universally, but - bizarrely - the H503 lacks a PB9 pin! So on
+   | both H5 boards we will use PC8 and PC9 instead.
+   |
+   | spi-init has turned on the Port B clock. For H5 we have to turn on
+   | Port C separately.
+   |
+   | Enable clocks to I2C1
+   [ 1 #21 << #]
+   | The clock enable register has different names for different chip
+   | families!
+.ifequ RCC_APB1ENR   RCC_APB1ENR    .then    | F051, F072, F303, F4
+.ifequ RCC_APB1LENR  RCC_APB1LENR   .then    | H503/H533
+.ifequ RCC_APBENR1   RCC_APBENR1    .then    | C0x1
+   set!
 
-   | Enable clocks to ic2c.
-   [ 1 #22 << #] RCC_APB1ENR set!
+   | Remember, we are using PC8 and 9 on H5, but PB8 and 9 on all others.
+   | Push the registers we need ahead of time so the code can be more
+   | easily shared.
+.ifdef stm32h5  %100 ( CBA) enable-gpio  ( turn on clocks to Port C)
+                GPIOC_OTYPER  GPIOC_AFRH  GPIOC_MODER  .else
+ ( all others)  GPIOB_OTYPER  GPIOB_AFRH  GPIOB_MODER  .then
 
-   | Set mode bits (%10) and alternate function (AF1) for i2c2.
-   [ %1010 #10       2*  << #] GPIOB_MODER set!  ( 2 bits per pin)
-   [    11 #10  8 -  4 * << #] GPIOB_AFRH set!   ( 4 bits per pin)
+   | Set mode bits (%10) for alternate function (pins 8 and 9).
+   dup @  ( MODER)
+   [ %1111 #8 2* << #]  bic  ( 2 bits per pin)
+   [ %1010 #8 2* << #]  or   ( 2 bits per pin)
+   swap !
+
+   | Choose alternate function (AF) setting based on chip family.
+   | and alternate function for I2C1
+.ifdef stm32c0  66  .else
+.ifdef stm32f0  11  .else
+   ( f3/f4/h5)  44  .then .then
+   [ #8  8 -  4 * << #]  ( 4 bits per pin)
+   swap set!  ( AFRH)
 
    | I'm not sure if setting the pins to alternate function causes them to
    | be open-drain, so to be sure, let's set that as well.
-   [   %11 #10           << #] GPIOB_OTYPER set!  ( 1 bit per pin)
+   [ %11 #8 << #] GPIOB_OTYPER set!  ( 1 bit per pin)
 
    | Now for the I2C itself.
-   I2C2_CR1  0 over ! ( reset and disable I2C)
+   I2C1_CR1  0 over ! ( reset and disable I2C)
    | Timing info from Table 95 of RM0091 manual. We want to run 100kHz
    | "standard mode" clock. Here are the recomended settings, based on a
    | 48M clock (values are in hex):
@@ -295,19 +355,19 @@ GPIOB_BSRR 2 +  equ GPIOB_CLR
    | SDADEL=02    2 cycles = 500ns  ( why isn't this 3 cycles?)
    | SCLH=0f     16 cycles = 4us
    | SCLL=13     20 cycles = 5us
-   | b042_0f13 I2C2_TIMINGR !
+   | b042_0f13 I2C1_TIMINGR !
 
    | Let's try some more "relaxed" timing...
    | SCLDEL=07    8 cycles = 2us
    | SDADEL=08    8 cycles = 2us
    | SCLH=13     20 cycles = 5us
    | SCLL=13     20 cycles = 5us
-   b078_1313 I2C2_TIMINGR !
+   b078_1313 I2C1_TIMINGR !
 
    1 ( PE) ( enable I2C)  swap set! ;
 
 : ?i2c-status  ( mask - status)
-   begin  I2C2_ISR @  over and  ?until  nip ;
+   begin  I2C1_ISR @  over and  ?until  nip ;
 
 ( I2Cx_ISR bits)
 1 1 << equ TXIS
@@ -324,10 +384,10 @@ GPIOB_BSRR 2 +  equ GPIOB_CLR
 : i2c-start  ( count rd/-wr)
    ( read=1, write=0) #10 <<
    swap ( count) #16 << +
-   station c@ ( slave-addr, low bit 0) +  I2C2_CR2 !
+   station c@ ( slave-addr, low bit 0) +  I2C1_CR2 !
    data p !
 
-   START I2C2_CR2 set! ( send start bit and addr+r/-wr) ;
+   START I2C1_CR2 set! ( send start bit and addr+r/-wr) ;
 
 | If we got a NACK back, store a 1 in the nack slot, and return to to the
 | *caller* of i2c-send-recv with an empty stack.
@@ -339,7 +399,7 @@ GPIOB_BSRR 2 +  equ GPIOB_CLR
 : ?nack  ( status-mask - status | <nothing>)
    ?i2c-status
    dup NACKF and if
-      NACKF I2C2_ICR !  ( clear NACKF)  drop ( status)
+      NACKF I2C1_ICR !  ( clear NACKF)  drop ( status)
       r> drop  r> drop  r> drop  ( exit from i2c-send-recv)
       1 nack c!  ( set the nack flag for usb client)
    then ;
@@ -347,15 +407,23 @@ GPIOB_BSRR 2 +  equ GPIOB_CLR
 : i2c-send?  ( - more?)  [ NACKF TC TXIS + + #] ?nack  TXIS and ;
 : i2c-recv?  ( - more?)  [ NACKF TC RXNE + + #] ?nack  RXNE and ;
 
-: i2c-send-buf   begin  i2c-send? while  p* I2C2_TXDR !  repeat ;
-: i2c-recv-buf   begin  i2c-recv? while  I2C2_RXDR @ p&  repeat ;
+: i2c-send-buf   begin  i2c-send? while  p* I2C1_TXDR !  repeat ;
+: i2c-recv-buf   begin  i2c-recv? while  I2C1_RXDR @ p&  repeat ;
 
 ( Send/recv once. Caller needs to deal with retrying after a NACK.)
 : i2c-send-recv
    0 nack c!  ( Ok)
    #send c@     0 ( write)  i2c-start  i2c-send-buf
    #recv c@ ?if 1 ( read)   i2c-start  i2c-recv-buf  then
-   STOP I2C2_CR2 set! ( send STOP bit)  100 wait ;
+   STOP I2C1_CR2 set! ( send STOP bit)  100 wait ;
+
+
+.else    | ndef with-i2c
+
+: i2c-init ;
+: i2c-send-recv ;
+
+.then    | def with-i2c
 
 
 | -------------------------------------------------------------------------

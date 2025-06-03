@@ -21,18 +21,27 @@ hex
           %0010 enable-gpio
 
    | Enable clock to SPI1 as well.
+.ifequ RCC_APBENR2
+   [ 1 #12 << #] RCC_APBENR2 set!
+.else
    [ 1 #12 << #] RCC_APB2ENR set!
+.then
 
    | Clear port B. Clock idles low; this will also assert /RST and /SS.
    0 GPIOB_ODR !
 
    | Set mode bits and alternate function for SPI1.
-   | F072: SPI1 is AF0. F303: SPI1 is AF5.
-   | Mode %01 is output ; mode %10 is alternate function
+   |
+   | On C0 and H5, MODER is all ones at reset; for every other family it is
+   | all zeros! We don't care. We start by setting the register to zero.
+
    0 GPIOB_MODER !
    [ %0101_101010 #3  2*  << #] GPIOB_MODER set!  ( 2 bits per pin)
+
+   | F072, C0: SPI1 is AF0. F303, F411: SPI1 is AF5.
+   | Mode %01 is output ; mode %10 is alternate function
    [         0fff #3  4 * << #] GPIOB_AFRL clr!   ( 4 bits per pin)
-.ifdef stm32f303
+.def stm32f3  .def stm32f4  .def stm32h5  .or .or .if
    [         0555 #3  4 * << #] GPIOB_AFRL set!   ( 4 bits per pin)
 .then
 
@@ -75,8 +84,16 @@ hex
 | until we have received the first one, and because SPI is synchronous, we
 | don't need to check for TXE before writing our byte to the data register.
 
+| Some families have separate TX and RX registers for SPI; others use
+| a single register for both.
+
+.ifequ SPI1_DR    | if single data register defined for both RX and TX
+   SPI1_DR equ SPI1_TXDR   | define both registers as synonyms
+   SPI1_DR equ SPI1_RXDR
+.then
+
 : >spi>  ( b1 - b2)
-   SPI1_DR c!  begin  SPI1_SR @  1 ( RXNE) and  until  SPI1_DR c@ ;
+   SPI1_TXDR c!  begin  SPI1_SR @  1 ( RXNE) and  until  SPI1_RXDR c@ ;
 
 ( Split into hi and lo parts. hi could be more than 8 bits!)
 : >hilo  ( w - hi lo)  dup 8 u>>  swap 0ff and ;
