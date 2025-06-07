@@ -9,6 +9,19 @@ loading S08 disassembler
 forth
 hex
 
+: equate?  ( addr - 0 | 'link -1)  .equates.        find-constant ;
+: label?   ( addr - 0 | 'link -1)  .labels.         find-constant ;
+: target?  ( addr - 0 | 'link -1)  .target-runtime. find-constant-chained ;
+
+: .name    ( 'link)  link>name type ;
+: .(name)  ( a 'link)  ."  (" .name ." )"  drop ;
+
+: ?named  ( a)
+   dup equate? if .(name) ^ then
+   dup label?  if .(name) ^ then
+   dup target? if .(name) ^ then
+   drop ;
+
 ( Sign extend byte to host cell.)
 : sext   ( b - n)  dup 80 and if -100 + then ;
 
@@ -51,7 +64,7 @@ forth
 | address.
 
 : +a     + 0ffff and ;  ( and and wrap to 16 bits)
-: .dest  b  ( offset)  sext  p @  +a  dup ea !  ._h4 ;
+: .dest   b  ( offset)  sext  p @  +a  dup ea !  dup ._h4 ?named ;
 
 | Since the system stack is empty descending, the top element is at 1,s
 | rather than 0,s. The X-indexed stack is full descending, however, and
@@ -64,10 +77,10 @@ forth
 : ireg+  ( op - op)  dup pre? negate  4" ,x+ ,s  " ;  ( for cbeq)
 
 : simm  b  ."  #"  .sh2 ;  ( signed)
-: dimm  w  ."  #"  dup ea !  .h4 ;
+: dimm  w  ."  #"  dup ea !  dup .h4 ?named ;
 : imm   b  ."  #"  .h2 ;
-: dir   b  dup ea !  ._h2 ;  ( direct addr)
-: ext   w  dup ea !  ._h4 ;  ( extended addr)
+: dir   b  dup ea !  dup ._h2 ?named ;  ( direct addr)
+: ext   w  dup ea !  dup ._h4 ?named ;  ( extended addr)
 : .a    ." a" ;
 : .x    ." x" ;
 : ix1   ( op - op)  ( indexed 1 byte offset)  b  sadjust  ._h2  ireg ;
@@ -205,4 +218,10 @@ forth
 
 ( The workhorse.)
 : 1dis  ( a)
+   dup target? if
+      over _addr .nesting ." target " .name
+   then
+   dup label? if
+      over _addr .nesting ." label " .name
+   then
    dup .addr  .nesting  dispatch  drop ;
