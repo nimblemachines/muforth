@@ -52,9 +52,6 @@ forth
 
 ld target/common/flash.mu4
 
-| The last page of the flash contains the vectors.
-@flash #flash +  1 Ki 2/ -  constant @vector-page
-
 | Check to see if we're going to clobber the bootloader and complain if
 | we're not executing from RAM.
 
@@ -63,16 +60,6 @@ ld target/common/flash.mu4
    in-ram? @ if ^ then  ( running in RAM - Ok)
    error" You need to be running a RAM-based version of the chat code in
 order to re-flash it. Consult a local guru. ;-)" ;
-
-| Prepare to do a comparison or computation between data read from the
-| target into a buffer, and data in our memory image. Read a chunk from the
-| target into buf, and set m to point to the beginning of buf.
-|
-| Be careful about setting m. Some chunked read implementations use it, so
-| set it *after* doing the read.
-
-: setup-comparison  ( buf a u - a u)
-   push  2dup r@ t.read  pop  rot m ! ;
 
 | On the S08, erasing the vectors means erasing the TRIM bytes, the secure
 | bits, and the bootloader. So be careful about re-programming things, esp
@@ -83,14 +70,13 @@ order to re-flash it. Consult a local guru. ;-)" ;
 
 : save-trims  ( save them from the wrecking ball)
    | cr ." save-trims"
-   pad 0ffac 4  setup-comparison
-   for  dup image-c@ m* and  over image-c!  1+  next  drop ;
+   pad 0ffac 4 t.read  pad m !   | read trims from chip
+   0ffac 4 for  dup image-c@ m* and  over image-c!  1+  next  drop ;
 
 -: save-trims  ( before erasing anything!)
      flash  flash-region
-    commit  flash-region
-      boot  ?clobbering-loader
-            flash-region
+    commit  ?clobbering-loader  flash-region    | either can trigger warning
+      boot  ?clobbering-loader  flash-region
      trims  flash-region
    vectors  flash-region ;  is flash-regions
 
