@@ -13,7 +13,18 @@ hex
 | with substantially the same code. Using the chat4 protocol as a model, we
 | are going to create a compatibility layer between that and each protocol.
 | The higher-level host chat code can then consume a *single* (basically
-| chat4) protocol.
+| chat4) protocol. It expects the following words to be defined:
+|
+| : cx.version   ( )             | point HX to chat firmware version commit
+| : cx.run       ( pc dp)        | execute code at pc with HX set to dp
+| : cx.status    ( - dp)         | read dp (HX) from chip
+| : cx.addr      ( a)            | set HX to memory address
+| : cx.read-n    ( n)            | read N bytes from memory, starting at HX
+| : cx.write-1   ( b)            | write one byte to memory at HX, incr
+| : cx.flash-1   ( b - status)   | flash one byte, incr, get flash status
+|
+| In a few places, we define words prefixed with "x.". These are building
+| blocks that help us define the required "cx." words.
 
 : >b  send ;
 : b>  recv ;
@@ -166,6 +177,9 @@ hex
 | Before loading anything chip-specific or the interact code, we'd like to
 | be able to query the chip for its device id. We read two bytes from
 | address 1806 (the SDIDH and SDIDL registers).
+|
+| Note: This routine is *not* necessary for target/S08/chat-host.mu4; it is
+| only used by the auto-device-id code in target/S08/device/supported.mu4.
 
 : cx.device-id
 .ifdef chat-slow  ( using a xtal that only allows 38400)
@@ -173,7 +187,6 @@ hex
 .else
    #115200 bps
 .then
-   resync
 
    | High nybble of device-id is "reserved" and might not be zero.
    1806 ( chip id) cx.addr  2 cx.read-n w>  0fff and ;
