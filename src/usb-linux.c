@@ -165,8 +165,11 @@ void mu_usb_find_device()
     /* Enumerate USB device tree, looking for a match */
     if (dir_exists(USB_ROOT1))
         matched = foreach_dirent(USB_ROOT1, is_bus_or_dev, enumerate_devices, vid, pid);
-    else
+    else if (dir_exists(USB_ROOT2))
         matched = foreach_dirent(USB_ROOT2, is_bus_or_dev, enumerate_devices, vid, pid);
+    else
+        /* No USB buses available to enumerate; return "not found". */
+        matched = 0;
 
     if (matched < 0) return abort_strerror();
 
