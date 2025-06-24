@@ -55,11 +55,13 @@ forth
 
 __meta
 
+| XXX Do we want vectors and commit regions?
+
 boot
 
 0 ,  ( startup rjmp)
 
-( Load device-specific support.)
+( Load device-family-specific support.)
 .ifdef 1xk50
    ld target/PIC18/device/chat-k.mu4
 .else
@@ -95,38 +97,38 @@ label run
 | Doing streaming reads from program memory space is critical to making
 | verifying the flash fast.
 
-( INDF1 points to a scratch byte at the end of ram.)
 label read-prog-n
-   recv-byte c  INDF1 ) st  ( count)
-   begin  prog@+  PROGDATA ) ld  send-byte c  INDF1 ) decsz  again  ret  ;c
+   recv-byte c  push  TOS ) st  ( count)
+   begin  prog@+  PROGDATA ) ld  send-byte c  TOS ) decsz  again
+   pop  ret  ;c
 
 | We don't necessarily need to do streaming reads from data space, but it's
 | much faster to read multiple bytes at a time. The code is longer, though:
 | single byte read is two instructions; multi-byte is seven!
 
 label read-data-n
-   recv-byte c  INDF1 ) st  ( count)
-   begin  @dp+ ) ld  send-byte c  INDF1 ) decsz  again  ret  ;c
+   recv-byte c  push  TOS ) st  ( count)
+   begin  @dp+ ) ld  send-byte c  TOS ) decsz  again
+   pop  ret  ;c
 
 label write-data
    recv-byte c  @dp+ ) st  ret  ;c
 
 label process-serial
-   @ram #ram + 1- FSR1 lda  ( point to last byte of ram, as scratch)
    recv-byte c  ( command)   -0f addi
-   W ) decsnz  ( 10)  get-version j
-   W ) decsnz  ( 11)  set-prog-addr j
-   W ) decsnz  ( 12)  set-data-addr j
-   W ) decsnz  ( 13)  get-data-addr j
-   W ) decsnz  ( 14)  run j
-   W ) decsnz  ( 15)  read-prog-n j
-   W ) decsnz  ( 16)  read-data-n j
-   W ) decsnz  ( 17)  write-data j
+   WREG ) decsnz  ( 10)  get-version j
+   WREG ) decsnz  ( 11)  set-prog-addr j
+   WREG ) decsnz  ( 12)  set-data-addr j
+   WREG ) decsnz  ( 13)  get-data-addr j
+   WREG ) decsnz  ( 14)  run j
+   WREG ) decsnz  ( 15)  read-prog-n j
+   WREG ) decsnz  ( 16)  read-data-n j
+   WREG ) decsnz  ( 17)  write-data j
 
 .ifndef 1xk50  ( Q-series support)
-   W ) decsnz  ( 18)  set-nvm-addr j
-   W ) decsnz  ( 19)  nvm-read j
-   W ) decsnz  ( 1a)  nvm-write j
+   WREG ) decsnz  ( 18)  set-nvm-addr j
+   WREG ) decsnz  ( 19)  nvm-read j
+   WREG ) decsnz  ( 1a)  nvm-write j
 .else  ( K50 support)
    ( not yet implemented!)
 .then
@@ -134,5 +136,30 @@ label process-serial
 
 here  0 goto  dup \a rjmp  goto
 label startup
+   | Before doing anything else, let's zero the RAM.
+
+@ram @sfr \f u< .if
+   | RAM is below the SFRs. Start at RAM origin (mostly likely 0000) and
+   | clear and increment until we reach the beginning of the page that
+   | contains the SFRs. If the low byte of the address of the first SFR is
+   | non-zero, keep clearing and incrementing until we reach the SFR.
+
+   @ram DP lda  @sfr >lohi ldi
+   begin  @dp+ ) clr  DPH ) cmpseq  again       | clear until beginning of SFR page
+   \f dup .if
+      ldi
+      begin  @dp+ ) clr  DP ) cmpseq  again     | clear until we reach first SFR
+   .else
+      \f drop
+   .then
+.else
+   | RAM is above SFRs. Most likely a chip with a 6-bit BSR. Start at
+   | beginning of RAM and clear and increment until the high byte of DP
+   | rolls over to 00.
+
+   @ram DP lda
+   begin  @dp+ ) clr  DPH ) tst  0= until
+.then
+
    chip-init c
    begin  process-serial c  again  ;c
