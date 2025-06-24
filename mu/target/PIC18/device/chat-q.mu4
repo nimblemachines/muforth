@@ -100,18 +100,14 @@ label set-nvm-addr
    PROGADRH ) ld  NVMADRH b) st
    PROGADRL ) ld  NVMADRL b) st  ret  ;c
 
-label nvm-complete
-   begin  0 NVMCON0 b) btstsc  again  ( wait for GO to clear)
-   NVMCON1 b) ld   ( read status)
-   NVMCON1 b) clr  ( clear cmd)  ret  ;c
+| NOTE: A byte read (ie, a read of Config or EEPROM space) clears NVMDATH,
+| and, if auto-incrementing, only increments NVMADR by 1.
 
 label nvm-read
    recv-byte-nvm c  ( cmd)  NVMCON1 b) st  ( set cmd from host)
    0 ( GO) NVMCON0 b) bset  ( set GO bit to start the read)
-   nvm-complete c  ( wait for read to complete)
-
-   ( Send to the host the data that was read.)
-   NVMDATL      b) ld  send-byte c
+   begin  0 NVMCON0 b) btstsc  again  ( wait for GO to clear)
+   NVMDATL      b) ld  send-byte c  ( Send to the host the data that was read.)
    NVMDATH bank b) ld  send-byte j  ;c
 
 label nvm-write
@@ -128,14 +124,14 @@ label nvm-write
    |
    | Host can send 0 for reads.
 
-   recv-byte-nvm c  INDF1 ) st  ( INDF1 points to a byte of scratch space)
-   NVMLOCK b) st  INDF1 ) w com  NVMLOCK b) st
+   recv-byte-nvm c  NVMLOCK b) st
+   W ) com          NVMLOCK b) st
 
    | Start the operation and wait for completion. This bset has to happen
    | *immediately* after the second NVMLOCK write or a WRERR occurs!
 
    0 ( GO) NVMCON0 b) bset  ( set GO bit to start the write)
-   nvm-complete c  ( wait for write to complete)
-
-   ( Status byte is in W. Send back to host.)
-   send-byte j  ;c
+   begin  0 NVMCON0 b) btstsc  again  ( wait for GO to clear)
+   NVMCON1 b) ld   ( read status)
+   NVMCON1 b) clr  ( clear cmd)
+   send-byte j     ( send status to host)  ;c
