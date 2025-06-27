@@ -240,20 +240,34 @@ b000 bitop btstsc  ( btfsc          bit test, skip clr)
 : movff   ( fsrc fdest)  swap  c000 i12 op,  f000 i12 op, ;
 forth
 
-: too-far   error" relative jump out of range" ;
 : >offset?  ( offset #bits - masked-offset fits)
    push  dup  r@ ones and  ( offset masked-offset)  swap  pop sfits? ;
 
+| Convert a dest to a *word* offset from PC (which is 2 bytes ahead of \m
+| here).
+
+: >rel     ( dest - woffset)  \m here - 2/ 1- ;
+
+| Try to compile a jump or call with an 11-bit signed word offset.
+|
+| If the destination is in range, compile the op and return, skipping the
+| following error routine.
+|
+| If the dest is too far away, return to the error routine with the dest on
+| the stack.
+
 : rel11
-   constant does> @  ( dest op)  swap  \m here - 2/ 1-  #11 >offset?
-   if  or op,  pop cell+ push ( skip error routine)
-   then  ( return to error routine) ;
+   constant does> @  ( dest op - <nothing> | dest)
+   over  >rel #11 >offset?  if  or op,  drop  pop cell+ push  ^  then
+   2drop ;
 
 | These versions compile the code, but if it doesn't fit they call the
 | following error routine.
 
 d000 rel11 _rjmp
 d800 rel11 _rcall
+
+: too-far   error" relative jump out of range" ;
 
 assembler
 : rjmp   _rjmp   too-far ;  ( complain if too far)
@@ -274,6 +288,16 @@ forth
 : ljmp
    constant does> @  ( dest op)  over u2/ 0ff and or op,  9 u>>  f000 i12 op, ;
 
+assembler
+ec00 ljmp call
+ed00 ljmp call.s  ( save W, STATUS, BSR in shadow regs.)
+ef00 ljmp jmp
+
+( Smart call and jump)
+: j   ( dest)  _rjmp   \a jmp ;   ( call jmp if too far for rjmp)
+: c   ( dest)  _rcall  \a call ;  ( call call if too far for rcall)
+forth
+
 | If reg is not a valid FSR address, we get it back as the index. This is
 | useful for addulnk and subulnk.
 
@@ -293,13 +317,6 @@ assembler
    over [ #bsr-bits 4 +      #] u>>  0f and  or op,
         [ #bsr-bits 4 + ones #] and  f000 or op, ;
 
-ec00 ljmp call
-ed00 ljmp call.s  ( save W, STATUS, BSR in shadow regs.)
-ef00 ljmp jmp
-
-( Smart call and jump)
-: j   ( dest)  _rjmp   \a jmp ;   ( call jmp if too far for rjmp)
-: c   ( dest)  _rcall  \a call ;  ( call call if too far for rcall)
 forth
 
 | f000 - ffff is a nop, and is used as an extension word for two-word
