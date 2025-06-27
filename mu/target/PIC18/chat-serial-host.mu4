@@ -53,8 +53,8 @@ hex
 : cx.set-nvm-addr    ( )     18 >cmd ;   ( sets NVMADR from MEMADR - aka p)
 : cx.nvm-read        ( cmd - data)
                              19 >cmd  >b          w> ;
-: cx.nvm-write       ( unlock data cmd - status)
-                             1a >cmd  >b >w >b    b> ;
+: cx.nvm-write       ( data cmd - status)
+                             1a >cmd  >b >w  55 >b ( unlock)  b> ;
 .then
 
 | Longest command - nvm-write - sends 5 bytes. To resync, let's send five
@@ -69,17 +69,11 @@ hex
    cx.version  radix preserve  hex  sep preserve  -sep   u.
    /page ( return erase page size as chunk size) ;
 
-| After executing code, target has put Z - our DP - into X so that we can
-| read it back. We adjust it by one byte when reading or writing it so that
-| we can think of SP as representing a full-descending stack - where DP
-| points *at* the last pushed byte. But the PIC hardware implements an
-| empty-descending stack, where Z points one byte *below* the last pushed
-| byte.
-|
-| Whereever possible, we try to isolate and hide this madness.
+| We leave it to the target (via trampoline code) to adjust the dp
+| appropriately.
 
-: c.get-status  ( - dp)  cx.get-data-addr 1+ ;
-: c.run  ( pc dp)     1- cx.set-data-addr  cx.set-prog-addr  cx.run ;
+: c.get-status  ( - dp)  cx.get-data-addr ;
+: c.run  ( pc dp)        cx.set-data-addr  cx.set-prog-addr  cx.run ;
 
 : c.read-buf  ( buf u)  for  b>  swap c!+  next  drop ;
 
@@ -97,8 +91,7 @@ hex
 : c.set-nvm-addr  ( a)  cx.set-prog-addr cx.set-nvm-addr ;
 
 : c.nvm-write  ( data cmd)
-   55 -rot cx.nvm-write  80 and ( WRERR)
-   if  error" flash write protect error"  then ;
+   cx.nvm-write  80 and ( WRERR)  if  error" flash write protect error"  then ;
 
 ( Only write config/ee space if bytes *differ*.)
 : ?ee!+  ( b)
