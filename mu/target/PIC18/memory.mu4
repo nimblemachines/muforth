@@ -73,15 +73,52 @@ ld target/common/memory.mu4   ( generic memory image support)
 ( Install choose-image in the flash aspace.)
 flash 'choose-image !
 
-| Since on some PIC18 families the ram starts at a non-zero offset into
-| data space - specifically, at @ram - we want to make sure that the ram
-| region - from @ram to @ram #ram + - fits into the ram image, which needs to
-| be a power of 2 in size.
-|
-| The easiest way to do this is to take the larger of @ram and #ram - we
-| assume they are both powers of 2! - and double it.
+| On some PIC18 families the ram has a strange origin, a strange size, or
+| both. The easiest way to create a ram image that contains the entirety of
+| the chip's ram is to take the number of BSR (bank select) bits, add 8,
+| and use this as a power-of-2 size. For older PIC18 families this will
+| result in a 4 Ki ram image; for newer (eg, Q) families, 16 Ki.
 
 ( For the data aspace we keep the default of "drop" for choose-image.)
 16 make-aspace  ( data: ram + i/o)
-   @ram #ram max 2* make-image  ( ensure that [@ram #ram +] is within the ram image)
-                    make-region ram
+   1 #bsr-bits 8 + << make-image
+                      make-region ram
+
+| On PIC18 parts, the bootloader - if any - starts at the beginning of
+| flash. Unfortunately, PIC18 parts are not all the same in how they
+| determine the size of the boot block.
+|
+| On the PIC18-K parts - at least the 1xK50, bit 3 of CONFIG4L is BBSIZ. If
+| set, the bootblock is the full size. If reset, it is half size. If we
+| define #boot to be the full size bootblock for each chip, we can easily
+| calculate bbsiz here.
+|
+| On the PIC18-Q parts, there is a 3-bit BBSIZE field in CONFIG7. 128 KiB
+| shifted right by BBSIZE is the boot block size.
+|
+| For both families, the unprogrammed state - BBSIZ=0 on K parts;
+| BBSIZE=111 on Q parts - selects the *smallest* boot block. This is most
+| likely what we want.
+
+( XXX This is a hack, just so that we can get something working.)
+#128 Ki 7 >> ( default boot block size on Q parts) constant #boot
+
+( XXX We will probably need some vector code here, like on AVR.)
+
+| Initialization of memory images and regions. We need the above vector
+| code to calculate everything.
+|
+| XXX This code should move to target/PIC18/memory.mu4.
+
+: wipe
+       ram      @ram region!    0 fill-image
+   user-id  @user-id region!  "ff fill-image
+    config   @config region!  "ff fill-image
+    eeprom   @eeprom region!  "ff fill-image
+      boot         0 region!  "ff fill-image  ( erases entire flash image)
+     flash     #boot region!  ( XXX should be *real* bbsize)
+
+   | #vectors vectors \m allot ( "application" starts after vectors) ;
+   ;
+
+wipe  ( leaves flash as current region)
