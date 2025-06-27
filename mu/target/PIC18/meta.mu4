@@ -2,189 +2,257 @@
 |
 | Copyright 2002-2025 David Frech. (Read the LICENSE for details.)
 
-loading PIC18 meta-compiler (main)
+loading PIC18 meta-compiler
 
 hex
 
 | -------------------------------------------------------------------------
-| Signatures - how we built the target image
+| Interpreter mode stack
 | -------------------------------------------------------------------------
 
-meta
-: string,  ( a u)
-   \m here image+ swap  ( a image u)  dup \m allot  cmove ;
+8 array mode-stack
+variable mode-ptr  mode-stack mode-ptr !  ( initialize empty stack)
 
-: cr,    #LF  \m c, ;  ( add a newline)
-: sig,  ( a u)   \m string,  \m cr, ;
+: mode-depth   mode-ptr @  mode-stack - cell/ ;
+: ?mode-empty  mode-depth  0= if error" mode stack underflowed"  then ;
+: ?mode-full   mode-depth 8 = if error" mode stack overflowed"  then ;
 
-: sig"   char " parse  \m sig, ;
+| We can use !+ to push to an empty ascending stack, but we need -@ for pop.
+: -@   ( a - n a-)  cell-  dup @  swap ;
 
-( Compile creation date, build command line, and muforth commit.)
+: push-mode  ?mode-full  state @  mode-ptr @  !+  mode-ptr ! ;
+: pop-mode   ?mode-empty          mode-ptr @  -@  mode-ptr !  state ! ;
 
-: end-sig
-   " created: "  \m string,  clock time"  \m sig,
-   " command: "  \m string,
-      " ./muforth " \m string,  command-line  count  \m sig,
-   " commit : "  \m string,  muforth-commit  drop 8  \m sig,
-   #LF  \m align, ;
-
-forth
-
-
-| -------------------------------------------------------------------------
-| Creating new target names | assembler code (label and handler)
-| -------------------------------------------------------------------------
-
-| By putting the vector addresses in .meta. we can use hooks to resolve
-| them.
-
-meta
-00_0000 constant RESET ( Reset vector at 00_0000)
-00_0008 constant IRQHI ( High-priority / compatibility interrupt at 00_0008)
-00_0018 constant IRQLO ( Low-priority interrupt at 00_0018)
-
-: handler  ( vector-offset)  boot  \m goto  __asm ;
-
-: label   \m here  current preserve  .labels. definitions constant  __asm ;
-
-| For forward references. Use hook to define the hook. This creates a label
-| and compiles a long jump. Then resolve using hooks, which recompiles the
-| jmp to point to here.
-
-: hook    state preserve  \m label  0 \a jmp ( dummy) ;
-: hooks   h preserve  \m here  .meta. chain' execute  \m goto  \a jmp ;
-
-assembler
-: ;c   __meta ;
-
-forth
-
-
-.ifdef copied-from-msp-meta
-
-| -------------------------------------------------------------------------
-| Creating new target names | forth code (code and name)
-| -------------------------------------------------------------------------
-
-variable last-code   ( for ;code and does> to fix up)
-
-( Back up over last token so we can re-read it.)
-: untoken   parsed drop  first ! ;
-
-| Create new target names. A name is a target word which is defined as a
-| _constant_ equal to its code field address.
-
-meta
-: name    \m here  dup last-code !  current preserve  target constant ;
-: codes   ( 'code)  \m name  \m ,  __asm ;
-: code    \m here  \m cell+  \m codes ;
-
-( For code words that implement forward-referenced meta-compiler primitives.)
-: code*   implements  untoken  \m code ;
-forth
-
-
-| -------------------------------------------------------------------------
-| Macros defining register conventions
-| -------------------------------------------------------------------------
-
-assembler
- 4 constant ip     ( ip - forth instruction pointer)
- 5 constant w      (  w - "working" register: holds cfa during next)
- 6 constant rp     ( rp - return stack pointer)
- 7 constant count  ( current for/next/do/loop count)
- 8 constant top    ( cached top of data stack)
- 9 constant x      ( scratch x)
-10 constant y      ( scratch y)
-forth
-
-( Tell the disassembler about these register names.)
--: ( reg)
-   dup #11 u< if  ( special)
-      2* 2*
-      z" pc  sp  sr  r3  ip  w   rp  cnt top x   y   "  +  4 -trailing type
-   ^  then
-   ." r"  .udec ;  is .regname
-
-
-| -------------------------------------------------------------------------
-| Forward references for fundamental target kernel words.
-| -------------------------------------------------------------------------
-meta
-
-( These are pointers to target CODE words.)
-variable (branch)
-variable (0branch)
-variable (=0branch)
-variable (?0branch)
-variable (for)
-variable (?for)
-variable (next)
-variable (do)
-variable (loop)
-variable (+loop)
-variable (lit)
-variable ^
-variable dodoes
-
-forth
-
-| looks up a label or forward-reference variable, and executes it to push
-| its value or address
-
-: lookup  ( look up next token as forward-ref variable or label)
-   .meta. chain' execute ( get addr) ;
-
-: implements   \m here  lookup  !  __asm ;
-
-( Fetch value of variable - a primitive - and complain if not yet defined.)
-: (p@)  ( var)  @  =if  ^  then  error" primitive not yet defined" ;
-
-( Fetch primitive and compile into target.)
-: (p,)  ( var)  (p@)  \m , ;
-
+| For seeing/debugging how the mode stack is working.
 compiler
-: p,   .meta. \chain  compile (p,) ;
-: p@   .meta. \chain  compile (p@) ;
+: .m  ( print mode stack and current mode)
+   mode-stack  mode-depth  cr  dup .  for
+      @+ swap  cell+ @execute ( mode prompt)  next  drop
+   ."  |>" .mode-prompt ;
+
+target-compiler
+: .m   \c .m ;
+forth
+: .m   \c .m ;
+
+| -------------------------------------------------------------------------
+| Creating new target names
+| -------------------------------------------------------------------------
+
+meta
+variable last-created  ( code field of last created target word)
+
+: label   current preserve  labels  \m here  constant  __asm ;
+: name    current preserve  target  \m here  constant ;
+: code    \m name  __asm ;
+: :       \m name  __target-colon ;
+
+| NOTE: Only created words have a code field!
+: create  \m name  \m here \m last-created !  0 \m , ( code field) ;
+
+| -------------------------------------------------------------------------
+| Special versions of the host colon compiler
+| -------------------------------------------------------------------------
+
+| Define useful colon compilers:
+|   :m    for defining new target defining words!
+|   :d    for defining definer words (analogous to compiler for host forth)
+|   :tc   for defining target-compiler words (analogous to compiler for
+|         target forth)
+
+forth
+: make-definer   :  __definer-colon ;
+meta
+
+: :m    current preserve  meta             make-definer ;
+: :tc   current preserve  target-compiler  make-definer ;
+: :d    current preserve  definer          make-definer ;
+
+| For the very infrequent times that we need to create a nameless host word
+| while compiling target code.
+
+: -:m   here <:>  __definer-colon ;
+
 forth
 
+| -------------------------------------------------------------------------
+| Macros defining register and stack conventions
+| -------------------------------------------------------------------------
+
+| Entering and exiting "macro definition" mode.
+compiler  ( also reachable when searching definer)
+: asm{   push-mode  __inline-asm ;  ( start assembling a macro)
+
+definer  ( searched by __definer-colon and __inline-asm)
+: }      pop-mode ;  ( exit from __inline-asm and return to previous colon)
+
+assembler
+
+| These are the three 16-bit pointer registers - implemented as register
+| pairs - on the PIC18.
+
+aka FSR0       equ DP   ( data pointer)
+aka FSR0H      equ DPH  ( data pointer, high byte)
+
+aka FSR1       equ AP   ( auxiliary pointer)
+aka FSR1H      equ APH  ( auxiliary pointer, high byte)
+
+aka FSR2       equ SP   ( stack pointer)
+aka FSR2H      equ SPH  ( stack pointer, high byte)
+
+aka POSTINC0   equ @dp+  ( read a data memory location, incr pointer)
+
+( Move byte and move word, via WREG.)
+: mov   ( from to)  asm{  \f swap ld  st } ;
+: movw  ( from to)  asm{  \f 2dup mov  1 1 v+  mov } ;
+
+forth
+( Define a stack slot.)
+: slot  ( offset)  constant  does> @  \a ] ;
+
+assembler
+( Offsets 0 and 1 are scratch space.)
+0 slot X    ( low byte of Scratch)
+1 slot XH   ( high byte of Scratch)
+
+2 slot T    ( low byte of Top)
+3 slot TH   ( high byte of Top)
+
+4 slot S    ( low byte of Second)
+5 slot SH   ( high byte of Second)
+
+forth
+: .slot  ( offset)
+   dup 6 u< if  2* z" X XHT THS SH" +  2 type  ^  then
+   ." [" .hex ." ]" ;
+
+| Tell the disassembler about our stack slot names.
+-: ( offset)  7f and  .slot ;  is .sp-off
+
+
+| -------------------------------------------------------------------------
+| Peephole optimizer tags
+| -------------------------------------------------------------------------
+
+| Tags tell the meta-compiler what kind of special code, if any, was just
+| compiled. Currently used to identify literals and calls, for simple
+| peephole optimizations.
+|
+| We store the tag byte at \m here. No tag is represented by an "empty"
+| image byte - 0ff - *not* by a tag of zero.
+|
+| Low bit of tag is set if \m here is a forward jump destination. Other
+| "option" bits can added as necessary.
+|
+| Tags used:
+
+0 constant $rcall  ( $ suggests price tag ;-)
+2 constant $call
+4 constant $lit
+
+: tag!  ( tag)     \m here image-c! ;
+: tag@  ( - tag)   \m here image-c@ ;
+
+: notag  "0ff tag! ;
+
+| For setting low bits - eg, for annotating jump destinations. Note that
+| this will leave an empty (0ff) tag unchanged!
+
+: tag-option!  ( option)   tag@  or  tag! ;
+
+| We want to cleanly uncompile code, so instead of simply backing up and
+| leaving the cruft - instructions and tags - behind, let's back up and
+| "uncompile" the code, leaving behind untagged empty space.
+
+: uncompile  ( #cells)
+   notag
+   dup \m cells negate allot  ( back up #cells cells)
+   for  0ffff \m ,  next  ( reset #cells cells) ;
+
+| -------------------------------------------------------------------------
+| target-compile, and tail call elimination
+| -------------------------------------------------------------------------
+
+: short?  ( dest)  >rel  ( woffset)  #11 sfits? ;
+
+( Compiling target words.)
+meta
+: compile,  ( cfa)  ( smart call - compile rcall if possible)
+   dup short? if  \a rcall  $rcall tag! ^  then
+                  \a call   $call tag! ;
+forth
+.meta. chain' compile,  is target-compile,
+
+| Convert call to jump. Remove tag. If call site is also a forward jump
+| destination, return true, otherwise false.
+
+: replace  ( tag toggle offset - compile-ret?)
+   \m here +  dup image-@  rot xor  swap image-!
+   notag  1 and ( jump dest?) ;
+
+| If last code compiled was a call, rewrite it to a jump. Return a flag:
+| true means we should compile a return instruction.
+
+: tail?  ( - compile-ret?)
+   tag@
+   dup $call u< if  ( short call)  "0800 -2 replace ^  then
+   dup $lit  u< if  ( long call)   "0300 -4 replace ^  then
+   drop  -1 ;
 
 | -------------------------------------------------------------------------
 | Support for ;code and does>
 | -------------------------------------------------------------------------
 
+| NOTE: There is a danger here. The "code field" of words created by create
+| contains a call instruction. If we allocate one word of space, the common
+| ("parent") code - compiled by ;code or does> - has to be within the range
+| of an rcall from the created ("child") word.
+|
+| It's too bad that we allocate space and build the data structure
+| *before* we change the code field... If we did it the other way round we
+| could compile a longer call if necessary. For now let's leave one
+| instruction slot of space and only ever patch using an rcall instruction.
+
 | This word, which is followed inline by a target code address, patches the
-| code field of the last last word compiled with a bl to the inline target
-| address. It essentially "repoints" previously defined words - defined by
-| create, variable, constant, etc - to point to new code. It gets -compiled-
-| indirectly by both ;calls and does>.
+| code field of the last created word with an rcall to the inline target
+| code address. It essentially "repoints" previously defined words
+| - defined by create, variable, constant, etc - to point to new code. It
+| gets *compiled* indirectly by both ;code and does>.
 
-: (;code@)   pop @  last-code @  image-! ;
+: patch  \m here  \m last-created @ \m goto  pop @  \a rcall  \m goto ;
 
-
-| <;code> is used to switch from compiling -host- code (that will later run
-| on the host, and build the target word) to compiling -target- code, that
-| will run when words defined by this defining word later execute. In order
-| to connect the two worlds, and to be able to patch up code fields to
-| point to this newly-defined behaviour, <;code> captures the target's
+| <;code> is used to switch from compiling *host* code (which will later
+| run on the host, and build the target word) to compiling *target* code,
+| which will run when words defined by this defining word later execute. In
+| order to connect the two worlds, and to be able to patch up code fields
+| to point to this newly-defined behavior, <;code> captures the target's
 | "here" value. Remember, we are about to start compiling target code at
 | "here".
 |
 | <;code> runs at the compile time of a defining word, but it leaves it up
-| to its caller - ;code or does> - to change the interpreter mode.
+| to its caller - ;code or does> - to compile any "prelude" code or to
+| change the interpreter mode.
 
-: <;code>   compile (;code@)  \m here  ,  show ;
+: <;code>   compile patch  \m here ,  show ;
 
+defer compile-;code-prelude
+defer compile-does-prelude
 
 definer
-: does>   <;code>  p@ dodoes  asm{ ( dodoes) # call  }  __target-colon ;
-: ;code   <;code>                                       __asm ;
+: ;code  <;code>  compile-;code-prelude  __asm ;
+: does>  <;code>  compile-does-prelude   __target-colon ;
 forth
 
-
+comment %%inline-in-kernel
 | -------------------------------------------------------------------------
 | Control structures.
 | -------------------------------------------------------------------------
+
+| Compile the following target word into the current target definition.
+definer
+: tcompile
+   \c \t  compile target-compile, ;
+forth
 
 ( Resolve a forward or backward jump, from src to dest.)
 ( When using absolute branch addresses, this is easy: just store dest at src.)
@@ -228,67 +296,53 @@ target-compiler
 : loop    ( dest)     p, (loop)   \m >mark  \m <resolve ;
 : +loop   ( dest)     p, (+loop)  \m >mark  \m <resolve ;
 forth
-
-
-| -------------------------------------------------------------------------
-| Special versions of host colon compiler
-| -------------------------------------------------------------------------
-
-| Define useful colon compilers:
-|     meta:  for defining new target defining words!
-|    macro:  for defining assembler macros
-| compiler:  for defining target-compiler words
-|
-| We define the another colon compiler - the actual target colon - in the
-| kernel, using our meta-defining words!
-
-meta
-
-: meta:      current preserve  meta               :  __definer-colon ;
-: compiler:  current preserve  target-compiler    :  __definer-colon ;
-: macro:                                          :  __inline-asm ;
-
-forth
-
+comment %%inline-in-kernel
 
 | -------------------------------------------------------------------------
 | Punctuation that changes the compiler state, or creates literals
 | -------------------------------------------------------------------------
 
+| XXX Much of this code is generic and related to the common/chains code
+| and should probably be moved there!
+
 meta
 : '   .target. chain' execute ;  ( get target word's constant value: cfa)
+
+| Assuming that the code field is an rcall instruction, these will work.
+| But they will return garbage for anything other than a created word.
+
 : >body   \m cell+ ;
 : >value  \m cell+  image-@ ;
 
-: ]   __target-colon ;  ( does NOT create a literal!)
+: literal   target-literal ;
 
-: literal    p, (lit)  \m , ;  ( make a target literal)
+: ]    pop-mode ;  ( does NOT create a literal!)
 
-: __host   \ [ ;        ( return to host forth mode)
-: {        \m __host ;  ( useful for bracketing a few host forth words)
+| If returning to a target colon definition, create a target literal;
+| otherwise, create a host literal.
+
+: #]   pop-mode  state @  [ ' __target-colon >body #] = if  \m literal ^ then  literal ;
+
+: __host   \ [ ;    ( return to host forth mode)
+: {   push-mode  \m __host ;  ( useful for bracketing a few host forth words)
 
 forth
-: }    __meta ;  ( return to meta)
+: }   pop-mode ;  ( return whence we came)
+
+definer  ( searched by __definer-colon and __inline-asm)
+: [   push-mode  __meta ;
+: ;   \ ;  __meta ;  ( do normal host ; and return to __meta)
 
 assembler
 : ;c   __meta ;
 
 target-compiler
-: [   __meta ;
-: ^    p, ^ ;         ( compile target's exit)
-: ;   \tc ^  \tc [ ;  ( compile exit and return to meta)
+: [    push-mode  __meta ;
 
-: [']        \m '  \m literal ;
-: literal          \m literal ;
+: ^   tail? if  asm{  ret }  then ;
+: ;   \tc ^  __meta ;  ( compile exit and return to __meta)
 
-definer
-: ;   \ ;  __meta ;  ( do normal host ; but then return to __meta)
+: [']       \m '  \m literal ;
+: literal         \m literal ;  | instead of doing [ #] ??
 
 forth
-
-( Patch target colon compiler.)
-.meta. chain' literal  is target-literal
-             ' number  is target-number    ( use host's number)
--: \m , ;              is target-compile,  ( simply comma into image)
-
-.then
