@@ -126,8 +126,8 @@ variable p
    | Set mode bits (%10) and alternate function (AF0) for PA8.
    | Be careful: on C0 and H5, MODER defaults to all ones.
    GPIOA_MODER dup @
-      [ %11 #8 2* << #] bic  ( 2 bits per pin)
-      [ %10 #8 2* << #] or   ( 2 bits per pin)
+      [ %11 8 2* << #] bic  ( 2 bits per pin)
+      [ %10 8 2* << #] or   ( 2 bits per pin)
    swap !
    | AF0 is reset default; nothing to do
    ;
@@ -295,7 +295,6 @@ GPIOB_BSRR 2 +  equ GPIOB_CLR
 .then    ( def with-uart)
 
 
-.ifdef with-i2c
 | NOTE: If I want to support I2C on *all* the chip families that I have
 | board support for, I need to use I2C1; I2C2 exists on all the chips
 | except for C031!
@@ -321,29 +320,30 @@ GPIOB_BSRR 2 +  equ GPIOB_CLR
    set!
 
    | Remember, we are using PC8 and 9 on H5, but PB8 and 9 on all others.
-   | Push the registers we need ahead of time so the code can be more
-   | easily shared.
-.ifdef stm32h5  %100 ( CBA) enable-gpio  ( turn on clocks to Port C)
-                GPIOC_OTYPER  GPIOC_AFRH  GPIOC_MODER  .else
- ( all others)  GPIOB_OTYPER  GPIOB_AFRH  GPIOB_MODER  .then
+.ifdef stm32h5  %100 ( CBA) enable-gpio  ( turn on clocks to Port C)  .then
 
    | Set mode bits (%10) for alternate function (pins 8 and 9).
-   dup @  ( MODER)
-   [ %1111 #8 2* << #]  bic  ( 2 bits per pin)
-   [ %1010 #8 2* << #]  or   ( 2 bits per pin)
+.ifdef stm32h5  GPIOC_MODER  .else
+ ( all others)  GPIOB_MODER  .then
+   dup @
+   [ %1111 8 2* << #]  bic  ( 2 bits per pin)
+   [ %1010 8 2* << #]  or   ( 2 bits per pin)
    swap !
 
-   | Choose alternate function (AF) setting based on chip family.
-   | and alternate function for I2C1
+   | Choose alternate function (AF) setting for I2C1 based on chip family.
+   [
 .ifdef stm32c0  66  .else
 .ifdef stm32f0  11  .else
    ( f3/f4/h5)  44  .then .then
-   [ #8  8 -  4 * << #]  ( 4 bits per pin)
-   swap set!  ( AFRH)
+   8  8 -  4 * << #]  ( 4 bits per pin)
+.ifdef stm32h5  GPIOC_AFRH  .else
+ ( all others)  GPIOB_AFRH  .then  set!
 
    | I'm not sure if setting the pins to alternate function causes them to
    | be open-drain, so to be sure, let's set that as well.
-   [ %11 #8 << #] GPIOB_OTYPER set!  ( 1 bit per pin)
+   [ %11 8 << #]  ( 1 bit per pin)
+.ifdef stm32h5  GPIOC_OTYPER  .else
+ ( all others)  GPIOB_OTYPER  .then  set!
 
    | Now for the I2C itself.
    I2C1_CR1  0 over ! ( reset and disable I2C)
@@ -416,14 +416,6 @@ GPIOB_BSRR 2 +  equ GPIOB_CLR
    #send c@     0 ( write)  i2c-start  i2c-send-buf
    #recv c@ ?if 1 ( read)   i2c-start  i2c-recv-buf  then
    STOP I2C1_CR2 set! ( send STOP bit)  100 wait ;
-
-
-.else    | ndef with-i2c
-
-: i2c-init ;
-: i2c-send-recv ;
-
-.then    | def with-i2c
 
 
 | -------------------------------------------------------------------------
