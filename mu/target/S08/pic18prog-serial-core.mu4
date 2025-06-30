@@ -5,8 +5,7 @@
 loading PIC18 programmer over serial (core)
 
 __meta
-
-hex
+decimal
 
 | Support for programming PIC18 parts over ICSP, using a serial-connected
 | S08QE or QG as a programmer. I need a 3v device for this! So I can't use
@@ -24,8 +23,6 @@ hex
 | And using tail calls, it's easy to code in a Forth-like style that is
 | very efficient.
 
-hex
-
 ( Create a forward jump at the start of the flash sector.)
 forward-jmp pic18-prog-loop
 
@@ -35,6 +32,9 @@ label id
    char p c,                        ( programming)
    char 1 c,                        ( version 1)
 
+.ifndef testing
+| Send and receive bytes over the serial interface.
+
 label recv-serial-byte  ( returns char in A)
    begin  SCIS1 5 ( recvr full)  bset? until
    SCID ) lda  rts  ;c
@@ -42,6 +42,20 @@ label recv-serial-byte  ( returns char in A)
 label send-serial-byte  ( transmits char in A)
    begin  SCIS1 7 ( xmit empty)  bset? until
    SCID ) sta  rts  ;c
+
+.else
+| Instead of sending and receiving bytes over the serial port, push and pop
+| them from a stack.
+
+2 var stack
+
+label recv-serial-byte  ( returns char in A)
+   pshhx  stack ) ldhx  tl lda  2 # aix  stack ) sthx  pulhx  rts  ;c
+
+label send-serial-byte  ( transmits char in A)
+   pshhx  stack ) ldhx  xl sta  xh clr  -2 # aix  stack ) sthx  pulhx  rts  ;c
+
+.then  ( ndef testing)
 
 ( Return a signature of who we are and what we're doing.)
 label signon
@@ -107,32 +121,46 @@ label init-pins
 
 ( The building blocks.)
 
-| comment %% delay-times
+| For n loop iterations, delay time is 8n cycles. We ignore the 10 or 11
+| cycles for the call/return.
 |
-|   In HX is a _negated_ 16-bit delay count. We negate the count and
-|   count _up_ to make it easier to know when to increment the high half.
-|   Remember that inc and dec affect V, N, and Z, but not C.
+| To calculate loop iterations from a delay time, we use this formula:
 |
-|   I _could_ put it on R stack. Delay would skip over ret address and decr
-|   2,s and 3,s.
+|   iterations = clock_khz * delay_us / 8 / 1000
 |
-|   Delay time is 9n + (9n/256) + 18 ( pshes, ais, call+ret) cycles
-|               = 9n(1 + 1/256) + 18
-|               = 9n(257/256) + 18
+| Instead of dividing by 1000 directly, We divide by 500, add 1, and divide
+| by two to round the answer.
 |
-|   QE and QG parts have been trimmed to run at 9.216M so they can
-|   accuratedly generate 115200 bps clock.
-|
-|   But one of my QE32 parts is running with a crystal at 24M.
-|
-|   At 9.216M, to delay 5ms, n = (46,080 - 18) * 256 / (9*257) = 5098
-|   At 9.216M, to delay 1ms, n = (9216 - 18) * 256 / (9*257) = 1018
-|            to delay 100us, n = (922 - 18) * 256 / (9*257) = 100
-|
-|   At 24M, to delay 5ms, n = (120,000 - 18) * 256 / (9*257) = 13,279
-|   At 24M, to delay 1ms, n = (24,000 - 18) * 256 / (9*257) = 2654
-|         to delay 100us, n = (2400 - 18) * 256 / (9*257) = 263.6
-| %%
+| QE and QG parts have been trimmed to run at 9.216M so they can accurately
+| generate 115200 bps clock, but some QE32 parts are running with a crystal
+| at 24M, so we calculate delays for both clock frequencies.
+
+label delay
+   | Cycles:    2        3        3
+   begin  -1 # aix  0 # cphx  0= until  rts  ;c
+
+.ifdef 24m
+
+__host
+: us  ( us - cycles)  24,000 *  8 /  500 / 1+ 2/ ( round) ;
+__meta
+
+| At 24M we need to slow down the clock pulses a bit, otherwise the PIC
+| can't keep up!
+
+| Padding for each half cycle.
+macro H  .x psh  .x pul  ;m
+
+.else  ( 9.216M)
+
+__host
+: us  ( us - cycles)  9,216 *  8 /  500 / 1+ 2/ ( round) ;
+__meta
+
+| Padding for each half cycle.
+macro H  ( none)  ;m
+
+.then
 
 | A few delays to keep in mind:
 |
@@ -147,50 +175,17 @@ label init-pins
 | P16    0
 | P18    0
 
-
-label delay
-   .h psh  .x psh
-   begin  begin  1 ,s inc  ( lo)  0= until  0 ,s inc  0= until
-   2 # ais  rts ;c
-
-decimal
-
-.ifdef 24m
-
 ( Configuration programming delay: 5ms)
--13,279 constant P9A
+5,000 us constant P9A
 
 ( Programming delay: 1ms)
--2654 constant P9
+1,000 us constant P9
 
 label P10
 label P12  ( overkill for P12 and P15, but whatever)
 label P15
 label 100us
-   -264 # ldhx  delay j  ;c
-
-| At 24M we need to slow down the clock pulses a bit, otherwise the PIC
-| can't keep up!
-
-macro Q  .x psh  .x pul  ;m
-
-.else  ( 9.216M)
-
-( Configuration programming delay: 5ms)
--5098 constant P9A
-
-( Programming delay: 1ms)
--1018 constant P9
-
-label P10
-label P12  ( overkill for P12 and P15, but whatever)
-label P15
-label 100us
-   -100 # ldhx  delay j  ;c
-
-macro Q  ;m
-
-.then
+   100 us # ldhx  delay j  ;c
 
 hex
 
@@ -210,8 +205,8 @@ label drive-d  ( drive low bit of A onto PGD)
 macro D@  PGD bset? if then  ( sets C with pin value!)  ;m
 macro D!  drive-d c    ;m
 
-label send-bit    D!  C/  Q      C\   rts  ;c
-label recv-bit        C/  Q  D@  C\   rts  ;c
+label send-bit    D!  C/  H      C\  H   rts  ;c
+label recv-bit        C/  H  D@  C\  H   rts  ;c
 
 ( 4-bit command to send in A. Send LSB first.)
 label send-icsp-cmd
@@ -229,10 +224,10 @@ label send-icsp-byte
 | high for a delay time specified in HX, then bring it low for time P10.
 | Then send 16-bit dummy word.
 |
-| Since we are supposed to send a 4-bit NOP - %0000 - command, receive a
-| byte from the host, and xor it with 55. If the result is zero, use this as
-| the 4-bit command. If not, skip the programming step, but return the status
-| ping.
+| Since we are supposed to send a 4-bit NOP - %0000 - command, receive
+| a byte from the host, and xor it with 55. If the result is zero, use this
+| as the 4-bit command. If not, skip the programming step, but return the
+| status ping.
 |
 | Because the 55 byte acts a bit like a "key", we are somewhat less likely
 | to accidentally program the PIC's flash.
@@ -362,3 +357,28 @@ label process-serial
 label main-loop
    signon c     ( tell who we are and what we're doing)
    begin  process-serial c  again  ;c
+
+
+.ifdef testing
+
+{ h @ } ram
+
+label execute-top
+   | Pointer to code is on the stack, in scratch slot. Push code address
+   | and "return" to it. HX will correctly point to scratch slot during
+   | execution.
+   xl lda  .a psh  xh lda  .a psh  rts  ;c
+
+label forth-like
+   stack ) sthx  execute-top c  stack ) ldhx  2 # aix  rts  ;c
+
+{ h ! }
+
+__host
+
+: rx  ( <bytes in> 'code - <bytes out>)
+   stack>  \m forth-like runwait  stack< ;
+
+__meta
+
+.then  ( def testing)

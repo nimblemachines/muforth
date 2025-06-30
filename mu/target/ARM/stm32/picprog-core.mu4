@@ -178,11 +178,12 @@ chip-path z" init.mu4" concat load-file
    [ cpuclk #1,000,000 / 1- #] TIM3_PSC !  ( set prescaler)
    1 TIM3_EGR ! ( generate update event) ;
 
-: us  ( n)  ( delay n microseconds)
+meta: us ;
+meta: ms   #1000 * ;
+
+meta: delay  ( us)  constant  does> @
    TIM3_ARR !  0 TIM3_SR !  1 ( CEN) TIM3_CR1 set!
    begin  TIM3_SR @  until ;
-
-: ms  ( n)  #1000 * us ;
 
 
 | -------------------------------------------------------------------------
@@ -214,34 +215,158 @@ chip-path z" init.mu4" concat load-file
 | single bi-directional data line between master and slave.
 
 | -------------------------------------------------------------------------
+| PIC18F programming (standard, J, and K families)
+| -------------------------------------------------------------------------
+.ifdef pic18f-std
+
+( Load the bitbanged SPI code.)
+-d lsb-first
+| -d slow-bits  ( Defaults to fast-bits.)
+ld target/ARM/stm32/bitbanged-spi-half-duplex.mu4
+
+#100 us delay 100us
+   1 ms delay t_enter_prog    | Huge overkill, but so what
+
+| XXX These two values are correct for 1xk50 but are chip-specific and need to
+| be passed from host.
+
+1 ms delay t_prog_flash
+5 ms delay t_prog_config
+
+| Chip commands:
+|   0000  execute core instruction
+|   0010  read tablat
+|   1000  tblrd*
+|   1001  tblrd*+         ( read, post-increment)
+|   1010  tblrd*-         ( read, post-decrement)
+|   1011  tblrd+*         ( read, pre-increment)
+|   1100  tblwr*          ( write)
+|   1101  tblwr*+2        ( write, post-increment by 2)
+|   1110  tblwrprog*+2    ( write, post-increment by 2, start programming)
+|   1111  tblwrprog       ( write, start programming)
+|
+| Programming protocol. Each "packet" consists of a 4-bit command and
+| a 16-bit data payload. The command is sent first, and everything is LSB
+| first.
+
+( Send a 4-bit command.)
+: cmd  ( cmd)  4 >bits ;
+
+( Send a command followed by a 2-byte payload.)
+: cmd+wr  ( lo hi cmd)  cmd  lohi> #16 >bits ;
+
+( Send a command and a dummy byte; read a byte and return it.)
+| : cmd+rd  ( cmd - byte)  cmd      #16 bits>  #24 u>> ;
+: cmd+rd  ( cmd - byte)  #12 >bits  8 bits>  #24 u>> ;
+
+| NOTE: In all these core instructions the "a" bit is 0, meaning that we're
+| using "access mode". This maps 00 to 5f to RAM, and 60 to ff to I/O regs
+| f60 to fff.
+
+: core  ( lo hi)  0 cmd+wr ;
+
+( XXX use the same mnemonics as the assembler?  ldi, ld, st, clr?)
+: lit   ( byte)         0e    ( movlw)  core ;
+: load  ( freg)         50    ( movf)   core ;
+: store ( freg)         6e    ( movwf)  core ;
+: clear ( freg)         6a    ( clrf)   core ;
+: bset  ( freg bit)  2* 80 +  ( bsf)    core ;
+: bclr  ( freg bit)  2* 90 +  ( bcf)    core ;
+: nop                  0 0              core ;
+
+( XXX all these addresses should be come from the equates!)
+
+( Useful addresses:)
+0ff8 equ pu  ( aka TBLPTRU)
+0ff7 equ ph  ( aka TBLPTRH)
+0ff6 equ pl  ( aka TBLPTRL)
+0ff5 equ memdata ( aka TABLAT)
+
+: !p
+   >hilo  lit  pl store
+   >hilo  lit  ph store
+          lit  pu store ;
+
+: p@+  ( - byte)  9 cmd+rd ;
+
+
+| Entering and exiting programming mode.
+|
+| The target uses one of two ways to enter program mode: a low-to-high
+| transition on a PGM pin, or a bit string that gets clocked in immediately
+| after MCLR goes low.
+
+.ifdef uses-pgm-pin
+
+| Exit programming mode.
+: -prog
+   0 GPIOB_ODR !  100us  reset/ ;
+
+| Enter programming mode.
+: +prog
+   0 GPIOB_ODR !  100us  pgm/  100us  ; | reset/  100us ;
+
+.then  ( def uses-pgm)
+
+.ifdef uses-mchp-key
+
+| NOTE: Unlike the PIC18-Q parts, for which MCLR is *low* during
+| programming, on older parts MCLR is *high* during programming, and must
+| be brough low and then high again to exit programming!
+
+| Exit programming mode.
+: -prog  reset\  t_enter_prog  reset/  t_enter_prog ;
+
+| The string "MCHP" is the initialization bit string that must be clocked
+| into the target, MSB first. Since we do everything else LSB first, we
+| bit-reverse the string before sending it to the target.
+
+{
+: bitrev  ( bits #bits - bits')
+   0 swap for  swap  dup u2/ swap 1 and  rot 2* +  next  nip ;
+}
+
+| Enter programming mode.
+: +prog
+   reset\  t_enter_prog
+   [ token MCHP drop bew@  #32 bitrev #] #32 >bits
+   t_enter_prog  reset/ ;
+
+.then  ( def uses-mchp)
+
+: rr
+   clock-init  led-init  flash-leds  timer-init  spi-init ;
+
+: tt  ( - revision device-id)
+   rr  +prog  30_0000 !p p@+ p@+  3f_fffe !p  p@+ p@+ lohi> ;
+
+.then  ( def pic18f-std)
+
+
+.ifdef pic18f-q
+| -------------------------------------------------------------------------
 | PIC18F-Q programming
 | -------------------------------------------------------------------------
 .ifdef pic18f-q
 
 ( Load the bitbanged SPI code.)
-( Defaults to msb-first and fast-bits.)
+| -d slow-bits  ( Defaults to msb-first and fast-bits.)
 ld target/ARM/stm32/bitbanged-spi-half-duplex.mu4
 
-: t_enter_prog  1 ms ;
-: t_dly  ( nominally 1us)  1 us ;
-: t_erase  #11 ms ;  ( bulk or page erase)
-: t_prog_eeprom_config  #11 ms ;  ( presumably because it includes erase)
-: t_prog_flash  #75 us ;
+  1 ms delay t_enter_prog
+  1 us delay t_dly  ( nominally 1us)
+#11 ms delay t_erase  ( bulk or page erase)
+#11 ms delay t_prog_eeprom_config  ( presumably because it includes erase)
+#75 us delay t_prog_flash
 
-| The string "MCHP" is the initialization bit string that must be clocked
-| into the target, MSB first.
+( Send a command; delay.)
+: cmd  ( cmd)  #24 <<  8 >bits  t_dly ;
 
-( Combine a command and payload; send the command; delay.)
-: cmd+payload  ( payload cmd - payload')  #23 <<  + 2*  8 >bits  t_dly ;
+( Send a command followed by a payload.)
+: cmd+wr  ( payload cmd)    cmd  9 <<  #24 >bits ;
 
-( Send a bare command with no payload; delay.)
-: cmd     ( cmd)  0 swap cmd+payload drop ;
-
-( Send a command; delay; send a payload.)
-: cmd+wr  ( payload cmd)  cmd+payload  #24 >bits  drop ;
-
-( Send a command; delay; recv a payload.)
-: cmd+rd  ( cmd - payload)  cmd  #24 bits>  2/ 0ffff and ;
+( Send a command; recv a 24-bit payload containing 16 bits.)
+: cmd+rd  ( cmd - payload)  cmd        #24 bits>  u2/ 0ffff and ;
 
 ( XXX Better names for these? The p suggests PIC and PC. And page erase.)
 : bulk-erase ( bits)
@@ -268,10 +393,13 @@ ld target/ARM/stm32/bitbanged-spi-half-duplex.mu4
 | Exit programming mode.
 : -prog  reset/  t_enter_prog ;
 
+| The string "MCHP" is the initialization bit string that must be clocked
+| into the target, MSB first. All PIC18-Q chips use this method.
+
 | Enter programming mode.
 : +prog
    -prog  ( first exit any previous session)
-   reset\  t_enter_prog  [ token MCHP drop bew@ #] #32 >bits drop  t_enter_prog
+   reset\  t_enter_prog  [ token MCHP drop bew@ #] #32 >bits  t_enter_prog
    get-page-size ;
 
 : read-flash  wsetup  for  p@+ >hilo  rot c!+ c!+  next  drop ;
@@ -320,12 +448,12 @@ ld target/ARM/stm32/bitbanged-spi-half-duplex.mu4
 ( Defaults to fast-bits.)
 ld target/ARM/stm32/bitbanged-spi-half-duplex.mu4
 
-: t_enter_prog  1 ms ;
-: t_dly  ( nominally 1us)  1 us ;
-: t_erase_bulk  5 ms ;
-: t_erase_page  #2500 us ;    ( Microchip calls this "row" erase)
-: t_prog_config  5 ms ;       ( time to erase and program a single config word)
-: t_prog_flash  #2500 us ;    ( time to program 32 words (1 row/page)
+    1 ms delay t_enter_prog
+    1 us delay t_dly  ( nominally 1us)
+    5 ms delay t_erase_bulk
+#2500 us delay t_erase_page  ( Microchip calls this "row" erase)
+    5 ms delay t_prog_config  ( time to erase and program a single config word)
+#2500 us delay t_prog_flash  ( time to program 32 words (1 row/page)
 
 : -prog  reset/  t_enter_prog ;
 
@@ -335,7 +463,7 @@ ld target/ARM/stm32/bitbanged-spi-half-duplex.mu4
 
 : +prog
    -prog
-   reset\  t_enter_prog  [ token MCHP drop bew@ #] #33 >bits drop  t_enter_prog ;
+   reset\  t_enter_prog  [ token MCHP drop bew@ #] #33 >bits  t_enter_prog ;
 
 | On the 16F145x, commands are 6 bits and the payload is 16 bits: 14 bits
 | of data, plus a start and stop bit.

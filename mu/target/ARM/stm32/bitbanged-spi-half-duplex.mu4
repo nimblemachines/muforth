@@ -24,8 +24,9 @@ __meta
 | the PIC programming interface, which *shares* a single bi-directional data
 | line between master and slave.
 |
-| I'm going to use PB3 as clock, PB4 as the bi-directional data, and
-| PB5 as the active-low reset output.
+| I'm going to use PB3 as clock, PB4 as the bi-directional data, PB5 as the
+| active-low reset output (MCLR), and PB6 for PGM (necessary for some older
+| PICs).
 
 : spi-init
    | Turn on clock to port B.
@@ -35,18 +36,21 @@ __meta
    | Clear port B. Clock idles low; target will be reset.
    0 GPIOB_ODR !
 
-   | Set PB3 and PB5 to output; PB4 will toggle between input and output.
+   | Set PB3 through PB6 to output; PB4 will toggle between input and output.
    | Mode %00 is input; %01 is output.
-   [ %0100_01  3 2*  << #] GPIOB_MODER !  ( 2 bits per pin)
+   [ %01_0101_01  3 2* << #] GPIOB_MODER !  ( 2 bits per pin)
 
    | Our max toggle rate is going to be around 5Mhz, so set output speed to
    | medium.
-   0 GPIOB_OSPEEDR !
-   [ %0101_01  3 2* << #] GPIOB_OSPEEDR set!  ( 2 bits per pin)
+   [ %01_0101_01  3 2* << #] GPIOB_OSPEEDR !  ( 2 bits per pin)
 
    | Let's pull up PB4 so that if the slave isn't driving it we will read
    | one bits.
-   [ %01  4 2* << #] GPIOB_PUPDR set!  ( 2 bits per pin) ;
+   | [ %01  4 2* << #] GPIOB_PUPDR !  ( 2 bits per pin) ;
+
+   | Actually, let's try pulling PB4 *down* instead. It might help with
+   | some of the quirks of the older PIC18 devices.
+   [ %10  4 2* << #] GPIOB_PUPDR !  ( 2 bits per pin) ;
 
 | Oddly enough, the F4 family chips lack a GPIOx_BRR register! Since the
 | BSRR can be used to set and reset bits (hence the name), let's use that
@@ -61,10 +65,21 @@ GPIOB_BSRR 2 +  equ GPIOB_CLR
 : bit/  ( bit)  GPIOB_SET h! ;
 : bit\  ( bit)  GPIOB_CLR h! ;
 
+( Clock on PB3.)
+: clk/   [ 1 3 << #] bit/ ;
+: clk\   [ 1 3 << #] bit\ ;
+
+( Data on PB4.)
+: data/   [ 1 4 << #] bit/ ;
+: data\   [ 1 4 << #] bit\ ;
+
 ( Reset - aka /MCLR on the PIC - on PB5.)
 : reset/  ( de-assert reset)   [ 1 5 << #] bit/ ;
 : reset\  ( assert reset)      [ 1 5 << #] bit\ ;
 
+( PGM on PB6.)
+: pgm/  [ 1 6 << #] bit/ ;
+: pgm\  [ 1 6 << #] bit\ ;
 
 | First, let's define the "reference" implementations, in Forth. These will
 | be somewhat slow. I haven't measured, but I think they toggle at around
@@ -72,59 +87,40 @@ GPIOB_BSRR 2 +  equ GPIOB_CLR
 
 .ifdef slow-bits
 
-( Clock on PB3.)
-: clk/   [ 1 3 << #] bit/ ;
-: clk\   [ 1 3 << #] bit\ ;
-
 ( Set the direction for PB4.)
 : pb4-out   [ %01 4 2* << #] GPIOB_MODER set! ;
 : pb4-in    [ %11 4 2* << #] GPIOB_MODER clr! ;
 
-
 | Older PICs used an LSB-first protocol; newer ones use MSB-first, to be
 | more SPI-compatible. We define both styles.
 
-.ifdef lsb-first
-
-| NOTE: In bit@ and bit! we try to do approximately the same amount of
-| "computation" during the high and low halves of the clock.
-
-( Read bit on PB4, shift in from the left - ie, LSB first.)
-: bit@   ( bits - bits')
-   clk/  u2/  GPIOB_IDR @  10  clk\  and  [ #31 4 - #] <<  + ;
-
-( Amusing note: The standard Forth-style pronunciation of bit! is "bit bang". ;-)
-
-( Drive bit on PB4.)
-: bit!   ( bits - bits')  ( sample low bit and drive PB4 with it)
-   dup  [ 1 4 << #]
-   rot  clk/  1 and if  GPIOB_SET  else  GPIOB_CLR  then  h!
-   u2/  clk\ ;
-
-.else  ( msb-first, the default)
-
-| NOTE: In bit@ and bit! we try to do approximately the same amount of
-| "computation" during the high and low halves of the clock.
-
 ( Read bit on PB4.)
 : bit@   ( bits - bits')
-   clk/  2*  GPIOB_IDR @  4  clk\  >>  1 and  + ;
+   clk/
+.ifdef lsb-first
+   u2/  GPIOB_IDR @  10 and  [ #31 4 - #] <<    | shift right, sample pin and shift to msb
+.else  ( msb-first, the default)
+   2*   GPIOB_IDR @  10 and        4      >>    | shift left, sample pin and shift to lsb
+.then
+   clk\  + ;
 
 ( Amusing note: The standard Forth-style pronunciation of bit! is "bit bang". ;-)
 
 ( Drive bit on PB4.)
-: bit!   ( bits - bits')  ( sample hi bit - 8000_0000 - and drive PB4 with it)
-   dup  [ 1 4 << #]
-   rot clk/  0< if  GPIOB_SET  else  GPIOB_CLR  then  h!
-   2*  clk\ ;
+: bit!   ( bits - bits')
+   dup clk/
+.ifdef lsb-first
+   1 and if  data/  else  data\  then  u2/   | sample low bit, drive, shift right
+.else  ( msb-first, the default)
+      0< if  data/  else  data\  then  2*    | sample high bit, drive, shift left
+.then
+   clk\ ;
 
-.then  ( msb-first)
+( Read some bits.)
+: bits>   ( count - bits)   pb4-in  0  swap for  bit@  next  pb4-out ;
 
-( Read some bits. bits is left-justified.)
-: bits>   ( count - bits)          0  swap for  bit@  next ;
-
-( Write some bits. bits and bits' are right-justified.)
-: >bits   ( bits count - bits')   pb4-out  for  bit!  next  pb4-in ;
+( Write some bits.)
+: >bits   ( bits count)                     for  bit!  next  drop ;
 
 .else  ( fast-bits, the default)
 
@@ -176,10 +172,8 @@ forth
 }
 
 ( Send bits down the wire - "to bits".)
-code >bits  ( bits count - bits')
+code >bits  ( bits count)
    w dpop1  GPIOB_MODER >iobase x lit
-   %01 z movs  4 2* z z lsls
-   GPIOB_MODER >io x y ldr  z y y orrs  GPIOB_MODER >io x y str  ( pb4 output)
    1 3 << y movs  ( PB3: clock)
    1 4 << z movs  ( PB4: data)
    begin
@@ -193,13 +187,13 @@ code >bits  ( bits count - bits')
       nop3  ( lengthen setup time)
       GPIOB_CLR >io x y strh  ( clock low)
    1 top top subs  0= until
-   %11 z movs  4 2* z z lsls
-   GPIOB_MODER >io x y ldr  z y y bics  GPIOB_MODER >io x y str  ( pb4 input)
-   w top mov  next  ;c
+   top dpop1  next  ;c
 
 ( Receive bits from the wire - "bits from".)
 code bits>  ( count - bits)
    0 w movs  GPIOB_MODER >iobase x lit
+   %11 z movs  4 2* z z lsls
+   GPIOB_MODER >io x y ldr  z y y bics  GPIOB_MODER >io x y str  ( pb4 input)
    1 3 << y movs  ( PB3: clock)
    begin
       GPIOB_SET >io x y strh  ( clock high)
@@ -215,6 +209,8 @@ code bits>  ( count - bits)
       GPIOB_CLR >io x y strh  ( clock low)
       z w w adds  ( add in new bit)
    1 top top subs  0= until
+   %01 z movs  4 2* z z lsls
+   GPIOB_MODER >io x y ldr  z y y orrs  GPIOB_MODER >io x y str  ( pb4 output)
    w top mov  next  ;c  pool,
 
 .then  ( fast-bits)
