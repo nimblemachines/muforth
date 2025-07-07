@@ -52,37 +52,35 @@ variable spy  spy on
 
 : >b   send ;
 : b>   recv ;
-: >w         >hilo  >b >b ;
+: >w          >hilo  >b >b ;
 : w>   b> b>  lohi> ;
-
-| A 0 length byte really means 256!
-: len>  b> ?if ^ then  #256 ;
-
-| These hold *host* addresses.
-variable prog-addr
-variable data-addr
-
-| For reading and writing target memory. addr is a *target* address.
-: target-c@+  ( addr - b addr+)  dup image+ c@    swap 1+ ;
-: target-@+   ( addr - w addr+)  dup image+ leh@  swap 2 + ;
-
-: target-c!+  ( b addr - addr+)  tuck image+ c!    1+ ;
-: target-!+   ( w addr - addr+)  tuck image+ leh!  2 + ;
 
 | Compile the first 32 bits of the current muforth Git commit. When asked
 | for the version, return four bytes, in little-endian order.
 
 : get-version   [ muforth-commit drop 8 evaluate #]  >3210 >b >b >b >b ;
 
-: set-prog-addr  b> b> b> 0 0123>  prog-addr ! ;
-: set-data-addr  w>  data-addr ! ;
-: get-data-addr      data-addr @  >w ;
+| These hold *host* addresses.
+variable prog-addr
+variable data-addr  0 ram image+  data-addr !  ( init to "zero")
+
+| Only used for flash addresses. Ram addresses always use the same image.
+variable prog-offset   ( offset to add to host flash address to get target address)
+
+: set-prog-addr
+   b> b> b> 0 0123>  dup  flash image+  tuck -  prog-offset !  prog-addr ! ;
+
+: set-data-addr  w>  ram image+  data-addr ! ;
+: get-data-addr                  data-addr @  ram 0 image+ -  >w ;
 
 : run ;
 
-: read-prog-n    flash  len> for  prog-addr @  target-c@+  prog-addr !  >b  next ;
-: read-data-n    ram    len> for  data-addr @  target-c@+  data-addr !  >b  next ;
-: write-data     ram          b>  data-addr @  target-c!+  data-addr ! ;
+| A 0 length byte really means 256!
+: len>  b> ?if ^ then  #256 ;
+
+: read-prog-n    len> for  prog-addr @  c@+  prog-addr !  >b  next ;
+: read-data-n    len> for  data-addr @  c@+  data-addr !  >b  next ;
+: write-data           b>  data-addr @  c!+  data-addr ! ;
 
 | Q-series NVM/flash operations.
 variable nvm-addr
@@ -107,13 +105,14 @@ defer nvm!+
 
 : set-nvm-addr
    prog-addr @  dup nvm-addr !
-   byte-wide? if  ['] target-c@+  ['] target-c!+
-            else  ['] target-@+   ['] target-!+  then
+   prog-offset @ +  ( convert back to target addr)
+   byte-wide? if  ['] c@+     ['] c!+
+            else  ['] leh@+   ['] leh!+  then
    is nvm!+  is nvm@+ ;
 
 | Return *host* address of first byte of page addressed by nvm-addr.
 : nvm-page-addr
-   nvm-addr @  [ /page 1- #] bic  flash image+ ;
+   nvm-addr @  prog-offset @ +  [ /page 1- #] bic  flash image+ ;
 
 | Host has written a page full of flash data to a hardware ram buffer at
 | the end of the data space. Copy this to the current nvm address.
@@ -125,23 +124,22 @@ defer nvm!+
 : erase-page
    nvm-page-addr  /page  0ff fill ;
 
-: read        ( - data)   flash  nvm-addr @  nvm@+  drop ;
-: read-incr   ( - data)   flash  nvm-addr @  nvm@+  nvm-addr ! ;
+: read        ( - data)   nvm-addr @  nvm@+  drop ;
+: read-incr   ( - data)   nvm-addr @  nvm@+  nvm-addr ! ;
 
-: write-incr  ( data)     flash  nvm-addr @  nvm!+  nvm-addr ! ;
+: write-incr  ( data)     nvm-addr @  nvm!+  nvm-addr ! ;
 
 : nvm-read   b> ( cmd) 0= if  read  else  read-incr  then  >w ;
 
-: do-nvm-write  ( cmd data)
-   over 4 = if  ( write and incr)  nip write-incr ^  then
-   over 5 = if  ( write page)  2drop  write-page ^  then
-   over 6 = if  ( erase page)  2drop  erase-page ^  then
-   2drop ;
+: do-nvm-write  ( cmd data - cmd data)
+   over 4 = if  ( write and incr)  dup write-incr ^  then
+   over 5 = if  ( write page)  write-page ^  then
+   over 6 = if  ( erase page)  erase-page ^  then ;
 
 : nvm-write
    b> ( cmd)  dup nvm-cmd !  w> ( data)
    b> ( key) 55 xor if  2drop  nvm-error ^  then  | return WRERR
-   do-nvm-write  nvm-ok ;
+   do-nvm-write  2drop  nvm-ok ;
 
 | Command dispatch.
 : peer-command
@@ -165,6 +163,5 @@ defer nvm!+
 : peer
    begin  catch re-peer  pty-master @ close-file
                                          0 #100,000,000 nanosleep  again ;
-
 ( Let's run it!)
-| peer
+peer
