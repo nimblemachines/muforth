@@ -40,16 +40,9 @@ aka TBLPTRH  equ PROGADRH
 aka TBLPTRL  equ PROGADRL
 aka TABLAT   equ PROGDATA
 
-| We are going to use FSR2 to point to data memory. Let's call it DP - data
-| pointer. Since this is also the stack pointer, our trampoline will have
-| even less work to do when executing code!
-
-assembler
-aka FSR2       equ DP   ( data pointer aka data *stack* pointer)
-aka FSR2H      equ DPH  ( data pointer, high byte)
-
-aka POSTINC2   equ @dp+  ( read or write a data memory location, incr pointer)
-forth
+| We are going to use FSR2 to point to data memory. Since this is also the
+| stack pointer, our trampoline will have even less work to do when
+| executing code!
 
 __meta
 
@@ -79,12 +72,12 @@ label set-prog-addr
    recv-byte c  PROGADRU ) st  ret  ;c
 
 label set-data-addr
-   recv-byte c  DP  ) st
-   recv-byte c  DPH ) st  ret  ;c
+   recv-byte c  SP  ) st
+   recv-byte c  SPH ) st  ret  ;c
 
 label get-data-addr
-   DP  ) ld  send-byte c
-   DPH ) ld  send-byte j  ;c
+   SP  ) ld  send-byte c
+   SPH ) ld  send-byte j  ;c
 
 ( Jump indirect to prog-addr.)
 label run
@@ -106,11 +99,11 @@ label read-prog-n
 
 label read-data-n
    recv-byte c  push  TOS ) st  ( count)
-   begin  @dp+ ) ld  send-byte c  TOS ) decsz  again
+   begin  @sp+ ) ld  send-byte c  TOS ) decsz  again
    pop  ret  ;c
 
 label write-data
-   recv-byte c  @dp+ ) st  ret  ;c
+   recv-byte c  @sp+ ) st  ret  ;c
 
 label process-serial
    recv-byte c  ( command)   -0f addi
@@ -142,21 +135,21 @@ label startup
    | contains the SFRs. If the low byte of the address of the first SFR is
    | non-zero, keep clearing and incrementing until we reach the SFR.
 
-   @ram DP lda  @sfr >lohi ldi
-   begin  @dp+ ) clr  DPH ) cmpseq  again       | clear until beginning of SFR page
+   @ram SP lda  @sfr >lohi ldi
+   begin  @sp+ ) clr  SPH ) cmpseq  again       | clear until beginning of SFR page
    \f dup .if
       ldi
-      begin  @dp+ ) clr  DP ) cmpseq  again     | clear until we reach first SFR
+      begin  @sp+ ) clr  SP ) cmpseq  again     | clear until we reach first SFR
    .else
       \f drop
    .then
 .else
    | RAM is above SFRs. Most likely a chip with a 6-bit BSR. Start at
-   | beginning of RAM and clear and increment until the high byte of DP
+   | beginning of RAM and clear and increment until the high byte of SP
    | rolls over to 00.
 
-   @ram DP lda
-   begin  @dp+ ) clr  DPH ) tst  0= until
+   @ram SP lda
+   begin  @sp+ ) clr  SPH ) tst  0= until
 .then
 
    chip-init c
