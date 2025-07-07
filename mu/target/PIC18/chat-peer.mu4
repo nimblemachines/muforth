@@ -1,0 +1,171 @@
+| This file is part of muforth: https://muforth.dev/
+|
+| Copyright 2002-2025 David Frech. (Read the LICENSE for details.)
+
+loading PIC18 serial chat protocol (peer)
+
+| NOTE: This might seem a bit odd, but this file implements the side of the
+| chat protocol normally implemented by firmware in a target chip! The
+| reason for doing this here, in muforth, is to test out the protocol by
+| having both sides running on the host.
+
+hex
+
+| Taking inspiration from the wildly successful HC08 serial chat protocol.
+|
+| Responds to the following commands. NOTE: these are hex values!
+|
+| 00 - 0f  Idle   - these command bytes are ignored
+|
+| 10  get-version      - send 4 byte commit (little endian) to host
+| 11  set-prog-addr    - set the program (flash) memory address pointer
+| 12  set-data-addr    - set the data memory address pointer
+| 13  get-data-addr    - get the current value of the data mem ptr
+| 14  run              - load PC from flash-addr
+| 15  read-prog-n      - read n bytes from program memory, incr pointer
+| 16  read-data-n      - read n bytes from data memory, incr pointer
+| 17  write-data       - write a byte to data memory, incr pointer
+|
+| These are Q-series commands for programming the flash, config, and
+| eeprom.
+|
+| 18  set-nvm-addr     - set NVMADR from prog-addr
+| 19  nvm-read         - execute an NVM read command, return data read
+| 1a  nvm-write        - execute an NVM write command, return status
+|
+| 1b - ff  Idle   - these command bytes are ignored
+
+variable pty-master
+: pty-send  ( b)     pty-master @ >emit ;
+: pty-recv  ( - b)   pty-master @ <key ;
+
+( Spying on the protocol.)
+variable spy  spy on
+: send             spy @ if ." >"  dup .h8_ then  pty-send ;
+: recv   pty-recv  spy @ if ." <"  dup .h8_ then ;
+
+| To make spying on the protocol easier to deal with, break up the printed
+| bytes into "packets" in a semantically meaningful way. How about this
+| stupid name, which is easy to remember:
+
+: ?spkt  ( spy packet, or "spiked")  spy @ if  cr  then ;
+
+: >b   send ;
+: b>   recv ;
+: >w         >hilo  >b >b ;
+: w>   b> b>  lohi> ;
+
+| A 0 length byte really means 256!
+: len>  b> ?if ^ then  #256 ;
+
+| These hold *host* addresses.
+variable prog-addr
+variable data-addr
+
+| To convert one of the above *back* to a target address, set the correct
+| region (ram or flash) and execute image- .
+
+| XXX going backwards doesn't work. We have several images in the flash
+| aspace; we have to remember which one we are in, or only use target
+| addresses and always do an image+ do find the host addr.
+
+: image-  ( host - target)  0 image+ - ;
+
+| Compile the first 32 bits of the current muforth Git commit. When asked
+| for the version, return four bytes, in little-endian order.
+
+: get-version   [ muforth-commit drop 8 evaluate #]  >3210 >b >b >b >b ;
+
+: set-prog-addr  b> b> b> 0 0123>  flash image+  prog-addr ! ;
+: set-data-addr  w>  ram image+  data-addr ! ;
+: get-data-addr                  data-addr @  ram image-  >w ;
+
+: run ;
+
+: read-prog-n    len> for  prog-addr @  c@+  prog-addr !  >b  next ;
+: read-data-n    len> for  data-addr @  c@+  data-addr !  >b  next ;
+: write-data           b>  data-addr @  c!+  data-addr ! ;
+
+| Q-series NVM/flash operations.
+variable nvm-addr
+variable nvm-cmd
+
+| Return status. NVMCON1 has nvm command in low 3 bits, WRERR in high bit.
+: nvm-ok     nvm-cmd @                >b ;
+: nvm-error  nvm-cmd @ 80 or ( WRERR) >b ;
+
+| NVM reads and writes are complicated by the fact that the flash memory
+| contains both byte-wide and word-wide areas. The config and eeprom are
+| byte-wide; everything else is word-wide. For single item incrementing
+| reads and writes we have to be careful about the size!
+
+: byte-wide?  ( host - flag)   flash image-  @config @device-config within ;
+
+| When we set the nvm address, also set the read and write operators
+| depending on the flash area that the address falls in.
+
+defer nvm@+
+defer nvm!+
+
+: set-nvm-addr
+   prog-addr @  dup nvm-addr !
+   byte-wide? if  ['] c@+  ['] c!+  else  ['] leh@+  ['] leh!+  then
+   is nvm!+  is nvm@+ ;
+
+| Return host address of first byte of page addressed by nvm-addr.
+: nvm-page-addr
+   flash  nvm-addr @  image-  [ /page 1- #] bic  image+ ;
+
+| Host has written a page full of flash data to a hardware ram buffer at
+| the end of the data space. Copy this to the current nvm address.
+
+: write-page
+   ram  [ @ram #ram + #] image+    | beginning of hardware buffer
+   nvm-page-addr  /page  cmove ;
+
+: erase-page
+   nvm-page-addr  /page  0ff fill ;
+
+: read        ( - data)   nvm-addr @  nvm@+  drop ;
+: read-incr   ( - data)   nvm-addr @  nvm@+  nvm-addr ! ;
+
+: write-incr  ( data)     nvm-addr @  nvm!+  nvm-addr ! ;
+
+: nvm-read   b> ( cmd) 0= if  read  else  read-incr  then  >w ;
+
+: do-nvm-write  ( cmd data)
+   over 4 = if  ( write and incr)  nip write-incr ^  then
+   over 5 = if  ( write page)  2drop  write-page ^  then
+   over 6 = if  ( erase page)  2drop  erase-page ^  then
+   2drop ;
+
+: nvm-write
+   b> ( cmd)  dup nvm-cmd !  w> ( data)
+   b> ( key) 55 xor if  2drop  nvm-error ^  then  | return WRERR
+   do-nvm-write  nvm-ok ;
+
+| Command dispatch.
+: peer-command
+   ?spkt  b>  10 - dup 0b u< if  jump
+      get-version  set-prog-addr  set-data-addr  get-data-addr  run
+      read-prog-n  read-data-n  write-data
+      | Q-series NVM commands:
+      set-nvm-addr  nvm-read  nvm-write
+   then  drop ;
+
+: re-peer
+   open-pty  cr  ." Connect to "  zcount type  ."  to chat with this peer."
+   pty-master !  begin  peer-command  again ;
+
+| FUCK!! Is it a new Linux kernel? The re-peering process seems now to open
+| another, different, pty each time! Really annoying.
+|
+| Ah! A race condition. Lovely. Let's wait 100ms before re-opening the pty
+| master. That seems to work. Fucking Linux!!
+
+: peer
+   begin  catch re-peer  pty-master @ close-file
+                                         0 #100,000,000 nanosleep  again ;
+
+( Let's run it!)
+| peer
