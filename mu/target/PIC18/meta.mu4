@@ -135,70 +135,43 @@ forth
 | Peephole optimizer tags
 | -------------------------------------------------------------------------
 
-| Tags tell the meta-compiler what kind of special code, if any, was just
-| compiled. Currently used to identify literals and calls, for simple
-| peephole optimizations.
-|
-| We store the tag byte at \m here. No tag is represented by an "empty"
-| image byte - 0ff - *not* by a tag of zero.
-|
-| Low bit of tag is set if \m here is a forward jump destination. Other
-| "option" bits can added as necessary.
-|
+ld target/common/peephole-tags.mu4
+
 | Tags used:
 
-0 constant $rcall  ( $ suggests price tag ;-)
+0 constant $lit    ( $ suggests price tag ;-)
+1 constant $rcall  ( for $rcall and $call, tag number is word length of instr)
 2 constant $call
-4 constant $lit
-
-: tag!  ( tag)     \m here image-c! ;
-: tag@  ( - tag)   \m here image-c@ ;
-
-: notag  "0ff tag! ;
-
-| For setting low bits - eg, for annotating jump destinations. Note that
-| this will leave an empty (0ff) tag unchanged!
-
-: tag-option!  ( option)   tag@  or  tag! ;
-
-| We want to cleanly uncompile code, so instead of simply backing up and
-| leaving the cruft - instructions and tags - behind, let's back up and
-| "uncompile" the code, leaving behind untagged empty space.
-
-: uncompile  ( #cells)
-   notag
-   dup \m cells negate allot  ( back up #cells cells)
-   for  0ffff \m ,  next  ( reset #cells cells) ;
 
 | -------------------------------------------------------------------------
 | target-compile, and tail call elimination
 | -------------------------------------------------------------------------
 
-: short?  ( dest)  >rel  ( woffset)  #11 sfits? ;
+| Compile a call instruction, and store a tag after the instruction.
 
-( Compiling target words.)
 meta
-: compile,  ( cfa)  ( smart call - compile rcall if possible)
-   dup short? if  \a rcall  $rcall tag! ^  then
-                  \a call   $call tag! ;
+: compile,  ( cfa)
+   \m here swap  \a c  ( compile call - rcall if possible, call otherwise)
+   \m here swap - \m cell/  ( word length is tag!)  tag! ;
+
 forth
 .meta. chain' compile,  is target-compile,
 
-| Convert call to jump. Remove tag. If call site is also a forward jump
-| destination, return true, otherwise false.
+: replace  ( tag toggle offset)
+   notag  \m here + image+  dup @  rot xor  swap !  drop ;
 
-: replace  ( tag toggle offset - compile-ret?)
-   \m here +  dup image-@  rot xor  swap image-!
-   notag  1 and ( jump dest?) ;
+| If last code compiled was a call, rewrite it to a jump; otherwise,
+| compile a return instruction.
 
-| If last code compiled was a call, rewrite it to a jump. Return a flag:
-| true means we should compile a return instruction.
+| XXX replace could operate on the high byte of the instruction, rather
+| than the whole instruction.
 
-: tail?  ( - compile-ret?)
+: ?tail-exit
    tag@
-   dup $call u< if  ( short call)  "0800 -2 replace ^  then
-   dup $lit  u< if  ( long call)   "0300 -4 replace ^  then
-   drop  -1 ;
+   dup $rcall = if  ( short call)  "0800 -2 replace ^  then
+   dup $call  = if  ( long call)   "0300 -4 replace ^  then
+   | No call to convert; compile a return.
+   drop  asm{  ret } ;
 
 | -------------------------------------------------------------------------
 | Support for ;code and does>
@@ -340,7 +313,7 @@ assembler
 target-compiler
 : [    push-mode  __meta ;
 
-: ^   tail? if  asm{  ret }  then ;
+: ^   ?tail-exit ;  ( compile exit, doing tail-call conversion if necessary)
 : ;   \tc ^  __meta ;  ( compile exit and return to __meta)
 
 : [']       \m '  \m literal ;
