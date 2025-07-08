@@ -13,12 +13,12 @@ hex
 __meta
 
 ( 1 byte literal; high byte is zero)
-label lit00   XH clr  ( fall thru)  ;c
-label lit      X st   ( fall thru)  ;c
+label lit00   SH clr  ( fall thru)  ;c
+label lit      S st   ( fall thru)  ;c
 label 1push   2 SP suba  ret  ;c
 
 ( 1 byte literal; high byte is ff)
-label litff   XH set  lit j  ;c
+label litff   SH set  lit j  ;c
 
 | NOTE: We use \m compile, instead of the assembler's c (smart call) so
 | that the calls will be tagged and can be tail-call converted if a word
@@ -28,26 +28,26 @@ label litff   XH set  lit j  ;c
    >lohi  0ff and
    dup    0= if  ( high 8 bits all 0)  drop  asm{  ldi  lit00 compile, }  ^  then
    dup 0ff = if  ( high 8 bits all 1)  drop  asm{  ldi  litff compile, }  ^  then
-   asm{  ldi  XH st  ldi  lit compile, } ;  is target-literal
+   asm{  ldi  SH st  ldi  lit compile, } ;  is target-literal
 
 ( Arith/logic 1ops.)
 code negate   T neg  0 ldi  TH rsbb  ret  ;c
-code invert   T com  TH com  ret  ;c
+code invert   T com         TH com   ret  ;c
 
 code 2*   0 ( C) STATUS ) bclr          T rlc  TH rlc  ret  ;c
 code u2/  0 ( C) STATUS ) bclr  begin  TH rrc   T rrc  ret  ;c
 code 2/   TH w rlc  ( sign -> C)   again  ;c
 
 ( Arith/logic 2ops.)
-code +      T ld  S add  TH ld  SH adc  ( fall thru)  ;c
+code +      T ld  U add  TH ld  UH adc  ( fall thru)  ;c
 label 1pop  2 SP adda  ret  ;c
 
 code bic    ' invert c  ( fall thru)  ;c
-code and    T ld  S and  TH ld  SH and  1pop j  ;c
-code or     T ld  S or   TH ld  SH or   1pop j  ;c
-code xor    T ld  S xor  TH ld  SH xor  1pop j  ;c
+code and    T ld  U and  TH ld  UH and  1pop j  ;c
+code or     T ld  U or   TH ld  UH or   1pop j  ;c
+code xor    T ld  U xor  TH ld  UH xor  1pop j  ;c
 
-code -      T ld  S sub  TH ld  SH sbb  1pop j  ;c
+code -      T ld  U sub  TH ld  UH sbb  1pop j  ;c
 
 ( Comparisons and tests.)
 label true   T set  TH set  ret  ;c
@@ -60,12 +60,11 @@ code u<   ' - c         false u< until  true j  ;c
 ( Stack ops.)
 :tc drop   asm{  2 SP adda } ;  ( make drop a macro!)
 
-code dup   ( a   - a a)    TH XH mov  T ld  lit j  ;c
-code over  ( a b - a b a)  SH XH mov  S ld  lit j  ;c
+code dup   ( a   - a a)    TH SH mov  T ld  lit j  ;c
+code over  ( a b - a b a)  UH SH mov  U ld  lit j  ;c
 
 ( Permutations are more involved!)
-code swap  ( a b - b a)     T  X mov   S  T mov   X  S mov
-                           TH XH mov  SH TH mov  XH SH mov  ret  ;c
+code swap  ( a b - b a)    T S movw  U T movw  S U movw  ret  ;c
 
 : nip   ( a b - b)      swap drop ;
 : tuck  ( a b - b a b)  swap over ;
@@ -87,7 +86,7 @@ code r!  | To implement >r, caller does push, then calls this
    STKPTR ) dec  T TOS ) movw  STKPTR ) inc  1pop j  ;c
 
 code r@  | To implement r>, caller calls this, then does pop
-   STKPTR ) dec  TOS ) X movw  STKPTR ) inc  1push j  ;c
+   STKPTR ) dec  TOS ) S movw  STKPTR ) inc  1push j  ;c
 
 :d tcompile   \c \t  compile target-compile, ;
 
@@ -108,18 +107,18 @@ code ra!
 code ra@
    STKPTR ) dec
    TOSU ) w rrc
-   TOSH ) w rrc  XH st
-   TOS  ) w rrc  X  st
+   TOSH ) w rrc  SH st
+   TOS  ) w rrc  S  st
    STKPTR ) inc  1push j  ;c
 
 code dr!  ( double r store)
    STKPTR ) dec
-   S TOS ) movw  T TOSU ) mov
+   U TOS ) movw  T TOSU ) mov
    STKPTR ) inc  4 SP adda  ret  ;c
 
 code dr@  ( double r fetch)
    STKPTR ) dec  4 SP suba
-   TOS ) S movw  TOSU ) T mov  TH clr
+   TOS ) U movw  TOSU ) T mov  TH clr
    STKPTR ) inc  ret  ;c
 
 ( rot will test >r and r>.)
@@ -147,14 +146,14 @@ label trampoline
    | and shift it *left* one bit.
 
    | NOTE: Since we have not adjusted SP to leave two bytes of scratch
-   | space, the PC is in X and XH, not T and TH.
+   | space, the PC is in S and SH, not T and TH.
 
    0 ( C) STATUS ) bclr  ( clear carry)
-   X rlc  XH w rlc  PCLATH ) st  PCLATU ) clr  PCLATU ) rlc
-   X ld  callw  ( execute the target word)
+   S rlc  SH w rlc  PCLATH ) st  PCLATU ) clr  PCLATU ) rlc
+   S ld  callw  ( execute the target word)
 
    ( Let's push STATUS. It's helpful to see how code affects the STATUS bits.)
-   STATUS ) X mov  XH clr  ret  ;c
+   STATUS ) S mov  SH clr  ret  ;c
 
 __host
 
