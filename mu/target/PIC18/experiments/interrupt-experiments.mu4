@@ -1,0 +1,45 @@
+| This file is part of muforth: https://muforth.dev/
+|
+| Copyright 2002-2025 David Frech. (Read the LICENSE for details.)
+
+| The PIC18-Q documnentation is unclear on what, exactly, an interrupt
+| vector contains. It seems to *suggest* - in two places - that an
+| interrupt vector contains a 16-bit value that is shifted *left* 2 bits
+| before being used as the PC to jump to (ie, the first instruction of an
+| interrupt service routine).
+|
+| Let's use the software interrupt to determine if this is correct.
+
+| If the documentation is correct, ISRs have to start on multiple-of-4
+| addresses.
+
+__meta
+hex
+
+flash
+ld target/PIC18/kernel.mu4
+0a00 region!
+
+| Let's put the ISR before the vector table. This way we know for sure that
+| it's 4-byte aligned.
+
+label swi-isr
+   0 ( SWIF) PIR0 ) bclr  ( ack interrupt)
+   | "cafe >hilo  ldi  PROD ) st  ldi  PRODH ) st  iret  ;c
+   | if swi is synchronous, this will work.
+   ' invert c  iret  ;c
+
+| Since software interrupt is vector 0, we only need to allocate space for
+| that one vector!
+
+here  swi-isr  2 >> ,  ( this is correct!)
+
+code interrupt-init
+   | Interrupts must be disabled in order to change IVTBASE.
+   7 ( GIE) INTCON0 ) bclr
+   ( 'vectors)  >hilo  ldi  IVTBASE bank b) st  ldi  IVTBASEH b) st
+   0 ( SWIF) PIR0 ) bclr  0 ( SWIE) PIE0 ) bset
+   7 ( GIE) INTCON0 ) bset  ret  ;c
+
+code trig
+   0 ( SWIF) PIR0 ) bset  ( trigger software interrupt)  ret  ;c

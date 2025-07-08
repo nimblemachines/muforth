@@ -1,0 +1,80 @@
+| This file is part of muforth: https://muforth.dev/
+|
+| Copyright 2002-2025 David Frech. (Read the LICENSE for details.)
+
+| I'm not sure what to call this file. I want to explore different ways of
+| implementing create/does> and create/;code.
+|
+| I initially thought of "data structures", but create/does isn't like the
+| traditional computing idea of a data structure.
+
+__meta
+hex
+
+flash
+ld target/PIC18/kernel.mu4  ( loads @400)
+900 region!  ( so we can refer to the kernel code but don't have to keep re-flashing it)
+
+| Copy return address on R stack to the program memory pointer.
+| XXX should be a label, but this will break the test Forth code later in
+| the file.
+code !p
+label copy-tos-to-prog-ptr
+   | We have done a call or rcall to get here. The TOS points to some data;
+   | we need to move the pointer in TOS to TBLPTR.
+   | XXX Usual caveats apply to TBLPTR and TABLAT. We need better names!
+   STKPTR ) dec
+   TOS ) TBLPTR ) movw  TOSU ) TBLPTRU ) mov
+   STKPTR ) inc  ret  ;c
+
+| add = f +  w
+| adc = f +  w + C
+|
+| sub = f + ~w + 1
+| sbb = f + ~w + C
+|
+| C=1 -> ff
+| C=0 -> 00
+
+code +p  ( offset)  ( add an offset to progmem ptr)
+   TH w rlc   WREG ) sbb  WREG ) com  S st   | sign extend TH into S
+   T  ld  TBLPTR  ) add
+   TH ld  TBLPTRH ) adc
+   S  ld  TBLPTRU ) adc  1pop j  ;c
+
+:tc rpop  asm{ pop } ;
+
+| Fetch a word from program memory; incr memptr
+code p@+
+   prog@+ TABLAT ) S  mov
+   prog@+ TABLAT ) SH mov  1push j  ;c
+
+: incrementer   !p rpop p@+ + ;
+
+| This is what we would like to compile:
+code 3005+
+   ' incrementer c  3005 ,  ;c
+
+| Let's make it happen.
+
+-:m asm{ copy-tos-to-prog-ptr c  pop } ;  is compile-does-prelude
+
+:m incrementer2  create , does> p@+ + ;
+
+600a incrementer2 600a+
+
+| Words using ;code don't get the "dodoes" prelude that calls copy-prog-ptr
+| and pops the R stack. They have complete flexibility to do what they
+| want. Is there any point to this? Or do we always want to grab the
+| address off the R stack?
+|
+| At the very least the R stack has to be popped, otherwise execution will
+| return to the body of the created word...
+
+| -:m asm{  TOS ) S movw  pop } ;  is compile-;code-prelude
+now nope is compile-;code-prelude
+
+:m foo  create  ;code  TOS ) ld  T add  TOSH ) ld  TH adc  pop  ret  ;c
+
+foo abc
+foo xyz

@@ -1,0 +1,41 @@
+| This file is part of muforth: https://muforth.dev/
+|
+| Copyright 2002-2025 David Frech. (Read the LICENSE for details.)
+
+hex  flash
+ld target/PIC18/kernel.mu4
+0a00 region!
+
+| Helper words for constructing and deconstructing doubles. d> assumes that
+| target values have been sign-extended to 64-bits.
+
+: >d   ( d - lo hi)  dup 0ffff and  dup 8000 and 2* -  swap #16 >> ;
+: d>   ( lo hi - d)  #16 <<  swap 0ffff and + ;
+
+__meta
+
+| add = f +  w
+| adc = f +  w + C
+|
+| sub = f + ~w + 1
+| sbb = f + ~w + C
+|
+| C=1 -> ff
+| C=0 -> 00
+
+code s>d  ( n - d)
+   | TH w rlc   WREG ) sbb  WREG ) com  S st  SH st  1push j  ;c
+   TH w rlc   WREG ) sbb  WREG ) com  S st  SH st  2 SP suba  ret  ;c
+
+( T/TH is the high word; U/UH the low.)
+code dnegate
+   | U neg  0 ldi  UH rsbb  0 ldi  T rsbb  neg-hi j  ;c
+   U neg  0 ldi  UH rsbb  0 ldi  T rsbb  0 ldi  TH rsbb  ret  ;c
+
+code d-
+   ' dnegate c  ( fall thru)  ;c
+
+| Add T/U to V/W. T and V are the high words.
+code d+
+   U ld  W add  UH ld  WH adc  T ld  V adc  TH ld  VH adc
+   4 SP adda  ret  ;c
