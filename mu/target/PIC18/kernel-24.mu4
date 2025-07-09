@@ -1,0 +1,185 @@
+| This file is part of muforth: https://muforth.dev/
+|
+| Copyright 2002-2025 David Frech. (Read the LICENSE for details.)
+
+loading PIC18 24-bit Forth kernel
+
+hex
+
+| NOTE: This is somewhat experimental!
+|
+| It struck me that
+|
+|   (a) any 8-bit machine can be turned into an 8n-bit machine;
+|
+|   (b) several peripherals - on the Q family chips in particular - have 20
+|   or 24-bit registers, and all PIC18 devices have a 22-bit program memory
+|   pointer and PC;
+|
+|   (c) while 16 bits are great, sometimes the extra "headroom" of
+|   computing with 24 bits might be nice; and
+|
+|   (d) the overhead - often one or two more instructions than the 16-bit
+|   versions - just isn't that much.
+|
+| As always, anything truly performance-critical will be coded in
+| assembler, rather than Forth. This is just as true of the 16-bit kernel
+| as it is of the 24-bit one.
+
+__meta
+
+label lit00  SH clr  ( fall thru)  ;c     | high two bytes 00
+label lit0   SU clr  ( fall thru)  ;c     | highest byte 00
+label lit     S st   ( fall thru)  ;c     | regular literal
+label 1push   3 SP suba  ret  ;c
+
+label lit11  SH set  ( fall thru)  ;c     | high two bytes ff
+label lit1   SU set  lit j  ;c            | highest byte ff
+
+| NOTE: We use \m compile, instead of the assembler's c (smart call) so
+| that the calls will be tagged and can be tail-call converted if a word
+| ends with a literal.
+
+-:m ( literal)
+   >lohi  0ffff and
+   dup      0= if  ( high 16 bits all 0)  drop  asm{  ldi  lit00 compile, }  ^  then
+   dup 0ffff = if  ( high 16 bits all 1)  drop  asm{  ldi  lit11 compile, }  ^  then
+   >lohi
+   dup      0= if  ( high 8 bits all 0)   drop  asm{  ldi  SH st  ldi  lit0 compile, }  ^  then
+   dup   0ff = if  ( high 8 bits all 1)   drop  asm{  ldi  SH st  ldi  lit1 compile, }  ^  then
+   asm{  ldi  SU st  ldi  SH st  ldi  lit compile, } ;  is target-literal
+
+( Arith/logic 1ops.)
+code negate   0 ldi  T neg  TH rsbb  TU rsbb  ret  ;c
+code invert          T com  TH com   TU com   ret  ;c
+
+code 2*   0 ( C) STATUS ) bclr            T rlc  TH rlc  TU rlc  ret  ;c
+code 2/   TU w rlc  ( sign -> C)  begin  TU rrc  TH rrc   T rrc  ret  ;c
+code u2/  0 ( C) STATUS ) bclr    again  ;c
+
+( Arith/logic 2ops.)
+code +      T ld  U add  TH ld  UH adc  TU ld  UU adc  ( fall thru)  ;c
+label 1pop  3 SP adda  ret  ;c
+
+code bic    ' invert c  ( fall thru)  ;c
+code and    T ld  U and  TH ld  UH and  TU ld  UU and  1pop j  ;c
+code or     T ld  U or   TH ld  UH or   TU ld  UU or   1pop j  ;c
+code xor    T ld  U xor  TH ld  UH xor  TU ld  UU xor  1pop j  ;c
+
+code -      T ld  U sub  TH ld  UH sbb  TU ld  UU sbb  1pop j  ;c
+
+( Comparisons and tests.)
+label true   T set  TH set  TU set  ret  ;c
+label false  T clr  TH clr  TU clr  ret  ;c
+
+code 0=   T ld  TH w or  TU or   false 0= until  true j  ;c
+code 0<         TU tst  false 0< until  true j  ;c
+code u<   ' - c         false u< until  true j  ;c
+
+( Stack ops.)
+:tc drop   asm{  3 SP adda } ;  ( make drop a macro!)
+
+code dup   ( a   - a a)    TH SH movw  T ld  lit j  ;c
+code over  ( a b - a b a)  UH SH movw  U ld  lit j  ;c
+
+( Permutations are more involved!)
+code swap  ( a b - b a)    T S mov3  U T mov3  S U mov3  ret  ;c
+
+: nip   ( a b - b)      swap drop ;
+: tuck  ( a b - b a b)  swap over ;
+
+( Memory ops. These operate on the data space: ram and i/o registers.)
+label !dp   T DP ) movw  ret  ;c    | DP is only 12 or 14 bits wide
+
+code 3@   !dp c  @dp+ ) T mov  @dp+ ) TH mov  @dp+ ) TU mov  ret  ;c
+code @    !dp c  @dp+ ) T mov  @dp+ ) TH mov  begin  TU clr  ret  ;c
+code c@   !dp c  @dp+ ) T mov         TH clr  again  ;c
+
+code !    !dp c  U @dp+ ) mov  UH @dp+ ) mov                 ( fall thru)  ;c
+label 2pop                                                   6 SP adda  ret  ;c
+code 3!   !dp c  U @dp+ ) mov  UH @dp+ ) mov  UU @dp+ ) mov  2pop j  ;c
+code c!   !dp c  U @dp+ ) mov                                2pop j  ;c
+
+code 3+!  !dp c  U ld  @dp+ ) add  UH ld  @dp+ ) adc  UU ld  @dp+ ) adc  2pop j  ;c
+code +!   !dp c  U ld  @dp+ ) add  UH ld  @dp+ ) adc                     2pop j  ;c
+
+| XXX What would Forth-style @+ look like? It would be nice to have words
+| that stored a pointer into DP and then used it over and over without
+| having to keep it on the stack and continually store T into DP.
+
+code @dp   DP ) S movw  SU clr  1push j  ;c
+
+| These are not the most efficient, but I think they will work! There is
+| something to be said for doing things the "bog standard" Forth way. ;-)
+
+: @+   @ @dp ;
+: !+   ! @dp ;
+
+( Fetching from program memory.)
+code @p   PGP ) S mov3  1push j  ;c
+code !p   T PGP ) mov3  1pop j  ;c
+
+code +p  ( offset)  ( add an offset to progmem ptr)
+   T  ld  PGP  ) add
+   TH ld  PGPH ) adc
+   TU ld  PGPU ) adc  1pop j  ;c
+
+| Fetch a word from program memory; incr memptr
+code p@+
+   prog@+ PGD ) S  mov
+   prog@+ PGD ) SH mov  begin  SU clr  1push j  ;c
+
+| Fetch a byte from program memory; incr memptr
+code pc@+
+   prog@+ PGD ) S  mov  SH clr  again  ;c
+
+( Return stack.)
+
+| With a 24-bit Forth, there is a complication: the stack slots are only 21
+| bits wide! So we actually can't implement >r and r> using the hardware
+| stack; we need an aux stack.
+|
+| OTOH, fetching, popping, and pushing return addresses (ra's) is easy,
+| since the data stack is wide enough to store a complete address.
+
+code ra@   STKPTR ) dec  TOS ) S mov3  STKPTR ) inc  1push j  ;c
+code ra!   STKPTR ) dec  T TOS ) mov3  STKPTR ) inc  1pop j  ;c
+
+( These definitions are from fig-FORTH.)
+| : rot   ( a b c - b c a)  >r swap  r> swap ;
+| : -rot  ( a b c - c a b)  swap >r  swap r> ;
+
+( Literals test.)
+: lits  34 f00 -23 -4fa abcd -8765 3f_fffc ;
+
+( R stack test.)
+| : rr  1122 >r r@ r>  r@ ( lo 16 of return addr) ;
+
+label trampoline
+   | NOTE: Since we have not adjusted SP to leave three bytes of scratch
+   | space, the PC is in S/SH/SU not T/TH/TU.
+
+   SH PCLATH ) movw  ( SH/SU -> PCLATH/U)
+   S ld  callw  ( execute the target word)
+
+   ( Let's push STATUS. It's helpful to see how code affects the STATUS bits.)
+   STATUS ) S mov  SH clr  SU clr  ret  ;c
+
+__host
+
+variable .STATUS   | --    nTO   nPD   N     OV    Z     DC    C
+: .status  .STATUS @  binary  <# 4# char _ hold # #> type  2sp ;
+
+: .regs   radix preserve
+   cr  ." N_VZHC    SP"
+       (  0_1111  0123  )
+   cr    .status
+                dp@ .w ;
+
+: rx  ( addr)  ( execute target word)
+   stack>  \m trampoline runwait  stack<
+   .STATUS !  .regs ;
+
+now rx is remote
+
+__meta
