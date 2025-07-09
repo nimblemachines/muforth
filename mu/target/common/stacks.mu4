@@ -32,8 +32,9 @@
 | it uses \m words for anything related to target cells, it should work
 | unmodified for all targets.
 |
-| Users of this code should define two values before loading this file:
+| Users of this code should define three values before loading this file:
 |
+|   stack-cell       | the size (in bytes) of a stack value
 |   stack-sentinel   | the *value* to be used; or leave undefined
 |   dp0              | address of bottom of data stack memory
 |
@@ -41,12 +42,28 @@
 | why it's (sometimes) necessary - just leave it undefined; no space will
 | be allocated for it on the stack.
 |
-| Users must also define two words for reading and writing the target's
-| stack (these are simply synonyms for the words for reading and writing
-| the target's RAM):
+| Users must also define four words for reading and writing the target's
+| stack. The first two are simply synonyms for the words for reading and
+| writing the target's RAM:
 |
 |   stack-read   ( buf a u)
 |   stack-write  ( buf a u)
+|
+| The other two are synonyms for fetching and storing a single stack item
+| to or from the host's ram image of the target's stack:
+|
+|   stack@  ( addr - value)
+|   stack!  ( value addr)
+|
+| In both cases, addr is a *host* address; it has already been "converted"
+| by image+ .
+|
+| stack@ and stack! used to be synonyms for image-@ and image-! (with the
+| caveat that the code below let them do the image+ mapping for each item,
+| instead of doing it once at the beginning of the stack copy); however,
+| I'm experimenting with an oddball idea: an 8-bit machine, with 16-bit
+| "cells" (in particular, instruction memory is cell-aligned), but with
+| a 24-bit stack! Hence the separate stack-cell, stack@, and stack! words.
 |
 | This code *should* be trivially simple, but there is a twist: some
 | targets require a *stack sentinel*, and this sentinel must be ignored by
@@ -106,7 +123,7 @@
 | *equal*; if there *is* a sentinel, dp-empty will point one target cell
 | *lower* in memory (the stack is growing *down*).
 
-dp0 dup constant dp-sentinel  .ifdef stack-sentinel  \m cell-  .then
+dp0 dup constant dp-sentinel  .ifdef stack-sentinel  stack-cell -  .then
         constant dp-empty
 
 variable dp          | target data stack pointer; points to *top* of stack
@@ -114,19 +131,21 @@ variable dp          | target data stack pointer; points to *top* of stack
 : dp@   dp @ ;
 
 meta
-: depth  dp-empty  dp@ -  \m cell/ ;
+: depth  dp-empty  dp@ -  stack-cell / ;
 forth
 
 | stack> *first* builds a local image of the target stack - in the RAM
 | image - and *then* copies it, in one chunk, to the target.
 
-: image-pop  ( cell a - a+)  tuck image-!  \m cell+ ;
+| Move a stack item from the host stack to the target stack image.
+: item>  ( cell a - a+)  tuck stack!  stack-cell + ;
+
 : stack>  ( "push" stack to target)
    h preserve ram  ( make sure we are creating the stack in the ram image!)
    depth 0 max 12 min
-   dp-empty  over \m cells -  dup dp! ( top of D stack)  swap
-   for  image-pop  next  ( copy each cell as a word to D stack)
-.ifdef stack-sentinel  stack-sentinel swap image-!  .else  drop  .then
+   dp-empty  over stack-cell * -  dup dp! ( top of D stack)
+   image+  swap for  item>  next  ( copy each item to D stack)
+.ifdef stack-sentinel  stack-sentinel swap stack!  .else  drop  .then
    | Write stack image to target, *including* sentinel, if any)
    dp@ image+  dp@  dp-sentinel  over -  ( buf a u)  stack-write ;
 
@@ -137,16 +156,18 @@ forth
 | on the host stack as well. So let's sign extend stack values when they
 | come back from the target.
 
-| How this is done depends on the size of the stack cells; we assume that
-| \m cell is the size of a number on the stack.
+| We calculate the location of the sign bit from the size (in bytes) of
+| a stack cell.
 
 : t>h  ( target - host)    | "target to host"
-   dup  [ 1  \m cell 8 * 1-  <<  ( sign bit) #] and  2* - ;
+   dup  [ 1  stack-cell 8 * 1-  <<  ( sign bit) #] and  2* - ;
 
-: image-push  ( a - cell a-)  \m cell- dup  image-@ t>h  swap ;
+| Move a stack item from the target stack image to the host stack..
+: item<  ( a - cell a-)  stack-cell - dup  stack@ t>h  swap ;
+
 : stack<  ( "pop" stack from target)
    h preserve ram  ( make sure we are copying the stack to the ram image!)
    \m depth 0 max 12 min  =if
    | Read stack image from target, *excluding* sentinel, if any.
-   dp@  over \m cells  over image+ -rot  ( buf a u)  stack-read
-   dp-empty  swap for  image-push  next  drop  ^  then  drop ;
+   dp@  over stack-cell *  over image+ -rot  ( buf a u)  stack-read
+   dp-empty image+  swap for  item<  next  drop  ^  then  drop ;
