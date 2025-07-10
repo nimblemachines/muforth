@@ -19,14 +19,16 @@ hex
 |   (c) while 16 bits are great, sometimes the extra "headroom" of
 |   computing with 24 bits might be nice; and
 |
-|   (d) the overhead - often one or two more instructions than the 16-bit
-|   versions - just isn't that much.
+|   (d) the overhead - often just one or two more instructions than the
+|   16-bit versions - just isn't that much.
 |
 | As always, anything truly performance-critical will be coded in
 | assembler, rather than Forth. This is just as true of the 16-bit kernel
 | as it is of the 24-bit one.
 
 __meta
+
+flash  0c00 region!
 
 label lit00  SH clr  ( fall thru)  ;c     | high two bytes 00
 label lit0   SU clr  ( fall thru)  ;c     | highest byte 00
@@ -141,6 +143,36 @@ code p@+
 code pc@+
    prog@+ PGMDAT ) S  mov         SH clr  again  ;c
 
+| For ;code and does> support.
+label tos>pgp
+   | We have done a call or rcall to get here. The TOS points to some data;
+   | we need to move the pointer in TOS to PGMADR (program memory address).
+   STKPTR ) dec  TOS ) PGMADR ) mov3  STKPTR ) inc  ret  ;c
+
+| And a quick test of does> .
+-:m asm{  tos>pgp c  pop } ;  is compile-does-prelude
+
+:m 3!  ( n a)  push  >3210  pop  c!+ c!+ c!  drop ;
+:m 3,  ( n)  here image+ 3!  3 allot ;
+
+:m incrementer   create ,         does> p@+ + ;
+:m incrementer3  create 3, align  does> p3@+ + ;
+
+  600a incrementer  600a+
+112233 incrementer3 big+
+
+| Test the failure.
+-4 incrementer bad-minus-4
+
+| Fix it.
+code s>3  ( sign-extend 16 bit value to 24 bits)
+   TH w rlc  ( sign -> carry)
+   WREG ) sbb  WREG ) com  TU st  ret  ;c
+
+:m s-incrementer   create ,  does> p@+ s>3 + ;
+
+-4 s-incrementer good-minus-4
+
 ( Return stack.)
 
 | With a 24-bit Forth, there is a complication: the stack slots are only 21
@@ -149,9 +181,26 @@ code pc@+
 |
 | OTOH, fetching, popping, and pushing return addresses (ra's) is easy,
 | since the data stack is wide enough to store a complete address.
+|
+| NOTE: For this to work in an interrupt-driven environment, we need
+| to disable interrupts while STKPTR is decremented, as this exposes the
+| return address to being clobbered by an interrupt.
+
+| These "expose" the creation of R stack slots to Forth code. Do we want
+| this?
+:tc +r  ( push a new R slot)  asm{  push } ;
+:tc -r  ( pop an R slot)      asm{  pop } ;
 
 code ra@   STKPTR ) dec  TOS ) S mov3  STKPTR ) inc  1push j  ;c
 code ra!   STKPTR ) dec  T TOS ) mov3  STKPTR ) inc  1pop j  ;c
+
+code  0  S clr  SH clr  SU clr  1push j  ;c
+code -1  S set  SH set  SU set  1push j  ;c
+
+code test-tos
+   push  0ff ldi  TOSU ) st  TOSU ) SU mov  SH clr  S clr  pop  1push j  ;c
+
+: rr  ra@  +r  -1 ra! ra@  -r ;
 
 ( These definitions are from fig-FORTH.)
 | : rot   ( a b c - b c a)  >r swap  r> swap ;
@@ -175,8 +224,7 @@ label trampoline
 
 __host
 
-variable .STATUS   | --    nTO   nPD   N     OV    Z     DC    C
-: .status  .STATUS @  binary  <# 4# char _ hold # #> type  2sp ;
+: .status  binary  <# 4# char _ hold # #> type  2sp ;
 
 : .regs   radix preserve
    cr  ." N_VZHC    SP"
@@ -185,8 +233,7 @@ variable .STATUS   | --    nTO   nPD   N     OV    Z     DC    C
                 dp@ .w ;
 
 : rx  ( addr)  ( execute target word)
-   stack>  \m trampoline runwait  stack<
-   .STATUS !  .regs ;
+   stack>  \m trampoline runwait  stack<  .regs ;
 
 now rx is remote
 
