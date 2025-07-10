@@ -42,34 +42,6 @@ mode __meta
 
 
 | -------------------------------------------------------------------------
-| Peephole optimiser tags
-| -------------------------------------------------------------------------
-
-| Tags tell the meta-compiler what kind of special code, if any, was just
-| compiled. Currently used to identify literals and calls, for simple
-| peephole optimisations.
-|
-| We store the tag byte at \m here. No tag is represented by an "empty"
-| image byte - 0ff - _not_ by a tag of zero.
-
-( Tags used:)
-1 constant $rcall  ( $ suggests price tag ;-)
-2 constant $call
-3 constant $lit
-
-: tag!  ( tag-byte)  \m here image-c! ;
-: tag@               \m here image-c@ ;
-: notag  "0ff tag! ;
-
-| We also want to cleanly uncompile code, so instead of simply backing up h
-| and leaving the cruft - instructions and tags - behind, let's back up and
-| "uncompile" the code, leaving behind untagged code.
-
-: uncompile  ( #words)
-   notag
-   \m here  swap  for  -2 +a  -1 ( 0ffff) over  image-!  next  \m goto ;
-
-| -------------------------------------------------------------------------
 | Macros defining register convention and stack operations
 | -------------------------------------------------------------------------
 
@@ -269,39 +241,53 @@ forth
    [ 8 Ki #] +loop  2drop ;
 
 | -------------------------------------------------------------------------
+| Peephole optimizer tags
+| -------------------------------------------------------------------------
+
+ld target/common/peephole-tags.mu4
+
+| Tags used:
+
+0 constant $lit    ( $ suggests price tag ;-)
+1 constant $rcall
+2 constant $call
+
+| -------------------------------------------------------------------------
 | Smart jump and call, tail call elimination
 | -------------------------------------------------------------------------
+
+| XXX On the S08 and PIC18, the assembler smart call does *not* add a tag;
+| only compile, does that. Do we want the AVR to work the same way?
 
 assembler
 : c  ( dest)  ( smart call - compile rcall if possible, otherwise call)
    kshort? if  \a rcall  $rcall tag! ^  then
-                \a call   $call tag! ;
+               \a call   $call  tag! ;
 
 : j  ( dest)  ( smart jmp - compile rjmp if possible, otherwise jmp)
    kshort? if  \a rjmp ^  then  \a jmp ;
 
 forth
 
-: replace  ( addr toggle)
-   over  image-@  xor  swap  image-! ;
-
-: untag  ( oldtag - f)  drop  notag  -1 ;
+: replace  ( tag toggle offset)
+   untag  \m here +  tuck image-@  xor  swap image-!  drop ;
 
 | If last code compiled was a call, rewrite it to a jump and return true;
 | else return false.
 
-: tail?  ( - f)
-   tag@ dup  $rcall = if  ( short call)
-   \m here 2 -  "1000 replace  untag  ^  then
-        dup  $call = if   ( long call)
-   \m here 4 -  "0002 replace  untag  ^  then
-   drop  0 ;
-
-meta-compiler
-: ^   tail? if ^ then  asm{  ret } ;
+: ?tail-exit
+   tag@
+   dup $rcall = if  ( short call)  "1000 -2 replace ^  then
+   dup $call  = if  ( long call)   "0002 -4 replace ^  then
+   | No call to convert; compile a return.
+   drop  asm{  ret } ;
 
 meta
+| XXX See note above about smart call and compile, .
 : compile,  ( target-cfa)  \a c  ( compile call) ;
+
+meta-compiler
+: ^   ?tail-exit ;
 
 forth
 
@@ -444,8 +430,8 @@ forth
 wipe  ( leaves flash as current region)
 
 
-| Create a new target names. A name is a target word which is defined as a
-| _constant_ equal to its code field address, and which compiles itself
+| Creating new target names. A name is a target word which is defined as
+| a _constant_ equal to its code field address, and which compiles itself
 | when executed.
 
 meta
@@ -479,7 +465,7 @@ forth
 : }    __meta ;  ( return to meta)
 
 assembler
-: ;c   __meta ;
+: ;c   untag  __meta ;
 
 meta-compiler
 : [   __meta ;

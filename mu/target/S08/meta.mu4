@@ -90,33 +90,56 @@ forth
 
 
 | -------------------------------------------------------------------------
-| Peephole optimiser tags
+| Peephole optimizer tags
 | -------------------------------------------------------------------------
 
-| Tags tell the meta-compiler what kind of special code, if any, was just
-| compiled. Currently used to identify literals and calls, for simple
-| peephole optimisations.
+ld target/common/peephole-tags.mu4
+
+| Tags used:
+
+  0 constant $lit    ( $ suggests price tag ;-)
+"ad constant $bsr    ( bsr relative)
+
+| All of the jsr opcodes can be converted to an equivalent jmp by clearing
+| the lsb. "bd -> "bc, "cd -> "cc, etc.
 |
-| We store the tag byte at \m here. No tag is represented by an "empty"
-| image byte - 0ff - _not_ by a tag of zero.
+| Currently the compiler (really, the "smart call" (c) pseudo-instruction
+| in the assembler) only generates $bsr, $jsr-dir, and $jsr-ext calls.
 
-( Tags used:)
-  1 constant $lit    ( $ suggests price tag ;-)
-"ad constant $bsr
-"bd constant $jsr1   ( jsr dir)
-"cd constant $jsr2   ( jsr ext)
+"bd constant $jsr-dir  ( jsr direct)
+"cd constant $jsr-ext  ( jsr extended)
+"dd constant $jsr-16x  ( jsr indexed, 16-bit offset)
+"ed constant $jsr-8x   ( jsr indexed, 8-bit offset)
+"fd constant $jsr-x    ( jsr indexed, 0 offset)
 
-: tag!  ( tag)     \m here image-c! ;
-: tag@  ( - tag)   \m here image-c@ ;
-: notag  "ff tag! ;
+| -------------------------------------------------------------------------
+| Tail-call conversion
+| -------------------------------------------------------------------------
 
-| We also want to cleanly uncompile code, so instead of simply backing up
-| and leaving the cruft - instructions and tags - behind, let's back up and
-| "uncompile" the code, leaving behind untagged code.
+: replace  ( tag jmp-op offset)  untag  \m here +a image-c!  drop ;
 
-: uncompile  ( #bytes)
-   \m here  over -  dup \m goto image+  swap ( #bytes)  1+ ( include tag)  "ff fill ;
+| If last code compiled was a call, rewrite it to a jump; otherwise,
+| compile an rts instruction.
 
+: ?tail-exit
+   tag@
+   dup $bsr     = if  "20 ( bra)      -2 replace ^  then
+   dup $jsr-dir = if  "bc ( jmp dir)  -2 replace ^  then
+   dup $jsr-ext = if  "cc ( jmp ext)  -3 replace ^  then
+   drop  asm{  rts } ;
+
+: called  ( - dest-addr)
+   \m here  tag@
+   dup $bsr     = if  drop  dup 1- image-c@ ( offset)  sext  +a ^ then
+   dup $jsr-dir = if  drop      1- image-c@ ^  then
+   dup $jsr-ext = if  drop     2 - image-@  ^  then
+   2drop  0 ;
+
+meta
+: compile,  ( target-cfa)  \m here swap  \a c ( compile call)  image-c@ tag! ;
+target-compiler
+: ^   ?tail-exit ;
+forth
 
 | -------------------------------------------------------------------------
 | Literal loading.
@@ -182,31 +205,6 @@ forth
 
 meta
 : literal   ( n)  load-literal  push-literal  $lit tag! ;
-: compile,  ( target-cfa)  \m here swap  \a c ( compile call)  image-c@ tag! ;
-forth
-
-: called  ( - dest-addr)
-   \m here  tag@
-   dup $bsr  = if ( bsr)      drop  dup 1- image-c@ ( offset)  sext  +a ^ then
-   dup $jsr1 = if ( jsr dir)  drop      1- image-c@ ^  then
-   dup $jsr2 = if ( jsr ext)  drop     2 - image-@  ^  then
-   2drop  0 ;
-
-: replace  ( jsr-op jmp-op offset - -1)
-   \m here +a image-c!  drop  notag  -1 ;
-
-| If last code compiled was a call, rewrite it to a jump and return true;
-| else return false.
-
-: tail?  ( - f)
-   tag@
-   dup $bsr  = if ( bsr)      "20 ( bra)      -2 replace ^  then
-   dup $jsr1 = if ( jsr dir)  "bc ( jmp dir)  -2 replace ^  then
-   dup $jsr2 = if ( jsr ext)  "cc ( jmp ext)  -3 replace ^  then
-   drop  0 ;
-
-target-compiler
-: ^   tail? if ^ then  asm{  rts } ;
 
 forth
 : lit?   ( - lit?)  tag@ $lit =  dup if  4 uncompile  then ;
@@ -240,7 +238,7 @@ meta
 : code    \m name  __asm ;
 : :       \m name  __target-colon ;
 
-:  ]   __target-colon  notag ;
+:  ]   __target-colon  untag ;
 : #]   \m literal  \m ] ;
 
 ( For forward references)
