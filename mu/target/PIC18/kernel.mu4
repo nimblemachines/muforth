@@ -31,12 +31,12 @@ label litff   SH set  lit j  ;c
    asm{  ldi  SH st  ldi  lit compile, } ;  is target-literal
 
 ( Arith/logic 1ops.)
-code negate   T neg  0 ldi  TH rsbb  ret  ;c
-code invert   T com         TH com   ret  ;c
+code negate   0 ldi  T neg  TH rsbb  ret  ;c
+code invert          T com  TH com   ret  ;c
 
-code 2*   0 ( C) STATUS ) bclr          T rlc  TH rlc  ret  ;c
-code u2/  0 ( C) STATUS ) bclr  begin  TH rrc   T rrc  ret  ;c
-code 2/   TH w rlc  ( sign -> C)   again  ;c
+code 2*   0 ( C) STATUS ) bclr            T rlc  TH rlc  ret  ;c
+code 2/   TH w rlc  ( sign -> C)  begin  TH rrc   T rrc  ret  ;c
+code u2/  0 ( C) STATUS ) bclr    again  ;c
 
 ( Arith/logic 2ops.)
 code +      T ld  U add  TH ld  UH adc  ( fall thru)  ;c
@@ -68,6 +68,79 @@ code swap  ( a b - b a)    T S movw  U T movw  S U movw  ret  ;c
 
 : nip   ( a b - b)      swap drop ;
 : tuck  ( a b - b a b)  swap over ;
+
+( Memory ops. These operate on the data space: ram and i/o registers.)
+label !dp   T DP ) movw  ret  ;c
+
+code @    !dp c  @dp+ ) T mov  @dp+ ) TH mov  ret  ;c
+code c@   !dp c  @dp+ ) T mov         TH clr  ret  ;c
+
+code !    !dp c  U     @dp+ ) mov  UH     @dp+ ) mov  ( fall thru)  ;c
+label 2pop                                    4 SP adda  ret  ;c
+
+code +!   !dp c  U ld  @dp+ ) add  UH ld  @dp+ ) adc  2pop j  ;c
+code c!   !dp c  U     @dp+ ) mov                     2pop j  ;c
+
+| XXX What would Forth-style @+ look like? It would be nice to have words
+| that stored a pointer into DP and then used it over and over without
+| having to keep it on the stack and continually store T into DP.
+
+code @dp   DP ) S movw  1push j  ;c
+
+| These are not the most efficient, but I think they will work! There is
+| something to be said for doing things the "bog standard" Forth way. ;-)
+
+: @+   @ @dp ;
+: !+   ! @dp ;
+
+( Fetching from program memory.)
+code !p-2*  ( shifted-addr)  ( write progmem ptr from shifted address)
+   0 ( C) STATUS ) bclr  ( clear carry)
+   T  w rlc  PGMADR  ) st
+   TH w rlc  PGMADRH ) st
+   PGMADRU ) clr  PGMADRU ) rlc  1pop j  ;c
+
+code !plo  ( w)  ( write low 16 bits of progmem ptr)
+   T PGMADR ) movw  1pop j  ;c
+
+code !phi  ( b)  ( write high 6 bits of progmem ptr)
+   T PGMADRU ) mov  1pop j  ;c
+
+code @p-2/  ( - shifted-addr)  ( read progmem ptr; conv to shifted address)
+   PGMADRU ) w rrc  ( low bit into carry)
+   PGMADRH ) w rrc  SH st
+   PGMADR  ) w rrc  S  st  1push j  ;c
+
+code @plo  ( w)  ( read low 16 bits of progmem ptr)
+   PGMADR ) S movw  1push j  ;c
+
+code @phi  ( b)  ( read high 6 bits of progmem ptr)
+   PGMADRU ) S mov  SH clr  1push j  ;c
+
+| Read and write as double numbers.
+code @p22
+   4 SP suba
+   PGMADR  ) U movw
+   PGMADRU ) T mov  TH clr  ret  ;c
+
+code !p22
+   T PGMADRU ) mov
+   U PGMADR  ) movw  2pop j  ;c
+
+code +p  ( offset)  ( add an offset to progmem ptr)
+   TH w rlc   WREG ) sbb  WREG ) com  S st   | sign extend TH into S
+   T  ld  PGMADR  ) add
+   TH ld  PGMADRH ) adc
+   S  ld  PGMADRU ) adc  1pop j  ;c
+
+| Fetch a word from program memory; incr memptr
+code p@+
+   prog@+ PGMDAT ) S  mov
+   prog@+ PGMDAT ) SH mov  1push j  ;c
+
+| Fetch a byte from program memory; incr memptr
+code pc@+
+   prog@+ PGMDAT ) S  mov  SH clr  1push j  ;c
 
 ( Return stack.)
 
@@ -114,7 +187,7 @@ code ra@
 code dr!  ( double r store)
    STKPTR ) dec
    U TOS ) movw  T TOSU ) mov
-   STKPTR ) inc  4 SP adda  ret  ;c
+   STKPTR ) inc  2pop j  ;c
 
 code dr@  ( double r fetch)
    STKPTR ) dec  4 SP suba
@@ -157,8 +230,7 @@ label trampoline
 
 __host
 
-variable .STATUS   | --    nTO   nPD   N     OV    Z     DC    C
-: .status  .STATUS @  binary  <# 4# char _ hold # #> type  2sp ;
+: .status  binary  <# 4# char _ hold # #> type  2sp ;
 
 : .regs   radix preserve
    cr  ." N_VZHC    SP"
@@ -167,8 +239,7 @@ variable .STATUS   | --    nTO   nPD   N     OV    Z     DC    C
                 dp@ .w ;
 
 : rx  ( addr)  ( execute target word)
-   2/  stack>  \m trampoline runwait  stack<
-   .STATUS !  .regs ;
+   2/  stack>  \m trampoline runwait  stack<  .regs ;
 
 now rx is remote
 
