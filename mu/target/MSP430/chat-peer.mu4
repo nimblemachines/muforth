@@ -41,6 +41,12 @@ variable spy  spy on
 : send             spy @ if ." >"  dup .h8_ then  pty-send ;
 : recv   pty-recv  spy @ if ." <"  dup .h8_ then ;
 
+| To make spying on the protocol easier to deal with, break up the printed
+| bytes into "packets" in a semantically meaningful way. How about this
+| stupid name, which is easy to remember:
+
+: ?spkt  ( spy packet, or "spiked")  spy @ if  cr  then ;
+
 variable checksum
 : sum  ( w)  checksum @  xor  checksum ! ;
 
@@ -55,11 +61,17 @@ variable peer-sp
 
 : peer-push-frame
    @ram #ram +  peer-sp !
-   feec p.push  ( entry to chat code)
-   ff4e p.push  ( outer PC)
-   @ram 40 +  p.push  ( frame PC)
-      0 p.push  ( SR)
-   0308 p.push  ( CP) ;
+
+.ifdef in-ram
+   034c p.push  ( return to "call interact" loop)
+   0342 p.push  ( return to "call chat-entry" loop)
+.else
+   fd70 p.push  ( return to "call interact" loop)
+   fd58 p.push  ( return to "call chat-entry" loop)
+.then
+
+   d0d0 p.push  ( SR)
+   @ram p.push  ( CP) ;
 
 | Compile the first 32 bits of the current muforth Git commit.
 | When asked for the version, return these two 16-bit words, in
@@ -80,20 +92,20 @@ variable peer-sp
    peer-push-frame ;
 
 : peer-erase-page
-   m @  image-  ( 'target)  cr ." erase " dup u.  [ /page 1- #] bic  image+  m !
+   m @  0 image+ -  ( 'target)  cr ." erase " dup u.  [ /page 1- #] bic  image+  m !
    /page for  0ff m&  next  [ /page negate #]  m +! ;
 
 ( Only do the flash operation if fcmd is valid.)
 : p.FlashWord
    w> ( value)  w> ( fcmd)
-   dup  program-cmd = if  drop  >hilo m& m&  9658 >w  ^  then
-        erase-cmd   = if  drop  peer-erase-page  9658 >w  ^  then
+   dup  [ \eq FWRT    \eq FKEY  + #] = if  drop  >hilo m& m&  9658 >w  ^  then
+        [ \eq FERASE  \eq FKEY  + #] = if  drop  peer-erase-page  9658 >w  ^  then
    9680 >w  ( bad flash command) ;
 
 : p.GetCheck     checksum @ >w ;  ( zeroes checksum!!)
 
 : peer-command
-   b>  dup sum  20 - dup 0a u< if  jump
+   ?spkt  b>  dup sum  20 - dup 0a u< if  jump
       p.GetVersion  p.SetAddr  p.GetSP
       p.ReadWord  p.ReadWords  p.WriteWord
       p.Run  p.FlashWord  p.GetCheck
