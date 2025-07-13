@@ -15,7 +15,7 @@ variable chat-vector
 
 0  ( initial command index)
 
-chat-cmd t.Hello
+chat-cmd t.Hello        ( - chat-running-in-ram? chunk-size)
 chat-cmd t.Status       ( - dp)
 chat-cmd t.Run          ( pc dp)
 chat-cmd t.ReadChunk    ( buf a u)
@@ -28,35 +28,35 @@ drop  ( last command index)
 : >image   ['] read-host-image  ( read from memory image)      du-target ;
 : >chat    ['] t.ReadChunk      ( read from connected target)  du-target ;
 
+| Chunk size is reported by the debug interface. Always use this when
+| copying RAM contents or programming the flash!
+
+variable /chunk  ( chunk size, as reported by debug interface)
+
 : copy-chunk  ( 'target len - 'target+len)
    | cr ." copy-chunk "  2dup swap u. u.
    2dup + push  over image+ -rot t.WriteChunk  pop ;
 
-: copy-chunked  ( a u)
-   | cr ." copy-chunked "  2dup swap u. u.
-   256 /mod ( r q)  swap push  for   256 copy-chunk  next
-                        pop  =if  ( rem) copy-chunk  drop ^  then  2drop ;
+: copy-region  ( a u)
+   | cr ." copy-region "  2dup swap u. u.
+   /chunk @  /mod ( r q)  swap push  for   /chunk @  copy-chunk  next
+                                    pop  =if  ( rem) copy-chunk  drop ^  then  2drop ;
 
 variable ram-copied  ( pointer to first un-copied byte)
 
 : copy-ram
    h preserve  ram
    ram-copied @  dup 0= if  drop  region drop  then
-   \m here  over -  copy-chunked
+   \m here  over -  copy-region
    \m here  ram-copied ! ;
 
-variable in-ram?  | true if chat running in RAM
+variable chat-running-in-ram?  | true if chat running in RAM
 
 defer verify-quietly
 
-: hi  chatting on  >chat  t.Hello
-   dup in-ram? !  if  ."  (running in RAM)"  then
+: hi  chatting on  >chat  t.Hello  /chunk !  chat-running-in-ram? !
    ram-copied off  copy-ram
-.ifndef noverify
-   h preserve  flash region  nip if  ( non-empty)  verify-quietly if  ( differs)
-      cr warn" Target's flash image differs from host's."
-   then  then
-.then
+.ifndef noverify  verify-quietly  .then
    now __chatting is __meta  __meta ;
 
 : chat-via   pop  chat-vector !  hi ;

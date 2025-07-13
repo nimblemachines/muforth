@@ -15,8 +15,71 @@ hex
 | programming time". I think the way the flash code has been written that
 | this isn't a problem, even doing word writes, rather than block/row writes.
 
-( XXX These are for main memory. Do we want to treat info memory separately?)
-#512 constant /page   ( this is the erase size of main memory)
+| Fake "interact-level" code to do the flashing in a way that's compatible
+| with the common flash code.
+
+: t.flash-begin ;
+: t.flash-end ;
+
+: ?flash  ( fail?)
+   if error" flash access or protection violation" then ;
+
+: t.read     ( buf a u)  t.ReadChunk ;
+
+: t.erase    ( a)        t.ErasePage   ?flash ;
+: t.program  ( buf a u)  t.FlashChunk  ?flash ;
+
+ld target/common/flash.mu4
+
+| Each device's datasheet specifies the address of the first (lowest in
+| memory) vector. We have already defined this as @vectors. Since the
+| vectors go from @vectors to "1_0000 we can calculate the size of the
+| vector table.
+
+"1_0000 @vectors -  constant #vectors
+
+| Check to see if we're going to clobber the bootloader and complain if
+| we're not executing from RAM.
+
+: ?clobbering-loader
+   @boot  \m here  u< not  if ^ then  ( not touching bootloader - Ok)
+   chat-running-in-ram? @  if ^ then  ( running in RAM - Ok)
+   error" You need to be running a RAM-based version of the chat code in
+order to re-flash it. Consult a local guru. ;-)" ;
+
+: ?clobbering-vectors
+   @vectors  \m here  u< if
+      error" Your boot code runs into the vectors. Are you sure this is right?"
+   then ;
+
+| Things to check before we start.
+-: boot  ?clobbering-loader  ?clobbering-vectors ;  is ?flash-check
+
+-: flash   flash-region
+   boot    flash-region
+   @boot  \m here  u< if
+      | We are flashing boot code, so we need to program the vectors too.
+      | If the boot code - which may start earlier than the vector page
+      | - doesn't reach into the vector page, we need to erase the vector
+      | page before flashing the vectors, since @vectors does *not* fall on
+      | a page boundary.
+      @vector-page  \m here  u< not if
+      cr ." Erasing vector page"
+         @vector-page erase-page
+      then
+   then
+   vectors  flash-region ;  is flash-regions
+
+: skip  ( offset)   'origin +! ;    ( change region's origin pointer)
+
+-: flash    verify-region  report
+   boot     4 skip  ( don't include commit in verify)
+            verify-region  report  or
+            -4 skip
+   vectors  verify-region  report  or ;  is verify-regions
+
+
+.ifdef obsolete-flashing-code
 
 : ?flash  ( fail?)
    if error" flash access or protection violation" then ;
@@ -43,7 +106,7 @@ hex
 
 : ?clobbering-loader
    @boot  \m here  u< not  if ^ then  ( not touching bootloader - Ok)
-   in-ram? @  if ^ then  ( running in RAM - Ok)
+   chat-running-in-ram? @  if ^ then  ( running in RAM - Ok)
    error" You need to be running a RAM-based version of the chat code in
 order to re-flash it. Consult a local guru. ;-)" ;
 
@@ -136,3 +199,5 @@ variable noisy-verify?  ( Whether to print differences.)
    @boot  \m here  u< if
       @vectors #vectors  verify-region  or  ( combine diffs)
    then ;   is verify-quietly
+
+.then  ( def obsolete)
