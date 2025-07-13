@@ -31,8 +31,6 @@ forth
 40 constant mPageErase
 41 constant mMassErase
 
-#512 constant /page   ( S08 has 512 byte Flash pages - this is erase size)
-
 : check-flash-status  ( status)
    ." FSTAT=" dup u.
    30 and if error" flash access or protection violation" then ;
@@ -56,10 +54,13 @@ ld target/common/flash.mu4
 | we're not executing from RAM.
 
 : ?clobbering-loader
-   @vector-page  \m here  u< not  if ^ then  ( not touching bootloader - Ok)
-   in-ram? @ if ^ then  ( running in RAM - Ok)
+   @boot  \m here  u< not  if ^ then  ( not touching bootloader - Ok)
+   chat-running-in-ram? @ if ^ then  ( running in RAM - Ok)
    error" You need to be running a RAM-based version of the chat code in
 order to re-flash it. Consult a local guru. ;-)" ;
+
+| Things to check before we start.
+-: boot  ?clobbering-loader ;  is ?flash-check
 
 | On the S08, erasing the vectors means erasing the TRIM bytes, the secure
 | bits, and the bootloader. So be careful about re-programming things, esp
@@ -75,15 +76,17 @@ order to re-flash it. Consult a local guru. ;-)" ;
 
 -: save-trims  ( before erasing anything!)
      flash  flash-region
-    commit  ?clobbering-loader  flash-region    | either can trigger warning
-      boot  ?clobbering-loader  flash-region
+      boot  flash-region
      trims  flash-region
    vectors  flash-region ;  is flash-regions
 
+: skip  ( offset)   'origin +! ;    ( change region's origin pointer)
+
 -: verify-1  save-trims
      flash  verify-region  report
-    commit  verify-region  report  drop   | we expect commit to differ!
-      boot  verify-region  report  or
+      boot  4 skip  ( don't include commit in verify)
+            verify-region  report  or
+            -4 skip
      trims  verify-region  report  or
    vectors  verify-region  report  or ;  is verify-regions
 
