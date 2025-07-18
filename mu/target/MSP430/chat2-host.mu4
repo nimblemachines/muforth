@@ -1,0 +1,108 @@
+| This file is part of muforth: https://muforth.dev/
+|
+| Copyright 2002-2025 David Frech. (Read the LICENSE for details.)
+
+loading MSP430 serial chat v2 (host)
+
+hex
+
+| XXX Is this obsolete enough that I can get rid of it?
+.ifdef chat1-host
+
+: cx.GetVersion  ( - n)    10 >cmd      w> w>  ( lo hi)  10 << + ;
+: cx.SetAddr     ( a)      11 >cmd  >w     ;
+: cx.GetSP       ( - sp)   12 >cmd      w> ;
+: cx.ReadWord    ( - w)    13 >cmd      w> ;
+: cx.ReadWords   ( n)      14 >cmd  >b     ;  ( then read streamed bytes)
+: cx.WriteWord   ( w)      15 >cmd  >w     ;
+: cx.Run         ( )       16 >cmd         ;
+: cx.FlashWord   ( cmd w - w)                     2drop  "9658 ;  ( dummy)
+: cx.GetCheck    ( )       18 >cmd      w> drop ;
+
+| c.ReadWordsB doesn't exist in chat-v1, but we need to define it to get the
+| basics working, so we can still talk to and recover/update old chat code.
+
+: cx.ReadWordsB  cx.ReadWords ;
+
+.then  ( chat1)
+
+.ifdef chat2-host
+
+| Chat v2 responds to the following commands. NOTE: these are hex values!
+|
+| 00 - 1f  Idle   - these command bytes are ignored
+|
+| 20  GetVersion  - get the chat protocol version
+| 21  SetAddr     - set the memory address pointer
+| 22  GetSP       - get stack pointer - points to saved regs
+| 23  ReadWord    - read a word from memory, incr pointer
+| 24  ReadWords   - read N words, incrementing as we go
+| 25  WriteWord   - write a word to memory, incr pointer
+| 26  Run         - set the pc in the saved frame, pop the registers and
+|                 - saved status, and go
+| 27  FlashWord   - write word to flash, incr pointer
+|                 - execute command saved on chat frame
+|                 - target returns word-sized flash status
+| 28  GetCheck    - get target's checksum value
+| 29  ReadWordsB  - read N words *byte-wise*, incrementing as we go
+|
+| 2a - ff  Idle   - these command bytes are ignored
+
+: cx.GetVersion  ( - n)        20 >cmd          w> w>  ( lo hi)  10 << + ;
+: cx.SetAddr     ( a)          21 >cmd  >w     ;
+: cx.GetSP       ( - sp)       22 >cmd          w> ;
+: cx.ReadWord    ( - w)        23 >cmd          w> ;
+: cx.ReadWords   ( n)          24 >cmd  >b     ;  ( then read streamed bytes)
+: cx.WriteWord   ( w)          25 >cmd  >w     ;
+: cx.Run         ( )           26 >cmd         ;
+: cx.FlashWord   ( cmd w - w)  27 >cmd  >w  >w  w> ;
+: cx.GetCheck    ( )           28 >cmd          w> drop ;
+: cx.ReadWordsB  ( n)          29 >cmd  >b     ;  ( then read streamed bytes)
+
+.then  ( chat2)
+
+| We don't really care about the status register, but chat passes it back
+| and forth.
+variable chat-sr
+
+| Chat stack frame contains CP SR PC, from low to high.
+: c.Status   ( - dp)
+   cx.GetSP  cx.SetAddr  2 cx.ReadWords  w> ( cp)  w> chat-sr ! ;  ( cp is dp)
+
+: c.Run      ( pc dp)
+   chat-sr @ swap  ( pc sr dp)
+   cx.GetSP  cx.SetAddr  cx.WriteWord  cx.WriteWord  cx.WriteWord  cx.Run ;
+
+: c.setup-chunk  ( buf a u - #words)
+   resync  swap cx.SetAddr  swap m !  1+ 2/ ( words) ;
+
+: ?read-bytewise  ( u a)
+   100 u< if  cx.ReadWordsB ^  then  cx.ReadWords ;
+
+: c.ReadChunk    ( buf a u)
+   over push  ( a)  c.setup-chunk  dup pop ?read-bytewise
+   for  w> >hilo  m& m&  next ;
+
+: c.WriteChunk   ( buf a u)
+   c.setup-chunk  for  m* m* lohi>  cx.WriteWord  next ;
+
+: ?flash-status  ( status - fail?)   84 and ;
+
+: c.ErasePage   ( a   - fail?)
+   cx.SetAddr  [ \eq FERASE  \eq FKEY + #]  0  cx.FlashWord  ?flash-status ;
+
+( OR together returned flash statuses for the chunk.)
+: c.FlashChunk  ( buf a u - fail?)
+   c.setup-chunk  ( #words)
+   [ \eq FWRT   \eq FKEY + #]  0 rot  ( fcmd status #words)
+   for  over ( fcmd)  m* m* lohi> ( data)  cx.FlashWord  or  next  nip
+   ?flash-status ;
+
+: get-version  cx.GetVersion ;
+
+| Capture chat PC to determine if chat is running in ram or flash.
+: get-chat-pc
+   cx.GetSP  2 +  ( SR)  cx.SetAddr  3 cx.ReadWords
+   w> ( SR)  chat-sr ! ( set up for later calls to c.Run)
+   w> ( PC in chat frame)  drop
+   w> ( PC *above* chat frame) ;

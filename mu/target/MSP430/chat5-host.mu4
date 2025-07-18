@@ -1,0 +1,102 @@
+| This file is part of muforth: https://muforth.dev/
+|
+| Copyright 2002-2025 David Frech. (Read the LICENSE for details.)
+
+loading MSP430 serial chat v5 (host)
+
+hex
+
+| chat v5 esponds to the following commands. NOTE: these are hex values!
+|
+| 00 - 4f  Idle   - these command bytes are ignored
+|
+| 50  Version        - set the memory pointer to commit string
+| 51  SetAddr        - set the memory pointer
+| 52  GetAddr        - get the memory pointer
+| 53  Run            - push memptr as pc; do SetAddr; return to pushed pc`
+| 54  ReadWords      - read n words from memory, incr pointer
+| 55  WriteWord      - write a word to memory, incr pointer
+|
+| The last command number has two different meanings, depending on the
+| target.
+|
+| For targets with flash memory (eg, G2553 and F5529) we need a separate
+| FlashWord command to trigger the special flash-writing code in the
+| target's chat implementation.
+|
+| 56  FlashWord   - send command and word to target
+|                 - target executes command, incr pointer
+|                 - target returns word-sized flash status
+|
+| For FRAM devices, we need a byte write in order to lock the MPUCTL after
+| making changes to it.
+|
+| 56  WriteByte   - write a byte to memory, incr pointer
+|
+| 57 - ff  Idle   - these command bytes are ignored
+
+: cx.Version      ( )      50 >cmd     ;
+: cx.SetAddr      ( a)     51 >cmd  >w ;
+: cx.GetAddr      ( - a)   52 >cmd     w> ;
+: cx.Run          ( dp)    53 >cmd  >w ;
+: cx.ReadWords    ( n)     54 >cmd  >b ;  ( then read streamed bytes)
+: cx.WriteWord    ( w)     55 >cmd  >w ;
+
+.equates. .contains FCTL1 .if
+: cx.FlashWord    ( cmd w - status)
+                           56 >cmd  >w >w  w> ;
+.else
+: cx.WriteByte    ( b)     56 >cmd  >b ;  ( FRAM device)
+.then
+
+: ReadWord  ( - w)  1 cx.ReadWords  w> ;
+
+: get-version   cx.Version  2 cx.ReadWords  w> w>  10 << + ;
+: get-chat-pc
+   [ @ram #ram +  \m cell- #]  cx.SetAddr  ReadWord ;
+
+: c.Status  ( - dp)   cx.GetAddr ;
+: c.Run     ( pc dp)  swap cx.SetAddr  cx.Run ;
+
+: c.setup-chunk  ( buf a u - #words)
+   resync  swap cx.SetAddr  swap m !  1+ 2/ ( words) ;
+
+: c.ReadChunk    ( buf a u)
+   c.setup-chunk  dup cx.ReadWords  for  w> >hilo  m& m&  next ;
+
+: c.WriteChunk   ( buf a u)
+   c.setup-chunk  for  m* m* lohi>  cx.WriteWord  next ;
+
+( Flash devices have an FCTL1 register.)
+.equates. .contains FCTL1 .if
+
+: ?flash-status  ( status - fail?)   84 and ;
+
+: c.ErasePage   ( a - fail?)
+   cx.SetAddr  [ \eq FERASE  \eq FKEY + #]  0  cx.FlashWord  ?flash-status ;
+
+( OR together returned flash statuses for the chunk.)
+: c.FlashChunk  ( buf a u - fail?)
+   c.setup-chunk  ( #words)
+   [ \eq FWRT   \eq FKEY + #]  0 rot  ( fcmd status #words)
+   for  over ( fcmd)  m* m* lohi> ( data)  cx.FlashWord  or  next  nip
+   ?flash-status ;
+
+.else  ( FRAM)
+
+: unlock-mpu
+   \eq MPUCTL0 cx.SetAddr  [ \eq MPUKEY 1+ #] cx.WriteWord ;
+
+: lock-mpu
+   [ \eq MPUCTL0 1+ #] cx.SetAddr  0 cx.WriteByte ;
+
+: c.ErasePage    ( a - fail?)  ( XXX - no-op?)  drop  0 ;
+
+: c.FlashChunk   ( buf a u - fail?)
+   unlock-mpu
+   \eq MPUSAM  cx.SetAddr  ReadWord  0200 or  ( enable W bit for segment3)
+   \eq MPUSAM  cx.SetAddr  cx.WriteWord
+   c.WriteChunk
+   lock-mpu  0 ;
+
+.then  ( flash vs FRAM)

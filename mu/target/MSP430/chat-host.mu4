@@ -2,151 +2,47 @@
 |
 | Copyright 2002-2025 David Frech. (Read the LICENSE for details.)
 
-.ifndef chat-v1
-loading MSP430 serial chat protocol v2 (host)
-.else
-loading MSP430 serial chat protocol v1 (host)
-.then
-
-hex
-
-| Taking inspiration from the wildly successful HC08 serial chat protocol.
+| Load host-side support for chat.
 |
-| Responds to the following commands. NOTE: these are hex values!
-|
-| These are the v2 values. The v1 commands were 10 - 18 hex.
-|
-| 00 - 1f  Idle   - these command bytes are ignored
-|
-| 20  GetVersion  - get the chat protocol version
-| 21  SetAddr     - set the memory address pointer
-| 22  GetSP       - get stack pointer - points to saved regs
-| 23  ReadWord    - read a word from memory, incr pointer
-| 24  ReadWords   - read N words, incrementing as we go
-| 25  WriteWord   - write a word to memory, incr pointer
-| 26  Run         - set the pc in the saved frame, pop the registers and
-|                 - saved status, and go
-| 27  FlashWord   - write word to flash, incr pointer
-|                 - execute command saved on chat frame
-|                 - target returns word-sized flash status
-| 28  GetCheck    - get target's checksum value
-| 29  ReadWordsB  - read N words *byte-wise*, incrementing as we go
-|
-| 2a - ff  Idle   - these command bytes are ignored
+| We define some common code, load the version-specific code, then end with
+| code to connect the chat code with the interact code.
 
+| Common code shared across chat protocols.
 
-variable checksum
-: sum!       checksum off ;
-: sum  ( w)  checksum @  xor  checksum ! ;
+: >b   send ;
+: b>   recv ;
 
-: >b         dup sum  send ;
-: b>   recv  dup sum ;
+: >w         >hilo  >b >b ;
+: w>   b> b>  lohi> ;
 
-: >w                     dup sum  >hilo  send send ;
-: w>   recv recv  lohi>  dup sum ;
-
-
-.ifndef chat-v1
-
-: c.Idle                       0 >b         ;
-: c.GetVersion  ( - n)        20 >b          w> w>  ( lo hi)  10 << + ;
-: c.SetAddr     ( a)          21 >b  >w     ;
-: c.GetSP       ( - sp)       22 >b          w> ;
-: c.ReadWord    ( - w)        23 >b          w> ;
-: c.ReadWords   ( n)          24 >b  >b     ;  ( then read streamed bytes)
-: c.WriteWord   ( w)          25 >b  >w     ;
-: c.Run         ( )           26 >b         ;
-: c.FlashWord   ( cmd w - w)  27 >b  >w  >w  w> ;
-: c.GetCheck    ( )           28 >b          w> drop ;
-: c.ReadWordsB  ( n)          29 >b  >b     ;  ( then read streamed bytes)
-
-.else  ( chat-v1)
-
-: c.Idle                   0 >b         ;
-: c.GetVersion  ( - n)    10 >b      w> w>  ( lo hi)  10 << + ;
-: c.SetAddr     ( a)      11 >b  >w     ;
-: c.GetSP       ( - sp)   12 >b      w> ;
-: c.ReadWord    ( - w)    13 >b      w> ;
-: c.ReadWords   ( n)      14 >b  >b     ;  ( then read streamed bytes)
-: c.WriteWord   ( w)      15 >b  >w     ;
-: c.Run         ( )       16 >b         ;
-: c.FlashWord   ( cmd w - w)                     2drop  "9658 ;  ( dummy)
-: c.GetCheck    ( )       18 >b      w> drop ;
-
-| c.ReadWordsB doesn't exist in chat-v1, but we need to define it to get the
-| basics working, so we can still talk to and recover/update old chat code.
-
-: c.ReadWordsB  c.ReadWords ;
-
-.then
+: cx.Idle   0 >b ;
+: >cmd   ?spkt  >b ;
 
 ( Send two no-ops, let them transmit, _then_ throw away any input bytes.)
-: resync  c.Idle  c.Idle  drain  flush ;
+: resync  cx.Idle  cx.Idle  drain  flush ;
 
-
-.ifdef paranoid
-
-( Reset host's and target's checksum accumulator.)
-: ?reset   resync  c.GetCheck              sum! ;
-: ?ok              c.GetCheck  checksum @  sum!
-   =if  ." checksum failed: " u.  ^  then  drop ;
-
-.else
-
-: ?reset   resync ;
-: ?ok ;
-
+.ndef chat1-host  .ndef chat2-host  .ndef chat4-host  .ndef chat5-host  .and .and .and .if
+   | If no override, set version based on chip.
+   .ifdef g2553  -d chat2-host  .else  -d chat4-host  .then
 .then
 
+.def chat1-host  .def chat2-host  .or .if
+   ld target/MSP430/chat2-host.mu4
+.else .ifdef chat5-host
+   ld target/MSP430/chat5-host.mu4
+.else
+   ld target/MSP430/chat4-host.mu4
+.then
 
-: c.setup-chunk  ( buf a u - #words)
-   swap c.SetAddr  swap m !  1+ 2/ ( words) ;
+| Connect chat with the interact code.
 
-( Hook into interact code.)
-: c.Hello
-   #115200 bps  ?reset
-   cr ." Chat firmware version "  c.GetVersion  ?ok
-   radix preserve  hex  sep preserve  -sep   <# 4# 4# #> type ;
-
-: ?read-bytewise  ( u a)
-   100 u< if  c.ReadWordsB ^  then  c.ReadWords ;
-
-: c.ReadChunk    ( buf a u)
-   over push  ( a)  c.setup-chunk  dup pop ?read-bytewise
-   for  w> >hilo  m& m&  next
-   ?ok ;
-
-: c.WriteChunk   ( buf a u)
-   c.setup-chunk  for  m* m* lohi>  c.WriteWord  next
-   ?ok ;
-
-| We used to do ?reset in c.Run, but if we're resetting the chip we'll lose
-| the GetCheck command and time out. Doing it here makes more sense.
-
-: c.GetStatus    ( - sp pc sr cp)
-   ?reset  c.GetSP  dup c.SetAddr  3 c.ReadWords  w> w> w> ( cp sr pc)  swap rot ;
-
-: chat-run            ( pc sr cp)
-           c.GetSP      c.SetAddr  c.WriteWord  c.WriteWord  c.WriteWord
-   c.Run ;
-
-: ?flash-status  ( status - fail?)   84 and ;
-
-: c.ErasePage   (     a   - fail?)
-   c.SetAddr  [ \eq FERASE  \eq FKEY + #]  0  c.FlashWord  ?flash-status  ?ok ;
-
-( OR together returned flash statuses for the chunk.)
-: c.FlashChunk  ( buf a u - fail?)
-   c.setup-chunk  ( #words)
-   [ \eq FWRT   \eq FKEY + #]  0 rot  ( fcmd status #words)
-   for  over ( fcmd)  m* m* lohi> ( data)  c.FlashWord  or  next  nip
-   ?flash-status  ?ok ;
-
-
-| NOTE: We don't define RunWait separately. Since we will always be reading
-| the registers back after Run, that first read command will block until
-| the target is ready.
+: c.Hello  ( - chat-running-in-ram? chunk-size)
+   #115200 bps  resync
+   cr ." Chat firmware version "
+   get-version  radix preserve  hex  <# 4# 4# #> type
+   get-chat-pc @flash u<  dup if  ."  (running in RAM)"  then
+   #256 ;
 
 : chat
-   chat-via  c.Hello  c.GetStatus  chat-run
-             c.ReadChunk  c.WriteChunk  c.ErasePage  c.FlashChunk ;
+   chat-via  c.Hello  c.Status  c.Run  c.ReadChunk  c.WriteChunk
+             c.ErasePage  c.FlashChunk ;

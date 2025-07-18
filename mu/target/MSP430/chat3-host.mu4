@@ -2,13 +2,17 @@
 |
 | Copyright 2002-2025 David Frech. (Read the LICENSE for details.)
 
-loading MSP430 serial chat protocol v3 (host)
+loading MSP430 serial chat v3 (host) (DEPRECATED)
 
 hex
 
+| XXX Since this is DEPRECATED it should probably be removed.
+| Also, it hasn't been refactored to remove the common host code, the way
+| that chat2/4/5 have been.
+
 | Trying something simple and traditional.
 |
-| Responds to the following commands. NOTE: these are hex values!
+| Chat v3 responds to the following commands. NOTE: these are hex values!
 |
 | 00 - 2f  Idle   - these command bytes are ignored
 |
@@ -28,16 +32,11 @@ hex
 |
 | 38 - ff  Idle   - these command bytes are ignored
 
+: >b   send ;
+: b>   recv ;
 
-variable checksum
-: sum!       checksum off ;
-: sum  ( w)  checksum @  xor  checksum ! ;
-
-: >b         dup sum  send ;
-: b>   recv  dup sum ;
-
-: >w                     dup sum  >hilo  send send ;
-: w>   recv recv  lohi>  dup sum ;
+: >w             >hilo  send send ;
+: w>   recv recv  lohi> ;
 
 : c.Idle                           0 >b  ;
 : c.GetVersion  ( - n)            30 >b  w> w>  ( lo hi)  10 << + ;
@@ -55,30 +54,14 @@ variable checksum
 ( Send two no-ops, let them transmit, _then_ throw away any input bytes.)
 : resync  c.Idle  c.Idle  drain  flush ;
 
-
-.ifdef paranoid
-
-( Reset host's and target's checksum accumulator.)
-: ?reset   resync  c.GetCheck              sum! ;
-: ?ok              c.GetCheck  checksum @  sum!
-   =if  ." checksum failed: " u.  ^  then  drop ;
-
-.else
-
-: ?reset   resync ;
-: ?ok ;
-
-.then
-
-
 : get-status  resync  c.GetStatus ;
 
 : c.setup-chunk  ( buf a u - #words a #words)  rot m !  1+ 2/ ( words)  tuck ;
 
 ( Hook into interact code.)
 : c.Hello
-   #115200 bps  ?reset
-   cr ." Chat firmware version "  c.GetVersion  ?ok
+   #115200 bps
+   cr ." Chat firmware version "  c.GetVersion
    radix preserve  hex  sep preserve  -sep   <# 4# 4# #> type ;
 
 | This is for the sake of the G2553 and other chips that have bytewide i/o
@@ -88,10 +71,10 @@ variable checksum
    over 0100 u< if  c.ReadWordsB ^  then  c.ReadWords ;
 
 : c.ReadChunk    ( buf a u)
-   c.setup-chunk  ?read-bytewise  for  w> >hilo  m& m&  next  ?ok ;
+   c.setup-chunk  ?read-bytewise  for  w> >hilo  m& m&  next ;
 
 : c.WriteChunk   ( buf a u)
-   c.setup-chunk  c.WriteWords  for  m* m* lohi> >w  next  ?ok ;
+   c.setup-chunk  c.WriteWords  for  m* m* lohi> >w  next ;
 
 : deprecated    ( - -1)
    cr ." Don't use this code! Use chat-v2 or chat-v4 instead."  -1 ;
