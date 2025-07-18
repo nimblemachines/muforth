@@ -2,7 +2,20 @@
 |
 | Copyright 2002-2025 David Frech. (Read the LICENSE for details.)
 
-loading MSP430 serial chat protocol v2 (peer)
+| Which version of chat are we trying to support?
+
+.ndef chat2  .ndef chat4  .ndef chat5  .and .and .if
+   | If no override, set version based on chip.
+   .ifdef g2553  -d chat2  .else  -d chat4  .then
+.then
+
+.ifdef chat2
+loading MSP430 serial chat v2 (peer)
+.else .ifdef chat5  ( experimental!)
+loading MSP430 serial chat v5 (peer)
+.else  ( default)
+loading MSP430 serial chat v4 (peer)
+.then .then
 
 | NOTE: This might seem a bit odd, but this file implements the side of the
 | chat protocol normally implemented by firmware in a target chip! The
@@ -10,27 +23,6 @@ loading MSP430 serial chat protocol v2 (peer)
 | having both sides running on the host.
 
 hex
-
-| Taking inspiration from the wildly successful HC08 serial chat protocol.
-|
-| Responds to the following commands. NOTE: these are hex values!
-|
-| 00 - 1f  Idle   - these command bytes are ignored
-|
-| 20  GetVersion  - get the chat protocol version
-| 21  SetAddr     - set the memory address pointer
-| 22  GetSP       - get stack pointer - points to saved regs
-| 23  ReadWord    - read a word from memory, incr pointer
-| 24  ReadWords   - read N words, incrementing as we go
-| 25  WriteWord   - write a word to memory, incr pointer
-| 26  Run         - pop the registers and saved status, and go
-| 27  FlashWord   - write a word to flash, passing command each time
-|               - can be used to initiate an erase, or to write a word
-| 28  GetCheck    - return accumulated checksum to host
-| 29  ReadWordsB  - read N words *byte-wise*, incrementing as we go
-|
-| 2a - ff  Idle   - these command bytes are ignored
-
 
 variable pty-master
 : pty-send  ( b)     pty-master @ >emit ;
@@ -47,21 +39,45 @@ variable spy  spy on
 
 : ?spkt  ( spy packet, or "spiked")  spy @ if  cr  then ;
 
-variable checksum
-: sum  ( w)  checksum @  xor  checksum ! ;
-
 : >b   send ;
 : b>   recv ;
-: >w   dup sum  >hilo  >b >b ;
-: w>   b> b>  lohi>  dup sum ;
+: >w         >hilo  >b >b ;
+: w>   b> b>  lohi> ;
+
+: cmd>   ?spkt  b> ;
 
 variable peer-sp
 : p.push  ( w)     peer-sp @       \m cell-  dup  peer-sp !  image-! ;
 : p.pop   ( - w)   peer-sp @  dup  \m cell+       peer-sp !  image-@ ;
 
+: p.stack@  ( offset)  peer-sp @ +  image-@ ;
+: p.stack!  ( offset)  peer-sp @ +  image-! ;
+
+: image-  ( host - target)  0 image+ - ;
+
+
+.ifdef chat2
+
+| chat v2 responds to the following commands. NOTE: these are hex values!
+|
+| 00 - 1f  Idle   - these command bytes are ignored
+|
+| 20  GetVersion  - get the chat protocol version
+| 21  SetAddr     - set the memory address pointer
+| 22  GetSP       - get stack pointer - points to saved regs
+| 23  ReadWord    - read a word from memory, incr pointer
+| 24  ReadWords   - read N words, incrementing as we go
+| 25  WriteWord   - write a word to memory, incr pointer
+| 26  Run         - pop the registers and saved status, and go
+| 27  FlashWord   - write a word to flash, passing command each time
+|                 - can be used to initiate an erase, or to write a word
+| 28  GetCheck    - return accumulated checksum to host
+| 29  ReadWordsB  - read N words *byte-wise*, incrementing as we go
+|
+| 2a - ff  Idle   - these command bytes are ignored
+
 : peer-push-frame
    @ram #ram +  peer-sp !
-
 .ifdef in-ram
    034c p.push  ( return to "call interact" loop)
    0342 p.push  ( return to "call chat-entry" loop)
@@ -69,7 +85,6 @@ variable peer-sp
    fd70 p.push  ( return to "call interact" loop)
    fd58 p.push  ( return to "call chat-entry" loop)
 .then
-
    d0d0 p.push  ( SR)
    @ram p.push  ( CP) ;
 
@@ -85,11 +100,12 @@ variable peer-sp
 : p.ReadWord     m* m* lohi> >w ;
 : p.WriteWord    w> >hilo m& m& ;
 
-: p.ReadWords    b>  dup sum  for  p.ReadWord  next ;
+: p.ReadWords    b>  for  p.ReadWord  next ;
 
-: p.Run
-   "c0de checksum !   ( emulate code that clobbers checksum when run)
-   peer-push-frame ;
+variable peer-pc
+variable peer-cp
+
+: p.Run ;
 
 : peer-erase-page
    m @  0 image+ -  ( 'target)  cr ." erase " dup u.  [ /page 1- #] bic  image+  m !
@@ -102,15 +118,177 @@ variable peer-sp
         [ \eq FERASE  \eq FKEY  + #] = if  drop  peer-erase-page  9658 >w  ^  then
    9680 >w  ( bad flash command) ;
 
-: p.GetCheck     checksum @ >w ;  ( zeroes checksum!!)
+: p.GetCheck     0 >w ;  ( no longer used by host)
 
 : peer-command
-   ?spkt  b>  dup sum  20 - dup 0a u< if  jump
+   cmd>  20 - dup 0a u< if  jump
       p.GetVersion  p.SetAddr  p.GetSP
       p.ReadWord  p.ReadWords  p.WriteWord
       p.Run  p.FlashWord  p.GetCheck
       p.ReadWords
    then  drop ;
+
+.else .ifdef chat5  ( experimental!)
+
+| chat v5 esponds to the following commands. NOTE: these are hex values!
+|
+| 00 - 4f  Idle   - these command bytes are ignored
+|
+| 50  version        - set the memory pointer to commit string
+| 51  set-addr       - set the memory pointer
+| 52  get-addr       - get the memory pointer
+| 53  run            - push memptr (pc); do set-addr; return to pushed pc`
+| 54  read-words     - read n words from memory, incr pointer
+| 55  write-word     - write a word to memory, incr pointer
+| 56  flash-word     - TBD how this works
+|
+| 57 - ff  Idle   - these command bytes are ignored
+
+| XXX is this any better than using m/m*/m& like chat-v2?
+variable mp    | memory pointer
+
+create commit  muforth-commit drop 8 evaluate ,
+: version   commit mp ! ;
+
+: set-addr   w> image+ mp ! ;
+: get-addr             mp @  image-  >w ;
+
+variable peer-pc
+| XXX does this make sense? We are going to pop the pushed PC to *start*
+| executing code; that code will return to the outermost PC, which will
+| push a PC and wait for another command. So shouldn't we, like the chat v2
+| code, do peer-push-frame at the end of run?
+
+: run  mp @  image- p.push  set-addr  p.pop peer-pc ! ;
+
+: read-words  b> ( count)  mp @  swap for  leh@+ swap >w  next  mp ! ;
+: write-word  w> ( data)   mp @            leh!+                mp ! ;
+
+: peer-erase-page
+   m @  0 image+ -  ( 'target)  cr ." erase " dup u.  [ /page 1- #] bic  image+  m !
+   /page for  0ff m&  next  [ /page negate #]  m +! ;
+
+( Only do the flash operation if fcmd is valid.)
+: flash-word
+   w> ( value)  w> ( fcmd)
+   dup  [ \eq FWRT    \eq FKEY  + #] = if  drop  >hilo m& m&  9658 >w  ^  then
+        [ \eq FERASE  \eq FKEY  + #] = if  drop  peer-erase-page  9658 >w  ^  then
+   9680 >w  ( bad flash command) ;
+
+: peer-push-frame
+   @ram #ram +  peer-sp !
+.ifdef in-ram
+   034c p.push  ( return to "call process" loop)
+.else
+   fd70 p.push  ( return to "call process" loop)
+.then ;
+
+: peer-command
+   cmd>  50 - dup 7 u< if  jump
+      version  set-addr  get-addr  run
+      read-words  write-word  flash-word
+   then  drop ;
+
+.else  ( default: chat4)
+
+| Chat v4 responds to the following commands. NOTE: these are hex values!
+|
+| 00 - 3f  Idle        - these command bytes are ignored
+|
+| 40  VersionAddr      - get the address of the version commit
+| 41  SetAddr          - set the memory address pointer
+| 42  GetStatus        - get SP, PC, SR, and CP
+| 43  Run              - set SP, PC, SR, CP, and execute
+| 44  ReadWords        - read N words, incrementing by 2 as we go
+| 45  WriteWord        - write a word to memory, incr pointer by 2
+|
+| For flash devices (with FCTL1 registers), chat defines the following:
+|
+| 46  UNUSED
+| 47  SetFlashCmd      - set flash command, clear flash status
+| 48  GetFlashStatus   - read accumulated flash status word
+| 49  FlashWord        - write a word to flash, incr pointer
+|
+| For FRAM devices, chat defines the following:
+|
+| 46  WriteByte        - write a byte to memory, incr pointer by 1
+|
+| 4a - ff  Idle        - these command bytes are ignored
+
+: peer-push-frame
+   @ram #ram +  peer-sp !
+.ifdef in-ram
+   034c p.push  ( return to "call interact" loop)
+   0342 p.push  ( return to "call chat-entry" loop)
+.else
+   fd70 p.push  ( return to "call interact" loop)
+   fd58 p.push  ( return to "call chat-entry" loop)
+.then
+   d0d0 p.push  ( SR)
+   @ram p.push  ( CP) ;
+
+| Compile the first 32 bits of the current muforth Git commit.
+| When asked for the version, return these two 16-bit words, in
+| little-endian order.
+
+create commit  muforth-commit drop 8 evaluate ,
+: version-addr       commit  m ! ;
+: set-addr       w>  image+  m ! ;
+
+( Send SP PC SR CP.)
+variable peer-cp
+: get-status
+   peer-sp @ >w  2 p.stack@ >w ( pc)  0 p.stack@ >w ( sr)  peer-cp @ >w ;
+
+( Get PC SR CP.)
+: run
+   m @ image-  peer-sp !  ( Set sp from mem pointer)
+   w> ( pc)  2 p.stack!  w> ( sr)  0 p.stack!  w> ( cp)  peer-cp ! ;
+
+: read-words   b>  for  m* m* lohi> >w  next ;
+: write-word              w> >hilo m& m& ;
+
+.equates. .contains FCTL1 .if  ( flash device)
+
+variable flash-cmd
+variable flash-status
+: +status  flash-status @  or  flash-status ! ;
+: set-flash-cmd  w> flash-cmd !  flash-status off ;
+: get-flash-status  flash-cmd off  flash-status @ >w ;
+
+: peer-erase-page
+   m @  image-  ( 'target)  cr ." erase " dup u.  [ /page 1- #] bic  image+  m !
+   /page for  0ff m&  next  [ /page negate #]  m +! ;
+
+( Only do the flash operation if fcmd is valid.)
+: flash-word
+   w> ( value)  flash-cmd @
+   dup  [ \eq FWRT    \eq FKEY  + #] = if  drop  >hilo m& m&  9658 +status  ^  then
+        [ \eq FERASE  \eq FKEY  + #] = if  drop  peer-erase-page  9658 +status  ^  then
+   9680 +status  ( bad flash command) ;
+
+: peer-command
+   cmd>  40 - dup 0a u< if  jump
+      version-addr  set-addr  get-status  run
+      read-words  write-word  write-word  ( this is what chat4 does)
+      set-flash-cmd  get-flash-status  flash-word
+   then  drop ;
+
+.else
+
+( FRAM device)
+
+: write-byte  b>  m& ;
+
+: peer-command
+   cmd>  40 - dup 07 u< if  jump
+      version-addr  set-addr  get-status  run
+      read-words  write-word  write-byte
+   then  drop ;
+
+.then  ( flash vs fram)
+
+.then  .then  ( chat2 vs chat5 vs chat4)
 
 : re-peer
    open-pty  cr  ." Connect to "  zcount type  ."  to chat with this peer."
