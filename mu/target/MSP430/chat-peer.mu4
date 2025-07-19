@@ -55,6 +55,27 @@ variable peer-sp
 
 : image-  ( host - target)  0 image+ - ;
 
+: peer-erase
+   m @ image- ( target)
+   cr ." erase " dup u.
+   [ /page 1- #] bic  image+  /page 0ff fill ;
+
+| Common memory operations.
+
+: set-addr   w>  image+  m ! ;
+: get-addr               m @  image-  >w ;
+
+: read-word     m* m* lohi>  >w ;
+: write-word     w>  >hilo m& m& ;
+
+: read-words   b>  for  read-word  next ;
+
+| Compile the first 32 bits of the current muforth Git commit as
+| a little-endian 32-bit value. Allot 8 bytes to keep the host heap 64-bit
+| aligned..
+
+create commit
+   muforth-commit drop 8 evaluate  >3210  here c!+ c!+ c!+ c!  8 allot
 
 .ifdef chat2
 
@@ -88,44 +109,33 @@ variable peer-sp
    d0d0 p.push  ( SR)
    @ram p.push  ( CP) ;
 
-| Compile the first 32 bits of the current muforth Git commit.
-| When asked for the version, return these two 16-bit words, in
+| When asked for the version, return the commit as two 16-bit words, in
 | little-endian order.
 
-: p.GetVersion   [ muforth-commit drop 8 evaluate #]  dup >w  10 >> >w ;
+: p.GetVersion   commit lew@  dup >w  10 >> >w ;
 
-: p.SetAddr      w>  image+  m ! ;
 : p.GetSP        peer-sp @ >w ;
-
-: p.ReadWord     m* m* lohi> >w ;
-: p.WriteWord    w> >hilo m& m& ;
-
-: p.ReadWords    b>  for  p.ReadWord  next ;
 
 variable peer-pc
 variable peer-cp
 
 : p.Run ;
 
-: peer-erase-page
-   m @  0 image+ -  ( 'target)  cr ." erase " dup u.  [ /page 1- #] bic  image+  m !
-   /page for  0ff m&  next  [ /page negate #]  m +! ;
-
 ( Only do the flash operation if fcmd is valid.)
 : p.FlashWord
    w> ( value)  w> ( fcmd)
    dup  [ \eq FWRT    \eq FKEY  + #] = if  drop  >hilo m& m&  9658 >w  ^  then
-        [ \eq FERASE  \eq FKEY  + #] = if  drop  peer-erase-page  9658 >w  ^  then
+        [ \eq FERASE  \eq FKEY  + #] = if  drop  peer-erase  9658 >w  ^  then
    9680 >w  ( bad flash command) ;
 
 : p.GetCheck     0 >w ;  ( no longer used by host)
 
 : peer-command
    cmd>  20 - dup 0a u< if  jump
-      p.GetVersion  p.SetAddr  p.GetSP
-      p.ReadWord  p.ReadWords  p.WriteWord
+      p.GetVersion  set-addr  p.GetSP
+      read-word  read-words  write-word
       p.Run  p.FlashWord  p.GetCheck
-      p.ReadWords
+      read-words
    then  drop ;
 
 .else .ifdef chat5  ( experimental!)
@@ -144,14 +154,7 @@ variable peer-cp
 |
 | 57 - ff  Idle   - these command bytes are ignored
 
-| XXX is this any better than using m/m*/m& like chat-v2?
-variable mp    | memory pointer
-
-create commit  muforth-commit drop 8 evaluate ,
-: version   commit mp ! ;
-
-: set-addr   w> image+ mp ! ;
-: get-addr             mp @  image-  >w ;
+: version   commit m ! ;
 
 variable peer-pc
 | XXX does this make sense? We are going to pop the pushed PC to *start*
@@ -159,20 +162,13 @@ variable peer-pc
 | push a PC and wait for another command. So shouldn't we, like the chat v2
 | code, do peer-push-frame at the end of run?
 
-: run  mp @  image- p.push  set-addr  p.pop peer-pc ! ;
-
-: read-words  b> ( count)  mp @  swap for  leh@+ swap >w  next  mp ! ;
-: write-word  w> ( data)   mp @            leh!+                mp ! ;
-
-: peer-erase-page
-   m @  0 image+ -  ( 'target)  cr ." erase " dup u.  [ /page 1- #] bic  image+  m !
-   /page for  0ff m&  next  [ /page negate #]  m +! ;
+: run  m @  image- p.push  set-addr  p.pop peer-pc ! ;
 
 ( Only do the flash operation if fcmd is valid.)
 : flash-word
    w> ( value)  w> ( fcmd)
    dup  [ \eq FWRT    \eq FKEY  + #] = if  drop  >hilo m& m&  9658 >w  ^  then
-        [ \eq FERASE  \eq FKEY  + #] = if  drop  peer-erase-page  9658 >w  ^  then
+        [ \eq FERASE  \eq FKEY  + #] = if  drop  peer-erase  9658 >w  ^  then
    9680 >w  ( bad flash command) ;
 
 : peer-push-frame
@@ -227,13 +223,7 @@ variable peer-pc
    d0d0 p.push  ( SR)
    @ram p.push  ( CP) ;
 
-| Compile the first 32 bits of the current muforth Git commit.
-| When asked for the version, return these two 16-bit words, in
-| little-endian order.
-
-create commit  muforth-commit drop 8 evaluate ,
-: version-addr       commit  m ! ;
-: set-addr       w>  image+  m ! ;
+: version-addr   commit  m ! ;
 
 ( Send SP PC SR CP.)
 variable peer-cp
@@ -245,9 +235,6 @@ variable peer-cp
    m @ image-  peer-sp !  ( Set sp from mem pointer)
    w> ( pc)  2 p.stack!  w> ( sr)  0 p.stack!  w> ( cp)  peer-cp ! ;
 
-: read-words   b>  for  m* m* lohi> >w  next ;
-: write-word              w> >hilo m& m& ;
-
 .equates. .contains FCTL1 .if  ( flash device)
 
 variable flash-cmd
@@ -256,15 +243,11 @@ variable flash-status
 : set-flash-cmd  w> flash-cmd !  flash-status off ;
 : get-flash-status  flash-cmd off  flash-status @ >w ;
 
-: peer-erase-page
-   m @  image-  ( 'target)  cr ." erase " dup u.  [ /page 1- #] bic  image+  m !
-   /page for  0ff m&  next  [ /page negate #]  m +! ;
-
 ( Only do the flash operation if fcmd is valid.)
 : flash-word
    w> ( value)  flash-cmd @
    dup  [ \eq FWRT    \eq FKEY  + #] = if  drop  >hilo m& m&  9658 +status  ^  then
-        [ \eq FERASE  \eq FKEY  + #] = if  drop  peer-erase-page  9658 +status  ^  then
+        [ \eq FERASE  \eq FKEY  + #] = if  drop  peer-erase  9658 +status  ^  then
    9680 +status  ( bad flash command) ;
 
 : peer-command
