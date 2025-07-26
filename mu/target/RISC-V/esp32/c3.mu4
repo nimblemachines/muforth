@@ -1,0 +1,80 @@
+| This file is part of muforth: https://muforth.dev/
+|
+| Copyright 2002-2025 David Frech. (Read the LICENSE for details.)
+
+loading ESP32-C3 chip
+
+| Memory origins and sizes.
+|
+| The ESP32-C3 is slightly unusual in that it has a pseudo-Harvard
+| architecture. There are two buses - instruction and data - and the chip
+| memories each show up in two places in the memory map: one address is
+| used to access the memory over the instruction bus; the other, the data
+| bus.
+|
+| The main difference between the two buses is that all accesses on the
+| instruction bus are word-wide (32 bits), while the data bus can be
+| accessed by byte, halfword, and word.
+|
+| From the reference manual (refman):
+| ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+| Addresses below 0x4000_0000 are accessed using the data bus. Addresses in
+| the range of 0x4000_0000 ~ 0x4FFF_FFFF are accessed using the instruction bus.
+| Addresses over and including 0x5000_0000 are shared by the data bus and the
+| instruction bus.
+| ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+|
+| Here is the layout for the internal memories of the ESP32-C3:
+|
+
+| Bus Type          Low Address  High Address  Size (KB)  Target
+| ~~~~~~~~          ~~~~~~~~~~~  ~~~~~~~~~~~~  ~~~~       ~~~~~~
+| Data bus          0x3FC8_0000  0x3FCD_FFFF   384        Internal SRAM 1
+|                   0x3FF0_0000  0x3FF1_FFFF   128        Internal ROM 1
+| 
+| Instruction bus   0x4000_0000  0x4003_FFFF   256        Internal ROM 0
+|                   0x4004_0000  0x4005_FFFF   128        Internal ROM 1
+|                   0x4037_C000  0x4037_FFFF    16        Internal SRAM 0
+|                   0x4038_0000  0x403D_FFFF   384        Internal SRAM 1
+|
+| The external flash memory can also be memory-mapped, as follows:
+| 
+| Bus Type          Low Address  High Address  Size (MB)  Target
+| ~~~~~~~~          ~~~~~~~~~~~  ~~~~~~~~~~~~  ~~~~       ~~~~~~
+| Data bus          0x3C00_0000  0x3C7F_FFFF      8       Uniform Cache
+| Instruction bus   0x4200_0000  0x427F_FFFF      8       Uniform Cache
+|
+| The external memory is addressed via the cache, which is implemented (I
+| believe) using RAM 0 (16 KiB).
+
+| Since the CPU can access both buses, let's use the instruction bus
+| addresses for our "canonical" origins.
+
+"4000_0000 constant @rom0
+    256 Ki constant #rom0
+
+"4004_0000 constant @rom1
+    128 Ki constant #rom1
+
+"4037_c000 constant @cache       | aka RAM0
+     16 Ki constant #cache
+
+"4038_0000 constant @ram         | aka RAM1, but we consider it the "main" ram
+    384 Ki constant #ram
+
+"4200_0000 constant @flash
+      4 Mi constant #flash       | Window is 8 MiB; device is 4 MiB
+
+( ESP32-C3 is an RV32IMC core.)
+-d xlen32
+-d M-ext  -d C-ext
+
+( Set up .csr. and .equates. and the defining words we need.)
+ld target/RISC-V/equates.mu4
+ld target/RISC-V/csr-v1.10.mu4
+
+| Load the chip equates
+ld target/RISC-V/esp32/c3/equates.mu4
+
+| Load the environment!
+ld! target/RISC-V/build.mu4

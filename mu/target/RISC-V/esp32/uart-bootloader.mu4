@@ -1,0 +1,120 @@
+| This file is part of muforth: https://muforth.dev/
+|
+| Copyright 2002-2025 David Frech. (Read the LICENSE for details.)
+
+loading ESP32-C3 ROM bootloader support
+
+| Header printed by the bootloader ROM on my ESP32-C3:
+|
+| ESP-ROM:esp32c3-api1-20210207
+| Build:Feb  7 2021
+| rst:0x1 (POWERON),boot:0x4 (DOWNLOAD(USB/UART0/1))
+| waiting for download
+|
+| Each line - including the last - is terminated by a CRLF (0d 0a).
+
+: b>  recv ;
+: >b  send ;
+
+: echo-until  ( b)
+   begin  b> dup emit  over = until  drop ;
+
+| Await a string. Used to match the ESP ROM header message.
+runtime
+: (await")  ( a u)  for  c@+ swap  echo-until  next  drop ;
+forth
+: await"   char " parse  (await") ;
+compiler
+: await"   compile (")  \f z" drop  compile (await") ;
+forth
+
+hex
+
+| SLIP encode and send a byte.
+|
+| c0 is the packet delimiter; db is the escape character. In the SLIP
+| stream, c0 is represented by db dc, and db is represented by db dd.
+
+: >s  ( b)
+   dup 0c0 = if  drop  0db >b 0dc >b ^  then
+   dup 0db = if            >b 0dd >b ^  then
+   >b ;
+
+| Receive one SLIP-encoded byte - which may be represented by two bytes, if
+| it is escaped - and return the decoded byte.
+: s>  ( - b)
+   b>  dup 0db = if  ( escaped)
+      drop b>  dup 0dc = if  drop 0c0 ^  then
+               dup 0dd = if  drop 0db ^  then
+      ( error: just return the byte following the 0db)
+   then ;
+
+| Send a little-endian half-word (16-bit) value.
+: >h  >hilo  >s >s ;
+
+| Send a little-endian word (32-bit) value.
+: >w  >3210  >s >s >s >s ;
+
+| Send a 16-bit size.
+: >size  >h ;
+
+| Send a 32-bit checksum.
+: >sum   >w ;
+
+| Receive a 16-bit value.
+: h>  s> s>  lohi> ;
+
+| Receive a 32-bit value.
+: w>  s> s> s> s>  0123> ;
+
+| Wait for a packet delimiter (start or end).
+: ?pkt   begin  b> 0c0 = until ;
+
+: response  ( cmd size value)
+   ?pkt  s> drop  s>  h>  w>  s> s>  ?pkt
+   ( two bytes: ok=0 or error=1; status code)
+   swap if  error" bad status: " u. then  drop ;
+
+| End a SLIP packet by sending an unencoded packet delimiter.
+: pkt>  0c0 >b ;
+
+variable cmd   | last command sent to bootloader; so we can match response
+
+| Start a SLIP packet by sending an unencoded packet delimiter, followed by
+| a direction byte (0) and the command byte.
+
+: <pkt  ( cmd)  ?spkt  pkt> ( delim)  0 >s ( request)  dup cmd ! >s ( cmd) ;
+
+: match-response  ( size value)
+   begin  response  rot cmd @ xor while  2drop  repeat ;
+
+: ?pkt>  ( - size value)  ( end and send a packet; read response)
+   pkt>  match-response ;
+
+| Send a SYNC command. NOTE: We have to send at least *two* sync packets
+| before the target responds, so we can't use ?pkt> here, because it would
+| wait for a response from the *first* sync, which would never come.
+
+: sync   08 <pkt  #36 >size  0 >sum
+         07 >s  07 >s  12 >s  20 >s  #32 for 55 >s next  pkt> ;
+
+| WRITE-REG command.
+: write-reg  ( usecs mask value addr)
+         09 <pkt  #16 >size  0 >sum  >w >w >w >w  ?pkt> 2drop ;
+
+| READ-REG command.
+| XXX Need something to test with: something like ARM's CPUID register.
+| uart0 base 6000_0000
+| uart date reg 7c
+| uart id reg 80
+
+: read-reg  ( a - w)
+         0a <pkt  4 >size  0 >sum  >w ( addr)  ?pkt>  nip ;
+
+| XXX testing
+| After executing hi, target will send *eight* sync response packets.
+: hi
+   #115200 bps  flush drain
+   await" waiting for download"  b> emit  b> emit  ( CRLF)
+   ." Received ROM header"  spy on
+   sync sync  match-response ;    | have to send *two* syncs!
