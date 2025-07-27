@@ -111,13 +111,10 @@ variable cmd   | last command sent to bootloader; so we can match response
 : read-reg  ( a - w)
          0a <pkt  4 >size  0 >sum  >w ( addr)  ?pkt>  nip ;
 
-| XXX testing
-| After executing hi, target will send *eight* sync response packets.
-: b.hello
-   #115200 bps  flush drain
-   await" waiting for download"  b> emit  b> emit  ( CRLF)
-   ." Received ROM header"
-   sync sync  match-response 2drop     | have to send *two* syncs!
+: resync   sync sync  match-response 2drop ;   | have to send *two* syncs!
+
+: b.hello   ( - chunk-size)
+   #115200 bps  flush drain  resync
    #256 ;
 
 : setup    ( buf a u - a #words)   rot m !  \m aligned \m cell/ ;
@@ -143,3 +140,12 @@ variable cmd   | last command sent to bootloader; so we can match response
 
 : boot   chat-via   b.hello  chat-fail  chat-fail  b.read  b.write
                     nope  nope  b.erase  b.program ;
+
+| We only need to say "hi" when first connecting to the target - when we
+| first force it into bootloader mode.
+
+: hi
+   #115200 bps  flush drain
+   cr  ." Press and hold Boot; press and release Reset; release Boot."
+   await" waiting for download"  b> emit  b> emit  ( CRLF)
+   ." Received ROM header"  resync  boot ;
