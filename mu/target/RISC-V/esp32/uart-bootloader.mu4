@@ -141,11 +141,26 @@ variable cmd   | last command sent to bootloader; so we can match response
 : boot   chat-via   b.hello  chat-fail  chat-fail  b.read  b.write
                     nope  nope  b.erase  b.program ;
 
+| Let's see if we can get the device into bootloader mode by twiddling the
+| RTS and DTR modem control lines.
+
+: mget  ( - state)  ( "modem get")   target-tty modem-get ;
+: mset  ( state)    ( "modem set")   target-tty modem-set  10 ms ;
+
+| When we first open the device, both rts and dtr are 1. Does this mean
+| they are a logic one? In hardware-land they are active-low; asserted
+| would mean 0. We don't know which it is!
+
+: >bootloader
+   [ modem-dtr modem-rts or #] mset    | start with DTR and RTS both high
+   [ 0         modem-rts or #] mset    | bring DTR low
+   [ modem-dtr 0         or #] mset    | bring RTS low
+   [ modem-dtr modem-rts or #] mset ;  | both high again
+
 | We only need to say "hi" when first connecting to the target - when we
 | first force it into bootloader mode.
 
 : hi
-   #115200 bps  flush drain
-   cr  ." Press and hold Boot; press and release Reset; release Boot."
+   #115200 bps  flush drain  >bootloader
    await" waiting for download"  b> emit  b> emit  ( CRLF)
    ." Received ROM header"  resync  boot ;

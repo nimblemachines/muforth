@@ -14,6 +14,9 @@
 #include <termios.h>
 #include <unistd.h>         /* isatty */
 
+/* XXX For all the calls that take an fd, it seems like it should be in
+ * TOP; it acts like an *address*. */
+
 void mu_isatty_q()    /* isatty?  ( fd - flag) */
 {
     TOP = -isatty(TOP);
@@ -192,6 +195,28 @@ void mu_set_termios_odd_parity()
     pti->c_cflag |= (PARENB | PARODD);  /* enable parity - odd */
     DROP(1);
 }
+
+/* For controlling the modem control lines. */
+void mu_modem_get()     /* ( fd - state) */
+{
+    int state = 0;
+    if (ioctl(TOP, TIOCMGET, &state) == -1)
+        return abort_strerror();
+
+    TOP = state;
+}
+
+void mu_modem_set()     /* ( state fd) */
+{
+    int state = ST1;
+    if (ioctl(TOP, TIOCMSET, &state) == -1)
+        return abort_strerror();
+    DROP(2);
+}
+
+/* Push constants for DTR and RTS */
+void mu_modem_dtr()     { PUSH(TIOCM_DTR); }
+void mu_modem_rts()     { PUSH(TIOCM_RTS); }
 
 /*
  * We need to be able to send RS232 BREAKs. In at least one case (HC908
