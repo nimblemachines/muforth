@@ -149,17 +149,28 @@ forth
    | Write stack image to target, *including* sentinel, if any)
    dp@ image+  dp@  dp-sentinel  over -  ( buf a u)  stack-write ;
 
-| stack< *first* copies the target stack, in one chunk, to the host's RAM
-| image, and *then* pulls the values out and pushes them onto the host's stack.
+| By default, we want numbers that the target would consider negative to be
+| negative on the host stack as well. But we want this to be configurable
+| by the user.
 |
-| We'd like numbers that the target would consider negative to be negative
-| on the host stack as well. So let's sign extend stack values when they
-| come back from the target.
+|   starget  (the default) turns on sign-extension;
+|   utarget  turns it off.
+|
+| Since we want to be able to turn sign-extension off and on, let's make
+| a defer'd word that acts on a target value as it gets copied from the
+| target stack to the host stack.
 
+defer t>h  ( target - host)    | "target to host" conversion
+
+| Move a stack item from the target stack image to the host stack.
+: item<  ( a - cell a-)  stack-cell - dup  stack@ t>h  swap ;
+
+| Sign extend stack values when they come back from the target.
+|
 | We calculate the location of the sign bit from the size (in bytes) of
 | a stack cell.
 
-: t>h  ( target - host)    | "target to host"
+-: ( sign-extend target value)
    dup  [ 1  stack-cell 8 * 1-  <<  ( sign bit) #] and  2* - ;
 
    | NOTE: the following also works, but it's better suited to
@@ -167,8 +178,16 @@ forth
    |
    | [ 64 stack-cell 8 * - #] tuck <<  swap >> ;
 
-| Move a stack item from the target stack image to the host stack..
-: item<  ( a - cell a-)  stack-cell - dup  stack@ t>h  swap ;
+: starget  ( set target stack to *signed*; sign-extension occurs)
+   [ #]      is t>h ;  ( sign extend value)
+
+starget  ( set default)
+
+: utarget  ( set target stack to *unsigned*; no sign-extension occurs)
+   ['] nope  is t>h ;  ( leave the value alone)
+
+| stack< *first* copies the target stack, in one chunk, to the host's RAM
+| image, and *then* pulls the values out and pushes them onto the host's stack.
 
 : stack<  ( "pop" stack from target)
    h preserve ram  ( make sure we are copying the stack to the ram image!)
