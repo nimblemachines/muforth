@@ -1193,57 +1193,87 @@ ctrl ?  constant #DEL  | 127
 
 : spaces  ( n)  0 max  for  space  next ;
 
-| pad is where we convert numbers to ASCII. A number is 1 cell - could be
-| 64 bits! - and in binary would take 64 characters to represent, plus a
-| character for the sign. pad returns the address of the _end_ of the
-| buffer, since conversion occurs right-to-left.
+| Between here and pad is where we convert numbers to ASCII. A number is
+| 64 bits and in binary would take 64 characters to represent, plus a
+| character for the sign, plus underscore separators (if enabled) every
+| 4 digits.
+|
+| Numbers are converted right-to-left, least significant digit to most
+| significant. The variable hld points to the last digit or punctuation
+| character added to the number string (via hold).
+|
+| In order for thousands or "quartet" separators to be added correctly, the
+| code needs to know where the rightmost digit is; !num sets this. The word
+|  <#  - which is normally used to begin number conversion - calls !num by
+| default; but if you are converting multiple numbers into a single string
+| you need to call  !num  before converting the least significant digit of
+| a new number.
+|
+| Since the stack display code converts several numbers into a single
+| string, we allot plenty of space for number conversion.
 
-| Since we're putting "thousands" separations in here as well, I thought I
-| might increase the size to an over-generous 128 bytes.
+: pad   here 1024 + ;  ( plenty of room!)
 
-: pad   here 128 + ;  ( 64 digits + sign + alignment)
+variable hld      | address of first character of number string
+variable num|     | address just beyond the least significant digit
 
-variable hld
-: hold   -1 hld +!  hld @ c! ;
-: held   ( - #chars)  pad  hld @ - ;
-: <#     pad hld !  ;
-: #>     ( u - a #)  drop  hld @  pad over - ;
-: sign   ( n -)   0< if  char - hold  then  ;
+: !num   hld @  num| ! ;      | remember where number ends
+: #num   num| @  hld @  - ;   | how many digits have we converted?
 
-: #     ( u - u')   /digit  >digit  hold  ;
+: hold   -1 hld +!  hld @ c! ;   | add a digit/character to beginning of number string
+: <#     pad hld !  !num ;       | initialize number conversion
 
-| For base-10 numbers, insert a "," every three digits; for other
-| bases, insert a "_" every four digits.
+: #>     ( u - a #)   drop  hld @  pad over - ;
+: sign   ( n)   0< if  char - hold  then  ;
 
-: ?sep  radix @ 10 = if  held 4 mod  3 = if  char , hold  then  ^  then
-                         held 5 mod  4 = if  char _ hold  then ;
+: #      ( u - u')   /digit  >digit  hold  ;
 
-variable sep  ( include "thousands" separators in numbers - or not.)
-: #,s    ( u - 0)  begin  #  =while  ?sep  repeat ;  ( digits with separators)
-: #s     ( u - 0)  begin  #  dup 0= until ;       ( digits without separators)
-: #sep   ( u - 0)  sep @execute ;  ( optionally with separators)
+
+| Hold several copies of a character. n can be negative. If n < 1 no
+| characters are held.
+
+: holds  ( n ch)  swap  0 max  for  dup hold  next  drop ;
+
+| Convert digits until zero, with no "thousands" or "quartet" separators.
+: #s     ( u - 0)  begin  #  dup 0= until ;
+
+| Convert digits until zero, possibly including "thousands" or "quartet" separators.
+| The user turns separators on (+sep) or off (-sep), as they prefer.
+
+defer ?sep
+: #sep   ( u - 0)  begin  #  =while  ?sep  repeat ;
+
+| For base-10 numbers, insert a comma every three digits; for other bases,
+| insert an underline every four digits.
+
+-: radix @ 10 = if  #num 4 mod  3 = if  char , hold  then  ^  then
+                    #num 5 mod  4 = if  char _ hold  then ;
 
 ( Turn digit separators on and off.)
-: +sep   ['] #,s  sep ! ;  +sep
-: -sep   ['] #s   sep ! ;
+: +sep   [ #]      is ?sep ;  +sep
+: -sep   ['] nope  is ?sep ;
 
 : (u.)    ( u - a #)   <#  #sep  #> ;
-: u.      ( u -)       (u.)  type  space  ;
+: u.      ( u)         (u.)  type  space  ;
 
-: (.)     ( n - a #)   dup push ( sign)  abs  <#  #sep  pop sign  #> ;
-: .       ( n -)       (.)  type  space ;
+| Convert a signed number, using separators if enabled.
+: #signed   ( n - 0)   dup abs #sep  swap sign ;
+
+: (.)      ( n - a #)   <#  #signed  #> ;
+: .        ( n)         (.)  type  space ;
 
 ( This should truncate to field length. Actually, it shouldn't. Does it?)
+| XXX I don't think this works!
 : truncating-field   ( a c field - a' field)   tuck swap -  ( a field field-c)
-   dup 0< if  drop ^  then  for  bl hold  next  #>  ;
+   dup 0< if  drop ^  then  bl holds  #>  ;
 
 ( Non-truncating field.)
-: field   ( a c field - a c)  over - spaces  ;
+: field  ( width a u - a' u')  nip -  bl holds  0 #> ;
 
-:  (.r)   ( n field - a #)   push  (.)   pop  field  ;
+:  (.r)   ( n width - a u)   swap (.) field  ;
 :   .r    (.r)  type  ;
 
-: (u.r)   ( u field - a #)   push  (u.)  pop  field  ;
+: (u.r)   ( u width - a u)   swap (u.) field  ;
 :  u.r    (u.r)  type  ;
 
 ( Useful.)
@@ -1509,7 +1539,7 @@ being-defined -redef
  -redef
 
 ( A useful list of words as they're being defined.)
--: ( a u)   radix preserve hex  sep preserve  -sep
+-: ( a u)   radix preserve hex
    info-text  cr
    ( print stack depth)  depth 2 - .
    ( print here)  here u.
@@ -1639,7 +1669,6 @@ being-defined -v  ( be verbose)
 | possible confusion of using "M" thinking it means 2^20 rather than 10^6.
 
 
-
 defer ?show-radix
 
 -:  radix @
@@ -1663,16 +1692,27 @@ defer ?show-radix
 
 defer ?show-stack
 
-| XXX Should decimal show as signed and everything else as unsigned?
-|     Should that be another setting?
+variable stk   | address of first character of stack display
+
+: !stk   hld @  stk ! ;  ( set stk from hld)
+
+| <stk and stk> bracket the stack display conversion in the same way that
+| <# and #> bracket the conversion of a single number.
+
+: <stk   <#  !stk ;
+: stk>   ( - a u)  stk @  pad over - ;  ( like #> but using stk instead of hld)
+
 -: depth ?if
-      sep preserve  -sep
-      status-text
-      stderr >col @ if cr then
-      radix @ push  decimal  dup 2 u.r space  1-  ." =>"  pop radix !
-      stderr >width @  5 -  18 / 1-  ( max # of stack items to print)
-      min  0 max  0 swap  do  i nth  18 .r  -1 +loop
-      normal-text
+      cr  status-text  stderr >width @
+      radix @ push  decimal  over (u.) tuck type  ."  =>"  pop radix !
+      ( depth width #chars)  - 3 - ( max width of stack display)
+      <stk
+      swap 1+ 1 do
+         i nth  !num  #signed drop  3 bl holds
+         #num -  dup 0< if  leave  then   | leave if no more space
+         !stk                             | otherwise include number
+      loop  drop
+      stk> type  normal-text
    then ;
 
 : +stack      [ #]  is ?show-stack ;
