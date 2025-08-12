@@ -1,0 +1,90 @@
+| This file is part of muforth: https://muforth.dev/
+|
+| Copyright 2002-2025 David Frech. (Read the LICENSE for details.)
+
+loading PIC18 multiply routines (24 bit)
+
+assembler
+: bset?  ( bit# f)  asm{  btstss  never } ;
+: bclr?  ( bit# f)  asm{  btstsc  never } ;
+forth
+
+__meta
+hex
+
+flash
+ld target/PIC18/kernel-24.mu4  ( loads @c00)
+1000 region!  ( so we can refer to the kernel code but don't have to keep re-flashing it)
+
+| 24x24 -> 48
+|
+| Distribute:
+|
+|                     | T  * U  |
+|                | T  * UH |
+|           | T  * UU |
+|                | TH * U  |
+|           | TH * UH |
+|      | TH * UU |
+|           | TU * U  |
+|      | TU * UH |
+| | TU * UU |
+|
+| Reorder for to see the cross-products:
+|
+|                     | T  * U  |
+|                | T  * UH |
+|                | TH * U  |
+|           | T  * UU |
+|           | TH * UH |
+|           | TU * U  |
+|      | TH * UU |
+|      | TU * UH |
+| | TU * UU |
+| ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+|   VU   VH   V    WU   WH   W
+|
+
+| Add in the cross-products.
+
+label l*h  | => WH, WU
+   PRODL ) ld  WH add  PRODH ) ld  WU adc  WREG ) clr  V  adc  VH adc  VU adc  ret  ;c
+
+label l*u  | => WU, V
+   PRODL ) ld  WU add  PRODH ) ld  V  adc  WREG ) clr  VH adc  VU adc  ret  ;c
+
+label h*u  | => V, VH
+   PRODL ) ld  V  add  PRODH ) ld  VH adc  WREG ) clr  VU adc  ret  ;c
+
+| Callable from m* and um*.
+label mul24
+   ' over c  ' over c  | aka 2dup; inline later for better performance?
+   T  ld  U  mul  PRODL ) W  movw                | L * L => W, WH
+   TH ld  UH mul  PRODL ) WU mov  PRODH ) V mov  | H * H => WU, V
+   TU ld  UU mul  PRODL ) VH movw                | U * U => VH, VU
+
+   | H * U => V, VH
+   TH ld  UU mul  h*u c
+   TU ld  UH mul  h*u c
+
+   | L * U => WU, V
+   T  ld  UU mul  l*u c
+   TU ld  U  mul  l*u c
+
+   | L * H => WH, WU
+   T  ld  UH mul  l*h c
+   TH ld  U  mul  l*h j  ;c
+
+code um*  ( u1 u2 - ud)  ( 24x24 -> 48 unsigned multiply)
+   mul24 c  6 SP adda  ret  ;c
+
+code m*  ( n1 n2 - d)  ( 24x24 -> 48 signed multiply)
+   mul24 c
+
+   | Fix up product by subtracting other multiplicand from high word of
+   | product if a multiplicand's sign bit is set.
+
+   7 ( sign) TU bset? if  U ld  V sub  UH ld  VH sbb  UU ld  VU sbb  then
+   7 ( sign) UU bset? if  T ld  V sub  TH ld  VH sbb  TU ld  VU sbb  then
+   
+   6 SP adda  ret  ;c

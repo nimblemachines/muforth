@@ -1,0 +1,52 @@
+| This file is part of muforth: https://muforth.dev/
+|
+| Copyright 2002-2025 David Frech. (Read the LICENSE for details.)
+
+loading PIC18 multiply routines
+
+assembler
+: bset?  ( bit# f)  asm{  btstss  never } ;
+: bclr?  ( bit# f)  asm{  btstsc  never } ;
+forth
+
+__meta
+hex
+
+flash
+ld target/PIC18/kernel.mu4  ( loads @400)
+800 region!  ( so we can refer to the kernel code but don't have to keep re-flashing it)
+
+| 16x16 -> 32
+|
+|           | T  * U  |
+|      | T  * UH |
+|      | TH * U  |
+| | TH * UH |
+| ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+|   VH   V    WH   W
+ 
+| Add the l*h cross-product.
+label l*h
+   PRODL ) ld  WH add  PRODH ) ld  V adc  WREG ) clr  VH adc  ret  ;c
+
+| Callable from m* and um*.
+label mul16
+   ' over c  ' over c  | aka 2dup; inline later for better performance?
+   T  ld  U  mul  PRODL ) W movw
+   TH ld  UH mul  PRODL ) V movw
+   T  ld  UH mul  l*h c
+   TH ld  U  mul  l*h j  ;c
+
+code um*  ( u1 u2 - ud)  ( 16x16 -> 32 unsigned multiply)
+   mul16 c  4 SP adda  ret  ;c
+
+code m*  ( n1 n2 - d)  ( 16x16 -> 32 signed multiply)
+   mul16 c
+
+   | Fix up product by subtracting other multiplicand from high word of
+   | product if a multiplicand's sign bit is set.
+
+   7 ( sign) TH bset? if  U ld  V sub  UH ld  VH sbb  then
+   7 ( sign) UH bset? if  T ld  V sub  TH ld  VH sbb  then
+   
+   4 SP adda  ret  ;c
