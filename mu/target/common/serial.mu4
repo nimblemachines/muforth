@@ -2,19 +2,23 @@
 |
 | Copyright 2002-2025 David Frech. (Read the LICENSE for details.)
 
-| loading Serial expect/send
+( Simple target serial send/recv code.)
 
-( Simple target serial expect/send code.)
+z" serial-target"  r/w open-file?  .if  constant serial-target  .else  drop
+z" serial-target2" r/w open-file?  .if  constant serial-target  .else  drop
 
-| XXX Should target-tty be called serial-target?
+| Better names and more options?
+z" serial-target-2" r/w open-file?  .if  constant serial-target  .else  drop
+z" serial-target-3" r/w open-file?  .if  constant serial-target  .else  drop
+z" serial-target-4" r/w open-file?  .if  constant serial-target  .else  drop
+.then .then .then .then .then
 
-z" serial-target"  r/w open-file?  .if  constant target-tty  .else  drop
-z" serial-target2" r/w open-file?  .if  constant target-tty  .else  drop  .then .then
+.ifdef serial-target
 
-.ifdef target-tty
+serial-target constant target-tty   | DEPRECATED; defined for compat reasons
 
-( Modify termios settings of target-tty device.)
-: target-termios   create  ( cfa)  ,  does> @  target-tty  modify-termios ;
+( Modify termios settings of serial-target device.)
+: target-termios   create  ( cfa)  ,  does> @  serial-target  modify-termios ;
 
 ( Set up raw mode tailored for target interaction.)
 ' set-termios-target-raw      target-termios target-raw
@@ -25,16 +29,16 @@ z" serial-target2" r/w open-file?  .if  constant target-tty  .else  drop  .then 
 ' set-termios-odd-parity      target-termios odd-parity
 
 ( Recv from, send to target.)
-: _send  target-tty  >emit ;
-: _recv  target-tty  <key ;
+: _send  serial-target  >emit ;
+: _recv  serial-target  <key ;
 
 | flush throws away bytes in the input queue; drain waits until all bytes
 | in the output queue have been transmitted.
 
-: flush  target-tty  tty-iflush ;
-: drain  target-tty  tty-drain ;
+: flush  serial-target  tty-iflush ;
+: drain  serial-target  tty-drain ;
 
-| Clear the decks.
+| Set the serial target device to raw mode and "clear the decks".
 target-raw  flush  drain
 
 ( Spying on the protocol.)
@@ -48,6 +52,11 @@ variable spy  spy off
 
 : ?spkt  ( spy packet, or "spiked")  spy @ if  cr  then ;
 
+| This is code specific to the S08. Various firmware routines that might be
+| programmed into an S08 have a a 5-byte "signature". await can be used to
+| match that signature, to make sure the host is communicating with the
+| right piece of code.
+|
 | Wait for target command loop to announce itself, and compare to what we
 | expect. This has only ever been used to identify firmware running on a
 | serially-connected S08 device.
@@ -56,4 +65,4 @@ variable spy  spy off
    m preserve
    swap m !  for  m* recv  xor if  error" Wrong firmware"  then  next ;
 
-.then  ( ifdef target-tty)
+.then  ( ifdef serial-target)
