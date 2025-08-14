@@ -1,0 +1,156 @@
+There is a neat technique for turning an unsigned product - which is generally
+straightforward to compute - into a signed product - which tends to be
+trickier to compute - by doing two conditional subtractions based on the
+multiplicands' sign bits.
+
+I discovered this technique while reading about the PIC18's built-in 8x8
+multiplier in a Microchip datasheet. It was explaining how to use the
+multiplier - which generates an unsigned 16-bit product from two unsigned
+8-bit values - to synthesize 16x16 unsigned and signed multiplies. The
+description of the signed multiply contained the following intriguing text:
+
+"To account for the sign bits of the arguments, each argument’s Most
+Significant bit (MSb) is tested and the appropriate subtractions are done."
+
+Appropriate subtractions?!? What does that mean?
+
+Their code for the signed multiply has two steps:
+
+(1) First, compute the *unsigned* product
+
+(2) Then, test the sign bit of each multiplicand; if it is *set*, subtract the
+    *other* multiplicand from the high half of the product.
+
+I had no idea that there could be such a simple relationship between the
+signed and unsigned products. Signed multiply algorithms have always made my
+brain hurt, and I had always wondered how an 8x8 unsigned multiplier could be
+used to compute a *signed* product.
+
+I tried to convince myself that the subtractions made sense. They seemed
+plausible, at least.
+
+I implemented the code and it worked perfectly! Intrigued, I sat down to
+figure out *why* this works. That adventure now awaits you as well!
+
+Let's dig in.
+
+We model the product of two n-bit numbers as a product of *sums*: each
+multiplicand consists of a weighted sign bit (s) and an unsigned part (u),
+consisting of n-1 bits.
+
+We define the 2n-bit *unsigned* product of (s1,u1) * (s2,u2) by giving a
+
+           n-1
+weight of 2    to both sign bits:
+
+             n-1          n-1
+  prod_u = (2   s1 + u1)(2   s2 + u2)
+
+            2n-2         n-1
+         = 2    s1 s2 + 2   (s1 u2 + s2 u1) + u1 u2
+
+                                                      n-1
+In contrast, the *signed* product gives a weight of -2    to the sign bits:
+
+              n-1           n-1
+  prod_s = (-2   s1 + u1)(-2   s2 + u2)
+
+            2n-2         n-1
+         = 2    s1 s2 - 2   (s1 u2 + s2 u1) + u1 u2
+
+Note that the first and last terms of prod_u and prod_s are identical; only
+the middle terms differ, and only by their sign!
+
+The fixup that we need to apply to prod_u to get prod_s is the *difference*
+between them. The identical terms cancel out, and we are left with
+
+  fixup = prod_s - prod_u
+
+            n-1                   n-1
+        = -2   (s1 u2 + s2 u1) - 2   (s1 u2 + s2 u1)
+
+            n
+	= -2 (s1 u2 + s2 u1)
+
+Since the product is 2n bits, that 2^n factor (an n-bit left shift) means that
+the products differ only in the high half! If you only want or need the low n
+bits it doesn't matter whether your multiply is signed or unsigned!
+
+To apply this fixup to an unsigned product to get the signed one,
+we execute the following code:
+
+  if s1 then subtract u2 from high half of product
+  if s2 then subtract u1 from high half of product
+
+Ah, but there is still a problem: the code that Microchip published in their
+datasheet and that I implemented and tested is slightly different: it
+subtracts the *entire* multiplicand (including the sign bit) - not just the
+"unsigned" part. But the code works perfectly; how is this possible?
+
+There are two ways to think about it: as a series of cases, and algebraically.
+Let's start with the cases. We number them in binary, since they represent the
+four combinations of two sign bits.
+
+Case 00: both sign bits are zero. In this case prod_u = prod_s and the fixup
+is zero as well; no subtractions occur, so our possibly "erroneous" code does
+nothing.
+
+Case 01 and 10: In these two cases, only one sign bit is one so when we
+subtract the "other" multiplicand, its sign bit is zero, and the correct value
+- only the unsigned (u) part of the multiplicand - is subtracted.
+
+Case 11: Both sign bits are one. This is the only interesting case, and it
+works, but for a non-obvious reason: the sign bits will be subtracted *twice*,
+which will cause a borrow (from bits above the product that we don't care
+about) but will result in the correct value for the product's sign bit!
+
+Can we understand this algebraically as well?
+
+Let's write out what our coded fixup actually computes and compare it to the
+fixup that we want. Let's initially leave off the -2^n factor to make the
+simplifications clearer. We write m1 to mean (s1,u1) and m2 to mean (s2,u2).
+m1 and m2 are what my code subtracted, rather than u1 and u2.
+
+  fixup_coded_unshifted
+        = s1 m2 + s2 m1
+
+expanding m1 and m2 we get:
+
+              n-1               n-1
+        = s1(2   s2 + u2) + s2(2   s1 + u1)
+
+and distributing:
+
+           n-1                 n-1
+        = 2   s1 s2 + s1 u2 + 2   s1 s2 + s2 u1
+
+           n
+        = 2 s1 s2 + s1 u2 + s2 u1
+
+That (s1 u2 + s2 u1) looks familiar, right? Plus a weird product of the two sign bits...
+
+Let's put the shift factor back in and compute the fixup "error" between the
+desired fixup and the fixup as coded:
+
+  fixup_error = fixup - fixup_coded
+
+                           n
+              = fixup - (-2  fixup_coded_unshifted)
+
+                  n                   n  n
+              = -2 (s1 u2 + s2 u1) + 2 (2 s1 s2 + s1 u2 + s2 u1)
+
+distributing and canceling yields
+
+                 2n
+              = 2  s1 s2
+
+What is interesting about this is that this is case 11 (both sign bits are
+one) and the product of the sign bits is shifted above the range of our 2n-bit
+product! This is exactly the double-subtract (or double-add, depending on how
+you like to think about two's complement subtraction) that we saw in case 11:
+it causes a borrow (or carry, resp.) but the bit value is unchanged.
+
+So the error - between the fixup as coded and as desired - is zero.
+
+It's a neat trick!
