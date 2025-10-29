@@ -1,0 +1,79 @@
+| This file is part of muforth: https://muforth.dev/
+|
+| Copyright 2002-2025 David Frech. (Read the LICENSE for details.)
+
+| We are testing out the idea of using the DMA engine available on PIC18-Q
+| parts to make the serial chat a bit more robust to multitasking delays.
+| The idea is that the DMA essentially does what I have done with
+| interrupts in the past: when a byte comes into the UART, we store it into
+| a circular ring buffer.
+|
+| This is quite easy to do with DMA; the trouble is going to be
+| synchronizing between the DMA writing to the buffer and the chat code
+| reading it.
+|
+| This code is simply a proof-of-concept experiment. If it works, I will
+| likely add this to the official chat code!
+
+hex
+__meta
+
+flash
+ld target/PIC18/kernel.mu4
+
+0b00 region!
+
+( Wait for U2TXIF, then transmit T.)
+code tx
+   begin  1 ( U2TXIF) PIR8 ) btstss  again
+   T ld  U2TXB bank b) st  2 SP adda  ret  ;c
+
+| Set up UART 2 as a loopback device. This way we can easily test reception
+| of bytes by the DMA engine.
+|
+| We use pin RC7 to tie the UART's RX and TX together - no external wiring
+| necessary! And because we are not clearing bit 7 of TRISC, no signals are
+| driven outside the device.
+|
+| We set up the pin mappings as follows:
+|
+|   U2RXPPS = %010_111     | RC7
+|   RC7PPS = "23           | U2TX output
+
+code loopback
+   ( We have to turn *off* the analog select pin for RX.)
+   7 ANSELC bank b) bclr
+
+   ( Now let's connect the pins.)
+   %010_111 ( RC7) ldi  U2RXPPS bank b) st
+   23 ( index of U2TX) ldi  RC7PPS b) st
+
+   ( Now that we have the pins connected, set up the UART itself.)
+   30 ( TXEN RXEN MODE=0: 8-bit no parity) ldi  U2CON0 b) st
+   #64,000,000 #250,000 #16 * / 1- ldi  U2BRG b) st
+   7 ( ON) U2CON1 b) bset
+   ret  ;c
+
+code dma-init
+   55 ldi  PRLOCK bank b) st  | unlock PRLOCK register
+   aa ldi  PRLOCK b) st
+   0 PRLOCK b) bset           | set PRLOCKED bit - necessary for DMA to have bus access
+
+   DMASELECT b) clr           | select DMA 1
+
+   1 ldi  DMAnSSZ b) st       | source size = 1
+   U2RXB >hilo
+   ldi  DMAnSSAL b) st
+   ldi  DMAnSSAH b) st        | starting source addr = U2RBX
+
+   #16 ldi  DMAnDSZ b) st     | dest size = 16
+   @ram #ram + >hilo
+   ldi  DMAnDSAL b) st
+   ldi  DMAnDSAH b) st        | starting dest addr = flash memory page buffer
+
+    40 ldi  DMAnCON1 b) st    | DMODE=%01: increment; SMODE unchanged; read data space
+    40 ldi  DMAnSIRQ b) st    | use U2RX interrupt as trigger
+   0c0 ldi  DMAnCON0 b) st    | set SIRQEN and EN bits - this should start the process!
+   ret  ;c
+
+: tt  loopback dma-init ;
