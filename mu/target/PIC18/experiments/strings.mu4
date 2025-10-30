@@ -1,0 +1,47 @@
+| This file is part of muforth: https://muforth.dev/
+|
+| Copyright 2002-2025 David Frech. (Read the LICENSE for details.)
+
+| Strings have a prefix byte which contains the length of the string minus
+| one. This allows us to encode 256-byte-long strings in one byte.
+
+meta
+: string,  ( a u)
+   \m here image+ swap  ( a image u)  dup \m allot  cmove  \m align ;
+forth
+
+__meta hex flash
+
+ld target/PIC18/kernel.mu4  0c00 region!
+
+label tos-to-pgmadr
+   | We have done a call or rcall to get here. The TOS points to some data;
+   | we need to move the pointer in TOS to PGMADR (program memory address).
+   STKPTR ) dec
+   TOS ) PGMADR ) mov3
+   STKPTR ) inc  ret  ;c
+
+label (")  ( - u)
+   tos-to-pgmadr c
+   prog@+  PGMDAT ) w inc  S st  SH clr  SH rlc   | length to scratch
+
+   | We need to jump over the embedded string. PGMADR contains the address
+   | of the first byte of the string; because it started out even and we
+   | have fetched one byte, it is now *odd*. If the length is even, we want
+   | to increment it, so that when we add it to PGMADR, the result is even.
+   | If the length is already odd, we are fine.
+
+   1 ori    | if even, increment; if odd, leave alone
+            | NOTE that this will not generate a carry and can never change SH!
+
+          PGMADR  ) w add  TOS  ) st
+   SH ld  PGMADRH ) w adc  TOSH ) st
+   0 ldi  PGMADRU ) w adc  TOSU ) st
+
+   1push j  ;c
+
+| Try some strings.
+code s1   (") c  2 c,  token foo string,  ret  ;c
+code s2   (") c  3 c,  token barf string,  ret  ;c
+code s3   (") c  0fe c,  0ff allot  align  ret  ;c   | edge cases for long strings
+code s4   (") c  0ff c,  100 allot  align  ret  ;c
