@@ -2,7 +2,7 @@
 
 echo Processing $1
 
-# just update copyright date
+# update copyright date
 sed -E \
 	-f scripts/copyright.sed \
 	$1 > $1.sedded
