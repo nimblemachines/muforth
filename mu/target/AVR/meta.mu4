@@ -2,44 +2,7 @@
 |
 | Copyright (c) 2002-2026 David Frech. (Read the LICENSE for details.)
 
-loading AVR meta-compiler (main)
-
-( The various token consumers for each mode.)
-
--:  ."  (assembling)"  ;
--:
-    .assembler. find  if  execute  ^  then
-         .meta. find  if  execute  ^  then
-       .labels. find  if  execute  ^  then
-      .equates. find  if  execute  ^  then
-        .forth. find  if  execute  ^  then  ( utility words in .forth.)
-                                            number ;
-mode __asm
-
--:  ."  (compiling inlne assembler)"  ;
--:
-    .assembler. find  if  compile,  ^  then  ( find assembler's if/then etc)
-     .compiler. find  if  execute   ^  then  ( need } and ; to exit this mode)
-         .meta. find  if  compile,  ^  then
-       .labels. find  if  compile,  ^  then
-      .equates. find  if  compile,  ^  then
-        .forth. find  if  compile,  ^  then  ( utility words in .forth.)
-                                             number literal ;
-mode __inline-asm
-
-| The meta-interpreter. We're in this mode when we're building the target
-| image, and when in between [ and ] when running the target colon
-| compiler.
-
--:  ."  (meta)"  ;
--:
-         .meta. find  if  execute  ^  then
-       .labels. find  if  execute  ^  then
-      .equates. find  if  execute  ^  then
-        .forth. find  if  execute  ^  then
-                                            number ;
-mode __meta
-
+loading AVR meta-compiler
 
 | -------------------------------------------------------------------------
 | Macros defining register convention and stack operations
@@ -286,7 +249,7 @@ meta
 | XXX See note above about smart call and compile, .
 : compile,  ( target-cfa)  \a c  ( compile call) ;
 
-meta-compiler
+target-compiler
 : ^   ?tail-exit ;
 
 forth
@@ -330,7 +293,7 @@ forth
 : lit?   ( f)
    tag@ $lit =  dup if  unpush-literal  then ;
 
-: _litop  current preserve  meta-compiler  create
+: _litop  current preserve  target-compiler  create
           does>  lit?  if  cell+  then  @  \m compile, ;
 
 meta
@@ -363,16 +326,6 @@ meta
 
 forth
 
-( Finally, we have the definition of the target colon compiler.)
-
--:  ."  (compiling a target word)"  ;
--:  .meta-compiler. find  if  execute  ^  then
-              .lex. find  if  execute  ^  then  ( comments and conditional compilation)
-           .target. find  if  execute  \m compile, ^  then
-          .equates. find  if  execute  \m literal  ^  then  ( chip equates create literals)
-                               number  \m literal ;
-mode __target-colon
-
 
 ( Interrupt vectors and handlers.)
 #flash 16 Ki u< .if
@@ -395,7 +348,7 @@ mode __target-colon
 .then
 
 ( How many vectors are there?)
-\eq LAST_VECTOR constant #vectors
+\m LAST_VECTOR constant #vectors
 
 | Return true if vector has _not_ been set. For two-word vectors - on
 | devices with 16Ki and larger flash - assume that if first word - the jmp
@@ -420,9 +373,9 @@ forth
 | code to calculate everything.
 
 : wipe
-   ram      @ram region!    0 fill-image
-   eeprom      0 region!    0 fill-image
-   boot    @boot region!  "ff fill-image  ( fills entire flash image)
+   ram      @ram region!    zero-image
+   eeprom      0 region!    zero-image
+   boot    @boot region!   erase-image  ( fills entire flash image)
    flash       0 region!
 
    #vectors vectors \m allot ( "application" starts after vectors) ;
@@ -431,8 +384,7 @@ wipe  ( leaves flash as current region)
 
 
 | Creating new target names. A name is a target word which is defined as
-| a _constant_ equal to its code field address, and which compiles itself
-| when executed.
+| a _constant_ equal to its code field address.
 
 meta
 : name    \m here  current preserve  target constant ;
@@ -467,9 +419,9 @@ forth
 assembler
 : ;c   untag  __meta ;
 
-meta-compiler
+target-compiler
 : [   __meta ;
-: ;   \mc ^  \mc [ ;  ( return to meta)
+: ;   \tc ^  \tc [ ;  ( return to meta)
 
 compiler
 : ;m   \ ^  __meta ;     ( exit macro compilation and return to meta-compiler)
@@ -528,6 +480,9 @@ meta
 
 forth
 
+
+| I have no idea which target is the source of this code. MSP430? In any
+| case, it's not currently being used.
 
 .ifdef later-gator
 
@@ -594,7 +549,7 @@ variable last-code   ( for ;code and does> to fix up)
 
 meta
 
-meta-compiler
+target-compiler
 : [']  \m '  \m aliteral ;
 meta
 
@@ -659,19 +614,19 @@ assembler
 : <test>               asm{  tl th or ( test) } ;
 : <zbranch>  ( - src)  asm{  0= not if } ;
 
-meta-compiler
+target-compiler
 : =if   ( - src)  <test>          <zbranch> ;
 : if    ( - src)  <test>  <drop>  <zbranch> ;
 : then  ( src)          \a then ;
 : else  ( src0 - src1)  \a else ;
 
 : begin   ( - dest)  \m here ;
-: =until  ( dest -)  \mc =if  \a <resolve ;
-: until   ( dest -)   \mc if  \a <resolve ;
+: =until  ( dest -)  \tc =if  \a <resolve ;
+: until   ( dest -)   \tc if  \a <resolve ;
 : again   ( dest -)  \a again ;
-: =while  ( dest - src dest)  \mc =if  swap ;
-: while   ( dest - src dest)   \mc if  swap ;
-: repeat  ( src dest -)   \mc again  \mc then ;
+: =while  ( dest - src dest)  \tc =if  swap ;
+: while   ( dest - src dest)   \tc if  swap ;
+: repeat  ( src dest -)   \tc again  \tc then ;
 
 ( n for .. next         goes n times; 4 billion+ if n=0 )
 ( n ?for .. next then   goes n times; 0 if n=0 )
@@ -680,15 +635,15 @@ meta
 : <resolve  ." unimplemented" ;
 : >mark  \m <resolve ;
 
-meta-compiler
-: for     ( - dest)      p,  (for)            \mc begin ;
-: ?for    ( - src dest)  p, (?for)  \m >mark  \mc begin ;
+target-compiler
+: for     ( - dest)      p,  (for)            \tc begin ;
+: ?for    ( - src dest)  p, (?for)  \m >mark  \tc begin ;
 : next    ( dest -)      p, (next)  \m >mark  \m <resolve ;
 
 ( do, loop, +loop)
-: do      ( - src dest)   p, (do)     \m >mark  \mc begin ;
-: loop    ( src dest)     p, (loop)   \m >mark  \m <resolve  \mc then ;
-: +loop   ( src dest)     p, (+loop)  \m >mark  \m <resolve  \mc then ;
+: do      ( - src dest)   p, (do)     \m >mark  \tc begin ;
+: loop    ( src dest)     p, (loop)   \m >mark  \m <resolve  \tc then ;
+: +loop   ( src dest)     p, (+loop)  \m >mark  \m <resolve  \tc then ;
 forth
 
 | -------------------------------------------------------------------------
@@ -719,10 +674,10 @@ compiler
 : ;    \ ^   __meta ;
 : [']  \m '  literal ;
 
-meta-compiler
+target-compiler
 : [    'target-literal @  _[ ;   ( when we return, make a target literal)
 : ^    p, ^  ;   ( compile target's ^ - EXIT)
-: ;    \mc ^  __meta ;
+: ;    \tc ^  __meta ;
 
 forth
 
