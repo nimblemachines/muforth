@@ -1,0 +1,112 @@
+| This file is part of muforth: https://muforth.dev/
+|
+| Copyright (c) 2002-2026 David Frech. (Read the LICENSE for details.)
+
+| RISC-V Debug 0.13.2 support. Debug Module register definitions, and some
+| basic operations to read and write core registers and CSRs.
+
+loading RISC-V Debug (0.13.2)
+
+: debugreg  constant ;
+hex
+
+04 debugreg data0            | Abstract Data 0
+05 debugreg data1            | Abstract Data 1
+06 debugreg data2            | Abstract Data 2
+07 debugreg data3            | Abstract Data 3
+08 debugreg data4            | Abstract Data 4
+09 debugreg data5            | Abstract Data 5
+0a debugreg data6            | Abstract Data 6
+0b debugreg data7            | Abstract Data 7
+0c debugreg data8            | Abstract Data 8
+0d debugreg data9            | Abstract Data 9
+0e debugreg data10           | Abstract Data 10
+0f debugreg data11           | Abstract Data 11
+10 debugreg dmcontrol        | Debug Module Control
+11 debugreg dmstatus         | Debug Module Status
+12 debugreg hartinfo         | Hart Info
+13 debugreg haltsum1         | Halt Summary 1
+14 debugreg hawindowsel      | Hart Array Window Select
+15 debugreg hawindow         | Hart Array Window
+16 debugreg abstractcs       | Abstract Control and Status
+17 debugreg command          | Abstract Command
+18 debugreg abstractauto     | Abstract Command Autoexec
+19 debugreg confstrptr0      | Configuration String Pointer 0
+1a debugreg confstrptr1      | Configuration String Pointer 1
+1b debugreg confstrptr2      | Configuration String Pointer 2
+1c debugreg confstrptr3      | Configuration String Pointer 3
+1d debugreg nextdm           | Next Debug Module
+20 debugreg progbuf0         | Program Buffer 0
+21 debugreg progbuf1         | Program Buffer 1
+22 debugreg progbuf2         | Program Buffer 2
+23 debugreg progbuf3         | Program Buffer 3
+24 debugreg progbuf4         | Program Buffer 4
+25 debugreg progbuf5         | Program Buffer 5
+26 debugreg progbuf6         | Program Buffer 6
+27 debugreg progbuf7         | Program Buffer 7
+28 debugreg progbuf8         | Program Buffer 8
+29 debugreg progbuf9         | Program Buffer 9
+2a debugreg progbuf10        | Program Buffer 10
+2b debugreg progbuf11        | Program Buffer 11
+2c debugreg progbuf12        | Program Buffer 12
+2d debugreg progbuf13        | Program Buffer 13
+2e debugreg progbuf14        | Program Buffer 14
+2f debugreg progbuf15        | Program Buffer 15
+30 debugreg authdata         | Authentication Data
+34 debugreg haltsum2         | Halt Summary 2
+35 debugreg haltsum3         | Halt Summary 3
+37 debugreg sbaddress3       | System Bus Address 127:96
+38 debugreg sbcs             | System Bus Access Control and Status
+39 debugreg sbaddress0       | System Bus Address 31:0
+3a debugreg sbaddress1       | System Bus Address 63:32
+3b debugreg sbaddress2       | System Bus Address 95:64
+3c debugreg sbdata0          | System Bus Data 31:0
+3d debugreg sbdata1          | System Bus Data 63:32
+3e debugreg sbdata2          | System Bus Data 95:64
+3f debugreg sbdata3          | System Bus Data 127:96
+40 debugreg haltsum0         | Halt Summary 0
+
+| If I ever want to use something other than 0.13.2 debug registers, the
+| following code can be put into a separate file, perhaps called
+| debug-module.mu4. But for now I'm putting it here.
+
+| In order to interact with the Debug Module on the target chip, we need
+| some kind of transport. We assume here that such a transport - over JTAG,
+| via a WCH Link device, etc - has been loaded and has defined two
+| primitives for us: dm@ and dm! which read and write the debug module
+| registers.
+
+| XXX testing! This prints out the actions that would be taken.
+: dm!  swap u. u. ." dm!  " ;
+: dm@          u. ." dm@  " ;
+
+: cmd!  700 abstractcs dm!  ( clear cmderr bits)  command dm! ;
+
+| Bit definitions for the command register.
+| "aar" stands for "abstract access register" - command 0.
+
+| Sizes: 2 means 32 bits; 3 means 64 bits.
+: >aarsize  #20 << ;
+
+1 #19 << constant aarpostincrement
+1 #18 << constant postexec
+1 #17 << constant transfer
+1 #16 << constant write
+
+2 >aarsize  transfer +  constant transfer32
+
+| The lowest bits of command are the "regno" field.
+| 0000 - 0fff: CSR
+| 1000 - 101f: GPR (the core integer registers)
+| 1020 - 103f: floating point registers
+
+| Read or write a CSR.
+: csr@  ( csr# - val)                  [ transfer32         #] +  cmd!  data0 dm@ ;
+: csr!  ( val csr#)    swap data0 dm!  [ transfer32 write + #] +  cmd! ;
+
+| Read or write a core register.
+: reg@  ( reg# - val)  1000 + csr@ ;
+: reg!  ( val reg#)    1000 + csr! ;
+
+| Once we have an easy way to compile instructions and put them into the
+| progbuf, we can use lw and sw instructions to read and write memory.
