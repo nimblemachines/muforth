@@ -91,7 +91,7 @@ hex
 1 #19 << constant aarpostincrement
 1 #18 << constant postexec
 1 #17 << constant transfer
-1 #16 << constant write
+1 #16 << constant write       | XXX rename to not conflict with i/o write?
 
 2 >aarsize  transfer +  constant transfer32
 
@@ -110,3 +110,60 @@ hex
 
 | Once we have an easy way to compile instructions and put them into the
 | progbuf, we can use lw and sw instructions to read and write memory.
+
+| Two ways to compile into progbuf:
+|
+| (1) Create a small region to hold the progbuf instructions; compile into
+| it as normal; copy the region into the progbuf. This would work for both
+| 32-bit and 16-bit (compressed) instructions.
+|
+| (2) Change the word that compiles ("commas") instructions into memory so
+| that its behavior is to *immediately* write the completed instruction to
+| the progbuf. Since I think it's only possible to write 32-bit values to
+| the DM registers, this approach is straightforward for 32-bit
+| instructions but more complicated for compressed ones.
+|
+| One problem with approach (1) is that the region has to live somewhere in
+| the 32-bit flat address space. While we don't need much space - 16 32-bit
+| values - 64 bytes - is the maximum size of the progbug - we don't want to
+| conflict with anything. Unlike the ARM Cortex-M architectures, which have
+| an *architecturally-mandated memory map*, the RISC-V world is much freer.
+| Maybe it doesn't matter, as long as we never try to map *backwards* from
+| a progbuf address to a memory image.
+|
+| I'm tempted to start with (1) and see how it works, keeping (2) as a Plan
+| B.
+
+| We start by creating a new aspace - a separate address space - for the
+| debug registers. There are only 7 bits of address space in the debug
+| module. Let's put that in our aspace and use it as the byte count for the
+| memory image. And we will make a single *region* pointing into the image,
+| called debug.
+
+| Nope, that doesn't work. The debug registers are *indexed*, not
+| *addresses*. Each index refers to a 32-bit value; adding one gets you to
+| the next one. A byte-addressed memory image of this register space is not
+| going to have the same addresses. And, anyway, all we care about is being
+| able to assemble into the progbuf space. So let's try again.
+
+#16 \m cells      | space required for 16 progbuf instructions
+dup log_2 drop    | bits required for our aspace
+make-aspace  swap make-image  make-region debug
+
+| XXX Hmm, maybe we should fill it with ebreak instructions instead of
+| zeros?
+debug  zero-image    | clear it out
+
+| Let's compile something!
+__asm   0 x5 x6 lw   ebreak  ;c
+ram
+
+| We can also use assembler macros to do the same thing, so it's easy to
+| compile code to read memory, write memory, jump off into the weeds, etc.
+
+| We can use  debug region  to figure out how many *words* (progbuf slots)
+| are required, and copy them over using a simple loop and  dm! .
+
+: progbuf!
+   h preserve  debug ( align by compiling c.nop?)  region swap
+   do  i image-@  i \m cell/ progbuf0 + dm!  \m cell  +loop ;
