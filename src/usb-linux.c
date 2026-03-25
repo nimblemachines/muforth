@@ -249,6 +249,14 @@ void mu_usb_control()
 }
 
 /*
+ * usb-find-pipe ( ep direction dev -- pipe#)
+ *
+ * Unlike on OSX, on Linux endpoints and pipes are the same, so
+ * usb-find-pipe is a no-op.
+ */
+void mu_usb_find_pipe()     { DROP(2); }
+
+/*
  * usb-read-pipe ( 'buffer size pipe# dev -- #read)
  */
 void mu_usb_read_pipe()

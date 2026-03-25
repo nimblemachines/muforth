@@ -246,33 +246,65 @@ void mu_usb_control()
     TOP = tr.wLenDone;
 }
 
-#ifdef WITH_USB_EXTRAS
 /*
- * usb-get-pipe-properties (pipe# dev -- direction number transferType maxpacketsize interval)
+ * usb-get-pipe-properties (pipe# dev -- direction number transferType maxpacketsize interval -1 | 0)
  */
 void mu_usb_get_pipe_properties()
 {
     IOUSBInterfaceInterface **intf = (IOUSBInterfaceInterface **)UNHEAPIFY(TOP);
-    IOReturn ior;
     UInt16 max_packet_size;
     UInt8 direction;
     UInt8 number;
     UInt8 transfer_type;
     UInt8 interval;
 
-    ior = (*intf)->GetPipeProperties(intf, ST1, &direction, &number, &transfer_type,
-                                     &max_packet_size, &interval);
-    if (ior != kIOReturnSuccess)
-        return abort_zmsg("GetPipeProperties failed");
-
-    DROP(-3);
-    SP[4] = direction;
-    ST3 = number;
-    ST2 = transfer_type;
-    ST1 = max_packet_size;
-    TOP = interval;
+    if ((*intf)->GetPipeProperties(intf, ST1, &direction, &number, &transfer_type,
+                                   &max_packet_size, &interval) == kIOReturnSuccess)
+    {
+        DROP(-4);
+        SP[5] = direction;
+        SP[4] = number;
+        ST3 = transfer_type;
+        ST2 = max_packet_size;
+        ST1 = interval;
+        TOP = -1;
+    }
+    else
+    {
+        DROP(1);
+        TOP = 0;
+    }
 }
-#endif
+
+/*
+ * usb-find-pipe ( ep direction dev -- pipe#)
+ */
+void mu_usb_find_pipe()
+{
+    IOUSBInterfaceInterface **intf = (IOUSBInterfaceInterface **)UNHEAPIFY(TOP);
+    UInt16 max_packet_size;
+    UInt8 direction;
+    UInt8 number;
+    UInt8 transfer_type;
+    UInt8 interval;
+    int pipe = 0;
+
+    while ((*intf)->GetPipeProperties(intf, pipe, &direction, &number, &transfer_type,
+                                      &max_packet_size, &interval) == kIOReturnSuccess)
+    {
+        if (ST2 == number && ST1 == direction)
+        {
+            /* matched: return it */
+            DROP(2);
+            TOP = pipe;
+            return;
+        }
+        pipe++;
+    }
+    /* not found: return a bogus pipe number */
+    DROP(2);
+    TOP = -1;
+}
 
 /*
  * usb-read-pipe ( 'buffer size pipe# dev -- #read)
