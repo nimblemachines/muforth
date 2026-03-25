@@ -139,7 +139,7 @@ void mu_usb_find_device()
     CFMutableDictionaryRef matching;
     io_service_t ioService;
     IOCFPlugInInterface **pluginInterface;
-    IOUSBInterfaceInterface190 **intfInterface;
+    IOUSBInterfaceInterface **intfInterface;
     IOReturn ior;
     SInt32 score;      /* unused */
 
@@ -176,7 +176,7 @@ void mu_usb_find_device()
 
     /* Use the plugin interface to retrieve the device interface. */
     ior = (*pluginInterface)->QueryInterface(pluginInterface,
-            CFUUIDGetUUIDBytes(kIOUSBInterfaceInterfaceID190),
+            CFUUIDGetUUIDBytes(kIOUSBInterfaceInterfaceID),
             (LPVOID*) &intfInterface);
 
     /* We're done with the plugin interface. */
@@ -206,7 +206,7 @@ void mu_usb_find_device()
  */
 void mu_usb_close()
 {
-    IOUSBInterfaceInterface190 **intfInterface = (IOUSBInterfaceInterface190 **)UNHEAPIFY(TOP);
+    IOUSBInterfaceInterface **intfInterface = (IOUSBInterfaceInterface **)UNHEAPIFY(TOP);
     IOReturn ior;
 
     /* We're done with the interface. Close it and then release it. */
@@ -225,7 +225,7 @@ void mu_usb_control()
 {
     IOUSBDevRequestTO tr;
     IOReturn ior;
-    IOUSBInterfaceInterface190 **intf = (IOUSBInterfaceInterface190 **)UNHEAPIFY(TOP);
+    IOUSBInterfaceInterface **intf = (IOUSBInterfaceInterface **)UNHEAPIFY(TOP);
 
     tr.bmRequestType = SP[6];
     tr.bRequest = SP[5];
@@ -252,7 +252,7 @@ void mu_usb_control()
  */
 void mu_usb_get_pipe_properties()
 {
-    IOUSBInterfaceInterface190 **intf = (IOUSBInterfaceInterface190 **)UNHEAPIFY(TOP);
+    IOUSBInterfaceInterface **intf = (IOUSBInterfaceInterface **)UNHEAPIFY(TOP);
     IOReturn ior;
     UInt16 max_packet_size;
     UInt8 direction;
@@ -279,7 +279,7 @@ void mu_usb_get_pipe_properties()
  */
 void mu_usb_read_pipe()
 {
-    IOUSBInterfaceInterface190 **intf = (IOUSBInterfaceInterface190 **)UNHEAPIFY(TOP);
+    IOUSBInterfaceInterface **intf = (IOUSBInterfaceInterface **)UNHEAPIFY(TOP);
     IOReturn ior;
     UInt32 size = ST2;
     UInt8 pipe = ST1;
@@ -298,7 +298,7 @@ void mu_usb_read_pipe()
  */
 void mu_usb_write_pipe()
 {
-    IOUSBInterfaceInterface190 **intf = (IOUSBInterfaceInterface190 **)UNHEAPIFY(TOP);
+    IOUSBInterfaceInterface **intf = (IOUSBInterfaceInterface **)UNHEAPIFY(TOP);
     IOReturn ior;
     UInt8 pipe = ST1;
 
