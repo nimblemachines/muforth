@@ -2,7 +2,78 @@
 |
 | Copyright (c) 2002-2026 David Frech. (Read the LICENSE for details.)
 
-loading WCH Link-E debug
+loading WCH-LinkE debug
 
-| XXX nothing here yet!
-warn" Sorry, this is just a placeholder! "
+hex
+
+| The LinkE can be in three different modes; each has a unique USB vid/pid
+| pair (these numbers are from
+| https://github.com/cnlohr/ch32fun/blob/master/minichlink/pgm-wch-linke.c):
+|
+|   1a86:8010 is in RISC-V mode
+|   1a86:8012 is in ARM mode
+|   4348:55e0 is in IAP mode
+|
+| Initially we are going to "hope" that we are in the right mode. Later I
+| can try to figure out how to *change* modes.
+
+1a86 8010 usb-find-device  .if  constant wch-link-e  .else
+
+warn" No WCH-Link devices found. "
+
+.then
+
+.ifdef wch-link-e
+
+( Device found - load support)
+
+." Found WCH-Link device. "
+
+.ifdef usb-read-pipe  ( OSX or Linux)
+
+| The WCH LinkE communicates using endpoint 1 (in both directions).
+                               | ep dir
+: uread    ( buf len - #read)   [ 1 1 wch-link-e usb-find-pipe #]  wch-link-e  usb-read-pipe ;
+: uwrite   ( buf len)           [ 1 0 wch-link-e usb-find-pipe #]  wch-link-e  usb-write-pipe ;
+
+.else
+
+warn" No BSD support yet for the WCH-LinkE. "
+
+.then  ( ifdef usb-read-pipe)
+
+| We assemble the LinkE command into cmdbuf and then send it as one chunk.
+
+#64 buffer cmdbuf
+
+: <cmd  ( len cmd - cmdbuf+1)   81 cmdbuf c!+ c!+ c!+ ;
+: cmd>  ( cmdbuf+n)   cmdbuf tuck -  uwrite ;
+
+: ?expected  ( #expected #got)
+   2dup  -  if  swap  ." expected "  u.  ." got "  u.  ^  then  2drop ;
+
+| XXX Should we be skipping the length of the returned payload?
+| XXX Should we roll cmd> and expect into one word?
+
+: expect  ( #expected - cmdbuf+3)
+   cmdbuf over uread  ( #expected #got)  ?expected
+   cmdbuf c@+ swap  82 = if  2 + ( skip cmd and len) ^  then
+   error" bad command response"  ( XXX print something here) ;
+
+: linke-reset
+   0ff 01 0d <cmd c!+ cmd>  4 expect drop ;
+
+: .version  ( ver-major ver-minor)   <#  # # drop  char . hold  #s #> type ;
+
+: connect-chip   02 01 0d <cmd c!+ cmd>  5 expect  c@+ bew@ ;
+
+: hi
+   linke-reset
+   01 01 0d <cmd c!+ cmd>  7 expect  c@+ ( ver-major)  c@+ ( ver-minor)  leh@ ( programmer)
+   radix preserve decimal  ." Connected to WCH-Link"
+   12 = if  ( LinkE)  ." E v"  .version ^  then
+          ."  type " u. ." v"  .version ;
+
+.then  ( OSX or Linux)
+
+.then  ( ifdef wch-link-e)
