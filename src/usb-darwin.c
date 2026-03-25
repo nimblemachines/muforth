@@ -62,7 +62,7 @@ void mu_usb_find_device()
     add_number_match(matching, CFSTR(kUSBProductID), TOP);
 
     /* Look up our service. We have to release it when we're done. */
-    ioService = IOServiceGetMatchingService(kIOMasterPortDefault, matching);
+    ioService = IOServiceGetMatchingService(kIOMainPortDefault, matching);
     if (ioService == 0)
     {
         DROP(1);
@@ -157,7 +157,7 @@ void mu_usb_find_device()
     add_number_match(matching, CFSTR(kUSBConfigurationValue), 1);
 
     /* Look up our service. We have to release it when we're done. */
-    ioService = IOServiceGetMatchingService(kIOMasterPortDefault, matching);
+    ioService = IOServiceGetMatchingService(kIOMainPortDefault, matching);
     if (ioService == 0)
     {
         DROP(1);
