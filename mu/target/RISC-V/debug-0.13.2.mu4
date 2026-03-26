@@ -75,10 +75,15 @@ hex
 | via a WCH Link device, etc - has been loaded and has defined two
 | primitives for us: dm@ and dm! which read and write the debug module
 | registers.
+|
+| Since we are loading this code *before* any JTAG transport code, let's
+| make dm@ and dm! deferred words.
 
-| XXX testing! This prints out the actions that would be taken.
-: dm!  swap u. u. ." dm!  " ;
-: dm@          u. ." dm@  " ;
+defer dm@
+defer dm!
+
+| XXX it's probably overkill to clear cmderr each time, but it's simple and
+| expedient.
 
 : cmd!  700 abstractcs dm!  ( clear cmderr bits)  command dm! ;
 
@@ -126,9 +131,6 @@ make-aspace  swap make-image  make-region debug
 
 h @  ( save region)
 debug  0 region!  zero-image    | clear it out
-
-| Let's compile something!
-__asm   0 x5 x6 lw  4 x5 c.addi  ;c
 h !  ( restore region)
 
 | We can also use assembler macros to do the same thing, so it's easy to
@@ -158,3 +160,70 @@ h !  ( restore region)
    h preserve  debug  compile-ebreak
    region swap  do  i image-@  i \m cell/ progbuf0 + dm!  \m cell  +loop
    0 region! ( empty debug region) ;
+
+| Let's define words to read and write memory.
+
+| Progbuf routines that use the core's lw and sw instructions to read and
+| write memory. We post-increment the address register (x5) to make reading
+| and writing chunks easier. Of course, this is overkill for single word
+| transfers. But by remembering which progbuf routine we last copied over
+| we can elide the copy if we do several read operations or several write
+| operations sequentially.
+
+| XXX make these create/does words?
+| XXX and remember which one we last executed?
+| XXX which registers do we want to use?
+
+: mem-read-progbuf!    h preserve debug  asm{  0 x5 x6 lw   4 x5 x5 addi  }  progbuf! ;
+: mem-write-progbuf!   h preserve debug  asm{  0 x5 x6 sw   4 x5 x5 addi  }  progbuf! ;
+
+: mem-read-setup   ( a)  mem-read-progbuf!   [ 5 postexec + #] reg! ;    | write progbuf; set addr; read word
+: mem-write-setup  ( a)  mem-write-progbuf!    5               reg! ;    | write progbuf; set addr
+
+| Read/write a single 32-bit word from/to memory.
+: mem@  ( a - w)   mem-read-setup     6               reg@ ;
+: mem!  ( w a)     mem-write-setup  [ 6 postexec + #] reg! ;
+
+| Reading and writing multiple words is more complicated, but it can be a
+| lot more efficient than doing single word operations, especially if we
+| make use of the autoexec facility.
+|
+| The noauto versions are simpler, but require *two* DMI transactions per
+| transfer: one to send a command, and one to read or write the data.
+|
+| These versions could perhaps be used initially, as a proof-of-concept.
+| Then, once everything is going smoothly, we can transition to (and
+| probably *debug*) the autoexec versions!
+
+: mem-words  ( buf a u - buf #words a)   \m aligned \m cell/  swap ;
+
+: mem-read  ( buf a u)
+   mem-words  mem-read-setup     | read first word into x6
+   1- for  [ 6 postexec + #] reg@  swap lew!+  next
+   6 reg@  swap lew! ;
+
+: mem-write  ( buf a u)
+   mem-words  mem-write-setup
+   for  lew@+ swap  [ 6 postexec + #] reg!  next  drop ;
+
+.ifdef future-dreams
+
+| I'm pretty sure that these routines don't work - especially the read. I
+| was going crazy trying to get the sequence of commands correct, and
+| finally punted on it for now.
+
+: mem-read-auto  ( buf a u)
+   \m cell/ 2 - -rot  mem@  swap lew!+
+   [ 6 postexec + #] cmd!                 | read 2nd word into x6 to preset autoexec command
+   1 abstractauto dm!                     | exec progbuf whenever data0 accessed
+   swap for  data0 dm@  swap lew!+  next
+   0 abstractauto dm!
+   data0 dm@  swap lew! ;
+
+: mem-write-auto  ( buf a u)
+   \m cell/ 1- -rot  lew@+ swap  mem!  | write first word to preset autoexec command
+   1 abstractauto dm!                  | exec progbuf whenever data0 accessed
+   swap for  lew@+ swap  data0 dm!  next  drop
+   0 abstractauto dm! ;
+
+.then

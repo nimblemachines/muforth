@@ -56,23 +56,53 @@ warn" No BSD support yet for the WCH-LinkE. "
 | XXX Should we roll cmd> and expect into one word?
 
 : expect  ( #expected - cmdbuf+3)
-   cmdbuf over uread  ( #expected #got)  ?expected
+   cmdbuf #64 uread  ( #expected #got)  ?expected
    cmdbuf c@+ swap  82 = if  2 + ( skip cmd and len) ^  then
    error" bad command response"  ( XXX print something here) ;
 
-: linke-reset
-   0ff 01 0d <cmd c!+ cmd>  4 expect drop ;
+| The workhorses. These use a 7-bit register address and transfer 32 bits
+| of data.
 
-: .version  ( ver-major ver-minor)   <#  # # drop  char . hold  #s #> type ;
+: dm-cmd   ( op data addr - 'response)  06 08 <cmd  c!+ bew!+ c!+  cmd>  9 expect ;
 
-: connect-chip   02 01 0d <cmd c!+ cmd>  5 expect  c@+ bew@ ;
+| We can now connect these to the defer'd words.
+-:   ( reg - w)
+   1 ( read)  0 ( dummy data)  rot  dm-cmd  1+ ( skip addr)  bew@ ;  is dm@
 
-: hi
-   linke-reset
-   01 01 0d <cmd c!+ cmd>  7 expect  c@+ ( ver-major)  c@+ ( ver-minor)  leh@ ( programmer)
+-:   ( w reg)
+   2 ( write) -rot  dm-cmd drop ;  is dm!
+
+: link-reset    0ff 01 0d <cmd c!+ cmd>  4 expect drop ;
+: connect-chip   02 01 0d <cmd c!+ cmd>  8 expect  c@+ bew@ ;
+
+: get-version  ( - v-major v-minor programmer)
+                 01 01 0d <cmd c!+ cmd>  7 expect
+   c@+ ( v-major)  c@+ ( v-minor)  leh@ ( programmer) ;
+
+: .version  ( v-major v-minor)   <#  # # drop  char . hold  #s #> type ;
+
+: .link-device
    radix preserve decimal  ." Connected to WCH-Link"
    12 = if  ( LinkE)  ." E v"  .version ^  then
           ."  type " u. ." v"  .version ;
+
+: l.hello  ( - chunk-size)
+   link-reset  get-version .link-device  connect-chip
+   #256 ;
+
+: l.read    mem-read ;
+: l.write   mem-write ;
+
+| XXX These aren't interesting until we add code to start the core running!
+| But at least now we can read and disassemble memory and poke around the
+| chip!
+
+: l.status  ( - sp)     2 ( sp) reg@ ;
+: l.run     ( pc sp)    2 ( sp) reg!  \m dpc csr!  ( XXX start core running!) ;
+
+| Connect to WCH-Link device and start chatting.
+: jtag   chat-via   l.hello  l.status  l.run  l.read  l.write
+                    chat-fail  chat-fail  chat-fail  chat-fail ;
 
 .then  ( OSX or Linux)
 
