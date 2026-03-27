@@ -2,7 +2,7 @@
 |
 | Copyright (c) 2002-2026 David Frech. (Read the LICENSE for details.)
 
-loading WCH-LinkE debug
+loading WCH-Link debug
 
 hex
 
@@ -17,13 +17,13 @@ hex
 | Initially we are going to "hope" that we are in the right mode. Later I
 | can try to figure out how to *change* modes.
 
-1a86 8010 usb-find-device  .if  constant wch-link-e  .else
+1a86 8010 usb-find-device  .if  constant wch-link  .else
 
 warn" No WCH-Link devices found. "
 
 .then
 
-.ifdef wch-link-e
+.ifdef wch-link
 
 ( Device found - load support)
 
@@ -33,8 +33,8 @@ warn" No WCH-Link devices found. "
 
 | The WCH LinkE communicates using endpoint 1 (in both directions).
                                | ep dir
-: uread    ( buf len - #read)   [ 1 1 wch-link-e usb-find-pipe #]  wch-link-e  usb-read-pipe ;
-: uwrite   ( buf len)           [ 1 0 wch-link-e usb-find-pipe #]  wch-link-e  usb-write-pipe ;
+: uread    ( buf len - #read)   [ 1 1 wch-link usb-find-pipe #]  wch-link  usb-read-pipe ;
+: uwrite   ( buf len)           [ 1 0 wch-link usb-find-pipe #]  wch-link  usb-write-pipe ;
 
 .else
 
@@ -75,30 +75,43 @@ warn" No BSD support yet for the WCH-LinkE. "
 : link-reset    0ff 01 0d <cmd c!+ cmd>  4 expect drop ;
 : connect-chip   02 01 0d <cmd c!+ cmd>  8 expect  c@+ bew@ ;
 
-: get-version  ( - v-major v-minor programmer)
+: get-link-version  ( - v-major v-minor programmer)
                  01 01 0d <cmd c!+ cmd>  7 expect
    c@+ ( v-major)  c@+ ( v-minor)  leh@ ( programmer) ;
 
 : .version  ( v-major v-minor)   <#  # # drop  char . hold  #s #> type ;
 
-: .link-device
+: .wch-link
    radix preserve decimal  ." Connected to WCH-Link"
    12 = if  ( LinkE)  ." E v"  .version ^  then
           ."  type " u. ." v"  .version ;
 
+| Set a hart into the running state.
+|
+| NOTE: We currently force the hart into machine mode, and clear the
+| interrupt enable bits! However, messing with the interrupt bits should
+| probably not happen here; instead it should be handled by the specific
+| code that is doing remote exec, eg, a trampoline to run Forth code.
+
+: dm-run
+   8003 ( machine mode + ebreakm) \m dcsr csr!
+   \m mstatus csr@  88 ( MIE+MPIE) bic  \m mstatus csr!
+   4000_0001 ( resumereq) dmcontrol dm! ;
+
+| XXX should probably loop a max number of times, like in st-link code.
+: halted?  haltsum0 dm@ ;
+
 : l.hello  ( - chunk-size)
-   link-reset  get-version .link-device  connect-chip
+   link-reset  get-link-version .wch-link  connect-chip
    #256 ;
 
 : l.read    mem-read ;
 : l.write   mem-write ;
 
-| XXX These aren't interesting until we add code to start the core running!
-| But at least now we can read and disassemble memory and poke around the
-| chip!
+: l.status  ( - sp)     begin halted? until  2 ( sp) reg@ ;
+: l.run     ( pc sp)    2 ( sp) reg!  \m dpc csr!  dm-run ;
 
-: l.status  ( - sp)     2 ( sp) reg@ ;
-: l.run     ( pc sp)    2 ( sp) reg!  \m dpc csr!  ( XXX start core running!) ;
+| TODO: Add code to erase and program the flash!
 
 | Connect to WCH-Link device and start chatting.
 : jtag   chat-via   l.hello  l.status  l.run  l.read  l.write
@@ -106,4 +119,4 @@ warn" No BSD support yet for the WCH-LinkE. "
 
 .then  ( OSX or Linux)
 
-.then  ( ifdef wch-link-e)
+.then  ( ifdef wch-link)
