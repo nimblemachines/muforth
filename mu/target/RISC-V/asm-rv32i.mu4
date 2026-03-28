@@ -17,16 +17,34 @@ compiler
 : }      saved-state @  state ! ;  ( exit assembler mode and restart colon compiler)
 forth
 
-| Let's define the registers first. There are 32 general-purpose
-| registers. We define them with "weird" bits in the upper part so we can
+| Let's define the registers first.
+|
+| Except for RV32E devices, which have "only" 16 registers, RISC-V devices
+| have 32 general-purpose registers.
+|
+| We are going to define all 32 generic and ABI register names and only
+| complain if a register greater than 15 is used on an RV32E device.
+
+.ifdef E-variant     | RV32E device
+   : ?valid-reg  16 u< if ^ then  error" Register doesn't exist on RV32E." ;
+.else
+   : ?valid-reg  drop ;
+.then
+
+| We define registers with "weird" bits in the upper part so we can
 | identify them, while they are sitting on the stack, as registers. ;-)
+|
+| We put the signature in the high 32 bits of the stack cell because there
+| are times - like when using the register number in a Debug Module
+| abstract command. We don't want anything in the bits above the register
+| number.
+|
+| Because the command register is 32 bits, writing to it will strip off the
+| register signature.
 
-| I was hoping these "weird bits" would spell "five dude", not "five
-| doodoo". ;-)
+"5_c0ded constant reg-signature
 
-"5_d00d 8 << constant reg-signature
-
-: 32regs  0  32 for  dup reg-signature or  constant 1+  next  drop ;
+: 32regs  0  32 for  dup [ reg-signature 32 << #] or  constant 1+  next  drop ;
 assembler
 
 ( Define the generic register names.)
@@ -38,7 +56,10 @@ assembler
 | Also define the C - or "Unix" - ABI names.
 | https://github.com/riscv-non-isa/riscv-elf-psabi-doc/blob/master/riscv-cc.adoc
 |
+| For RV32E devices, only a0 - a5, s0 and s1, and t0 - t2 are defined.
+|
 | Name      | ABI Mnemonic | Meaning                | Preserved across calls?
+| ~~~~~     | ~~~~~~~~~~~~ | ~~~~~~~~               | ~~~~~~~~~~~~~~~~~~~~~~~~
 | x0        | zero         | Zero                   | - (Immutable)
 | x1        | ra           | Return address         | No
 | x2        | sp           | Stack pointer          | Yes
@@ -89,9 +110,9 @@ defer .regname
 : >funct7  ( op bits - op')  25 <<  or ;
 
 ( Dealing with register fields.)
-: >reg  ( reg op - op reg-masked)  swap  31 and ;
+: >reg  ( reg op - op reg-masked)  swap  31 and  dup ?valid-reg ;
 : ?reg  ( reg op - op reg-masked)
-   over -32 and  reg-signature = if  ( valid reg)  >reg  ^  then
+   over 32 u>>  reg-signature = if  ( is a reg)  >reg  ^  then
    error" expected a register" ;
 
 : rd   ( reg op - op')  ?reg  >rd ;
