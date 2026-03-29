@@ -110,7 +110,8 @@ defer .regname
 : >funct7  ( op bits - op')  25 <<  or ;
 
 ( Dealing with register fields.)
-: >reg  ( reg op - op reg-masked)  swap  31 and  dup ?valid-reg ;
+: >5bits   ( bits op - op 5bits)   swap  31 and ;     | truncate bits to 5 bits
+: >reg  ( reg op - op reg-masked)  >5bits  dup ?valid-reg ;
 : ?reg  ( reg op - op reg-masked)
    over 32 u>>  reg-signature = if  ( is a reg)  >reg  ^  then
    error" expected a register" ;
@@ -119,8 +120,8 @@ defer .regname
 : rs1  ( reg op - op')  ?reg  >rs1 ;
 : rs2  ( reg op - op')  ?reg  >rs2 ;
 
-: rs1-imm  ( zimm op - op')  >reg  >rs1 ;
-: rs2-imm  ( zimm op - op')  >reg  >rs2 ;
+: rs1-imm  ( zimm op - op')  >5bits  >rs1 ;
+: rs2-imm  ( zimm op - op')  >5bits  >rs2 ;
 
 ( For grabbing single bits out of something.)
 : bit@  ( mask bit# - bit)  u>>  1 and ;
@@ -130,11 +131,17 @@ defer .regname
    swap  \m here -  swap ;
 
 ( Does a signed value fit into a bit field?)
-: sfits?  ( value bits - f)   1- >>  1+  2 u< ;   ( signed)
+: sfits?  ( value bits - f)   1- >>  1+  2 u< ;
 
-( Complain when it doesn't fit.)
-: ?sfits  ( value bits)   sfits? if ^ then
-   error" relative branch out of range" ;
+( Does an unsigned value fit into a bit field?)
+: ufits?  ( value bits - f)   u>>  0= ;
+
+: too-big   error" branch offset or immediate value is too big." ;
+
+| Complain when it doesn't fit.
+: ?sfits  ( value bits)  sfits? if ^ then  too-big ;
+: ?ufits  ( value bits)  ufits? if ^ then  too-big ;
+
 
 : op,  ( op)  \m , ;  ( for now, instructions are 32 bits wide)
 
@@ -333,11 +340,11 @@ assembler
 ( Utility.)
 
 ( Synthetic instructions.)
-: nop              asm{           0 x0 x0 addi  } ;
-: mv     ( rs rd)  asm{            0 -rot addi  } ;
-: li    ( imm rd)  asm{           x0 swap addi  } ;
-: subi  ( imm rd)  asm{  swap negate swap addi  } ;
-: la    ( imm rd)  asm{  2dup lui   dup addi  } ;
+: nop                  asm{           0 x0 x0 addi  } ;
+: mv     ( rs rd)      asm{            0 -rot addi  } ;
+: li    ( imm rd)      asm{           x0 swap addi  } ;
+: subi  ( imm rs1 rd)  asm{   rot negate -rot addi  } ;
+: la    ( imm rd)      asm{    2dup lui   dup addi  } ;
 
 : not   ( rs rd)  asm{  -1 -rot xori  } ;
 : neg   ( rs rd)  asm{  x0 -rot sub  } ;
