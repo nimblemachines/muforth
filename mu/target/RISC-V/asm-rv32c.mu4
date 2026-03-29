@@ -41,12 +41,7 @@ loading RISC-V RV32 assembler (C subset)
 : crs1'  ( reg8 op - op')  ?reg8  >crs1 ;
 : crs2'  ( reg8 op - op')  ?reg8  >crs2 ;
 
-( Does an unsigned value fit into a bit field?)
-: ufits?  ( value bits - f)   u>>  0= ;  ( unsigned)
-
 : cop,  ( op)  \m h, ;
-
-: offset-too-large  error" offset too large" ;
 
 | -------------------------------------------------------------------------
 | Immediate encodings
@@ -57,81 +52,73 @@ loading RISC-V RV32 assembler (C subset)
 | Instruction bits:  12 .11 10  9  8 . 7  6  5  4 . 3  2  1  0
 |       Immed bits:   5                   4  3  2   1  0       )
 : CI-imm  ( imm op - op')
-   over 6 sfits? if
-      over 5 bit@  >cfunct4
-      swap %0001_1111 and  >crs2  ( [4:0] => bit 2)
-   ^ then  offset-too-large ;
+   | caller checks whether signed or unsigned value fits.
+   over 5 bit@  >cfunct4
+   swap %0001_1111 and  >crs2  ( [4:0] => bit 2) ;
 
 | Instruction bits:  12 .11 10  9  8 . 7  6  5  4 . 3  2  1  0
 |      Offset bits:   5                   4  3  2   7  6       )
 : CI-imm-x4  ( imm op - op')
-   over 8 ufits? if
-      over %1100_0000 and  4 >>  or  ( imm[7:6])
-      over 5 bit@  >cfunct4  ( imm[5])
-      swap %0001_1100 and  >crs2  ( imm[4:2])
-   ^ then  offset-too-large ;
+   over 8 ?ufits
+   over %1100_0000 and  4 >>  or  ( imm[7:6])
+   over 5 bit@  >cfunct4  ( imm[5])
+   swap %0001_1100 and  >crs2  ( imm[4:2]) ;
 
 | Instruction bits:  12 .11 10  9  8 . 7  6  5  4 . 3  2  1  0
 |      Offset bits:   9                   4  6  8   7  5       )
 : CI-imm-x16  ( offset op - op')
-   over 10 sfits? if
-      over 9 bit@  >cfunct4
-      over %0001_1000_0000 and  4 >> or  ( imm[8:7])
-      over 6 bit@  >cimm5
-      over 5 bit@  >crs2
-      swap 4 bit@  6 << or
-   ^ then  offset-too-large ;
+   over 10 ?sfits
+   over 9 bit@  >cfunct4
+   over %0001_1000_0000 and  4 >> or  ( imm[8:7])
+   over 6 bit@  >cimm5
+   over 5 bit@  >crs2
+   swap 4 bit@  6 << or ;
 
 | Instruction bits:  12 .11 10  9  8 . 7  6  5  4 . 3  2  1  0
 |      Offset bits:   5   4  3  2  7   6                       )
 : CSS-imm-x4  ( imm op - op')
-   over 8 ufits? if
-      over %1100_0000 and  2*  or  ( imm[7:6])
-      swap %0011_1100 and  >crs1  ( imm[5:2])
-   ^ then  offset-too-large ;
+   over 8 ?ufits
+   over %1100_0000 and  2*  or  ( imm[7:6])
+   swap %0011_1100 and  >crs1  ( imm[5:2]) ;
 
 | Instruction bits:  12 .11 10  9  8 . 7  6  5  4 . 3  2  1  0
 |      Offset bits:   5   4  3            2  6                 )
 : CL-imm-x4  ( imm op - op')
-   over 7 ufits? if
-      over %0011_1000 and  >crs1  ( imm[5:3])
-      over 2 bit@ 2*  rot 6 bit@  or  >cimm5  ( imm[2|6])
-   ^ then  offset-too-large ;
+   over 7 ?ufits
+   over %0011_1000 and  >crs1  ( imm[5:3])
+   over 2 bit@ 2*  rot 6 bit@  or  >cimm5  ( imm[2|6]) ;
 
 ( This one is pretty crazy!)
 | Instruction bits:  12 .11 10  9  8 . 7  6  5  4 . 3  2  1  0
 |      Offset bits:  11   4  9  8 10   6  7  3  2   1  5       )
 : CJ-imm  ( offset op - op')
-   over 12 sfits? if
-      over %1011_0100_0000 and  2* or  ( off[11|-|9:8|-|6|])
-      over 10 bit@  8 << or
-      over  7 bit@  6 << or
-      over  5 bit@  >crs2
-      over  4 bit@  11 << or
-      swap %1110 and  >crs2  ( off[3:1])
-   ^ then  offset-too-large ;
+   over 12 ?sfits
+   over %1011_0100_0000 and  2* or  ( off[11|-|9:8|-|6|])
+   over 10 bit@  8 << or
+   over  7 bit@  6 << or
+   over  5 bit@  >crs2
+   over  4 bit@  11 << or
+   swap %1110 and  >crs2  ( off[3:1]) ;
 
 | Instruction bits:  12 .11 10  9  8 . 7  6  5  4 . 3  2  1  0
 |      Offset bits:   8   4  3            7  6  2   1  5       )
 : CB-imm  ( offset op - op')
-   over 9 sfits? if
-      over 8 bit@  >cfunct4 ( [8] => bit 12)
-      over %1100_0000 and  2/ or  ( [7:6] => bit 5)
-      over 5 bit@  >crs2  ( [5] => bit 2)
-      over %0001_1000 and  >crs1  ( [4:3] => bit 10)
-      swap %0110 and  >crs2  ( [2:1] => bit 3)
-   ^ then  offset-too-large ;
+   over 9 ?sfits
+   over 8 bit@  >cfunct4 ( [8] => bit 12)
+   over %1100_0000 and  2/ or  ( [7:6] => bit 5)
+   over 5 bit@  >crs2  ( [5] => bit 2)
+   over %0001_1000 and  >crs1  ( [4:3] => bit 10)
+   swap %0110 and  >crs2  ( [2:1] => bit 3) ;
 
 | Instruction bits:  12 .11 10  9  8 . 7  6  5  4 . 3  2  1  0
 |      Offset bits:   5   4  9  8  7   6  2  3                 )
 : CIW-imm  ( offset op - op')
-   over 10 ufits? if
-      over %0011_1100_0000 and  2* or  ( imm[9:6])
-      over 5 bit@  >cfunct4
-      over 4 bit@  11 << or
-      over 3 bit@  >cimm5
-      swap 2 bit@  6 << or
-   ^ then  offset-too-large ;
+   over 10 ?ufits
+   over %0011_1100_0000 and  2* or  ( imm[9:6])
+   over 5 bit@  >cfunct4
+   over 4 bit@  11 << or
+   over 3 bit@  >cimm5
+   swap 2 bit@  6 << or ;
 
 | -------------------------------------------------------------------------
 | Instruction encoding types
@@ -150,8 +137,24 @@ loading RISC-V RV32 assembler (C subset)
 : CR-type-0op  ( opcode)  constant
    does> @  ( op)                                         cop, ;
 
-: CI-type  ( opcode)  constant
-   does> @  ( imm rd op)  rd  CI-imm  cop, ;
+| The CI types use a full-size (5-bit) rd field; the CI' types instead use
+| a 3-bit rd'/rs1' field.
+|
+| The RISC-V spec refers to the CI' type as a CB type, which is misleading,
+| since the CB is a branch type, and the offset is encoded completely
+| differently than the 6 bit immediates.
+|
+| We define signed and unsigned immediate versions of both CI-type and
+| CI'-type.
+
+: CI-imm-s6  ( imm op)  over 6 ?sfits  CI-imm ;
+: CI-imm-u6  ( imm op)  over 6 ?ufits  CI-imm ;
+
+: CI-type-s6   ( opcode)  constant  does> @  ( imm rd op)  rd  CI-imm-s6  cop, ;
+: CI-type-u6   ( opcode)  constant  does> @  ( imm rd op)  rd  CI-imm-u6  cop, ;
+
+: CI'-type-s6  ( opcode)  constant  does> @  ( imm rd'/rs1' op)  crs1'  CI-imm-s6  cop, ;
+: CI'-type-u6  ( opcode)  constant  does> @  ( imm rd'/rs1' op)  crs1'  CI-imm-u6  cop, ;
 
 ( lwsp - word-sized values; offsets multiplied by 4)
 : CI-type-x4  ( opcode)  constant
@@ -191,9 +194,9 @@ assembler hex
   c000  CL-type-x4 c.sw
 ( e000             c.fsw / c.sd)
 
-  0001  CI-type c.addi
-  2001  CJ-type c.jal    ( also encodes c.addiw for rv64/rv128)
-  4001  CI-type c.li
+  0001  CI-type-s6 c.addi
+  2001  CJ-type    c.jal    ( also encodes c.addiw for rv64/rv128)
+  4001  CI-type-s6 c.li
 
 : c.lui  ( imm rd)
   6001  ?regnz  dup 2 xor if
@@ -203,9 +206,9 @@ assembler hex
 : c.addi16sp  ( imm)
   6101  ?immnz  CI-imm-x16  cop, ;
 
-  8001  CI-type c.srli
-  8401  CI-type c.srai
-  8801  CI-type c.andi
+  8001  CI'-type-u6 c.srli
+  8401  CI'-type-u6 c.srai
+  8801  CI'-type-s6 c.andi
 
   8c01  CL-type-misc c.sub
   8c21  CL-type-misc c.xor
@@ -221,7 +224,7 @@ assembler hex
   c001  CB-type c.beqz
   e001  CB-type c.bnez
 
-  0002  CI-type    c.slli    ( also encodes c.slli64 for rv128)
+  0002  CI-type-u6 c.slli    ( also encodes c.slli64 for rv128)
 ( 2002             c.fldsp / c.lqsp)
   4002  CI-type-x4 c.lwsp
 ( 6002             c.flwsp / c.ldsp)
