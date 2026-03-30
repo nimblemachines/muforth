@@ -8,38 +8,62 @@ loading RISC-V meta-compiler (main)
 | Macros defining register conventions
 | -------------------------------------------------------------------------
 
-assembler
-\a a0  constant top
-.ifdef native
-\a ra  constant ip  ( instruction pointer)
-.else
-\a s1  constant ip  ( instruction pointer)
-.then
-\a s0  constant rp  ( return stack pointer; ABI: fp, frame pointer)
-\a gp  constant kp  ( kernel origin pointer)  ( XXX needed?)
-\a tp  constant up  ( "user" pointer - points to per-thread data)
+| We are abandoing any pretense of supporting or being compatible with the
+| "standard" ABI convention for the core integer registers. The only rules
+| we follow are:
+|
+|   (1) be compatible with the RV32E (which has only 16 registers);
+|
+|   (2) make using the compressed (C) instructions as useful as possible -
+|   which means putting commonly-used values in x8 to x15, using x1 as ra,
+|   and using x2 as sp.
 
-( XXX these are outside of compressed instruction set's register range.)
-\a s2  constant ix  ( loop index)
-\a t0  constant w   ( scratch w, also "word" pointer)
-\a t1  constant x   ( scratch x, also "execute" pointer)
-\a t2  constant y   ( scratch y)
-\a t3  constant z   ( scratch z)
+assembler
+| These two are essentially mandated by the compressed instruction
+| extension.
+\a  x1  constant ra
+\a  x2  constant sp
+
+\a  x8  constant w   ( scratch w, also "word" pointer)
+\a  x9  constant x   ( scratch x, also "execute" pointer)
+\a x10  constant y   ( scratch y)
+\a x11  constant z   ( scratch z)
+
+\a x12  constant top  ( XXX should this be called t?)
+\a x13  constant rp   ( return stack pointer)
+\a x14  constant ix   ( loop index)
+.ifdef native
+\a  ra  constant ip   ( instruction pointer for threaded kernels)
+.else
+\a x15  constant ip
+.then
+
+| The registers in the range x3 to x7 are currently unallocated. In the
+| event that we define a multitasker, one of them can be the current *user*
+| pointer. Likewise, if we want to have a central place with a bunch of
+| support routines (perhaps including NEXT), we can define a global
+| pointer.
+|
+| In fact, the standard ABI has done just that, defining x3 and x4 as the
+| global pointer (gp) and thread pointer (tp), respectively. We could do
+| the same.
+|
+| Right now, code and label words are free to use x3 to x7 as they wish;
+| and on RV32I cores, x16 to x31 for any use as well!
+
 forth
 
-( Tell the disassembler about these register names.)
+( Tell the disassembler about our register names.)
 -:  ( reg)
-   dup 0= if  drop  ." zero"  ^  then
+   dup 0= if  drop  ." zero"  ^  then     | XXX is this better than x0?
    dup 16 u< if
 .ifdef native
-            z"    ip sp kp up w  x  y  rp s1 topa1 a2 a3 a4 a5 "
+      z"    ip sp x3 x4 x5 x6 x7 w  x  y  z  toprp ix x15"
 .else
-            z"    ra sp kp up w  x  y  rp ip topa1 a2 a3 a4 a5 "
+      z"    ra sp x3 x4 x5 x6 x7 w  x  y  z  toprp ix ip "
 .then
-   else
-      16 -  z" a6 a7 ix s3 s4 s5 s6 s7 s8 s9 s10s11z  t4 t5 t6 "
-   then
-   swap 3 * + 3 -trailing type ;
+      swap 3 * + 3 -trailing type ^ then
+   .raw-reg ;
 
 : forth-regs  [ #] is .regname ;  forth-regs
 
