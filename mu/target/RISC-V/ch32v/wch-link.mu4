@@ -93,29 +93,69 @@ warn" No BSD support yet for the WCH-LinkE. "
 | probably not happen here; instead it should be handled by the specific
 | code that is doing remote exec, eg, a trampoline to run Forth code.
 
+: dm-disable-interrupts
+   \m mstatus csr@  88 ( MIE+MPIE) bic  \m mstatus csr! ;
+
 : dm-run
    8003 ( machine mode + ebreakm) \m dcsr csr!
-   \m mstatus csr@  88 ( MIE+MPIE) bic  \m mstatus csr!
+   dm-disable-interrupts
    4000_0001 ( resumereq) dmcontrol dm! ;
 
 | XXX should probably loop a max number of times, like in st-link code.
 : halted?  haltsum0 dm@ ;
 
 : l.hello  ( - chunk-size)
-   link-reset  get-link-version .wch-link  connect-chip
-   #256 ;
+   link-reset  get-link-version .wch-link  connect-chip  #256 ;
 
 : l.read    mem-read ;
 : l.write   mem-write ;
 
-: l.status  ( - sp)     begin halted? until  2 ( sp) reg@ ;
-: l.run     ( pc sp)    2 ( sp) reg!  \m dpc csr!  dm-run ;
+: l.status  ( - sp)     begin halted? until  \a sp reg@ ;
+: l.run     ( pc sp)    \a sp reg!  \m dpc csr!  dm-run ;
 
-| TODO: Add code to erase and program the flash!
+( Unlock the flash controller, and clear any error bits.)
+: l.flash-begin
+   dm-disable-interrupts
+   4567_0123  \m FLASH_KEYR mem!       ( write unlock keys)
+  0cdef_89ab  \m FLASH_KEYR mem!
+   \m FLASH_STATR mem@  \m FLASH_STATR mem!  ( clear any error bits) ;
 
-| Connect to WCH-Link device and start chatting.
+( Lock the flash controller by setting LOCK and FLOCK bits.)
+: l.flash-end   8080 \m FLASH_CTLR mem! ;
+
+| For most debug module abstract commands we assume that the command
+| finishes executing immediately. However, unlike reading and writing
+| registers and ram, writing to the flash can take significant time, so we
+| need to wait until the command finishes.
+
+| XXX put this in the debug support file?
+variable #busy          | for counting how many times we have to check
+: wait-for-command
+   begin  abstractcs dm@  [ 1 #12 ( busy) << #] and  while  1 #busy +!  repeat ;
+
+: flash-prog-setup
+   #busy off
+   h preserve debug
+   | This code programs a halfword, increments the memory pointer, and
+   | waits for BSY (in FLASH_STATR) to clear. Including the following
+   | ebreak, it takes 4 progbuf entries.
+   asm{  0 x8 x9 sh   2 x8 c.addi
+         begin   0 x10 x9 c.lw   1 ( BSY) x9 c.andi   x9 c.bnez  }
+   progbuf! ;
+
+: l.program  ( buf a u)
+   1+ 2/ ( #halfwords) swap  1 ( PG) \m FLASH_CTLR mem!  flash-prog-setup
+   \a x8 reg!  \m FLASH_STATR \a x10 reg!
+   for  leh@+ swap  [ postexec \a x9 + #] reg!  wait-for-command  next  drop ;
+
+: l.erase    ( a)
+    2 (      PER) \m FLASH_CTLR mem!  \m FLASH_ADDR mem!
+   42 ( STRT+PER) \m FLASH_CTLR mem!
+   begin  \m FLASH_STATR mem@  1 ( BSY) and 0= until ;
+
+| Connect to the WCH-Link device and start chatting.
 : jtag   chat-via   l.hello  l.status  l.run  l.read  l.write
-                    chat-fail  chat-fail  chat-fail  chat-fail ;
+                    l.flash-begin  l.flash-end  l.erase  l.program ;
 
 .then  ( OSX or Linux)
 
