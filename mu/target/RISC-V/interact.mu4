@@ -107,10 +107,10 @@ ld target/common/stacks.mu4
 : runwait  ( pc)  run  10 ms  t.status  dp! ;               ( wait for target)
 
 
-128 array riscv-seekeys
+128 array target-seekeys
 
 ( Default key action is to run host key code)
-host-seekeys riscv-seekeys  128 cells cmove
+host-seekeys target-seekeys  128 cells cmove
 
 : >target
    chatting @ if   >chat  ^  then  >image ;  ( set up memory access)
@@ -137,15 +137,71 @@ host-seekeys riscv-seekeys  128 cells cmove
    then
    drop ;
 
-riscv-seekeys  -4  du-mode dumping    >target  skip+  skip-  1dump  ( a - a')
-riscv-seekeys  -4  du-mode xrefing    >target  skip+  skip-  1xref  ( a - a')
-riscv-seekeys  -2  du-mode disasming  >target  dis+   dis-   1dis   ( a - a')
+( Support for interactive decompiling.)
+: dec+  ( a - a' 0)   4 advance  0 ;
+: dec-  ( a - a' 0)  -4 advance  0 ;
 
-riscv-seekeys 'seekeys !    ( switch over to our bindings)
+defer 1smart-dec
+defer 1smart-dis
 
-key: d  ( a - a 0)   dumping    0 ;
-key: x  ( a - a 0)   xrefing    0 ;
-key: i  ( a - a 0)   disasming  0 ;
+target-seekeys  -4  du-mode dumping       >target  skip+  skip-  1dump
+target-seekeys  -4  du-mode xrefing       >target  skip+  skip-  1xref
+
+target-seekeys  -4  du-mode decompiling   >target  dec+   dec-   1smart-dec
+target-seekeys  -2  du-mode disasming     >target  dis+   dis-   1smart-dis
+
+meta
+| These variables are filled in when we compile a Forth kernel.
+variable target-docolon
+variable target-doconst
+variable target-docreate
+forth
+
+: target?  ( pfa - link -1 | 0)   .target-runtime. find-constant-chained ;
+
+| This can change the mode that we are in, depending on what it finds in
+| the code field.
+
+: known-code  ( a - code a u)
+   p !  cell*  ( fetch code field contents)
+   dup                  p @ = if  " code"  0 disasming drop ^  then
+   0 decompiling drop ( start decompiling a colon definition)
+   dup \m target-docolon  @ = if  " :"  ^  then
+   dup \m target-doconst  @ = if  " constant"  ^  then
+   dup \m target-docreate @ = if  " create"  ^  then
+   dup label? if                  link>name  ^  then
+                                  " (unknown)" ;
+
+: .target-code  ( a 'link)
+   over _addr .nesting space  over known-code type space  swap .target
+   swap .addr .nesting space  .hcell_ ( code field) ;
+
+: 1dec  ( a)
+   dup .addr .nesting space
+   p !  cell*  dup .hcell_
+   dup -4 and ea !  ( default ea: fetch cell and round down)
+   dup target? if  .target space  drop ^  then
+      equate?  if  .equate space  then ;
+
+| Switches modes any time a target word or a label points to the current
+| address. If neither label nor target it just passes the address through.
+
+: ?switch  ( a - a | <nothing> )
+   dup  p !  cell*  ea !  ( default ea: fetch cell)
+   dup label? if
+      over _addr .nesting space  ." label "  .target space
+      1dis  disasming  shunt ^  then
+   dup target? if  .target-code  shunt ^  then ;
+
+-: ( a)  ?switch  1dis ;  is 1smart-dis
+-: ( a)  ?switch  1dec ;  is 1smart-dec
+
+target-seekeys 'seekeys !    ( switch over to our bindings)
+
+key: d  ( a - a 0)   dumping      0 ;
+key: e  ( a - a 0)   decompiling  0 ;  | e for dEcompile. f for forth? : for colon word?
+key: x  ( a - a 0)   xrefing      0 ;
+key: i  ( a - a 0)   disasming    0 ;
 
 host-seekeys 'seekeys !  ( back to host bindings)
 
