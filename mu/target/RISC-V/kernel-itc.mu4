@@ -82,31 +82,39 @@ code* (unnest)  [r]   ip rpop1   next,  ;c
 ( Macros defining common VM operations)
 ( Compile NEXT inline.)
 assembler
-: dispatch   asm{  -1 cells w x lw   0 x jr  } ;
+.ifdef C-ext   | compressed instructions
+: dispatch   asm{      0 w x c.lw   x c.jr  } ;
+:  next,     asm{     0 ip w c.lw      cell ip c.addi   dispatch  } ;
+: +next,     asm{  cell ip w c.lw   2 cells ip c.addi   dispatch  } ;
+.else
+: dispatch   asm{      0 w x lw   0 x jr  } ;
 :  next,     asm{     0 ip w lw      cell ip ip addi   dispatch  } ;
 : +next,     asm{  cell ip w lw   2 cells ip ip addi   dispatch  } ;
+.then
 forth
 
 __meta
 
-meta: constant  new  ,  ;code  label doconst
-                               0 w w lw  ( fetch constant into w)
-                               ( fall thru)  ;c
+meta: constant  new  ,  ;code    label doconst
+                                 implements target-doconst
+                                    cell w w lw  ( fetch constant into w)
+                                 label wpush
+                                    top push1   w top mv   next,  ;c
 
-meta: create    new     ;code  label dovar
-                               label wpush
-                               top push1   w top mv  ( move pfa to top)
-                               label shared-next  next,  ;c
+meta: create    new     ;code    label docreate
+                                 implements target-docreate
+                                    cell w w addi  ( put pfa into w)   wpush j  ;c
 
-                               label dodoes
-                               top push1   w top mv  ( move pfa to top)
-                               x w mv  ( x is parent ip)  ( fall thru)  ;c
+                                 label dodoes
+                                    top push1   cell w top addi  ( put pfa into top)
+                                    -4 x w addi  ( x is parent ip)  ( fall thru)  ;c
 
-meta: :         new  ]  ;code  label docolon
-                               ip rpush1   w ip mv  ( pfa is new ip)   next,  ;c
+meta: :         new  ]  ;code    label docolon
+                                 implements target-docolon
+                                    ip rpush1   cell w ip addi  ( pfa is new ip)   next,  ;c
 
-code* (unnest)  [r]   ip rpop1   begin   next,  ;c
-codes nope      [r]
+code* (unnest)  [r]   ip rpop1   label shared-next   next,  ;c
+shared-next codes nope  [r]
 
 | For ITC kernels, define one of two possible ways to compile NEXT for the
 | rest of the kernel.
@@ -125,8 +133,8 @@ code* (lit)     [r]   0 ip w lw  ( fetch literal)
                       top push1   w top mv  ( move literal to top)
                       +next,  ( skip literal value)  ;c
 
-code execute   ( cfa/pfa)       top w mv   begin   top pop1   dispatch  ;c
-code @execute  ( 'cfa/'pfa)   0 top w lw   again  ;c
+code execute   ( cfa)       top w mv   begin   top pop1   dispatch  ;c
+code @execute  ( 'cfa)    0 top w lw   again  ;c
 
 code*    (branch)   [r]
 label branch        0 ip ip lw  ( follow branch)   next,  ;c
@@ -521,7 +529,7 @@ label continue-forth
 
 .then
 
-label trampoline  ( x0 .. xn pfa - y0 .. ym)
+label trampoline  ( x0 .. xn cfa - y0 .. ym)
    ]  execute  begin  bug  again  [
 
 __host
@@ -573,7 +581,7 @@ variable tmepc    ( mepc exception register)
 |    RP = saved RP
 |    IX = saved IX
 
-( NOTE: For initial execution of a Forth word, xn is pfa!)
+( NOTE: For initial execution of a Forth word, xn is cfa!)
 : continue  ( x0 .. xn ip rp ix - y0 .. yn ip rp ix)
    stack>  \l continue-forth runwait  stack<
    tix !  trp !  tip !  .forth-regs ;
@@ -584,7 +592,7 @@ meta
 forth
 
 ( Set rp to rp0, ix to 0, and ip to trampoline.)
--: ( pfa)  ( execute target forth word)
+-: ( cfa)  ( execute target forth word)
    \l trampoline  rp0  0  ( ip rp ix)  continue ;  is remote
 
 

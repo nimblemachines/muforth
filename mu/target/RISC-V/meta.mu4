@@ -216,7 +216,7 @@ forth
 
 : implements   \m here  lookup  ! ;
 
-( Compile a pfa - for ITC - or a cfa - for native - into a target colon word.)
+( Compile a cfa into a target colon word.)
 meta
 .ifdef native
 : compile,   asm{  ip jal  } ;
@@ -263,8 +263,7 @@ meta
 variable last-code   ( for ;code and does> to fix up)
 
 | Create new target names. A name is a target word which is defined as a
-| _constant_ equal to its parameter field address, for ITC, or its code
-| field address, for native code.
+| _constant_ equal to its code field address.
 
 | labels are always created in .labels.
 |  names are always created in .target.
@@ -279,26 +278,24 @@ meta
    swap ! ( link our new word to last-runtime) ;
 
 : label   current preserve  .labels. definitions  \m here  constant  __asm ;
-: name    current preserve  target  \m here  constant ;
-: code,   \m here last-code !  ( make a code field)  "deadc0de \m , ;
+: name    current preserve  target                \m here  constant ;
 
 .ifdef native
 
-( Created constant contains target cfa, not pfa!)
-: new    \m name  \m code, ;  ( for words with code fields)
-: code   \m name  __asm ;
+| Native code words can start on 2 byte alignment.
+: code    \m name  __asm ;
 
 .else  ( ITC)
 
-( Created constant contains target pfa, not cfa!)
-: new     \m code,  \m name ;  ( for words with code fields)
-: codes   ( 'code)  \m ,  \m name  __asm ;
-: code    \m here  \m cell+  \m codes ;
+| ITC words have to have a 4-byte-aligned code field.
+: codes   ( 'code)  \m name  \m ,  __asm ;
+: code    \m align  \m here               \m cell+  \m codes ;
+: new     \m align  \m here  last-code !  "deadc0de \m codes ;
 
 .then
 
 ( For code words that implement forward-referenced meta-compiler primitives.)
-: code*   \m code  untoken  implements ;
+: code*   \m align  implements  untoken  \m code ;
 
 
 | For forward references. Use hook to define the hook. This creates a label
@@ -461,11 +458,11 @@ forth
 | -------------------------------------------------------------------------
 
 meta
-| ' get target word's constant value: its pfa
+| ' get target word's constant value: its cfa
 | We search runtime words too, so we can du or dis them.
 
-: '   .target-runtime. chain' execute ;
-: >value  image-@ ;
+: '   ( - cfa)  .target-runtime. chain' execute ;
+: >body   ( cfa - pfa)  \m cell+ ;
 
 : literal    p, (lit)  \m , ;  ( make a target literal)
 
