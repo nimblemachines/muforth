@@ -133,15 +133,35 @@ variable #busy          | for counting how many times we have to check
 : wait-for-command
    begin  abstractcs dm@  [ 1 #12 ( busy) << #] and  while  1 #busy +!  repeat ;
 
+: >iobase  ( a - high-20-bits)    0fff bic ;
+: >io      ( a - 12-bit-offset)   0fff and  dup 800 and 2* - ;
+
+snippet {prog-halfword}
+   0 x8 x9 sh   2 x8 c.addi
+   begin   0 x10 x9 c.lw   1 ( BSY) x9 c.andi   x9 c.bnez  ;snip
+
+| NOTE: This requires the host to increment the address. If we add the
+| auto-incr instruction, the snippet requires 4 progbuf entries.
+snippet {load-word-003}
+   | x8 is flash address to write
+   | x9 is word to write
+   | x10 is FLASH_BASE (use >iobase to find it)
+   | x11 is BUFLOAD bit
+
+   0 x8 x9 c.sw         | write word to flash
+   FLASH_CTLR >io x10 x11 c.sw       | set the BUFLOAD bit of FLASH_CTLR
+   begin  FLASH_STATR >io x10 x9 c.lw  1 ( BSY) x9 c.andi  x9 c.bnez  ;snip
+
+snippet {load-word-203}
+   | x8 is flash address to write
+   | x9 is word to write
+   | x10 is FLASH_BASE (use >iobase to find it)
+
+   0 x8 x9 c.sw         | write word to flash
+   begin  FLASH_STATR >io x10 x9 c.lw  2 ( WR_BSY) x9 c.andi  x9 c.bnez  ;snip
+
 : flash-prog-setup
-   #busy off
-   h preserve debug
-   | This code programs a halfword, increments the memory pointer, and
-   | waits for BSY (in FLASH_STATR) to clear. Including the following
-   | ebreak, it takes 4 progbuf entries.
-   asm{  0 x8 x9 sh   2 x8 c.addi
-         begin   0 x10 x9 c.lw   1 ( BSY) x9 c.andi   x9 c.bnez  }
-   progbuf! ;
+   #busy off  {prog-halfword} ;
 
 : l.program  ( buf a u)
    1+ 2/ ( #halfwords) swap  1 ( PG) \m FLASH_CTLR mem!  flash-prog-setup
