@@ -19,14 +19,16 @@ loading ESP32-C3 ROM bootloader support
 : echo-until  ( b)
    begin  b> dup emit  over = until  drop ;
 
+: matched-rest?  ( a u - matched?)
+   for  c@+ swap  b> dup emit  xor if ( mismatch) r> 2drop 0 ^ then  next  drop -1 ;
+
 | Await a string. Used to match the ESP ROM header message.
-runtime
-: (await")  ( a u)  for  c@+ swap  echo-until  next  drop ;
-forth
-: await"   char " parse  (await") ;
-compiler
-: await"   compile (")  \f z" drop  compile (await") ;
-forth
+: "await  ( a u)
+   begin
+      2dup  ( so we can start all over again on any mismatch)
+      over c@ echo-until  ( wait for first character)  1 -1 v+  ( skip first char)
+      matched-rest? if  2drop ^  then
+   again ;
 
 hex
 
@@ -117,13 +119,10 @@ variable cmd   | last command sent to bootloader; so we can match response
    #115200 bps  flush drain  resync
    #256 ;
 
-: setup    ( buf a u - a #words)   rot m !  \m aligned \m cell/ ;
-
-: b.read   ( buf a u)
-   setup  for  dup read-reg >3210 m& m& m& m&  \m cell+  next  drop ;
+: b.read    ( buf a u)   over + swap do              i read-reg  swap lew!+  \m cell +loop  drop ;
+: b.write   ( buf a u)   over + swap do  swap lew@+  i write-reg             \m cell +loop  drop ;
 
 : NYI   error" not yet implemented" ;
-: b.write    ( buf a u)  NYI ;
 : b.erase    ( a)  NYI ;
 : b.program  ( buf a u)  NYI ;
 
@@ -147,20 +146,63 @@ variable cmd   | last command sent to bootloader; so we can match response
 : mget  ( - state)  ( "modem get")   target-tty modem-get ;
 : mset  ( state)    ( "modem set")   target-tty modem-set  10 ms ;
 
+.ifdef devkit-style
+
+| This sequence is required to satisfy the strange circuit on the Espressif
+| DevKit boards.
+
+: >bootloader
+   [ modem-rts modem-dtr or #] mset    | start with RTS and DTR both high
+     0                         mset    | bring both low
+   [ modem-rts 0         or #] mset    | bring RTS high: set GPIO9 low
+   [ 0         modem-dtr or #] mset    | bring RTS low, DTR high: reset device
+   [ modem-rts modem-dtr or #] mset ;  | both high again
+
+.else
+
 | When we first open the device, both rts and dtr are 1. Does this mean
 | they are a logic one? In hardware-land they are active-low; asserted
 | would mean 0. We don't know which it is!
 
+| RTS DTR Action
+| ~~~ ~~~ ~~~~~~~
+|  0   0  Clear download mode flag
+|  0   1  Set download mode flag
+|  1   0  Reset ESP32
+|  1   1  No action
+
+| This works for Xiao-C6 but fails on C3-DevKit, which has a weird
+| pseudo-flip-flop that makes no sense. It has its own sequence, above.
+
 : >bootloader
-   [ modem-dtr modem-rts or #] mset    | start with DTR and RTS both high
-   [ 0         modem-rts or #] mset    | bring DTR low
-   [ modem-dtr 0         or #] mset    | bring RTS low
-   [ modem-dtr modem-rts or #] mset ;  | both high again
+   [ modem-rts modem-dtr or #] mset    | start with RTS and DTR both high
+   [ 0         modem-dtr or #] mset    | bring RTS low: set download flag
+   [ modem-rts modem-dtr or #] mset    | both high again
+   [ modem-rts 0         or #] mset    | bring DTR low: reset device
+   [ modem-rts modem-dtr or #] mset ;  | both high again
+
+.then
+
+| Oddly, this seems to work for both Xiao-style and Devkit-style boards.
+
+: >normal-reset
+   [ modem-rts modem-dtr or #] mset    | start with RTS and DTR both high
+   [ 0         modem-dtr or #] mset    | bring RTS low: set download flag
+     0                         mset    | bring both low: clear download flag
+   [ modem-rts 0         or #] mset    | bring RTS high: reset device
+   [ modem-rts modem-dtr or #] mset ;  | bring both high again
 
 | We only need to say "hi" when first connecting to the target - when we
 | first force it into bootloader mode.
 
 : hi
    #115200 bps  flush drain  >bootloader
-   await" waiting for download"  b> emit  b> emit  ( CRLF)
-   ." Received ROM header"  resync  boot ;
+   " waiting for download" "await  b> emit  b> emit  ( CRLF)
+   ." Received ROM bootloader header"  resync  boot ;
+
+| These are for testing.
+: echo
+   #115200 bps  flush drain  >normal-reset  begin  b> emit  again ;
+
+: boot-echo
+   #115200 bps  flush drain  >bootloader  begin  b> emit  again ;
