@@ -99,7 +99,8 @@ defer dm!
 1 #17 << constant transfer
 1 #16 << constant aarwrite
 
-2 >aarsize  transfer +  constant transfer32
+2 >aarsize  transfer +              constant aar-read32
+2 >aarsize  transfer +  aarwrite +  constant aar-write32
 
 | The lowest bits of command are the "regno" field.
 | 0000 - 0fff: CSR
@@ -107,8 +108,8 @@ defer dm!
 | 1020 - 103f: floating point registers
 
 | Read or write a CSR.
-: csr@  ( csr# - val)                  [ transfer32            #] +  cmd!  data0 dm@ ;
-: csr!  ( val csr#)    swap data0 dm!  [ transfer32 aarwrite + #] +  cmd! ;
+: csr@  ( csr# - val)                  aar-read32  cmd!  data0 dm@ ;
+: csr!  ( val csr#)    swap data0 dm!  aar-write32 cmd! ;
 
 | Read or write a core register.
 : reg@  ( reg# - val)  1000 + csr@ ;
@@ -121,10 +122,14 @@ defer dm!
 | live outside of the 32-bit address space, we start by creating a new
 | aspace - a separate address space - to hold our instructions.
 |
-| There are at most 16 4-byte progbuf slots - 64 bytes - so we need
-| log_2(64) or 6 bits of address space. Let's put that in our aspace and
-| use 64 as the byte count for the memory image. And we will make a single
-| *region* pointing into the image, called debug.
+| There are at most 16 4-byte progbuf slots - 64 bytes - but we want to be
+| able to precompile an arbitrary number of progbuf code snippets, so
+| loading them is fast and easy.
+|
+| Let's allocate 1 KiB for snippets, so we need log_2(1Ki) or 10 bits of
+| address space. Let's put that in our aspace and use 1 Ki as the byte
+| count for the memory image. And we will make a single *region* pointing
+| into the image, called debug.
 
 1 Ki              | lots of space for sequences
 dup log_2 drop    | bits required for our aspace
@@ -134,11 +139,7 @@ h @  ( save region)
 debug  0 region!  zero-image    | clear it out
 h !  ( restore region)
 
-| We can also use assembler macros to do the same thing, so it's easy to
-| compile code to read memory, write memory, jump off into the weeds, etc.
-
-| Before copying the instructions in the debug region to the progbuf we
-| want to add an ebreak at the end so the user doesn't have to.
+| Each debug code snippet needs to end with an ebreak instruction.
 |
 | If the core has compressed instructions (C-ext is defined) then we can
 | use c.ebreak instead of ebreak. We do this when we need to "pad" a
@@ -158,23 +159,29 @@ h !  ( restore region)
 | but I need a better name!
 
 | Remember the last snippet we stored into progbuf. If we try to store the
-| same one, do nothing.
+| same one again, do nothing.
 
 variable last-snippet
 
-: snippet  create  h @ debug  \m here image+  __asm ;
-: ;snip
+: snippet  ( - h start)  create  h @ debug  \m here image+  __asm ;
+: ;snip    ( h start)
    compile-ebreak  \m here image+  rot h !
    over - \m cell/ , ( #words)  , ( start)
    does>  last-snippet @  over last-snippet !  over = if  drop ^  then
           2@ 0 do  lew@+ swap  i progbuf0 + dm!  loop  drop ;
 
-| Let's define words to read and write memory.
-
-| Progbuf routines that use the core's lw and sw instructions to read and
-| write memory. We post-increment the address register (x5) to make reading
-| and writing chunks easier. Of course, this is overkill for single word
-| transfers. But by remembering which progbuf routine we last copied over
+| Let's define words to read and write memory. While we can use abstract
+| access commands to read and write registers and CSRs, on many devices we
+| won't be able to directly access memory. So we write a small program -
+| one or two instructions - store it into progbuf, and execute it.
+|
+| Progbuf routines use the core's lw and sw instructions to read and
+| write memory. If we have compressed instructions, the code to read or
+| write a single word of memory is two instructions: c.lw/c.sw and
+| c.ebreak, and fits into *one* progbuf slot.
+|
+| For reading and writing chunks of memory, we post-increment the address
+| register (x8). By remembering which progbuf routine we last copied over
 | we can elide the copy if we do several read operations or several write
 | operations sequentially.
 
@@ -196,7 +203,7 @@ snippet {mem-write-incr}   0 x8 x9 sw   4 x8 x8 addi  ;snip
 
 .then
 
-: read-setup   ( a)   [ 8 postexec + #] reg! ;    | set addr; read word
+: read-setup   ( a)   [ 8 postexec + #] reg! ;    | set addr; read word into x9
 : write-setup  ( a)     8               reg! ;    | set addr
 
 | Read/write a single 32-bit word from/to memory.
