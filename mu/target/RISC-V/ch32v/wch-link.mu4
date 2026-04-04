@@ -46,7 +46,7 @@ warn" No BSD support yet for the WCH-LinkE. "
 
 #64 buffer cmdbuf
 
-: <cmd  ( len cmd - cmdbuf+1)   81 cmdbuf c!+ c!+ c!+ ;
+: <cmd  ( len cmd - cmdbuf+3)   81 cmdbuf c!+ c!+ c!+ ;
 : cmd>  ( cmdbuf+n)   cmdbuf tuck -  uwrite ;
 
 : ?expected  ( #expected #got)
@@ -72,11 +72,15 @@ warn" No BSD support yet for the WCH-LinkE. "
 -:   ( w reg)
    2 ( write) -rot  dm-cmd drop ;  is dm!
 
-: link-reset    0ff 01 0d <cmd c!+ cmd>  4 expect drop ;
-: connect-chip   02 01 0d <cmd c!+ cmd>  8 expect  c@+ bew@ ;
+| Shorthand. We use this several times. Sends a command, a length of 1, and
+| a sub-command.
+: cmd2   ( subcmd cmd)   1 ( len) swap  <cmd  c!+  cmd> ;
+
+: link-reset    0ff 0d cmd2  4 expect drop ;
+: connect-chip   02 0d cmd2  8 expect  c@+ bew@ ;
 
 : get-link-version  ( - v-major v-minor programmer)
-                 01 01 0d <cmd c!+ cmd>  7 expect
+                 01 0d cmd2  7 expect
    c@+ ( v-major)  c@+ ( v-minor)  leh@ ( programmer) ;
 
 : .version  ( v-major v-minor)   <#  # # drop  char . hold  #s #> type ;
@@ -104,24 +108,7 @@ warn" No BSD support yet for the WCH-LinkE. "
 | XXX should probably loop a max number of times, like in st-link code.
 : halted?  haltsum0 dm@ ;
 
-: l.hello  ( - chunk-size)
-   link-reset  get-link-version .wch-link  connect-chip  #256 ;
-
-: l.read    mem-read ;
-: l.write   mem-write ;
-
-: l.status  ( - sp)     begin halted? until  \a sp reg@ ;
-: l.run     ( pc sp)    \a sp reg!  \m dpc csr!  dm-run ;
-
-( Unlock the flash controller, and clear any error bits.)
-: l.flash-begin
-   dm-disable-interrupts
-   4567_0123  \m FLASH_KEYR mem!       ( write unlock keys)
-  0cdef_89ab  \m FLASH_KEYR mem!
-   \m FLASH_STATR mem@  \m FLASH_STATR mem!  ( clear any error bits) ;
-
-( Lock the flash controller by setting LOCK and FLOCK bits.)
-: l.flash-end   8080 \m FLASH_CTLR mem! ;
+| Flash programming support.
 
 | For most debug module abstract commands we assume that the command
 | finishes executing immediately. However, unlike reading and writing
@@ -133,49 +120,128 @@ variable #busy          | for counting how many times we have to check
 : wait-for-command
    begin  abstractcs dm@  [ 1 #12 ( busy) << #] and  while  1 #busy +!  repeat ;
 
-: >iobase  ( a - high-20-bits)    0fff bic ;
+( Unlock the flash controller, and clear any error bits.)
+: l.flash-begin
+   #busy off
+   dm-disable-interrupts
+   4567_0123  \m FLASH_KEYR mem!       ( write unlock keys)
+   cdef_89ab  \m FLASH_KEYR mem!
+   4567_0123  \m FLASH_MODEKEYR mem!   ( write fast programming mode unlock keys)
+   cdef_89ab  \m FLASH_MODEKEYR mem!
+   \m FLASH_STATR mem@  \m FLASH_STATR mem!  ( clear any error bits) ;
+
+( Lock the flash controller by setting LOCK and FLOCK bits.)
+: l.flash-end   8080 \m FLASH_CTLR mem! ;
+
+: wait-for-bsy-clear   begin  \m FLASH_STATR mem@  1 ( BSY) and 0= until ;
+
+: l.erase    ( a)
+    2 (      PER) \m FLASH_CTLR mem!  \m FLASH_ADDR mem!
+   42 ( STRT+PER) \m FLASH_CTLR mem!  wait-for-bsy-clear ;
+
+: >iobase  ( a - high-20-bits)    800 + ( round up)  0fff bic ;
 : >io      ( a - 12-bit-offset)   0fff and  dup 800 and 2* - ;
 
 snippet {prog-halfword}
    0 x8 x9 sh   2 x8 c.addi
    begin   0 x10 x9 c.lw   1 ( BSY) x9 c.andi   x9 c.bnez  ;snip
 
-| NOTE: This requires the host to increment the address. If we add the
-| auto-incr instruction, the snippet requires 4 progbuf entries.
+| NOTE: Currently UNUSED. We are using the fast programming method.
+: program-by-halfwords  ( buf a u)
+   1+ 2/ ( #halfwords) swap  1 ( PG) \m FLASH_CTLR mem!  {prog-halfword}
+   \a x8 reg!  \m FLASH_STATR \a x10 reg!
+   for  leh@+ swap  [ postexec \a x9 + #] reg!  wait-for-command  next  drop ;
+
+| Bits for 003 FLASH_CTLR
+1 #16 <<  constant FTPG       | fast programming mode
+1 #18 <<  constant BUFLOAD    | load programming buffer
+1 #19 <<  constant BUFRST     | clear programming buffer
+
 snippet {load-word-003}
    | x8 is flash address to write
    | x9 is word to write
    | x10 is FLASH_BASE (use >iobase to find it)
-   | x11 is BUFLOAD bit
+   | x11 is BUFLOAD + FTPG bits
 
-   0 x8 x9 c.sw         | write word to flash
-   FLASH_CTLR >io x10 x11 c.sw       | set the BUFLOAD bit of FLASH_CTLR
+   0 x8 x9 c.sw   4 x8 c.addi       | write word to flash; incr address
+   FLASH_CTLR >io x10 x11 c.sw      | set the BUFLOAD bit of FLASH_CTLR
    begin  FLASH_STATR >io x10 x9 c.lw  1 ( BSY) x9 c.andi  x9 c.bnez  ;snip
+
+| NOTE: We ignore u and *always* program 64 bytes (16 words). Caller needs
+| to chunk this properly and also pad the buf with "ff. The normal flash
+| region is fine.
+|
+| NOTE also: We do not execute wait-for-command, like we did when
+| programming by halfwords (conventional programming). I measured #busy
+| during programming of both the 003 and 203 and it remained at zero.
+
+: program-fast-003  ( buf a u)
+   | Set fast programming mode.
+   FTPG \m FLASH_CTLR mem!
+
+   | Clear programming buffer.
+   [ FTPG BUFRST + #] \m FLASH_CTLR mem!  wait-for-bsy-clear
+
+   | Load programming buffer. 64 bytes = 16 words.
+   over \a x8 reg!  [ \m FLASH_STATR >iobase #] \a x10 reg!  [ FTPG BUFLOAD + #] \a x11 reg!
+   {load-word-003}
+   rot #16 for  lew@+ swap  [ postexec \a x9 + #] reg!  next  2drop
+
+   | Start programming.
+   ( a) \m FLASH_ADDR mem!  [ FTPG 40 ( STRT) + #] \m FLASH_CTLR mem!  wait-for-bsy-clear ;
+
+| Bits for 203 FLASH_CTLR
+|                  FTPG       | fast programming mode
+1 #21 <<  constant PGSTRT     | start fast programming
 
 snippet {load-word-203}
    | x8 is flash address to write
    | x9 is word to write
    | x10 is FLASH_BASE (use >iobase to find it)
 
-   0 x8 x9 c.sw         | write word to flash
+   0 x8 x9 c.sw   4 x8 c.addi       | write word to flash; incr address
    begin  FLASH_STATR >io x10 x9 c.lw  2 ( WR_BSY) x9 c.andi  x9 c.bnez  ;snip
 
-: flash-prog-setup
-   #busy off  {prog-halfword} ;
+| NOTE: We ignore u and *always* program 256 bytes (64 words). Caller needs
+| to chunk this properly and also pad the buf with "ff. The normal flash
+| region is fine.
+|
+| See "NOTE also" above about wait-for-command.
 
-: l.program  ( buf a u)
-   1+ 2/ ( #halfwords) swap  1 ( PG) \m FLASH_CTLR mem!  flash-prog-setup
-   \a x8 reg!  \m FLASH_STATR \a x10 reg!
-   for  leh@+ swap  [ postexec \a x9 + #] reg!  wait-for-command  next  drop ;
+: program-fast-203  ( buf a u)
+   | Set fast programming mode.
+   FTPG \m FLASH_CTLR mem!
 
-: l.erase    ( a)
-    2 (      PER) \m FLASH_CTLR mem!  \m FLASH_ADDR mem!
-   42 ( STRT+PER) \m FLASH_CTLR mem!
-   begin  \m FLASH_STATR mem@  1 ( BSY) and 0= until ;
+   | Load programming buffer. 256 bytes = 64 words.
+   swap \a x8 reg!  [ \m FLASH_STATR >iobase #] \a x10 reg!
+   {load-word-203}
+   swap #64 for  lew@+ swap  [ postexec \a x9 + #] reg!  next  2drop
+
+   | Start programming.
+   [ FTPG PGSTRT + #] \m FLASH_CTLR mem!  wait-for-bsy-clear ;
+
+| Currently supported chip types:
+|    9  CH32V003
+|    5  CH32V203
+
+defer l.program-fast
+: setup-fast-programming  ( chip-type - chunk-size)
+   9 = if  now program-fast-003  is l.program-fast   #64  ^  then
+           now program-fast-203  is l.program-fast  #256 ;
+
+: l.hello  ( - chunk-size)
+   link-reset  get-link-version .wch-link  connect-chip
+   over ( chip-type) setup-fast-programming ;
+
+: l.read    mem-read ;
+: l.write   mem-write ;
+
+: l.status  ( - sp)     begin halted? until  \a sp reg@ ;
+: l.run     ( pc sp)    \a sp reg!  \m dpc csr!  dm-run ;
 
 | Connect to the WCH-Link device and start chatting.
 : jtag   chat-via   l.hello  l.status  l.run  l.read  l.write
-                    l.flash-begin  l.flash-end  l.erase  l.program ;
+                    l.flash-begin  l.flash-end  l.erase  l.program-fast ;
 
 .then  ( OSX or Linux)
 
