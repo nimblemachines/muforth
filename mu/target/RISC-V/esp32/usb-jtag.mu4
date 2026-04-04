@@ -1,0 +1,291 @@
+| This file is part of muforth: https://muforth.dev/
+|
+| Copyright (c) 2002-2026 David Frech. (Read the LICENSE for details.)
+
+loading ESP32 USB-JTAG support
+
+| NOTE/WARNING/FYI: This is a NON-WORKING work-in-progress.
+|
+| For some reason I am having a hard time setting the IR so I can read and
+| write dtmcs and dmi. I always read back zeros.
+|
+| Otherwise, I have implemented all of the necessaries to convenienty drive
+| the JTAG processor on the chip, including the repeating commands for
+| doing run-length encoding.
+
+
+| We want to be able to talk to the on-chip JTAG port that is part of the
+| USB-serial-JTAG peripheral.
+|
+| It exposes two bulk endpoints on interface 1 of 303a:1001. We write a
+| stream of nybbles (instructions) to the OUT endpoint that drives the JTAG TAP (test
+| access port) state machine; these can specify the capture of shifted
+| data, which we then read back from the IN endpoint.
+|
+| It's conceptually simple, but the JTAG TAP is not. It has a lot of
+| states, and we need to find our paths through it.
+
+decimal
+
+| NOTE: This code requires a modified version of usb-find-device that takes
+| an interface parameter. Yet another way in which this code is currently
+| not very usable!
+
+"303a "1001 2 usb-find-device  .if  constant usb-jtag  .else
+   ." No ESP32 USB-JTAG devices found. "
+.then
+
+.ifdef usb-jtag
+
+." Found ESP32 USB-JTAG device. "
+
+.ifdef usb-read-pipe  ( OSX or Linux)
+
+| On OSX in particular, if you don't do this, the next time around the
+| board wedges... Weird.
+
+: done   usb-jtag  usb-close ;
+
+                             | ep dir
+: jread   ( buf len - #read)  [ 3 1 usb-jtag usb-find-pipe #]  usb-jtag  usb-read-pipe ;
+: jwrite  ( buf len)          [ 2 0 usb-jtag usb-find-pipe #]  usb-jtag  usb-write-pipe ;
+
+.then   ( no bsd support yet)
+
+.else  ( no usb-jtag found)
+
+| No-ops so we can at least test the stream generation without a device
+| connected.
+
+: jread   ( buf len - #read)  2drop ;
+: jwrite  ( buf len)          ;  | leave on stack for testing
+
+.then  ( def usb-jtag)
+
+
+| Here are the nybbles accepted by the chip:
+|
+|       bit  3   2   1   0
+| ~~~~~~~~~~~~~~~~~~~~~~~~~~
+| CMD_CLK    0 cap tms tdi
+| CMD_RST    1   0   0 srst
+| CMD_FLUSH  1   0   1   0
+| CMD_RSV    1   0   1   1
+| CMD_REP    1   1  R1  R0
+|
+| CMD_CLK drives signals onto tdi and tms and optionally captures the data
+| on tdo.
+|
+| CMD_FLUSH writes the captured back on the IN endpoint. This endpoint is
+| double-buffered and consists of two 64 byte buffers. When a buffer is
+| full it is automatically written. FLUSH forces the write of un-full
+| buffers. We can use two CMD_FLUSH in a row to end a transaction and pad
+| to a byte boundary.
+|
+| CMD_RSV is reserved.
+|
+| CMD_REP is for doing run-length-encoding of long streams of identical
+| nybbles. Each CMD_REP represents two bits of a larger number, ordered
+| from least to most significant (ie, little-endian).
+|
+| That's it!
+
+| Compile command into stream, one byte per nybble. We combine the nybbles
+| when we start concatenating streams.
+
+variable last-cmd    | so we can compress repeated commands
+variable #cmd-repeated
+
+| We represent the repeat count by a series of CMD_REP instructions, each
+| one containing two bits of the count, from least to most significant.
+| Think of them as representing a quaternary (base-4) number, in
+| little-endian order.
+
+: ?repeated
+   #cmd-repeated @ ?if
+      begin  4 u/mod ( r q)  swap %1100 ( CMD_REP) or  \m c,  dup 0= until
+      drop
+   then ;
+
+: cmd,  ( cmd)
+   dup 8 u< if  ( CMD_CLK)  
+      last-cmd @ over = if
+         1 #cmd-repeated +!  drop ^  then
+      ?repeated
+      dup last-cmd !  #cmd-repeated off  then
+   \m c, ;
+
+: lsb   ( bits - bits' lsb)   dup u2/  swap 1 and ;
+
+| Shift n TMS bits.
+: tms  ( bits n)   for  lsb 2* cmd,  next  drop ;
+
+| Shift n TDI bits, ignoring the DO bits. Sets tms bit to 0.
+: tdi  ( bits n)   for  lsb    cmd,  next  drop ;
+
+| Shift n TDI bits, while also capturing n TDO bits.
+variable #bits-captured
+: tdio  ( bits n)
+   dup #bits-captured +!
+   for  lsb  4 or ( cap)  cmd,  next  drop ;
+
+| We also want to document the JTAG state machine. Instead of trying to
+| draw ASCII art arrows I'm going to show it in table form. Since the
+| state transitions for capturing, shifting, and updating are the same
+| between the instruction register (IR) and data register (DR), I'm only
+| going to show one set of them. You choose one or the other by starting in
+| Select-DR or Select-IR.
+|
+| Everything in JTAG is shifted in LSB first; ie, TDI is connected to the
+| MSB of the register and TDO to the LSB.
+|
+| The standard uses two long names that I'm going to abbreviate:
+|
+|   Test-Logic-Reset  ==>  Reset
+|   Run-Test/Idle     ==>   Idle
+|
+| State       0          1             Notes
+| ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+| Reset       Idle       Reset         ET phone home: 5 1 bits takes us home
+| Idle        Idle       Select-DR
+| Select-DR   Capture*   Select-IR
+| Select-IR   Capture*   Reset
+|
+| Capture*    Shift*     Exit1*
+| Shift*      Shift*     Exit1*
+| Exit1*      Pause*     Update*
+| Pause*      Pause*     Exit2*
+| Exit2*      Shift*     Update*
+| Update*     Idle       Select-DR
+|
+| The JTAG state machine was designed so that 5 1-transitions will always
+| move to Reset and stay there. That's why Reset's "stay put" transition is
+| 1 instead of 0, like it is in the Idle, Pause, and Shift states.
+
+| I'm not having great luck with select-dr being our "home state". Let's
+| try Idle instead. (Dear reader, this didn't help the fundamental problem:
+| not properly setting IR.)
+|
+| >home will take us home from the shift state, whether that should be Idle
+| or Select-DR.
+
+.ifdef home-is-select-dr
+
+| Take us to Select-DR (our home) state from anywhere.
+: et-phone-home   %101_1111 7 tms ;
+: >home                %111 3 tms ;    | from shift state
+
+| These take us from home to a select state.
+: >select-dr                      ;    | We are already there
+: >select-ir              1 1 tms ;
+
+.else  ( default to idle state being our home state)
+
+| Take us to Idle (our home) state from anywhere.
+: et-phone-home   %01_1111 6 tms ;
+: >home               %011 3 tms ;     | from shift state
+
+| These take us from home to a select state.
+: >select-dr             1 1 tms ;
+: >select-ir           %11 2 tms ;
+
+.then
+
+| Move to shift from corresponding select state.
+: >shift       %00 2 tms ;
+
+: shift-in-only      ( bits n)   >shift  tdi   >home ;
+: shift-and-capture  ( bits n)   >shift  tdio  >home ;
+: capture-only       (      n)   0  swap shift-and-capture ;
+
+: dr!    ( bits n)   >select-dr  shift-in-only ;
+: dr!@   ( bits n)   >select-dr  shift-and-capture ;
+: dr@    (      n)   >select-dr  capture-only ;
+
+: ir!    ( bits)     >select-ir  5 shift-in-only ;
+
+| Combining the nybbles. The instructions are executed high-nybble first.
+variable nybble            | empty or high nybble plus flag
+
+| Add nybble to string of nybbles.
+: nyb!+   ( a nyb - a')
+   nybble @ ?if  or  swap c!+  nybble off  ^  then  4 <<  "100 or  nybble ! ;
+
+| Add a CMD_FLUSH to the end of the stream. If necessary, to byte-align the
+| stream, add a second one. The hardware only executes one flush operation.
+
+: flush-captures  ( buf - buf')
+   %1010 ( CMD_FLUSH) nyb!+  nybble @ if  %1010 nyb!+  then ;
+
+| We use a single 64 byte buffer to communicate in both directions. This is
+| slower, but it's also very simple.
+#64 buffer jtagbuf
+
+variable #nybbles-in-buf   | total so far
+
+| Make sure stream will fit in buffer. Update #nybbles-in-buf if so;
+| complain if not.
+
+: ?stream-fits  ( u - u)
+   #128  over #nybbles-in-buf @ +  tuck u< if
+      error" no room in jtagbuf for stream"  ^  then
+   #nybbles-in-buf !  ( update count) ;
+
+| Append stream to jtag buffer.
+: append-stream  ( buf a u - buf')
+   ?stream-fits  over + swap do  i c@  nyb!+  loop ;
+
+| Let's put our "streams" of nybbles somewhere we can easily see and copy
+| them. This works like the code snippets for debug progbufs.
+
+1 Ki              | lots of space for sequences
+dup log_2 drop    | bits required for our aspace
+make-aspace  swap make-image  make-region jtag
+
+| As streams are executed, they copy their commands into the jtag buffer,
+| converting to nybbles as they are copied. They also add the number of
+| bits that they capture to the total count of bits expected back.
+
+variable #bits-expected
+
+: stream    ( - h start)
+   create
+   #bits-captured off  "10 ( impossible) last-cmd !
+   h @ jtag  \m here image+ ;
+
+: ;stream   ( h start)
+   ?repeated
+   \m here image+  rot h !  over -  swap  , ( start) , ( len)
+   #bits-captured @ ,    | record # of bits that the stream captures
+   does>  ( buf - a u)  @+ @+ @  ( a u #bits-captured)
+                        #bits-expected +!  append-stream  ;
+
+| Start appending streams for a transaction.
+: <xact   ( - buf)
+   #bits-expected off  #nybbles-in-buf off  jtagbuf ;
+
+| Do a transaction with the USB-JTAG device.
+: xact>  ( buf - #read #expected)
+   flush-captures
+   jtagbuf  tuck -  jwrite
+   jtagbuf #64 jread
+   #bits-expected @ 7 + 8 / ;
+
+| Interesting RISC-V JTAG registers.
+  1 constant idcode
+"10 constant dtmcs
+"11 constant dmi
+
+stream idcode@  et-phone-home  #32 dr@  ;stream
+stream idcode@2  idcode ir!  #32 dr@  ;stream
+stream dtmcs@  dtmcs ir!  #32 dr@  ;stream
+stream dmi@  dmi ir!  #32 dr@  ;stream
+stream ir-len  >select-ir  -1 #32 shift-and-capture  ;stream
+
+| testing
+| : xact>  ( buf - buf u)  flush-captures  jtagbuf  tuck - ;
+
+: t1  <xact  idcode@  ir-len  ir-len   xact> ;
+: t2  <xact  idcode@2  xact> ;
+: t3  <xact  dtmcs@  dmi@  xact> ;
+: t4  <xact  idcode@  ir-len  ir-len  idcode@2  dtmcs@  xact> ;
