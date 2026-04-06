@@ -25,6 +25,8 @@ loading ESP32 USB-JTAG support
 | It's conceptually simple, but the JTAG TAP is not. It has a lot of
 | states, and we need to find our paths through it.
 
+ld target/RISC-V/debug-0.13.2.mu4
+
 decimal
 
 | NOTE: This code requires a modified version of usb-find-device that takes
@@ -90,8 +92,13 @@ decimal
 |
 | That's it!
 
-| Compile command into stream, one byte per nybble. We combine the nybbles
-| when we start concatenating streams.
+| Combining the nybbles. The instructions are executed high-nybble first.
+variable nybble            | empty or high nybble plus flag
+variable 'j                | pointer to next free byte in jtagout buffer
+
+| Add nybble to string of nybbles.
+: nyb,   ( nyb)
+   nybble @ ?if  or  'j @  c!+  'j !  nybble off  ^  then  4 <<  "100 or  nybble ! ;
 
 variable last-cmd    | so we can compress repeated commands
 variable #cmd-repeated
@@ -103,31 +110,53 @@ variable #cmd-repeated
 
 : ?repeated
    #cmd-repeated @ ?if
-      begin  4 u/mod ( r q)  swap %1100 ( CMD_REP) or  \m c,  dup 0= until
+      begin  4 u/mod ( r q)  swap %1100 ( CMD_REP) or  nyb,  dup 0= until
       drop
+      #cmd-repeated off
    then ;
 
-: cmd,  ( cmd)
-   dup 8 u< if  ( CMD_CLK)  
-      last-cmd @ over = if
-         1 #cmd-repeated +!  drop ^  then
-      ?repeated
-      dup last-cmd !  #cmd-repeated off  then
-   \m c, ;
+| All commands, CLK and non-CLK, set last-cmd. This way two matching CLK
+| commands with something in between will *not* turn into a repeated
+| command. Oddly enough, with the exception of the CMD_FLUSH at the end, we
+| only use CLK commands in this code! But if, in the future, someone wanted
+| to put a CMD_RST (really the only other option) in their command stream,
+| between two CLK commands, this code would encode it properly.
+
+: cmd,  ( cmd)   ?repeated  dup last-cmd !  nyb, ;
+
+| Add a CMD_FLUSH to the end of the stream. If necessary, to byte-align the
+| stream, add a second one. The hardware only executes one flush operation.
+
+: flush-captures
+   %1010 ( CMD_FLUSH) cmd,  nybble @ if  %1010 cmd,  then ;
+
+| Use this when we know we are creating a clock command. It checks for
+| repeated commands.
+
+: clk,  ( clk-cmd)
+   dup last-cmd @ = if  1 #cmd-repeated +!  drop ^  then
+   cmd, ;
 
 : lsb   ( bits - bits' lsb)   dup u2/  swap 1 and ;
 
 | Shift n TMS bits.
-: tms  ( bits n)   for  lsb 2* cmd,  next  drop ;
+: tms  ( bits n)   for  lsb 2* clk,  next  drop ;
 
-| Shift n TDI bits, ignoring the DO bits. Sets tms bit to 0.
-: tdi  ( bits n)   for  lsb    cmd,  next  drop ;
+| Shift n TDI bits, ignoring the DO bits. Sets tms bit to 0, except for
+| last bit, which means we end in Exit-1 state..
 
-| Shift n TDI bits, while also capturing n TDO bits.
+: tdi  ( bits n)
+   1- for  lsb               clk,  next
+           lsb  2 or ( tms)  clk,  drop ;
+
+| Shift n TDI bits, while also capturing n TDO bits. As above, we end in
+| Exit-1 state.
+
 variable #bits-captured
 : tdio  ( bits n)
    dup #bits-captured +!
-   for  lsb  4 or ( cap)  cmd,  next  drop ;
+   1- for  lsb  4 or ( cap)      clk,  next
+           lsb  6 or ( cap+tms)  clk,  drop ;
 
 | We also want to document the JTAG state machine. Instead of trying to
 | draw ASCII art arrows I'm going to show it in table form. Since the
@@ -169,11 +198,15 @@ variable #bits-captured
 | >home will take us home from the shift state, whether that should be Idle
 | or Select-DR.
 
+variable #chill  8 #chill !
+
+: chill  0 #chill @ tms ;     | sit idle for a bit
+
 .ifdef home-is-select-dr
 
 | Take us to Select-DR (our home) state from anywhere.
 : et-phone-home   %101_1111 7 tms ;
-: >home                %111 3 tms ;    | from shift state
+: >home                 %11 2 tms  chill ;   | from exit-1 state; go home and chill
 
 | These take us from home to a select state.
 : >select-dr                      ;    | We are already there
@@ -183,7 +216,7 @@ variable #bits-captured
 
 | Take us to Idle (our home) state from anywhere.
 : et-phone-home   %01_1111 6 tms ;
-: >home               %011 3 tms ;     | from shift state
+: >home                %01 2 tms  chill ;    | from exit-1 state; go home and chill
 
 | These take us from home to a select state.
 : >select-dr             1 1 tms ;
@@ -202,90 +235,43 @@ variable #bits-captured
 : dr!@   ( bits n)   >select-dr  shift-and-capture ;
 : dr@    (      n)   >select-dr  capture-only ;
 
-: ir!    ( bits)     >select-ir  5 shift-in-only ;
+: ir!    ( bits)     >select-ir   5 shift-in-only ;
 
-| Combining the nybbles. The instructions are executed high-nybble first.
-variable nybble            | empty or high nybble plus flag
+#64 buffer jtagout
+#64 buffer jtagin
 
-| Add nybble to string of nybbles.
-: nyb!+   ( a nyb - a')
-   nybble @ ?if  or  swap c!+  nybble off  ^  then  4 <<  "100 or  nybble ! ;
+| Start a transaction. Set last-cmd to a non-CLK command so we don't
+| create an erroneous repeat.
 
-| Add a CMD_FLUSH to the end of the stream. If necessary, to byte-align the
-| stream, add a second one. The hardware only executes one flush operation.
+: <xact   ( - h)   #bits-captured off  "10 last-cmd !  jtagout 'j ! ;
 
-: flush-captures  ( buf - buf')
-   %1010 ( CMD_FLUSH) nyb!+  nybble @ if  %1010 nyb!+  then ;
+| Do a transaction with the USB-JTAG device
+| XXX I wonder if leaving h on the stack is going to a problem. We could
+| also save it somewhere.
 
-| We use a single 64 byte buffer to communicate in both directions. This is
-| slower, but it's also very simple.
-#64 buffer jtagbuf
-
-variable #nybbles-in-buf   | total so far
-
-| Make sure stream will fit in buffer. Update #nybbles-in-buf if so;
-| complain if not.
-
-: ?stream-fits  ( u - u)
-   #128  over #nybbles-in-buf @ +  tuck u< if
-      error" no room in jtagbuf for stream"  ^  then
-   #nybbles-in-buf !  ( update count) ;
-
-| Append stream to jtag buffer.
-: append-stream  ( buf a u - buf')
-   ?stream-fits  over + swap do  i c@  nyb!+  loop ;
-
-| Let's put our "streams" of nybbles somewhere we can easily see and copy
-| them. This works like the code snippets for debug progbufs.
-
-1 Ki              | lots of space for sequences
-dup log_2 drop    | bits required for our aspace
-make-aspace  swap make-image  make-region jtag
-
-| As streams are executed, they copy their commands into the jtag buffer,
-| converting to nybbles as they are copied. They also add the number of
-| bits that they capture to the total count of bits expected back.
-
-variable #bits-expected
-
-: stream    ( - h start)
-   create
-   #bits-captured off  "10 ( impossible) last-cmd !
-   h @ jtag  \m here image+ ;
-
-: ;stream   ( h start)
-   ?repeated
-   \m here image+  rot h !  over -  swap  , ( start) , ( len)
-   #bits-captured @ ,    | record # of bits that the stream captures
-   does>  ( buf - a u)  @+ @+ @  ( a u #bits-captured)
-                        #bits-expected +!  append-stream  ;
-
-| Start appending streams for a transaction.
-: <xact   ( - buf)
-   #bits-expected off  #nybbles-in-buf off  jtagbuf ;
-
-| Do a transaction with the USB-JTAG device.
-: xact>  ( buf - #read #expected)
+: xact>  ( h - #expected matched)
    flush-captures
-   jtagbuf  tuck -  jwrite
-   jtagbuf #64 jread
-   #bits-expected @ 7 + 8 / ;
+   jtagout  'j @ over -  jwrite
+   pad #64 jread
+   #bits-captured @ 7 + 8 /  tuck = ;
 
 | Interesting RISC-V JTAG registers.
   1 constant idcode
 "10 constant dtmcs
 "11 constant dmi
 
-stream idcode@  et-phone-home  #32 dr@  ;stream
-stream idcode@2  idcode ir!  #32 dr@  ;stream
-stream dtmcs@  dtmcs ir!  #32 dr@  ;stream
-stream dmi@  dmi ir!  #32 dr@  ;stream
-stream ir-len  >select-ir  -1 #32 shift-and-capture  ;stream
+: idcode@  et-phone-home  #32 dr@  ;
+: idcode@2  idcode ir!  #32 dr@  ;
+: dtmcs@  dtmcs ir!  #32 dr@  ;
+: dmi@  dmi ir!  #41 dr@  ;
+: dmi><  dmi ir!  #41 dr!  #41 dr@ ;
+: ir-len  >select-ir  -1 #32 shift-and-capture  ;
+: dtm-reset  et-phone-home  #32 dr@  dtmcs ir!  -1 #32 dr!  #32 dr@ ;
 
-| testing
-| : xact>  ( buf - buf u)  flush-captures  jtagbuf  tuck - ;
-
-: t1  <xact  idcode@  ir-len  ir-len   xact> ;
+: t1  <xact  idcode@  ir-len  ir-len  dtm-reset  xact> ;
 : t2  <xact  idcode@2  xact> ;
 : t3  <xact  dtmcs@  dmi@  xact> ;
 : t4  <xact  idcode@  ir-len  ir-len  idcode@2  dtmcs@  xact> ;
+: t5  <xact  dmi@  xact> ;
+
+: >dmi-op  ( data addr op)  -rot  #32 << or  2 << or ;
