@@ -746,15 +746,6 @@ variable cf   ( catch frame pointer)
 
 ( These versions of catch and throw don't save or restore SP.)
 
-( Call the word following catch, and push 0 if it returned normally.)
-: catch  ( - 0 | error)
-   r> @+ >r    ( fetch & skip following cfa)
-   cf @ >r     ( push prev catch frame pointer)
-   rp@ cf !    ( now point to this frame)
-   execute
-   r> cf !     ( restore prev catch frame pointer)
-   0 ;
-
 | catch can only return an error value if throw is called with a non-zero -
 | error - value during the execution of the word following catch.
 |
@@ -771,41 +762,41 @@ variable cf   ( catch frame pointer)
 | catch calls a; if no non-zero value is throw'n during the execution of a,
 | catch pushes 0 and execution continues with b.
 |
-| If something non-zero *is* throw'n, then throw "pretends" to return from
-| a, but this time b is executed with the non-zero error value on the stack,
-| instead of 0.
-|
-| It is up to the code following a call to catch - b in our example - to
-| handle both the zero and non-zero cases, and to print the error and
-| unwind the stack in case of an error.
+| If something non-zero *is* throw'n, then throw unwinds the stack and
+| returns from a, but this time b is executed with the -1 (error) flag and
+| the error and filename on the stack, instead of 0.
 
-: throw  ( 0 | error)
-   ?if
-      ( pretend to return from catch!)
-      cf @     ( fetch most recently created catch frame)
-      cell+ @  ( skip catch frame ptr, fetch return address)
-      >r       ( push return address so that we return from catch!)
-   then ;
-
-| unwind is useful in the context of exceptions. It starts at fp and
-| unlinks each frame in turn until fp is zero or points to a frame above
-| the current catch frame.
+( Call the word following catch, and push 0 if it returned normally.)
+: catch  ( - 0 | error being-loaded -1)
+   r> @+ >r    ( fetch & skip following cfa)
+   cf @ >r     ( push prev catch frame pointer)
+   rp@ cf !    ( now point to this frame)
+   execute
+   r> cf !     ( restore prev catch frame pointer)
+   0 ;
 
 | XXX Right now we are using unwinding as an on/off toggle, but in the
 | future we could have different bits that could be tested by the various
 | cleanup routines.
-
 variable unwinding
-: unwind  ( unwind-flags)
-   unwinding !
-   r>  ( ra)
-   ( While fp non-zero and pushed frames are below last catch frame, unlink them.)
-   begin  fp @ dup  cf @  u<  and  while  unlink  repeat
-   cf @  rp!
-   r>  cf ! ( restore prev catch frame pointer)
-   rdrop    ( discard return address from catch - we've already executed it!)
-   >r  ( ra)
-   unwinding off ;
+
+| It's a bit silly, but it was in dpANS94: throw'ing 0 is a no-op. Assuming
+| 0 means "no error", this lets us throw errors without testing them first.
+
+: throw  ( 0 or error)
+   ?if
+      ( Capture file being loaded when exception occurred.)
+      being-loaded @  -1
+
+      ( Unwind stack, unlinking frames while fp non-zero and below catch frame.)
+      unwinding on
+      begin  fp @ dup  cf @  u<  and  while  unlink  repeat
+      unwinding off
+
+      cf @  rp!      ( reset stack to outermost catch frame)
+      r>  cf !       ( restore prev catch frame pointer)
+                     ( return to after the word following catch!)
+   then ;
 
 
 | -------------------------------------------------------------------------
@@ -1880,8 +1871,8 @@ Type 'settings' to see a few of muforth's tweakable behaviours.
 | If being-loaded is non-zero, print filename; if @line is *also* non-zero,
 | print linenumber as well.
 
-: .where
-   being-loaded @  ?if  count type
+: .where  ( being-loaded)
+   ?if  count type
       @line ?if  ." , line "  radix preserve decimal  (u.) type  then
       ." : "
    then ;
@@ -1891,7 +1882,7 @@ Type 'settings' to see a few of muforth's tweakable behaviours.
 | compute its length.
 
 ( XXX which kind of text used for location? info doesn't seem right.)
-: .error  ( z")
+: .error  ( err" being-loaded)
    info-text  cr  .where  parsed tuck type if space then
    error-text  zcount type  normal-text ;
 
@@ -1899,7 +1890,7 @@ Type 'settings' to see a few of muforth's tweakable behaviours.
 | string describing the error; we want to print the error and then unwind
 | the stack.
 
-: ?error  ( 0 | z")   ?if  .error  r>  -1 unwind  >r  then ;
+: ?error  ( 0 | zerror" being-loaded -1)   if  .error  then ;
 
 
 | Now that all targets have been switched to the du-cached code, and
