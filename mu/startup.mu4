@@ -766,27 +766,61 @@ variable cf   ( catch frame pointer)
 | returns from a, but this time b is executed with the -1 (error) flag and
 | the error and filename on the stack, instead of 0.
 
+| dpANS94:
+|
+| : CATCH  ( xt -- exception# | 0 ) \ return addr on stack
+|    SP@ >R         ( xt ) \ save data stack pointer
+|    HANDLER @ >R   ( xt ) \ and previous handler
+|    RP@ HANDLER !  ( xt ) \ set current handler
+|    EXECUTE        ( )    \ execute returns if no THROW
+|    R> HANDLER !   ( )    \ restore previous handler
+|    R> DROP        ( )    \ discard saved stack ptr
+|    0              ( 0 )  \ normal completion
+| ;
+
 ( Call the word following catch, and push 0 if it returned normally.)
-: catch  ( - 0 | error being-loaded -1)
+| The code to save the SP is present but has been commented out.
+
+: catch  ( - 0 | error a u line# being-loaded -1)
+   | sp@       ( data stack pointer)
    r> @+ >r    ( fetch & skip following cfa)
+   | swap >r   ( push sp)
    cf @ >r     ( push prev catch frame pointer)
    rp@ cf !    ( now point to this frame)
    execute
    r> cf !     ( restore prev catch frame pointer)
+   | rdrop     ( discard saved sp)
    0 ;
 
 | XXX Right now we are using unwinding as an on/off toggle, but in the
 | future we could have different bits that could be tested by the various
 | cleanup routines.
+
 variable unwinding
 
 | It's a bit silly, but it was in dpANS94: throw'ing 0 is a no-op. Assuming
 | 0 means "no error", this lets us throw errors without testing them first.
 
+| dpANS94:
+|
+| : THROW  ( ??? exception# -- ??? exception# )
+|    ?DUP IF          ( exc# ) \ 0 THROW is no-op
+|      HANDLER @ RP!  ( exc# ) \ restore prev return stack
+|      R> HANDLER !   ( exc# ) \ restore prev handler
+|      R> SWAP >R     ( saved-sp ) \ exc# on return stack
+|      SP! DROP R>    ( exc# ) \ restore stack
+|      \  Return to the caller of CATCH because return
+|      \  stack is restored to the state that existed
+|      \  when CATCH began execution
+|    THEN
+| ;
+
 : throw  ( 0 or error)
    ?if
-      ( Capture file being loaded when exception occurred.)
-      being-loaded @  -1
+      | Capture the token, line number, and file being loaded when
+      | exception occurred.
+
+      parsed  @line  being-loaded @  -1
 
       ( Unwind stack, unlinking frames while fp non-zero and below catch frame.)
       unwinding on
@@ -796,6 +830,9 @@ variable unwinding
       cf @  rp!      ( reset stack to outermost catch frame)
       r>  cf !       ( restore prev catch frame pointer)
                      ( return to after the word following catch!)
+      | rdrop        | discard saved sp. In the future we could pop the saved
+                     | sp and use it to adjust the stack and move the captured
+                     | error info to the "correct" place
    then ;
 
 
@@ -1868,29 +1905,32 @@ Copyright (c) 2002-2026 David Frech (read the LICENSE for details)
 Type 'settings' to see a few of muforth's tweakable behaviours.
 " ;
 
-| If being-loaded is non-zero, print filename; if @line is *also* non-zero,
-| print linenumber as well.
+| If being-loaded is non-zero, print filename; if line# is non-zero,
+| print it; if *either* is non-zero, print a colon (the token will be
+| printed next).
 
-: .where  ( being-loaded)
-   ?if  count type
-      @line ?if  ." , line "  radix preserve decimal  (u.) type  then
-      ." : "
-   then ;
+: .where  ( line# being-loaded)
+   2dup or -rot  ( whether to print a following ":")
+   ?if  count type  ( filename)  then
+   ?if  ." , line "  radix preserve decimal  (u.) type  then
+   if  ." : "  then ;
 
-| The error string could have come from C code, in which case it will *not*
-| have a preceding count. We need to use zcount rather than count to
-| compute its length.
+| Print the location (filename, line#) where the error occurred, follwed by
+| the token that triggered the error, followed by the error string itself.
+|
+| Note that the error string could have come from C code, in which case it
+| will *not* have a preceding count. We need to use zcount rather than
+| count to compute its length.
 
-( XXX which kind of text used for location? info doesn't seem right.)
-: .error  ( err" being-loaded)
-   info-text  cr  .where  parsed tuck type if space then
-   error-text  zcount type  normal-text ;
+: .error  ( zerror" a u line# being-loaded)
+   cr  info-text  .where  normal-text  tuck type ( token) if space then
+   error-text  zcount type ( error string)  normal-text ;
 
-| If the top of the stack is zero, no error occurred. If non-zero, it is a
-| string describing the error; we want to print the error and then unwind
-| the stack.
+| If the top of the stack is zero, no error occurred. If non-zero, below
+| the flag is data describing the error: the error string, the token that
+| caused the error, the line#, the filename that was being loaded.
 
-: ?error  ( 0 | zerror" being-loaded -1)   if  .error  then ;
+: ?error  ( 0 | zerror" a u line# being-loaded -1)   if  .error  then ;
 
 
 | Now that all targets have been switched to the du-cached code, and
