@@ -96,13 +96,11 @@ void mu_0less()     { TOP = -(TOP <  0); }
 void mu_0equal()    { TOP = -(TOP == 0); }
 
 void mu_depth()     { int d = SP0 - SP; PUSH(d); }
-void mu_sp_reset()  { SP = SP0; SP[0] = 0xdecafbad; }
+void mu_sp_reset()  { for (SP = &dstack[STACK_SIZE]; SP0 < SP;) PUSH(0xdecafbad); }
 
-#ifdef WITH_SP_OPERATORS
 void mu_push_s0()   { PUSH_ADDR(SP0); }         /* address of stack bottom */
 void mu_sp_fetch()  { cell *s = SP; PUSH_ADDR(s); }     /* push stack pointer */
 void mu_sp_store()  { SP = (cell *)TOP; }               /* set stack pointer */
-#endif
 
 /* So we can do return-stack magic. */
 void mu_runtime_rp_fetch()       { PUSH_ADDR(RP); }
