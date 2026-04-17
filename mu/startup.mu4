@@ -1435,26 +1435,20 @@ variable lines-read
 
 | raw-load-file reads and interprets a file containing muforth code.
 |
-| Before reading anything, it resets the radix to decimal, resets the
-| interpreter mode to the host forth interpreter, and sets the .forth. vocab
-| chain as the destination for new definitions. It also redirects the console
-| output to stderr, and sets up a few checking and cleanup routines to be
-| executed on exit; most importantly, to close the file, and to check that
-| the stack depth hasn't been altered.
+| It sets up a few checking and cleanup routines to be executed on exit;
+| most importantly, to close the file, and to check that the stack depth
+| hasn't been altered.
 |
 | NOTE: We wait until we've both opened and read the file before resetting
 | being-loaded and line, so we should get more accurate error locations!
 |
-| Because raw-load-file does *not* preserve the radix, mode, or current
-| chain, any changes made to them by the loaded file will remain after the
-| file is loaded. This is useful for loading a set of development tools that
-| need to change into a metacompiler state, and perhaps switch to hex. See
-| target/S08/build.mu4 for an example.
+| Because raw-load-file does *not* preserve the radix, interpreter mode
+| (state), or current chain, any changes made to them by the loaded file
+| will remain after the file is loaded. This is useful for loading a set of
+| development tools that need to change into a metacompiler state, and
+| perhaps switch to hex. See target/S08/build.mu4 for an example.
 
 : raw-load-file  ( z")
-   decimal
-   \ [    ( return to host forth...)
-   forth  ( ... and compile into .forth. chain)
    dup r/o open-file? ?abort ( z" fd)  dup on-exit close-file
    read-file ( z" a u)
    being-loaded preserve  rot being-loaded !
@@ -1464,19 +1458,36 @@ variable lines-read
    | depth  on-exit show-depths
    evaluate ;
 
-| Save radix, state, and current, then call raw-load-file to actually load
-| and interpret the file. Unlike raw-load-file, above, load-file preserves
-| the radix, mode, and current chain.
+| Before calling raw-load-file to read and interpret a muforth file,
+| safe-load-file resets the radix to decimal, resets the interpreter mode
+| to the host forth interpreter, and sets the .forth. vocab chain as the
+| destination for new definitions. This puts the interpreter into a known,
+| "safe", state.
+|
+| Like raw-load-file, it doesn't *preserve* any of these settings, so the
+| loaded ("called") file can make changes that affect the loading
+| ("calling") file.
+
+: safe-load-file  ( z")
+   decimal
+   \ [    ( return to host forth mode...)
+   forth  ( ... and compile into .forth. chain)
+   raw-load-file ;
+
+| Preserve radix, state, and current (the current chain), then call
+| safe-load-file to actually load and interpret the file.
 
 : load-file  ( z")
    radix preserve  state preserve  current preserve
-   raw-load-file ;
+   safe-load-file ;
 
 ( Consumes a token - a filename - and loads it, preserving settings.)
 : ld  token, load-file ;
 
-( Ditto, but allows durable changes to settings.)
-: ld!  token, raw-load-file ;
+| Consumes a filename and loads it, but doesn't save the loading file's
+| settings; this allows the loaded file to make durable changes to
+| settings.
+: ld!  token, safe-load-file ;
 
 
 | Now that we can load files, let's load the endianness code. We'll need it
