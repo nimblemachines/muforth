@@ -152,12 +152,12 @@ snippet {prog-halfword}
    \a x8 reg!  \m FLASH_STATR \a x10 reg!
    for  leh@+ swap  [ postexec \a x9 + #] reg!  wait-for-command  next  drop ;
 
-| Bits for 003 FLASH_CTLR
+| Bits for 00x FLASH_CTLR
 1 #16 <<  constant FTPG       | fast programming mode
 1 #18 <<  constant BUFLOAD    | load programming buffer
 1 #19 <<  constant BUFRST     | clear programming buffer
 
-snippet {load-word-003}
+snippet {load-word-00x}
    | x8 is flash address to write
    | x9 is word to write
    | x10 is FLASH_BASE (use >iobase to find it)
@@ -167,34 +167,34 @@ snippet {load-word-003}
    FLASH_CTLR >io x10 x11 c.sw      | set the BUFLOAD bit of FLASH_CTLR
    begin  FLASH_STATR >io x10 x9 c.lw  1 ( BSY) x9 c.andi  x9 c.bnez  ;snip
 
-| NOTE: We ignore u and *always* program 64 bytes (16 words). Caller needs
-| to chunk this properly and also pad the buf with "ff. The normal flash
-| region is fine.
+| NOTE: We ignore u and *always* program a full chunk (/chunk bytes) when
+| doing fast programming. u should always be <= /chunk; however, we don't
+| check this! It is the callers responsibility to chunk the data correctly.
 |
 | NOTE also: We do not execute wait-for-command, like we did when
 | programming by halfwords (conventional programming). I measured #busy
 | during programming of both the 003 and 203 and it remained at zero.
 
-: program-fast-003  ( buf a u)
+: program-fast-00x  ( buf a u)
    | Set fast programming mode.
    FTPG \m FLASH_CTLR mem!
 
    | Clear programming buffer.
    [ FTPG BUFRST + #] \m FLASH_CTLR mem!  wait-for-bsy-clear
 
-   | Load programming buffer. 64 bytes = 16 words.
-   over \a x8 reg!  [ \m FLASH_STATR >iobase #] \a x10 reg!  [ FTPG BUFLOAD + #] \a x11 reg!
-   {load-word-003}
-   rot #16 for  lew@+ swap  [ postexec \a x9 + #] reg!  next  2drop
+   | Load programming buffer.
+   drop tuck \a x8 reg!  [ \m FLASH_STATR >iobase #] \a x10 reg!  [ FTPG BUFLOAD + #] \a x11 reg!
+   {load-word-00x}
+   /chunk @ \m cell/ for  lew@+ swap  [ postexec \a x9 + #] reg!  next  drop
 
    | Start programming.
    ( a) \m FLASH_ADDR mem!  [ FTPG 40 ( STRT) + #] \m FLASH_CTLR mem!  wait-for-bsy-clear ;
 
-| Bits for 203 FLASH_CTLR
+| Bits for 20x FLASH_CTLR
 |                  FTPG       | fast programming mode
 1 #21 <<  constant PGSTRT     | start fast programming
 
-snippet {load-word-203}
+snippet {load-word-20x}
    | x8 is flash address to write
    | x9 is word to write
    | x10 is FLASH_BASE (use >iobase to find it)
@@ -202,36 +202,41 @@ snippet {load-word-203}
    0 x8 x9 c.sw   4 x8 c.addi       | write word to flash; incr address
    begin  FLASH_STATR >io x10 x9 c.lw  2 ( WR_BSY) x9 c.andi  x9 c.bnez  ;snip
 
-| NOTE: We ignore u and *always* program 256 bytes (64 words). Caller needs
-| to chunk this properly and also pad the buf with "ff. The normal flash
-| region is fine.
-|
-| See "NOTE also" above about wait-for-command.
+| NOTE: The comments for program-fast-00x apply to program-fast-20x as well.
 
-: program-fast-203  ( buf a u)
+: program-fast-20x  ( buf a u)
    | Set fast programming mode.
    FTPG \m FLASH_CTLR mem!
 
-   | Load programming buffer. 256 bytes = 64 words.
-   swap \a x8 reg!  [ \m FLASH_STATR >iobase #] \a x10 reg!
-   {load-word-203}
-   swap #64 for  lew@+ swap  [ postexec \a x9 + #] reg!  next  2drop
+   | Load programming buffer.
+   drop \a x8 reg!  [ \m FLASH_STATR >iobase #] \a x10 reg!
+   {load-word-20x}
+   /chunk @ \m cell/ for  lew@+ swap  [ postexec \a x9 + #] reg!  next  drop
 
    | Start programming.
    [ FTPG PGSTRT + #] \m FLASH_CTLR mem!  wait-for-bsy-clear ;
 
-| Currently supported chip types:
-|    9  CH32V003
-|    5  CH32V203
-
 defer l.program-fast
-: setup-fast-programming  ( chip-type - chunk-size)
-   9 = if  now program-fast-003  is l.program-fast   #64  ^  then
-           now program-fast-203  is l.program-fast  #256 ;
 
-: l.hello  ( - chunk-size)
+: setup-fast-prog  ( chip-id chunk-size 'program-fast - chunk-size)
+   is l.program-fast  nip ;
+
+| NOTE: We do not use the chip-type returned by connect-chip. In the future
+| it will probably be drop'ed, but for now it's useful to see it.
+
+: l.hello  ( - chip-type chip-id chunk-size)
    link-reset  get-link-version .wch-link  connect-chip
-   over ( chip-type) setup-fast-programming ;
+
+   | Set up fast programming for our specific chip.
+   | Chunk size is set to be the fast-programming "page" size for that chip.
+   dup ( chip-id)  #20 >>
+   dup 003 = if  ( 003)   #64  ['] program-fast-00x  setup-fast-prog ^  then
+   0f bic
+   dup 000 = if  ( 00x)  #256  ['] program-fast-00x  setup-fast-prog ^  then
+   dup 200 = if  ( 20x)  #256  ['] program-fast-20x  setup-fast-prog ^  then
+
+   drop  cr warn" No fast programming routine has been defined for your chip. Please email the
+maintainer or open an issue, and include the two values on the stack."   #256 ;
 
 : l.read    mem-read ;
 : l.write   mem-write ;
