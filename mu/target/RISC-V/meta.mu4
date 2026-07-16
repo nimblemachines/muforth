@@ -238,27 +238,70 @@ forth
 
 
 | -------------------------------------------------------------------------
-| Creating new target names
+| Trap (exception and interrupt) vectors and vector table
 | -------------------------------------------------------------------------
 
-.ifdef notyet  ( vectors)
+| XXX Should I call this a "trap" table rather than a vector table? Yes,
+| it's a table of vectors; but the RISC-V standards tend to use "trap" as a
+| generic term that includes exceptions and interrupts.
 
-( XXX How do we do vectors in RISC-V land?)
-: unvectored?  ( offset - f)  image-@  "0ffff_ffff = ;
+| A vector table is represented by two values: an origin address and a
+| count of vectors.
+
+variable 'vector-table        | pointer to the current vector table
+: 'vectors  ( - vector-table-origin)  'vector-table @       @ ;
+: #vectors  ( - #vectors)             'vector-table @ cell+ @ ;
+
+: 'vector  ( vector# - addr)  \m cells  'vectors + ;
+
+: vector-table  ( #vectors)
+   create
+      \m here  ( in current region)
+.ifdef vector-table-align  vector-table-align  .else  4  .then
+      aligned-by  ( this is *origin* alignment)
+      dup , ( origin)    \m goto  ( set here to table origin)
+      dup , ( #vectors)  for  "dead_c0de \m ,  next  ( fill table)
+      | start following code on 16 byte alignment
+      \m here  16 aligned-by  \m goto
+   does> 'vector-table ! ;
+
+: unvectored?  ( vector# - f)  'vector image-@  "dead_c0de = ;
+
+: compile-jump  ( dest src)
+   \m here -rot  ( remember where we were)
+   \m goto  ( src)  \a j  ( compile jump to dest)
+   \m goto  ( back to where we were) ;
+
+| Store either an address or a jump instruction in a vector slot.
+: vector!  ( dest 'vector)
+.ifdef vectors-contain-addresses
+   image-!
+.else
+   compile-jump
+.then ;
 
 meta
-: handler  ( vector-offset)  \m here swap  image-!  __asm ;
+: handler  ( vector#)  \m here  swap 'vector  vector!  __asm ;
 
-( Set all unset vectors to point to this vector - usually RESET.)
-: default-handler  ( start-vector default-vector)
-   \m handler  ( force it, in case it's been set already)
-   ( then set all unset handlers to this address)
-   \eq Vreset  swap do
+| Since reset isn't generally defined as a trap, and because we *always*
+| want to put a jump instruction into the reset vector, let's handle it
+| specially.
+
+: reset-handler   \m here  0 'vector  compile-jump  __asm ;
+
+| Set all unset vectors to point to \m here, then start assembler.
+: default-handler
+   #vectors 1 do     | start at 1 to skip reset vector
       i unvectored? if  i  \m handler  ( set it)  then
-   \m cell +loop ;
+   loop
+   __asm ;
 
-.then  ( vectors)
+forth
 
+
+| -------------------------------------------------------------------------
+| Creating new target names
+| -------------------------------------------------------------------------
 
 variable last-code   ( for ;code and does> to fix up)
 
