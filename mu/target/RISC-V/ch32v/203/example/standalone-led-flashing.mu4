@@ -1,0 +1,54 @@
+| This file is part of muforth: https://muforth.dev/
+|
+| Copyright (c) 2002-2026 David Frech. (Read the LICENSE for details.)
+
+| Load the board first.
+ld target/RISC-V/board/ch32v203c8t6-evt.mu4
+
+flash
+1 vector-table flash-vectors        | only room for reset vector
+flash-vectors                       | make it the current table
+
+-d tiny-kernel
+-d shared-next
+ld target/RISC-V/kernel-itc.mu4
+
+ld target/RISC-V/ch32v/clock.mu4
+ld target/RISC-V/ch32v/203/example/led.mu4
+
+assembler
+: lit    ( imm rd)      asm{  2dup lui   dup addi  } ;
+forth
+
+__meta
+
+| NOTE: The WCH-LinkE sets the clock on the ch32v203 to 120M when it
+| connects, regardless of what the reset code has done. It uses the 8M HSI
+| to run the PLL at *15. Running the PLL faster might run the chip out of
+| spec since the HSI is only *nominally* 8M and might be running much
+| faster. Also, the system clock should not be running faster than 120M
+| when programming the flash! So this setting by the LinkE is a good
+| precaution.
+|
+| Let's turn on the HSE - there is an 8M crystal on the board - and use
+| this to run the PLL at *12 to get a 96M clock. This is fast enough to have
+| fun, divisible by two for the USB interface, and less than the 120M
+| maximum for programming the flash.
+
+: clock-init
+   >hsi +hse -pll
+   [ %1010 ( PLLMUL=*12) 2 <<  1+ ( PLLSRC=HSE) #] [ RCC_CFGR0 2 + #] c!
+   +pll >pll ;
+
+here ]  ( chip-init)
+   clock-init  led-init  begin  count  "20_0000 delay  again  [
+
+reset-handler
+   | Startup code!
+   | Since we have a Forth kernel, let's write the startup code in Forth!
+   rp0 rp lit   dp0 sp lit    | init stack pointers
+   "decafbad     top lit
+   ( chip-init)  ip  lit
+   next  ;c
+
+hex

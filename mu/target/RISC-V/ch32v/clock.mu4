@@ -1,0 +1,38 @@
+| This file is part of muforth: https://muforth.dev/
+|
+| Copyright (c) 2002-2026 David Frech. (Read the LICENSE for details.)
+
+| Some utility words related to setting up the clock[s] on the CH32V.
+| These were copied from target/ARM/stm32/; only the register names had to
+| be changed!
+
+loading CH32V clock setting
+
+hex
+__meta
+
+| Set a byte register to a value (set), then loop, reading the same
+| register, until the register anded with a mask matches the match value.
+
+: set-until-match  ( set mask match reg)
+   >r  rot r@ c!  ( set reg to "set" value)
+   begin  over r@ c@ and  over =  until  r>  drop drop drop ;
+
+| We do this because we don't have a multiply instruction on the ch32v003!
+: 5*  dup 2 << + ;
+
+| NOTE: sysclk! sets HPRE (the AHB clock prescaler) to /1. The HPRE field
+| is the high 4 bits of the low byte of RCC_CFGR0.
+
+: sysclk!  ( clksrc)  0f  over 5*  RCC_CFGR0  set-until-match ;
+
+: >hsi   0 ( SW=HSI) sysclk! ;
+: >hse   1 ( SW=HSE) sysclk! ;
+: >pll   2 ( SW=PLL) sysclk! ;
+
+: hse-start   ( hsebits)  2 2  [ RCC_CTLR 2 + #]  set-until-match ;
+: +hse         1 ( HSEON)           hse-start ;
+: +hse-bypass  5 ( HSEON + HSEBYP)  hse-start ;
+
+: +pll   1  2 2  [ RCC_CTLR 3 + #]  set-until-match ;
+: -pll   0  2 0  [ RCC_CTLR 3 + #]  set-until-match ;
