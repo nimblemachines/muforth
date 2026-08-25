@@ -394,35 +394,10 @@ forth
 | compiler, doing no other work.
 
 
-| Dictionary structure words. Link fields point to link fields. Roughly, a
-| dictionary entry is the following cell-sized things: suffix, link, code;
-| where suffix is the last 3 characters of the name, followed by its
-| byte-sized length. If length is zero, the word is *hidden*.
-
-: link>name    ( 'link - a u)  1- dup c@  ( 'len len)  tuck -  swap ;
-
-| These words all assume we're calculating to or from a code field
-| address.
-
-: >link   ( 'code - 'link)  cell- ;
-: link>   ( 'link - 'code)  cell+ ;
-: >name   ( 'code - a u)   >link  link>name ;
-: >ip     ( 'code - 'ip)    cell+ ;
-: ip>     ( 'ip   - 'code)  cell- ;
-: >body   ( 'code - 'body)  >ip  cell+ ;
-: body>   ( 'body - 'code)  cell-  ip> ;
-
-( Undefine a word by zeroing out the length byte of the name.)
-: undef  current @ chain'  >link 1-  0 swap c! ;
-
-
-( create and does>. Everything old is new again. ;-)
-
-| 2010-nov-30. After many iterations, I have finally arrived at fig-forth's
-| implementation of create/does>. The only difference is the names of the
-| words.
-
-| In fig-forth there are several kinds of words:
+| Dictionary structure.
+|
+| In a traditional Forth - for example, fig-FORTH, a popular threaded Forth
+| from the late 1970s - the dictionary consists of a variety of word types:
 |
 |   * CODE words, whose code field points to machine code
 |
@@ -438,29 +413,51 @@ forth
 |   * DOES words, whose code field points to dodoes, and whose body
 |     contains an IP pointer, followed optionally by data.
 |
-| In muforth there are only three kinds of words:
+| docolon, doconst, dovar, and dodoes are short machine-code sequences
+| ending in NEXT.
+|
+| In muforth there are only three types of words:
 |
 |   * CODE words - primitives defined in C whose code field points to the C
 |     code implementation
 |
-|   * COLON words, whose code field points to docolon, and whose body
-|     contains a list of execution tokens
+|   * COLON words, whose code field points to mu_do_colon (a short C
+|     function) and whose body contains a list of execution tokens
 |
-|   * DOES words, whose code field points to dodoes, and whose body
-|     contains an IP pointer, followed optionally by data.
+|   * DOES words, whose code field points to mu_do_does (another C
+|     function) and whose body contains an IP pointer, followed optionally
+|     by data.
 |
-| fig and muforth share this inefficient but simple implementation. In the
-| case of fig, it was because they didn't know any better. In my case, I
-| knew better but in the interest of avoiding machine-code dependencies -
-| the efficient way of compiling does> words essentially being a form of
-| DTC (direct-threaded code) - I had no choice.
+| If you want a threaded-code implementation of create/does words using
+| only pure pointers, you need two pointers in each "child" word defined
+| with create/does: one to point to C (mu_do_does) and one to point to
+| Forth (the body of the parent defining word).
 |
-| If you want a threaded-code implementation using only pure pointers, you
-| need two pointers in each "child" word defined with create/does: one to
-| point to C (dodoes) and one to point to Forth (the body of the parent
-| defining word).
+| There is a "clever" implementation using only one pointer, but it
+| requires that the does code in the parent start with machine code -
+| either a jump or a call, depending on the details of the implementation.
+| If you want to avoid machine dependencies, you have to use two pointers!
+|
+| Let's define a handful of words to help navigate between the fields of a
+| dictionary entry. Except for link>name these all assume we're calculating
+| to or from a code field address.
 
+: link>name    ( 'link - a u)  1- dup c@  ( 'len len)  tuck -  swap ;
 
+: >link   ( 'code - 'link)  cell- ;
+: link>   ( 'link - 'code)  cell+ ;
+: >name   ( 'code - a u)   >link  link>name ;
+: >ip     ( 'code - 'ip)    cell+ ;
+: ip>     ( 'ip   - 'code)  cell- ;
+: >body   ( 'code - 'body)  >ip  cell+ ;
+: body>   ( 'body - 'code)  cell-  ip> ;
+
+( Undefine a word by zeroing out the length byte of the name.)
+: undef  current @ chain'  >link 1-  0 swap c! ;
+
+| Now we are ready to define create and does> which form the basis for all
+| data structures in muforth, including variables and constants.
+|
 | last-created contains the address of the ip address slot of the last
 | <does> word defined.
 |
@@ -476,7 +473,6 @@ new last-created  show
 | after "does>" in the caller.
 
 : does>  pop  last-created @  ! ;
-
 
 | We'll use this version of "create" for all host words, since they will be
 | *data* words. But for the target compiler we are going to have a *target*
@@ -566,8 +562,8 @@ new last-created  show
 | indeed, we could have all deferred use _user_ variables instead of
 | globals. But that's what the fuss is.
 |
-| That and that "vectoring" them isn't strictly postfix. And it requires
-| architecture-specific code!
+| That and that "vectoring" them isn't strictly postfix, and that it
+| requires knowledge of the structure of a dictionary entry.
 
 variable undeferred  ' nope undeferred !
 variable last-deferred-executed
@@ -597,14 +593,17 @@ forth
 | chain.
 |
 | The name is hidden - by setting the length to zero - so that dictionary
-| searches and word listings won't see it.
+| searches and word listings won't see it - but it also can act as a
+| sentinel, demarcating the boundary between dictionary chains. Words that
+| traverse the dictionary can choose to stop at a muchain entry or ignore
+| it and continue searching.
 |
 | The link field points to the link field within the name entry of the last
 | word defined on the chain.
 |
 | We create new chains by reusing the code field and the "muchain" name
-| field from  .forth.  - an existing chain that is created by C code in
-| src/dict.c that is executed at startup.
+| field from  .forth.  - an existing chain that is created at startup by
+| executing C code in src/dict.c.
 
 : chain   ( anchor-link)
    new  [ ' .forth.       @ #] , ( code field: mu_do_chain)
