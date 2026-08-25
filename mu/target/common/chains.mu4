@@ -88,6 +88,27 @@ forth  decimal
 .target. chain .target-runtime.   ( compile-only target words)
    .lex. chain .target-compiler.  ( the `meta' version of .compiler.)
 
+defer .asm-instructions.   | points to a chain containing the set of assembler
+                           | instructions; this can thus choose to include
+                           | or exclude sets of instructions.
+
+now .assembler. is .asm-instructions.  | default to .assembler.
+
+defer .asm-regs.  | points to a chain containing the register names that is
+                  | anchored to .asm-instructions.
+
+now .asm-instructions. is .asm-regs.   | so that targets that don't define any
+                                       | asm register conventions will work
+                                       | without modification
+
+| Let's put this into the prompt and see how that looks. Only print it if
+| .asm-regs. is *not* currently pointing to .asm-instructions.
+
+-: ( - a u)
+   [ ' .asm-regs. >body #] @  dup ['] .asm-instructions. = if  0 ^  then
+   >name 1 -2 v+ ;
+   add-status-indicator
+
 : assembler               .assembler. definitions ;
 : definer                   .definer. definitions ;
 : labels                     .labels. definitions ;
@@ -104,7 +125,7 @@ forth  decimal
 
 ( XXX Do we need all of these?)
 compiler
-: \a   ( compile from assembler)              .assembler. \chain ;
+: \a   ( compile from assembler)               .asm-regs. \chain ;
 : \d   ( compile from definer)                  .definer. \chain ;
 : \eq  ( compile from equates)                  .equates. \chain ;
 : \l   ( compile from labels)                    .labels. \chain ;
@@ -123,7 +144,7 @@ meta
 : \f                    ' execute ;  ( execute a forth word from meta)
 
 forth
-: \a   .assembler. chain' execute ;  ( execute an assembler word from forth)
+: \a    .asm-regs. chain' execute ;  ( execute an assembler word from forth)
 : \eq    .equates. chain' execute ;  ( execute an equates word from forth)
 : \l      .labels. chain' execute ;  ( execute a label word from forth)
 : \m        .meta. chain' execute ;  ( execute a meta word from forth)
@@ -176,7 +197,7 @@ forth
 
 z" compiling inline assembler"
 -:
-    .assembler. find  if  compile,  ^  then  ( find assembler's if/then etc)
+     .asm-regs. find  if  compile,  ^  then  ( find assembler's if/then etc)
       .definer. find  if  execute   ^  then  ( need } or }} to exit this mode)
          .meta. find  if  compile,  ^  then  ( labels are in .meta.)
       .runtime. find  if  compile,  ^  then  ( utility and runtime words)
@@ -186,7 +207,7 @@ mode __inline-asm
 
 z" assembling"
 -:
-    .assembler. find  if  execute  ^  then
+     .asm-regs. find  if  execute  ^  then
          .meta. find  if  execute  ^  then  ( labels are in .meta.)
         .forth. find  if  execute  ^  then  ( utility words in .forth.)
                                             number ;
