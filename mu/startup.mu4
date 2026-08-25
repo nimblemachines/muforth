@@ -1047,19 +1047,22 @@ decimal
 | if they saw something not in the dictionary.
 
 | First we need to re-define  [  and  ] . We will define these as
-| interpreter "modes", which consist of a word to display a prompt string
-| and a token consumer function. Since we don't currently have a way to
-| compile strings, we will use  nope  until we re-define the prompts later.
+| interpreter "modes", which consist of a word to display a string
+| description of the mode, and a token consumer function. Since we don't
+| currently have a way to compile strings, we will use empty strings until
+| we re-define the descriptions later.
 
 variable state  ( interpret or compile - or whatever!)
-: mode   create  ( prompt token-consumer)  ,  ,  does>  state ! ;
+: mode   create  ( mode-description token-consumer)  ,  ,  does>  state ! ;
 
 
 | Redefine the forth "consumer" to try to convert numbers after failing to
 | find a token in the .forth. chain. Since we don't yet have a way to
 | create nameless colon definitions, do it by hand!
 
-' nope  ( null prompt for interpret mode)
+| placeholder description for interpret mode - an empty z-string!
+| dup it so we can also use it for compile mode.
+0 , here  dup
 
 here <:> ]  ( make a nameless colon word)
    ( interpret one token)
@@ -1070,7 +1073,9 @@ mode [  ( enter interpreter mode)
 forth
 
 ( Now for the compiler "consumer".)
-' nope  ( null prompt for compiler mode)
+
+| Stack contains a copy of the empty z-string we used for interpret mode.
+| This is our placeholder description for compiler mode.
 
 here <:> ]  ( make a nameless colon word)
    ( compile one token)
@@ -1712,23 +1717,6 @@ being-defined -v  ( be verbose)
 | possible confusion of using "M" thinking it means 2^20 rather than 10^6.
 
 
-defer .radix-prompt
-
-: radix-name  ( - a u)
-   radix @
-   dup  2 = if  drop  " binary"   ^  then
-   dup  8 = if  drop  " octal"    ^  then
-   dup 10 = if  drop  " decimal"  ^  then
-   | dup 10 = if  drop  0 0         ^  then  ( say nothing if decimal)
-   dup 16 = if  drop  " hex"      ^  then
-   radix preserve  decimal  <#  #s  " radix " "hold  #> ;
-
--: radix-name =if  ."  (" type ." )"  ^  then 2drop ;
-
-: +radix      [ #]  is .radix-prompt ;  +radix
-: -radix  now nope  is .radix-prompt ;
-
-
 | Toggle-able "stack status" display, showing as many values as will fit on
 | one line.
 
@@ -1768,16 +1756,53 @@ defer #stk  ( n - 0)  ( convert stack item to a string)
 : -stack  now nope  is ?show-stack ;
 
 
-( show ` Ok', then mode-prompt, then perhaps radix)
-defer .extra-prompt  ' nope is .extra-prompt
-: .mode-prompt   state @  cell+  @execute ;
-: .prompt
-   status-text
-   ."  Ok"   .mode-prompt  .radix-prompt  .extra-prompt
-   normal-text ;
+| Ok prompt and status indicators.
+|
+| We maintain a linked list of status indicators. Each status indicator is
+| a function that returns a string - an a u pair. If u is != 0, a separator
+| is printed, followed by the string.
 
-( set prompt in compile mode)
--: ."  (compiling)" ;   ' ] >body cell+ !
+variable status-indicators
+
+| Add a new status indicator to the head of the list.
+: add-status-indicator  ( 'code)
+   here swap ,  status-indicators @ ,  status-indicators ! ;
+
+| Conditionally - if u is nonzero - print a separator followed by an indicator.
+: ?.status  ( a u)  ?if  ."  : "  type  ^  then  drop ;
+
+: .status-indicators
+   status-indicators  begin  @ ?while  @+ swap  execute ?.status  repeat ;
+
+| Show ` Ok', followed by various status indicators.
+: .prompt   status-text  ."  Ok"  .status-indicators  normal-text ;
+
+| Interpreter modes contain a z-string describing what they do. This
+| routine fetches current mode's z-string and converts it to an a u string
+| for printing as a status indicator.
+
+-: ( mode-indicator)  ( - a u)  state @  cell+  @ count ;  add-status-indicator
+
+( set compile mode description string)
+z" compiling"  ' ] >body cell+ !
+
+
+defer radix-indicator  ' radix-indicator add-status-indicator
+
+-: ( radix-name)  ( - a u)
+   radix @
+   dup  2 = if  drop  " binary"   ^  then
+   dup  8 = if  drop  " octal"    ^  then
+   dup 10 = if  drop  " decimal"  ^  then
+   | dup 10 = if  drop  0 0         ^  then  ( say nothing if decimal)
+   dup 16 = if  drop  " hex"      ^  then
+   radix preserve  decimal  <#  #s  " radix " "hold  #> ;
+
+: +radix  [ #]  is radix-indicator ;  +radix
+
+-: 0 0 ;  ( empty radix name)
+: -radix  [ #]  is radix-indicator ;
+
 
 -: ( ?stack)
    depth 0< if  sp-reset  error" tried to pop an empty stack"  then
