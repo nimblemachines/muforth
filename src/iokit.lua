@@ -3,8 +3,14 @@
 -- I turned some of the #define's into functions and others into a table of
 -- values.
 
+-- Error encoding.
 function err_system(x)  return ((x)&0x3f)<<26 end
 function err_sub(x)     return ((x)&0xfff)<<14 end
+
+-- Error decoding.
+function err_get_code(err)      return ((err)&0x3fff) end
+function err_get_sub(err)       return (((err)>>14)&0xfff) end
+function err_get_system(err)    return (((err)>>26)&0x3f) end
 
 KERN_SUCCESS = 0
 sub_iokit_common = err_sub(0)
