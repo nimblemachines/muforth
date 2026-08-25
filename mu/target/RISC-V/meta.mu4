@@ -8,9 +8,72 @@ loading RISC-V meta-compiler (main)
 | Macros defining register conventions
 | -------------------------------------------------------------------------
 
-| We are abandoing any pretense of supporting or being compatible with the
-| "standard" ABI convention for the core integer registers. The only rules
-| we follow are:
+| The push and pop macros that follow the register convention definitions
+| need to know which registers to use for the data and return stacks.
+| Instead of "hardwiring" these, we make them defer'd words, so they can be
+| changed when the register convention changes.
+
+defer _rp   | return stack pointer
+
+| Raw regs convention.
+|
+| No special meaning is assigned to any register. Names are simply x0 to
+| x31. The raw register names and the raw register printer have already
+| been defined in target/RISC-V/asm-rv32i.mu4.
+
+: raw-regs  now .asm-instructions. is .asm-regs.    | no special register convention
+                     undeferred @  is _rp ;
+
+| Default to using the raw register names until we choose another
+| convention.
+raw-regs
+
+| C ABI register convention.
+|
+| We define the C ABI register convention so that we can easily disassemble
+| code compiled by conventional toolchains, and also because, at the moment
+| anyway, the serial chat code was written using this convention.
+
+.asm-instructions. chain .c-regs.   | all register conventions anchor to .asm-instructions.
+
+| Also define the C - or "Unix" - ABI names.
+| https://github.com/riscv-non-isa/riscv-elf-psabi-doc/blob/master/riscv-cc.adoc
+|
+| For RV32E devices, only a0 - a5, s0 and s1, and t0 - t2 are defined.
+|
+| Name      | ABI Mnemonic | Meaning                | Preserved across calls?
+| ~~~~~     | ~~~~~~~~~~~~ | ~~~~~~~~               | ~~~~~~~~~~~~~~~~~~~~~~~~
+| x0        | zero         | Zero                   | - (Immutable)
+| x1        | ra           | Return address         | No
+| x2        | sp           | Stack pointer          | Yes
+| x3        | gp           | Global pointer         | - (Unallocatable)
+| x4        | tp           | Thread pointer         | - (Unallocatable)
+| x5 - x7   | t0 - t2      | Temporary registers    | No
+| x8 - x9   | s0 - s1      | Callee-saved registers | Yes
+| x10 - x17 | a0 - a7      | Argument registers     | No
+| x18 - x27 | s2 - s11     | Callee-saved registers | Yes
+| x28 - x31 | t3 - t6      | Temporary registers    | No
+
+.c-regs. definitions
+now .c-regs.  is .asm-regs.   | this allows us to use \a to find the register names
+
+32regs zero  ra  sp  gp  tp  t0  t1  t2
+         s0  s1  a0  a1  a2  a3  a4  a5
+         a6  a7  s2  s3  s4  s5  s6  s7
+         s8  s9 s10 s11  t3  t4  t5  t6
+
+\a s0  constant rp  ( return stack pointer; ABI: s0/fp, frame pointer)
+forth
+
+: c-regs             now .c-regs.  is .asm-regs.
+          [ .c-regs. chain' rp #]  is _rp ;
+
+
+| Forth register convention.
+|
+| For Forth code we are abandoning any pretense of supporting or being
+| compatible with the "standard" C ABI convention for the core integer
+| registers. The only rules we follow are:
 |
 |   (1) be compatible with the RV32E (which has only 16 registers);
 |
@@ -18,7 +81,11 @@ loading RISC-V meta-compiler (main)
 |   which means putting commonly-used values in x8 to x15, using x1 as ra,
 |   and using x2 as sp.
 
-assembler
+.asm-instructions. chain .forth-regs.  | all register conventions anchor to .asm-instructions.
+
+.forth-regs. definitions
+now .forth-regs.  is .asm-regs.  | this allows us to use \a to find the register names
+
 | These two are essentially mandated by the compressed instruction
 | extension.
 \a  x1  constant ra
@@ -33,7 +100,7 @@ assembler
 \a x13  constant rp   ( return stack pointer)
 \a x14  constant ix   ( loop index)
 .ifdef native
-\a  ra  constant ip   ( instruction pointer for threaded kernels)
+\a  ra  constant ip   ( ra is instruction pointer!)
 .else
 \a x15  constant ip
 .then
@@ -53,25 +120,27 @@ assembler
 
 forth
 
-( Tell the disassembler about our register names.)
--:  ( reg)
-   dup 0= if  drop  ." zero"  ^  then     | XXX is this better than x0?
-   dup 16 u< if
-.ifdef native
-      z"    ip sp x3 x4 x5 x6 x7 w  x  y  z  toprp ix x15"
-.else
-      z"    ra sp x3 x4 x5 x6 x7 w  x  y  z  toprp ix ip "
-.then
-      swap 3 * + 3 -trailing type ^ then
-   .raw-reg ;
-
-: forth-regs  [ #] is .regname ;
+: forth-regs             now .forth-regs.  is .asm-regs.
+              [ .forth-regs. chain' rp #]  is _rp ;
 
 
 | -------------------------------------------------------------------------
 | Macros defining stack operations
 | -------------------------------------------------------------------------
 assembler
+
+| Because the compressed instruction set has special stack instructions
+| that use x2 as the stack pointer, it makes sense - just like it does on
+| ARM Cortex devices, and for the same reason - to use the machine stack as
+| the data stack, whether our code is threaded or native.
+|
+| The only question is which register to use for the return stack pointer.
+|
+| So let's define the sp register in the assembler, and then define the
+| rpush and rpop words to use a defer'd word that will always point to the
+| correct, current return stack pointer register.
+
+\a x2  constant sp      | data stack pointer is machine stack pointer
 
 ( XXX Macros or subroutines?)
 ( Data stack macros.)
@@ -107,15 +176,15 @@ assembler
                           3 cells swap ( r4) c.lwsp   4 cells sp c.addi  } ;
 
 ( Return stack macros.)
-: rpush1  ( r1)      asm{   -1 cells rp c.addi   0 rp rot ( r1) c.sw  } ;
+: rpush1  ( r1)      asm{   -1 cells _rp c.addi   0 _rp rot ( r1) c.sw  } ;
 
-: rpush2  ( r2 r1)   asm{   -2 cells rp c.addi   0 rp rot ( r1) c.sw
-                                              cell rp rot ( r2) c.sw  } ;
+: rpush2  ( r2 r1)   asm{   -2 cells _rp c.addi   0 _rp rot ( r1) c.sw
+                                               cell _rp rot ( r2) c.sw  } ;
 
-: rpop1  ( r1)       asm{  0 rp rot ( r1) c.lw      cell rp c.addi  } ;
+: rpop1  ( r1)       asm{  0 _rp rot ( r1) c.lw      cell _rp c.addi  } ;
 
-: rpop2  ( r2 r1)    asm{  0 rp rot ( r1) c.lw
-                        cell rp rot ( r2) c.lw   2 cells rp c.addi  } ;
+: rpop2  ( r2 r1)    asm{  0 _rp rot ( r1) c.lw
+                        cell _rp rot ( r2) c.lw   2 cells _rp c.addi  } ;
 
 .else   ( no C-ext; use full-size instructions)
 
@@ -148,15 +217,15 @@ assembler
                           3 cells sp rot ( r4) lw   4 cells sp sp addi  } ;
 
 ( Return stack macros.)
-: rpush1  ( r1)      asm{   -1 cells rp rp addi   0 rp rot ( r1) sw  } ;
+: rpush1  ( r1)      asm{   -1 cells _rp _rp addi   0 _rp rot ( r1) sw  } ;
 
-: rpush2  ( r2 r1)   asm{   -2 cells rp rp addi   0 rp rot ( r1) sw
-                                               cell rp rot ( r2) sw  } ;
+: rpush2  ( r2 r1)   asm{   -2 cells _rp _rp addi   0 _rp rot ( r1) sw
+                                                 cell _rp rot ( r2) sw  } ;
 
-: rpop1  ( r1)       asm{  0 rp rot ( r1) lw      cell rp rp addi  } ;
+: rpop1  ( r1)       asm{  0 _rp rot ( r1) lw      cell _rp _rp addi  } ;
 
-: rpop2  ( r2 r1)    asm{  0 rp rot ( r1) lw
-                        cell rp rot ( r2) lw   2 cells rp rp addi  } ;
+: rpop2  ( r2 r1)    asm{  0 _rp rot ( r1) lw
+                        cell _rp rot ( r2) lw   2 cells _rp _rp addi  } ;
 
 .then  ( def C-ext)
 
