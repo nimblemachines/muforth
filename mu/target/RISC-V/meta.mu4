@@ -389,25 +389,43 @@ meta
    .target-runtime. @  ( last last-runtime)  over .target-runtime. !
    swap ! ( link our new word to last-runtime) ;
 
-: label   current preserve  .labels. definitions  \m here  constant  __asm ;
-: name    current preserve  target                \m here  constant ;
+| If compressed instructions are available, instructions can be 2-byte
+| aligned. Otherwise they must be 4-byte aligned.
+
+.ifdef C-ext
+: ialign  ( instruction align)  \m halign ;  | instructions aligned on 2 byte boundaries
+.else
+: ialign  ( instruction align)  \m align ;   | instructions aligned on 4 byte boundaries
+.then
+
+| Create a labeled machine code routine.
+: label   current preserve  .labels. definitions  \m ialign  \m here  constant  __asm ;
 
 .ifdef native
 
-| Native code words can start on 2 byte alignment.
+| Native code words are instruction-aligned.
+: name    current preserve  target  \m ialign  \m here  constant ;
 : code    \m name  __asm ;
+
+| For code words that implement forward-referenced meta-compiler primitives.
+: code*   \m ialign  implements  untoken  \m code ;
 
 .else  ( ITC)
 
 | ITC words have to have a 4-byte-aligned code field.
+: name    current preserve  target  \m align  \m here  constant ;
+
+| For creating code words: primitives coded in assembler.
 : codes   ( 'code)  \m name  \m ,  __asm ;
-: code    \m align  \m here               \m cell+  \m codes ;
-: new     \m align  \m here  last-code !  "deadc0de \m codes ;
+: code    \m align  \m here  \m cell+  \m codes ;
+
+| For code words that implement forward-referenced meta-compiler primitives.
+: code*   \m align  implements  untoken  \m code ;
+
+| For creating words whose behavior is defined by ;code or does>.
+: new     \m name  \m here  last-code !  "deadc0de \m , ( placeholder code field) ;
 
 .then
-
-( For code words that implement forward-referenced meta-compiler primitives.)
-: code*   \m align  implements  untoken  \m code ;
 
 
 | For forward references. Use hook to define the hook. This creates a label
