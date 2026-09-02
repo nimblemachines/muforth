@@ -94,7 +94,7 @@ __meta
    [ 1 2 << ( IOPA_EN)
      1 3 << ( IOPB_EN) +
    1 #12 << ( SPI1_EN) + #] RCC_APB2ENR set!
-   
+
    | PB0/1/2 are active low outputs. Set them to de-asserted before
    | enabling them as outputs.
    7 bit/
@@ -141,9 +141,13 @@ __meta
 : until-clear   ( mask)  begin  SPI1_SR @  over and  0= until  drop ;
 
 | Send a byte over SPI. "to spi"
-: >s  ( b)   SPI1_DR ! ;   | Forth runs too slowly to cause SPI overrun!
+| >s  ( b)   SPI1_DR ! ;   | Forth runs too slowly to cause SPI overrun!
+code >s  ( b)
+   SPI1_DR w lui   SPI1_DR w top sw   top pop1   next  ;c
 
-: >lohi  ( w - lo hi)  dup 0ff and  swap 8 u>> ;
+| >lohi  ( w - lo hi)  dup 0ff and  swap 8 u>> ;
+code >lohi  ( w - lo hi)
+   0ff top w andi  w push1  top 8 top srli  next  ;c
 
 | Send 16-bit big-endian value. >sw is "to spi word".
 : >sw  ( w)  >lohi >s >s ;
@@ -223,10 +227,21 @@ meta: cmd0  ( cmd)  constant  does> @ cmd ;
 
 : madctl  ( bits)  36 cmd  >s ;
 
-| Write a pixel.
-: px  ( rgb)  >lohi  ( b rg) >sw >s ;
-
 decimal
+
+| Write a pixel.
+| px  ( rgb)  >lohi  ( b rg) >sw >s ;
+
+| We play fast and loose with the truth here - we are not masking off the
+| remaining high bits. Since the only use for this word is sending bytes
+| via SPI, and the SPI engine will ignore the high bits, we are ok.
+
+code >bgr  ( rgb - b g r)
+   top w mv
+   top  8   x srli
+   top 16 top srli   w x push2   next  ;c
+
+: px  ( rgb)  >bgr  >s >s >s ;
 
 | Include the printable ASCII chars (32 to 126) from OpenBSD's Spleen 8x16
 | font.
@@ -241,24 +256,34 @@ spleen-8x16
 
 variable fg    | foreground color for drawing
 
+| Test the sign bit. If set, copy fg to px; otherwise px is 0. Shift bits
+| left one bit.
+
+code 1bit  ( fg bits - fg bits' px)
+   top w mv   0 top li   w 0< if   0 sp top s.lw   then   w 1 w slli
+   begin   w push1   next  ;c
+
 | This is a special word for fetching the next row of 8 bits. Note that it
 | puts the value on top rather than the incremented address, unlike, say @+
 | It also shifts the value up so that its MSB is in the sign bit.
 
 code row@+  ( a - a+1 bits)
-   top w mv   0 w top lbu   top 24 top slli   1 w w addi   w push1   next  ;c
+   top w mv   0 w top lbu   top 24 top slli   1 w w addi   again  ;c
+
+code 2drop   top w pop2   next  ;c
 
 : 8bits  ( a - a+1)
-   row@+  fg @  swap  ( a+4 fg bits)  8 for  2dup 0< and px  2*  next  drop drop ;
+   | row@+  fg @  swap  ( a+1 fg bits)  8 for  2dup 0< and px  2*  next  2drop ;
+   row@+  fg @  swap  ( a+1 fg bits)  8 for  1bit px  next  2drop ;
 
 : glyph  ( char)
-   spleen  ramwr  16 for  8bits  next  drop ; 
+   spleen  ramwr  16 for  8bits  next  drop ;
 
 | Goto text row n, assuming an Nx16 font.
 : row  ( n)  4 << ( *16)  26 +  dup 15 + swap  raset ;
 
 | Goto text col n, assuming an 8xM font.
-: col  ( n)  3 << ( *8)  1+  dup 7 + swap  caset ; 
+: col  ( n)  3 << ( *8)  1+  dup 7 + swap  caset ;
 
 variable curcol
 variable currow
@@ -283,6 +308,9 @@ code c@+  ( a - b a+1)  0 top w lbu   w push1   1 top top addi   next  ;c
 
 | NOTE: a" is the address of the count byte.
 : (")  ( - a")  r> dup  c@+ + 3+ -4 and  >r ; [r]
+
+| Compile a string into a target word. At runtime, (") will push the
+| address of the count byte, which precedes the string.
 
 tc: "
    \t (") compile,
