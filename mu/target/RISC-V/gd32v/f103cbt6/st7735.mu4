@@ -140,14 +140,35 @@ __meta
 : until-set     ( mask)  begin  SPI1_SR @  over and     until  drop ;
 : until-clear   ( mask)  begin  SPI1_SR @  over and  0= until  drop ;
 
-| Send a byte over SPI. "to spi"
-| >s  ( b)   SPI1_DR ! ;   | Forth runs too slowly to cause SPI overrun!
-code >s  ( b)
-   SPI1_DR w lui   SPI1_DR w top sw   top pop1   next  ;c
+__host
 
-| >lohi  ( w - lo hi)  dup 0ff and  swap 8 u>> ;
-code >lohi  ( w - lo hi)
-   0ff top w andi  w push1  top 8 top srli  next  ;c
+lex
+.ifdef slower
+| Keep the lines starting with s| and toss the ones starting with f|
+: s|  ;
+: f|  \lex | ;    | throw away the rest of the line
+.else
+| Keep the lines starting with f| and toss the ones starting with s|
+: s|  \lex | ;    | throw away the rest of the line
+: f|  ;
+.then
+forth
+
+__meta
+
+| Send a byte over SPI. "to spi"
+s| : >s  ( b)   SPI1_DR ! ;   | Forth runs too slowly to cause SPI overrun!
+
+f| code >s  ( b)
+f|   SPI1_DR w lui   SPI1_DR w top sw   top pop1   next  ;c
+
+| Split a value into a low and high part, where the low part is the low 8
+| bits; the high part is everything above that, shifted down 8 bits..
+
+s| : >lohi  ( w - lo hi)  dup 0ff and  swap 8 u>> ;
+
+f| code >lohi  ( w - lo hi)
+f|    0ff top w andi  w push1  top 8 top srli  next  ;c
 
 | Send 16-bit big-endian value. >sw is "to spi word".
 : >sw  ( w)  >lohi >s >s ;
@@ -230,18 +251,18 @@ meta: cmd0  ( cmd)  constant  does> @ cmd ;
 decimal
 
 | Write a pixel.
-| px  ( rgb)  >lohi  ( b rg) >sw >s ;
+s| : px  ( rgb)  >lohi  ( b rg) >sw >s ;
 
 | We play fast and loose with the truth here - we are not masking off the
 | remaining high bits. Since the only use for this word is sending bytes
 | via SPI, and the SPI engine will ignore the high bits, we are ok.
 
-code >bgr  ( rgb - b g r)
-   top w mv
-   top  8   x srli
-   top 16 top srli   w x push2   next  ;c
+f| code >bgr  ( rgb - b g r)
+f|    top w mv
+f|    top  8   x srli
+f|    top 16 top srli   w x push2   next  ;c
 
-: px  ( rgb)  >bgr  >s >s >s ;
+f| : px  ( rgb)  >bgr  >s >s >s ;
 
 | Include the printable ASCII chars (32 to 126) from OpenBSD's Spleen 8x16
 | font.
@@ -259,22 +280,24 @@ variable fg    | foreground color for drawing
 | Test the sign bit. If set, copy fg to px; otherwise px is 0. Shift bits
 | left one bit.
 
-code 1bit  ( fg bits - fg bits' px)
-   top w mv   0 top li   w 0< if   0 sp top s.lw   then   w 1 w slli
-   begin   w push1   next  ;c
+f| code 1bit  ( fg bits - fg bits' px)
+f|    top w mv   0 top li   w 0< if   0 sp top s.lw   then   w 1 w slli
+f|    begin   w push1   next  ;c
 
 | This is a special word for fetching the next row of 8 bits. Note that it
 | puts the value on top rather than the incremented address, unlike, say @+
 | It also shifts the value up so that its MSB is in the sign bit.
 
 code row@+  ( a - a+1 bits)
-   top w mv   0 w top lbu   top 24 top slli   1 w w addi   again  ;c
+   top w mv   0 w top lbu   top 24 top slli   1 w w addi
+f|   again  ;c
+s|   w push1   next  ;c
 
 code 2drop   top w pop2   next  ;c
 
 : 8bits  ( a - a+1)
-   | row@+  fg @  swap  ( a+1 fg bits)  8 for  2dup 0< and px  2*  next  2drop ;
-   row@+  fg @  swap  ( a+1 fg bits)  8 for  1bit px  next  2drop ;
+   s| row@+  fg @  swap  ( a+1 fg bits)  8 for  2dup 0< and px  2*  next  2drop ;
+   f| row@+  fg @  swap  ( a+1 fg bits)  8 for  1bit px  next  2drop ;
 
 : glyph  ( char)
    spleen  ramwr  16 for  8bits  next  drop ;
