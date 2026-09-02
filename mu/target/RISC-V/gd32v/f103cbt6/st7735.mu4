@@ -1,0 +1,308 @@
+| This file is part of muforth: https://muforth.dev/
+|
+| Copyright (c) 2002-2026 David Frech. (Read the LICENSE for details.)
+
+loading Sitronix ST7735 display
+
+| This is code to write to the ST7735 display on the Sipeed Longan Nano
+| board.
+|
+| Here is a published schematic of the board:
+|
+| https://doc.nucleisys.com/nuclei_sdk/_images/sipeed_longan_nano_schematic.png
+|
+| Of interest to us here are the connections to the display:
+|
+| MCU    LCD    Function
+| ~~~~~  ~~~~~  ~~~~~~~~~~~~~~~~~~~~~~~
+| PA5    SCL    SPI1_SCK  (NOTE: GigaDevice calls this SPI0!)
+| PA7    SDA    SPI2_MOSI
+| PB0    RS     Command/data: 0=command, 1=data
+| PB1    RST    reset
+| PB2    CS     chip select
+|
+| According to the schematic, the backlight voltage is sourced from a 2.8V
+| regulator.
+
+__meta
+hex
+
+| We need a basic kernel, since we are going to write this in Forth.
+.target. .contains @ .not .if  error" ST7735 code requires a Forth kernel."  .then
+
+| Copied this code from chat-asm. It should really be in its own file.
+|
+| On older chips - eg F103/F105 - and on the new GigaDevice GD32VF103! -
+| the GPIO configuration is somewhat different.
+|
+| GPIOx_CRL and _CRH have 4 bits per GPIO pin: CNF<2>:MODE<2>
+|
+| Here are the tables of their meanings:
+|
+| MODE  Meaning
+|  00   Input
+|  01   Output; Maximum speed 10 MHz
+|  10   Output; Maximum speed 2 MHz
+|  11   Output; Maximum speed 50 MHz
+|
+| If MODE = 00:
+| CNF   Meaning
+|  00   Analog
+|  01   Input floating
+|  10   Input pull-up / pull-down
+|  11   Reserved
+|
+| If MODE != 00:
+| CNF   Meaning
+|  00   Output, general purpose, push-pull
+|  01   Output, general purpose, open-drain
+|  10   Output, alternate function, push-pull
+|  11   Output, alternate function, open-drain
+|
+| If MODE = 00 (input) and CNF = 10 (pull-up/pull-down), the GPIOx_ODR bit
+| corresponding to the pin determines the direction of the pull-up/-down:
+|
+| ODR
+|  0   pull-down
+|  1   pull-up
+
+__host
+
+( CNF bits, MODE=0)
+0 equ gpio-in-analog
+4 equ gpio-in-floating
+8 equ gpio-in-pulled
+
+( CNF bits, MODE=1,2,3)
+4 equ gpio-open-drain
+8 equ gpio-alternate-function
+
+( MODE bits.)
+1 equ gpio-out-10m
+2 equ gpio-out-2m
+3 equ gpio-out-50m
+
+__meta
+
+| GPIO registers have to be accessed by word only.
+
+| Set and clear port B bits.
+: bit/  ( bit)  GPIOB_BSRR ! ;      | set bit
+: bit\  ( bit)  #16 <<  bit/ ;      | clear bit
+
+: disp-init
+   [ 1 2 << ( IOPA_EN)
+     1 3 << ( IOPB_EN) +
+   1 #12 << ( SPI1_EN) + #] RCC_APB2ENR set!
+   
+   | PB0/1/2 are active low outputs. Set them to de-asserted before
+   | enabling them as outputs.
+   7 bit/
+
+   | Set up PB0/1/2 as GPIO outputs, 10M toggle freq.
+   GPIOB_CRL dup @
+                    0fff      bic   | 4 bits per pin
+      [ gpio-out-10m 111 * #] or
+   swap !
+
+   | Assign PA5/7 to SPI1.
+   | We want to run the SPI at 12M, so set slew rate to 50M.
+   GPIOA_CRL dup @
+                                 f0f0_0000      bic
+      [ gpio-alternate-function
+        gpio-out-50m +           1010_0000 * #] or
+   swap !
+
+   | Set up SPI peripheral.
+   %0011_01_001_100 ( 8bit data, SSM=1, SSI=1, SPE=1, PCLK/4, MSTR=1, CPOL,CPHA=00)
+   | %0011_00_001_100 ( 8bit data, SSM=1, SSI=1, SPE=0, PCLK/4, MSTR=1, CPOL,CPHA=00)
+   | 0
+   SPI1_CR1
+      0 over !  ( reset and disable)
+      | tuck !  ( config)
+           !  ( config and enable) ;
+
+( Command/data select on PB0. Command=0, data=1.)
+: cmd/  ( de-assert command mode)  1 bit/ ;
+: cmd\  ( assert command mode)     1 bit\ ;
+
+( /RST on PB1.)
+: rst/  ( de-assert /RST)   2 bit/ ;
+: rst\  ( assert /RST)      2 bit\ ;
+
+( /CS on PB2.)
+: cs/  ( de-assert /CS)     4 bit/ ;
+: cs\  ( assert /CS)        4 bit\ ;
+
+| NOTE: Accesses to SPI registers must be halfword or word; no byte access!
+
+| Wait until status bit set or reset.
+: until-set     ( mask)  begin  SPI1_SR @  over and     until  drop ;
+: until-clear   ( mask)  begin  SPI1_SR @  over and  0= until  drop ;
+
+| Send a byte over SPI. "to spi"
+: >s  ( b)   SPI1_DR ! ;   | Forth runs too slowly to cause SPI overrun!
+
+: >lohi  ( w - lo hi)  dup 0ff and  swap 8 u>> ;
+
+| Send 16-bit big-endian value. >sw is "to spi word".
+: >sw  ( w)  >lohi >s >s ;
+
+| Wait until transmit complete.
+: ?bsy  [ 1 7 << ( BSY) #] until-clear ;
+
+| Sitronix ST7735 commands of interest.
+|
+| Hex   Data bytes         Description
+| ~~~~  ~~~~~~~~~~~~~~~~~  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+| 10    --                 Sleep in
+| 11    --                 Sleep out
+| 28    --                 Display off
+| 29    --                 Display on
+| 2a    X start, X end     Column address set (CASET)
+| 2b    Y start, Y end     Row address set (RASET)
+| 2c    pixels             Memory write (RAMWR)
+| 36    bits               Memory access control (MADCTL)
+| 3a    bits               Interface pixel format (COLMOD)
+|
+| For CASET and RASET the start and end addresses are sent as 16-bit
+| big-endian values.
+|
+| For MADCTL the bits are as follows:
+|
+|   MY MX MV ML RGB MH - -
+|
+|  MY : Mirror y
+|  MX : Mirror x
+|  MV : swap x and y
+| RGB : order of pixel components
+|
+| ML and MH are the directions that the hardware panel is scanned; we
+| ignore these.
+|
+| For the ST7735 on the Longan Nano, we need to set MV so we can use the
+| display in "landscape" mode; we set MX if we want the origin in the upper
+| left corner - otherwise it's in the lower left; and if we send the pixel
+| components in the order R G B we need to set the RGB bit.
+|
+| COLMOD bits: - - - - - IFPF2 IFPF1 IFPF0
+| Pixel formats: 011  12 bits (4/4/4)
+|                101  16 bits (5/6/5)
+|                110  18 bits (6/6/6)
+| Device resets to 18 bits, so we probably don't need to set it.
+|
+| Pixel formats for writing to memory:
+| 12 bits:  rrrr_gggg bbbb_rrrr gggg_bbbb  (1.5 bytes/pixel)
+| 16 bits:  rrrr_rggg gggb_bbbb            (2 bytes/pixel)
+| 18 bits:  rrrr_rr00 gggg_gg00 bbbb_bb00  (3 bytes/pixel)
+|
+| Serial data is sent MSB first.
+
+| At the start of each command byte, pulse CS high to reset the serial
+| interface; then set command mode, send command byte, wait for
+| transmission to end, and set data mode.
+
+: cmd  ( cmd)  cs/ cs\  cmd\  >s ?bsy  cmd/ ;
+
+| For simple commands with no parameters.
+meta: cmd0  ( cmd)  constant  does> @ cmd ;
+
+10 cmd0 +sleep    | "sleep in"
+11 cmd0 -sleep    | "sleep out"
+
+20 cmd0 -invert
+21 cmd0 +invert
+
+28 cmd0 -display  | display off
+29 cmd0 +display  | display on
+
+: caset  ( end start)  2a cmd  >sw >sw ;    | Column address set (CASET)
+: raset  ( end start)  2b cmd  >sw >sw ;    | Row address set (RASET)
+
+2c cmd0 ramwr  ( write to display ram)
+
+: madctl  ( bits)  36 cmd  >s ;
+
+| Write a pixel.
+: px  ( rgb)  >lohi  ( b rg) >sw >s ;
+
+decimal
+
+| Include the printable ASCII chars (32 to 126) from OpenBSD's Spleen 8x16
+| font.
+
+meta: font
+   create  ( 'font b/glyph #glyphs )
+      over ,  *  push  here image+ r@ cmove  pop allot
+   does> @+ swap ( char 'glyphs b/glyph)  rot 32 - * + ;
+
+spleen-8x16
+   16 127 32 - ( skip delete char)  font spleen
+
+variable fg    | foreground color for drawing
+
+| This is a special word for fetching the next row of 8 bits. Note that it
+| puts the value on top rather than the incremented address, unlike, say @+
+| It also shifts the value up so that its MSB is in the sign bit.
+
+code row@+  ( a - a+1 bits)
+   top w mv   0 w top lbu   top 24 top slli   1 w w addi   w push1   next  ;c
+
+: 8bits  ( a - a+1)
+   row@+  fg @  swap  ( a+4 fg bits)  8 for  2dup 0< and px  2*  next  drop drop ;
+
+: glyph  ( char)
+   spleen  ramwr  16 for  8bits  next  drop ; 
+
+| Goto text row n, assuming an Nx16 font.
+: row  ( n)  4 << ( *16)  26 +  dup 15 + swap  raset ;
+
+| Goto text col n, assuming an 8xM font.
+: col  ( n)  3 << ( *8)  1+  dup 7 + swap  caset ; 
+
+variable curcol
+variable currow
+
+: cr   currow @  1+ dup row  currow !
+                           0 curcol ! ;
+
+: locate  curcol @  dup col 1+  curcol ! ;
+: ?cr     curcol @  20 = if  cr  then ;
+
+variable 'wrap
+: wrap    ['] ?cr   'wrap ! ;
+: nowrap  ['] nope  'wrap ! ;
+
+: emit   ( char)  locate  glyph  'wrap @execute ;
+
+code c@+  ( a - b a+1)  0 top w lbu   w push1   1 top top addi   next  ;c
+
+: count  ( a" - a u)  c@+ swap ;
+: type   ( a u)  for  count emit  next  drop ;
+: atype ( a")  count type ;
+
+| NOTE: a" is the address of the count byte.
+: (")  ( - a")  r> dup  c@+ + 3+ -4 and  >r ; [r]
+
+tc: "
+   \t (") compile,
+   char " parse  push  r@ c,  here image+ r@ cmove  pop allot align ;
+
+| Display initialization.
+
+| Panel goes from (1,26) to (160,105), assuming MV (swap x and y) set.
+
+: clear
+   160 1 caset  105 26 raset  ramwr  [ 160 80 * #] for  0 px  next
+   -1 currow !  cr ;
+
+: +disp   disp-init  "68 madctl  clear  +invert  -sleep  +display ;
+
+: demo
+   +disp  "ffff00 ( yellow) fg !  nowrap
+       " Brought to you by" atype
+   cr  " OpenBSD's spleen8x16"  atype
+   cr  " font and muforth!" atype
+   cr cr  " 2026/09/01" atype ;
+
+: demo2  "ff00ff ( magenta) fg !  clear  wrap  127 32 do  i emit  loop ;
