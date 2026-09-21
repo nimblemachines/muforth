@@ -78,11 +78,10 @@ static void set_termios_raw(struct termios *pti)
 {
 #ifdef __CYGWIN__
     /* Cygwin lacks cfmakeraw, so we do it "by hand". */
-    pti->c_iflag &= ~(PARMRK | ISTRIP | INLCR | IGNCR |
-                      ICRNL | IXON | IXOFF);
-    pti->c_iflag |= IGNBRK;
+    pti->c_iflag &= ~(PARMRK | ISTRIP | INLCR | IGNCR | ICRNL | IXON | IXOFF);
+    pti->c_iflag |= (IGNBRK);
 
-/*    pti->c_oflag &= ~OPOST;  */
+    pti->c_oflag &= ~(OPOST);
 
     pti->c_lflag &= ~(ECHO | ECHONL | ICANON | IEXTEN | ISIG);
 
@@ -97,8 +96,9 @@ void mu_set_termios_user_raw()
 {
     struct termios *pti = (struct termios *) UNHEAPIFY(TOP);
     set_termios_raw(pti);
-    pti->c_oflag |= (OPOST);    /* set opost, so newlines become CR/LF */
-    pti->c_lflag |= (ISIG);     /* accept special chars and gen signals */
+    pti->c_iflag |= (ICRNL);    /* convert CR to NL on input */
+    pti->c_oflag |= (OPOST | ONLCR);    /* set opost; newlines become CR/LF on output */
+    pti->c_lflag |= (ECHOE | ECHOKE | ISIG);     /* keep echo erase set; accept special chars and gen signals */
     pti->c_cc[VMIN] = 1;        /* wait forever for a character */
     pti->c_cc[VTIME] = 0;
     DROP(1);
